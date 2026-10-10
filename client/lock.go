@@ -16,12 +16,29 @@ import (
 // errLocked is returned when another consumer holds the box.
 var errLocked = refuse("another consumer holds the lock: one consumer per box (remove lock/ if it is stale)")
 
+// errLockGone is a lock/pid deleted between this client's open and its flock.
+var errLockGone = errors.New("the lock file was deleted under us")
+
+// lockOpened, in tests, runs between opening lock/pid and taking its flock:
+// the window in which a releasing holder can delete it.
+var lockOpened = func() {}
+
 type lock struct {
 	dir string
 	pid *os.File
 }
 
 func (b *Box) lock() (*lock, error) {
+	for range 3 {
+		l, err := b.lockOnce()
+		if !errors.Is(err, errLockGone) {
+			return l, err
+		}
+	}
+	return nil, errLocked
+}
+
+func (b *Box) lockOnce() (*lock, error) {
 	l := &lock{dir: b.path("lock")}
 	err := os.Mkdir(l.dir, 0o700)
 	if err != nil && !errors.Is(err, fs.ErrExist) {
@@ -44,9 +61,18 @@ func (b *Box) lock() (*lock, error) {
 	if err != nil {
 		return nil, err
 	}
+	lockOpened()
 	if err := flock(f); err != nil {
 		f.Close() //nolint:errcheck,gosec // held by another process
 		return nil, errLocked
+	}
+	// A holder releasing deletes lock/pid and lock/, then closes the file,
+	// which drops its flock. A file opened before that delete and flocked
+	// after that close is locked, but it is no longer the lock: a third
+	// consumer can make a new one. Only the file lock/pid still names counts.
+	if !stillNamed(f, l.dir+"/pid") {
+		f.Close() //nolint:errcheck,gosec // not the lock any more
+		return nil, errLockGone
 	}
 	if err := f.Truncate(0); err != nil {
 		f.Close() //nolint:errcheck,gosec
@@ -58,6 +84,16 @@ func (b *Box) lock() (*lock, error) {
 	}
 	l.pid = f
 	return l, nil
+}
+
+// stillNamed reports whether name is the file f has open.
+func stillNamed(f *os.File, name string) bool {
+	held, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	named, err := os.Stat(name)
+	return err == nil && os.SameFile(held, named)
 }
 
 func (l *lock) release() error {

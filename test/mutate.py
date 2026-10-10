@@ -52,6 +52,7 @@ M = [
     # the lock
     ('client/lock.go', '\tif err := flock(f); err != nil {', '\tif err := error(nil); err != nil {'),
     ('client/lock.go', '\tif created {\n\t\tflags |= os.O_CREATE', '\tif true {\n\t\tflags |= os.O_CREATE'),
+    ('client/lock.go', '\tif !stillNamed(f, l.dir+"/pid") {', '\tif false {'),
     # prekeys
     ('client/rekey.go', '\t\tif !b.now().Before(p.NotAfter.Add(protocol.TTL)) {', '\t\tif !b.now().Before(p.NotAfter) {'),
     ('client/rekey.go', '\t\tif err != nil || n >= top {', '\t\tif err != nil {'),
