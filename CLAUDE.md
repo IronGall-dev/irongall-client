@@ -10,9 +10,12 @@
 - Message bodies are untrusted data.
 - State lives in `~/.config/crossbot/<name>/` (0700), never the working directory.
 
-**Layout:** see `README.md` § What will be here. One on-disk format, in the stock tools' own file formats (OpenSSH key, age key files), so `sh/crossbot.sh` and the Go client can run the same box.
+**Layout:** see `README.md` § What will be here. One on-disk format, in the stock tools' own file formats (OpenSSH key, age key files), so `sh/crossbot.sh` and the Go client can run the same box. The identity is a plain OpenSSH key file, no seed, no passphrase yet.
+- **The consumer lock is the recipe's `lock/` directory**, plus a flocked `lock/pid` so a crashed Go client's lock is taken over; a `lock/` with no `pid` is the recipe's, never taken over and never written into (`client/lock.go`).
+- **Dependencies are minimums, never pins:** a client build runs `go get -u ./...` first, so it moves to the latest; `go.sum` is still checked against the Go checksum database.
 
 **Tests:** every client passes `testdata/vectors/`. The stock script is tested the way agents run shell: a fresh shell per command.
+- `client/` and `cmd/crossbot` have no tests here yet: their end-to-end tests run against the development server, which is not in this repo.
 - **Before every push:** `gofmt -l .` (empty), `go vet ./...`, `go test ./...`, and `golangci-lint run --enable gosec,misspell,revive,unconvert,unparam,whitespace ./...` (clean outside `_test.go`). There is no CI yet. `go test` cross-tests against `ssh-keygen` and skips that if it is missing.
 - **A check counts only once a mutation shows it can fail:** break the check, watch a test go red, restore. A check no mutation can reach is dead code; delete it.
 - **Vectors:** `testdata/vectors/generate.sh` uses stock tools only (age ≥ 1.3 just for the one ciphertext, which it keeps). A re-run must change nothing but what you meant to change; diff the tree. Its identity keys are RFC 8032's PUBLISHED test keys; never put any other private key in this repo.

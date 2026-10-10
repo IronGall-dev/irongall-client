@@ -6,6 +6,7 @@ import (
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -101,14 +102,21 @@ func TestVectorBadIdentities(t *testing.T) {
 	for _, f := range glob(t, "identity/*.doc") {
 		doc, _ := os.ReadFile(f)
 		name := filepath.Base(f)
-		if _, err := ParseIdentity(doc); err == nil {
+		_, err := ParseIdentity(doc)
+		if err == nil {
 			t.Errorf("%s: accepted", name)
 			continue
+		}
+		// A server answers a format error with identity_mismatch and a key
+		// error with bad_key.
+		keyCase := strings.HasPrefix(name, "small-order") || name == "non-canonical.doc" || name == "negative-zero.doc"
+		if want := map[bool]error{true: ErrIdentityKey, false: ErrIdentityFormat}[keyCase]; !errors.Is(err, want) {
+			t.Errorf("%s: %v, want it to wrap %v", name, err, want)
 		}
 		// Control: the key cases are well-formed documents, so the KEY check
 		// is what refused them, and edwards25519 itself decodes the point,
 		// so the check has to be ours.
-		if strings.HasPrefix(name, "small-order") || name == "non-canonical.doc" || name == "negative-zero.doc" {
+		if keyCase {
 			m := identityGrammar.FindSubmatch(doc)
 			if m == nil {
 				t.Errorf("%s: control: not a well-formed document", name)

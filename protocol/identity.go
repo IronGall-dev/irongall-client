@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"regexp"
 
 	"filippo.io/edwards25519"
@@ -17,6 +18,14 @@ const (
 	IdentityTag = "crossbot-v1"
 	// IdentityDocumentSize is the exact size of a v1 identity document.
 	IdentityDocumentSize = 93
+)
+
+// Every ParseIdentity error wraps one of these: the document breaks its
+// format, or its key fails the key checks. A server answers the first with
+// identity_mismatch and the second with bad_key.
+var (
+	ErrIdentityFormat = errors.New("not an identity document")
+	ErrIdentityKey    = errors.New("bad identity key")
 )
 
 // identityGrammar is the whole document: the tag line, then an OpenSSH
@@ -37,26 +46,26 @@ type Identity struct {
 // non-canonical keys, so this check is explicit.
 func ParseIdentity(doc []byte) (*Identity, error) {
 	if len(doc) != IdentityDocumentSize {
-		return nil, errors.New("an identity document is exactly 93 bytes: \"crossbot-v1\", LF, an ssh-ed25519 key with no comment, LF (look for a comment, CRLF, or a missing final newline)")
+		return nil, fmt.Errorf("%w: it is exactly 93 bytes: \"crossbot-v1\", LF, an ssh-ed25519 key with no comment, LF (look for a comment, CRLF, or a missing final newline)", ErrIdentityFormat)
 	}
 	m := identityGrammar.FindSubmatch(doc)
 	if m == nil {
-		return nil, errors.New("not an identity document: \"crossbot-v1\", LF, an ssh-ed25519 key with no comment, LF")
+		return nil, fmt.Errorf("%w: \"crossbot-v1\", LF, an ssh-ed25519 key with no comment, LF", ErrIdentityFormat)
 	}
 	wire, err := base64.StdEncoding.Strict().DecodeString(string(m[1]))
 	if err != nil {
-		return nil, errors.New("the identity key is not valid base64")
+		return nil, fmt.Errorf("%w: it is not valid base64", ErrIdentityKey)
 	}
 	key, err := ssh.ParsePublicKey(wire)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrIdentityKey, err)
 	}
 	if key.Type() != ssh.KeyAlgoED25519 || !bytes.Equal(key.Marshal(), wire) {
-		return nil, errors.New("the identity key is not an ssh-ed25519 key")
+		return nil, fmt.Errorf("%w: it is not an ssh-ed25519 key", ErrIdentityKey)
 	}
 	raw := key.(ssh.CryptoPublicKey).CryptoPublicKey().(ed25519.PublicKey)
 	if err := checkEd25519(raw); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %v", ErrIdentityKey, err)
 	}
 	return &Identity{
 		doc:  bytes.Clone(doc),
