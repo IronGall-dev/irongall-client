@@ -261,11 +261,14 @@ func TestVectorEnvelopes(t *testing.T) {
 	for _, f := range glob(t, "envelope/*.json") {
 		name := strings.TrimSuffix(filepath.Base(f), ".json")
 		pt, _ := os.ReadFile(f)
-		_, err := OpenEnvelope(pt, a.Address(), b.Address(), now)
+		env, err := OpenEnvelope(pt, a.Address(), b.Address(), now)
 		switch {
 		case strings.HasPrefix(name, "accept-"):
 			if err != nil {
 				t.Errorf("%s: %v", name, err)
+			}
+			if name == "accept-case-variant-key" && err == nil && string(env.Body) != `"benign"` {
+				t.Errorf("%s: body %s: BODY is an unknown key, never the body", name, env.Body)
 			}
 		case strings.HasPrefix(name, "refuse-"):
 			if err == nil {

@@ -24,8 +24,10 @@ const usage = `usage: crossbot <command> [arguments]
   init [-classic]          create this box, register it and activate it
   addr                     print this box's address
   send <address> [file]    send a message (the body from file, or stdin)
-  flush                    re-post messages still in the outbox
-  recv [-wait duration]    receive, verify and ack every message
+  flush                    re-post messages still in the outbox; ones that can
+                           never be delivered move to outbox/failed/
+  recv [-wait duration]    receive, verify and ack every message: one line of
+                           JSON per message, built from the verified fields
   rekey [-classic | -pq]   publish a new prekey (run at least monthly)
 
 The box lives in $CROSSBOT_HOME, or ${XDG_CONFIG_HOME:-~/.config}/crossbot/${CROSSBOT_BOX:-default}.
@@ -140,9 +142,10 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 			res, err := b.Receive(ctx)
 			if res != nil {
 				// Every delivery is also kept in inbox/, so a failed
-				// write to stdout loses nothing.
+				// write to stdout loses nothing. The line is this client's
+				// own, from the verified fields: never the sender's bytes.
 				for _, d := range res.Delivered {
-					if _, werr := fmt.Fprintf(stdout, "%s\n", d.Plaintext); werr != nil && err == nil {
+					if _, werr := fmt.Fprintf(stdout, "%s\n", d.Line); werr != nil && err == nil {
 						err = werr
 					}
 				}

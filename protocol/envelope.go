@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -46,7 +48,7 @@ type Envelope struct {
 
 // wireEnvelope is the JSON form, in the field order the stock recipe writes.
 type wireEnvelope struct {
-	V          json.Number     `json:"v"`
+	V          json.Number     `json:"v"` // written as a number; read only as one
 	From       Address         `json:"from"`
 	To         Address         `json:"to"`
 	SentAt     string          `json:"sent_at"`
@@ -61,6 +63,9 @@ type wireEnvelope struct {
 // NewEnvelope returns an envelope from one box to another with a string body,
 // sent now, with a fresh msg_id.
 func NewEnvelope(from, to Address, body string, now time.Time) (*Envelope, error) {
+	if !utf8.ValidString(body) {
+		return nil, errors.New("the body is not UTF-8 text: JSON carries text only, and would replace the bad bytes")
+	}
 	b, err := marshalCompact(body)
 	if err != nil {
 		return nil, err
@@ -93,28 +98,43 @@ func (e *Envelope) Marshal() ([]byte, error) {
 }
 
 // OpenEnvelope parses a decrypted envelope and checks it, in this order: it is
-// version 1; its from is the VERIFIED signer and its to is this box (a
-// mismatch means someone re-signed another sender's ciphertext as their own);
-// it has a body and a msg_id; and sent_at is no older than TTL at now.
+// UTF-8 JSON, one object with no key twice; it is version 1, as a JSON number;
+// its from is the VERIFIED signer and its to is this box (a mismatch means
+// someone re-signed another sender's ciphertext as their own); it has a body
+// and a msg_id; and sent_at is no older than TTL at now.
+//
+// Keys match exactly, as in jq and every other strict reader: "BODY" is an
+// unknown key, ignored, never the body. No key twice, so no two readers can
+// take different values from one envelope.
 //
 // The caller has already verified the signature and decrypted. Replay and
 // duplicate checks need the caller's seen-set and are the caller's.
 func OpenEnvelope(plaintext []byte, signer, me Address, now time.Time) (*Envelope, error) {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(plaintext, &fields); err != nil {
-		return nil, errors.New("the envelope is not a JSON object")
+	if !utf8.Valid(plaintext) {
+		return nil, errors.New("the envelope is not UTF-8")
+	}
+	fields, err := objectFields(plaintext)
+	if err != nil {
+		return nil, err
 	}
 	if _, ok := fields["body"]; !ok {
 		return nil, errors.New("the envelope has no body")
 	}
 	var w wireEnvelope
-	d := json.NewDecoder(bytes.NewReader(plaintext))
-	d.UseNumber()
-	if err := d.Decode(&w); err != nil {
-		return nil, fmt.Errorf("the envelope is malformed: %v", err)
+	for key, dst := range map[string]any{
+		"from": &w.From, "to": &w.To, "sent_at": &w.SentAt, "msg_id": &w.MsgID,
+		"subject": &w.Subject, "in_reply_to": &w.InReplyTo, "supersedes": &w.Supersedes, "pad": &w.Pad,
+	} {
+		if raw, ok := fields[key]; ok {
+			if err := json.Unmarshal(raw, dst); err != nil {
+				return nil, fmt.Errorf("the envelope is malformed: %s: %v", key, err)
+			}
+		}
 	}
-	if v, err := w.V.Float64(); err != nil || v != EnvelopeVersion {
-		return nil, fmt.Errorf("unknown envelope version %q", w.V)
+	w.Body = fields["body"]
+	// The raw value: a JSON string keeps its quotes, and is no number.
+	if f, err := json.Number(fields["v"]).Float64(); err != nil || f != EnvelopeVersion {
+		return nil, fmt.Errorf("unknown envelope version %s: v is the JSON number 1", fields["v"])
 	}
 	if w.From != signer || w.To != me {
 		return nil, errors.New("the inner from/to do not match the signer and this box (re-attribution)")
@@ -140,6 +160,39 @@ func OpenEnvelope(plaintext []byte, signer, me Address, now time.Time) (*Envelop
 		Supersedes: w.Supersedes,
 		Pad:        w.Pad,
 	}, nil
+}
+
+// objectFields reads a JSON object's members by their exact keys. A key that
+// appears twice, or anything after the object, is an error.
+func objectFields(data []byte) (map[string]json.RawMessage, error) {
+	notObject := errors.New("the envelope is not a JSON object")
+	d := json.NewDecoder(bytes.NewReader(data))
+	if t, err := d.Token(); err != nil || t != json.Delim('{') {
+		return nil, notObject
+	}
+	fields := map[string]json.RawMessage{}
+	for d.More() {
+		t, err := d.Token()
+		if err != nil {
+			return nil, notObject
+		}
+		key, _ := t.(string)
+		if _, dup := fields[key]; dup {
+			return nil, fmt.Errorf("the envelope has the key %q twice", key)
+		}
+		var v json.RawMessage
+		if err := d.Decode(&v); err != nil {
+			return nil, notObject
+		}
+		fields[key] = v
+	}
+	if t, err := d.Token(); err != nil || t != json.Delim('}') {
+		return nil, notObject
+	}
+	if _, err := d.Token(); err != io.EOF {
+		return nil, notObject
+	}
+	return fields, nil
 }
 
 // NewMsgID returns a random UUID, version 4 (RFC 9562 §5.4), in lowercase.

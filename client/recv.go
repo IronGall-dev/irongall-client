@@ -28,9 +28,14 @@ var hexID = regexp.MustCompile(`\A[0-9a-f]{64}\z`)
 
 // Delivery is a message that passed every check.
 type Delivery struct {
-	ID       string // the server's id for it
+	ID       string // the SHA-256 of its ciphertext, as computed here
 	Envelope *protocol.Envelope
-	// Plaintext is the envelope exactly as decrypted, as kept in inbox/.
+	// Line is the envelope as ONE line of JSON, built by this client from the
+	// checked fields (pad dropped), as kept in inbox/. Print or pass on this,
+	// never Plaintext: the sender chose Plaintext's bytes, and a line-oriented
+	// reader can be shown a second envelope hidden on a line of its own.
+	Line []byte
+	// Plaintext is the envelope exactly as decrypted: the sender's bytes.
 	Plaintext []byte
 }
 
@@ -125,8 +130,12 @@ func (b *Box) drain(ctx context.Context) (*Result, error) {
 }
 
 // receiveOne judges one message unless its id was already handled, stores
-// the verdict, and acks it. An error is transient: the message stays on the
-// server for the next drain.
+// the verdict, and acks it. An error is transient, or a fault of this box
+// (an unreadable key, a full disk): the message stays on the server for the
+// next drain, never judged by a box that cannot judge it.
+//
+// Files are named by the SHA-256 of the ciphertext as computed here, never by
+// the server's id; a message whose id is not that hash is refused.
 func (b *Box) receiveOne(ctx context.Context, id string, res *Result) error {
 	handled, err := b.seenHash(id)
 	if err != nil {
@@ -144,29 +153,38 @@ func (b *Box) receiveOne(ctx context.Context, id string, res *Result) error {
 		if err := b.fetchSenderIdentity(ctx, m.From); err != nil {
 			return err
 		}
-		d, dup, why := b.judge(&m)
+		h := sha256.Sum256(m.Ciphertext)
+		local := hex.EncodeToString(h[:])
+		d, dup, why, err := b.judge(&m)
+		if err != nil {
+			return err
+		}
+		if why == "" && local != id {
+			d, dup, why = nil, false, "the server's id for it is not the SHA-256 of its ciphertext"
+		}
 		switch {
 		case why != "":
 			raw, err := json.Marshal(m)
 			if err != nil {
 				return err
 			}
-			if err := writeFile(b.path("quarantine", id+".json"), raw); err != nil {
+			if err := writeFile(b.path("quarantine", local+".json"), raw); err != nil {
 				return err
 			}
-			res.Refused = append(res.Refused, Refusal{ID: id, Reason: why})
+			res.Refused = append(res.Refused, Refusal{ID: local, Reason: why})
 		case dup:
-			res.Duplicates = append(res.Duplicates, id)
+			res.Duplicates = append(res.Duplicates, local)
 		default:
-			// Stored before it is recorded as seen, and both before the
-			// ack: a crash in between delivers it again, never loses it.
-			if err := writeFile(b.path("inbox", id+".json"), d.Plaintext); err != nil {
+			// Stored before it is recorded as seen, and both, on disk,
+			// before the ack: a crash or power loss in between delivers it
+			// again, never loses it.
+			if err := writeFile(b.path("inbox", local+".json"), d.Line); err != nil {
 				return err
 			}
 			if err := b.recordSeen(m.Ciphertext, d.Envelope); err != nil {
 				return err
 			}
-			d.ID = id
+			d.ID = local
 			res.Delivered = append(res.Delivered, *d)
 		}
 	}
@@ -202,7 +220,8 @@ func (b *Box) fetchSenderIdentity(ctx context.Context, from string) error {
 }
 
 // judge runs every check on one message, in this order, and returns the
-// delivery only if all of them pass; otherwise why says which failed.
+// delivery only if all of them pass; otherwise why says which failed. An
+// error is this box's own fault, not the message's: no verdict.
 //
 //  1. The sender is an address.
 //  2. Its identity: the pin, or at first contact the served identity,
@@ -213,63 +232,71 @@ func (b *Box) fetchSenderIdentity(ctx context.Context, from string) error {
 //  6. Freshness: sent_at no older than 8 days.
 //  7. Replay: the locally computed ciphertext hash is not in the seen-set.
 //  8. Retry: (from, msg_id) is not in the seen-set. A match is a duplicate.
-func (b *Box) judge(m *protocol.Message) (d *Delivery, dup bool, why string) {
+func (b *Box) judge(m *protocol.Message) (d *Delivery, dup bool, why string, err error) {
 	from, err := protocol.ParseAddress(m.From)
 	if err != nil {
-		return nil, false, "the sender is not an address"
+		return nil, false, "the sender is not an address", nil
 	}
 	var ir protocol.IdentityResponse
 	if j, err := os.ReadFile(b.path("peers", from.String(), "identity.json")); err == nil {
-		_ = json.Unmarshal(j, &ir) // unreadable is unpinnable: pin refuses
+		_ = json.Unmarshal(j, &ir) // the server's answer: unparsable is unpinnable, and pin refuses
 	}
 	id, err := b.pin(from, ir.Identity)
 	if err != nil {
-		return nil, false, reason(err)
+		return verdict(err)
 	}
 	me := b.id.Address()
 	if err := protocol.Verify(id, m.Ciphertext, m.Signature, protocol.MessageNamespace(me)); err != nil {
-		return nil, false, fmt.Sprintf("the signature does not verify for %s", from)
+		return nil, false, fmt.Sprintf("the signature does not verify for %s", from), nil
 	}
 	ids, err := b.prekeyIdentities()
 	if err != nil {
-		return nil, false, reason(err)
+		return nil, false, "", err
 	}
 	r, err := age.Decrypt(bytes.NewReader(m.Ciphertext), ids...)
 	if err != nil {
-		return nil, false, "it does not decrypt with this box's prekeys"
+		return nil, false, "it does not decrypt with this box's prekeys", nil
 	}
 	p, err := io.ReadAll(io.LimitReader(r, maxResponse))
 	if err != nil {
-		return nil, false, "it does not decrypt with this box's prekeys"
+		return nil, false, "it does not decrypt with this box's prekeys", nil
 	}
 	env, err := protocol.OpenEnvelope(p, from, me, b.now())
 	if err != nil {
-		return nil, false, err.Error()
+		return nil, false, err.Error(), nil
 	}
 	h := sha256.Sum256(m.Ciphertext)
 	seen, err := b.seenHash(hex.EncodeToString(h[:]))
 	if err != nil {
-		return nil, false, reason(err)
+		return nil, false, "", err
 	}
 	if seen {
-		return nil, false, "replay: this ciphertext was already received"
+		return nil, false, "replay: this ciphertext was already received", nil
 	}
 	again, err := b.seenMsgID(from, env.MsgID)
 	if err != nil {
-		return nil, false, reason(err)
+		return nil, false, "", err
 	}
 	if again {
-		return nil, true, ""
+		return nil, true, "", nil
 	}
-	return &Delivery{Envelope: env, Plaintext: p}, false, ""
+	shown := *env
+	shown.Pad = ""
+	line, err := shown.Marshal()
+	if err != nil {
+		return nil, false, "", err
+	}
+	return &Delivery{Envelope: env, Line: line, Plaintext: p}, false, "", nil
 }
 
-func reason(err error) string {
+// verdict turns a failed check into a refusal, and anything else (a file
+// this box cannot read or write) into an error.
+func verdict(err error) (*Delivery, bool, string, error) {
 	var r *RefusedError
 	if errors.As(err, &r) {
-		return r.Reason
+		return nil, false, r.Reason, nil
 	}
-	return err.Error()
+	return nil, false, "", err
 }
 
 // The seen-set: one line per accepted message, "<ciphertext hash> <sent_at,
@@ -323,6 +350,10 @@ func (b *Box) recordSeen(ciphertext []byte, env *protocol.Envelope) error {
 	}
 	if _, err := fmt.Fprintf(f, "%x %d %s %s\n", h, env.SentAt.Unix(), env.From, env.MsgID); err != nil {
 		f.Close() //nolint:errcheck,gosec // the write error wins
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close() //nolint:errcheck,gosec // the sync error wins
 		return err
 	}
 	return f.Close()

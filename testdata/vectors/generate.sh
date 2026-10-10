@@ -131,6 +131,12 @@ case_env refuse-no-msg-id "{$H,\"sent_at\":\"$NOW\",\"body\":\"hello\"}" "$A" "$
 case_env refuse-msg-id-uppercase "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$(printf '%s' "$MSG_ID" | tr a-f A-F)\",\"body\":\"hello\"}" "$A" "$B"
 case_env refuse-sent-at-malformed "{$H,\"sent_at\":\"2026-10-10 00:00:00\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
 case_env refuse-not-json "not json"
+# Parser differentials: every reader must take the same values from one envelope.
+case_env accept-case-variant-key "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"benign\",\"BODY\":\"evil\"}" "$A" "$B"
+case_env refuse-version-string "{\"v\":\"1\",\"from\":\"%s\",\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
+case_env refuse-duplicate-key "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\",\"from\":\"%s\"}" "$B" "$B" "$A"
+case_env refuse-two-objects "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}{}" "$A" "$B"
+case_env refuse-not-utf8 "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"\xff\xfe\"}" "$A" "$B"
 
 # A message from A to B: envelope/accept-minimal.json encrypted to B's prekey, made once and
 # kept (age is randomised), then signed for B only.

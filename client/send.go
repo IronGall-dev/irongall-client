@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"filippo.io/age"
@@ -36,31 +39,64 @@ func (b *Box) Send(ctx context.Context, to protocol.Address, body string) (*prot
 }
 
 // Flush re-posts every message still in the outbox, unchanged: a retry of a
-// message the server already holds gets its original receipt.
+// message the server already holds gets its original receipt. It tries every
+// entry; one that fails never stops the others, and the error names each
+// that failed.
 func (b *Box) Flush(ctx context.Context) ([]*protocol.Receipt, error) {
 	names, err := filepath.Glob(b.path("outbox", "*.P"))
 	if err != nil {
 		return nil, err
 	}
 	var receipts []*protocol.Receipt
+	var errs []error
 	for _, n := range names {
 		stem := strings.TrimSuffix(n, ".P")
 		to, _, _ := strings.Cut(filepath.Base(stem), ".")
 		peer, err := protocol.ParseAddress(to)
 		if err != nil {
-			return receipts, fmt.Errorf("%s: not an outbox entry", n)
+			errs = append(errs, fmt.Errorf("%s: not an outbox entry", filepath.Base(n)))
+			continue
 		}
 		r, err := b.post(ctx, peer, stem)
 		if err != nil {
-			return receipts, err
+			errs = append(errs, fmt.Errorf("%s: %w", filepath.Base(stem), err))
+			continue
 		}
 		receipts = append(receipts, r)
 	}
-	return receipts, nil
+	return receipts, errors.Join(errs...)
 }
 
-// post posts the outbox entry stem, sealing it first if it is not sealed.
+// undeliverable are the answers that never change for this message: retrying
+// it can only fail again.
+var undeliverable = []protocol.Code{
+	protocol.CodeRevoked, protocol.CodeSenderRevoked, protocol.CodeBadAddress, protocol.CodeTooLarge, protocol.CodeConflict,
+}
+
+// post posts the outbox entry stem, sealing it first if it is not sealed. On
+// failure the entry stays in the outbox for the next flush, unless it can
+// never be delivered: the server refused it for good, or its envelope is
+// older than any recipient accepts. Then it moves to outbox/failed/.
 func (b *Box) post(ctx context.Context, to protocol.Address, stem string) (*protocol.Receipt, error) {
+	r, err := b.trySend(ctx, to, stem)
+	if err != nil {
+		if !slices.Contains(undeliverable, Code(err)) && !b.expired(stem) {
+			return nil, fmt.Errorf("%w (kept in the outbox: retry with crossbot flush)", err)
+		}
+		if merr := b.moveToFailed(stem); merr != nil {
+			return nil, errors.Join(err, merr)
+		}
+		return nil, fmt.Errorf("%w (it can never be delivered: moved to outbox/failed/)", err)
+	}
+	for _, ext := range []string{".P", ".age", ".sig", ".json"} {
+		if err := removeIfExists(stem + ext); err != nil {
+			return r, err
+		}
+	}
+	return r, nil
+}
+
+func (b *Box) trySend(ctx context.Context, to protocol.Address, stem string) (*protocol.Receipt, error) {
 	if !exists(stem + ".json") {
 		if err := b.seal(ctx, to, stem); err != nil {
 			return nil, err
@@ -73,15 +109,40 @@ func (b *Box) post(ctx context.Context, to protocol.Address, stem string) (*prot
 		}
 		r, err = b.postSealed(ctx, to, stem)
 	}
+	return r, err
+}
+
+// expired reports whether an entry's envelope is older than the 8 days a
+// recipient accepts: past that, every recipient refuses it as stale.
+func (b *Box) expired(stem string) bool {
+	p, err := os.ReadFile(stem + ".P") //nolint:gosec // a path inside the box's own directory
 	if err != nil {
-		return nil, fmt.Errorf("%w (kept in the outbox: retry with crossbot flush)", err)
+		return false
+	}
+	var e struct {
+		SentAt string `json:"sent_at"`
+	}
+	if json.Unmarshal(p, &e) != nil {
+		return false
+	}
+	t, err := protocol.ParseTime(e.SentAt)
+	return err == nil && t.Before(b.now().Add(-protocol.TTL))
+}
+
+// moveToFailed moves an outbox entry's files to outbox/failed/, where flush
+// no longer sees them. Delete them there to drop the message.
+func (b *Box) moveToFailed(stem string) error {
+	failed := b.path("outbox", "failed")
+	if err := os.MkdirAll(failed, 0o700); err != nil {
+		return err
 	}
 	for _, ext := range []string{".P", ".age", ".sig", ".json"} {
-		if err := removeIfExists(stem + ext); err != nil {
-			return r, err
+		err := os.Rename(stem+ext, filepath.Join(failed, filepath.Base(stem)+ext))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
 		}
 	}
-	return r, nil
+	return syncDir(failed)
 }
 
 func (b *Box) postSealed(ctx context.Context, to protocol.Address, stem string) (*protocol.Receipt, error) {

@@ -23,11 +23,16 @@ import (
 // DefaultBase is the server every box talks to unless told otherwise.
 const DefaultBase = "https://crossbot.dev"
 
+// requestTimeout bounds one request of the default HTTP client.
+const requestTimeout = time.Minute
+
 // Options configures a [Box]. The zero value is ready to use.
 type Options struct {
 	// Base is the server's base URL; DefaultBase if empty.
 	Base string
-	// HTTPClient makes the requests; http.DefaultClient if nil.
+	// HTTPClient makes the requests; if nil, a client whose requests time
+	// out after a minute, so a server that never answers cannot hold the
+	// box's lock for ever.
 	HTTPClient *http.Client
 	// Now is the clock; time.Now if nil.
 	Now func() time.Time
@@ -58,7 +63,7 @@ func newBox(dir string, opt Options) *Box {
 		b.base = DefaultBase
 	}
 	if b.http == nil {
-		b.http = http.DefaultClient
+		b.http = &http.Client{Timeout: requestTimeout}
 	}
 	if b.now == nil {
 		b.now = time.Now
@@ -214,7 +219,7 @@ func (b *Box) makePrekey(serial uint64, kt protocol.KeyType) (*protocol.Prekey, 
 		}
 		return protocol.ParsePrekey(st)
 	}
-	if !exists(stem + ".agekey") {
+	if !exists(stem+".agekey") || keyType(stem+".agekey") != kt {
 		if err := newAgeKey(stem+".agekey", kt, b.now()); err != nil {
 			return nil, err
 		}
@@ -268,6 +273,22 @@ func newAgeKey(name string, kt protocol.KeyType, now time.Time) error {
 		return fmt.Errorf("unknown prekey type %q", kt)
 	}
 	return writeFile(name, fmt.Appendf(nil, "# created: %s\n# public key: %s\n%s\n", now.Format(time.RFC3339), recipient, key))
+}
+
+// keyType returns the type of the key in an age key file, or "" if it holds
+// none this client makes.
+func keyType(name string) protocol.KeyType {
+	ids, err := readAgeKeys(name)
+	if err != nil || len(ids) == 0 {
+		return ""
+	}
+	switch ids[0].(type) {
+	case *age.HybridIdentity:
+		return protocol.PostQuantum
+	case *age.X25519Identity:
+		return protocol.Classic
+	}
+	return ""
 }
 
 func readAgeKeys(name string) ([]age.Identity, error) {

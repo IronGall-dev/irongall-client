@@ -2,7 +2,9 @@ package client
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,7 +19,23 @@ import (
 // so it also recovers a box that lost its prekeys or its token. The new token
 // it returns, encrypted to the new prekey, replaces the old one, which dies.
 // Run it at least monthly: a prekey is valid for at most 32 days.
+//
+// It holds the box's lock, so two runs never make the same serial's key at
+// once, and it refuses a served serial below the highest this box has
+// published (a rollback), whose next serial's key was already published.
 func (b *Box) Rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey, error) {
+	l, err := b.lock()
+	if err != nil {
+		return nil, err
+	}
+	p, err := b.rekey(ctx, kt)
+	if e := l.release(); err == nil {
+		err = e
+	}
+	return p, err
+}
+
+func (b *Box) rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey, error) {
 	var ir protocol.IdentityResponse
 	if _, err := b.call(ctx, http.MethodGet, b.boxPath("/identity"), nil, nil, &ir); err != nil {
 		return nil, err
@@ -26,14 +44,22 @@ func (b *Box) Rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey,
 	if err != nil {
 		return nil, refuse("this box's current prekey, as served: %v", err)
 	}
+	published, err := b.publishedSerial()
+	if err != nil {
+		return nil, err
+	}
+	if cur.Serial < published {
+		return nil, refuse("rollback: the server serves this box's prekey serial %d, below %d, which this box published", cur.Serial, published)
+	}
 	if kt == "" {
 		kt = cur.Type()
 	}
 	next := cur.Serial + 1
 	stem := b.path("prekeys", strconv.FormatUint(next, 10))
 	// A statement left by an attempt that never published is remade, so its
-	// not_after is counted from now. Its key, if any, is reused: it was
-	// never published.
+	// not_after is counted from now. Its key, if any, is reused when it is of
+	// type kt: it was never published, as next is above every serial this
+	// box published.
 	for _, ext := range []string{".txt", ".txt.sig"} {
 		if err := removeIfExists(stem + ext); err != nil {
 			return nil, err
@@ -51,10 +77,39 @@ func (b *Box) Rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey,
 	if _, err := b.call(ctx, http.MethodPut, b.boxPath("/prekey"), req, nil, &tr); err != nil {
 		return nil, err
 	}
+	if err := b.recordPublished(next); err != nil {
+		return nil, err
+	}
 	if err := b.storeToken(tr.Token); err != nil {
 		return nil, err
 	}
 	return p, b.Prune()
+}
+
+// publishedSerial returns the highest prekey serial this box has published,
+// or 0 if none is recorded.
+func (b *Box) publishedSerial() (uint64, error) {
+	s, err := os.ReadFile(b.path("serial"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	n, err := strconv.ParseUint(strings.TrimSpace(string(s)), 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%s is not a serial", b.path("serial"))
+	}
+	return n, nil
+}
+
+// recordPublished records serial as published, unless a higher one is.
+func (b *Box) recordPublished(serial uint64) error {
+	cur, err := b.publishedSerial()
+	if err != nil || serial <= cur {
+		return err
+	}
+	return writeFile(b.path("serial"), []byte(strconv.FormatUint(serial, 10)+"\n"))
 }
 
 // Prune deletes every retired prekey whose deletion time has come: its

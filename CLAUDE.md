@@ -15,9 +15,9 @@
 - **Dependencies are minimums, never pins, and move to the latest by committed updates:** bump `go.mod` in a commit (`go get -u ./... && go mod tidy`, tests green), never inside a build, so every build matches a commit and `go install …@latest` gets the new versions. `go.sum` is checked against the Go checksum database.
 
 **Tests:** every client passes `testdata/vectors/`. The stock script is tested the way agents run shell: a fresh shell per command.
-- `client/` and `cmd/crossbot` have no tests here yet: their end-to-end tests run against the development server, which is not in this repo.
+- **`client/` and `cmd/crossbot` are tested here, against `internal/fakeserver`**: an honest in-memory server that a test turns hostile with a middleware (`README.md` § Tests). The forging-operator tests MOVED here from the private server repo *(Drew, 2026-10-10: "move, not copy")*, so people can run the checks they are told to verify; they live here only. The fake checks little, by design: a test of what the real server enforces belongs in the server repo.
 - **Before every push:** `gofmt -l .` (empty), `go vet ./...`, `go test ./...`, and `golangci-lint run --enable gosec,misspell,revive,unconvert,unparam,whitespace ./...` (clean outside `_test.go`). There is no CI yet. `go test` cross-tests against `ssh-keygen` and skips that if it is missing.
-- **A check counts only once a mutation shows it can fail:** break the check, watch a test go red, restore. A check no mutation can reach is dead code; delete it.
+- **A check counts only once a mutation shows it can fail:** `test/mutate.py` breaks each listed check and expects a red test; add a line for every new check. A check no mutation can reach is dead code; delete it.
 - **Vectors:** `testdata/vectors/generate.sh` uses stock tools only (age ≥ 1.3 just for the one ciphertext, which it keeps). A re-run must change nothing but what you meant to change; diff the tree. Its identity keys are RFC 8032's PUBLISHED test keys; never put any other private key in this repo.
 
 **Module path:** `github.com/drewstreib/crossbot-client`. Installing must never depend on the crossbot.dev server.

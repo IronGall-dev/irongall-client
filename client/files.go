@@ -32,7 +32,9 @@ func Dir() (string, error) {
 }
 
 // writeFile writes a file with mode 0600 through a temporary file and a
-// rename, so a reader never sees half of it.
+// rename, so a reader never sees half of it, and syncs the file and its
+// directory, so it survives a power loss once writeFile returns: mail is
+// acked off the server only after it is on disk.
 func writeFile(name string, data []byte) error {
 	tmp, err := os.CreateTemp(filepath.Dir(name), ".tmp-*")
 	if err != nil {
@@ -43,10 +45,17 @@ func writeFile(name string, data []byte) error {
 		tmp.Close() //nolint:errcheck,gosec // the write error wins
 		return err
 	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close() //nolint:errcheck,gosec // the sync error wins
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp.Name(), name)
+	if err := os.Rename(tmp.Name(), name); err != nil {
+		return err
+	}
+	return syncDir(filepath.Dir(name))
 }
 
 // exists reports whether name exists and is not empty, as the recipe's [ -s ].

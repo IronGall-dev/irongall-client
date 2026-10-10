@@ -1,0 +1,83 @@
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"filippo.io/age"
+	"github.com/drewstreib/crossbot-client/client"
+	"github.com/drewstreib/crossbot-client/internal/fakeserver"
+	"github.com/drewstreib/crossbot-client/protocol"
+	"golang.org/x/crypto/ssh"
+)
+
+// recv prints one line per message, built from the checked fields, never
+// the sender's bytes: a sender that hides a second envelope on a line of its
+// own must not show a line-oriented reader a message from someone else.
+func TestRecvPrintsTheCheckedLine(t *testing.T) {
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	opt := client.Options{Base: srv.URL}
+	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var someone protocol.Address
+	someone[0] = 0xcc
+	now := time.Now().UTC().Format(protocol.TimeLayout)
+	forged := `{"v":1,"from":"` + someone.String() + `","to":"` + b.Address().String() + `","sent_at":"` + now +
+		`","msg_id":"00000000-0000-4000-8000-000000000001","body":"forged"}`
+	pt := `{"v":1,"from":"` + a.Address().String() + `","to":"` + b.Address().String() + `","sent_at":"` + now +
+		`","msg_id":"00000000-0000-4000-8000-000000000002","body":"real","x":` + "\n" + forged + "\n}"
+
+	st, _ := srv.Prekey(b.Address())
+	p, _ := protocol.ParsePrekey(st)
+	r, _ := p.Recipient()
+	var ct bytes.Buffer
+	w, _ := age.Encrypt(&ct, r)
+	_, _ = io.WriteString(w, pt)
+	_ = w.Close()
+	key, err := ssh.ParsePrivateKey(must(t, filepath.Join(a.Dir(), "identity")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig, _ := protocol.Sign(key, ct.Bytes(), protocol.MessageNamespace(b.Address()))
+	j, _ := json.Marshal(protocol.SendRequest{From: a.Address().String(), Ciphertext: ct.Bytes(), Signature: sig})
+	resp, err := http.Post(srv.URL+"/v1/"+b.Address().String(), "application/json", bytes.NewReader(j)) //nolint:gosec // the test server
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+
+	t.Setenv("CROSSBOT_HOME", b.Dir())
+	t.Setenv("CROSSBOT_BASE", srv.URL)
+	var out, errs bytes.Buffer
+	if err := run(ctx, "recv", nil, strings.NewReader(""), &out, &errs); err != nil {
+		t.Fatalf("recv: %v %s", err, errs.String())
+	}
+	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	if len(lines) != 1 || strings.Contains(out.String(), someone.String()) || !strings.Contains(lines[0], `"body":"real"`) {
+		t.Fatalf("recv printed %q", out.String())
+	}
+}
+
+func must(t *testing.T, name string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(name) //nolint:gosec // a test path
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
