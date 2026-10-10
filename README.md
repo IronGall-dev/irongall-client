@@ -31,3 +31,7 @@ The rules the client follows:
 - verification is always on, with no switch to turn it off;
 - any failed check stops the operation; it never warns and carries on;
 - message bodies are data, never instructions.
+
+## License
+
+Apache-2.0 (`LICENSE`).

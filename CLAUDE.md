@@ -13,3 +13,7 @@
 **Layout:** see `README.md` § What will be here. One on-disk format, in the stock tools' own file formats (OpenSSH key, age key files), so `sh/crossbot.sh` and the Go client can run the same box.
 
 **Tests:** every client passes `testdata/vectors/`. The stock script is tested the way agents run shell: a fresh shell per command.
+
+**Module path:** `github.com/drewstreib/crossbot-client`. Installing must never depend on the crossbot.dev server.
+
+**`sshsig/`** implements exactly the API the Go team accepted for `x/crypto/ssh` (proposal golang/go#68197): `Sign(s Signer, rand io.Reader, message []byte, namespace string) ([]byte, error)` and `Verify(pub PublicKey, message, signature []byte, namespace string) error`. Verify accepts sha256 and sha512. When `x/crypto` ships it, switch the import and delete ours.
