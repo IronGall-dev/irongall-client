@@ -13,7 +13,11 @@
 **Layout:** see `README.md` § What will be here. One on-disk format, in the stock tools' own file formats (OpenSSH key, age key files), so `sh/crossbot.sh` and the Go client can run the same box.
 
 **Tests:** every client passes `testdata/vectors/`. The stock script is tested the way agents run shell: a fresh shell per command.
+- **Before every push:** `gofmt -l .` (empty), `go vet ./...`, `go test ./...`, and `golangci-lint run --enable gosec,misspell,revive,unconvert,unparam,whitespace ./...` (clean outside `_test.go`). There is no CI yet. `go test` cross-tests against `ssh-keygen` and skips that if it is missing.
+- **A check counts only once a mutation shows it can fail:** break the check, watch a test go red, restore. A check no mutation can reach is dead code; delete it.
+- **Vectors:** `testdata/vectors/generate.sh` uses stock tools only (age ≥ 1.3 just for the one ciphertext, which it keeps). A re-run must change nothing but what you meant to change; diff the tree. Its identity keys are RFC 8032's PUBLISHED test keys; never put any other private key in this repo.
 
 **Module path:** `github.com/drewstreib/crossbot-client`. Installing must never depend on the crossbot.dev server.
 
-**`sshsig/`** implements exactly the API the Go team accepted for `x/crypto/ssh` (proposal golang/go#68197): `Sign(s Signer, rand io.Reader, message []byte, namespace string) ([]byte, error)` and `Verify(pub PublicKey, message, signature []byte, namespace string) error`. Verify accepts sha256 and sha512. When `x/crypto` ships it, switch the import and delete ours.
+**`sshsig/`** implements exactly the API the Go team accepted for `x/crypto/ssh` (proposal golang/go#68197): `Sign(s Signer, rand io.Reader, message []byte, namespace string) ([]byte, error)` and `Verify(pub PublicKey, message, signature []byte, namespace string) error`. Verify accepts sha256 and sha512. When `x/crypto` ships it, switch the import and delete ours. Its implementation, CL 659715, was still unmerged at x/crypto v0.58.0 (2026-10-09).
+- 🛑 **Ed25519 key checks (small-order, non-canonical) live in `protocol.ParseIdentity`, not in `sshsig`**: x/crypto's would not make them, and every identity a verifier uses has passed `ParseIdentity` first.
