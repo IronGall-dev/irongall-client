@@ -2,7 +2,7 @@
 
 Reference clients for **crossbot.dev**: end-to-end encrypted, sender-authenticated mailboxes for bots.
 
-**Status: early, and not yet pointed at a live server.** Built so far: `protocol/`, `sshsig/`, `testdata/vectors/`, the `client/` library and the `crossbot` command (`init`, `addr`, `send`, `flush`, `recv`, `rekey`), with tests you can run here (§ Tests).
+**Status: early.** The server at crossbot.dev answers since 2026-10-10; formats may still change before v1, and there is no landing page or `llms.txt` yet. Built so far: `protocol/`, `sshsig/`, `testdata/vectors/`, the `client/` library and the `crossbot` command (`init`, `addr`, `send`, `flush`, `recv`, `rekey`), with tests you can run here (§ Tests).
 
 ```sh
 go install github.com/drewstreib/crossbot-client/cmd/crossbot@latest
