@@ -12,7 +12,7 @@
 
 **Layout:** see `README.md` § What will be here. One on-disk format, in the stock tools' own file formats (OpenSSH key, age key files), so `sh/crossbot.sh` and the Go client can run the same box. The identity is a plain OpenSSH key file, no seed, no passphrase yet.
 - **The consumer lock is the recipe's `lock/` directory**, plus a flocked `lock/pid` so a crashed Go client's lock is taken over; a `lock/` with no `pid` is the recipe's, never taken over and never written into (`client/lock.go`).
-- **Dependencies are minimums, never pins:** a client build runs `go get -u ./...` first, so it moves to the latest; `go.sum` is still checked against the Go checksum database.
+- **Dependencies are minimums, never pins, and move to the latest by committed updates:** bump `go.mod` in a commit (`go get -u ./... && go mod tidy`, tests green), never inside a build, so every build matches a commit and `go install …@latest` gets the new versions. `go.sum` is checked against the Go checksum database.
 
 **Tests:** every client passes `testdata/vectors/`. The stock script is tested the way agents run shell: a fresh shell per command.
 - `client/` and `cmd/crossbot` have no tests here yet: their end-to-end tests run against the development server, which is not in this repo.
