@@ -87,33 +87,33 @@ func TestReceiveRetriesAFailedRenewalHourly(t *testing.T) {
 }
 
 // After a drain that emptied the box and began more than an hour after the
-// last renewal, every retired prekey but the newest is deleted, key and
-// statement. Mail encrypted to the newest retired one still decrypts.
+// newest retired prekey was made (so every older one had been retired for an
+// hour), every retired prekey but the newest is deleted, key and statement.
+// Mail encrypted to the newest retired one still decrypts.
 func TestReceiveKeepsOnePriorPrekey(t *testing.T) {
 	e := newEnv(t)
+	ctx := context.Background()
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	key := func(n int) string { return filepath.Join(b.Dir(), "prekeys", strconv.Itoa(n)) }
 	send(t, a, b, "to key 1")
 	e.clock.Add(25 * time.Hour)
 	if res := receive(t, b); res.Renewed == nil || len(res.Delivered) != 1 {
-		t.Fatalf("day 1: renewed %v, delivered %d", res.Renewed, len(res.Delivered))
+		t.Fatalf("renewed %v, delivered %d", res.Renewed, len(res.Delivered))
 	}
 	send(t, a, b, "to key 2")
-	e.clock.Add(25 * time.Hour)
-	if res := receive(t, b); res.Renewed == nil || res.Renewed.Serial != 3 || len(res.Delivered) != 1 {
-		t.Fatalf("day 2: renewed %v, delivered %d", res.Renewed, len(res.Delivered))
-	}
-	if !exists(key(1)+".agekey") || !exists(key(2)+".agekey") {
-		t.Fatal("a drain that began before the renewal deleted a prekey")
+	if _, err := b.Rekey(ctx, ""); err != nil { // retires key 2 at once
+		t.Fatal(err)
 	}
 	e.clock.Add(time.Hour)
-	receive(t, b)
+	if res := receive(t, b); len(res.Delivered) != 1 {
+		t.Fatal("mail to the newest retired prekey was not delivered")
+	}
 	if !exists(key(1) + ".agekey") {
-		t.Fatal("deleted an hour after the renewal, not more")
+		t.Fatal("deleted an hour after the newest retired prekey was made, not more")
 	}
 	e.clock.Add(time.Second)
 	failOnce(e, http.MethodGet, "/messages")
-	if _, err := b.Receive(context.Background()); err == nil {
+	if _, err := b.Receive(ctx); err == nil {
 		t.Fatal("the failed drain succeeded")
 	}
 	if !exists(key(1) + ".agekey") {
@@ -127,5 +127,25 @@ func TestReceiveKeepsOnePriorPrekey(t *testing.T) {
 	}
 	if !exists(key(2)+".agekey") || !exists(key(3)+".agekey") {
 		t.Fatal("deleted the newest retired prekey or the current one")
+	}
+}
+
+// A box received monthly deletes its older prekeys at the check-in that
+// renews: a key is gone by the second renewal after it was retired.
+func TestMonthlyBoxDeletesAtTheRenewingCheckIn(t *testing.T) {
+	e := newEnv(t)
+	b := e.box(protocol.Classic)
+	key1 := filepath.Join(b.Dir(), "prekeys", "1.agekey")
+	for range 2 {
+		e.clock.Add(30 * 24 * time.Hour)
+		if res := receive(t, b); res.Renewed == nil {
+			t.Fatal("a monthly check-in did not renew")
+		}
+	}
+	if exists(key1) {
+		t.Fatal("key 1 outlived the second renewal after it was retired")
+	}
+	if !exists(filepath.Join(b.Dir(), "prekeys", "2.agekey")) {
+		t.Fatal("the newest retired prekey was deleted")
 	}
 }

@@ -97,8 +97,9 @@ M = [
     ('client/rekey.go', 'err == nil && b.now().Sub(made) <= renewAfter {', 'err == nil && b.now().Sub(made) < renewAfter {'),
     ('client/rekey.go', '\tif !b.renewFailed.IsZero() && b.now().Sub(b.renewFailed) < renewRetry {', '\tif false {'),
     ('client/rekey.go', '\t\tb.renewFailed = b.now()\n', ''),
-    ('client/rekey.go', 'if err != nil || began.Sub(made) <= retiredGrace {', 'if err != nil || began.Sub(made) < retiredGrace {'),
-    ('client/rekey.go', 'for _, n := range retired[:max(len(retired)-1, 0)] {', 'for _, n := range retired {'),
+    ('client/rekey.go', 'err != nil || began.Sub(made) <= retiredGrace {', 'err != nil || began.Sub(made) < retiredGrace {'),
+    ('client/rekey.go', 'if made, err := b.made(newest);', 'if made, err := b.made(retired[0]);'),
+    ('client/rekey.go', 'for _, n := range retired[:len(retired)-1] {', 'for _, n := range retired {'),
     ('client/rekey.go', 'for _, ext := range []string{".agekey", ".txt", ".txt.sig"} {', 'for _, ext := range []string{".agekey"} {'),
     ('cmd/crossbot/main.go', '\t\t\t\tif res.RenewErr != nil {', '\t\t\t\tif false {'),
     # the link, <server>/to/<address>: printed by init and addr, taken by send, and only for this box's server

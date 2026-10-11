@@ -135,24 +135,30 @@ const retiredGrace = time.Hour
 const renewRetry = time.Hour
 
 // current returns the serial of the prekey this box published last, and
-// when that prekey was made. Both clients give every prekey the full
-// lifetime, so it was made at its not_after less MaxPrekeyLifetime. A box
-// that has never renewed has published only serial 1.
+// when that prekey was made. A box that has never renewed has published
+// only serial 1.
 func (b *Box) current() (uint64, time.Time, error) {
 	n, err := b.publishedSerial()
 	if err != nil {
 		return 0, time.Time{}, err
 	}
 	n = max(n, 1)
+	made, err := b.made(n)
+	return n, made, err
+}
+
+// made returns when prekey n was made. Both clients give every prekey the
+// full lifetime, so it was made at its not_after less MaxPrekeyLifetime.
+func (b *Box) made(n uint64) (time.Time, error) {
 	st, err := os.ReadFile(b.path("prekeys", strconv.FormatUint(n, 10)+".txt")) //nolint:gosec // a path inside the box's own directory
 	if err != nil {
-		return n, time.Time{}, err
+		return time.Time{}, err
 	}
 	p, err := protocol.ParsePrekey(st)
 	if err != nil {
-		return n, time.Time{}, err
+		return time.Time{}, err
 	}
-	return n, p.NotAfter.Add(-protocol.MaxPrekeyLifetime), nil
+	return p.NotAfter.Add(-protocol.MaxPrekeyLifetime), nil
 }
 
 // renewIfDue publishes a new prekey, of the current type, when the current
@@ -175,18 +181,18 @@ func (b *Box) renewIfDue(ctx context.Context) (*protocol.Prekey, error) {
 }
 
 // dropRetired deletes every retired prekey but the newest, after a drain
-// that emptied the box and began more than retiredGrace after the last
-// renewal. A send must name the recipient's current prekey serial, so mail
-// encrypted to a retired prekey reached the server before the renewal that
-// retired it, or with a send already in progress: such a drain collected all
-// of it. The newest retired prekey is kept regardless. After this, mail
-// encrypted to a deleted prekey is unrecoverable from the box's keys.
-// crossbot.sh does not do this; it keeps every retired prekey until Prune's
-// deletion time.
+// that emptied the box and began more than retiredGrace after the newest
+// retired prekey was made: every older one was retired by then. A send must
+// name the recipient's current prekey serial, so mail encrypted to a retired
+// prekey reached the server before the renewal that retired it, or with a
+// send already in progress: such a drain collected all of it. The newest
+// retired prekey is kept regardless. After this, mail encrypted to a deleted
+// prekey is unrecoverable from the box's keys. crossbot.sh does not do this;
+// it keeps every retired prekey until Prune's deletion time.
 func (b *Box) dropRetired(began time.Time) error {
-	cur, made, err := b.current()
-	if err != nil || began.Sub(made) <= retiredGrace {
-		return nil //nolint:nilerr // a box whose current prekey is unreadable keeps every key
+	cur, err := b.publishedSerial()
+	if err != nil {
+		return err
 	}
 	keys, err := filepath.Glob(b.path("prekeys", "*.agekey"))
 	if err != nil {
@@ -198,8 +204,15 @@ func (b *Box) dropRetired(began time.Time) error {
 			retired = append(retired, n)
 		}
 	}
+	if len(retired) < 2 {
+		return nil
+	}
 	slices.Sort(retired)
-	for _, n := range retired[:max(len(retired)-1, 0)] {
+	newest := retired[len(retired)-1]
+	if made, err := b.made(newest); err != nil || began.Sub(made) <= retiredGrace {
+		return nil //nolint:nilerr // a newest retired prekey that cannot be read keeps every key
+	}
+	for _, n := range retired[:len(retired)-1] {
 		if err := b.removePrekey(n); err != nil {
 			return err
 		}
