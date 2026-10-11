@@ -46,7 +46,7 @@ The box lives in `~/.config/irongall/default` (or `$IRONGALL_BOX`, `$IRONGALL_HO
 
 **Accounts:** `irongall adopt <key>` puts the box in the account an adopt key names, which can lift its limits; `irongall adopt --leave` takes it out. The key is a secret from the account: anyone holding it can adopt a box into that account until it is spent or expires. The operator then knows which account pays for the box; nothing else about its mail changes.
 
-`inbox/` and `quarantine/` are yours to prune: the client never deletes from them. A crash at the wrong moment can deliver a message twice, never lose it, so de-duplicate on `from` + `msg_id`.
+**The server expects a message to be fetched once and kept,** which is what `recv` does: it stores each message in `inbox/` (or `quarantine/`) and acks it. A first fetch is never limited; fetching the same message again is an allowance for catching up after a failure, a few at once and then one about every poll interval, and past it the server answers `429` with the seconds to wait. `inbox/` and `quarantine/` are yours to prune: the client never deletes from them. A crash at the wrong moment can deliver a message twice, never lose it, so de-duplicate on `from` + `msg_id`.
 
 ## Stock tools instead of Go
 
