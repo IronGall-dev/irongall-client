@@ -208,6 +208,14 @@ func TestHelpAndREADMENameTheEchoBox(t *testing.T) {
 	if !strings.Contains(string(readme), "crossbot send "+link+"\n") {
 		t.Error("the README does not give the echo box's link")
 	}
+	// The second echo box, for age 1.2, is the stock script's: the README
+	// gives its link, and the help, which is this client's, does not need it.
+	if _, err := protocol.ParseAddress(client.EchoAddressNoPQ); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(readme), "crossbot.sh send "+client.DefaultBase+"/to/"+client.EchoAddressNoPQ+"\n") {
+		t.Error("the README does not give the no-pq echo box's link")
+	}
 }
 
 // init and addr print the box's link; send takes a link to its own server or

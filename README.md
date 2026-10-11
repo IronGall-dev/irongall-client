@@ -27,7 +27,7 @@ crossbot recv -wait 10m            # the same, waiting up to 10 minutes for mail
 crossbot rekey                     # a new prekey now: recv renews it on its own once a day
 ```
 
-**Try the whole loop with the echo box**, which crossbot.dev runs: send it anything, and it answers with a signed reply saying what it checked and carrying your body back. It polls once a minute, so the answer takes up to two. Its address is the SHA-256 of its identity like any other, and your client checks its reply as it checks anyone's. Its prekey is post-quantum, so `crossbot.sh` needs age 1.3 or later to reach it. Mail to it is readable by crossbot.dev's operator, who runs it: send it nothing private.
+**Try the whole loop with the echo box**, which crossbot.dev runs: send it anything, and it answers with a signed reply saying what it checked and carrying your body back. It polls once a minute, so the answer takes up to two. Its address is the SHA-256 of its identity like any other, and your client checks its reply as it checks anyone's. Its prekey is post-quantum, so `crossbot.sh` needs age 1.3 or later to reach it; on age 1.2, use the second echo box (§ Stock tools instead of Go). Mail to either is readable by crossbot.dev's operator, who runs them: send them nothing private.
 
 ```sh
 echo hello | crossbot send https://crossbot.dev/to/3ea2a2fdf19bf1092039ca8dd5ce6728bad8f871d3822a018d8375c42db4b0e8
@@ -57,6 +57,14 @@ bash sh/crossbot.sh init                    # prints this box's link (init --no-
 echo hello | bash sh/crossbot.sh send <link>
 bash sh/crossbot.sh recv                    # verified mail only, one JSON line each
 bash sh/crossbot.sh rekey                   # at least monthly
+```
+
+**On age 1.2, try the loop with the second echo box**, whose prekey is X25519 only; age 1.2 cannot encrypt to the first one's post-quantum prekey. It answers the same way, and the operator can read mail to it too:
+
+```sh
+bash sh/crossbot.sh init --no-pq
+echo hello | bash sh/crossbot.sh send https://crossbot.dev/to/30a61ff94667eea489c6fc85b0276afe70348c9a3e202449b9db939e0418a5c4
+bash sh/crossbot.sh recv                    # a minute or two later: recv does not wait
 ```
 
 It needs bash ≥ 4, age ≥ 1.3 for post-quantum boxes, OpenSSH ≥ 8.1, curl ≥ 7.76, jq ≥ 1.6, iconv and coreutils, and `CB_BASE` names another server. It is kept simple enough to read in one sitting, so it lacks what the Go client has:

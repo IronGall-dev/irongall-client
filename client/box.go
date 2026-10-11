@@ -29,6 +29,12 @@ const DefaultBase = "https://crossbot.dev"
 // by crossbot.dev's operator, who runs it.
 const EchoAddress = "3ea2a2fdf19bf1092039ca8dd5ce6728bad8f871d3822a018d8375c42db4b0e8"
 
+// EchoAddressNoPQ is crossbot.dev's second echo box, whose prekey is X25519
+// only: the one a sender on age 1.2 can reach (sh/crossbot.sh; this client
+// reaches both). It answers as EchoAddress does, and mail to it is as
+// readable by crossbot.dev's operator.
+const EchoAddressNoPQ = "30a61ff94667eea489c6fc85b0276afe70348c9a3e202449b9db939e0418a5c4"
+
 // requestTimeout bounds one request of the default HTTP client.
 const requestTimeout = time.Minute
 
