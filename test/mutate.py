@@ -6,16 +6,23 @@ Every mutation must be CAUGHT: some test goes red. MISSED means no test can
 reach the check: add the test, or delete the check as dead code. BUILD FAILED
 means the mutation itself does not compile: fix the line.
 
-Run from anywhere, with go on PATH:   test/mutate.py [index ...]
-Every file is restored, even on an error or ^C. Nothing here needs a server or
-a network: the tests run against internal/fakeserver.
+Run from anywhere, with go on PATH:   test/mutate.py [--since REF] [index ...]
+It runs in a throwaway copy of HEAD (a detached worktree in a temp
+directory), never in the checkout: commit first, and nothing else waits on a
+pass. It is an occasional check, run in the background, not a step of every
+change. --since REF keeps only the entries whose file changed since REF.
+Nothing here needs a server or a network: the tests run against
+internal/fakeserver.
 
 Not here: durability (fsync) and error plumbing, which no test can observe
 failing; a check's line is listed only when a test can see it break.
 """
+import argparse
+import atexit
 import os
+import shutil
 import subprocess
-import sys
+import tempfile
 
 R = os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + '/'
 M = [
@@ -119,29 +126,54 @@ M = [
     ('sh/crossbot.sh', '[ -s "$CB/address" ] || { cb_refuse "no box in $CB: run init first"; return 1; }', 'true'),
 ]
 
-only = sys.argv[1:]
+ap = argparse.ArgumentParser(description='Show every client check can fail.')
+ap.add_argument('indexes', nargs='*', type=int, help='run only these entries')
+ap.add_argument('--since', metavar='REF', help='only entries whose file changed since REF')
+args = ap.parse_args()
+changed = None
+if args.since:
+    changed = set(subprocess.run(['git', '-C', R, 'diff', '--name-only', args.since, 'HEAD'], capture_output=True, text=True, check=True).stdout.split())
+
+# A copy of HEAD: the checkout, which the server's image also builds from, is never touched.
+tmp = tempfile.mkdtemp(prefix='mutate-client-')
+W = os.path.join(tmp, 'crossbot-client') + '/'
+
+
+def cleanup():
+    subprocess.run(['git', '-C', R, 'worktree', 'remove', '--force', W], capture_output=True)
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
+atexit.register(cleanup)
+subprocess.run(['git', '-C', R, 'worktree', 'add', '--detach', '-q', W, 'HEAD'], check=True)
+head = subprocess.run(['git', '-C', R, 'rev-parse', '--short', 'HEAD'], capture_output=True, text=True).stdout.strip()
+dirty = subprocess.run(['git', '-C', R, 'status', '--porcelain', '--untracked-files=no'], capture_output=True, text=True).stdout.strip()
+print(f'testing HEAD {head}' + (' (the checkout has uncommitted changes, which are not tested)' if dirty else ''), flush=True)
+
 caught = missed = 0
 for i, (f, a, b) in enumerate(M):
-    if only and str(i) not in only:
+    if args.indexes and i not in args.indexes:
         continue
-    path = R + f
+    if changed is not None and f not in changed:
+        continue
+    path = W + f
     src = open(path).read()
     if src.count(a) != 1:
-        print(f'{i}: PATTERN COUNT {src.count(a)} in {f}: {a[:60]!r}')
+        print(f'{i}: PATTERN COUNT {src.count(a)} in {f}: {a[:60]!r}', flush=True)
         continue
     open(path, 'w').write(src.replace(a, b))
     try:
-        r = subprocess.run(['go', 'test', '-count=1', './...'], cwd=R, capture_output=True, text=True, timeout=600)
+        r = subprocess.run(['go', 'test', '-count=1', '-failfast', './...'], cwd=W, capture_output=True, text=True, timeout=600)
     finally:
         open(path, 'w').write(src)
     out = r.stdout + r.stderr
     fails = [l.strip() for l in out.splitlines() if l.lstrip().startswith('--- FAIL')]
     if 'build failed' in out or '[setup failed]' in out:
-        print(f'{i}: BUILD FAILED {f} {a.strip()[:50]!r}\n{out[-600:]}')
+        print(f'{i}: BUILD FAILED {f} {a.strip()[:50]!r}\n{out[-600:]}', flush=True)
     elif r.returncode == 0:
         missed += 1
-        print(f'{i}: MISSED  {f} {a.strip()[:70]!r}')
+        print(f'{i}: MISSED  {f} {a.strip()[:70]!r}', flush=True)
     else:
         caught += 1
-        print(f'{i}: caught  {f} {a.strip()[:50]!r} -> {", ".join(x.replace("--- FAIL: ", "") for x in fails[:3])}')
+        print(f'{i}: caught  {f} {a.strip()[:50]!r} -> {", ".join(x.replace("--- FAIL: ", "") for x in fails[:3])}', flush=True)
 print(f'caught {caught}, missed {missed}')
