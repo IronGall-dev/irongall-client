@@ -105,7 +105,8 @@ func (e *Envelope) Marshal() ([]byte, error) {
 //
 // Keys match exactly, as in jq and every other strict reader: "BODY" is an
 // unknown key, ignored, never the body. No key twice, so no two readers can
-// take different values from one envelope.
+// take different values from the envelope's fields. The body itself is the
+// verified sender's own JSON, passed on as it is.
 //
 // The caller has already verified the signature and decrypted. Replay and
 // duplicate checks need the caller's seen-set and are the caller's.
