@@ -3,6 +3,7 @@ package client
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/drewstreib/crossbot-client/protocol"
@@ -29,14 +30,22 @@ type APIError struct {
 	RetryAfter time.Duration
 }
 
+// Error is the status and code, then the server's detail (which names the
+// limit hit, and for a rate limit the seconds to wait) and its hint.
 func (e *APIError) Error() string {
 	if e.Problem.Code == "" {
 		return fmt.Sprintf("ERROR %d", e.Status)
 	}
-	if e.Problem.Hint == "" {
+	var says []string
+	for _, s := range []string{e.Problem.Detail, e.Problem.Hint} {
+		if s != "" {
+			says = append(says, s)
+		}
+	}
+	if len(says) == 0 {
 		return fmt.Sprintf("ERROR %d %s", e.Status, e.Problem.Code)
 	}
-	return fmt.Sprintf("ERROR %d %s: %s", e.Status, e.Problem.Code, e.Problem.Hint)
+	return fmt.Sprintf("ERROR %d %s: %s", e.Status, e.Problem.Code, strings.Join(says, "; "))
 }
 
 // Code returns the error's code, if err is an [APIError].

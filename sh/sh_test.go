@@ -235,7 +235,7 @@ func TestWithGoClient(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
-	kt, mode := protocol.Classic, "classic"
+	kt, mode := protocol.Classic, "--no-pq"
 	if pq() {
 		kt, mode = protocol.PostQuantum, ""
 	}
@@ -256,6 +256,10 @@ func TestWithGoClient(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// An API error prints its status, code and the server's detail.
+	if _, err := sh(shDir, "printf x | cb_send "+strings.Repeat("0", 64)); err == nil || !strings.Contains(err.Error(), "ERROR 404 no_such_mailbox: no box has this address") {
+		t.Fatalf("cb_send to no box: %v", err)
+	}
 	if _, err := sh(shDir, fmt.Sprintf("printf 'from the script' | cb_send %s", g.Address())); err != nil {
 		t.Fatalf("cb_send: %v", err)
 	}

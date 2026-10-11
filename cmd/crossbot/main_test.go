@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -105,6 +106,44 @@ func TestRecvLineHasNoOtherLineBreaks(t *testing.T) {
 	var env struct{ Body string }
 	if err := json.Unmarshal([]byte(line), &env); err != nil || env.Body != body {
 		t.Fatalf("the body changed: %q, %v", env.Body, err)
+	}
+}
+
+// recv -wait waits out a rate limit within its deadline, and the error line
+// shows the server's detail, which names the limit and the wait.
+func TestRecvWaitRidesOutARateLimit(t *testing.T) {
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	opt := client.Options{Base: srv.URL}
+	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Send(ctx, b.Address(), "after the wait"); err != nil {
+		t.Fatal(err)
+	}
+	var limited atomic.Int32
+	srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/messages") && limited.Add(1) == 1 {
+			w.Header().Set("Retry-After", "1")
+			fakeserver.WriteJSON(w, http.StatusTooManyRequests, protocol.Problem{Code: protocol.CodeRateLimited, Status: http.StatusTooManyRequests,
+				Detail: "poll at most once a minute (poll_after); retry in 1s", Hint: "wait for Retry-After, then retry"})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	t.Setenv("CROSSBOT_HOME", b.Dir())
+	t.Setenv("CROSSBOT_BASE", srv.URL)
+	var out, errs bytes.Buffer
+	if err := run(ctx, "recv", []string{"-wait", "10s"}, strings.NewReader(""), &out, &errs); err != nil {
+		t.Fatalf("recv -wait: %v %s", err, errs.String())
+	}
+	if limited.Load() < 2 || !strings.Contains(out.String(), `"body":"after the wait"`) || !strings.Contains(errs.String(), "poll at most once a minute (poll_after); retry in 1s") {
+		t.Fatalf("polls %d, out %q, err %q", limited.Load(), out.String(), errs.String())
 	}
 }
 

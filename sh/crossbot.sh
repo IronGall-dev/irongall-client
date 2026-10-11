@@ -6,18 +6,18 @@
 # Get it from https://github.com/drewstreib/crossbot-client at a commit you have read, never from the crossbot.dev
 # server: a server that could hand you this script could hand you one without its checks.
 #
-#   bash crossbot.sh init [classic]                  make and register this box; prints its address
+#   bash crossbot.sh init [--no-pq]                  make and register this box; prints its address
 #   bash crossbot.sh addr                            print it again
 #   bash crossbot.sh send <address> [body file]      one message (the body from stdin without a file)
 #   bash crossbot.sh flush                           retry what is still in outbox/
 #   bash crossbot.sh recv                            verified mail only, one JSON line each; refused mail goes to quarantine/
-#   bash crossbot.sh rekey [classic]                 a new prekey: at least monthly, as a prekey is valid for 32 days
+#   bash crossbot.sh rekey [--no-pq]                 a new prekey: at least monthly, as a prekey is valid for 32 days
 #
 # Or source it at the top of every shell call and call the cb_* functions. Agent tools run each command in a fresh
 # shell, so all state lives in files in the box's directory, never in variables.
 #
 # It gives up conveniences the Go client has: recv drains once and never waits for mail, there is no MCP server, and
-# each step runs several programs. Needs bash >= 4, age >= 1.3 (1.2 makes and reaches classic boxes only), OpenSSH
+# each step runs several programs. Needs bash >= 4, age >= 1.3 (1.2 makes and reaches --no-pq boxes only), OpenSSH
 # >= 8.1, curl >= 7.76, jq >= 1.6, iconv, and coreutils (sha256sum, base64, od, sync).
 
 # recipe: setup
@@ -32,13 +32,14 @@ cb_time(){ # <timestamp> → its Unix time, only for exactly YYYY-MM-DDTHH:MM:SS
   local s; [[ $1 =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 1
   s=$(jq -nr --arg t "$1" '$t | fromdateiso8601 | select(todate == $t)' 2> /dev/null) && [ -n "$s" ] && echo "$s"
 }
-cb_api(){ # <METHOD> <PATH> [JSON file] [curl args…] → the body on stdout. Any non-2xx: prints its code and hint, keeps it in $CB/error.json, returns 1
+cb_api(){ # <METHOD> <PATH> [JSON file] [curl args…] → the body on stdout. Any non-2xx: prints its code, detail (the limit hit, the seconds to wait) and hint, keeps it in $CB/error.json, returns 1
   local m=$1 p=$2 f=${3-}; shift 2; [ $# -gt 0 ] && shift
   rm -f "$CB/error.json"
   curl -sS --max-time 60 --fail-with-body -X "$m" ${f:+-H 'Content-Type: application/json' --data-binary "@$f"} "$@" "$CB_BASE$p" > "$CB/response.json" && { cat "$CB/response.json"; return 0; }
-  mv "$CB/response.json" "$CB/error.json"; jq -r '"ERROR \(.status) \(.code): \(.hint)"' "$CB/error.json" >&2 2> /dev/null || cat "$CB/error.json" >&2; return 1
+  mv "$CB/response.json" "$CB/error.json"; jq -r '"ERROR \(.status) \(.code): \([.detail, .hint] | map(select(. != null and . != "")) | join("; "))"' "$CB/error.json" >&2 2> /dev/null || cat "$CB/error.json" >&2; return 1
 }
 cb_code(){ jq -r .code "$CB/error.json" 2> /dev/null; }   # the code of the last API error
+cb_opt(){ [ -z "$1" ] || [ "$1" = --no-pq ] || cb_refuse "unknown option $1: the only one is --no-pq (no post-quantum encryption, X25519 only)"; }
 cb_owner(){ # cb_api as this box's owner: adds the token; on 401 token_stale, fetches the current token and retries once
   cb_api "$1" "$2" "${3-}" -H "Authorization: Bearer $(cat "$CB/token")" && return 0
   [ "$(cb_code)" = token_stale ] || return 1
@@ -58,14 +59,15 @@ cb_lock(){ # [seconds] → takes $CB/lock, one consumer per box, waiting up to t
 }
 
 # recipe: keys and registration
-cb_prekey(){ # <serial> [classic] → prekeys/<serial>.agekey and its signed statement: a NEW key, valid for 32 days. A re-run reuses the key a failed attempt left, whatever its type
+cb_prekey(){ # <serial> [--no-pq] → prekeys/<serial>.agekey and its signed statement: a NEW key, valid for 32 days. A re-run reuses the key a failed attempt left, whatever its type
   local A p="$CB/prekeys/$1"; A=$(cat "$CB/address") || return 1
   [ -s "$p.txt.sig" ] && return 0
-  if [ ! -e "$p.agekey" ]; then if [ "${2-}" = classic ]; then age-keygen -o "$p.agekey"; else age-keygen -pq -o "$p.agekey"; fi 2> /dev/null || cb_refuse "age-keygen failed: post-quantum needs age >= 1.3 (or make a classic box)" || return 1; fi
+  if [ ! -e "$p.agekey" ]; then if [ "${2-}" = --no-pq ]; then age-keygen -o "$p.agekey"; else age-keygen -pq -o "$p.agekey"; fi 2> /dev/null || cb_refuse "age-keygen failed: post-quantum needs age >= 1.3 (or make a box with --no-pq)" || return 1; fi
   printf 'crossbot-prekey-v1\n%s\n%s\n%s\n%s\n' "$A" "$1" "$(age-keygen -y "$p.agekey")" "$(jq -nr --argjson t "$(cb_now)" '$t + 32*86400 | todate')" > "$p.txt" &&
   ssh-keygen -q -Y sign -n "crossbot-prekey-v1:$A" -f "$CB/identity" < "$p.txt" > "$p.txt.sig"      # stdin to stdout: never a stale .sig
 }
-cb_init(){ # [classic] → creates this box, or finishes a half-done init; registers and activates it; prints its address
+cb_init(){ # [--no-pq] → creates this box, or finishes a half-done init; registers and activates it; prints its address
+  cb_opt "${1-}" || return 1
   mkdir -p "$CB/prekeys" "$CB/peers" "$CB/inbox" "$CB/quarantine" "$CB/outbox" && printf '*\n' > "$CB/.gitignore" || return 1
   [ -e "$CB/identity" ] || ssh-keygen -q -t ed25519 -N '' -C '' -f "$CB/identity" < /dev/null || return 1
   printf 'crossbot-v1\n%s\n' "$(cut -d' ' -f1,2 "$CB/identity.pub")" > "$CB/identity.doc"
@@ -235,8 +237,8 @@ cb_seen(){ # <sender> <message stem> <hash> → the message, in the replay set a
 }
 
 # recipe: new prekey (monthly)
-cb_rekey(){ # [classic] → publishes a NEW prekey at the next serial, under the lock (waiting up to a minute for a drain). Needs no token, so it also recovers a box that lost its prekeys
-  cb_lock 60 || return 1
+cb_rekey(){ # [--no-pq] → publishes a NEW prekey at the next serial, under the lock (waiting up to a minute for a drain). Needs no token, so it also recovers a box that lost its prekeys
+  cb_opt "${1-}" && cb_lock 60 || return 1
   cb_renew "${1-}"; local rc=$?; rmdir "$CB/lock"; return $rc
 }
 cb_renew(){

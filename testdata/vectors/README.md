@@ -6,7 +6,7 @@ Files any crossbot implementation can check itself against, made with stock tool
 
 | Path | What | Expected |
 |---|---|---|
-| `a/`, `b/` | each box's `identity.doc` and `address`, its prekey statements `prekey-<serial>.txt` with `.sig`, and A's `revoke.txt` with `revoke.sig` | all valid. `a/prekey-1` is post-quantum, `a/prekey-2` classic; `a/prekey-1.txt.sha256.sig` signs with SHA-256 instead of SHA-512, which verifiers accept |
+| `a/`, `b/` | each box's `identity.doc` and `address`, its prekey statements `prekey-<serial>.txt` with `.sig`, and A's `revoke.txt` with `revoke.sig` | all valid. `a/prekey-1` is post-quantum, `a/prekey-2` X25519 only (`--no-pq`); `a/prekey-1.txt.sha256.sig` signs with SHA-256 instead of SHA-512, which verifiers accept |
 | `message/` | `a-to-b.age`, an age file encrypted to B's prekey; `.sig`, A's signature for B | verifies for B. `a-to-b.age.for-another-box.sig` is A's signature of the same bytes for A's own box, and must not verify for B |
 | `identity/*.doc` | malformed identity documents, and well-formed ones holding a small-order or non-canonical Ed25519 key | every one rejected |
 | `prekey/bad-*` | prekey statements with a `.sig` by A, in A's namespace except where the name says otherwise | every one rejected |

@@ -69,6 +69,8 @@ M = [
     ('protocol/envelope.go', '\tif f, err := json.Number(fields["v"]).Float64(); err != nil || f != EnvelopeVersion {', '\tif f, err := json.Number(fields["v"]).Float64(); err != nil && f != EnvelopeVersion {'),
     ('protocol/envelope.go', '\tif _, err := d.Token(); err != io.EOF {', '\tif _, err := d.Token(); err != io.EOF && false {'),
     ('protocol/envelope.go', '\tif !utf8.ValidString(body) {', '\tif false {'),
+    ('client/errors.go', '[]string{e.Problem.Detail, e.Problem.Hint}', '[]string{e.Problem.Hint}'),
+    ('cmd/crossbot/main.go', 'if errors.As(err, &e) && e.RetryAfter > 0 && time.Until(deadline) > e.RetryAfter {', 'if false {'),
     # crossbot.sh, the stock-tools client (sh/sh_test.go runs it)
     # Not listed: cb_pin's "a pin always wins" branch. Only one document hashes to an address, so re-pinning from
     # any served identity that passes the hash check reaches the same pin: the branch saves a re-check, nothing more.
@@ -112,6 +114,8 @@ M = [
     ('sh/crossbot.sh', '[ "$s" -ge "$(cat "$CB/serial" 2> /dev/null || echo 0)" ] || cb_refuse "rollback: the server serves', 'true || cb_refuse "rollback: the server serves'),
     ('sh/crossbot.sh', '[ "$(cb_now)" -lt $((na + 8*86400)) ] || rm -f', 'true || rm -f'),
     ('sh/crossbot.sh', '[ "$n" -lt "$top" ] || continue', 'true'),
+    ('sh/crossbot.sh', '[.detail, .hint] | map(', '[.hint] | map('),
+    ('sh/crossbot.sh', '[ -z "$1" ] || [ "$1" = --no-pq ] || cb_refuse', 'true || cb_refuse'),
 ]
 
 only = sys.argv[1:]

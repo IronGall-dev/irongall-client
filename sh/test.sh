@@ -11,8 +11,8 @@
 #     mail, a newline-injected sender, a wrong id. And the honest paths: two sends in a row, a retried envelope,
 #     renewal with a NEW key, 409 stale_prekey, restore without a token, pagination, the lock, token refresh,
 #     deletion of retired prekeys (forward secrecy), the outbox's failures, and a fault in the box itself.
-# Needs what crossbot.sh needs, but curl. KEYTYPE=auto (default: pq if `age-keygen -pq` works, else classic, saying
-# why) · pq · classic. The work dir is left in place after the run.
+# Needs what crossbot.sh needs, but curl. KEYTYPE=auto (default: pq if `age-keygen -pq` works, else no-pq, saying
+# why) · pq · no-pq. The work dir is left in place after the run.
 set -eu
 HERE=$(cd "$(dirname "$0")" && pwd)
 W=${1:?usage: test.sh <empty work dir>}; mkdir -p "$W"; W=$(cd "$W" && pwd); cd "$W"
@@ -20,10 +20,10 @@ W=${1:?usage: test.sh <empty work dir>}; mkdir -p "$W"; W=$(cd "$W" && pwd); cd 
 KEYTYPE=${KEYTYPE:-auto}
 if [ "$KEYTYPE" = auto ]; then
   if age-keygen -pq -o "$W/probe.agekey" > /dev/null 2>&1; then KEYTYPE=pq; else
-    KEYTYPE=classic; echo "KEYTYPE=auto -> classic: age $(age --version) has no -pq (post-quantum needs age >= 1.3)"; fi
+    KEYTYPE=no-pq; echo "KEYTYPE=auto -> no-pq: age $(age --version) has no -pq (post-quantum needs age >= 1.3)"; fi
   rm -f "$W/probe.agekey"
 fi
-case "$KEYTYPE" in pq) PQ=-pq; CLASSIC= ;; classic) PQ=; CLASSIC=classic ;; *) echo "KEYTYPE must be auto, pq or classic"; exit 2 ;; esac
+case "$KEYTYPE" in pq) PQ=-pq; NOPQ= ;; no-pq) PQ=; NOPQ=--no-pq ;; *) echo "KEYTYPE must be auto, pq or no-pq"; exit 2 ;; esac
 stanza_of(){ case "$1" in age1pq1*) echo mlkem768x25519 ;; age1*) echo X25519 ;; esac; }
 echo "mode: KEYTYPE=$KEYTYPE, age $(age --version)"
 PASS=0
@@ -175,10 +175,11 @@ recv(){ if RECV_OUT=$(cb_recv 2> $SRV/recv.err); then RECV_RC=0; else RECV_RC=$?
 box_count(){ ls $SRV/$1/msgs | awk NF | wc -l; }
 
 # --- 1. init: keys, registration, activation
-for X in A B C D; do as $X; eval "$X=\$(cb_init $CLASSIC)" || bad "cb_init $X"; done
+for X in A B C D; do as $X; eval "$X=\$(cb_init $NOPQ)" || bad "cb_init $X"; done
 as A; [ "$(sha256sum < $CB/identity.doc | cut -c1-64)" = "$A" ] && [ "$(cat $SRV/$A/state)" = active ] && ok "cb_init: the address is the identity's hash, and the first token call activated the box" || bad "init"
 [ "$(stat -c %a $CB/identity)" = 600 ] && [ "$(stat -c %a $CB/token)" = 600 ] && [ "$(stat -c %a $CB/prekeys/1.agekey)" = 600 ] && ok "keys and token are 0600 (umask 077)" || bad "file modes"
-as A; cb_init $CLASSIC > /dev/null && ok "cb_init again: idempotent" || bad "init rerun"
+as A; cb_init $NOPQ > /dev/null && ok "cb_init again: idempotent" || bad "init rerun"
+cb_init classic 2> err.txt && bad "an unknown option was taken" || grep -q "unknown option classic" err.txt && ok "an unknown option (the old 'classic') is REFUSED, not taken as post-quantum" || bad "unknown option: $(cat err.txt)"
 # --- 2. send, twice in a row, and receive both
 as A; printf 'hello B' > body1; printf 'second, "quoted" <tags> & ünïcode\n' > body2
 cb_send "$B" body1 && cb_send "$B" body2 && ok "two sends in a row" || bad "two sends"
@@ -285,13 +286,13 @@ jq -n --arg p "$(cb_b64 same.txt)" --arg g "$(cb_b64 same.sig)" '{prekey:$p, pre
 cb_api PUT "/v1/$B/prekey" same.json > /dev/null 2>&1 && bad "re-signed key accepted" || ok "the server refuses a renewal that re-signs the SAME key: every renewal is a new key"
 # --- 8. renewal: a NEW key, serial 2; the epoch bumps; senders move on; rollback refused; 409 stale_prekey
 as B; OLD_TOKEN=$(cat $CB/token); cp $CB/prekeys/1.agekey key1.agekey
-cb_rekey $CLASSIC && [ "$(sed -n 3p $SRV/$B/prekey.txt)" = 2 ] && [ "$(cat $CB/token)" != "$OLD_TOKEN" ] && [ "$(cat $CB/serial)" = 2 ] && ok "cb_rekey: serial 2, a new key, a new token (the epoch bumped), and the box records serial 2" || bad "rekey"
+cb_rekey $NOPQ && [ "$(sed -n 3p $SRV/$B/prekey.txt)" = 2 ] && [ "$(cat $CB/token)" != "$OLD_TOKEN" ] && [ "$(cat $CB/serial)" = 2 ] && ok "cb_rekey: serial 2, a new key, a new token (the epoch bumped), and the box records serial 2" || bad "rekey"
 [ "$(sed -n 4p $SRV/$B/prekey.txt)" != "$(age-keygen -y $CB/prekeys/1.agekey)" ] && ok "the renewed prekey is a different key" || bad "same key"
 as A; printf 'after rotation' > body4; cb_send "$B" body4 && [ "$(cat $CB/peers/$B/serial)" = 2 ] && ok "A sends to serial 2; the address did not move" || bad "send after rekey"
 as B; recv; printf '%s' "$RECV_OUT" | jq -e '.body == "after rotation"' > /dev/null && ok "B decrypts it" || bad "recv after rekey: $RECV_OUT / $RECV_ERR"
 as A; MODE="rollback $B"; cb_send "$B" body3 2> err.txt || true; MODE=honest; rm -f $CB/outbox/*.P
 grep -q "rollback" err.txt && ok "rollback: B's genuine serial-1 statement is REFUSED once serial 2 was seen" || bad "rollback: $(cat err.txt)"
-as B; n0=$(grep -c "^PUT /v1/$B/prekey\$" $SRV/log); MODE="rollback $B"; cb_rekey $CLASSIC 2> err.txt; MODE=honest
+as B; n0=$(grep -c "^PUT /v1/$B/prekey\$" $SRV/log); MODE="rollback $B"; cb_rekey $NOPQ 2> err.txt; MODE=honest
 grep -q "rollback" err.txt && [ "$(grep -c "^PUT /v1/$B/prekey\$" $SRV/log)" = "$n0" ] && ok "rollback of the box's own prekey: cb_rekey refuses, publishes nothing" || bad "own rollback: $(cat err.txt)"
 as C; echo "$B" > $SRV/stale-once; printf 'via a stale cache' > $W/body5
 cb_send "$B" $W/body5 2> $W/err.txt && grep -q stale_prekey $W/err.txt && [ "$(cat $CB/peers/$B/serial)" = 2 ] && ok "a sender handed serial 1 gets 409 stale_prekey and re-encrypts the SAME envelope to serial 2" || bad "stale_prekey: $(cat $W/err.txt)"
@@ -307,14 +308,14 @@ cb_prune; [ -e $CB/prekeys/2.agekey ] && ok "cb_prune never deletes the newest k
 cp held2.txt $CB/prekeys/2.txt
 # --- 10. restore without a token or prekeys: the identity alone renews the prekey
 as B; rm -f $W/box/B/prekeys/* $W/box/B/token
-cb_rekey $CLASSIC && [ "$(sed -n 3p $SRV/$B/prekey.txt)" = 3 ] && [ -s $CB/token ] && ok "lost prekeys and token: cb_rekey with the identity alone publishes serial 3 and recovers a token" || bad "restore"
+cb_rekey $NOPQ && [ "$(sed -n 3p $SRV/$B/prekey.txt)" = 3 ] && [ -s $CB/token ] && ok "lost prekeys and token: cb_rekey with the identity alone publishes serial 3 and recovers a token" || bad "restore"
 as A; printf 'after restore' > body6; cb_send "$B" body6 && as B && recv && printf '%s' "$RECV_OUT" | jq -e '.body == "after restore"' > /dev/null && ok "mail flows again after the restore" || bad "after restore: $RECV_OUT / $RECV_ERR"
 # --- 11. pagination, token refresh, the lock, a sender with no box, a fault in the box itself
 as A; for i in 1 2 3; do printf 'page %s' $i > p$i; cb_send "$B" p$i || bad "send p$i"; done
 as B; echo cbt1_stale > $CB/token; PAGE=2; recv; PAGE=50
 [ "$(printf '%s\n' "$RECV_OUT" | awk NF | wc -l)" = 3 ] && [ "$(box_count "$B")" = 0 ] && ok "pages of 2: cb_recv follows next_cursor and drains all 3; a stale token was refreshed on the way" || bad "pagination: $RECV_OUT / $RECV_ERR"
 as B; mkdir $CB/lock; cb_recv 2> err.txt && bad "second consumer ran" || grep -q "one consumer per box" err.txt && ok "a second consumer is refused while the lock is held" || bad "lock"
-(sleep 2; rmdir $CB/lock) & cb_rekey $CLASSIC 2> err.txt && [ "$(sed -n 3p $SRV/$B/prekey.txt)" = 4 ] && ok "cb_rekey waits for a drain's lock, then renews" || bad "rekey under the lock: $(cat err.txt)"
+(sleep 2; rmdir $CB/lock) & cb_rekey $NOPQ 2> err.txt && [ "$(sed -n 3p $SRV/$B/prekey.txt)" = 4 ] && ok "cb_rekey waits for a drain's lock, then renews" || bad "rekey under the lock: $(cat err.txt)"
 wait
 ssh-keygen -q -t ed25519 -N '' -C '' -f G.sigkey; printf 'crossbot-v1\n%s\n' "$(cut -d' ' -f1,2 G.sigkey.pub)" > G.doc; G=$(sha256sum < G.doc | cut -c1-64)
 forge "$B" "$G" "from a box that is gone"; as B; srv_inject "$B" "$G" $SRV/op.age $SRV/op.sig; recv

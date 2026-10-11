@@ -21,14 +21,14 @@ import (
 
 const usage = `usage: crossbot <command> [arguments]
 
-  init [-classic]          create this box, register it and activate it
+  init [--no-pq]          create this box, register it and activate it
   addr                     print this box's address
   send <address> [file]    send a message (the body from file, or stdin)
   flush                    re-post messages still in the outbox; ones that can
                            never be delivered move to outbox/failed/
   recv [-wait duration]    receive, verify and ack every message: one line of
                            JSON per message, built from the verified fields
-  rekey [-classic | -pq]   publish a new prekey (run at least monthly)
+  rekey [--no-pq | --pq]   publish a new prekey (run at least monthly)
 
 The box lives in $CROSSBOT_HOME, or ${XDG_CONFIG_HOME:-~/.config}/crossbot/${CROSSBOT_BOX:-default}.
 The server is $CROSSBOT_BASE, or https://crossbot.dev.
@@ -61,12 +61,12 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 	fs.SetOutput(stderr)
 	switch cmd {
 	case "init":
-		classic := fs.Bool("classic", false, "make a classic (X25519) box instead of a post-quantum one")
+		noPQ := fs.Bool("no-pq", false, "make a box without post-quantum encryption (X25519 only), which age 1.2 can reach")
 		if err := fs.Parse(args); err != nil {
 			return err
 		}
 		kt := protocol.PostQuantum
-		if *classic {
+		if *noPQ {
 			kt = protocol.Classic
 		}
 		b, err := client.Init(ctx, dir, opt, kt)
@@ -156,12 +156,18 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 					_, _ = fmt.Fprintf(stderr, "REFUSED %s: %s\n", r.ID, r.Reason)
 				}
 			}
-			if err != nil || len(res.Delivered) > 0 || !time.Now().Before(deadline) {
-				return err
+			pause := time.Minute
+			if res != nil && res.PollAfter > 0 {
+				pause = time.Duration(res.PollAfter) * time.Second
 			}
-			pause := time.Duration(res.PollAfter) * time.Second
-			if pause <= 0 {
-				pause = time.Minute
+			// A rate limit or a restarting server says how long to wait:
+			// -wait waits it out when there is time to poll again after.
+			var e *client.APIError
+			if errors.As(err, &e) && e.RetryAfter > 0 && time.Until(deadline) > e.RetryAfter {
+				_, _ = fmt.Fprintf(stderr, "%v: waiting %s\n", err, e.RetryAfter)
+				err, pause = nil, e.RetryAfter
+			} else if err != nil || len(res.Delivered) > 0 || !time.Now().Before(deadline) {
+				return err
 			}
 			select {
 			case <-ctx.Done():
@@ -171,16 +177,16 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 		}
 
 	case "rekey":
-		classic := fs.Bool("classic", false, "switch to a classic (X25519) prekey")
+		noPQ := fs.Bool("no-pq", false, "switch to a prekey without post-quantum encryption (X25519 only)")
 		pq := fs.Bool("pq", false, "switch to a post-quantum prekey")
 		if err := fs.Parse(args); err != nil {
 			return err
 		}
 		var kt protocol.KeyType
 		switch {
-		case *classic && *pq:
-			return errors.New("-classic or -pq, not both")
-		case *classic:
+		case *noPQ && *pq:
+			return errors.New("--no-pq or --pq, not both")
+		case *noPQ:
 			kt = protocol.Classic
 		case *pq:
 			kt = protocol.PostQuantum
