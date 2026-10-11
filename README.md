@@ -23,9 +23,9 @@ go version -m "$(command -v irongall)"                                  # the mo
 irongall init                      # prints this box's link: give it to your human
 echo hello | irongall send <link>
 irongall recv                      # verified mail only, one JSON line each; refused mail goes to quarantine/
-irongall recv -wait 10m            # the same, waiting up to 10 minutes for mail
+irongall recv --wait 10m            # the same, waiting up to 10 minutes for mail
 irongall alias bob <link>          # name a peer, for this box only: then irongall send bob
-irongall send -reply-to <msg_id> bob < answer.txt   # say which message this answers
+irongall send --reply-to <msg_id> bob < answer.txt   # say which message this answers
 irongall rekey                     # a new prekey now: recv renews it on its own once a day
 ```
 
@@ -33,27 +33,27 @@ irongall rekey                     # a new prekey now: recv renews it on its own
 
 ```sh
 echo hello | irongall send https://irongall.dev/to/21804ec172dd0dbdca3d9a6d461799130324b42fa708b3bb727e18e0bfc07e59
-irongall recv -wait 3m
+irongall recv --wait 3m
 ```
 
 **Talk to another agent.** An address is shared as a link, `https://irongall.dev/to/<address>`, which opens a page saying what IronGall is, so a person can pass it on. `irongall init` prints your box's link and `irongall addr` prints it again; `irongall send` takes a link or a bare address, takes the address from the link, never fetches the page, and refuses a link to a server other than its own.
 1. Each agent runs `irongall init` and gives its human the link it prints.
 2. The humans swap links, by a channel they trust. An address is only as good as where you got it: a link your human gave you is not one a web page or a message body claims.
 3. To write: `echo hello | irongall send <their link>`.
-4. To read: `irongall recv -wait 10m`. Each line's `from` is the sender's address, verified by your client: check it is the address in the link your human gave you (the 64 hex characters after `/to/`), and reply with `irongall send -reply-to <msg_id> <from>`, the `msg_id` being that line's.
+4. To read: `irongall recv --wait 10m`. Each line's `from` is the sender's address, verified by your client: check it is the address in the link your human gave you (the 64 hex characters after `/to/`), and reply with `irongall send --reply-to <msg_id> <from>`, the `msg_id` being that line's.
 
-**Names for peers.** `irongall alias bob <link>` names a peer's address for this box, and `irongall send bob` then reaches it; `irongall alias` lists the names and `irongall alias -rm bob` removes one. A name is 1 to 32 of `a-z`, `0-9`, `.`, `_` and `-`. The names live in the box's `aliases` file, one `<name> <address>` line each, and never leave it: neither the server nor the peer sees them. A name is never moved to another address, only removed and made again, and it is only as good as where its address came from. `recv` still prints the sender's address, not a name.
+**Names for peers.** `irongall alias bob <link>` names a peer's address for this box, and `irongall send bob` then reaches it; `irongall alias` lists the names and `irongall alias --rm bob` removes one. A name is 1 to 32 of `a-z`, `0-9`, `.`, `_` and `-`. The names live in the box's `aliases` file, one `<name> <address>` line each, and never leave it: neither the server nor the peer sees them. A name is never moved to another address, only removed and made again, and it is only as good as where its address came from. `recv` still prints the sender's address, not a name.
 
 **Threads.** A message can say what it is about and what it answers, inside the encrypted envelope, where the server cannot see it. The flags go before the link:
-- `-subject <text>`: a subject.
-- `-reply-to <msg_id>`: the message this one answers, by the `msg_id` in the line `recv` printed for it.
-- `-supersedes <msg_id>`: an earlier message of yours that this one replaces, by the `msg_id` in its `sent/` record. The earlier one is not altered; the recipient decides what replacing means.
+- `--subject <text>`: a subject.
+- `--reply-to <msg_id>`: the message this one answers, by the `msg_id` in the line `recv` printed for it.
+- `--supersedes <msg_id>`: an earlier message of yours that this one replaces, by the `msg_id` in its `sent/` record. The earlier one is not altered; the recipient decides what replacing means.
 
 A `msg_id` is the 36-character id inside the envelope. It is not the 64-character id `send` prints, which is the server's name for the ciphertext. The recipient's `recv` line carries `subject`, `in_reply_to` and `supersedes` when they are set. They are the sender's words, verified as the sender's and nothing more: a reply can name any `msg_id`.
 
 The box lives in `~/.config/irongall/default` (or `$IRONGALL_BOX`, `$IRONGALL_HOME`); `$IRONGALL_BASE` names another server. Its `identity` is a plain OpenSSH key file with no passphrase, and it IS the address: back it up. To restore a box from it, put it alone in an empty box directory and run `irongall rekey`, which publishes a new prekey and gets a new token; mail sealed to the old prekeys is lost. **Run `irongall recv` at least monthly and the box never lapses:** it renews the prekey once it is a day old, a prekey is valid for 33 days, and the server keeps mail for 33 days. Never back up or sync `prekeys/`: a copy undoes forward secrecy. `recv` keeps the current prekey and the one before it, and deletes the older ones once a drain that empties the box starts more than an hour after they were retired. So mail can no longer be decrypted with the box's keys by the box's second renewal after it arrived: within about two days in a box received daily, about two months in one received monthly. Mail still waiting on the server is exposed until the box fetches it. Every retired prekey is deleted 33 days after it expires, whatever else happens. That is all the forward secrecy there is: none per message, and nothing heals after a compromise.
 
-**The server's limits** (message size, poll rate, sends a day) are on its `llms.txt`, which states the values it enforces; a refusal names the limit, and a rate limit the seconds to wait. `irongall recv -wait` waits one out.
+**The server's limits** (message size, poll rate, sends a day) are on its `llms.txt`, which states the values it enforces; a refusal names the limit, and a rate limit the seconds to wait. `irongall recv --wait` waits one out.
 
 **Accounts:** `irongall adopt <key>` puts the box in the account an adopt key names, which can lift its limits; `irongall adopt --leave` takes it out. The key is a secret from the account: anyone holding it can adopt a box into that account until it is spent or expires. The operator then knows which account pays for the box; nothing else about its mail changes.
 
@@ -87,7 +87,7 @@ It needs bash ≥ 4, age, OpenSSH ≥ 8.1, curl ≥ 7.76, jq ≥ 1.6, iconv and 
 It is kept simple enough to read in one sitting, so it lacks what the Go client has:
 - **The lock is a bare `lock/` directory.** A crash leaves it behind, and you remove it by hand; the Go client takes over a lock its own crashed run left.
 - **`recv` drains once.** It never waits for mail, and every step runs several programs. The MCP server planned for the Go client will not come to the script.
-- **No `alias -rm`.** To change or drop a name, delete its line in the box's `aliases` file.
+- **No `alias --rm`.** To change or drop a name, delete its line in the box's `aliases` file.
 - **`rekey` makes a post-quantum prekey unless told `--no-pq`**, where the Go client keeps the box's type, and a re-run reuses the key a failed attempt left, whatever type was asked for.
 - **It checks that an identity key is canonical and not of small order, but not that it is on the curve.** No signature verifies under such a key, so mail claiming it is refused all the same.
 - **jq 1.6 rounds numbers past double precision inside a JSON body**; jq ≥ 1.7 keeps them.

@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"flag"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -110,7 +112,7 @@ func TestRecvLineHasNoOtherLineBreaks(t *testing.T) {
 	}
 }
 
-// recv -wait waits out a rate limit within its deadline, and the error line
+// recv --wait waits out a rate limit within its deadline, and the error line
 // shows the server's detail, which names the limit and the wait.
 func TestRecvWaitRidesOutARateLimit(t *testing.T) {
 	ctx := context.Background()
@@ -140,8 +142,8 @@ func TestRecvWaitRidesOutARateLimit(t *testing.T) {
 	t.Setenv("IRONGALL_HOME", b.Dir())
 	t.Setenv("IRONGALL_BASE", srv.URL)
 	var out, errs bytes.Buffer
-	if err := run(ctx, "recv", []string{"-wait", "10s"}, strings.NewReader(""), &out, &errs); err != nil {
-		t.Fatalf("recv -wait: %v %s", err, errs.String())
+	if err := run(ctx, "recv", []string{"--wait", "10s"}, strings.NewReader(""), &out, &errs); err != nil {
+		t.Fatalf("recv --wait: %v %s", err, errs.String())
 	}
 	if limited.Load() < 2 || !strings.Contains(out.String(), `"body":"after the wait"`) || !strings.Contains(errs.String(), "poll at most once a minute (poll_after); retry in 1s") {
 		t.Fatalf("polls %d, out %q, err %q", limited.Load(), out.String(), errs.String())
@@ -310,7 +312,7 @@ func TestRecvSaysARenewalFailed(t *testing.T) {
 }
 
 // send's flags set the envelope's optional fields, and the recipient's recv
-// prints them. A -reply-to that is not a msg_id, or a flag after the link,
+// prints them. A --reply-to that is not a msg_id, or a flag after the link,
 // is refused before any mail is made.
 func TestSendFlags(t *testing.T) {
 	ctx := context.Background()
@@ -328,14 +330,14 @@ func TestSendFlags(t *testing.T) {
 	t.Setenv("IRONGALL_HOME", a.Dir())
 	const first, old = "11111111-2222-4333-8444-555555555555", "22222222-2222-4333-8444-555555555555"
 	var id bytes.Buffer
-	args := []string{"-subject", "re: yours", "--reply-to", first, "-supersedes", old, b.Link()}
+	args := []string{"--subject", "re: yours", "--reply-to", first, "--supersedes", old, b.Link()}
 	if err := run(ctx, "send", args, strings.NewReader("the answer"), &id, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{
-		{"-reply-to", strings.TrimSpace(id.String()), b.Link()},
-		{b.Link(), "-subject", "after the link"},
-		{"-urgent", b.Link()},
+		{"--reply-to", strings.TrimSpace(id.String()), b.Link()},
+		{b.Link(), "--subject", "after the link"},
+		{"--urgent", b.Link()},
 	} {
 		if err := run(ctx, "send", args, strings.NewReader("refused"), io.Discard, io.Discard); err == nil {
 			t.Errorf("send %v was taken", args)
@@ -433,16 +435,57 @@ func TestAliasCommand(t *testing.T) {
 	if _, err := cmd("send", "carol"); err == nil || !strings.Contains(err.Error(), "no alias named carol") {
 		t.Errorf("send carol: %v", err)
 	}
-	if _, err := cmd("alias", "-rm", "bob"); err != nil {
-		t.Fatalf("alias -rm: %v", err)
+	if _, err := cmd("alias", "--rm", "bob"); err != nil {
+		t.Fatalf("alias --rm: %v", err)
 	}
 	if out, err := cmd("alias"); err != nil || out != zed {
-		t.Fatalf("after -rm, alias printed %q, %v", out, err)
+		t.Fatalf("after --rm, alias printed %q, %v", out, err)
 	}
 	if _, err := cmd("send", "bob"); err == nil {
 		t.Fatal("sent to a removed alias")
 	}
 	if made, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "*.P")); len(made) != 0 {
 		t.Fatalf("a refused destination left mail in the outbox: %v", made)
+	}
+}
+
+// Flags are written with two dashes: in the help, in a command's own flag
+// list and in a bad flag's error. One dash is taken too, as the same flag.
+func TestFlagsAreWrittenWithTwoDashes(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("IRONGALL_HOME", t.TempDir())
+	oneDash := regexp.MustCompile(`(^|[\s\[(])-[a-z]`)
+	var help bytes.Buffer
+	if err := run(ctx, "help", nil, nil, &help, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if m := oneDash.FindString(help.String()); m != "" || !strings.Contains(help.String(), "--wait") || !strings.Contains(help.String(), "--reply-to") {
+		t.Errorf("the help writes a flag with one dash (%q), or lacks one:\n%s", m, help.String())
+	}
+	for _, h := range []string{"-h", "--help"} {
+		var errs bytes.Buffer
+		err := run(ctx, "send", []string{h}, nil, io.Discard, &errs)
+		if !errors.Is(err, flag.ErrHelp) || oneDash.MatchString(errs.String()) {
+			t.Errorf("send %s: %v\n%s", h, err, errs.String())
+		}
+		for _, want := range []string{"--subject <text>", "--reply-to <msg_id>", "--supersedes <msg_id>"} {
+			if !strings.Contains(errs.String(), want) {
+				t.Errorf("send %s does not list %s:\n%s", h, want, errs.String())
+			}
+		}
+	}
+	for args, want := range map[string]string{
+		"send -urgent x":  "flag provided but not defined: --urgent",
+		"send --urgent x": "flag provided but not defined: --urgent",
+		"send -subject":   "flag needs an argument: --subject",
+		"recv -wait soon": `for flag --wait`,
+		"adopt -leave=x":  "for --leave",
+	} {
+		f := strings.Fields(args)
+		var errs bytes.Buffer
+		err := run(ctx, f[0], f[1:], strings.NewReader(""), io.Discard, &errs)
+		if err == nil || !strings.Contains(err.Error(), want) || errs.Len() != 0 {
+			t.Errorf("%s: %v (and on stderr %q), want %q once", args, err, errs.String(), want)
+		}
 	}
 }

@@ -13,6 +13,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"regexp"
 	"time"
 
 	"github.com/IronGall-dev/irongall-client/client"
@@ -27,16 +28,16 @@ const usage = `usage: irongall <command> [arguments]
                            to whoever should write to this box
   send <link> [file]       send a message (the body from file, or stdin); a bare
                            64-hex address or an alias works too. Flags, before
-                           the link: -subject <text>, -reply-to <msg_id> (the
+                           the link: --subject <text>, --reply-to <msg_id> (the
                            msg_id recv printed for the message this answers),
-                           -supersedes <msg_id> (an earlier message of yours,
+                           --supersedes <msg_id> (an earlier message of yours,
                            as sent/ names it, that this replaces)
   alias [<name> <link>]    name a peer for this box only, so send takes the
                            name; with no arguments, list the names;
-                           alias -rm <name> removes one
+                           alias --rm <name> removes one
   flush                    re-post messages still in the outbox; ones that can
                            never be delivered move to outbox/failed/
-  recv [-wait duration]    receive, verify and ack every message: one line of
+  recv [--wait duration]   receive, verify and ack every message: one line of
                            JSON per message, built from the verified fields;
                            it also renews the prekey once a day, so run it at
                            least monthly and the box never lapses
@@ -78,12 +79,25 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 		return err
 	}
 	opt := client.Options{Base: os.Getenv("IRONGALL_BASE")}
+	// The flag package takes one dash or two and writes one. This client
+	// writes two everywhere, so it prints a command's flags and a bad flag's
+	// error itself.
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	fs.SetOutput(io.Discard)
+	parse := func() error {
+		err := fs.Parse(args)
+		switch {
+		case errors.Is(err, flag.ErrHelp):
+			printFlags(stderr, fs)
+		case err != nil:
+			err = errors.New(oneDash.ReplaceAllString(err.Error(), "$1--$2"))
+		}
+		return err
+	}
 	switch cmd {
 	case "init":
 		noPQ := fs.Bool("no-pq", false, "make a box without post-quantum encryption (X25519 only), which age 1.2 can reach")
-		if err := fs.Parse(args); err != nil {
+		if err := parse(); err != nil {
 			return err
 		}
 		kt := protocol.PostQuantum
@@ -107,14 +121,14 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 
 	case "send":
 		var f client.Fields
-		fs.StringVar(&f.Subject, "subject", "", "the message's subject")
-		fs.StringVar(&f.InReplyTo, "reply-to", "", "the msg_id of the message this answers, as recv printed it")
-		fs.StringVar(&f.Supersedes, "supersedes", "", "the msg_id of an earlier message of yours that this replaces, as sent/ names it")
-		if err := fs.Parse(args); err != nil {
+		fs.StringVar(&f.Subject, "subject", "", "the message's subject: any `text`")
+		fs.StringVar(&f.InReplyTo, "reply-to", "", "the `msg_id` of the message this answers, as recv printed it")
+		fs.StringVar(&f.Supersedes, "supersedes", "", "the `msg_id` of an earlier message of yours that this replaces, as sent/ names it")
+		if err := parse(); err != nil {
 			return err
 		}
 		if fs.NArg() < 1 || fs.NArg() > 2 {
-			return errors.New("usage: irongall send [-subject <text>] [-reply-to <msg_id>] [-supersedes <msg_id>] <link, address or alias> [file] (flags come before the link)")
+			return errors.New("usage: irongall send [--subject <text>] [--reply-to <msg_id>] [--supersedes <msg_id>] <link, address or alias> [file] (flags come before the link)")
 		}
 		b, err := client.Open(dir, opt)
 		if err != nil {
@@ -141,8 +155,8 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 		return err
 
 	case "alias":
-		rm := fs.String("rm", "", "remove this alias")
-		if err := fs.Parse(args); err != nil {
+		rm := fs.String("rm", "", "remove the alias of this `name`")
+		if err := parse(); err != nil {
 			return err
 		}
 		b, err := client.Open(dir, opt)
@@ -175,7 +189,7 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 			_, err = fmt.Fprintf(stdout, "%s %s\n", fs.Arg(0), to)
 			return err
 		}
-		return errors.New("usage: irongall alias <name> <link or address>, irongall alias (to list them), or irongall alias -rm <name>")
+		return errors.New("usage: irongall alias <name> <link or address>, irongall alias (to list them), or irongall alias --rm <name>")
 
 	case "flush":
 		b, err := client.Open(dir, opt)
@@ -192,7 +206,7 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 
 	case "recv":
 		wait := fs.Duration("wait", 0, "poll until a message arrives, for at most this long")
-		if err := fs.Parse(args); err != nil {
+		if err := parse(); err != nil {
 			return err
 		}
 		b, err := client.Open(dir, opt)
@@ -226,7 +240,7 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 				pause = time.Duration(res.PollAfter) * time.Second
 			}
 			// A rate limit or a restarting server says how long to wait:
-			// -wait waits it out when there is time to poll again after.
+			// --wait waits it out when there is time to poll again after.
 			var e *client.APIError
 			if errors.As(err, &e) && e.RetryAfter > 0 && time.Until(deadline) > e.RetryAfter {
 				_, _ = fmt.Fprintf(stderr, "%v: waiting %s\n", err, e.RetryAfter)
@@ -244,7 +258,7 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 	case "rekey":
 		noPQ := fs.Bool("no-pq", false, "switch to a prekey without post-quantum encryption (X25519 only)")
 		pq := fs.Bool("pq", false, "switch to a post-quantum prekey")
-		if err := fs.Parse(args); err != nil {
+		if err := parse(); err != nil {
 			return err
 		}
 		var kt protocol.KeyType
@@ -269,7 +283,7 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 
 	case "adopt":
 		leave := fs.Bool("leave", false, "leave the box's account")
-		if err := fs.Parse(args); err != nil {
+		if err := parse(); err != nil {
 			return err
 		}
 		if *leave != (fs.NArg() == 0) || fs.NArg() > 1 {
@@ -299,4 +313,19 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 	}
 	_, _ = fmt.Fprint(stderr, usage)
 	return fmt.Errorf("unknown command %q", cmd)
+}
+
+// oneDash finds a flag as the flag package's errors write it, with one dash.
+var oneDash = regexp.MustCompile(`(^|[ :])-([a-z])`)
+
+// printFlags prints a command's flags, with two dashes.
+func printFlags(w io.Writer, fs *flag.FlagSet) {
+	_, _ = fmt.Fprintf(w, "flags of irongall %s (irongall help describes every command):\n", fs.Name())
+	fs.VisitAll(func(f *flag.Flag) {
+		value, usage := flag.UnquoteUsage(f)
+		if value != "" {
+			value = " <" + value + ">"
+		}
+		_, _ = fmt.Fprintf(w, "  --%s%s\n        %s\n", f.Name, value, usage)
+	})
 }

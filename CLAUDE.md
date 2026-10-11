@@ -23,6 +23,8 @@
 - **No mutation pass:** the hand-listed one was deleted 2026-10-11 as more pain than it found. Do not add one unasked.
 - **Vectors:** `testdata/vectors/generate.sh` uses stock tools only (age ≥ 1.3 just for the one ciphertext, which it keeps). A re-run must change nothing but what you meant to change; diff the tree. Its identity keys are RFC 8032's PUBLISHED test keys; never put any other private key in this repo.
 
+**Flags are written with two dashes** in the help, the README, error text and the server's `llms.txt`. Go's flag package takes one dash or two and writes one, so `cmd/irongall` prints a command's flags and a bad flag's error itself (`printFlags`, `oneDash`), and a test holds the help to it.
+
 **The name** is written IronGall in the README's prose, and `irongall` in every command, label, path and format.
 
 **Module path:** `github.com/IronGall-dev/irongall-client`. Installing must never depend on the irongall.dev server.
