@@ -70,21 +70,21 @@ func (b *Box) call(ctx context.Context, method, path string, in any, hdr http.He
 	return resp, nil
 }
 
-// owner makes a request as the box's owner. On 401 token_stale it fetches the
-// current token, decrypts it, and retries once. A refreshed token carried in a
-// Crossbot-Token header is kept.
-func (b *Box) owner(ctx context.Context, method, path string, hdr http.Header, out any) (*http.Response, error) {
-	resp, err := b.ownerOnce(ctx, method, path, hdr, out)
+// owner makes a request as the box's owner, with in as its JSON body when not
+// nil. On 401 token_stale it fetches the current token, decrypts it, and
+// retries once. A refreshed token carried in a Crossbot-Token header is kept.
+func (b *Box) owner(ctx context.Context, method, path string, in any, hdr http.Header, out any) (*http.Response, error) {
+	resp, err := b.ownerOnce(ctx, method, path, in, hdr, out)
 	if Code(err) != protocol.CodeTokenStale {
 		return resp, err
 	}
 	if err := b.RefreshToken(ctx); err != nil {
 		return nil, err
 	}
-	return b.ownerOnce(ctx, method, path, hdr, out)
+	return b.ownerOnce(ctx, method, path, in, hdr, out)
 }
 
-func (b *Box) ownerOnce(ctx context.Context, method, path string, hdr http.Header, out any) (*http.Response, error) {
+func (b *Box) ownerOnce(ctx context.Context, method, path string, in any, hdr http.Header, out any) (*http.Response, error) {
 	tok, err := os.ReadFile(b.path("token"))
 	if err != nil {
 		return nil, fmt.Errorf("no token: %w", err)
@@ -94,7 +94,7 @@ func (b *Box) ownerOnce(ctx context.Context, method, path string, hdr http.Heade
 		h[k] = v
 	}
 	h.Set("Authorization", "Bearer "+strings.TrimSpace(string(tok)))
-	resp, err := b.call(ctx, method, path, nil, h, out)
+	resp, err := b.call(ctx, method, path, in, h, out)
 	if resp != nil {
 		if v := resp.Header.Get(protocol.TokenHeader); v != "" {
 			// A refresh that does not decrypt is ignored: the token_stale

@@ -160,7 +160,7 @@ func TestCodes(t *testing.T) {
 	codes := []Code{
 		CodeBadRequest, CodeBadAddress, CodeBadEncoding, CodeIdentityMismatch, CodeBadKey, CodeNotAge, CodeWrongRecipientType,
 		CodeUnauthorized, CodeTokenStale,
-		CodeBadSignature, CodeUnknownSender, CodeSenderRevoked, CodeSenderNotAllowed,
+		CodeBadSignature, CodeUnknownSender, CodeSenderRevoked, CodeSenderNotAllowed, CodeAdoptKeyRefused,
 		CodeNoSuchMailbox, CodeNoSuchMessage,
 		CodeConflict, CodeStalePrekey, CodePrekeyExpired,
 		CodeRevoked, CodeTooLarge,

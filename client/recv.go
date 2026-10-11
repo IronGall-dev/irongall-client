@@ -95,7 +95,7 @@ func (b *Box) drain(ctx context.Context) (*Result, error) {
 			path += "?cursor=" + url.QueryEscape(cursor)
 		}
 		var list protocol.MessageList
-		resp, err := b.owner(ctx, http.MethodGet, path, hdr, &list)
+		resp, err := b.owner(ctx, http.MethodGet, path, nil, hdr, &list)
 		if err != nil {
 			return res, err
 		}
@@ -143,7 +143,7 @@ func (b *Box) receiveOne(ctx context.Context, id string, res *Result) error {
 	}
 	if !handled {
 		var m protocol.Message
-		_, err := b.owner(ctx, http.MethodGet, b.boxPath("/messages/"+id), nil, &m)
+		_, err := b.owner(ctx, http.MethodGet, b.boxPath("/messages/"+id), nil, nil, &m)
 		if Code(err) == protocol.CodeNoSuchMessage {
 			return nil // already gone
 		}
@@ -188,7 +188,7 @@ func (b *Box) receiveOne(ctx context.Context, id string, res *Result) error {
 			res.Delivered = append(res.Delivered, *d)
 		}
 	}
-	_, err = b.owner(ctx, http.MethodDelete, b.boxPath("/messages/"+id), nil, nil)
+	_, err = b.owner(ctx, http.MethodDelete, b.boxPath("/messages/"+id), nil, nil, nil)
 	if Code(err) == protocol.CodeNoSuchMessage {
 		return nil
 	}

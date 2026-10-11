@@ -155,3 +155,33 @@ func must(t *testing.T, name string) []byte {
 	}
 	return b
 }
+
+// adopt puts the box in the key's account and says which; a spent key is
+// refused; --leave takes the box out.
+func TestAdopt(t *testing.T) {
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CROSSBOT_HOME", b.Dir())
+	t.Setenv("CROSSBOT_BASE", srv.URL)
+	key := srv.AdoptKey("acme")
+	var out, errs bytes.Buffer
+	if err := run(ctx, "adopt", []string{key}, strings.NewReader(""), &out, &errs); err != nil || out.String() != "in account acme\n" || srv.Account(b.Address()) != "acme" {
+		t.Fatalf("adopt: %v %q %q", err, out.String(), errs.String())
+	}
+	if err := run(ctx, "adopt", []string{key}, strings.NewReader(""), &out, &errs); client.Code(err) != protocol.CodeAdoptKeyRefused {
+		t.Fatalf("a spent key: %v", err)
+	}
+	for _, args := range [][]string{nil, {"--leave", key}, {key, key}} {
+		if err := run(ctx, "adopt", args, strings.NewReader(""), &out, &errs); err == nil {
+			t.Fatalf("adopt %q ran", args)
+		}
+	}
+	out.Reset()
+	if err := run(ctx, "adopt", []string{"--leave"}, strings.NewReader(""), &out, &errs); err != nil || out.String() != "in no account\n" || srv.Account(b.Address()) != "" {
+		t.Fatalf("adopt --leave: %v %q", err, out.String())
+	}
+}

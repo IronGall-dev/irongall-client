@@ -29,6 +29,8 @@ const usage = `usage: crossbot <command> [arguments]
   recv [-wait duration]    receive, verify and ack every message: one line of
                            JSON per message, built from the verified fields
   rekey [--no-pq | --pq]   publish a new prekey (run at least monthly)
+  adopt <key>              join the account an adopt key names, which can
+                           lift this box's limits; adopt --leave leaves it
 
 The box lives in $CROSSBOT_HOME, or ${XDG_CONFIG_HOME:-~/.config}/crossbot/${CROSSBOT_BOX:-default}.
 The server is $CROSSBOT_BASE, or https://crossbot.dev.
@@ -200,6 +202,32 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 			return err
 		}
 		_, err = fmt.Fprintf(stdout, "prekey %d, valid until %s\n", p.Serial, p.NotAfter.Format(protocol.TimeLayout))
+		return err
+
+	case "adopt":
+		leave := fs.Bool("leave", false, "leave the box's account")
+		if err := fs.Parse(args); err != nil {
+			return err
+		}
+		if *leave != (fs.NArg() == 0) || fs.NArg() > 1 {
+			return errors.New("usage: crossbot adopt <key>, or crossbot adopt --leave")
+		}
+		b, err := client.Open(dir, opt)
+		if err != nil {
+			return err
+		}
+		if *leave {
+			if err := b.Leave(ctx); err != nil {
+				return err
+			}
+			_, err = fmt.Fprintln(stdout, "in no account")
+			return err
+		}
+		acc, err := b.Adopt(ctx, fs.Arg(0))
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(stdout, "in account %s\n", acc)
 		return err
 
 	case "help", "-h", "-help", "--help":

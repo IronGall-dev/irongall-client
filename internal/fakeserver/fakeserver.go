@@ -35,6 +35,7 @@ type Server struct {
 	now    func() time.Time
 	mu     sync.Mutex
 	boxes  map[protocol.Address]*box
+	keys   map[string]string // adopt key → account, each good once
 	middle func(w http.ResponseWriter, r *http.Request, next http.Handler)
 }
 
@@ -44,6 +45,7 @@ type box struct {
 	signature []byte
 	prekey    *protocol.Prekey
 	token     string          // the current owner token
+	account   string          // the account it is in, or ""
 	stale     map[string]bool // earlier tokens: token_stale
 	messages  map[string]*message
 	order     []string // ids, oldest first
@@ -58,7 +60,7 @@ type message struct {
 
 // New starts a server on the clock now, stopped when the test ends.
 func New(t testing.TB, now func() time.Time) *Server {
-	s := &Server{now: now, boxes: map[protocol.Address]*box{}}
+	s := &Server{now: now, boxes: map[protocol.Address]*box{}, keys: map[string]string{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("PUT /v1/{addr}", s.register)
 	mux.HandleFunc("POST /v1/{addr}", s.send)
@@ -68,6 +70,8 @@ func New(t testing.TB, now func() time.Time) *Server {
 	mux.HandleFunc("GET /v1/{addr}/messages", s.owner(s.list))
 	mux.HandleFunc("GET /v1/{addr}/messages/{id}", s.owner(s.fetch))
 	mux.HandleFunc("DELETE /v1/{addr}/messages/{id}", s.owner(s.ack))
+	mux.HandleFunc("PUT /v1/{addr}/account", s.owner(s.adopt))
+	mux.HandleFunc("DELETE /v1/{addr}/account", s.owner(s.leave))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		m := s.middle
@@ -394,5 +398,47 @@ func (s *Server) ack(w http.ResponseWriter, r *http.Request, b *box) {
 		return
 	}
 	delete(b.messages, id)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// AdoptKey mints an adopt key into account, good for one box.
+func (s *Server) AdoptKey(account string) string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	k := "cba1_" + hex.EncodeToString(b[:])
+	s.mu.Lock()
+	s.keys[k] = account
+	s.mu.Unlock()
+	return k
+}
+
+// Account is the account a box is in, or "".
+func (s *Server) Account(a protocol.Address) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if b := s.boxes[a]; b != nil {
+		return b.account
+	}
+	return ""
+}
+
+func (s *Server) adopt(w http.ResponseWriter, r *http.Request, b *box) {
+	var req protocol.AdoptRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		problem(w, protocol.CodeBadRequest, "not JSON")
+		return
+	}
+	acc, ok := s.keys[req.Key]
+	if !ok {
+		problem(w, protocol.CodeAdoptKeyRefused, "not a key, or spent")
+		return
+	}
+	delete(s.keys, req.Key)
+	b.account = acc
+	WriteJSON(w, http.StatusOK, protocol.AccountResponse{Account: acc})
+}
+
+func (s *Server) leave(w http.ResponseWriter, _ *http.Request, b *box) {
+	b.account = ""
 	w.WriteHeader(http.StatusNoContent)
 }

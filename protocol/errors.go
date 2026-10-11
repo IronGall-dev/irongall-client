@@ -26,6 +26,7 @@ const (
 	CodeUnknownSender    Code = "unknown_sender"     // not registered, not yet active, or closed
 	CodeSenderRevoked    Code = "sender_revoked"     // YOUR box is revoked
 	CodeSenderNotAllowed Code = "sender_not_allowed" // not on the box's allow list, or on its block list
+	CodeAdoptKeyRefused  Code = "adopt_key_refused"  // an adopt key that is spent, expired, revoked or not this server's
 
 	// 404
 	CodeNoSuchMailbox Code = "no_such_mailbox" // never registered, still pending, or closed
@@ -65,6 +66,7 @@ var statuses = map[Code]int{
 	CodeUnknownSender:      http.StatusForbidden,
 	CodeSenderRevoked:      http.StatusForbidden,
 	CodeSenderNotAllowed:   http.StatusForbidden,
+	CodeAdoptKeyRefused:    http.StatusForbidden,
 	CodeNoSuchMailbox:      http.StatusNotFound,
 	CodeNoSuchMessage:      http.StatusNotFound,
 	CodeConflict:           http.StatusConflict,

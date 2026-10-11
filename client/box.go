@@ -135,7 +135,7 @@ func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*B
 		}
 	}
 	// The first owner call activates the box.
-	if _, err := b.owner(ctx, http.MethodGet, b.boxPath("/messages"), nil, nil); err != nil {
+	if _, err := b.owner(ctx, http.MethodGet, b.boxPath("/messages"), nil, nil, nil); err != nil {
 		return nil, err
 	}
 	return b, nil

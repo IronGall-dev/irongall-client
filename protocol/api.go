@@ -90,6 +90,18 @@ type SendRequest struct {
 	Signature    Bytes   `json:"signature"`
 }
 
+// AdoptRequest is the body of PUT /v1/<address>/account (Bearer): an adopt
+// key an account minted. The box joins that account, which may lift its
+// limits.
+type AdoptRequest struct {
+	Key string `json:"key"`
+}
+
+// AccountResponse names the account a box now belongs to.
+type AccountResponse struct {
+	Account string `json:"account"`
+}
+
 // Receipt is the answer to a send. A retry of the same ciphertext gets the
 // original receipt.
 type Receipt struct {
