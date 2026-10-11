@@ -93,7 +93,17 @@ M = [
     ('cmd/crossbot-echo/main.go', '\tif errors.As(err, &ae) && ae.RetryAfter > 0 {', '\tif errors.As(err, &ae) && ae.RetryAfter > 0 && false {'),
     ('cmd/crossbot-echo/main.go', 'fmt.Fprintf(&s, "body, as JSON: %s\\n", env.Body)', 'fmt.Fprintf(&s, "body, as JSON: %q\\n", env.Body)'),
     ('client/box.go', '\tif err := b.makeDirs(); err != nil {\n\t\treturn nil, err\n\t}\n\treturn b, nil', '\treturn b, nil'),
+    # the link, <server>/to/<address>: printed by init and addr, taken by send, and only for this box's server
+    ('client/box.go', 'a, err := protocol.ParseAddress(strings.TrimPrefix(s, b.base+protocol.LinkPath))', 'a, err := protocol.ParseAddress(s)'),
+    ('client/box.go', 'a, err := protocol.ParseAddress(strings.TrimPrefix(s, b.base+protocol.LinkPath))', 'a, err := protocol.ParseAddress(s[strings.LastIndex(s, "/")+1:])'),
+    ('client/box.go', '\tcase strings.Contains(s, "://") && !strings.HasPrefix(s, b.base+"/"):', '\tcase false:'),
+    ('client/box.go', 'return b.base + protocol.LinkPath + b.Address().String() }', 'return b.Address().String() }'),
+    ('cmd/crossbot/main.go', '_, err = fmt.Fprintln(stdout, b.Link())\n\t\treturn err\n\n\tcase "addr":', '_, err = fmt.Fprintln(stdout, b.Address())\n\t\treturn err\n\n\tcase "addr":'),
     # crossbot.sh, the stock-tools client (sh/sh_test.go runs it)
+    ('sh/crossbot.sh', 'local a=${1#"$CB_BASE/to/"}', 'local a=$1'),
+    ('sh/crossbot.sh', 'local a=${1#"$CB_BASE/to/"}', 'local a=${1##*/}'),
+    ('sh/crossbot.sh', '[[ $1 != *://* || $1 = "$CB_BASE/"* ]] ||', 'true ||'),
+    ('sh/crossbot.sh', 'a=$(cat "$CB/address") && echo "$CB_BASE/to/$a"', 'cat "$CB/address"'),
     # Not listed: cb_pin's "a pin always wins" branch. Only one document hashes to an address, so re-pinning from
     # any served identity that passes the hash check reaches the same pin: the branch saves a re-check, nothing more.
     ('sh/crossbot.sh', '[ "$(wc -c < "$f")" -eq 93 ] && [ "$(sed -n 1p "$f")" = crossbot-v1 ] &&', 'true &&'),

@@ -85,6 +85,24 @@ func newBox(dir string, opt Options) *Box {
 // Address returns the box's address.
 func (b *Box) Address() protocol.Address { return b.id.Address() }
 
+// Link returns the box's link, <server>/to/<address>: what to give whoever
+// should write to it.
+func (b *Box) Link() string { return b.base + protocol.LinkPath + b.Address().String() }
+
+// Destination parses where to send: an address, or a link to one on this
+// box's server. A link to another server is refused, since a box sends only
+// through its own.
+func (b *Box) Destination(s string) (protocol.Address, error) {
+	a, err := protocol.ParseAddress(strings.TrimPrefix(s, b.base+protocol.LinkPath))
+	switch {
+	case err == nil:
+		return a, nil
+	case strings.Contains(s, "://") && !strings.HasPrefix(s, b.base+"/"):
+		return a, refuse("a link to another server: this box's server is %s", b.base)
+	}
+	return a, refuse("not an address, or a link to one: %s", s)
+}
+
 // Identity returns the box's identity.
 func (b *Box) Identity() *protocol.Identity { return b.id }
 

@@ -176,14 +176,20 @@ box_count(){ ls $SRV/$1/msgs | awk NF | wc -l; }
 
 # --- 1. init: keys, registration, activation
 as Z; cb_recv 2> err.txt && bad "recv in no box" || grep -q "no box in" err.txt && ok "recv where there is no box says so" || bad "no box: $(cat err.txt)"
-for X in A B C D; do as $X; eval "$X=\$(cb_init $NOPQ)" || bad "cb_init $X"; done
+for X in A B C D; do as $X; L=$(cb_init $NOPQ) && [ "$L" = "$CB_BASE/to/$(cat $CB/address)" ] || bad "cb_init $X printed $L, not its link"; eval "$X=\$(cat \$CB/address)"; done
 as A; [ "$(sha256sum < $CB/identity.doc | cut -c1-64)" = "$A" ] && [ "$(cat $SRV/$A/state)" = active ] && ok "cb_init: the address is the identity's hash, and the first token call activated the box" || bad "init"
 [ "$(stat -c %a $CB/identity)" = 600 ] && [ "$(stat -c %a $CB/token)" = 600 ] && [ "$(stat -c %a $CB/prekeys/1.agekey)" = 600 ] && ok "keys and token are 0600 (umask 077)" || bad "file modes"
 as A; cb_init $NOPQ > /dev/null && ok "cb_init again: idempotent" || bad "init rerun"
 cb_init classic 2> err.txt && bad "an unknown option was taken" || grep -q "unknown option classic" err.txt && ok "an unknown option (the old 'classic') is REFUSED, not taken as post-quantum" || bad "unknown option: $(cat err.txt)"
 # --- 2. send, twice in a row, and receive both
 as A; printf 'hello B' > body1; printf 'second, "quoted" <tags> & ünïcode\n' > body2
-cb_send "$B" body1 && cb_send "$B" body2 && ok "two sends in a row" || bad "two sends"
+cb_send "$B" body1 && cb_send "$CB_BASE/to/$B" body2 && ok "two sends in a row, the second to B's link" || bad "two sends"
+[ "$(cb_addr)" = "$CB_BASE/to/$A" ] && ok "cb_addr prints the box's link" || bad "cb_addr: $(cb_addr)"
+for L in "https://elsewhere.example/to/$B" "$CB_BASE.example/to/$B"; do
+  cb_send "$L" body1 2> err.txt && bad "sent to $L" || grep -q "a link to another server: this box's server is $CB_BASE" err.txt && ok "a link to another server is REFUSED: $L" || bad "$L: $(cat err.txt)"; done
+for L in "$CB_BASE/to/$B/" "$CB_BASE/v1/$B" "$(tr a-f A-F <<< "$B")"; do
+  cb_send "$L" body1 2> err.txt && bad "sent to $L" || grep -q "not an address, or a link to one" err.txt && ok "neither an address nor a link to one is REFUSED: $L" || bad "$L: $(cat err.txt)"; done
+[ "$(ls $SRV/$B/msgs | awk NF | wc -l)" = 2 ] && [ -z "$(ls $CB/outbox | grep -v '^failed$')" ] && ok "no refused destination made mail" || bad "refused destinations made mail: $(ls $CB/outbox)"
 cp $SRV/$B/msgs/*.json $SRV/; CAPTURED=$(ls $SRV/*.json | head -n1)      # one genuine A→B message, for the replay and re-sign tests
 as B; recv
 [ $RECV_RC = 0 ] && [ "$(printf '%s\n' "$RECV_OUT" | awk NF | wc -l)" = 2 ] && printf '%s\n' "$RECV_OUT" | jq -se --arg a "$A" 'map(select(.from == $a)) | map(.body) == ["hello B", "second, \"quoted\" <tags> & ünïcode\n"]' > /dev/null && ok "B receives both, verified and in order, bodies exact" || bad "receive: $RECV_OUT / $RECV_ERR"

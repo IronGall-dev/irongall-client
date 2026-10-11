@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -187,23 +188,80 @@ func TestAdopt(t *testing.T) {
 }
 
 // The echo box's address is an address, and the help and the README both
-// give it: the one constant is what they publish.
+// give its link: the one constant is what they publish.
 func TestHelpAndREADMENameTheEchoBox(t *testing.T) {
 	if _, err := protocol.ParseAddress(client.EchoAddress); err != nil {
 		t.Fatal(err)
 	}
+	link := client.DefaultBase + "/to/" + client.EchoAddress
 	var out bytes.Buffer
 	if err := run(context.Background(), "help", nil, nil, &out, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out.String(), client.EchoAddress) {
-		t.Error("the help does not give the echo box's address")
+	if !strings.Contains(out.String(), link+"\n") {
+		t.Error("the help does not give the echo box's link")
 	}
 	readme, err := os.ReadFile("../../README.md")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(readme), "crossbot send "+client.EchoAddress+"\n") {
-		t.Error("the README does not give the echo box's address")
+	if !strings.Contains(string(readme), "crossbot send "+link+"\n") {
+		t.Error("the README does not give the echo box's link")
+	}
+}
+
+// init and addr print the box's link; send takes a link to its own server or
+// a bare address, and refuses a link to another server, or anything else,
+// before it makes any mail.
+func TestTheLink(t *testing.T) {
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	opt := client.Options{Base: srv.URL}
+	home := t.TempDir()
+	t.Setenv("CROSSBOT_HOME", home)
+	t.Setenv("CROSSBOT_BASE", srv.URL)
+	var out bytes.Buffer
+	if err := run(ctx, "init", []string{"--no-pq"}, nil, &out, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	a, err := client.Open(home, opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := srv.URL + "/to/" + a.Address().String()
+	if out.String() != link+"\n" {
+		t.Fatalf("init printed %q, not %q", out.String(), link)
+	}
+	out.Reset()
+	if err := run(ctx, "addr", nil, nil, &out, io.Discard); err != nil || out.String() != link+"\n" {
+		t.Fatalf("addr: %v %q", err, out.String())
+	}
+	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, to := range []string{b.Link(), b.Address().String()} {
+		if err := run(ctx, "send", []string{to}, strings.NewReader("to "+to), io.Discard, io.Discard); err != nil {
+			t.Fatalf("send %s: %v", to, err)
+		}
+	}
+	if res, err := b.Receive(ctx); err != nil || len(res.Delivered) != 2 {
+		t.Fatalf("receive: %v %+v", err, res)
+	}
+	for to, want := range map[string]string{
+		"https://elsewhere.example/to/" + b.Address().String(): "a link to another server: this box's server is " + srv.URL,
+		srv.URL + ".example/to/" + b.Address().String():        "a link to another server",
+		b.Link() + "/":                          "not an address, or a link to one",
+		srv.URL + "/v1/" + b.Address().String(): "not an address, or a link to one",
+		strings.ToUpper(b.Address().String()):   "not an address, or a link to one",
+	} {
+		err := run(ctx, "send", []string{to}, strings.NewReader("x"), io.Discard, io.Discard)
+		var r *client.RefusedError
+		if !errors.As(err, &r) || !strings.Contains(r.Reason, want) {
+			t.Errorf("send %s: %v, want %q", to, err, want)
+		}
+	}
+	if made, _ := filepath.Glob(filepath.Join(home, "outbox", "*.P")); len(made) != 0 {
+		t.Fatalf("a refused destination left mail in the outbox: %v", made)
 	}
 }

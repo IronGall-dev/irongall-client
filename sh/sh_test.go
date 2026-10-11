@@ -247,9 +247,10 @@ func TestWithGoClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("cb_init: %v", err)
 	}
-	shAddr, err := protocol.ParseAddress(strings.TrimSpace(out))
-	if err != nil {
-		t.Fatalf("cb_init printed %q", out)
+	shLink := strings.TrimSpace(out)
+	shAddr, err := protocol.ParseAddress(strings.TrimPrefix(shLink, srv.URL+protocol.LinkPath))
+	if err != nil || shLink != srv.URL+protocol.LinkPath+shAddr.String() {
+		t.Fatalf("cb_init printed %q, not the box's link", out)
 	}
 	g, err := client.Init(ctx, goDir, client.Options{Base: srv.URL}, kt)
 	if err != nil {
@@ -260,7 +261,7 @@ func TestWithGoClient(t *testing.T) {
 	if _, err := sh(shDir, "printf x | cb_send "+strings.Repeat("0", 64)); err == nil || !strings.Contains(err.Error(), "ERROR 404 no_such_mailbox: no box has this address") {
 		t.Fatalf("cb_send to no box: %v", err)
 	}
-	if _, err := sh(shDir, fmt.Sprintf("printf 'from the script' | cb_send %s", g.Address())); err != nil {
+	if _, err := sh(shDir, fmt.Sprintf("printf 'from the script' | cb_send %s", g.Link())); err != nil {
 		t.Fatalf("cb_send: %v", err)
 	}
 	res, err := g.Receive(ctx)

@@ -21,9 +21,12 @@ import (
 
 const usage = `usage: crossbot <command> [arguments]
 
-  init [--no-pq]          create this box, register it and activate it
-  addr                     print this box's address
-  send <address> [file]    send a message (the body from file, or stdin)
+  init [--no-pq]          create this box, register it and activate it; prints
+                           its link, as addr does
+  addr                     print this box's link, <server>/to/<address>: give it
+                           to whoever should write to this box
+  send <link> [file]       send a message (the body from file, or stdin); a bare
+                           64-hex address works too
   flush                    re-post messages still in the outbox; ones that can
                            never be delivered move to outbox/failed/
   recv [-wait duration]    receive, verify and ack every message: one line of
@@ -36,7 +39,7 @@ The box lives in $CROSSBOT_HOME, or ${XDG_CONFIG_HOME:-~/.config}/crossbot/${CRO
 The server is $CROSSBOT_BASE, or https://crossbot.dev.
 
 To try the whole loop, send anything to crossbot.dev's echo box,
-` + client.EchoAddress + `
+` + client.DefaultBase + protocol.LinkPath + client.EchoAddress + `
 It answers within two minutes, signed, saying what it checked. Mail to it
 is readable by crossbot.dev's operator.
 `
@@ -80,7 +83,7 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintln(stdout, b.Address())
+		_, err = fmt.Fprintln(stdout, b.Link())
 		return err
 
 	case "addr":
@@ -88,7 +91,7 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprintln(stdout, b.Address())
+		_, err = fmt.Fprintln(stdout, b.Link())
 		return err
 
 	case "send":
@@ -96,11 +99,15 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 			return err
 		}
 		if fs.NArg() < 1 || fs.NArg() > 2 {
-			return errors.New("usage: crossbot send <address> [file]")
+			return errors.New("usage: crossbot send <link or address> [file]")
 		}
-		to, err := protocol.ParseAddress(fs.Arg(0))
+		b, err := client.Open(dir, opt)
 		if err != nil {
-			return &client.RefusedError{Reason: "not an address: " + fs.Arg(0)}
+			return err
+		}
+		to, err := b.Destination(fs.Arg(0))
+		if err != nil {
+			return err
 		}
 		var body []byte
 		if fs.NArg() == 2 {
@@ -108,10 +115,6 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 		} else {
 			body, err = io.ReadAll(stdin)
 		}
-		if err != nil {
-			return err
-		}
-		b, err := client.Open(dir, opt)
 		if err != nil {
 			return err
 		}

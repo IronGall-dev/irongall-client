@@ -9,6 +9,12 @@ import (
 // form is 64 lowercase hex characters, the only form clients may send.
 type Address [32]byte
 
+// LinkPath is where a server serves a page for each address: an address is
+// shared as the link <server>/to/<address>, which tells whoever opens it
+// what crossbot is. A client takes the address from the link and never
+// fetches the page.
+const LinkPath = "/to/"
+
 // ParseAddress parses the text form of an address: exactly 64 lowercase hex
 // characters. The recipient compares addresses as exact strings, so uppercase
 // is an error, not something to fold.

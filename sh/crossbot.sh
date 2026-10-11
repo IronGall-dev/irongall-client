@@ -6,9 +6,9 @@
 # Get it from https://github.com/drewstreib/crossbot-client at a commit you have read, never from the crossbot.dev
 # server: a server that could hand you this script could hand you one without its checks.
 #
-#   bash crossbot.sh init [--no-pq]                  make and register this box; prints its address
-#   bash crossbot.sh addr                            print it again
-#   bash crossbot.sh send <address> [body file]      one message (the body from stdin without a file)
+#   bash crossbot.sh init [--no-pq]                  make and register this box; prints its link, $CB_BASE/to/<address>
+#   bash crossbot.sh addr                            print it again: give it to whoever should write to this box
+#   bash crossbot.sh send <link> [body file]         one message (the body from stdin without a file); a bare address works too
 #   bash crossbot.sh flush                           retry what is still in outbox/
 #   bash crossbot.sh recv                            verified mail only, one JSON line each; refused mail goes to quarantine/
 #   bash crossbot.sh rekey [--no-pq]                 a new prekey: at least monthly, as a prekey is valid for 32 days
@@ -67,7 +67,7 @@ cb_prekey(){ # <serial> [--no-pq] → prekeys/<serial>.agekey and its signed sta
   printf 'crossbot-prekey-v1\n%s\n%s\n%s\n%s\n' "$A" "$1" "$(age-keygen -y "$p.agekey")" "$(jq -nr --argjson t "$(cb_now)" '$t + 32*86400 | todate')" > "$p.txt" &&
   ssh-keygen -q -Y sign -n "crossbot-prekey-v1:$A" -f "$CB/identity" < "$p.txt" > "$p.txt.sig"      # stdin to stdout: never a stale .sig
 }
-cb_init(){ # [--no-pq] → creates this box, or finishes a half-done init; registers and activates it; prints its address
+cb_init(){ # [--no-pq] → creates this box, or finishes a half-done init; registers and activates it; prints its link
   cb_opt "${1-}" || return 1
   mkdir -p "$CB/prekeys" "$CB/peers" "$CB/inbox" "$CB/quarantine" "$CB/outbox" && printf '*\n' > "$CB/.gitignore" || return 1
   [ -e "$CB/identity" ] || ssh-keygen -q -t ed25519 -N '' -C '' -f "$CB/identity" < /dev/null || return 1
@@ -78,9 +78,15 @@ cb_init(){ # [--no-pq] → creates this box, or finishes a half-done init; regis
     jq -n --arg i "$(cb_b64 "$CB/identity.doc")" --arg p "$(cb_b64 "$p.txt")" --arg s "$(cb_b64 "$p.txt.sig")" '{identity:$i, prekey:$p, prekey_signature:$s}' > "$CB/register.json"
     cb_api PUT "/v1/$A" "$CB/register.json" > "$CB/token.json" && cb_token "$CB/token.json" || return 1
   fi
-  cb_owner GET "/v1/$A/messages" > /dev/null && echo "$A"      # the first token-authenticated call ACTIVATES the box
+  cb_owner GET "/v1/$A/messages" > /dev/null && cb_addr      # the first token-authenticated call ACTIVATES the box
 }
-cb_addr(){ cat "$CB/address"; }
+cb_addr(){ local a; a=$(cat "$CB/address") && echo "$CB_BASE/to/$a"; }      # the box's link: what to give whoever should write to it
+cb_dest(){ # <link or address> → the address: 64 hex, or taken from a link to this box's server, $CB_BASE/to/<address>
+  local a=${1#"$CB_BASE/to/"}
+  cb_hex "$a" && { echo "$a"; return 0; }
+  [[ $1 != *://* || $1 = "$CB_BASE/"* ]] || { cb_refuse "a link to another server: this box's server is $CB_BASE"; return 1; }
+  cb_refuse "not an address, or a link to one: $1"
+}
 
 # recipe: verify a peer
 cb_idcheck(){ # <identity document> [address] → 0 only for exactly the 93-byte two-line document, its Ed25519 key canonical and not of small order (and hashing to the address, given one)
@@ -132,9 +138,8 @@ cb_resolve(){ # <address> → prints "<serial> <age recipient>" only when EVERY 
 
 # recipe: send
 cb_uuid(){ local h; h=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n'); printf '%s-%s-4%s-%x%s-%s\n' "${h:0:8}" "${h:8:4}" "${h:13:3}" $(( 0x${h:16:1} & 3 | 8 )) "${h:17:3}" "${h:20:12}"; }
-cb_send(){ # <address> [body file] → one logical message, its envelope built ONCE. To retry, run cb_flush, never cb_send again
-  local B=$1 f=${2-} A id; A=$(cat "$CB/address") || return 1
-  cb_hex "$B" || cb_refuse "not an address: $B" || return 1
+cb_send(){ # <link or address> [body file] → one logical message, its envelope built ONCE. To retry, run cb_flush, never cb_send again
+  local B f=${2-} A id; A=$(cat "$CB/address") && B=$(cb_dest "$1") || return 1
   mkdir -p "$CB/outbox" || return 1
   [ -n "$f" ] || { f="$CB/body.txt"; cat > "$f" || return 1; }
   iconv -f UTF-8 -t UTF-8 < "$f" > /dev/null 2>&1 || cb_refuse "the body is not UTF-8 text" || return 1

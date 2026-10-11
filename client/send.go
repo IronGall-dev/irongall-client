@@ -155,7 +155,7 @@ func (b *Box) moveToFailed(stem string) error {
 }
 
 func (b *Box) postSealed(ctx context.Context, to protocol.Address, stem string) (*protocol.Receipt, error) {
-	j, err := os.ReadFile(stem + ".json")
+	j, err := os.ReadFile(stem + ".json") //nolint:gosec // a path inside the box's own directory
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +173,7 @@ func (b *Box) postSealed(ctx context.Context, to protocol.Address, stem string) 
 // seal encrypts the entry's envelope to the peer's VERIFIED current prekey,
 // signs the ciphertext for that peer only, and writes the request to post.
 func (b *Box) seal(ctx context.Context, to protocol.Address, stem string) error {
-	p, err := os.ReadFile(stem + ".P")
+	p, err := os.ReadFile(stem + ".P") //nolint:gosec // a path inside the box's own directory
 	if err != nil {
 		return err
 	}
