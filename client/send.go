@@ -13,21 +13,59 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"filippo.io/age"
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
-// Send sends one logical message: its envelope is built once, kept in the
+// Fields are an envelope's optional fields: the sender's own words about a
+// message, encrypted with it, so the server sees none of them.
+type Fields struct {
+	Subject string
+	// InReplyTo is the msg_id of the message this one answers, as its
+	// envelope carried it: never the id the server lists a message by.
+	InReplyTo string
+	// Supersedes is the msg_id of an earlier message of this box's that this
+	// one replaces. The earlier one is not altered: the recipient decides.
+	Supersedes string
+}
+
+func (f Fields) check() error {
+	if !utf8.ValidString(f.Subject) {
+		return errors.New("the subject is not UTF-8 text: JSON carries text only, and would replace the bad bytes")
+	}
+	for _, id := range []struct{ field, value string }{{"in_reply_to", f.InReplyTo}, {"supersedes", f.Supersedes}} {
+		if id.value != "" && !protocol.IsMsgID(id.value) {
+			return fmt.Errorf("%s is not a msg_id: it names a message by the 36-character msg_id in its envelope, "+
+				"as recv prints it and sent/ keeps it, never by the 64-character id the server gives it", id.field)
+		}
+	}
+	return nil
+}
+
+// Send sends one logical message with none of the optional fields: see
+// [Box.SendWith].
+func (b *Box) Send(ctx context.Context, to protocol.Address, body string) (*protocol.Receipt, error) {
+	return b.SendWith(ctx, to, body, Fields{})
+}
+
+// SendWith sends one logical message: its envelope is built once, kept in the
 // outbox, encrypted to the peer's verified prekey and signed for that peer
 // only, then posted. On 409 stale_prekey it re-encrypts the SAME envelope to
 // the newer prekey, once. If the post fails, the message stays in the outbox:
 // retry with [Box.Flush], never by sending again, or the peer gets it twice.
-func (b *Box) Send(ctx context.Context, to protocol.Address, body string) (*protocol.Receipt, error) {
+// Once the server has it, the envelope and the server's receipt are kept in
+// sent/.
+func (b *Box) SendWith(ctx context.Context, to protocol.Address, body string, f Fields) (*protocol.Receipt, error) {
+	if err := f.check(); err != nil {
+		return nil, err
+	}
 	env, err := protocol.NewEnvelope(b.id.Address(), to, body, b.now())
 	if err != nil {
 		return nil, err
 	}
+	env.Subject, env.InReplyTo, env.Supersedes = f.Subject, f.InReplyTo, f.Supersedes
 	p, err := env.Marshal()
 	if err != nil {
 		return nil, err
@@ -98,12 +136,46 @@ func (b *Box) post(ctx context.Context, to protocol.Address, stem string) (*prot
 		}
 		return nil, fmt.Errorf("%w (it can never be delivered: moved to outbox/failed/)", err)
 	}
+	// Recorded before the outbox entry goes: a crash in between posts it
+	// again, gets the original receipt, and records it again.
+	if err := b.recordSent(stem, r); err != nil {
+		return r, fmt.Errorf("sent, but not recorded in sent/ (still in the outbox: irongall flush records it): %w", err)
+	}
 	for _, ext := range []string{".P", ".age", ".sig", ".json"} {
 		if err := removeIfExists(stem + ext); err != nil {
 			return r, err
 		}
 	}
 	return r, nil
+}
+
+// recordSent keeps a sent message in sent/, under its outbox name,
+// <address>.<msg_id>: its envelope as one line of JSON, as the recipient's
+// recv delivers it, with one more member, "receipt", the server's answer.
+// The client never deletes from sent/.
+func (b *Box) recordSent(stem string, r *protocol.Receipt) error {
+	p, err := os.ReadFile(stem + ".P") //nolint:gosec // a path inside the box's own directory
+	if err != nil {
+		return err
+	}
+	receipt, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	// The envelope is this box's own compact JSON object, so the receipt
+	// goes in as its last member.
+	p = bytes.TrimSpace(p)
+	if !json.Valid(p) || !bytes.HasSuffix(p, []byte("}")) {
+		return errors.New("the outbox entry's envelope is not a JSON object")
+	}
+	line := slices.Concat(p[:len(p)-1], []byte(`,"receipt":`), receipt, []byte("}"))
+	if !json.Valid(line) {
+		return errors.New("the outbox entry's envelope is not a JSON object")
+	}
+	if err := os.MkdirAll(b.path("sent"), 0o700); err != nil {
+		return err
+	}
+	return writeFile(b.path("sent", filepath.Base(stem)+".json"), []byte(lineBreaks.Replace(string(line))))
 }
 
 func (b *Box) trySend(ctx context.Context, to protocol.Address, stem string) (*protocol.Receipt, error) {

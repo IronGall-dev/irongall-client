@@ -10,7 +10,8 @@
 #     plays the hostile operator too: forged keys and identities, rollback, expiry, forged, re-signed and replayed
 #     mail, a newline-injected sender, a wrong id. And the honest paths: two sends in a row, a retried envelope,
 #     renewal with a NEW key, 409 stale_prekey, restore without a token, pagination, the lock, token refresh,
-#     deletion of retired prekeys (forward secrecy), the outbox's failures, and a fault in the box itself.
+#     deletion of retired prekeys (forward secrecy), the outbox's failures, a fault in the box itself, the
+#     optional fields, sent/ and aliases.
 # Needs what irongall.sh needs, but curl. KEYTYPE=auto (default: pq if `age-keygen -pq` works, else no-pq, saying
 # why) · pq · no-pq. The work dir is left in place after the run.
 set -eu
@@ -188,7 +189,7 @@ ig_send "$B" body1 && ig_send "$IG_BASE/to/$B" body2 && ok "two sends in a row, 
 for L in "https://elsewhere.example/to/$B" "$IG_BASE.example/to/$B"; do
   ig_send "$L" body1 2> err.txt && bad "sent to $L" || grep -q "a link to another server: this box's server is $IG_BASE" err.txt && ok "a link to another server is REFUSED: $L" || bad "$L: $(cat err.txt)"; done
 for L in "$IG_BASE/to/$B/" "$IG_BASE/v1/$B" "$(tr a-f A-F <<< "$B")"; do
-  ig_send "$L" body1 2> err.txt && bad "sent to $L" || grep -q "not an address, or a link to one" err.txt && ok "neither an address nor a link to one is REFUSED: $L" || bad "$L: $(cat err.txt)"; done
+  ig_send "$L" body1 2> err.txt && bad "sent to $L" || grep -q "not an address, a link to one, or an alias" err.txt && ok "neither an address, a link to one nor an alias is REFUSED: $L" || bad "$L: $(cat err.txt)"; done
 [ "$(ls $SRV/$B/msgs | awk NF | wc -l)" = 2 ] && [ -z "$(ls $IG/outbox | grep -v '^failed$')" ] && ok "no refused destination made mail" || bad "refused destinations made mail: $(ls $IG/outbox)"
 cp $SRV/$B/msgs/*.json $SRV/; CAPTURED=$(ls $SRV/*.json | head -n1)      # one genuine A→B message, for the replay and re-sign tests
 as B; recv
@@ -332,4 +333,32 @@ ls $W/box/B/quarantine > $W/quarantine.before
 as B; mkdir $W/held; mv $IG/prekeys/*.agekey $W/held/; recv; mv $W/held/*.agekey $IG/prekeys/
 [ $RECV_RC != 0 ] && [ "$(box_count "$B")" = 1 ] && ls $IG/quarantine | diff -q - $W/quarantine.before > /dev/null && printf '%s' "$RECV_ERR" | grep -q "no prekeys" && ok "a fault in the box itself (its prekeys gone) stops the drain: nothing judged, nothing acked" || bad "local fault: $RECV_RC / $RECV_ERR"
 recv; printf '%s' "$RECV_OUT" | jq -e '.body == "kept"' > /dev/null && [ "$(box_count "$B")" = 0 ] && ok "once fixed, the next drain delivers it" || bad "after the fault: $RECV_OUT / $RECV_ERR"
+# --- 12. the optional fields, sent/, and aliases
+as A; printf 'the answer' > body8; R=11111111-2222-4333-8444-555555555555; S=22222222-2222-4333-8444-555555555555
+ig_send --subject "re: yours" --reply-to $R --supersedes $S "$B" body8 || bad "send with options"
+as B; recv
+printf '%s' "$RECV_OUT" | jq -e --arg r $R --arg s $S '.subject == "re: yours" and .in_reply_to == $r and .supersedes == $s and .body == "the answer"' > /dev/null && ok "--subject, --reply-to and --supersedes reach the recipient, in the line it delivers" || bad "options: $RECV_OUT / $RECV_ERR"
+as A; n0=$(grep -c "^POST /v1/$B\$" $SRV/log)
+ig_send --reply-to "$B" "$B" body8 2> err.txt && bad "a 64-character id was taken as a msg_id"; grep -q "not a msg_id" err.txt || bad "not a msg_id: $(cat err.txt)"
+ig_send --supersedes 2> err.txt && bad "an option with no value was taken"; grep -q "needs a value" err.txt || bad "no value: $(cat err.txt)"
+ig_send --urgent yes "$B" body8 2> err.txt && bad "an unknown option was taken"; grep -q "unknown option --urgent" err.txt || bad "unknown option: $(cat err.txt)"
+printf 'bad \377 subject' > badsubject; ig_send --subject "$(cat badsubject)" "$B" body8 2> err.txt && bad "a subject that is not UTF-8 was taken"; grep -q "not UTF-8" err.txt || bad "subject: $(cat err.txt)"
+[ "$(grep -c "^POST /v1/$B\$" $SRV/log)" = "$n0" ] && ! ls $IG/outbox/*.P > /dev/null 2>&1 && ok "a --reply-to that is not a msg_id, an option with no value, an unknown option and a subject that is not UTF-8 are REFUSED before anything is built" || bad "a refused option made mail"
+for f in $IG/sent/*.json; do
+  [ "$(wc -l < "$f")" = 0 ] && [ "$(stat -c %a "$f")" = 600 ] && jq -e --arg n "$(basename "$f" .json)" --arg a "$A" '.to + "." + .msg_id == $n and .from == $a' "$f" > /dev/null || bad "sent/ entry $f"
+  [ "$(sed -n 2p "$SRV/$(jq -r .to "$f")/dedupe/$(jq -r .receipt.id "$f")")" = "$(jq -c .receipt "$f")" ] || bad "the receipt in $f is not the server's"
+done
+ok "sent/ keeps every message the server took: one line each, named <address>.<msg_id>, with the server's receipt"
+f=$(grep -l '"subject":"re: yours"' $IG/sent/*.json); [ "$(jq -c 'del(.receipt)' "$f")" = "$(jq -c . $W/box/B/inbox/$(jq -r .receipt.id "$f").json)" ] && ok "a sent line is the line its recipient delivered, plus the receipt" || bad "sent line: $(cat "$f")"
+for p in $IG/outbox/failed/*.P; do [ ! -e "$IG/sent/$(basename "$p" .P).json" ] || bad "a message refused for good is in sent/: $p"; done; ok "a message that never went is not in sent/"
+as A; [ "$(ig_alias bob "$IG_BASE/to/$B")" = "bob $B" ] && [ "$(ig_alias)" = "bob $B" ] && [ "$(stat -c %a $IG/aliases)" = 600 ] && ok "ig_alias names a peer for this box, in a 0600 file, and lists it" || bad "alias"
+printf 'to bob' > body9; ig_send bob body9 || bad "send to an alias"
+as B; recv; printf '%s' "$RECV_OUT" | jq -e --arg a "$A" '.body == "to bob" and .from == $a' > /dev/null && ok "ig_send takes the alias" || bad "alias send: $RECV_OUT / $RECV_ERR"
+as A; n0=$(grep -c "^POST " $SRV/log)
+ig_alias bob "$C" 2> err.txt && bad "an alias was moved"; grep -q "already names $B" err.txt && [ "$(ig_alias bob "$B")" = "bob $B" ] && [ "$(wc -l < $IG/aliases)" = 1 ] && ok "a name is never moved to another address, and naming the same one again adds nothing" || bad "alias moved: $(cat err.txt)"
+for N in Bob "" -x "$B" "$IG_BASE/to/$B" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; do ig_alias "$N" "$B" 2> err.txt && bad "named '$N'"; grep -q "not an alias" err.txt || bad "name '$N': $(cat err.txt)"; done
+[ "$(wc -l < $IG/aliases)" = 1 ] && ok "a name that is not 1 to 32 of a-z, 0-9, '.', '_' and '-' is REFUSED: never an address, never a link" || bad "a bad name was written"
+ig_send carol body9 2> err.txt && bad "sent to an alias nobody made"; grep -q "no alias named carol" err.txt && ok "an alias nobody made is REFUSED" || bad "carol: $(cat err.txt)"
+echo "bob $C" >> $IG/aliases; ig_send bob body9 2> err.txt && bad "sent to a name with two addresses"; sed -i '$d' $IG/aliases
+grep -q "an alias naming one address" err.txt && [ "$(grep -c "^POST " $SRV/log)" = "$n0" ] && ! ls $IG/outbox/*.P > /dev/null 2>&1 && ok "a name with two addresses names neither, and no refused alias made mail" || bad "two addresses: $(cat err.txt)"
 echo "--- $PASS PASS, 0 FAIL (KEYTYPE=$KEYTYPE)"

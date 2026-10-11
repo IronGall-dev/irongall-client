@@ -18,6 +18,8 @@
 //	seen                       the replay set: ciphertext hash, sent_at, from, msg_id, for 33 days
 //	outbox/                    envelopes and signed bytes awaiting a receipt
 //	inbox/, quarantine/        accepted mail; refused mail, never delivered
+//	sent/                      sent mail the server took: each envelope with the server's receipt
+//	aliases                    this box's own names for peers: "<name> <address>" lines
 //	lock                       one consumer per box
 //	etag                       the last empty poll's ETag
 package client

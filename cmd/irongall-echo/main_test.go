@@ -164,15 +164,15 @@ func TestEchoAnswers(t *testing.T) {
 	if res := receive(t, a); len(res.Delivered) != 0 {
 		t.Fatal("answered twice")
 	}
-	for _, sub := range []string{"inbox", "quarantine", "outbox"} {
+	for _, sub := range []string{"inbox", "quarantine", "outbox", "sent"} {
 		if l := left(t, x.b.Dir(), sub); len(l) != 0 {
 			t.Errorf("%s keeps %v", sub, l)
 		}
 	}
 }
 
-// The reply names the message it answers: its msg_id, sent_at and the
-// SHA-256 of its ciphertext.
+// The reply names the message it answers: its msg_id, as the reply's
+// in_reply_to and in its body, its sent_at and the SHA-256 of its ciphertext.
 func TestEchoNamesTheMessage(t *testing.T) {
 	e := newEnv(t)
 	x, a := e.echo(), e.box()
@@ -188,7 +188,11 @@ func TestEchoNamesTheMessage(t *testing.T) {
 	}
 	msgID = res.Delivered[0].Envelope.MsgID
 	x.reply(ctx, res.Delivered[0])
-	got := body(t, receive(t, a).Delivered[0])
+	reply := receive(t, a).Delivered[0]
+	if reply.Envelope.InReplyTo != msgID {
+		t.Errorf("the reply's in_reply_to is %q, not %s", reply.Envelope.InReplyTo, msgID)
+	}
+	got := body(t, reply)
 	for _, want := range []string{
 		"msg_id: " + msgID + "\n",
 		"ciphertext_sha256: " + r.ID + "\n",

@@ -29,6 +29,10 @@ const (
 // hex and hyphens, as the stock recipe checks it.
 var msgIDGrammar = regexp.MustCompile(`\A[0-9a-f-]{36}\z`)
 
+// IsMsgID reports whether s has the form of a msg_id, as a receiver checks
+// one: what a sender may put in in_reply_to and supersedes.
+func IsMsgID(s string) bool { return msgIDGrammar.MatchString(s) }
+
 // Envelope is a message's plaintext: what is encrypted to the recipient's
 // prekey. The server never sees it.
 type Envelope struct {

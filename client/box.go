@@ -97,10 +97,13 @@ func (b *Box) Address() protocol.Address { return b.id.Address() }
 // should write to it.
 func (b *Box) Link() string { return b.base + protocol.LinkPath + b.Address().String() }
 
-// Destination parses where to send: an address, or a link to one on this
-// box's server. A link to another server is refused, since a box sends only
-// through its own.
+// Destination parses where to send: an address, a link to one on this box's
+// server, or one of this box's aliases (see [Box.SetAlias]). A link to
+// another server is refused, since a box sends only through its own.
 func (b *Box) Destination(s string) (protocol.Address, error) {
+	if aliasGrammar.MatchString(s) {
+		return b.alias(s)
+	}
 	a, err := protocol.ParseAddress(strings.TrimPrefix(s, b.base+protocol.LinkPath))
 	switch {
 	case err == nil:
@@ -108,7 +111,7 @@ func (b *Box) Destination(s string) (protocol.Address, error) {
 	case strings.Contains(s, "://") && !strings.HasPrefix(s, b.base+"/"):
 		return a, refuse("a link to another server: this box's server is %s", b.base)
 	}
-	return a, refuse("not an address, or a link to one: %s", s)
+	return a, refuse("not an address, a link to one, or an alias: %s", s)
 }
 
 // Identity returns the box's identity.
@@ -178,7 +181,7 @@ func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*B
 
 // makeDirs makes the box's directories that are missing.
 func (b *Box) makeDirs() error {
-	for _, d := range []string{"prekeys", "peers", "inbox", "quarantine", "outbox"} {
+	for _, d := range []string{"prekeys", "peers", "inbox", "quarantine", "outbox", "sent"} {
 		if err := os.MkdirAll(b.path(d), 0o700); err != nil {
 			return err
 		}

@@ -26,7 +26,14 @@ const usage = `usage: irongall <command> [arguments]
   addr                     print this box's link, <server>/to/<address>: give it
                            to whoever should write to this box
   send <link> [file]       send a message (the body from file, or stdin); a bare
-                           64-hex address works too
+                           64-hex address or an alias works too. Flags, before
+                           the link: -subject <text>, -reply-to <msg_id> (the
+                           msg_id recv printed for the message this answers),
+                           -supersedes <msg_id> (an earlier message of yours,
+                           as sent/ names it, that this replaces)
+  alias [<name> <link>]    name a peer for this box only, so send takes the
+                           name; with no arguments, list the names;
+                           alias -rm <name> removes one
   flush                    re-post messages still in the outbox; ones that can
                            never be delivered move to outbox/failed/
   recv [-wait duration]    receive, verify and ack every message: one line of
@@ -38,6 +45,8 @@ const usage = `usage: irongall <command> [arguments]
                            lift this box's limits; adopt --leave leaves it
 
 The box lives in $IRONGALL_HOME, or ${XDG_CONFIG_HOME:-~/.config}/irongall/${IRONGALL_BOX:-default}.
+Its inbox/ keeps each message received and its sent/ each message sent, with
+the server's receipt: both are yours to prune.
 The server is $IRONGALL_BASE, or https://irongall.dev.
 
 To try the whole loop, send anything to irongall.dev's echo box,
@@ -97,11 +106,15 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 		return err
 
 	case "send":
+		var f client.Fields
+		fs.StringVar(&f.Subject, "subject", "", "the message's subject")
+		fs.StringVar(&f.InReplyTo, "reply-to", "", "the msg_id of the message this answers, as recv printed it")
+		fs.StringVar(&f.Supersedes, "supersedes", "", "the msg_id of an earlier message of yours that this replaces, as sent/ names it")
 		if err := fs.Parse(args); err != nil {
 			return err
 		}
 		if fs.NArg() < 1 || fs.NArg() > 2 {
-			return errors.New("usage: irongall send <link or address> [file]")
+			return errors.New("usage: irongall send [-subject <text>] [-reply-to <msg_id>] [-supersedes <msg_id>] <link, address or alias> [file] (flags come before the link)")
 		}
 		b, err := client.Open(dir, opt)
 		if err != nil {
@@ -120,12 +133,49 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 		if err != nil {
 			return err
 		}
-		r, err := b.Send(ctx, to, string(body))
+		r, err := b.SendWith(ctx, to, string(body), f)
 		if err != nil {
 			return err
 		}
 		_, err = fmt.Fprintln(stdout, r.ID)
 		return err
+
+	case "alias":
+		rm := fs.String("rm", "", "remove this alias")
+		if err := fs.Parse(args); err != nil {
+			return err
+		}
+		b, err := client.Open(dir, opt)
+		if err != nil {
+			return err
+		}
+		switch {
+		case *rm != "" && fs.NArg() == 0:
+			return b.RemoveAlias(*rm)
+		case *rm == "" && fs.NArg() == 0:
+			as, err := b.Aliases()
+			for _, a := range as {
+				if _, werr := fmt.Fprintf(stdout, "%s %s\n", a.Name, a.Address); werr != nil && err == nil {
+					err = werr
+				}
+			}
+			return err
+		case *rm == "" && fs.NArg() == 2:
+			// The name first, so swapped arguments are told what an alias is.
+			if err := client.ValidAlias(fs.Arg(0)); err != nil {
+				return err
+			}
+			to, err := b.Destination(fs.Arg(1))
+			if err != nil {
+				return err
+			}
+			if err := b.SetAlias(fs.Arg(0), to); err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(stdout, "%s %s\n", fs.Arg(0), to)
+			return err
+		}
+		return errors.New("usage: irongall alias <name> <link or address>, irongall alias (to list them), or irongall alias -rm <name>")
 
 	case "flush":
 		b, err := client.Open(dir, opt)

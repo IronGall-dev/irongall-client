@@ -35,8 +35,14 @@ func need(t *testing.T, tools ...string) {
 
 var scriptTools = []string{"bash", "age", "age-keygen", "ssh-keygen", "jq", "iconv", "sha256sum", "base64", "od", "sync"}
 
-// pq reports whether the local age makes post-quantum keys (age >= 1.3).
-func pq() bool { return exec.Command("age-keygen", "-pq", "-o", os.DevNull).Run() == nil }
+// pq reports whether the local age makes post-quantum keys (age >= 1.3). The
+// key goes to stdout and is dropped: age-keygen refuses -o on a file that
+// exists, /dev/null included, which would make this false on every age.
+func pq() bool { return exec.Command("age-keygen", "-pq").Run() == nil }
+
+// noPQ is what a run on an age without post-quantum support logs: a plain
+// "ok" from go test does not say that only half of the script was tested.
+const noPQ = "the age on PATH has no post-quantum support (that takes age >= 1.3): only --no-pq boxes were tested here"
 
 func abs(t *testing.T, name string) string {
 	t.Helper()
@@ -67,6 +73,15 @@ func TestScript(t *testing.T) {
 	out, err := exec.Command("bash", "test.sh", t.TempDir()).CombinedOutput()
 	if err != nil || !bytes.Contains(out, []byte(" PASS, 0 FAIL")) {
 		t.Fatalf("test.sh: %v\n%s", err, out)
+	}
+	// What ran, for go test -v: test.sh's mode line, then its count.
+	for l := range strings.Lines(string(out)) {
+		if strings.HasPrefix(l, "mode: ") {
+			t.Log(strings.TrimSpace(l))
+		}
+	}
+	if !pq() {
+		t.Log(noPQ)
 	}
 	t.Logf("%s", out[bytes.LastIndex(out, []byte("--- ")):])
 }
@@ -146,6 +161,23 @@ func TestVectorsPrekey(t *testing.T) {
 		_, err = fmt.Sscan(f[2], &notAfter)
 		return f[0], notAfter, err
 	}
+	// On an age older than 1.3 the script cannot encrypt to a post-quantum
+	// prekey, and must say so: there, such a vector is checked for that
+	// refusal, not for its verdict.
+	tooOld := func(stmt string, err error) bool {
+		st, _ := os.ReadFile(stmt) //nolint:gosec // a test vector
+		lines := strings.Split(string(st), "\n")
+		if pq() || len(lines) < 4 || !strings.HasPrefix(lines[3], "age1pq1") {
+			return false
+		}
+		if err == nil || !strings.Contains(err.Error(), "takes age >= 1.3") {
+			t.Errorf("%s: a post-quantum prekey on an age that cannot encrypt to one: %v", stmt, err)
+		}
+		return true
+	}
+	if !pq() {
+		t.Log(noPQ)
+	}
 	for _, c := range []struct{ stmt, sig, addr, signers, serial string }{
 		{"a/prekey-1.txt", "a/prekey-1.txt.sig", a, aSigners, "1"},
 		{"a/prekey-1.txt", "a/prekey-1.txt.sha256.sig", a, aSigners, "1"},
@@ -153,6 +185,9 @@ func TestVectorsPrekey(t *testing.T) {
 		{"b/prekey-1.txt", "b/prekey-1.txt.sig", b, bSigners, "1"},
 	} {
 		s, na, err := check(filepath.Join(vectors, c.stmt), filepath.Join(vectors, c.sig), c.addr, c.signers)
+		if tooOld(filepath.Join(vectors, c.stmt), err) {
+			continue
+		}
 		if err != nil || s != c.serial || na <= now.Unix() {
 			t.Errorf("%s with %s: serial %q, not_after %d, %v", c.stmt, c.sig, s, na, err)
 		}
@@ -168,6 +203,7 @@ func TestVectorsPrekey(t *testing.T) {
 		name := strings.TrimSuffix(filepath.Base(st), ".txt")
 		_, na, err := check(st, st+".sig", a, aSigners)
 		switch {
+		case !strings.HasPrefix(name, "bad-") && tooOld(st, err):
 		case strings.HasPrefix(name, "bad-"):
 			if err == nil {
 				t.Errorf("%s: accepted", name)
@@ -238,6 +274,8 @@ func TestWithGoClient(t *testing.T) {
 	kt, mode := protocol.Classic, "--no-pq"
 	if pq() {
 		kt, mode = protocol.PostQuantum, ""
+	} else {
+		t.Log(noPQ)
 	}
 	shDir, goDir := t.TempDir(), t.TempDir()
 	sh := func(dir, commands string) (string, error) {
@@ -297,5 +335,71 @@ func TestWithGoClient(t *testing.T) {
 	res, err = s.Receive(ctx)
 	if err != nil || len(res.Delivered) != 1 || string(res.Delivered[0].Envelope.Body) != `"from the Go box"` {
 		t.Fatalf("the Go client in the script's box received %+v, %v", res, err)
+	}
+
+	// The optional fields cross between the clients, each keeps what it sent
+	// in sent/ in the same form, and an alias either makes serves both.
+	const answered, replaced = "11111111-2222-4333-8444-555555555555", "22222222-2222-4333-8444-555555555555"
+	if _, err := sh(shDir, fmt.Sprintf("ig_alias go %s && printf 'named by the script' | ig_send --subject 'a subject' --reply-to %s --supersedes %s go", g.Link(), answered, replaced)); err != nil {
+		t.Fatalf("ig_alias, then ig_send with options: %v", err)
+	}
+	res, err = g.Receive(ctx)
+	if err != nil || len(res.Delivered) != 1 {
+		t.Fatalf("the Go client received %+v, %v", res, err)
+	}
+	d := res.Delivered[0]
+	if d.Envelope.Subject != "a subject" || d.Envelope.InReplyTo != answered || d.Envelope.Supersedes != replaced {
+		t.Fatalf("the script's options arrived as %+v", d.Envelope)
+	}
+	sameButReceipt(t, filepath.Join(shDir, "sent", g.Address().String()+"."+d.Envelope.MsgID+".json"), d.Line, d.ID)
+	if to, err := s.Destination("go"); err != nil || to != g.Address() {
+		t.Fatalf("the Go client reads the script's alias as %s, %v", to, err)
+	}
+	if err := g.SetAlias("sh", shAddr); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := sh(goDir, "ig_alias && ig_dest sh"); err != nil || out != "sh "+shAddr.String()+"\n"+shAddr.String()+"\n" {
+		t.Fatalf("the script reads the Go client's alias as %q, %v", out, err)
+	}
+	f := client.Fields{Subject: "from Go", InReplyTo: d.Envelope.MsgID, Supersedes: replaced}
+	r, err := g.SendWith(ctx, shAddr, "answered by Go", f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err = sh(shDir, "ig_recv")
+	var line struct {
+		MsgID      string `json:"msg_id"`
+		Subject    string `json:"subject"`
+		InReplyTo  string `json:"in_reply_to"`
+		Supersedes string `json:"supersedes"`
+	}
+	if err != nil || json.Unmarshal([]byte(out), &line) != nil || line.Subject != f.Subject || line.InReplyTo != f.InReplyTo || line.Supersedes != f.Supersedes {
+		t.Fatalf("ig_recv printed %q, %v", out, err)
+	}
+	sameButReceipt(t, filepath.Join(goDir, "sent", shAddr.String()+"."+line.MsgID+".json"), []byte(out), r.ID)
+}
+
+// sameButReceipt checks a sent/ record: the line its recipient delivered,
+// with one more member, a receipt naming the message by id.
+func sameButReceipt(t *testing.T, record string, delivered []byte, id string) {
+	t.Helper()
+	data, err := os.ReadFile(record) //nolint:gosec // a test's own directory
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got, want map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("%s: %v", record, err)
+	}
+	if err := json.Unmarshal(delivered, &want); err != nil {
+		t.Fatal(err)
+	}
+	receipt, _ := got["receipt"].(map[string]any)
+	if receipt["id"] != id || receipt["received_at"] == nil || receipt["expires_at"] == nil || len(receipt) != 3 {
+		t.Errorf("%s: its receipt is %v, the message %s", record, receipt, id)
+	}
+	delete(got, "receipt")
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("%s holds %v, its recipient delivered %v", record, got, want)
 	}
 }

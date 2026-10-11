@@ -259,9 +259,9 @@ func TestTheLink(t *testing.T) {
 	for to, want := range map[string]string{
 		"https://elsewhere.example/to/" + b.Address().String(): "a link to another server: this box's server is " + srv.URL,
 		srv.URL + ".example/to/" + b.Address().String():        "a link to another server",
-		b.Link() + "/":                          "not an address, or a link to one",
-		srv.URL + "/v1/" + b.Address().String(): "not an address, or a link to one",
-		strings.ToUpper(b.Address().String()):   "not an address, or a link to one",
+		b.Link() + "/":                          "not an address, a link to one, or an alias",
+		srv.URL + "/v1/" + b.Address().String(): "not an address, a link to one, or an alias",
+		strings.ToUpper(b.Address().String()):   "not an address, a link to one, or an alias",
 	} {
 		err := run(ctx, "send", []string{to}, strings.NewReader("x"), io.Discard, io.Discard)
 		var r *client.RefusedError
@@ -306,5 +306,143 @@ func TestRecvSaysARenewalFailed(t *testing.T) {
 	}
 	if !strings.Contains(errs.String(), "due for renewal and was not renewed") || strings.Count(out.String(), "\n") != 1 {
 		t.Fatalf("stdout %q, stderr %q", out.String(), errs.String())
+	}
+}
+
+// send's flags set the envelope's optional fields, and the recipient's recv
+// prints them. A -reply-to that is not a msg_id, or a flag after the link,
+// is refused before any mail is made.
+func TestSendFlags(t *testing.T) {
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	opt := client.Options{Base: srv.URL}
+	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("IRONGALL_BASE", srv.URL)
+	t.Setenv("IRONGALL_HOME", a.Dir())
+	const first, old = "11111111-2222-4333-8444-555555555555", "22222222-2222-4333-8444-555555555555"
+	var id bytes.Buffer
+	args := []string{"-subject", "re: yours", "--reply-to", first, "-supersedes", old, b.Link()}
+	if err := run(ctx, "send", args, strings.NewReader("the answer"), &id, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"-reply-to", strings.TrimSpace(id.String()), b.Link()},
+		{b.Link(), "-subject", "after the link"},
+		{"-urgent", b.Link()},
+	} {
+		if err := run(ctx, "send", args, strings.NewReader("refused"), io.Discard, io.Discard); err == nil {
+			t.Errorf("send %v was taken", args)
+		}
+	}
+	if made, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "*.P")); len(made) != 0 {
+		t.Fatalf("a refused send left mail in the outbox: %v", made)
+	}
+
+	// sent/ keeps it, with the receipt whose id send printed.
+	recs, _ := filepath.Glob(filepath.Join(a.Dir(), "sent", b.Address().String()+".*.json"))
+	if len(recs) != 1 {
+		t.Fatalf("sent/ holds %v", recs)
+	}
+	var rec struct {
+		Body    string
+		Subject string
+		Receipt protocol.Receipt
+	}
+	if err := json.Unmarshal(must(t, recs[0]), &rec); err != nil || rec.Body != "the answer" || rec.Subject != "re: yours" || rec.Receipt.ID+"\n" != id.String() {
+		t.Fatalf("the record: %+v, %v; send printed %q", rec, err, id.String())
+	}
+
+	t.Setenv("IRONGALL_HOME", b.Dir())
+	var out, errs bytes.Buffer
+	if err := run(ctx, "recv", nil, strings.NewReader(""), &out, &errs); err != nil {
+		t.Fatalf("recv: %v %s", err, errs.String())
+	}
+	var line struct {
+		Body       string `json:"body"`
+		Subject    string `json:"subject"`
+		InReplyTo  string `json:"in_reply_to"`
+		Supersedes string `json:"supersedes"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &line); err != nil || line.Body != "the answer" || line.Subject != "re: yours" || line.InReplyTo != first || line.Supersedes != old {
+		t.Fatalf("recv printed %q: %v", out.String(), err)
+	}
+}
+
+// alias names a peer for this box, lists the names and removes one, and send
+// takes a name where it takes a link.
+func TestAliasCommand(t *testing.T) {
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	opt := client.Options{Base: srv.URL}
+	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("IRONGALL_BASE", srv.URL)
+	t.Setenv("IRONGALL_HOME", a.Dir())
+	cmd := func(name string, args ...string) (string, error) {
+		var out bytes.Buffer
+		err := run(ctx, name, args, strings.NewReader("to a name"), &out, io.Discard)
+		return out.String(), err
+	}
+	bob, zed := "bob "+b.Address().String()+"\n", "zed "+c.Address().String()+"\n"
+	if out, err := cmd("alias", "zed", c.Address().String()); err != nil || out != zed {
+		t.Fatalf("alias zed: %q %v", out, err)
+	}
+	if out, err := cmd("alias", "bob", b.Link()); err != nil || out != bob {
+		t.Fatalf("alias bob: %q %v", out, err)
+	}
+	if out, err := cmd("alias"); err != nil || out != bob+zed {
+		t.Fatalf("alias printed %q, %v", out, err)
+	}
+	if _, err := cmd("send", "bob"); err != nil {
+		t.Fatalf("send bob: %v", err)
+	}
+	if res, err := b.Receive(ctx); err != nil || len(res.Delivered) != 1 {
+		t.Fatalf("bob received %+v, %v", res, err)
+	}
+	if res, err := c.Receive(ctx); err != nil || len(res.Delivered) != 0 {
+		t.Fatalf("zed received %+v, %v", res, err)
+	}
+	// Swapped arguments are told what an alias is; a name is never moved; a
+	// name nobody made is no destination.
+	for want, args := range map[string][]string{
+		"not an alias":  {b.Link(), "bob"},
+		"already names": {"bob", c.Link()},
+		"usage":         {"bob"},
+	} {
+		if _, err := cmd("alias", args...); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("alias %v: %v, want %q", args, err, want)
+		}
+	}
+	if _, err := cmd("send", "carol"); err == nil || !strings.Contains(err.Error(), "no alias named carol") {
+		t.Errorf("send carol: %v", err)
+	}
+	if _, err := cmd("alias", "-rm", "bob"); err != nil {
+		t.Fatalf("alias -rm: %v", err)
+	}
+	if out, err := cmd("alias"); err != nil || out != zed {
+		t.Fatalf("after -rm, alias printed %q, %v", out, err)
+	}
+	if _, err := cmd("send", "bob"); err == nil {
+		t.Fatal("sent to a removed alias")
+	}
+	if made, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "*.P")); len(made) != 0 {
+		t.Fatalf("a refused destination left mail in the outbox: %v", made)
 	}
 }

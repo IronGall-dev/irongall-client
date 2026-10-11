@@ -8,7 +8,9 @@
 #
 #   bash irongall.sh init [--no-pq]                  make and register this box; prints its link, $IG_BASE/to/<address>
 #   bash irongall.sh addr                            print it again: give it to whoever should write to this box
-#   bash irongall.sh send <link> [body file]         one message (the body from stdin without a file); a bare address works too
+#   bash irongall.sh send [options] <link> [file]    one message (the body from stdin without a file); an address or an alias works too.
+#                                                    Options: --subject <text>, --reply-to <msg_id>, --supersedes <msg_id>
+#   bash irongall.sh alias [<name> <link>]           name a peer for this box only, so send takes the name; without arguments, list them
 #   bash irongall.sh flush                           retry what is still in outbox/
 #   bash irongall.sh recv                            verified mail only, one JSON line each; refused mail goes to quarantine/
 #   bash irongall.sh rekey [--no-pq]                 a new prekey: at least monthly, as a prekey is valid for 33 days
@@ -16,8 +18,8 @@
 # Or source it at the top of every shell call and call the ig_* functions. Agent tools run each command in a fresh
 # shell, so all state lives in files in the box's directory, never in variables.
 #
-# It gives up conveniences the Go client has: recv drains once and never waits for mail, there is no MCP server, and
-# each step runs several programs. Needs bash >= 4, age >= 1.3 (1.2 makes and reaches --no-pq boxes only), OpenSSH
+# It gives up conveniences the Go client has: recv drains once and never waits for mail, and each step runs several
+# programs. Needs bash >= 4, age >= 1.3 (1.2 makes and reaches --no-pq boxes only), OpenSSH
 # >= 8.1, curl >= 7.76, jq >= 1.6, iconv, and coreutils (sha256sum, base64, od, sync).
 
 # recipe: setup
@@ -69,7 +71,7 @@ ig_prekey(){ # <serial> [--no-pq] → prekeys/<serial>.agekey and its signed sta
 }
 ig_init(){ # [--no-pq] → creates this box, or finishes a half-done init; registers and activates it; prints its link
   ig_opt "${1-}" || return 1
-  mkdir -p "$IG/prekeys" "$IG/peers" "$IG/inbox" "$IG/quarantine" "$IG/outbox" && printf '*\n' > "$IG/.gitignore" || return 1
+  mkdir -p "$IG/prekeys" "$IG/peers" "$IG/inbox" "$IG/quarantine" "$IG/outbox" "$IG/sent" && printf '*\n' > "$IG/.gitignore" || return 1
   [ -e "$IG/identity" ] || ssh-keygen -q -t ed25519 -N '' -C '' -f "$IG/identity" < /dev/null || return 1
   printf 'irongall-v1\n%s\n' "$(cut -d' ' -f1,2 "$IG/identity.pub")" > "$IG/identity.doc"
   sha256sum < "$IG/identity.doc" | cut -c1-64 > "$IG/address" && ig_prekey 1 "${1-}" || return 1
@@ -81,11 +83,23 @@ ig_init(){ # [--no-pq] → creates this box, or finishes a half-done init; regis
   ig_owner GET "/v1/$A/messages" > /dev/null && ig_addr      # the first token-authenticated call ACTIVATES the box
 }
 ig_addr(){ local a; a=$(cat "$IG/address") && echo "$IG_BASE/to/$a"; }      # the box's link: what to give whoever should write to it
-ig_dest(){ # <link or address> → the address: 64 hex, or taken from a link to this box's server, $IG_BASE/to/<address>
+ig_dest(){ # <link, address or alias> → the address: 64 hex, or taken from a link to this box's server, $IG_BASE/to/<address>, or the one address $IG/aliases gives the name
   local a=${1#"$IG_BASE/to/"}
+  if ig_name "$1"; then a=$(awk -v n="$1" '$1 == n {print $2}' "$IG/aliases" 2> /dev/null | sort -u); [ -n "$a" ] || { ig_refuse "no alias named $1: ig_alias lists them, and names one"; return 1; }; fi
   ig_hex "$a" && { echo "$a"; return 0; }
   [[ $1 != *://* || $1 = "$IG_BASE/"* ]] || { ig_refuse "a link to another server: this box's server is $IG_BASE"; return 1; }
-  ig_refuse "not an address, or a link to one: $1"
+  ig_refuse "not an address, a link to one, or an alias naming one address: $1"
+}
+ig_name(){ [[ $1 =~ ^[a-z0-9][a-z0-9._-]{0,31}$ ]]; }   # an alias: never 64 hex, never a link
+ig_alias(){ # [<name> <link or address>] → names a peer for this box only, one "<name> <address>" line in $IG/aliases; without arguments, lists them. A name is never moved: to change or drop one, delete its line
+  [ $# -gt 0 ] || { cat "$IG/aliases" 2> /dev/null; return 0; }
+  local a have
+  ig_name "$1" || { ig_refuse "not an alias: $1 (1 to 32 of a-z, 0-9, '.', '_' and '-', starting with a letter or a digit)"; return 1; }
+  a=$(ig_dest "${2-}") || return 1
+  have=$(awk -v n="$1" '$1 == n {print $2}' "$IG/aliases" 2> /dev/null | sort -u)
+  [ -z "$have" ] || [ "$have" = "$a" ] || { ig_refuse "alias $1 already names $have: delete its line in $IG/aliases first"; return 1; }
+  [ -n "$have" ] || echo "$1 $a" >> "$IG/aliases" || return 1
+  echo "$1 $a"
 }
 
 # recipe: verify a peer
@@ -120,7 +134,10 @@ ig_prekeycheck(){ # <statement> <signature> <address> <signers file> → "<seria
   [ "$(wc -l < "$p")" -eq 5 ] && [ "$(tail -c 1 "$p" | od -An -tx1 | tr -d ' \n')" = 0a ] && [ "$(sed -n 1p "$p")" = irongall-prekey-v1 ] && [ "$(sed -n 2p "$p")" = "$B" ] ||
     { echo "the prekey statement is not $B's: five lines, each ending in LF"; return 1; }
   s=$(sed -n 3p "$p"); [[ $s =~ ^[1-9][0-9]{0,17}$ ]] || { echo "$B's prekey serial is malformed"; return 1; }
-  k=$(sed -n 4p "$p"); age -r "$k" < /dev/null > /dev/null 2>&1 || { echo "$B's prekey is not an age key that age will encrypt to"; return 1; }
+  k=$(sed -n 4p "$p")
+  if ! age -r "$k" < /dev/null > /dev/null 2>&1; then
+    if [[ $k = age1pq1* ]]; then echo "$B's prekey is post-quantum, and this age ($(age --version 2> /dev/null)) cannot encrypt to one: that takes age >= 1.3"; else echo "$B's prekey is not an age key that age will encrypt to"; fi; return 1
+  fi
   na=$(ig_time "$(sed -n 5p "$p")") || { echo "$B's prekey has no valid not_after"; return 1; }
   echo "$s $k $na"
 }
@@ -138,13 +155,20 @@ ig_resolve(){ # <address> → prints "<serial> <age recipient>" only when EVERY 
 
 # recipe: send
 ig_uuid(){ local h; h=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n'); printf '%s-%s-4%s-%x%s-%s\n' "${h:0:8}" "${h:8:4}" "${h:13:3}" $(( 0x${h:16:1} & 3 | 8 )) "${h:17:3}" "${h:20:12}"; }
-ig_send(){ # <link or address> [body file] → one logical message, its envelope built ONCE. To retry, run ig_flush, never ig_send again
-  local B f=${2-} A id; A=$(cat "$IG/address") && B=$(ig_dest "$1") || return 1
+ig_send(){ # [--subject <text>] [--reply-to <msg_id>] [--supersedes <msg_id>] <link, address or alias> [body file] → one logical message, its envelope built ONCE. To retry, run ig_flush, never ig_send again
+  local B f A id s= r= x= v
+  while [[ ${1-} = --* ]]; do      # --reply-to: the msg_id recv printed for the message this answers. --supersedes: an earlier message of this box's, as sent/ names it
+    [ $# -ge 2 ] || { ig_refuse "$1 needs a value"; return 1; }
+    case $1 in --subject) s=$2 ;; --reply-to) r=$2 ;; --supersedes) x=$2 ;; *) ig_refuse "unknown option $1: --subject, --reply-to or --supersedes, before the link"; return 1 ;; esac; shift 2
+  done
+  for v in "$r" "$x"; do [[ -z $v || $v =~ ^[0-9a-f-]{36}$ ]] || { ig_refuse "not a msg_id: $v (the 36-character msg_id in a message's envelope, never the 64-character id the server gives it)"; return 1; }; done
+  f=${2-}; A=$(cat "$IG/address") && B=$(ig_dest "${1-}") || return 1
   mkdir -p "$IG/outbox" || return 1
   [ -n "$f" ] || { f="$IG/body.txt"; cat > "$f" || return 1; }
-  iconv -f UTF-8 -t UTF-8 < "$f" > /dev/null 2>&1 || ig_refuse "the body is not UTF-8 text" || return 1
+  iconv -f UTF-8 -t UTF-8 < "$f" > /dev/null 2>&1 && printf %s "$s" | iconv -f UTF-8 -t UTF-8 > /dev/null 2>&1 || ig_refuse "the body or the subject is not UTF-8 text" || return 1
   id=$(ig_uuid) || return 1
-  jq -cn --arg from "$A" --arg to "$B" --arg id "$id" --argjson t "$(ig_now)" --rawfile body "$f" '{v:1, from:$from, to:$to, sent_at:($t|todate), msg_id:$id, body:$body}' > "$IG/outbox/$B.$id.P" || return 1
+  jq -cn --arg from "$A" --arg to "$B" --arg id "$id" --argjson t "$(ig_now)" --rawfile body "$f" --arg s "$s" --arg r "$r" --arg x "$x" \
+    '{v:1, from:$from, to:$to, sent_at:($t|todate), msg_id:$id, body:$body} + ([{subject:$s}, {in_reply_to:$r}, {supersedes:$x}] | map(select(.[] != "")) | add // {})' > "$IG/outbox/$B.$id.P" || return 1
   ig_post "$B" "$IG/outbox/$B.$id"
 }
 ig_seal(){ # <address> <outbox stem> → <stem>.json: <stem>.P encrypted to the VERIFIED prekey, and signed for that recipient only
@@ -157,13 +181,17 @@ ig_post(){ # <address> <outbox stem> → POSTs it, sealing it first; on 409 stal
   if sa=$(ig_time "$(jq -r .sent_at "$o.P" 2> /dev/null)") && [ "$sa" -lt $(($(ig_now) - 33*86400)) ]; then      # the server would take it, and every recipient refuses it
     ig_failed "$o"; ig_refuse "its envelope is older than 33 days, and every recipient refuses that: moved to outbox/failed/"; return 1
   fi
-  { [ -e "$o.json" ] || ig_seal "$B" "$o"; } && ig_api POST "/v1/$B" "$o.json" > /dev/null && { rm -f "$o.P" "$o.age" "$o.sig" "$o.json"; return 0; }
-  if [ "$(ig_code)" = stale_prekey ]; then ig_seal "$B" "$o" && ig_api POST "/v1/$B" "$o.json" > /dev/null && { rm -f "$o.P" "$o.age" "$o.sig" "$o.json"; return 0; }; fi
+  { [ -e "$o.json" ] || ig_seal "$B" "$o"; } && ig_api POST "/v1/$B" "$o.json" > "$IG/receipt.json" && { ig_sent "$o"; return; }
+  if [ "$(ig_code)" = stale_prekey ]; then ig_seal "$B" "$o" && ig_api POST "/v1/$B" "$o.json" > "$IG/receipt.json" && { ig_sent "$o"; return; }; fi
   case $(ig_code) in
     revoked | sender_revoked | bad_address | too_large | conflict) ig_failed "$o"; echo "it can never be delivered: moved to outbox/failed/" >&2 ;;
     *) echo "kept in the outbox: retry with ig_flush" >&2 ;;
   esac
   return 1
+}
+ig_sent(){ # <outbox stem> → sent/<address>.<msg_id>.json: the envelope as one line, as the recipient's recv delivers it, with the server's receipt. Stored, and only then does the outbox entry go. sent/ is yours to prune
+  local t="$IG/sent/${1##*/}.json"
+  mkdir -p "$IG/sent" && ig_line "$1.P" "$IG/receipt.json" > "$t" && sync "$t" "$IG/sent" && rm -f "$1.P" "$1.age" "$1.sig" "$1.json" || { echo "sent, but not recorded in sent/ (still in the outbox: ig_flush records it)" >&2; return 1; }
 }
 ig_failed(){ # <outbox stem> → moves its files to outbox/failed/, where ig_flush no longer sees them. Delete them there to drop the message
   local f; mkdir -p "$IG/outbox/failed" || return 1
@@ -234,8 +262,8 @@ ig_envcheck(){ # <envelope> <signer> <this box> → 0 only for one UTF-8 JSON ob
     { echo "the inner from/to do not match the signer and this box (re-attribution), or the envelope is malformed"; return 1; }
   sa=$(ig_time "$(jq -r .sent_at "$e")") && [ "$sa" -ge $(($(ig_now) - 33*86400)) ] || { echo "sent_at is older than 33 days, or malformed"; return 1; }
 }
-ig_line(){ # <checked envelope> → the one line delivered: built from the checked fields, never the sender's bytes, with U+0085, U+2028 and U+2029 escaped (Python's splitlines and Node's readline end lines there)
-  jq -j '{v: 1, from, to, sent_at, msg_id, body} + ([{subject}, {in_reply_to}, {supersedes}] | map(select(.[] | . != null and . != "")) | add // {}) | tojson | gsub("\u0085"; "\\u0085") | gsub("\u2028"; "\\u2028") | gsub("\u2029"; "\\u2029")' "$1"
+ig_line(){ # <checked envelope> [receipt] → the one line delivered: built from the checked fields, never the sender's bytes, with U+0085, U+2028 and U+2029 escaped (Python's splitlines and Node's readline end lines there). ig_sent adds the server's receipt as its last member
+  jq -j --slurpfile r "${2:-/dev/null}" '{v: 1, from, to, sent_at, msg_id, body} + ([{subject}, {in_reply_to}, {supersedes}] | map(select(.[] | . != null and . != "")) | add // {}) + ($r[0] | if . then {receipt: {id, received_at, expires_at}} else {} end) | tojson | gsub("\u0085"; "\\u0085") | gsub("\u2028"; "\\u2028") | gsub("\u2029"; "\\u2029")' "$1"
 }
 ig_seen(){ # <sender> <message stem> <hash> → the message, in the replay set and on disk
   local new=; [ -e "$IG/seen" ] || new=$IG
@@ -274,7 +302,7 @@ ig_prune(){ # deletes every retired prekey past its deletion time: its not_after
 # Run as a command, not sourced.
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   case ${1-} in
-    init | addr | send | flush | recv | rekey) cmd=ig_$1; shift; "$cmd" "$@"; exit ;;
-    *) sed -n '9,14p' "$0" | sed 's/^# *//' >&2; exit 2 ;;
+    init | addr | send | alias | flush | recv | rekey) cmd=ig_$1; shift; "$cmd" "$@"; exit ;;
+    *) sed -n '9,16p' "$0" | sed 's/^# *//' >&2; exit 2 ;;
   esac
 fi

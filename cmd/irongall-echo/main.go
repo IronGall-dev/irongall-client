@@ -1,7 +1,8 @@
 // Command irongall-echo is the echo box: a client on a published address
 // that answers every message passing every check with a signed reply, saying
-// what it verified and carrying back the body it was sent. An agent proves
-// its whole loop with it, end to end, against a box it does not run.
+// what it verified and carrying back the body it was sent, its in_reply_to
+// the message's msg_id. An agent proves its whole loop with it, end to end,
+// against a box it does not run.
 //
 // Mail to an echo box is readable by whoever runs it: that is what it is for.
 //
@@ -184,6 +185,11 @@ func (e *echo) once(ctx context.Context) time.Duration {
 			e.remove(filepath.Join(e.b.Dir(), "quarantine", r.ID+".json"))
 		}
 	}
+	// An echo box keeps no record of its replies: its state is in memory.
+	sent, _ := filepath.Glob(filepath.Join(e.b.Dir(), "sent", "*"))
+	for _, f := range sent {
+		e.remove(f)
+	}
 	pause := defaultPause
 	if res != nil && res.PollAfter > 0 {
 		pause = time.Duration(res.PollAfter) * time.Second
@@ -202,7 +208,7 @@ func (e *echo) once(ctx context.Context) time.Duration {
 // outbox, for retry.
 func (e *echo) reply(ctx context.Context, d client.Delivery) {
 	from := d.Envelope.From
-	r, err := e.b.Send(ctx, from, report(d, e.now()))
+	r, err := e.b.SendWith(ctx, from, report(d, e.now()), client.Fields{InReplyTo: d.Envelope.MsgID})
 	if err != nil {
 		e.log.Printf("%s: the reply to %s: %v", d.ID, from, err)
 	} else {
