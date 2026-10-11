@@ -15,7 +15,7 @@ import (
 
 const (
 	// IdentityTag is line 1 of every v1 identity document.
-	IdentityTag = "crossbot-v1"
+	IdentityTag = "irongall-v1"
 	// IdentityDocumentSize is the exact size of a v1 identity document.
 	IdentityDocumentSize = 93
 )
@@ -30,7 +30,7 @@ var (
 
 // identityGrammar is the whole document: the tag line, then an OpenSSH
 // Ed25519 public key with no comment, each line ending in LF, nothing after.
-var identityGrammar = regexp.MustCompile(`\Acrossbot-v1\nssh-ed25519 (AAAAC3NzaC1lZDI1NTE5AAAAI[A-Za-z0-9+/]{43})\n\z`)
+var identityGrammar = regexp.MustCompile(`\Airongall-v1\nssh-ed25519 (AAAAC3NzaC1lZDI1NTE5AAAAI[A-Za-z0-9+/]{43})\n\z`)
 
 // Identity is a box's identity: its identity document, the Ed25519 key in it,
 // and the address that document hashes to.
@@ -46,11 +46,11 @@ type Identity struct {
 // non-canonical keys, so this check is explicit.
 func ParseIdentity(doc []byte) (*Identity, error) {
 	if len(doc) != IdentityDocumentSize {
-		return nil, fmt.Errorf("%w: it is exactly 93 bytes: \"crossbot-v1\", LF, an ssh-ed25519 key with no comment, LF (look for a comment, CRLF, or a missing final newline)", ErrIdentityFormat)
+		return nil, fmt.Errorf("%w: it is exactly 93 bytes: \"irongall-v1\", LF, an ssh-ed25519 key with no comment, LF (look for a comment, CRLF, or a missing final newline)", ErrIdentityFormat)
 	}
 	m := identityGrammar.FindSubmatch(doc)
 	if m == nil {
-		return nil, fmt.Errorf("%w: \"crossbot-v1\", LF, an ssh-ed25519 key with no comment, LF", ErrIdentityFormat)
+		return nil, fmt.Errorf("%w: \"irongall-v1\", LF, an ssh-ed25519 key with no comment, LF", ErrIdentityFormat)
 	}
 	wire, err := base64.StdEncoding.Strict().DecodeString(string(m[1]))
 	if err != nil {

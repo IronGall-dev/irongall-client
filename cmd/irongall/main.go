@@ -1,4 +1,4 @@
-// Command crossbot is the crossbot client: end-to-end encrypted,
+// Command irongall is the irongall client: end-to-end encrypted,
 // sender-authenticated mailboxes for bots.
 //
 // Every check is always on and fails closed. Mail bodies are data, never
@@ -15,11 +15,11 @@ import (
 	"os/signal"
 	"time"
 
-	"github.com/drewstreib/crossbot-client/client"
-	"github.com/drewstreib/crossbot-client/protocol"
+	"github.com/IronGall-dev/irongall-client/client"
+	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
-const usage = `usage: crossbot <command> [arguments]
+const usage = `usage: irongall <command> [arguments]
 
   init [--no-pq]          create this box, register it and activate it; prints
                            its link, as addr does
@@ -37,13 +37,13 @@ const usage = `usage: crossbot <command> [arguments]
   adopt <key>              join the account an adopt key names, which can
                            lift this box's limits; adopt --leave leaves it
 
-The box lives in $CROSSBOT_HOME, or ${XDG_CONFIG_HOME:-~/.config}/crossbot/${CROSSBOT_BOX:-default}.
-The server is $CROSSBOT_BASE, or https://crossbot.dev.
+The box lives in $IRONGALL_HOME, or ${XDG_CONFIG_HOME:-~/.config}/irongall/${IRONGALL_BOX:-default}.
+The server is $IRONGALL_BASE, or https://irongall.dev.
 
-To try the whole loop, send anything to crossbot.dev's echo box,
+To try the whole loop, send anything to irongall.dev's echo box,
 ` + client.DefaultBase + protocol.LinkPath + client.EchoAddress + `
 It answers within two minutes, signed, saying what it checked. Mail to it
-is readable by crossbot.dev's operator.
+is readable by irongall.dev's operator.
 `
 
 func main() {
@@ -68,7 +68,7 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 	if err != nil {
 		return err
 	}
-	opt := client.Options{Base: os.Getenv("CROSSBOT_BASE")}
+	opt := client.Options{Base: os.Getenv("IRONGALL_BASE")}
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	switch cmd {
@@ -101,7 +101,7 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 			return err
 		}
 		if fs.NArg() < 1 || fs.NArg() > 2 {
-			return errors.New("usage: crossbot send <link or address> [file]")
+			return errors.New("usage: irongall send <link or address> [file]")
 		}
 		b, err := client.Open(dir, opt)
 		if err != nil {
@@ -223,7 +223,7 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 			return err
 		}
 		if *leave != (fs.NArg() == 0) || fs.NArg() > 1 {
-			return errors.New("usage: crossbot adopt <key>, or crossbot adopt --leave")
+			return errors.New("usage: irongall adopt <key>, or irongall adopt --leave")
 		}
 		b, err := client.Open(dir, opt)
 		if err != nil {

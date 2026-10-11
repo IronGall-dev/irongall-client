@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"filippo.io/age"
-	"github.com/drewstreib/crossbot-client/client"
-	"github.com/drewstreib/crossbot-client/protocol"
+	"github.com/IronGall-dev/irongall-client/client"
+	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
 // When things fail, mail is never lost and never delivered twice: a
@@ -188,7 +188,7 @@ func TestTokenStaleIsRefreshed(t *testing.T) {
 	}
 }
 
-// A refreshed token in a Crossbot-Token header is kept.
+// A refreshed token in a Irongall-Token header is kept.
 func TestTokenHeaderIsKept(t *testing.T) {
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
@@ -197,7 +197,7 @@ func TestTokenHeaderIsKept(t *testing.T) {
 	r, _ := p.Recipient()
 	var ct bytes.Buffer
 	w, _ := age.Encrypt(&ct, r)
-	_, _ = io.WriteString(w, "cbt1_refreshed")
+	_, _ = io.WriteString(w, "igt1_refreshed")
 	_ = w.Close()
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		w.Header().Set(protocol.TokenHeader, base64.StdEncoding.EncodeToString(ct.Bytes()))
@@ -206,8 +206,8 @@ func TestTokenHeaderIsKept(t *testing.T) {
 	if _, err := b.Receive(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if tok, _ := os.ReadFile(filepath.Join(b.Dir(), "token")); string(tok) != "cbt1_refreshed" {
-		t.Fatalf("token %q: the Crossbot-Token header was not kept", tok)
+	if tok, _ := os.ReadFile(filepath.Join(b.Dir(), "token")); string(tok) != "igt1_refreshed" {
+		t.Fatalf("token %q: the Irongall-Token header was not kept", tok)
 	}
 }
 

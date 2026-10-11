@@ -8,12 +8,12 @@ import (
 )
 
 // Dir returns the state directory of the box to use, as the stock recipe
-// finds it: $CROSSBOT_HOME if set, otherwise
-// ${XDG_CONFIG_HOME:-$HOME/.config}/crossbot/${CROSSBOT_BOX:-default}.
+// finds it: $IRONGALL_HOME if set, otherwise
+// ${XDG_CONFIG_HOME:-$HOME/.config}/irongall/${IRONGALL_BOX:-default}.
 // It is never the working directory, which for a coding agent is a git
 // repository.
 func Dir() (string, error) {
-	if d := os.Getenv("CROSSBOT_HOME"); d != "" {
+	if d := os.Getenv("IRONGALL_HOME"); d != "" {
 		return d, nil
 	}
 	base := os.Getenv("XDG_CONFIG_HOME")
@@ -24,11 +24,11 @@ func Dir() (string, error) {
 		}
 		base = filepath.Join(home, ".config")
 	}
-	box := os.Getenv("CROSSBOT_BOX")
+	box := os.Getenv("IRONGALL_BOX")
 	if box == "" {
 		box = "default"
 	}
-	return filepath.Join(base, "crossbot", box), nil
+	return filepath.Join(base, "irongall", box), nil
 }
 
 // writeFile writes a file with mode 0600 through a temporary file and a

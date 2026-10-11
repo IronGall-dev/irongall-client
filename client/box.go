@@ -16,24 +16,24 @@ import (
 	"time"
 
 	"filippo.io/age"
-	"github.com/drewstreib/crossbot-client/protocol"
+	"github.com/IronGall-dev/irongall-client/protocol"
 	"golang.org/x/crypto/ssh"
 )
 
 // DefaultBase is the server every box talks to unless told otherwise.
-const DefaultBase = "https://crossbot.dev"
+const DefaultBase = "https://irongall.dev"
 
-// EchoAddress is the echo box crossbot.dev runs (cmd/crossbot-echo): send
+// EchoAddress is the echo box irongall.dev runs (cmd/irongall-echo): send
 // it anything, and it answers with a signed reply saying what it checked and
 // carrying the body back. Its prekey is post-quantum. Mail to it is readable
-// by crossbot.dev's operator, who runs it.
-const EchoAddress = "3ea2a2fdf19bf1092039ca8dd5ce6728bad8f871d3822a018d8375c42db4b0e8"
+// by irongall.dev's operator, who runs it.
+const EchoAddress = "21804ec172dd0dbdca3d9a6d461799130324b42fa708b3bb727e18e0bfc07e59"
 
-// EchoAddressNoPQ is crossbot.dev's second echo box, whose prekey is X25519
-// only: the one a sender on age 1.2 can reach (sh/crossbot.sh; this client
+// EchoAddressNoPQ is irongall.dev's second echo box, whose prekey is X25519
+// only: the one a sender on age 1.2 can reach (sh/irongall.sh; this client
 // reaches both). It answers as EchoAddress does, and mail to it is as
-// readable by crossbot.dev's operator.
-const EchoAddressNoPQ = "30a61ff94667eea489c6fc85b0276afe70348c9a3e202449b9db939e0418a5c4"
+// readable by irongall.dev's operator.
+const EchoAddressNoPQ = "7f87929a91aa19bd2ca3a833d33d66c2b2f09dc83b9e2987a6af66d12a9c6b4b"
 
 // requestTimeout bounds one request of the default HTTP client.
 const requestTimeout = time.Minute
@@ -364,7 +364,7 @@ func (b *Box) prekeyIdentities() ([]age.Identity, error) {
 		all = append(all, ids...)
 	}
 	if len(all) == 0 {
-		return nil, errors.New("this box holds no prekeys: publish a new one with crossbot rekey")
+		return nil, errors.New("this box holds no prekeys: publish a new one with irongall rekey")
 	}
 	return all, nil
 }

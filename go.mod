@@ -1,4 +1,4 @@
-module github.com/drewstreib/crossbot-client
+module github.com/IronGall-dev/irongall-client
 
 go 1.26.0
 

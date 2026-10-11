@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerates the crossbot v1 test vectors with stock tools only: bash, od, base64, fold,
+# Regenerates the irongall v1 test vectors with stock tools only: bash, od, base64, fold,
 # sha256sum and ssh-keygen (OpenSSH >= 8.1), plus age >= 1.3 for the one ciphertext.
 # Everything is deterministic (Ed25519 signatures are), except message/a-to-b.age, which is
 # made once and kept. Inputs are in input/: the two identity keys are the PUBLISHED test keys
@@ -29,7 +29,7 @@ openssh_key() { # <seed hex> <public hex> <file>
     echo '-----END OPENSSH PRIVATE KEY-----'; } > "$3"
 }
 # An identity document for a raw 32-byte Ed25519 key in hex, valid or not.
-identity_doc() { printf 'crossbot-v1\nssh-ed25519 %s\n' "$(bin "$(str "$(asc ssh-ed25519)")$(str "$1")" | b64)"; }
+identity_doc() { printf 'irongall-v1\nssh-ed25519 %s\n' "$(bin "$(str "$(asc ssh-ed25519)")$(str "$1")" | b64)"; }
 
 KEYS=$(mktemp -d) # private keys live only here, and only while this runs
 cleanup() { rm -f "$KEYS/a" "$KEYS/b" "$KEYS/a.pub" "$KEYS/b.pub"; rmdir "$KEYS"; }
@@ -42,32 +42,32 @@ for box in a b; do
   openssh_key "$seed" "$pub" "$KEYS/$box"
   ssh-keygen -y -f "$KEYS/$box" > "$KEYS/$box.pub"
   [ "$(cut -d' ' -f2 "$KEYS/$box.pub")" = "$(bin "$(str "$(asc ssh-ed25519)")$(str "$pub")" | b64)" ] || { echo "the $box key file does not hold the RFC 8032 key" >&2; exit 1; }
-  printf 'crossbot-v1\n%s\n' "$(cut -d' ' -f1,2 "$KEYS/$box.pub")" > "$box/identity.doc"
+  printf 'irongall-v1\n%s\n' "$(cut -d' ' -f1,2 "$KEYS/$box.pub")" > "$box/identity.doc"
   sha256sum < "$box/identity.doc" | cut -c1-64 > "$box/address"
 done
 A=$(cat a/address); B=$(cat b/address)
 
 sign() { ssh-keygen -q -Y sign -n "$2" -f "$KEYS/$1" "${@:3}"; } # <box> <namespace> [-O …] < message > signature
-statement() { printf 'crossbot-prekey-v1\n%s\n%s\n%s\n%s\n' "$@"; } # <address> <serial> <recipient> <not_after>
+statement() { printf 'irongall-prekey-v1\n%s\n%s\n%s\n%s\n' "$@"; } # <address> <serial> <recipient> <not_after>
 
 # The two boxes, their prekeys and A's revocation.
 statement "$A" 1 "$(cat input/a-1.pq)" "$NOT_AFTER" > a/prekey-1.txt
 statement "$A" 2 "$(cat input/a-2.classic)" "$NOT_AFTER" > a/prekey-2.txt
 statement "$B" 1 "$(cat input/b-1.pq)" "$NOT_AFTER" > b/prekey-1.txt
-for f in a/prekey-1 a/prekey-2; do sign a "crossbot-prekey-v1:$A" < "$f.txt" > "$f.txt.sig"; done
-sign a "crossbot-prekey-v1:$A" -O hashalg=sha256 < a/prekey-1.txt > a/prekey-1.txt.sha256.sig
-sign b "crossbot-prekey-v1:$B" < b/prekey-1.txt > b/prekey-1.txt.sig
-printf 'crossbot-revoke-v1\n%s\n' "$A" > a/revoke.txt
-sign a "crossbot-revoke-v1:$A" < a/revoke.txt > a/revoke.sig
+for f in a/prekey-1 a/prekey-2; do sign a "irongall-prekey-v1:$A" < "$f.txt" > "$f.txt.sig"; done
+sign a "irongall-prekey-v1:$A" -O hashalg=sha256 < a/prekey-1.txt > a/prekey-1.txt.sha256.sig
+sign b "irongall-prekey-v1:$B" < b/prekey-1.txt > b/prekey-1.txt.sig
+printf 'irongall-revoke-v1\n%s\n' "$A" > a/revoke.txt
+sign a "irongall-revoke-v1:$A" < a/revoke.txt > a/revoke.sig
 
 # Identity documents every implementation must reject.
 GOOD=$(sed -n 2p a/identity.doc)
-printf 'crossbot-v1\n%s comment\n' "$GOOD" > identity/comment.doc
-printf 'crossbot-v1\r\n%s\r\n' "$GOOD" > identity/crlf.doc
-printf 'crossbot-v1\n%s' "$GOOD" > identity/no-final-newline.doc
-printf 'crossbot-v1\n%s\n \n' "$GOOD" > identity/padded.doc
-printf 'crossbot-v2\n%s\n' "$GOOD" > identity/wrong-tag.doc
-printf 'crossbot-v1\nssh-rsa %s\n' "$(cut -d' ' -f2 "$KEYS/a.pub")" > identity/key-type-mismatch.doc
+printf 'irongall-v1\n%s comment\n' "$GOOD" > identity/comment.doc
+printf 'irongall-v1\r\n%s\r\n' "$GOOD" > identity/crlf.doc
+printf 'irongall-v1\n%s' "$GOOD" > identity/no-final-newline.doc
+printf 'irongall-v1\n%s\n \n' "$GOOD" > identity/padded.doc
+printf 'irongall-v2\n%s\n' "$GOOD" > identity/wrong-tag.doc
+printf 'irongall-v1\nssh-rsa %s\n' "$(cut -d' ' -f2 "$KEYS/a.pub")" > identity/key-type-mismatch.doc
 identity_doc f0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f > identity/non-canonical.doc # y = p + 3: a large-order point, encoded non-canonically
 identity_doc 0100000000000000000000000000000000000000000000000000000000000080 > identity/negative-zero.doc
 identity_doc 0100000000000000000000000000000000000000000000000000000000000000 > identity/small-order-1.doc
@@ -85,31 +85,31 @@ identity_doc eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f > 
 # server must refuse to publish it. Each is signed by A in A's prekey namespace unless its name
 # says otherwise.
 PQ=$(cat input/a-1.pq)
-bad() { local name=$1; shift; printf "$@" > "prekey/$name.txt"; sign a "crossbot-prekey-v1:$A" < "prekey/$name.txt" > "prekey/$name.txt.sig"; }
-cp a/prekey-1.txt prekey/bad-wrong-namespace.txt; sign a "crossbot-msg-v1:$A" < a/prekey-1.txt > prekey/bad-wrong-namespace.txt.sig
-cp a/prekey-1.txt prekey/bad-signed-by-b.txt; sign b "crossbot-prekey-v1:$A" < a/prekey-1.txt > prekey/bad-signed-by-b.txt.sig
-bad bad-names-another-box 'crossbot-prekey-v1\n%s\n1\n%s\n%s\n' "$B" "$PQ" "$NOT_AFTER"
-bad bad-serial-zero 'crossbot-prekey-v1\n%s\n0\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
-bad bad-serial-leading-zero 'crossbot-prekey-v1\n%s\n01\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
-bad bad-serial-19-digits 'crossbot-prekey-v1\n%s\n1000000000000000000\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
-bad bad-serial-negative 'crossbot-prekey-v1\n%s\n-1\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
-bad bad-never 'crossbot-prekey-v1\n%s\n1\n%s\nnever\n' "$A" "$PQ"
-bad bad-time-lowercase-z 'crossbot-prekey-v1\n%s\n1\n%s\n2026-11-11T00:00:00z\n' "$A" "$PQ"
-bad bad-time-fraction 'crossbot-prekey-v1\n%s\n1\n%s\n2026-11-11T00:00:00.5Z\n' "$A" "$PQ"
-bad bad-time-offset 'crossbot-prekey-v1\n%s\n1\n%s\n2026-11-11T00:00:00+00:00\n' "$A" "$PQ"
-bad bad-tag 'crossbot-prekey-v2\n%s\n1\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
-bad bad-address-uppercase 'crossbot-prekey-v1\n%s\n1\n%s\n%s\n' "$(printf '%s' "$A" | tr a-f A-F)" "$PQ" "$NOT_AFTER"
-bad bad-four-lines 'crossbot-prekey-v1\n%s\n1\n%s\n' "$A" "$PQ"
-bad bad-six-lines 'crossbot-prekey-v1\n%s\n1\n%s\n%s\n\n' "$A" "$PQ" "$NOT_AFTER"
-bad bad-crlf 'crossbot-prekey-v1\r\n%s\r\n1\r\n%s\r\n%s\r\n' "$A" "$PQ" "$NOT_AFTER"
-bad bad-no-final-newline 'crossbot-prekey-v1\n%s\n1\n%s\n%s' "$A" "$PQ" "$NOT_AFTER"
-bad bad-recipient-uppercase-pq 'crossbot-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$(printf '%s' "$PQ" | tr a-z A-Z)" "$NOT_AFTER"
-bad bad-recipient-uppercase-classic 'crossbot-prekey-v1\n%s\n2\n%s\n%s\n' "$A" "$(tr a-z A-Z < input/a-2.classic)" "$NOT_AFTER"
-bad bad-recipient-not-age 'crossbot-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$GOOD" "$NOT_AFTER"
-bad bad-recipient-small-order-pq 'crossbot-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$(cat input/small-order.pq)" "$NOT_AFTER"
-bad bad-recipient-small-order-classic 'crossbot-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$(cat input/small-order.classic)" "$NOT_AFTER"
-bad expired 'crossbot-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$PQ" "$NOW"
-bad too-long 'crossbot-prekey-v1\n%s\n1\n%s\n2026-11-12T00:00:01Z\n' "$A" "$PQ"
+bad() { local name=$1; shift; printf "$@" > "prekey/$name.txt"; sign a "irongall-prekey-v1:$A" < "prekey/$name.txt" > "prekey/$name.txt.sig"; }
+cp a/prekey-1.txt prekey/bad-wrong-namespace.txt; sign a "irongall-msg-v1:$A" < a/prekey-1.txt > prekey/bad-wrong-namespace.txt.sig
+cp a/prekey-1.txt prekey/bad-signed-by-b.txt; sign b "irongall-prekey-v1:$A" < a/prekey-1.txt > prekey/bad-signed-by-b.txt.sig
+bad bad-names-another-box 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$B" "$PQ" "$NOT_AFTER"
+bad bad-serial-zero 'irongall-prekey-v1\n%s\n0\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
+bad bad-serial-leading-zero 'irongall-prekey-v1\n%s\n01\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
+bad bad-serial-19-digits 'irongall-prekey-v1\n%s\n1000000000000000000\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
+bad bad-serial-negative 'irongall-prekey-v1\n%s\n-1\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
+bad bad-never 'irongall-prekey-v1\n%s\n1\n%s\nnever\n' "$A" "$PQ"
+bad bad-time-lowercase-z 'irongall-prekey-v1\n%s\n1\n%s\n2026-11-11T00:00:00z\n' "$A" "$PQ"
+bad bad-time-fraction 'irongall-prekey-v1\n%s\n1\n%s\n2026-11-11T00:00:00.5Z\n' "$A" "$PQ"
+bad bad-time-offset 'irongall-prekey-v1\n%s\n1\n%s\n2026-11-11T00:00:00+00:00\n' "$A" "$PQ"
+bad bad-tag 'irongall-prekey-v2\n%s\n1\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
+bad bad-address-uppercase 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$(printf '%s' "$A" | tr a-f A-F)" "$PQ" "$NOT_AFTER"
+bad bad-four-lines 'irongall-prekey-v1\n%s\n1\n%s\n' "$A" "$PQ"
+bad bad-six-lines 'irongall-prekey-v1\n%s\n1\n%s\n%s\n\n' "$A" "$PQ" "$NOT_AFTER"
+bad bad-crlf 'irongall-prekey-v1\r\n%s\r\n1\r\n%s\r\n%s\r\n' "$A" "$PQ" "$NOT_AFTER"
+bad bad-no-final-newline 'irongall-prekey-v1\n%s\n1\n%s\n%s' "$A" "$PQ" "$NOT_AFTER"
+bad bad-recipient-uppercase-pq 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$(printf '%s' "$PQ" | tr a-z A-Z)" "$NOT_AFTER"
+bad bad-recipient-uppercase-classic 'irongall-prekey-v1\n%s\n2\n%s\n%s\n' "$A" "$(tr a-z A-Z < input/a-2.classic)" "$NOT_AFTER"
+bad bad-recipient-not-age 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$GOOD" "$NOT_AFTER"
+bad bad-recipient-small-order-pq 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$(cat input/small-order.pq)" "$NOT_AFTER"
+bad bad-recipient-small-order-classic 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$(cat input/small-order.classic)" "$NOT_AFTER"
+bad expired 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$PQ" "$NOW"
+bad too-long 'irongall-prekey-v1\n%s\n1\n%s\n2026-11-12T00:00:01Z\n' "$A" "$PQ"
 
 # Decrypted envelopes, judged as a message signed by A, received by box B, at ./now.
 case_env() { local name=$1; shift; printf "$@" > "envelope/$name.json"; }
@@ -144,5 +144,5 @@ case_env refuse-not-utf8 "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body
 # A message from A to B: envelope/accept-minimal.json encrypted to B's prekey, made once and
 # kept (age is randomised), then signed for B only.
 [ -e message/a-to-b.age ] || age -r "$(cat input/b-1.pq)" -o message/a-to-b.age < envelope/accept-minimal.json
-sign a "crossbot-msg-v1:$B" < message/a-to-b.age > message/a-to-b.age.sig
-sign a "crossbot-msg-v1:$A" < message/a-to-b.age > message/a-to-b.age.for-another-box.sig
+sign a "irongall-msg-v1:$B" < message/a-to-b.age > message/a-to-b.age.sig
+sign a "irongall-msg-v1:$A" < message/a-to-b.age > message/a-to-b.age.for-another-box.sig

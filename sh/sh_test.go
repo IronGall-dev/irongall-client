@@ -1,4 +1,4 @@
-// Package sh_test runs crossbot.sh, the stock-tools client, from go test: its
+// Package sh_test runs irongall.sh, the stock-tools client, from go test: its
 // forging-server test (test.sh), its verdicts on the test vectors against the
 // Go client's, and the two clients exchanging mail and sharing a box.
 package sh_test
@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/drewstreib/crossbot-client/client"
-	"github.com/drewstreib/crossbot-client/internal/fakeserver"
-	"github.com/drewstreib/crossbot-client/protocol"
+	"github.com/IronGall-dev/irongall-client/client"
+	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
+	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
 const vectors = "../testdata/vectors"
@@ -28,7 +28,7 @@ func need(t *testing.T, tools ...string) {
 	t.Helper()
 	for _, tool := range tools {
 		if _, err := exec.LookPath(tool); err != nil {
-			t.Skipf("%s is not on PATH: crossbot.sh needs bash, age, ssh-keygen, curl, jq, iconv and coreutils", tool)
+			t.Skipf("%s is not on PATH: irongall.sh needs bash, age, ssh-keygen, curl, jq, iconv and coreutils", tool)
 		}
 	}
 }
@@ -47,10 +47,10 @@ func abs(t *testing.T, name string) string {
 	return p
 }
 
-// bash runs commands after sourcing crossbot.sh, with env added.
+// bash runs commands after sourcing irongall.sh, with env added.
 func bash(t *testing.T, env []string, commands string) (string, error) {
 	t.Helper()
-	cmd := exec.Command("bash", "-c", ". "+abs(t, "crossbot.sh")+"\n"+commands)
+	cmd := exec.Command("bash", "-c", ". "+abs(t, "irongall.sh")+"\n"+commands)
 	cmd.Env = append(os.Environ(), env...)
 	var out, errs bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errs
@@ -61,7 +61,7 @@ func bash(t *testing.T, env []string, commands string) (string, error) {
 	return out.String(), err
 }
 
-// The forging-server test: crossbot.sh against test.sh's in-shell fake.
+// The forging-server test: irongall.sh against test.sh's in-shell fake.
 func TestScript(t *testing.T) {
 	need(t, scriptTools...)
 	out, err := exec.Command("bash", "test.sh", t.TempDir()).CombinedOutput()
@@ -71,7 +71,7 @@ func TestScript(t *testing.T) {
 	t.Logf("%s", out[bytes.LastIndex(out, []byte("--- ")):])
 }
 
-// vectorNow is the vectors' now, as cb_now gives it.
+// vectorNow is the vectors' now, as ig_now gives it.
 func vectorNow(t *testing.T) (time.Time, string) {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(vectors, "now"))
@@ -82,10 +82,10 @@ func vectorNow(t *testing.T) (time.Time, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return now, fmt.Sprintf("cb_now(){ echo %d; }\n", now.Unix())
+	return now, fmt.Sprintf("ig_now(){ echo %d; }\n", now.Unix())
 }
 
-// signers writes box's allowed-signers line, as cb_pin does, and returns its
+// signers writes box's allowed-signers line, as ig_pin does, and returns its
 // address and the file.
 func signers(t *testing.T, box string) (string, string) {
 	t.Helper()
@@ -111,10 +111,10 @@ func TestVectorsIdentity(t *testing.T) {
 	need(t, scriptTools...)
 	for _, box := range []string{"a", "b"} {
 		a, _ := signers(t, box)
-		if _, err := bash(t, nil, fmt.Sprintf("cb_idcheck %s %s", abs(t, filepath.Join(vectors, box, "identity.doc")), a)); err != nil {
+		if _, err := bash(t, nil, fmt.Sprintf("ig_idcheck %s %s", abs(t, filepath.Join(vectors, box, "identity.doc")), a)); err != nil {
 			t.Errorf("%s/identity.doc refused: %v", box, err)
 		}
-		if _, err := bash(t, nil, fmt.Sprintf("cb_idcheck %s %s", abs(t, filepath.Join(vectors, box, "identity.doc")), strings.Repeat("0", 64))); err == nil {
+		if _, err := bash(t, nil, fmt.Sprintf("ig_idcheck %s %s", abs(t, filepath.Join(vectors, box, "identity.doc")), strings.Repeat("0", 64))); err == nil {
 			t.Errorf("%s/identity.doc accepted for another address", box)
 		}
 	}
@@ -123,7 +123,7 @@ func TestVectorsIdentity(t *testing.T) {
 		t.Fatal("no identity vectors")
 	}
 	for _, d := range docs {
-		if _, err := bash(t, nil, "cb_idcheck "+abs(t, d)); err == nil {
+		if _, err := bash(t, nil, "ig_idcheck "+abs(t, d)); err == nil {
 			t.Errorf("%s: accepted", filepath.Base(d))
 		}
 	}
@@ -135,7 +135,7 @@ func TestVectorsPrekey(t *testing.T) {
 	a, aSigners := signers(t, "a")
 	b, bSigners := signers(t, "b")
 	check := func(stmt, sig, addr, signers string) (serial string, notAfter int64, err error) {
-		out, err := bash(t, nil, setNow+fmt.Sprintf("cb_prekeycheck %s %s %s %s", abs(t, stmt), abs(t, sig), addr, signers))
+		out, err := bash(t, nil, setNow+fmt.Sprintf("ig_prekeycheck %s %s %s %s", abs(t, stmt), abs(t, sig), addr, signers))
 		if err != nil {
 			return "", 0, fmt.Errorf("%w %s", err, out)
 		}
@@ -172,7 +172,7 @@ func TestVectorsPrekey(t *testing.T) {
 			if err == nil {
 				t.Errorf("%s: accepted", name)
 			}
-		case name == "expired": // valid, but no sender encrypts to it (cb_resolve)
+		case name == "expired": // valid, but no sender encrypts to it (ig_resolve)
 			if err != nil || na > now.Unix() {
 				t.Errorf("%s: want valid and expired: %d %v", name, na, err)
 			}
@@ -201,7 +201,7 @@ func TestVectorsEnvelope(t *testing.T) {
 	}
 	for _, f := range files {
 		name := strings.TrimSuffix(filepath.Base(f), ".json")
-		line, err := bash(t, nil, setNow+fmt.Sprintf("cb_envcheck %s %s %s && cb_line %s", abs(t, f), a, b, abs(t, f)))
+		line, err := bash(t, nil, setNow+fmt.Sprintf("ig_envcheck %s %s %s && ig_line %s", abs(t, f), a, b, abs(t, f)))
 		switch {
 		case strings.HasPrefix(name, "accept-"):
 			if err != nil {
@@ -241,16 +241,16 @@ func TestWithGoClient(t *testing.T) {
 	}
 	shDir, goDir := t.TempDir(), t.TempDir()
 	sh := func(dir, commands string) (string, error) {
-		return bash(t, []string{"CROSSBOT_HOME=" + dir, "CB_BASE=" + srv.URL}, commands)
+		return bash(t, []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}, commands)
 	}
-	out, err := sh(shDir, "cb_init "+mode)
+	out, err := sh(shDir, "ig_init "+mode)
 	if err != nil {
-		t.Fatalf("cb_init: %v", err)
+		t.Fatalf("ig_init: %v", err)
 	}
 	shLink := strings.TrimSpace(out)
 	shAddr, err := protocol.ParseAddress(strings.TrimPrefix(shLink, srv.URL+protocol.LinkPath))
 	if err != nil || shLink != srv.URL+protocol.LinkPath+shAddr.String() {
-		t.Fatalf("cb_init printed %q, not the box's link", out)
+		t.Fatalf("ig_init printed %q, not the box's link", out)
 	}
 	g, err := client.Init(ctx, goDir, client.Options{Base: srv.URL}, kt)
 	if err != nil {
@@ -258,11 +258,11 @@ func TestWithGoClient(t *testing.T) {
 	}
 
 	// An API error prints its status, code and the server's detail.
-	if _, err := sh(shDir, "printf x | cb_send "+strings.Repeat("0", 64)); err == nil || !strings.Contains(err.Error(), "ERROR 404 no_such_mailbox: no box has this address") {
-		t.Fatalf("cb_send to no box: %v", err)
+	if _, err := sh(shDir, "printf x | ig_send "+strings.Repeat("0", 64)); err == nil || !strings.Contains(err.Error(), "ERROR 404 no_such_mailbox: no box has this address") {
+		t.Fatalf("ig_send to no box: %v", err)
 	}
-	if _, err := sh(shDir, fmt.Sprintf("printf 'from the script' | cb_send %s", g.Link())); err != nil {
-		t.Fatalf("cb_send: %v", err)
+	if _, err := sh(shDir, fmt.Sprintf("printf 'from the script' | ig_send %s", g.Link())); err != nil {
+		t.Fatalf("ig_send: %v", err)
 	}
 	res, err := g.Receive(ctx)
 	if err != nil || len(res.Delivered) != 1 || string(res.Delivered[0].Envelope.Body) != `"from the script"` {
@@ -271,21 +271,21 @@ func TestWithGoClient(t *testing.T) {
 	if _, err := g.Send(ctx, shAddr, "from Go"); err != nil {
 		t.Fatal(err)
 	}
-	out, err = sh(shDir, "cb_recv")
+	out, err = sh(shDir, "ig_recv")
 	if err != nil || !strings.Contains(out, `"body":"from Go"`) {
-		t.Fatalf("cb_recv: %q %v", out, err)
+		t.Fatalf("ig_recv: %q %v", out, err)
 	}
 
 	// The script renews the Go client's box, and both keep using it.
-	if _, err := sh(goDir, "cb_rekey "+mode); err != nil {
-		t.Fatalf("cb_rekey on the Go box: %v", err)
+	if _, err := sh(goDir, "ig_rekey "+mode); err != nil {
+		t.Fatalf("ig_rekey on the Go box: %v", err)
 	}
-	if _, err := sh(shDir, fmt.Sprintf("printf 'after the rekey' | cb_send %s", g.Address())); err != nil {
-		t.Fatalf("cb_send after the rekey: %v", err)
+	if _, err := sh(shDir, fmt.Sprintf("printf 'after the rekey' | ig_send %s", g.Address())); err != nil {
+		t.Fatalf("ig_send after the rekey: %v", err)
 	}
-	out, err = sh(goDir, "cb_recv")
+	out, err = sh(goDir, "ig_recv")
 	if err != nil || !strings.Contains(out, `"body":"after the rekey"`) {
-		t.Fatalf("cb_recv in the Go box: %q %v", out, err)
+		t.Fatalf("ig_recv in the Go box: %q %v", out, err)
 	}
 	if _, err := g.Send(ctx, shAddr, "from the Go box"); err != nil {
 		t.Fatalf("the Go client after the script's rekey: %v", err)

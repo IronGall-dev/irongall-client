@@ -1,4 +1,4 @@
-// Command crossbot-echo is the echo box: a client on a published address
+// Command irongall-echo is the echo box: a client on a published address
 // that answers every message passing every check with a signed reply, saying
 // what it verified and carrying back the body it was sent. An agent proves
 // its whole loop with it, end to end, against a box it does not run.
@@ -29,11 +29,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/drewstreib/crossbot-client/client"
-	"github.com/drewstreib/crossbot-client/protocol"
+	"github.com/IronGall-dev/irongall-client/client"
+	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
-const usage = `usage: crossbot-echo -identity <key file> [-dir <dir>] [-no-pq]
+const usage = `usage: irongall-echo -identity <key file> [-dir <dir>] [-no-pq]
 
 Runs an echo box until interrupted: every message that passes every check
 is answered, signed, with what was checked and the body it carried.
@@ -41,10 +41,10 @@ is answered, signed, with what was checked and the body it carried.
   -identity   the echo box's identity, an OpenSSH Ed25519 key file; the box
               is registered at its first start
   -dir        the box's state directory, which belongs in memory (a tmpfs):
-              $CROSSBOT_HOME, or ${XDG_CONFIG_HOME:-~/.config}/crossbot/${CROSSBOT_BOX:-default}
+              $IRONGALL_HOME, or ${XDG_CONFIG_HOME:-~/.config}/irongall/${IRONGALL_BOX:-default}
   -no-pq      publish prekeys without post-quantum encryption (X25519 only)
 
-The server is $CROSSBOT_BASE, or https://crossbot.dev.
+The server is $IRONGALL_BASE, or https://irongall.dev.
 `
 
 // replyTTL is how long a reply that could not be posted is retried before it
@@ -69,7 +69,7 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, logw io.Writer) error {
-	fl := flag.NewFlagSet("crossbot-echo", flag.ContinueOnError)
+	fl := flag.NewFlagSet("irongall-echo", flag.ContinueOnError)
 	fl.SetOutput(logw)
 	fl.Usage = func() { _, _ = fmt.Fprint(logw, usage) }
 	identity := fl.String("identity", "", "")
@@ -93,7 +93,7 @@ func run(ctx context.Context, args []string, logw io.Writer) error {
 	if *noPQ {
 		kt = protocol.Classic
 	}
-	opt := client.Options{Base: os.Getenv("CROSSBOT_BASE")}
+	opt := client.Options{Base: os.Getenv("IRONGALL_BASE")}
 	e, err := start(ctx, *dir, *identity, opt, kt, log.New(logw, "", log.LstdFlags|log.LUTC))
 	if err != nil {
 		return err
@@ -247,7 +247,7 @@ func (e *echo) remove(name string) {
 func report(d client.Delivery, now time.Time) string {
 	env := d.Envelope
 	var s strings.Builder
-	s.WriteString("crossbot echo box: your message passed every check.\n")
+	s.WriteString("irongall echo box: your message passed every check.\n")
 	fmt.Fprintf(&s, "from: %s (its signature verified, by the identity this address is the SHA-256 of)\n", env.From)
 	fmt.Fprintf(&s, "to: %s\n", env.To)
 	fmt.Fprintf(&s, "msg_id: %s\n", env.MsgID)

@@ -15,9 +15,9 @@ import (
 	"time"
 
 	"filippo.io/age"
-	"github.com/drewstreib/crossbot-client/client"
-	"github.com/drewstreib/crossbot-client/internal/fakeserver"
-	"github.com/drewstreib/crossbot-client/protocol"
+	"github.com/IronGall-dev/irongall-client/client"
+	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
+	"github.com/IronGall-dev/irongall-client/protocol"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -63,8 +63,8 @@ func TestRecvPrintsTheCheckedLine(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 
-	t.Setenv("CROSSBOT_HOME", b.Dir())
-	t.Setenv("CROSSBOT_BASE", srv.URL)
+	t.Setenv("IRONGALL_HOME", b.Dir())
+	t.Setenv("IRONGALL_BASE", srv.URL)
 	var out, errs bytes.Buffer
 	if err := run(ctx, "recv", nil, strings.NewReader(""), &out, &errs); err != nil {
 		t.Fatalf("recv: %v %s", err, errs.String())
@@ -94,8 +94,8 @@ func TestRecvLineHasNoOtherLineBreaks(t *testing.T) {
 	if _, err := a.Send(ctx, b.Address(), body); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("CROSSBOT_HOME", b.Dir())
-	t.Setenv("CROSSBOT_BASE", srv.URL)
+	t.Setenv("IRONGALL_HOME", b.Dir())
+	t.Setenv("IRONGALL_BASE", srv.URL)
 	var out, errs bytes.Buffer
 	if err := run(ctx, "recv", nil, strings.NewReader(""), &out, &errs); err != nil {
 		t.Fatalf("recv: %v %s", err, errs.String())
@@ -137,8 +137,8 @@ func TestRecvWaitRidesOutARateLimit(t *testing.T) {
 		}
 		next.ServeHTTP(w, r)
 	})
-	t.Setenv("CROSSBOT_HOME", b.Dir())
-	t.Setenv("CROSSBOT_BASE", srv.URL)
+	t.Setenv("IRONGALL_HOME", b.Dir())
+	t.Setenv("IRONGALL_BASE", srv.URL)
 	var out, errs bytes.Buffer
 	if err := run(ctx, "recv", []string{"-wait", "10s"}, strings.NewReader(""), &out, &errs); err != nil {
 		t.Fatalf("recv -wait: %v %s", err, errs.String())
@@ -166,8 +166,8 @@ func TestAdopt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("CROSSBOT_HOME", b.Dir())
-	t.Setenv("CROSSBOT_BASE", srv.URL)
+	t.Setenv("IRONGALL_HOME", b.Dir())
+	t.Setenv("IRONGALL_BASE", srv.URL)
 	key := srv.AdoptKey("acme")
 	var out, errs bytes.Buffer
 	if err := run(ctx, "adopt", []string{key}, strings.NewReader(""), &out, &errs); err != nil || out.String() != "in account acme\n" || srv.Account(b.Address()) != "acme" {
@@ -205,7 +205,7 @@ func TestHelpAndREADMENameTheEchoBox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(readme), "crossbot send "+link+"\n") {
+	if !strings.Contains(string(readme), "irongall send "+link+"\n") {
 		t.Error("the README does not give the echo box's link")
 	}
 	// The second echo box, for age 1.2, is the stock script's: the README
@@ -213,7 +213,7 @@ func TestHelpAndREADMENameTheEchoBox(t *testing.T) {
 	if _, err := protocol.ParseAddress(client.EchoAddressNoPQ); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(readme), "crossbot.sh send "+client.DefaultBase+"/to/"+client.EchoAddressNoPQ+"\n") {
+	if !strings.Contains(string(readme), "irongall.sh send "+client.DefaultBase+"/to/"+client.EchoAddressNoPQ+"\n") {
 		t.Error("the README does not give the no-pq echo box's link")
 	}
 }
@@ -226,8 +226,8 @@ func TestTheLink(t *testing.T) {
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
 	home := t.TempDir()
-	t.Setenv("CROSSBOT_HOME", home)
-	t.Setenv("CROSSBOT_BASE", srv.URL)
+	t.Setenv("IRONGALL_HOME", home)
+	t.Setenv("IRONGALL_BASE", srv.URL)
 	var out bytes.Buffer
 	if err := run(ctx, "init", []string{"--no-pq"}, nil, &out, io.Discard); err != nil {
 		t.Fatal(err)
@@ -298,8 +298,8 @@ func TestRecvSaysARenewalFailed(t *testing.T) {
 		}
 		next.ServeHTTP(w, r)
 	})
-	t.Setenv("CROSSBOT_HOME", b.Dir())
-	t.Setenv("CROSSBOT_BASE", srv.URL)
+	t.Setenv("IRONGALL_HOME", b.Dir())
+	t.Setenv("IRONGALL_BASE", srv.URL)
 	var out, errs bytes.Buffer
 	if err := run(ctx, "recv", nil, nil, &out, &errs); err != nil {
 		t.Fatal(err)

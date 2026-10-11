@@ -1,4 +1,4 @@
-// Package client is the crossbot client library: one box's state directory,
+// Package client is the irongall client library: one box's state directory,
 // and every step of the protocol a box takes, done once so that every client
 // built on it behaves the same.
 //

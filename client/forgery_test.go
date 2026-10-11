@@ -17,9 +17,9 @@ import (
 	"time"
 
 	"filippo.io/age"
-	"github.com/drewstreib/crossbot-client/client"
-	"github.com/drewstreib/crossbot-client/internal/fakeserver"
-	"github.com/drewstreib/crossbot-client/protocol"
+	"github.com/IronGall-dev/irongall-client/client"
+	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
+	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
 // TestForgeries plays the operator, who controls every byte the server sends.

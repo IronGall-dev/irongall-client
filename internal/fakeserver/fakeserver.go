@@ -1,6 +1,6 @@
-// Package fakeserver is an in-memory crossbot server for the client's tests:
+// Package fakeserver is an in-memory irongall server for the client's tests:
 // honest, and just enough of the API for a client to register, renew its
-// prekey, send, list, fetch and ack. It is NOT the crossbot.dev server, and
+// prekey, send, list, fetch and ack. It is NOT the irongall.dev server, and
 // checks little of what that server checks.
 //
 // A test plays the hostile operator two ways: with SetMiddle, a function that
@@ -25,7 +25,7 @@ import (
 	"time"
 
 	"filippo.io/age"
-	"github.com/drewstreib/crossbot-client/protocol"
+	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
 // Server is a running fake server.
@@ -405,7 +405,7 @@ func (s *Server) ack(w http.ResponseWriter, r *http.Request, b *box) {
 func (s *Server) AdoptKey(account string) string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
-	k := "cba1_" + hex.EncodeToString(b[:])
+	k := "iga1_" + hex.EncodeToString(b[:])
 	s.mu.Lock()
 	s.keys[k] = account
 	s.mu.Unlock()

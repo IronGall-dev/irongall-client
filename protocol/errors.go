@@ -85,7 +85,7 @@ var statuses = map[Code]int{
 func (c Code) Status() int { return statuses[c] }
 
 // TypeURI returns the Problem Details "type" for the code.
-func (c Code) TypeURI() string { return "https://crossbot.dev/errors/" + string(c) }
+func (c Code) TypeURI() string { return "https://irongall.dev/errors/" + string(c) }
 
 // ProblemContentType is the media type of every error body (RFC 9457).
 const ProblemContentType = "application/problem+json"

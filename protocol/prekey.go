@@ -15,7 +15,7 @@ import (
 
 const (
 	// PrekeyTag is line 1 of every v1 prekey statement.
-	PrekeyTag = "crossbot-prekey-v1"
+	PrekeyTag = "irongall-prekey-v1"
 	// MaxPrekeyLifetime is the longest a prekey statement may be valid,
 	// counted from when it is published: 31 days, the longest month, plus a
 	// day a renewal may wait and a day of slip, so a box checked at least

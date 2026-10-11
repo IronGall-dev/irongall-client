@@ -6,7 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 
-	"github.com/drewstreib/crossbot-client/sshsig"
+	"github.com/IronGall-dev/irongall-client/sshsig"
 	"golang.org/x/crypto/ssh"
 )
 

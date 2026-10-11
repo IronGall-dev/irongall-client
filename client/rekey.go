@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/drewstreib/crossbot-client/protocol"
+	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
 // Rekey publishes a NEW prekey at the next serial, of type kt, or of the
@@ -187,7 +187,7 @@ func (b *Box) renewIfDue(ctx context.Context) (*protocol.Prekey, error) {
 // prekey reached the server before the renewal that retired it, or with a
 // send already in progress: such a drain collected all of it. The newest
 // retired prekey is kept regardless. After this, mail encrypted to a deleted
-// prekey is unrecoverable from the box's keys. crossbot.sh does not do this;
+// prekey is unrecoverable from the box's keys. irongall.sh does not do this;
 // it keeps every retired prekey until Prune's deletion time.
 func (b *Box) dropRetired(began time.Time) error {
 	cur, err := b.publishedSerial()

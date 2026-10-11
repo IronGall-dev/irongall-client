@@ -179,7 +179,7 @@ func TestCodes(t *testing.T) {
 		t.Error("an unknown code has a status")
 	}
 	b, _ := json.Marshal(Problem{Type: CodePairFull.TypeURI(), Title: "t", Status: 429, Code: CodePairFull})
-	if string(b) != `{"type":"https://crossbot.dev/errors/pair_full","title":"t","status":429,"code":"pair_full"}` {
+	if string(b) != `{"type":"https://irongall.dev/errors/pair_full","title":"t","status":429,"code":"pair_full"}` {
 		t.Errorf("Problem JSON %s", b)
 	}
 }

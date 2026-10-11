@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/drewstreib/crossbot-client/protocol"
+	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
 // RefusedError is a check that failed. The operation stopped there: nothing

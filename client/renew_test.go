@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/drewstreib/crossbot-client/client"
-	"github.com/drewstreib/crossbot-client/protocol"
+	"github.com/IronGall-dev/irongall-client/client"
+	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
 // servedSerial is the serial of the prekey the server serves for b.

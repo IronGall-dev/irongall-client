@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/drewstreib/crossbot-client/protocol"
+	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
 // Resolve fetches a peer's identity and current prekey and verifies them. It

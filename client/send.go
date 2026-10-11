@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"filippo.io/age"
-	"github.com/drewstreib/crossbot-client/protocol"
+	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
 // Send sends one logical message: its envelope is built once, kept in the
@@ -91,7 +91,7 @@ func (b *Box) post(ctx context.Context, to protocol.Address, stem string) (*prot
 	r, err := b.trySend(ctx, to, stem)
 	if err != nil {
 		if !slices.Contains(undeliverable, Code(err)) {
-			return nil, fmt.Errorf("%w (kept in the outbox: retry with crossbot flush)", err)
+			return nil, fmt.Errorf("%w (kept in the outbox: retry with irongall flush)", err)
 		}
 		if merr := b.moveToFailed(stem); merr != nil {
 			return nil, errors.Join(err, merr)

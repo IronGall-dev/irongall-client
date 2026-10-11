@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/drewstreib/crossbot-client/protocol"
+	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
 // maxResponse bounds what is read of any response. A message is far smaller;
@@ -72,7 +72,7 @@ func (b *Box) call(ctx context.Context, method, path string, in any, hdr http.He
 
 // owner makes a request as the box's owner, with in as its JSON body when not
 // nil. On 401 token_stale it fetches the current token, decrypts it, and
-// retries once. A refreshed token carried in a Crossbot-Token header is kept.
+// retries once. A refreshed token carried in a Irongall-Token header is kept.
 func (b *Box) owner(ctx context.Context, method, path string, in any, hdr http.Header, out any) (*http.Response, error) {
 	resp, err := b.ownerOnce(ctx, method, path, in, hdr, out)
 	if Code(err) != protocol.CodeTokenStale {

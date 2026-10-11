@@ -21,7 +21,7 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-const ns = "crossbot-msg-v1:test"
+const ns = "irongall-msg-v1:test"
 
 // rfc8032Seed is the secret key of RFC 8032 §7.1 TEST 1: a published test key.
 var rfc8032Seed = []byte{
@@ -62,7 +62,7 @@ func keys(t testing.TB) []keyCase {
 }
 
 func TestRoundTrip(t *testing.T) {
-	msg := []byte("hello, crossbot\n")
+	msg := []byte("hello, irongall\n")
 	for _, k := range keys(t) {
 		t.Run(k.name, func(t *testing.T) {
 			sig, err := Sign(k.signer, rand.Reader, msg, ns)
@@ -72,7 +72,7 @@ func TestRoundTrip(t *testing.T) {
 			if err := Verify(k.signer.PublicKey(), msg, sig, ns); err != nil {
 				t.Fatalf("Verify: %v", err)
 			}
-			if err := Verify(k.signer.PublicKey(), []byte("hello, crossbot!"), sig, ns); err == nil {
+			if err := Verify(k.signer.PublicKey(), []byte("hello, irongall!"), sig, ns); err == nil {
 				t.Error("verified a different message")
 			}
 			if err := Verify(k.signer.PublicKey(), msg, sig, ns+"x"); err == nil {
@@ -243,7 +243,7 @@ func TestSSHKeygen(t *testing.T) {
 		t.Skip("ssh-keygen not installed")
 	}
 	dir := t.TempDir()
-	msg := []byte("crossbot sshsig cross-test\n")
+	msg := []byte("irongall sshsig cross-test\n")
 	msgFile := filepath.Join(dir, "msg")
 	if err := os.WriteFile(msgFile, msg, 0o600); err != nil {
 		t.Fatal(err)

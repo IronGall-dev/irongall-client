@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/drewstreib/crossbot-client/protocol"
+	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
 // Adopt puts the box in the account an adopt key names, and returns the

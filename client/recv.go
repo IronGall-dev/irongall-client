@@ -19,7 +19,7 @@ import (
 	"strings"
 
 	"filippo.io/age"
-	"github.com/drewstreib/crossbot-client/protocol"
+	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
 // hexID is a message id as the server names it: the lowercase hex SHA-256 of
