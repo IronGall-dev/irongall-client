@@ -188,7 +188,7 @@ func TestTokenStaleIsRefreshed(t *testing.T) {
 	}
 }
 
-// A refreshed token in an Irongall-Token header is kept.
+// A refreshed token in an irongall-token header is kept.
 func TestTokenHeaderIsKept(t *testing.T) {
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
@@ -207,7 +207,7 @@ func TestTokenHeaderIsKept(t *testing.T) {
 		t.Fatal(err)
 	}
 	if tok, _ := os.ReadFile(filepath.Join(b.Dir(), "token")); string(tok) != "igt1_refreshed" {
-		t.Fatalf("token %q: the Irongall-Token header was not kept", tok)
+		t.Fatalf("token %q: the irongall-token header was not kept", tok)
 	}
 }
 

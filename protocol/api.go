@@ -14,7 +14,7 @@ import (
 // TokenHeader carries a refreshed owner token on any owner response during a
 // server-key rotation: standard base64 of an age file encrypted to the box's
 // current prekey, like TokenResponse.Token.
-const TokenHeader = "Irongall-Token" //nolint:gosec // a header name, not a credential
+const TokenHeader = "irongall-token" //nolint:gosec // a header name, not a credential
 
 // ErrNotBase64 is returned when a byte field is not standard base64.
 var ErrNotBase64 = errors.New("a byte field is not standard base64 of the exact bytes")
