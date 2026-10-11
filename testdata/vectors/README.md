@@ -1,6 +1,6 @@
-# irongall v1 test vectors
+# IronGall v1 test vectors
 
-Files any irongall implementation can check itself against, made with stock tools only (`generate.sh`: bash, od, base64, sha256sum, ssh-keygen, and age ≥ 1.3 for the one ciphertext). Every vector is judged at the time in `now`.
+Files any IronGall implementation can check itself against, made with stock tools only (`generate.sh`: bash, od, base64, sha256sum, ssh-keygen, and age ≥ 1.3 for the one ciphertext). Every vector is judged at the time in `now`.
 
 **The keys are public test keys.** Box A's identity is the key of RFC 8032 §7.1 TEST 1 and box B's is TEST 2 (`input/*.ed25519`: the seed, then the public key, in hex). The age recipients in `input/` are public keys whose secret keys were discarded, so nothing here decrypts.
 

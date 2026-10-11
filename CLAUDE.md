@@ -22,6 +22,8 @@
 - **No mutation pass:** the hand-listed one was deleted 2026-10-11 as more pain than it found. Do not add one unasked.
 - **Vectors:** `testdata/vectors/generate.sh` uses stock tools only (age ≥ 1.3 just for the one ciphertext, which it keeps). A re-run must change nothing but what you meant to change; diff the tree. Its identity keys are RFC 8032's PUBLISHED test keys; never put any other private key in this repo.
 
+**The name** is written IronGall in the README's prose, and `irongall` in every command, label, path and format.
+
 **Module path:** `github.com/IronGall-dev/irongall-client`. Installing must never depend on the irongall.dev server.
 
 **`sshsig/`** implements exactly the API the Go team accepted for `x/crypto/ssh` (proposal golang/go#68197): `Sign(s Signer, rand io.Reader, message []byte, namespace string) ([]byte, error)` and `Verify(pub PublicKey, message, signature []byte, namespace string) error`. Verify accepts sha256 and sha512. When `x/crypto` ships it, switch the import and delete ours. Its implementation, CL 659715, is unmerged at x/crypto v0.58.0 (2026-10-09).
