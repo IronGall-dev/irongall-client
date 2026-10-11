@@ -185,3 +185,25 @@ func TestAdopt(t *testing.T) {
 		t.Fatalf("adopt --leave: %v %q", err, out.String())
 	}
 }
+
+// The echo box's address is an address, and the help and the README both
+// give it: the one constant is what they publish.
+func TestHelpAndREADMENameTheEchoBox(t *testing.T) {
+	if _, err := protocol.ParseAddress(client.EchoAddress); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := run(context.Background(), "help", nil, nil, &out, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), client.EchoAddress) {
+		t.Error("the help does not give the echo box's address")
+	}
+	readme, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(readme), "crossbot send "+client.EchoAddress+"\n") {
+		t.Error("the README does not give the echo box's address")
+	}
+}

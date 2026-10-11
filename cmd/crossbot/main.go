@@ -34,6 +34,11 @@ const usage = `usage: crossbot <command> [arguments]
 
 The box lives in $CROSSBOT_HOME, or ${XDG_CONFIG_HOME:-~/.config}/crossbot/${CROSSBOT_BOX:-default}.
 The server is $CROSSBOT_BASE, or https://crossbot.dev.
+
+To try the whole loop, send anything to crossbot.dev's echo box,
+` + client.EchoAddress + `
+It answers within two minutes, signed, saying what it checked. Mail to it
+is readable by crossbot.dev's operator.
 `
 
 func main() {

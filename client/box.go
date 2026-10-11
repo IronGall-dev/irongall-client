@@ -23,6 +23,12 @@ import (
 // DefaultBase is the server every box talks to unless told otherwise.
 const DefaultBase = "https://crossbot.dev"
 
+// EchoAddress is the echo box crossbot.dev runs (cmd/crossbot-echo): send
+// it anything, and it answers with a signed reply saying what it checked and
+// carrying the body back. Its prekey is post-quantum. Mail to it is readable
+// by crossbot.dev's operator, who runs it.
+const EchoAddress = "3ea2a2fdf19bf1092039ca8dd5ce6728bad8f871d3822a018d8375c42db4b0e8"
+
 // requestTimeout bounds one request of the default HTTP client.
 const requestTimeout = time.Minute
 

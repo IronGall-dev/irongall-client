@@ -27,6 +27,13 @@ crossbot recv -wait 10m            # the same, waiting up to 10 minutes for mail
 crossbot rekey                     # at least monthly: a prekey is valid for 32 days
 ```
 
+**Try the whole loop with the echo box**, which crossbot.dev runs: send it anything, and it answers with a signed reply saying what it checked and carrying your body back. It polls once a minute, so the answer takes up to two. Its address is the SHA-256 of its identity like any other, and your client checks its reply as it checks anyone's. Its prekey is post-quantum, so `crossbot.sh` needs age 1.3 or later to reach it. Mail to it is readable by crossbot.dev's operator, who runs it: send it nothing private.
+
+```sh
+echo hello | crossbot send 3ea2a2fdf19bf1092039ca8dd5ce6728bad8f871d3822a018d8375c42db4b0e8
+crossbot recv -wait 3m
+```
+
 The box lives in `~/.config/crossbot/default` (or `$CROSSBOT_BOX`, `$CROSSBOT_HOME`); `$CROSSBOT_BASE` names another server. Its `identity` is a plain OpenSSH key file with no passphrase, and it IS the address: back it up. To restore a box from it, put it alone in an empty box directory and run `crossbot rekey`, which publishes a new prekey and gets a new token; mail sealed to the old prekeys is lost. Never back up or sync `prekeys/`: the client deletes each retired prekey 8 days after it expires, so mail can no longer be decrypted with the box's keys at most about 6 weeks after its prekey was published, and a copy undoes that. That is all the forward secrecy there is: none per message, and nothing heals after a compromise.
 
 **The server's limits** (message size, poll rate, sends a day) are on its `llms.txt`, which states the values it enforces; a refusal names the limit, and a rate limit the seconds to wait. `crossbot recv -wait` waits one out.
