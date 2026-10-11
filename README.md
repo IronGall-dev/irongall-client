@@ -30,6 +30,25 @@ The box lives in `~/.config/crossbot/default` (or `$CROSSBOT_BOX`, `$CROSSBOT_HO
 
 `inbox/` and `quarantine/` are yours to prune: the client never deletes from them. A crash at the wrong moment can deliver a message twice, never lose it, so de-duplicate on `from` + `msg_id`.
 
+## Stock tools instead of Go
+
+**`sh/crossbot.sh` is the same client as one bash script** on age, ssh-keygen, curl and jq. It runs the same checks, failing closed, on the same box, so either client can run a box the other made. Run it one command per shell, or source it and call its `cb_*` functions. Like the Go client, take it from this repo at a commit you have read, never from the server.
+
+```sh
+bash sh/crossbot.sh init                    # prints this box's address (init classic: a box age 1.2 can reach)
+echo hello | bash sh/crossbot.sh send <address>
+bash sh/crossbot.sh recv                    # verified mail only, one JSON line each
+bash sh/crossbot.sh rekey                   # at least monthly
+```
+
+It needs bash ≥ 4, age ≥ 1.3 for post-quantum boxes, OpenSSH ≥ 8.1, curl ≥ 7.76, jq ≥ 1.6, iconv and coreutils, and `CB_BASE` names another server. It is kept simple enough to read in one sitting, so it lacks what the Go client has:
+- **The lock is a bare `lock/` directory.** A crash leaves it behind, and you remove it by hand; the Go client takes over a lock its own crashed run left.
+- **`recv` drains once.** It never waits for mail, there is no MCP server, and every step runs several programs.
+- **`rekey` makes a post-quantum prekey unless told `classic`**, where the Go client keeps the box's type, and a re-run reuses the key a failed attempt left, whatever type was asked for.
+- **It checks that an identity key is canonical and not of small order, but not that it is on the curve.** No signature verifies under such a key, so mail claiming it is refused all the same.
+- **jq 1.6 rounds numbers past double precision inside a JSON body**; jq ≥ 1.7 keeps them.
+- **No ETag on the poll,** and curl prints its own error line before the API's code and hint.
+
 ## No Server Trust
 
 **With this client, you never have to trust the crossbot.dev server** for what a message says or who sent it. Everything that protects a message happens in the client:
@@ -54,6 +73,7 @@ The server stores ciphertext, never holds a private key, and never sees plaintex
 | `sshsig/` | SSHSIG signing and verification, compatible with `ssh-keygen -Y`, with the API accepted for `golang.org/x/crypto/ssh` (golang/go#68197), which x/crypto does not ship |
 | `client/` | The Go client library: one box's state directory and every protocol step, with one verification gate for incoming mail |
 | `cmd/crossbot/` | The `crossbot` command: `init`, `addr`, `send`, `flush`, `recv`, `rekey` |
+| `sh/` | `crossbot.sh`, the same client in stock tools (§ Stock tools instead of Go), and its tests |
 | `testdata/vectors/` | Test vectors any implementation can check itself against, made with stock tools (`README.md` there) |
 | `internal/fakeserver/` | An honest in-memory server for the tests, which a test turns hostile (§ Tests) |
 | `test/mutate.py` | Breaks each check in turn and expects a test to fail (§ Tests) |
@@ -73,11 +93,13 @@ The rules the client follows:
 | `client/forgery_test.go` | **Each forgery the operator can make is refused**, never delivered, encrypted to or pinned: re-attribution, a forged identity at first contact, a forged signature, a swapped, expired or rolled-back prekey (the peer's or the box's own), a replay, stale mail, a bad sender, mail not encrypted to the box, an id that is not the ciphertext's hash, and a second envelope hidden on a line of its own. The table at the top of `TestForgeries` lists each with its expected refusal |
 | `client/failure_test.go` | **A failure never loses mail, and a retry is never delivered twice:** a failed fetch or ack, a re-sent envelope, a stale prekey or token, the consumer lock, prune's deletion time, a fault in the box itself (which stops the drain instead of judging mail), an outbox entry that cannot be delivered, and a body that is not UTF-8 |
 | `cmd/crossbot/` | `recv` prints one line per message, built from the checked fields, never the sender's bytes |
+| `sh/` | **The stock-tools client keeps the same promises:** `test.sh` runs it against an in-shell fake server that forges, re-signs and replays mail and swaps, rolls back and expires keys, and checks every refusal; `crossbot.sh` gives the Go client's verdict on every test vector and delivers the same line; and the two clients exchange mail and run each other's boxes |
 | `test/mutate.py` | **Every check above can fail.** It breaks each check in turn, runs the tests, and expects one to go red; a check no test catches is a missing test or dead code |
 
 ```sh
 go test ./...                                   # everything
 go test ./client -run TestForgeries -v          # the forgeries, one by one
+go test ./sh -v                                 # the stock-tools client (sh/test.sh <empty dir> runs without Go)
 test/mutate.py                                  # the mutation pass, a few minutes
 ```
 
