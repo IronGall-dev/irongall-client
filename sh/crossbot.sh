@@ -52,6 +52,7 @@ cb_token(){ # <response file> → $CB/token, decrypted with this box's prekeys
 }
 cb_lock(){ # [seconds] → takes $CB/lock, one consumer per box, waiting up to that long while another holds it
   local end=$((SECONDS + ${1:-0}))
+  [ -s "$CB/address" ] || { cb_refuse "no box in $CB: run init first"; return 1; }
   until mkdir "$CB/lock" 2> /dev/null; do
     [ "$SECONDS" -lt "$end" ] || { cb_refuse "another consumer holds $CB/lock: one consumer per box (remove it if stale)"; return 1; }
     sleep 1

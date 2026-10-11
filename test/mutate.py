@@ -116,6 +116,7 @@ M = [
     ('sh/crossbot.sh', '[ "$n" -lt "$top" ] || continue', 'true'),
     ('sh/crossbot.sh', '[.detail, .hint] | map(', '[.hint] | map('),
     ('sh/crossbot.sh', '[ -z "$1" ] || [ "$1" = --no-pq ] || cb_refuse', 'true || cb_refuse'),
+    ('sh/crossbot.sh', '[ -s "$CB/address" ] || { cb_refuse "no box in $CB: run init first"; return 1; }', 'true'),
 ]
 
 only = sys.argv[1:]

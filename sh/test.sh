@@ -175,6 +175,7 @@ recv(){ if RECV_OUT=$(cb_recv 2> $SRV/recv.err); then RECV_RC=0; else RECV_RC=$?
 box_count(){ ls $SRV/$1/msgs | awk NF | wc -l; }
 
 # --- 1. init: keys, registration, activation
+as Z; cb_recv 2> err.txt && bad "recv in no box" || grep -q "no box in" err.txt && ok "recv where there is no box says so" || bad "no box: $(cat err.txt)"
 for X in A B C D; do as $X; eval "$X=\$(cb_init $NOPQ)" || bad "cb_init $X"; done
 as A; [ "$(sha256sum < $CB/identity.doc | cut -c1-64)" = "$A" ] && [ "$(cat $SRV/$A/state)" = active ] && ok "cb_init: the address is the identity's hash, and the first token call activated the box" || bad "init"
 [ "$(stat -c %a $CB/identity)" = 600 ] && [ "$(stat -c %a $CB/token)" = 600 ] && [ "$(stat -c %a $CB/prekeys/1.agekey)" = 600 ] && ok "keys and token are 0600 (umask 077)" || bad "file modes"
