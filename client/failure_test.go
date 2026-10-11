@@ -188,7 +188,7 @@ func TestTokenStaleIsRefreshed(t *testing.T) {
 	}
 }
 
-// A refreshed token in a Irongall-Token header is kept.
+// A refreshed token in an Irongall-Token header is kept.
 func TestTokenHeaderIsKept(t *testing.T) {
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
