@@ -29,7 +29,7 @@ echo "mode: KEYTYPE=$KEYTYPE, age $(age --version)"
 PASS=0
 ok(){ echo "PASS  $*"; PASS=$((PASS + 1)); }
 bad(){ echo "FAIL  $*"; exit 1; }
-NA=$(jq -nr 'now + 32*86400 | floor | todate')        # a valid not_after: 32 days out, the maximum
+NA=$(jq -nr 'now + 33*86400 | floor | todate')        # a valid not_after: 33 days out, the maximum
 
 # ===== Part 1: the primitives, by hand =====
 for X in A B C; do
@@ -87,7 +87,7 @@ srv_check(){ # <addr> <identity doc> <statement> <sig> <current serial>: the ser
   [ "$(sed -n 1p "$3")" = crossbot-prekey-v1 ] && [ "$(sed -n 2p "$3")" = "$1" ] || { srv_err 400 bad_key "the statement must name this address"; return 1; }
   s=$(sed -n 3p "$3"); [ "$s" -gt "$5" ] || { srv_err 409 conflict "the serial must be above $5"; return 1; }
   na=$(jq -n --arg t "$(sed -n 5p "$3")" '$t | fromdateiso8601' 2> /dev/null) || { srv_err 400 bad_key "not_after must be RFC 3339 UTC; never is not allowed"; return 1; }
-  now=$(date -u +%s); [ "$na" -gt "$now" ] && [ "$na" -le $((now + 32*86400)) ] || { srv_err 400 bad_key "not_after must be in the future and at most 32 days away"; return 1; }
+  now=$(date -u +%s); [ "$na" -gt "$now" ] && [ "$na" -le $((now + 33*86400)) ] || { srv_err 400 bad_key "not_after must be in the future and at most 33 days away"; return 1; }
   if grep -qxF "$(sed -n 4p "$3")" $SRV/$1/keys.used 2> /dev/null; then srv_err 400 bad_key "every prekey must be a NEW key"; return 1; fi; }
 srv_install(){ cp $SRV/tmp/pk.txt $SRV/$1/prekey.txt; cp $SRV/tmp/pk.sig $SRV/$1/prekey.sig; sed -n 4p $SRV/tmp/pk.txt >> $SRV/$1/keys.used; }
 srv_register(){ local a=$1 f=$2 d=$SRV/$1
@@ -132,13 +132,13 @@ srv_send(){ local b=$1 f=$2 d=$SRV/$1 A ps id now s r
   id=$(sha256sum < $SRV/tmp/c.age | cut -c1-64)
   if [ -e $d/dedupe/$id ]; then [ "$(sed -n 1p $d/dedupe/$id)" = "$A" ] && { sed -n 2p $d/dedupe/$id; return 0; }; srv_err 409 conflict "another box already sent this ciphertext"; return 1; fi
   now=$(date -u +%s); s=$(($(cat $d/seq) + 1)); echo $s > $d/seq
-  r=$(jq -cn --arg id "$id" --argjson t "$now" '{id:$id, received_at:($t|todate), expires_at:($t + 8*86400 | todate)}')
+  r=$(jq -cn --arg id "$id" --argjson t "$now" '{id:$id, received_at:($t|todate), expires_at:($t + 33*86400 | todate)}')
   printf '%s\n%s\n' "$A" "$r" > $d/dedupe/$id
   jq -n --argjson r "$r" --arg from "$A" --arg c "$(jq -r .ciphertext "$f")" --arg g "$(jq -r .signature "$f")" '$r + {from:$from, ciphertext:$c, signature:$g}' > $d/msgs/$(printf %06d $s)-$id.json
   echo "$r"; }
 srv_inject(){ # <box> <from> <c.age> <c.sig> [id]: what a malicious operator can do, put anything in a box
   local d=$SRV/$1 s id=${5:-$(sha256sum < "$3" | cut -c1-64)}; s=$(($(cat $d/seq) + 1)); echo $s > $d/seq
-  jq -n --arg id "$id" --arg from "$2" --arg c "$(base64 < "$3" | tr -d '\n')" --arg g "$(base64 < "$4" | tr -d '\n')" --argjson t "$(date -u +%s)" '{id:$id, from:$from, received_at:($t|todate), expires_at:($t + 8*86400 | todate), ciphertext:$c, signature:$g}' > $d/msgs/$(printf %06d $s)-$id.json; }
+  jq -n --arg id "$id" --arg from "$2" --arg c "$(base64 < "$3" | tr -d '\n')" --arg g "$(base64 < "$4" | tr -d '\n')" --argjson t "$(date -u +%s)" '{id:$id, from:$from, received_at:($t|todate), expires_at:($t + 33*86400 | todate), ciphertext:$c, signature:$g}' > $d/msgs/$(printf %06d $s)-$id.json; }
 srv_list(){ local d=$SRV/$1 c=${2#\?cursor=} all page last nc=null x; [ -n "$2" ] || c=0
   all=$(ls $d/msgs | sort); page=$(printf '%s\n' "$all" | awk -F- -v c="$c" 'NF && $1 + 0 > c + 0' | head -n "${PAGE:-50}")
   last=$(printf '%s\n' "$page" | tail -n1 | cut -d- -f1)
@@ -225,10 +225,10 @@ srv_inject "$B" "$A" resign.age replay.sig "$(head -c 32 /dev/urandom | sha256su
 jq -cn --arg f "$A" --arg t "$B" '{v:1, from:$f, to:$t, sent_at:(now | floor | todate), msg_id:"44444444-2222-4333-8444-555555555555", body:"wrong id"}' > wrongid.P; seal_as A "$B" wrongid.P
 as B; srv_inject "$B" "$A" wrongid.P.age wrongid.P.sig "$(head -c 32 /dev/urandom | sha256sum | cut -c1-64)"; recv
 [ -z "$RECV_OUT" ] && printf '%s' "$RECV_ERR" | grep -q "not the SHA-256 of its ciphertext" && ok "a genuine message under an id that is not its hash: REFUSED" || bad "wrong id: $RECV_OUT / $RECV_ERR"
-# a stale sent_at: older than the 8-day window
-jq -cn --arg f "$A" --arg t "$B" '{v:1, from:$f, to:$t, sent_at:(now - 9*86400 | floor | todate), msg_id:"22222222-2222-4333-8444-555555555555", body:"old"}' > old.P; seal_as A "$B" old.P
+# a stale sent_at: older than the 33-day window
+jq -cn --arg f "$A" --arg t "$B" '{v:1, from:$f, to:$t, sent_at:(now - 34*86400 | floor | todate), msg_id:"22222222-2222-4333-8444-555555555555", body:"old"}' > old.P; seal_as A "$B" old.P
 as B; srv_inject "$B" "$A" old.P.age old.P.sig; recv
-[ -z "$RECV_OUT" ] && printf '%s' "$RECV_ERR" | grep -q "older than 8 days" && ok "sent_at older than 8 days: REFUSED" || bad "stale: $RECV_OUT / $RECV_ERR"
+[ -z "$RECV_OUT" ] && printf '%s' "$RECV_ERR" | grep -q "older than 33 days" && ok "sent_at older than 33 days: REFUSED" || bad "stale: $RECV_OUT / $RECV_ERR"
 # a key twice: jq would take the second from, another reader the first
 printf '{"v":1,"from":"%s","from":"%s","to":"%s","sent_at":"%s","msg_id":"55555555-2222-4333-8444-555555555555","body":"twice"}' "$C" "$A" "$B" "$(jq -nr 'now | floor | todate')" > dup.P; seal_as A "$B" dup.P
 as B; srv_inject "$B" "$A" dup.P.age dup.P.sig; recv
@@ -275,9 +275,9 @@ cb_flush 2> err.txt && bad "flush reported success over a bad entry"; cp held.js
 [ "$(box_count "$last")" = $((n0 + 1)) ] && ok "flush tries every entry: one that fails does not stop the next" || bad "flush stopped: $(cat err.txt)"
 cb_flush 2> err.txt && [ $(($(box_count "$B") + $(box_count "$C"))) = 2 ] && ! ls $CB/outbox/*.P > /dev/null 2>&1 && ok "flush delivers what is left, once" || bad "flush: $(cat err.txt)"
 as B; recv; as C; recv
-jq -cn --arg f "$A" --arg t "$B" '{v:1, from:$f, to:$t, sent_at:(now - 8*86400 - 60 | floor | todate), msg_id:"66666666-2222-4333-8444-555555555555", body:"stuck"}' > $W/box/A/outbox/$B.stuck.P
+jq -cn --arg f "$A" --arg t "$B" '{v:1, from:$f, to:$t, sent_at:(now - 33*86400 - 60 | floor | todate), msg_id:"66666666-2222-4333-8444-555555555555", body:"stuck"}' > $W/box/A/outbox/$B.stuck.P
 as A; cb_flush 2> err.txt
-grep -q "older than 8 days" err.txt && [ "$(box_count "$B")" = 0 ] && [ -e $CB/outbox/failed/$B.stuck.P ] && ok "an entry older than 8 days is never posted: moved to outbox/failed/" || bad "stuck: $(cat err.txt)"
+grep -q "older than 33 days" err.txt && [ "$(box_count "$B")" = 0 ] && [ -e $CB/outbox/failed/$B.stuck.P ] && ok "an entry older than 33 days is never posted: moved to outbox/failed/" || bad "stuck: $(cat err.txt)"
 # --- 7. the server's prekey rules
 as B; printf 'crossbot-prekey-v1\n%s\n5\n%s\nnever\n' "$B" "$(age-keygen -y $CB/prekeys/1.agekey)" > never.txt
 ssh-keygen -q -Y sign -n "crossbot-prekey-v1:$B" -f $CB/identity < never.txt > never.sig
@@ -286,7 +286,7 @@ cb_api PUT "/v1/$B/prekey" never.json > /dev/null 2>&1 && bad "never accepted" |
 age-keygen $PQ -o far.agekey 2> /dev/null; printf 'crossbot-prekey-v1\n%s\n5\n%s\n%s\n' "$B" "$(age-keygen -y far.agekey)" "$(jq -nr 'now + 40*86400 | floor | todate')" > far.txt
 ssh-keygen -q -Y sign -n "crossbot-prekey-v1:$B" -f $CB/identity < far.txt > far.sig
 jq -n --arg p "$(cb_b64 far.txt)" --arg g "$(cb_b64 far.sig)" '{prekey:$p, prekey_signature:$g}' > far.json
-cb_api PUT "/v1/$B/prekey" far.json > /dev/null 2>&1 && bad "40 days accepted" || ok "the server refuses a not_after more than 32 days away"
+cb_api PUT "/v1/$B/prekey" far.json > /dev/null 2>&1 && bad "40 days accepted" || ok "the server refuses a not_after more than 33 days away"
 printf 'crossbot-prekey-v1\n%s\n5\n%s\n%s\n' "$B" "$(age-keygen -y $CB/prekeys/1.agekey)" "$NA" > same.txt
 ssh-keygen -q -Y sign -n "crossbot-prekey-v1:$B" -f $CB/identity < same.txt > same.sig
 jq -n --arg p "$(cb_b64 same.txt)" --arg g "$(cb_b64 same.sig)" '{prekey:$p, prekey_signature:$g}' > same.json
@@ -305,12 +305,12 @@ as C; echo "$B" > $SRV/stale-once; printf 'via a stale cache' > $W/body5
 cb_send "$B" $W/body5 2> $W/err.txt && grep -q stale_prekey $W/err.txt && [ "$(cat $CB/peers/$B/serial)" = 2 ] && ok "a sender handed serial 1 gets 409 stale_prekey and re-encrypts the SAME envelope to serial 2" || bad "stale_prekey: $(cat $W/err.txt)"
 as B; recv; printf '%s' "$RECV_OUT" | jq -e '.body == "via a stale cache"' > /dev/null && ok "and B receives it once" || bad "stale recv: $RECV_OUT / $RECV_ERR"
 CB=$W/box/B; cb_api GET "/v1/$B/messages" "" -H "Authorization: Bearer $OLD_TOKEN" > /dev/null 2>&1 && bad "old token accepted" || [ "$(jq -r .code $CB/error.json)" = token_stale ] && ok "the token from before the renewal is dead (token_stale)" || bad "old token code"
-# --- 9. forward secrecy: a retired prekey is deleted at its not_after + 8 days, then its mail is unrecoverable
+# --- 9. forward secrecy: a retired prekey is deleted at its not_after + 33 days, then its mail is unrecoverable
 as B; age -d -i key1.agekey < resign.age > /dev/null && age -d -i $CB/prekeys/1.agekey < resign.age > /dev/null && ok "control: mail to the retired key decrypts while it is retained" || bad "retained"
-sed -i "5s/.*/$(jq -nr 'now - 9*86400 | floor | todate')/" $CB/prekeys/1.txt     # pretend its not_after was 9 days ago
-cb_prune; [ ! -e $CB/prekeys/1.agekey ] && [ -e $CB/prekeys/2.agekey ] && ok "cb_prune deletes the retired key past not_after + 8 days, keeps the current one" || bad "prune"
+sed -i "5s/.*/$(jq -nr 'now - 34*86400 | floor | todate')/" $CB/prekeys/1.txt     # pretend its not_after was 34 days ago
+cb_prune; [ ! -e $CB/prekeys/1.agekey ] && [ -e $CB/prekeys/2.agekey ] && ok "cb_prune deletes the retired key past not_after + 33 days, keeps the current one" || bad "prune"
 age -d -i $CB/prekeys/2.agekey < resign.age > /dev/null 2>&1 && bad "old mail still decryptable" || ok "after deletion, mail to the retired key is unrecoverable from the box's keys"
-cp $CB/prekeys/2.txt held2.txt; sed -i "5s/.*/$(jq -nr 'now - 9*86400 | floor | todate')/" $CB/prekeys/2.txt
+cp $CB/prekeys/2.txt held2.txt; sed -i "5s/.*/$(jq -nr 'now - 34*86400 | floor | todate')/" $CB/prekeys/2.txt
 cb_prune; [ -e $CB/prekeys/2.agekey ] && ok "cb_prune never deletes the newest key, even past its deletion time: it decrypts the box's token" || bad "prune deleted the newest key"
 cp held2.txt $CB/prekeys/2.txt
 # --- 10. restore without a token or prekeys: the identity alone renews the prekey

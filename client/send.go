@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"filippo.io/age"
 	"github.com/drewstreib/crossbot-client/protocol"
@@ -81,7 +82,7 @@ var undeliverable = []protocol.Code{
 // receipt, and the recipient would refuse it.
 func (b *Box) post(ctx context.Context, to protocol.Address, stem string) (*protocol.Receipt, error) {
 	if b.expired(stem) {
-		err := refuse("its envelope is older than 8 days, and every recipient refuses that")
+		err := refuse("its envelope is older than %d days, and every recipient refuses that", protocol.TTL/(24*time.Hour))
 		if merr := b.moveToFailed(stem); merr != nil {
 			return nil, errors.Join(err, merr)
 		}
@@ -121,8 +122,8 @@ func (b *Box) trySend(ctx context.Context, to protocol.Address, stem string) (*p
 	return r, err
 }
 
-// expired reports whether an entry's envelope is older than the 8 days a
-// recipient accepts: past that, every recipient refuses it as stale.
+// expired reports whether an entry's envelope is older than protocol.TTL, the
+// most a recipient accepts: past that, every recipient refuses it as stale.
 func (b *Box) expired(stem string) bool {
 	p, err := os.ReadFile(stem + ".P") //nolint:gosec // a path inside the box's own directory
 	if err != nil {

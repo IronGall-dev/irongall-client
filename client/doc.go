@@ -15,7 +15,7 @@
 //	prekeys/<serial>.agekey    age keys, each with its signed statement (.txt, .txt.sig); never backed up
 //	token                      the owner token
 //	peers/<address>/           the pinned identity document, the highest prekey serial seen
-//	seen                       the replay set: ciphertext hash, sent_at, from, msg_id, for 8 days
+//	seen                       the replay set: ciphertext hash, sent_at, from, msg_id, for 33 days
 //	outbox/                    envelopes and signed bytes awaiting a receipt
 //	inbox/, quarantine/        accepted mail; refused mail, never delivered
 //	lock                       one consumer per box

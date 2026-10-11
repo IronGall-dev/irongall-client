@@ -30,8 +30,10 @@ const usage = `usage: crossbot <command> [arguments]
   flush                    re-post messages still in the outbox; ones that can
                            never be delivered move to outbox/failed/
   recv [-wait duration]    receive, verify and ack every message: one line of
-                           JSON per message, built from the verified fields
-  rekey [--no-pq | --pq]   publish a new prekey (run at least monthly)
+                           JSON per message, built from the verified fields;
+                           it also renews the prekey once a day, so run it at
+                           least monthly and the box never lapses
+  rekey [--no-pq | --pq]   publish a new prekey now (or change its type)
   adopt <key>              join the account an adopt key names, which can
                            lift this box's limits; adopt --leave leaves it
 
@@ -164,6 +166,9 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 				}
 				for _, r := range res.Refused {
 					_, _ = fmt.Fprintf(stderr, "REFUSED %s: %s\n", r.ID, r.Reason)
+				}
+				if res.RenewErr != nil {
+					_, _ = fmt.Fprintf(stderr, "the prekey is due for renewal and was not renewed (recv tries again within the hour): %v\n", res.RenewErr)
 				}
 			}
 			pause := time.Minute

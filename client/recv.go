@@ -56,6 +56,12 @@ type Result struct {
 	Refused    []Refusal
 	// PollAfter is the server's poll interval, in seconds.
 	PollAfter int
+	// Renewed is the prekey this Receive published, the current one being
+	// more than a day old; nil if none was due.
+	Renewed *protocol.Prekey
+	// RenewErr is why a due renewal failed. The drain went ahead, and a
+	// later Receive tries again, at most hourly.
+	RenewErr error
 }
 
 // Receive drains the box: every page, every message. Each message is judged
@@ -63,12 +69,26 @@ type Result struct {
 // delivered, to inbox/ and the Result. Refused mail goes to quarantine/. Both
 // are acked. A transient error stops the drain and leaves the rest for the
 // next one. One consumer per box: a second concurrent Receive is refused.
+//
+// First it renews the prekey if the current one is more than a day old, so
+// a box received at least monthly never lapses. A drain that empties the box
+// then deletes the retired prekeys no mail can still need (see
+// [Box.dropRetired]): all but the newest.
 func (b *Box) Receive(ctx context.Context) (*Result, error) {
 	l, err := b.lock()
 	if err != nil {
 		return nil, err
 	}
+	began := b.now()
+	renewed, renewErr := b.renewIfDue(ctx)
 	res, err := b.drain(ctx)
+	if res == nil {
+		res = &Result{}
+	}
+	res.Renewed, res.RenewErr = renewed, renewErr
+	if err == nil {
+		err = b.dropRetired(began)
+	}
 	if e := l.release(); err == nil {
 		err = e
 	}
@@ -229,7 +249,7 @@ func (b *Box) fetchSenderIdentity(ctx context.Context, from string) error {
 //  3. The signature, by that identity, in this box's message namespace.
 //  4. Decryption with every retained prekey.
 //  5. The envelope: version 1, from is the verified signer, to is this box.
-//  6. Freshness: sent_at no older than 8 days.
+//  6. Freshness: sent_at no older than protocol.TTL (33 days).
 //  7. Replay: the locally computed ciphertext hash is not in the seen-set.
 //  8. Retry: (from, msg_id) is not in the seen-set. A match is a duplicate.
 func (b *Box) judge(m *protocol.Message) (d *Delivery, dup bool, why string, err error) {
@@ -306,8 +326,8 @@ func verdict(err error) (*Delivery, bool, string, error) {
 }
 
 // The seen-set: one line per accepted message, "<ciphertext hash> <sent_at,
-// unix seconds> <from> <msg_id>", kept until sent_at + 8 days, so the replay
-// check and the freshness check cover the same 8 days.
+// unix seconds> <from> <msg_id>", kept until sent_at + protocol.TTL, so the
+// replay check and the freshness check cover the same window.
 
 func (b *Box) seenLines() ([][]string, error) {
 	f, err := os.Open(b.path("seen"))

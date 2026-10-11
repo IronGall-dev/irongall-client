@@ -279,7 +279,7 @@ func TestLiveLockExcludes(t *testing.T) {
 	}
 }
 
-// A retired prekey decrypts mail until its deletion time, not_after + 8
+// A retired prekey decrypts mail until its deletion time, not_after + 33
 // days, and is deleted then: the forward-secrecy bound.
 func TestPruneDeletesRetiredKeys(t *testing.T) {
 	e := newEnv(t)
@@ -304,7 +304,7 @@ func TestPruneDeletesRetiredKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	if exists(key1) {
-		t.Fatal("not deleted at not_after + 8 days")
+		t.Fatal("not deleted at not_after + 33 days")
 	}
 	if !exists(filepath.Join(b.Dir(), "prekeys", "2.agekey")) {
 		t.Fatal("the current key was deleted")
@@ -410,13 +410,13 @@ func TestFlushNeverStopsAtABadEntry(t *testing.T) {
 	if failed, _ := filepath.Glob(filepath.Join(outbox, "failed", c.Address().String()+".*.P")); len(failed) != 1 {
 		t.Fatal("the revoked box's entry did not move to outbox/failed/")
 	}
-	// Past 8 days no recipient accepts it: it moves to failed/ too.
+	// Past 33 days no recipient accepts it: it moves to failed/ too.
 	e.clock.Add(protocol.TTL + time.Second)
 	if _, err := a.Flush(ctx); err == nil {
 		t.Fatal("flush of an undeliverable entry reported nothing")
 	}
 	if left, _ := filepath.Glob(filepath.Join(outbox, "*.P")); len(left) != 0 {
-		t.Fatalf("an entry older than 8 days stayed: %v", left)
+		t.Fatalf("an entry older than 33 days stayed: %v", left)
 	}
 }
 
@@ -436,7 +436,7 @@ func TestStaleOutboxEntryIsNotPosted(t *testing.T) {
 		t.Fatalf("flush: %d sent, %v", len(rs), err)
 	}
 	if e.srv.Count(b.Address()) != 0 {
-		t.Fatal("an entry older than 8 days was posted")
+		t.Fatal("an entry older than 33 days was posted")
 	}
 	if failed, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "failed", b.Address().String()+".*.P")); len(failed) != 1 {
 		t.Fatal("the stale entry did not move to outbox/failed/")

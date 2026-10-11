@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -19,7 +20,9 @@ import (
 // current prekey's type if kt is empty. It needs no token, only the identity,
 // so it also recovers a box that lost its prekeys or its token. The new token
 // it returns, encrypted to the new prekey, replaces the old one, which dies.
-// Run it at least monthly: a prekey is valid for at most 32 days.
+// [Box.Receive] renews the prekey once it is more than a day old, so a box
+// received at least monthly never lapses; Rekey is for a new key type, for
+// recovery, and for boxes that are only ever sent from.
 //
 // It holds the box's lock, so two runs never make the same serial's key at
 // once, and it refuses a served serial below the highest this box has
@@ -118,10 +121,107 @@ func (b *Box) recordPublished(serial uint64) error {
 	return writeFile(b.path("serial"), []byte(strconv.FormatUint(serial, 10)+"\n"))
 }
 
-// Prune deletes every retired prekey whose deletion time has come: its
-// not_after plus the 8-day TTL. All mail encrypted to it arrived by its
-// not_after and has expired by then; after this, that mail is unrecoverable
-// from the box's keys. The newest prekey is never deleted.
+// renewAfter is how old the current prekey may get before Receive renews
+// it: a day, so a box received at least monthly never lapses, and a busy
+// box renews at most daily.
+const renewAfter = 24 * time.Hour
+
+// retiredGrace is how long after a renewal a drain must begin before it may
+// delete prekeys: room for a send the server took as the renewal landed.
+const retiredGrace = time.Hour
+
+// renewRetry is how long Receive waits to try a failed renewal again, so a
+// refused one (a rate limit, a server that is down) is not tried every poll.
+const renewRetry = time.Hour
+
+// current returns the serial of the prekey this box published last, and
+// when that prekey was made. Both clients give every prekey the full
+// lifetime, so it was made at its not_after less MaxPrekeyLifetime. A box
+// that has never renewed has published only serial 1.
+func (b *Box) current() (uint64, time.Time, error) {
+	n, err := b.publishedSerial()
+	if err != nil {
+		return 0, time.Time{}, err
+	}
+	n = max(n, 1)
+	st, err := os.ReadFile(b.path("prekeys", strconv.FormatUint(n, 10)+".txt")) //nolint:gosec // a path inside the box's own directory
+	if err != nil {
+		return n, time.Time{}, err
+	}
+	p, err := protocol.ParsePrekey(st)
+	if err != nil {
+		return n, time.Time{}, err
+	}
+	return n, p.NotAfter.Add(-protocol.MaxPrekeyLifetime), nil
+}
+
+// renewIfDue publishes a new prekey, of the current type, when the current
+// one is more than renewAfter old or cannot be read. The caller holds the
+// lock. A failure is retried after renewRetry.
+func (b *Box) renewIfDue(ctx context.Context) (*protocol.Prekey, error) {
+	if _, made, err := b.current(); err == nil && b.now().Sub(made) <= renewAfter {
+		return nil, nil
+	}
+	if !b.renewFailed.IsZero() && b.now().Sub(b.renewFailed) < renewRetry {
+		return nil, nil
+	}
+	p, err := b.rekey(ctx, "")
+	if err != nil {
+		b.renewFailed = b.now()
+		return nil, err
+	}
+	b.renewFailed = time.Time{}
+	return p, nil
+}
+
+// dropRetired deletes every retired prekey but the newest, after a drain
+// that emptied the box and began more than retiredGrace after the last
+// renewal. A send must name the recipient's current prekey serial, so mail
+// encrypted to a retired prekey reached the server before the renewal that
+// retired it, or with a send already in progress: such a drain collected all
+// of it. The newest retired prekey is kept regardless. After this, mail
+// encrypted to a deleted prekey is unrecoverable from the box's keys.
+// crossbot.sh does not do this; it keeps every retired prekey until Prune's
+// deletion time.
+func (b *Box) dropRetired(began time.Time) error {
+	cur, made, err := b.current()
+	if err != nil || began.Sub(made) <= retiredGrace {
+		return nil //nolint:nilerr // a box whose current prekey is unreadable keeps every key
+	}
+	keys, err := filepath.Glob(b.path("prekeys", "*.agekey"))
+	if err != nil {
+		return err
+	}
+	var retired []uint64
+	for _, k := range keys {
+		if n, err := strconv.ParseUint(strings.TrimSuffix(filepath.Base(k), ".agekey"), 10, 64); err == nil && n < cur {
+			retired = append(retired, n)
+		}
+	}
+	slices.Sort(retired)
+	for _, n := range retired[:max(len(retired)-1, 0)] {
+		if err := b.removePrekey(n); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// removePrekey deletes a prekey's key and its statement.
+func (b *Box) removePrekey(n uint64) error {
+	stem := b.path("prekeys", strconv.FormatUint(n, 10))
+	for _, ext := range []string{".agekey", ".txt", ".txt.sig"} {
+		if err := removeIfExists(stem + ext); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Prune deletes every retired prekey whose deletion time has come, whatever
+// else happened: its not_after plus protocol.TTL. All mail encrypted to it
+// arrived by its not_after and has expired by then; after this, that mail is
+// unrecoverable from the box's keys. The newest prekey is never deleted.
 func (b *Box) Prune() error {
 	keys, err := filepath.Glob(b.path("prekeys", "*.agekey"))
 	if err != nil {
@@ -147,7 +247,7 @@ func (b *Box) Prune() error {
 			continue
 		}
 		if !b.now().Before(p.NotAfter.Add(protocol.TTL)) {
-			if err := os.Remove(k); err != nil {
+			if err := b.removePrekey(n); err != nil {
 				return err
 			}
 		}

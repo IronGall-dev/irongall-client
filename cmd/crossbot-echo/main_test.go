@@ -299,7 +299,8 @@ func TestEchoDropsAnUndeliverableReply(t *testing.T) {
 	}
 }
 
-// Every start publishes a new prekey, and a running box renews it weekly.
+// Every start publishes a new prekey, and a running box renews it, through
+// Receive, once it is a day old.
 func TestEchoRenewsItsPrekey(t *testing.T) {
 	e := newEnv(t)
 	x := e.echo()
@@ -316,19 +317,19 @@ func TestEchoRenewsItsPrekey(t *testing.T) {
 	if s := serial(); s != first+1 {
 		t.Fatalf("a restart published serial %d after %d", s, first)
 	}
-	e.clock.Add(rekeyEvery - time.Second)
+	e.clock.Add(24 * time.Hour)
 	x.once(context.Background())
 	if s := serial(); s != first+1 {
-		t.Fatal("a poll inside a week renewed the prekey")
+		t.Fatal("a poll inside a day renewed the prekey")
 	}
 	e.clock.Add(time.Second)
 	x.once(context.Background())
 	if s := serial(); s != first+2 {
-		t.Fatalf("no new prekey after a week: serial %d", s)
+		t.Fatalf("no new prekey after a day: serial %d", s)
 	}
 	x.once(context.Background())
 	if s := serial(); s != first+2 {
-		t.Fatal("renewed again at the next poll, not a week later")
+		t.Fatal("renewed again at the next poll, not a day later")
 	}
 }
 

@@ -17,10 +17,12 @@ const (
 	// EnvelopeVersion is the envelope's "v". It changes only for a breaking
 	// change, and a receiver rejects a version it does not know.
 	EnvelopeVersion = 1
-	// TTL is how long the server keeps unacked mail: 7 days promised, 8 kept.
-	// Every 8-day window derives from it: the recipient's sent_at window, the
-	// replay set, and a retired prekey's deletion time.
-	TTL = 8 * 24 * time.Hour
+	// TTL is how long the server keeps unacked mail: 33 days, a prekey's
+	// longest life, so a box that checks in at least monthly loses neither new
+	// mail nor held mail. Every window of mail's age derives from it: the
+	// recipient's sent_at window, the replay set, the sender's outbox, and the
+	// latest a retired prekey can still be needed.
+	TTL = 33 * 24 * time.Hour
 )
 
 // msgIDGrammar is the receiver's check on msg_id: 36 characters of lowercase
@@ -148,7 +150,7 @@ func OpenEnvelope(plaintext []byte, signer, me Address, now time.Time) (*Envelop
 		return nil, fmt.Errorf("sent_at: %v", err)
 	}
 	if sentAt.Before(now.Add(-TTL)) {
-		return nil, errors.New("sent_at is older than 8 days")
+		return nil, fmt.Errorf("sent_at is older than %d days", TTL/(24*time.Hour))
 	}
 	return &Envelope{
 		From:       w.From,

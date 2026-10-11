@@ -9,7 +9,7 @@ set -euo pipefail
 umask 077
 cd "$(dirname "$0")"
 NOW=2026-10-10T00:00:00Z
-NOT_AFTER=2026-11-11T00:00:00Z # NOW + 32 days exactly: the longest a prekey may be valid
+NOT_AFTER=2026-11-12T00:00:00Z # NOW + 33 days exactly: the longest a prekey may be valid
 MSG_ID=6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b
 
 # Hex helpers. Binary goes through hex strings, never through shell variables.
@@ -109,7 +109,7 @@ bad bad-recipient-not-age 'crossbot-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$GOOD" "$N
 bad bad-recipient-small-order-pq 'crossbot-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$(cat input/small-order.pq)" "$NOT_AFTER"
 bad bad-recipient-small-order-classic 'crossbot-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$(cat input/small-order.classic)" "$NOT_AFTER"
 bad expired 'crossbot-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$PQ" "$NOW"
-bad too-long 'crossbot-prekey-v1\n%s\n1\n%s\n2026-11-11T00:00:01Z\n' "$A" "$PQ"
+bad too-long 'crossbot-prekey-v1\n%s\n1\n%s\n2026-11-12T00:00:01Z\n' "$A" "$PQ"
 
 # Decrypted envelopes, judged as a message signed by A, received by box B, at ./now.
 case_env() { local name=$1; shift; printf "$@" > "envelope/$name.json"; }
@@ -119,8 +119,8 @@ case_env accept-every-field "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"b
 case_env accept-json-body "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":{\"task\":\"ping\",\"n\":1}}" "$A" "$B"
 case_env accept-null-body "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":null}" "$A" "$B"
 case_env accept-unknown-field "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\",\"later\":true}" "$A" "$B"
-case_env accept-8-days-old "{$H,\"sent_at\":\"2026-10-02T00:00:00Z\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
-case_env refuse-8-days-and-1s-old "{$H,\"sent_at\":\"2026-10-01T23:59:59Z\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
+case_env accept-33-days-old "{$H,\"sent_at\":\"2026-09-07T00:00:00Z\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
+case_env refuse-33-days-and-1s-old "{$H,\"sent_at\":\"2026-09-06T23:59:59Z\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
 case_env refuse-from-not-signer "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$B" "$B"
 case_env refuse-to-another-box "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$A"
 case_env refuse-from-uppercase "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$(printf '%s' "$A" | tr a-f A-F)" "$B"

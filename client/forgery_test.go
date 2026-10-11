@@ -35,7 +35,7 @@ import (
 //	rollback of a peer's prekey          B's older prekey served again        → the send refuses (serial went down)
 //	rollback of the box's own prekey     the box's own older prekey served    → rekey refuses (it published a higher one)
 //	replay under a new id                a delivered ciphertext, stored again → refused as a replay
-//	sent_at older than 8 days            an envelope dated 8 days and 1 s ago → refused as stale
+//	sent_at older than 33 days           an envelope dated 33 days and 1 s ago → refused as stale
 //	sender not an address                a from that is not 64 hex            → refused
 //	not encrypted to this box            A's message to C, signed for B       → refused: it does not decrypt
 //	an id that is not the hash           a message listed under another id    → refused; files are named by the hash
@@ -204,7 +204,7 @@ func TestForgeries(t *testing.T) {
 		refusedFor(t, receive(t, b), "replay")
 	})
 
-	t.Run("sent_at older than 8 days", func(t *testing.T) {
+	t.Run("sent_at older than 33 days", func(t *testing.T) {
 		e := newEnv(t)
 		b := e.box(protocol.Classic)
 		past := e.opts()
@@ -217,7 +217,7 @@ func TestForgeries(t *testing.T) {
 		if _, err := old.Send(ctx, b.Address(), "stale"); err != nil {
 			t.Fatal(err)
 		}
-		refusedFor(t, receive(t, b), "older than 8 days")
+		refusedFor(t, receive(t, b), "older than 33 days")
 	})
 
 	t.Run("sender not an address", func(t *testing.T) {

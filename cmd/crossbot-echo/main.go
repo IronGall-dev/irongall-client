@@ -9,7 +9,8 @@
 // in the identity key, the one thing kept, and publishes a new prekey, which
 // needs only the identity, so no prekey ever reaches a disk or a backup. A
 // message sealed to the previous prekey is refused after a restart, like any
-// mail a box can no longer decrypt.
+// mail a box can no longer decrypt. While it runs, each Receive renews the
+// prekey once it is a day old, as for any box.
 package main
 
 import (
@@ -45,10 +46,6 @@ is answered, signed, with what was checked and the body it carried.
 
 The server is $CROSSBOT_BASE, or https://crossbot.dev.
 `
-
-// rekeyEvery is how often a running echo box publishes a new prekey, well
-// inside the 32 days one is valid.
-const rekeyEvery = 7 * 24 * time.Hour
 
 // replyTTL is how long a reply that could not be posted is retried before it
 // is dropped: a late echo is worth little, and a recipient that refuses one
@@ -105,11 +102,9 @@ func run(ctx context.Context, args []string, logw io.Writer) error {
 }
 
 type echo struct {
-	b       *client.Box
-	kt      protocol.KeyType
-	log     *log.Logger
-	now     func() time.Time
-	rekeyed time.Time
+	b   *client.Box
+	log *log.Logger
+	now func() time.Time
 }
 
 // start copies the identity into dir and publishes a new prekey, or at the
@@ -149,7 +144,7 @@ func start(ctx context.Context, dir, identity string, opt client.Options, kt pro
 		now = time.Now
 	}
 	l.Printf("echo box %s: a new prekey is published", b.Address())
-	return &echo{b: b, kt: kt, log: l, now: now, rekeyed: now()}, nil
+	return &echo{b: b, log: l, now: now}, nil
 }
 
 func (e *echo) run(ctx context.Context) error {
@@ -163,22 +158,19 @@ func (e *echo) run(ctx context.Context) error {
 	}
 }
 
-// once renews the prekey when it is due, retries replies not yet posted,
-// drains the box and answers what it delivered. It returns how long to wait
+// once retries replies not yet posted, drains the box (which renews its
+// prekey when due) and answers what it delivered. It returns how long to wait
 // before the next poll.
 func (e *echo) once(ctx context.Context) time.Duration {
-	if e.now().Sub(e.rekeyed) >= rekeyEvery {
-		// A failure is retried at the next poll, days before the prekey lapses.
-		if _, err := e.b.Rekey(ctx, e.kt); err != nil {
-			e.log.Printf("rekey: %v", err)
-		} else {
-			e.rekeyed = e.now()
-			e.log.Printf("a new prekey is published")
-		}
-	}
 	e.retry(ctx)
 	res, err := e.b.Receive(ctx)
 	if res != nil {
+		if res.Renewed != nil {
+			e.log.Printf("a new prekey is published, serial %d", res.Renewed.Serial)
+		}
+		if res.RenewErr != nil {
+			e.log.Printf("the prekey is due for renewal and was not renewed: %v", res.RenewErr)
+		}
 		for _, d := range res.Delivered {
 			e.reply(ctx, d)
 		}
@@ -262,8 +254,8 @@ func report(d client.Delivery, now time.Time) string {
 	fmt.Fprintf(&s, "sent_at: %s\n", env.SentAt.UTC().Format(protocol.TimeLayout))
 	fmt.Fprintf(&s, "received_at: %s\n", now.UTC().Format(protocol.TimeLayout))
 	fmt.Fprintf(&s, "ciphertext_sha256: %s\n", d.ID)
-	s.WriteString("checked: the sender's identity against its address; the signature, made for this box only; " +
-		"decryption with this box's prekey; the envelope's version, from and to; sent_at within 8 days; not a replay\n")
+	fmt.Fprintf(&s, "checked: the sender's identity against its address; the signature, made for this box only; "+
+		"decryption with this box's prekey; the envelope's version, from and to; sent_at within %d days; not a replay\n", protocol.TTL/(24*time.Hour))
 	s.WriteString("Mail to an echo box is readable by whoever runs it.\n")
 	fmt.Fprintf(&s, "body, as JSON: %s\n", env.Body)
 	return s.String()

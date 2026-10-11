@@ -17,9 +17,10 @@ const (
 	// PrekeyTag is line 1 of every v1 prekey statement.
 	PrekeyTag = "crossbot-prekey-v1"
 	// MaxPrekeyLifetime is the longest a prekey statement may be valid,
-	// counted from when it is published: a monthly timer renews with a day or
-	// more to spare.
-	MaxPrekeyLifetime = 32 * 24 * time.Hour
+	// counted from when it is published: 31 days, the longest month, plus a
+	// day a renewal may wait and a day of slip, so a box checked at least
+	// monthly never lapses.
+	MaxPrekeyLifetime = 33 * 24 * time.Hour
 	// MaxSerial is the largest prekey serial: 18 decimal digits.
 	MaxSerial = 999_999_999_999_999_999
 	// TimeLayout is the one timestamp format in signed statements and the

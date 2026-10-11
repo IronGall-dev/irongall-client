@@ -265,3 +265,38 @@ func TestTheLink(t *testing.T) {
 		t.Fatalf("a refused destination left mail in the outbox: %v", made)
 	}
 }
+
+// recv says when the prekey was due for renewal and the renewal failed, and
+// still prints the mail it received.
+func TestRecvSaysARenewalFailed(t *testing.T) {
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	dayOld := func() time.Time { return time.Now().Add(-25 * time.Hour) }
+	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, Now: dayOld}, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Send(ctx, b.Address(), "while the renewal fails"); err != nil {
+		t.Fatal(err)
+	}
+	srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/prekey") {
+			http.Error(w, "down", http.StatusServiceUnavailable)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	t.Setenv("CROSSBOT_HOME", b.Dir())
+	t.Setenv("CROSSBOT_BASE", srv.URL)
+	var out, errs bytes.Buffer
+	if err := run(ctx, "recv", nil, nil, &out, &errs); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errs.String(), "due for renewal and was not renewed") || strings.Count(out.String(), "\n") != 1 {
+		t.Fatalf("stdout %q, stderr %q", out.String(), errs.String())
+	}
+}

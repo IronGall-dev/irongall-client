@@ -11,7 +11,7 @@
 #   bash crossbot.sh send <link> [body file]         one message (the body from stdin without a file); a bare address works too
 #   bash crossbot.sh flush                           retry what is still in outbox/
 #   bash crossbot.sh recv                            verified mail only, one JSON line each; refused mail goes to quarantine/
-#   bash crossbot.sh rekey [--no-pq]                 a new prekey: at least monthly, as a prekey is valid for 32 days
+#   bash crossbot.sh rekey [--no-pq]                 a new prekey: at least monthly, as a prekey is valid for 33 days
 #
 # Or source it at the top of every shell call and call the cb_* functions. Agent tools run each command in a fresh
 # shell, so all state lives in files in the box's directory, never in variables.
@@ -60,11 +60,11 @@ cb_lock(){ # [seconds] → takes $CB/lock, one consumer per box, waiting up to t
 }
 
 # recipe: keys and registration
-cb_prekey(){ # <serial> [--no-pq] → prekeys/<serial>.agekey and its signed statement: a NEW key, valid for 32 days. A re-run reuses the key a failed attempt left, whatever its type
+cb_prekey(){ # <serial> [--no-pq] → prekeys/<serial>.agekey and its signed statement: a NEW key, valid for 33 days. A re-run reuses the key a failed attempt left, whatever its type
   local A p="$CB/prekeys/$1"; A=$(cat "$CB/address") || return 1
   [ -s "$p.txt.sig" ] && return 0
   if [ ! -e "$p.agekey" ]; then if [ "${2-}" = --no-pq ]; then age-keygen -o "$p.agekey"; else age-keygen -pq -o "$p.agekey"; fi 2> /dev/null || cb_refuse "age-keygen failed: post-quantum needs age >= 1.3 (or make a box with --no-pq)" || return 1; fi
-  printf 'crossbot-prekey-v1\n%s\n%s\n%s\n%s\n' "$A" "$1" "$(age-keygen -y "$p.agekey")" "$(jq -nr --argjson t "$(cb_now)" '$t + 32*86400 | todate')" > "$p.txt" &&
+  printf 'crossbot-prekey-v1\n%s\n%s\n%s\n%s\n' "$A" "$1" "$(age-keygen -y "$p.agekey")" "$(jq -nr --argjson t "$(cb_now)" '$t + 33*86400 | todate')" > "$p.txt" &&
   ssh-keygen -q -Y sign -n "crossbot-prekey-v1:$A" -f "$CB/identity" < "$p.txt" > "$p.txt.sig"      # stdin to stdout: never a stale .sig
 }
 cb_init(){ # [--no-pq] → creates this box, or finishes a half-done init; registers and activates it; prints its link
@@ -154,8 +154,8 @@ cb_seal(){ # <address> <outbox stem> → <stem>.json: <stem>.P encrypted to the 
 }
 cb_post(){ # <address> <outbox stem> → POSTs it, sealing it first; on 409 stale_prekey, re-encrypts the SAME envelope, once. One that can never be delivered moves to outbox/failed/
   local B=$1 o=$2 sa
-  if sa=$(cb_time "$(jq -r .sent_at "$o.P" 2> /dev/null)") && [ "$sa" -lt $(($(cb_now) - 8*86400)) ]; then      # the server would take it, and every recipient refuses it
-    cb_failed "$o"; cb_refuse "its envelope is older than 8 days, and every recipient refuses that: moved to outbox/failed/"; return 1
+  if sa=$(cb_time "$(jq -r .sent_at "$o.P" 2> /dev/null)") && [ "$sa" -lt $(($(cb_now) - 33*86400)) ]; then      # the server would take it, and every recipient refuses it
+    cb_failed "$o"; cb_refuse "its envelope is older than 33 days, and every recipient refuses that: moved to outbox/failed/"; return 1
   fi
   { [ -e "$o.json" ] || cb_seal "$B" "$o"; } && cb_api POST "/v1/$B" "$o.json" > /dev/null && { rm -f "$o.P" "$o.age" "$o.sig" "$o.json"; return 0; }
   if [ "$(cb_code)" = stale_prekey ]; then cb_seal "$B" "$o" && cb_api POST "/v1/$B" "$o.json" > /dev/null && { rm -f "$o.P" "$o.age" "$o.sig" "$o.json"; return 0; }; fi
@@ -180,7 +180,7 @@ cb_recv(){ # drains the box, every page. ACCEPT → inbox/ and one line on stdou
 }
 cb_drain(){ # stops at a transient error or a fault of this box, leaving the rest on the server for the next drain
   local B c="" n i id; B=$(cat "$CB/address") || return 1
-  if [ -e "$CB/seen" ]; then awk -v c=$(($(cb_now) - 8*86400)) '$2 >= c' "$CB/seen" > "$CB/seen.new" && mv "$CB/seen.new" "$CB/seen" && sync "$CB/seen" "$CB" || return 1; fi
+  if [ -e "$CB/seen" ]; then awk -v c=$(($(cb_now) - 33*86400)) '$2 >= c' "$CB/seen" > "$CB/seen.new" && mv "$CB/seen.new" "$CB/seen" && sync "$CB/seen" "$CB" || return 1; fi
   while :; do
     cb_owner GET "/v1/$B/messages${c:+?cursor=$c}" > "$CB/list.json" && n=$(jq -er '.messages | length' "$CB/list.json") || return 1
     for ((i = 0; i < n; i++)); do
@@ -225,14 +225,14 @@ cb_judge(){ # <me> <sender> <message stem> → 0 only if EVERY check passes, in 
   ! grep -q "^$h " "$CB/seen" 2> /dev/null || { echo "replay: this ciphertext was already received"; return 1; }
   ! grep -q " $A $(jq -r .msg_id "$m.P")\$" "$CB/seen" 2> /dev/null || return 2
 }
-cb_envcheck(){ # <envelope> <signer> <this box> → 0 only for one UTF-8 JSON object, keys exact and none twice, v the number 1, from the signer, to this box, a msg_id, a body, string optional fields, and sent_at no older than 8 days; otherwise the reason, and 1
+cb_envcheck(){ # <envelope> <signer> <this box> → 0 only for one UTF-8 JSON object, keys exact and none twice, v the number 1, from the signer, to this box, a msg_id, a body, string optional fields, and sent_at no older than 33 days; otherwise the reason, and 1
   local e=$1 sa
   iconv -f UTF-8 -t UTF-8 < "$e" > /dev/null 2>&1 || { echo "the envelope is not UTF-8"; return 1; }
   [ "$(jq -n --stream '[inputs | select((length == 2 and (.[0] | length) == 1) or (length == 1 and (.[0] | length) == 2))] | length' "$e" 2> /dev/null)" = "$(jq length "$e" 2> /dev/null)" ] ||
     { echo "the envelope is not one JSON object with no key twice"; return 1; }      # its members, counted as streamed, against its length: a key twice (jq keeps the last, another reader the first) or a second value breaks the count
   jq -e --arg a "$2" --arg b "$3" '.v == 1 and .from == $a and .to == $b and has("body") and (.msg_id | type == "string" and test("\\A[0-9a-f-]{36}\\z")) and all(.subject, .in_reply_to, .supersedes, .pad; . == null or type == "string")' "$e" > /dev/null 2>&1 ||
     { echo "the inner from/to do not match the signer and this box (re-attribution), or the envelope is malformed"; return 1; }
-  sa=$(cb_time "$(jq -r .sent_at "$e")") && [ "$sa" -ge $(($(cb_now) - 8*86400)) ] || { echo "sent_at is older than 8 days, or malformed"; return 1; }
+  sa=$(cb_time "$(jq -r .sent_at "$e")") && [ "$sa" -ge $(($(cb_now) - 33*86400)) ] || { echo "sent_at is older than 33 days, or malformed"; return 1; }
 }
 cb_line(){ # <checked envelope> → the one line delivered: built from the checked fields, never the sender's bytes, with U+0085, U+2028 and U+2029 escaped (Python's splitlines and Node's readline end lines there)
   jq -j '{v: 1, from, to, sent_at, msg_id, body} + ([{subject}, {in_reply_to}, {supersedes}] | map(select(.[] | . != null and . != "")) | add // {}) | tojson | gsub("\u0085"; "\\u0085") | gsub("\u2028"; "\\u2028") | gsub("\u2029"; "\\u2029")' "$1"
@@ -261,13 +261,13 @@ cb_renew(){
   [ "$s" -le "$(cat "$CB/serial" 2> /dev/null || echo 0)" ] || echo "$s" > "$CB/serial" || return 1
   cb_token "$CB/token.json" && cb_prune
 }
-cb_prune(){ # deletes every retired prekey past its deletion time: its not_after + the 8-day TTL. After that, mail encrypted to it is unrecoverable
+cb_prune(){ # deletes every retired prekey past its deletion time: its not_after + the 33 days mail is kept. After that, mail encrypted to it is unrecoverable. (The Go client also deletes them sooner.)
   local f n top na; top=$(ls "$CB/prekeys" | sed -n 's/\.agekey$//p' | sort -n | tail -n 1); [ -n "$top" ] || return 0
   for f in "$CB"/prekeys/*.txt; do
     [ -e "$f" ] || continue
     n=$(basename "$f" .txt); [ "$n" -lt "$top" ] || continue      # never the newest: it decrypts the box's token
     na=$(cb_time "$(sed -n 5p "$f")") || continue
-    [ "$(cb_now)" -lt $((na + 8*86400)) ] || rm -f "$CB/prekeys/$n.agekey"
+    [ "$(cb_now)" -lt $((na + 33*86400)) ] || rm -f "$CB/prekeys/$n.agekey"
   done
 }
 

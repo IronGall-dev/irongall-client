@@ -52,6 +52,8 @@ type Box struct {
 	now    func() time.Time
 	signer ssh.Signer
 	id     *protocol.Identity
+	// renewFailed is when Receive last failed to renew the prekey.
+	renewFailed time.Time
 }
 
 // Open opens an existing box's state directory. A directory holding only
@@ -244,7 +246,7 @@ func (b *Box) loadIdentity() error {
 	return nil
 }
 
-// makePrekey makes prekey serial, a NEW key of type kt valid for 32 days, and
+// makePrekey makes prekey serial, a NEW key of type kt valid for 33 days, and
 // its signed statement, unless its statement is already signed. A key left
 // by an attempt that never published is reused.
 func (b *Box) makePrekey(serial uint64, kt protocol.KeyType) (*protocol.Prekey, error) {
