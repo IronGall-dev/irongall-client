@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -203,6 +205,9 @@ func TestHelpAndREADMENameTheEchoBox(t *testing.T) {
 	if !strings.Contains(out.String(), link+"\n") {
 		t.Error("the help does not give the echo box's link")
 	}
+	if !strings.HasSuffix(out.String(), "https://github.com/IronGall-dev/irongall-client#readme\n") {
+		t.Error("the help does not end by saying where the README is")
+	}
 	readme, err := os.ReadFile("../../README.md")
 	if err != nil {
 		t.Fatal(err)
@@ -276,8 +281,8 @@ func TestTheLink(t *testing.T) {
 	}
 }
 
-// recv says when the prekey was due for renewal and the renewal failed, and
-// still prints the mail it received.
+// recv says when the prekey was due for renewal and the renewal failed, on
+// stderr and by its exit status, and still prints the mail it received.
 func TestRecvSaysARenewalFailed(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -303,11 +308,73 @@ func TestRecvSaysARenewalFailed(t *testing.T) {
 	t.Setenv("IRONGALL_HOME", b.Dir())
 	t.Setenv("IRONGALL_BASE", srv.URL)
 	var out, errs bytes.Buffer
-	if err := run(ctx, "recv", nil, nil, &out, &errs); err != nil {
-		t.Fatal(err)
+	var look *needsALook
+	if err := run(ctx, "recv", nil, nil, &out, &errs); !errors.As(err, &look) || !strings.Contains(look.why, "the prekey was not renewed") {
+		t.Fatalf("a failed renewal must give exit status 3, not %v", err)
 	}
 	if !strings.Contains(errs.String(), "due for renewal and was not renewed") || strings.Count(out.String(), "\n") != 1 {
 		t.Fatalf("stdout %q, stderr %q", out.String(), errs.String())
+	}
+	// status says so too, from the box's files, to a wrapper that kept
+	// neither recv's stderr nor its exit status.
+	out.Reset()
+	if err := run(ctx, "status", nil, nil, &out, io.Discard); !errors.As(err, &look) {
+		t.Fatalf("status after a failed renewal: %v", err)
+	}
+	var st client.Status
+	if err := json.Unmarshal(out.Bytes(), &st); err != nil || st.RenewalPendingSince == "" || len(st.Attention) != 1 || !strings.Contains(st.Attention[0], "was never seen published") {
+		t.Fatalf("status printed %q: %v", out.String(), err)
+	}
+	// Once the server takes the renewal, recv and status are quiet again.
+	srv.SetMiddle(nil)
+	out.Reset()
+	if err := run(ctx, "recv", nil, nil, io.Discard, io.Discard); err != nil {
+		t.Fatalf("recv after the server came back: %v", err)
+	}
+	if err := run(ctx, "status", nil, nil, &out, io.Discard); err != nil || !strings.Contains(out.String(), `"attention":[]`) || strings.Contains(out.String(), "renewal_pending_since") {
+		t.Fatalf("status after the renewal went through: %v %q", err, out.String())
+	}
+}
+
+// A refused message is told on stderr and kept in quarantine/, and does not
+// change recv's exit status: any sender can cause one, so a stranger must not
+// be able to make a box's recv fail. status is what reports it.
+func TestRefusedMailDoesNotFailRecv(t *testing.T) {
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	opt := client.Options{Base: srv.URL}
+	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("IRONGALL_HOME", b.Dir())
+	t.Setenv("IRONGALL_BASE", srv.URL)
+	var out bytes.Buffer
+	if err := run(ctx, "status", nil, nil, &out, io.Discard); err != nil || !strings.Contains(out.String(), `"quarantine":0,"attention":[]`) {
+		t.Fatalf("status of a new box: %v %q", err, out.String())
+	}
+	forged := []byte("not a ciphertext its claimed sender ever signed")
+	h := sha256.Sum256(forged)
+	srv.Inject(b.Address(), hex.EncodeToString(h[:]), a.Address(), forged, []byte("not a signature"))
+	var errs bytes.Buffer
+	out.Reset()
+	if err := run(ctx, "recv", nil, nil, &out, &errs); err != nil {
+		t.Fatalf("recv after refusing mail: %v", err)
+	}
+	if out.Len() != 0 || !strings.Contains(errs.String(), "REFUSED "+hex.EncodeToString(h[:])) {
+		t.Fatalf("stdout %q, stderr %q", out.String(), errs.String())
+	}
+	var look *needsALook
+	if err := run(ctx, "status", nil, nil, &out, io.Discard); !errors.As(err, &look) {
+		t.Fatalf("status with mail in quarantine/: %v", err)
+	}
+	var st client.Status
+	if err := json.Unmarshal(out.Bytes(), &st); err != nil || st.Quarantine != 1 || len(st.Attention) != 1 || !strings.Contains(st.Attention[0], "1 refused in quarantine/") {
+		t.Fatalf("status printed %q: %v", out.String(), err)
 	}
 }
 

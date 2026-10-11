@@ -14,6 +14,7 @@
 #   bash irongall.sh flush                           retry what is still in outbox/
 #   bash irongall.sh recv                            verified mail only, one JSON line each; refused mail goes to quarantine/
 #   bash irongall.sh rekey [--no-pq]                 a new prekey: at least monthly, as a prekey is valid for 33 days
+#   The README has the rest: https://github.com/IronGall-dev/irongall-client#readme
 #
 # Or source it at the top of every shell call and call the ig_* functions. Agent tools run each command in a fresh
 # shell, so all state lives in files in the box's directory, never in variables.
@@ -276,14 +277,16 @@ ig_rekey(){ # [--no-pq] → publishes a NEW prekey at the next serial, under the
   ig_renew "${1-}"; local rc=$?; rmdir "$IG/lock"; return $rc
 }
 ig_renew(){
-  local A r s; A=$(cat "$IG/address") || return 1; mkdir -p "$IG/prekeys"
+  local A r s t na; A=$(cat "$IG/address") || return 1; mkdir -p "$IG/prekeys"
   ig_api GET "/v1/$A/identity" > "$IG/self.json" || return 1
   jq -er .prekey "$IG/self.json" | base64 -d > "$IG/self.txt" && jq -er .prekey_signature "$IG/self.json" | base64 -d > "$IG/self.sig" || ig_refuse "the server sent no prekey for this box" || return 1
   printf '%s %s\n' "$A" "$(cut -d' ' -f1,2 "$IG/identity.pub")" > "$IG/self.signers"
   r=$(ig_prekeycheck "$IG/self.txt" "$IG/self.sig" "$A" "$IG/self.signers") || ig_refuse "this box's current prekey, as served: $r" || return 1
   s=${r%% *}
   [ "$s" -ge "$(cat "$IG/serial" 2> /dev/null || echo 0)" ] || ig_refuse "rollback: the server serves this box's prekey serial $s, below $(cat "$IG/serial"), which this box published" || return 1
-  s=$((s + 1)); rm -f "$IG/prekeys/$s.txt" "$IG/prekeys/$s.txt.sig"; ig_prekey "$s" "${1-}" || return 1
+  s=$((s + 1)); t=$(ls "$IG/prekeys" | sed -n 's/\.txt\.sig$//p' | sort -n | tail -n 1)      # the highest serial this box signed: nothing at or below it is signed anew
+  if [ "${t:-0}" -ge "$s" ]; then s=$t; na=$(ig_time "$(sed -n 5p "$IG/prekeys/$s.txt")") && [ "$na" -gt "$(ig_now)" ] || s=$((s + 1)); fi      # signed and never seen published: sent again AS IT IS until it expires, then the next serial. Signed again, the same key would get 33 more days from a server that keeps what it refuses
+  [ -s "$IG/prekeys/$s.txt.sig" ] || rm -f "$IG/prekeys/$s.txt"; ig_prekey "$s" "${1-}" || return 1
   jq -n --arg p "$(ig_b64 "$IG/prekeys/$s.txt")" --arg g "$(ig_b64 "$IG/prekeys/$s.txt.sig")" '{prekey:$p, prekey_signature:$g}' > "$IG/rekey.json"
   ig_api PUT "/v1/$A/prekey" "$IG/rekey.json" > "$IG/token.json" || return 1
   [ "$s" -le "$(cat "$IG/serial" 2> /dev/null || echo 0)" ] || echo "$s" > "$IG/serial" || return 1
@@ -303,6 +306,6 @@ ig_prune(){ # deletes every retired prekey past its deletion time: its not_after
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   case ${1-} in
     init | addr | send | alias | flush | recv | rekey) cmd=ig_$1; shift; "$cmd" "$@"; exit ;;
-    *) sed -n '9,16p' "$0" | sed 's/^# *//' >&2; exit 2 ;;
+    *) sed -n '9,17p' "$0" | sed 's/^# *//' >&2; exit 2 ;;
   esac
 fi

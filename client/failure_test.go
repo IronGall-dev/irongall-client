@@ -443,8 +443,9 @@ func TestStaleOutboxEntryIsNotPosted(t *testing.T) {
 	}
 }
 
-// A rekey asked for a key type makes that type, even over a key of the other
-// type that an earlier attempt left unpublished.
+// A rekey asked for a key type makes that type. A statement an earlier
+// attempt signed for a key of the other type is never signed over: its serial
+// is passed over and its key kept.
 func TestRekeyMakesTheTypeAskedFor(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
@@ -453,6 +454,8 @@ func TestRekeyMakesTheTypeAskedFor(t *testing.T) {
 	if _, err := b.Rekey(ctx, ""); err == nil {
 		t.Fatal("the rekey should have failed")
 	}
+	left := filepath.Join(b.Dir(), "prekeys", "2")
+	signed, _ := os.ReadFile(left + ".txt")
 	e.srv.SetMiddle(nil)
 	p, err := b.Rekey(ctx, protocol.PostQuantum)
 	if err != nil {
@@ -460,8 +463,11 @@ func TestRekeyMakesTheTypeAskedFor(t *testing.T) {
 	}
 	st, _ := e.srv.Prekey(b.Address())
 	served, _ := protocol.ParsePrekey(st)
-	if p.Type() != protocol.PostQuantum || served.Type() != protocol.PostQuantum || served.Serial != 2 {
+	if p.Type() != protocol.PostQuantum || served.Type() != protocol.PostQuantum || served.Serial != 3 {
 		t.Fatalf("published serial %d of type %s", served.Serial, served.Type())
+	}
+	if now, _ := os.ReadFile(left + ".txt"); len(signed) == 0 || !bytes.Equal(now, signed) || !exists(left+".agekey") {
+		t.Fatal("the statement the failed attempt signed was changed, or its key deleted")
 	}
 }
 

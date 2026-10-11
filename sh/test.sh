@@ -11,7 +11,7 @@
 #     mail, a newline-injected sender, a wrong id. And the honest paths: two sends in a row, a retried envelope,
 #     renewal with a NEW key, 409 stale_prekey, restore without a token, pagination, the lock, token refresh,
 #     deletion of retired prekeys (forward secrecy), the outbox's failures, a fault in the box itself, the
-#     optional fields, sent/ and aliases.
+#     optional fields, sent/ and aliases, and a renewal the server does not take.
 # Needs what irongall.sh needs, but curl. KEYTYPE=auto (default: pq if `age-keygen -pq` works, else no-pq, saying
 # why) · pq · no-pq. The work dir is left in place after the run.
 set -eu
@@ -102,6 +102,7 @@ srv_register(){ local a=$1 f=$2 d=$SRV/$1
   mkdir -p $d/msgs $d/dedupe; cp $SRV/tmp/id.doc $d/identity.doc; echo 0 > $d/epoch; echo 0 > $d/seq; echo pending > $d/state
   srv_install "$a"; srv_tokenjson "$a"; }
 srv_prekey(){ local a=$1 f=$2 d=$SRV/$1
+  [ -z "$PREKEY_FAILS" ] || { srv_err 503 unavailable "set by the test"; return 1; }
   srv_state "$a" pending active closed || return 1
   jq -er .prekey "$f" | base64 -d > $SRV/tmp/pk.txt && jq -er .prekey_signature "$f" | base64 -d > $SRV/tmp/pk.sig || { srv_err 400 bad_request "prekey, prekey_signature"; return 1; }
   if cmp -s $SRV/tmp/pk.txt $d/prekey.txt && cmp -s $SRV/tmp/pk.sig $d/prekey.sig; then srv_tokenjson "$a"; return; fi
@@ -163,7 +164,7 @@ ig_api(){ # the fake: the same contract as irongall.sh's ig_api (METHOD PATH [JS
     "DELETE /messages/"*) srv_auth "$a" "$tok" && srv_ack "$a" "${rest#/messages/}" ;;
     *) srv_err 404 not_found "no such route: $m $p" ;;
   esac; }
-SEND_FAILS=
+SEND_FAILS=; PREKEY_FAILS=
 # the operator's own keys, for the forging modes
 ssh-keygen -q -t ed25519 -N '' -C '' -f $SRV/op/identity; printf 'irongall-v1\n%s\n' "$(cut -d' ' -f1,2 $SRV/op/identity.pub)" > $SRV/op/identity.doc
 age-keygen $PQ -o $SRV/op/agekey 2> /dev/null; printf 'x\nx\nx\n%s\n' "$(age-keygen -y $SRV/op/agekey)" > $SRV/op/prekey.txt
@@ -361,4 +362,14 @@ for N in Bob "" -x "$B" "$IG_BASE/to/$B" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; do i
 ig_send carol body9 2> err.txt && bad "sent to an alias nobody made"; grep -q "no alias named carol" err.txt && ok "an alias nobody made is REFUSED" || bad "carol: $(cat err.txt)"
 echo "bob $C" >> $IG/aliases; ig_send bob body9 2> err.txt && bad "sent to a name with two addresses"; sed -i '$d' $IG/aliases
 grep -q "an alias naming one address" err.txt && [ "$(grep -c "^POST " $SRV/log)" = "$n0" ] && ! ls $IG/outbox/*.P > /dev/null 2>&1 && ok "a name with two addresses names neither, and no refused alias made mail" || bad "two addresses: $(cat err.txt)"
+# --- 13. a renewal the server does not take is sent again AS IT WAS SIGNED: one key, one statement, 33 days
+as B; s0=$(sed -n 3p $SRV/$B/prekey.txt); n=$((s0 + 1)); PREKEY_FAILS=1
+ig_rekey $NOPQ 2> err.txt && bad "a renewal the server refused succeeded"; cp $IG/rekey.json first.json
+ig_rekey $NOPQ 2> err.txt && bad "a renewal the server refused succeeded"
+[ -s $IG/prekeys/$n.txt.sig ] && cmp -s $IG/rekey.json first.json && ok "a renewal the server did not take is sent again byte for byte, never signed again with a later not_after" || bad "the retry differs: $(cat err.txt)"
+cp $IG/prekeys/$n.txt held.txt; sed -i "5s/.*/$(jq -nr 'now - 60 | floor | todate')/" $IG/prekeys/$n.txt       # pretend that statement has expired
+ig_rekey $NOPQ 2> err.txt && bad "a renewal the server refused succeeded"
+[ -s $IG/prekeys/$((n + 1)).txt.sig ] && [ -e $IG/prekeys/$n.agekey ] && [ "$(age-keygen -y $IG/prekeys/$n.agekey)" != "$(age-keygen -y $IG/prekeys/$((n + 1)).agekey)" ] && ok "once that statement expires, a NEW key is signed at the next serial, and the passed-over key is kept" || bad "after expiry: $(ls $IG/prekeys)"
+cp held.txt $IG/prekeys/$n.txt; cp $IG/prekeys/$((n + 1)).txt signed.txt; PREKEY_FAILS=
+ig_rekey $NOPQ && [ "$(sed -n 3p $SRV/$B/prekey.txt)" = $((n + 1)) ] && cmp -s $SRV/$B/prekey.txt signed.txt && [ "$(cat $IG/serial)" = $((n + 1)) ] && ok "when the server takes it, it publishes what was signed first, at the serial after the passed-over one" || bad "published: $(cat $SRV/$B/prekey.txt)"
 echo "--- $PASS PASS, 0 FAIL (KEYTYPE=$KEYTYPE)"

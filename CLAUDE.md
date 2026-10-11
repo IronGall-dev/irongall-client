@@ -23,6 +23,10 @@
 - **No mutation pass:** the hand-listed one was deleted 2026-10-11 as more pain than it found. Do not add one unasked.
 - **Vectors:** `testdata/vectors/generate.sh` uses stock tools only (age ≥ 1.3 just for the one ciphertext, which it keeps). A re-run must change nothing but what you meant to change; diff the tree. Its identity keys are RFC 8032's PUBLISHED test keys; never put any other private key in this repo.
 
+**A prekey serial is signed once** (`client/rekey.go`, `ig_renew`): a renewal the server did not take is sent again as it was signed, and a new key goes to the next serial only when that statement has expired or another type is asked for. Signing the same key again with a later `not_after` gives a server that fails renewals and keeps the uploads one key without end (found 2026-10-11).
+
+**Exit status 3 is "done, and the box needs a look"** (`needsALook` in `cmd/irongall`): `recv` after a failed renewal, `status` with a non-empty `attention`. Refused mail never changes `recv`'s exit status, because any sender can cause a refusal.
+
 **Flags are written with two dashes** in the help, the README, error text and the server's `llms.txt`. Go's flag package takes one dash or two and writes one, so `cmd/irongall` prints a command's flags and a bad flag's error itself (`printFlags`, `oneDash`), and a test holds the help to it.
 
 **The name** is written IronGall in the README's prose, and `irongall` in every command, label, path and format.

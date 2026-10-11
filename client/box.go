@@ -256,8 +256,8 @@ func (b *Box) loadIdentity() error {
 }
 
 // makePrekey makes prekey serial, a NEW key of type kt valid for 33 days, and
-// its signed statement, unless its statement is already signed. A key left
-// by an attempt that never published is reused.
+// its signed statement, unless its statement is already signed. A key an
+// earlier attempt made and never signed is reused.
 func (b *Box) makePrekey(serial uint64, kt protocol.KeyType) (*protocol.Prekey, error) {
 	stem := b.path("prekeys", fmt.Sprint(serial))
 	if exists(stem + ".txt.sig") {
@@ -272,18 +272,9 @@ func (b *Box) makePrekey(serial uint64, kt protocol.KeyType) (*protocol.Prekey, 
 			return nil, err
 		}
 	}
-	ids, err := readAgeKeys(stem + ".agekey")
+	recipient, err := ageRecipient(stem + ".agekey")
 	if err != nil {
 		return nil, err
-	}
-	var recipient string
-	switch k := ids[0].(type) {
-	case *age.HybridIdentity:
-		recipient = k.Recipient().String()
-	case *age.X25519Identity:
-		recipient = k.Recipient().String()
-	default:
-		return nil, fmt.Errorf("%s holds an unknown key type", stem+".agekey")
 	}
 	p := &protocol.Prekey{
 		Address:  b.id.Address(),
@@ -299,6 +290,21 @@ func (b *Box) makePrekey(serial uint64, kt protocol.KeyType) (*protocol.Prekey, 
 		return nil, err
 	}
 	return p, writeFile(stem+".txt.sig", sig)
+}
+
+// ageRecipient returns the recipient an age key file's key is encrypted to.
+func ageRecipient(name string) (string, error) {
+	ids, err := readAgeKeys(name)
+	if err != nil {
+		return "", err
+	}
+	switch k := ids[0].(type) {
+	case *age.HybridIdentity:
+		return k.Recipient().String(), nil
+	case *age.X25519Identity:
+		return k.Recipient().String(), nil
+	}
+	return "", fmt.Errorf("%s holds an unknown key type", name)
 }
 
 // newAgeKey writes a new age key file as age-keygen writes one.

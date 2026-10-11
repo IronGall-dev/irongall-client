@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -42,6 +43,11 @@ const usage = `usage: irongall <command> [arguments]
                            it also renews the prekey once a day, so run it at
                            least monthly and the box never lapses
   rekey [--no-pq | --pq]   publish a new prekey now (or change its type)
+  status                   say what this box holds and what needs a look, as one
+                           line of JSON, from its own files and with no call
+                           to the server: its prekey, a renewal that has not
+                           gone through, refused mail in quarantine/, mail not
+                           yet delivered
   adopt <key>              join the account an adopt key names, which can
                            lift this box's limits; adopt --leave leaves it
 
@@ -50,11 +56,25 @@ Its inbox/ keeps each message received and its sent/ each message sent, with
 the server's receipt: both are yours to prune.
 The server is $IRONGALL_BASE, or https://irongall.dev.
 
+Exit status: 0, done. 1, the command failed. 2, usage. 3, the command did its
+work and the box needs a look: from recv, mail was received as printed and
+the prekey, due for renewal, was not renewed; from status, its "attention"
+list is not empty. recv reports refused mail and a failed renewal on stderr
+only, and refused mail does not change its exit status, since any sender can
+cause one: never discard recv's stderr, or run status after it.
+
 To try the whole loop, send anything to irongall.dev's echo box,
 ` + client.DefaultBase + protocol.LinkPath + client.EchoAddress + `
 It answers within two minutes, signed, saying what it checked. Mail to it
 is readable by irongall.dev's operator.
+
+The README has the rest, with what this client checks and how to test it:
+` + readme + `
 `
+
+// readme is where this client's documentation is: the public repository it
+// is built from, never the server.
+const readme = "https://github.com/IronGall-dev/irongall-client#readme"
 
 func main() {
 	if len(os.Args) < 2 {
@@ -64,14 +84,26 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	err := run(ctx, os.Args[1], os.Args[2:], os.Stdin, os.Stdout, os.Stderr)
 	stop()
-	if errors.Is(err, flag.ErrHelp) {
+	var look *needsALook
+	switch {
+	case errors.Is(err, flag.ErrHelp):
 		os.Exit(2)
-	}
-	if err != nil {
+	case errors.As(err, &look):
+		if look.why != "" {
+			fmt.Fprintln(os.Stderr, look.why)
+		}
+		os.Exit(3)
+	case err != nil:
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
+
+// needsALook is how a command says it did its work and the box needs a look:
+// exit status 3, where a failure is 1.
+type needsALook struct{ why string }
+
+func (e *needsALook) Error() string { return e.why }
 
 func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	dir, err := client.Dir()
@@ -214,9 +246,15 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 			return err
 		}
 		deadline := time.Now().Add(*wait)
+		// renewErr is a renewal that was due and failed, and that no later
+		// Receive of this run made good.
+		var renewErr error
 		for {
 			res, err := b.Receive(ctx)
 			if res != nil {
+				if res.Renewed != nil {
+					renewErr = nil
+				}
 				// Every delivery is also kept in inbox/, so a failed
 				// write to stdout loses nothing. The line is this client's
 				// own, from the verified fields: never the sender's bytes.
@@ -232,6 +270,7 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 					_, _ = fmt.Fprintf(stderr, "REFUSED %s: %s\n", r.ID, r.Reason)
 				}
 				if res.RenewErr != nil {
+					renewErr = res.RenewErr
 					_, _ = fmt.Fprintf(stderr, "the prekey is due for renewal and was not renewed (recv tries again within the hour): %v\n", res.RenewErr)
 				}
 			}
@@ -246,6 +285,9 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 				_, _ = fmt.Fprintf(stderr, "%v: waiting %s\n", err, e.RetryAfter)
 				pause = e.RetryAfter
 			} else if err != nil || len(res.Delivered) > 0 || !time.Now().Before(deadline) {
+				if err == nil && renewErr != nil {
+					return &needsALook{"mail was received as printed, and the prekey was not renewed: this box needs a look (irongall status)"}
+				}
 				return err
 			}
 			select {
@@ -254,6 +296,27 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 			case <-time.After(min(pause, time.Until(deadline))):
 			}
 		}
+
+	case "status":
+		b, err := client.Open(dir, opt)
+		if err != nil {
+			return err
+		}
+		st, err := b.Status()
+		if err != nil {
+			return err
+		}
+		line, err := json.Marshal(st)
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(stdout, "%s\n", line); err != nil {
+			return err
+		}
+		if len(st.Attention) > 0 {
+			return &needsALook{}
+		}
+		return nil
 
 	case "rekey":
 		noPQ := fs.Bool("no-pq", false, "switch to a prekey without post-quantum encryption (X25519 only)")
