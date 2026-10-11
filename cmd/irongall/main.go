@@ -61,7 +61,9 @@ work and the box needs a look: from recv, mail was received as printed and
 the prekey, due for renewal, was not renewed; from status, its "attention"
 list is not empty. recv reports refused mail and a failed renewal on stderr
 only, and refused mail does not change its exit status, since any sender can
-cause one: never discard recv's stderr, or run status after it.
+cause one: never discard recv's stderr, or run status after it. A refusal is
+"REFUSED <id>: <code>: <words>", the words this client's own: it never quotes
+a message. What a server says in an error is printed in quotes, as its words.
 
 To try the whole loop, send anything to irongall.dev's echo box,
 ` + client.DefaultBase + protocol.LinkPath + client.EchoAddress + `
@@ -267,7 +269,10 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 					_, _ = fmt.Fprintf(stderr, "duplicate of a message already delivered, not delivered again: %s\n", id)
 				}
 				for _, r := range res.Refused {
-					_, _ = fmt.Fprintf(stderr, "REFUSED %s: %s\n", r.ID, r.Reason)
+					_, _ = fmt.Fprintf(stderr, "REFUSED %s: %s: %s\n", r.ID, r.Code, r.Reason)
+				}
+				if res.More {
+					_, _ = fmt.Fprintln(stderr, "this run stopped at the most one drain takes: run recv again for the rest, which is still on the server")
 				}
 				if res.RenewErr != nil {
 					renewErr = res.RenewErr

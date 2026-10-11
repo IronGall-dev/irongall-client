@@ -43,7 +43,11 @@ type Delivery struct {
 // delivered, and acked so that it leaves the server. It never blocks its
 // claimed sender: a forgery may be the operator framing them.
 type Refusal struct {
-	ID     string
+	ID string
+	// Code says which check failed: one of this package's Refused codes or
+	// protocol's. Reason says it in this client's own words, which never
+	// quote the message.
+	Code   string
 	Reason string
 }
 
@@ -54,6 +58,10 @@ type Result struct {
 	// acked, not delivered again.
 	Duplicates []string
 	Refused    []Refusal
+	// More reports that the drain stopped at one of its limits (see
+	// maxDrainMessages): the rest is still on the server for the next
+	// Receive.
+	More bool
 	// PollAfter is the server's poll interval, in seconds.
 	PollAfter int
 	// Renewed is the prekey this Receive published, the current one being
@@ -86,7 +94,8 @@ func (b *Box) Receive(ctx context.Context) (*Result, error) {
 		res = &Result{}
 	}
 	res.Renewed, res.RenewErr = renewed, renewErr
-	if err == nil {
+	// Only a drain that emptied the box may delete retired prekeys.
+	if err == nil && !res.More {
 		err = b.dropRetired(began)
 	}
 	if e := l.release(); err == nil {
@@ -98,6 +107,16 @@ func (b *Box) Receive(ctx context.Context) (*Result, error) {
 	return res, err
 }
 
+// A drain is bounded, so that a server which lists mail without end, or
+// serves answers as large as it may, costs one Receive a known amount of
+// time and disk at most. A drain that reaches a limit stops there: what is
+// left stays on the server for the next Receive.
+var (
+	maxDrainMessages = 1000     // messages handled in one drain
+	maxDrainBytes    = 64 << 20 // of ciphertext fetched in one drain
+	maxDrainPages    = 100      // list pages followed in one drain
+)
+
 func (b *Box) drain(ctx context.Context) (*Result, error) {
 	res := &Result{}
 	if err := b.pruneSeen(); err != nil {
@@ -105,7 +124,13 @@ func (b *Box) drain(ctx context.Context) (*Result, error) {
 	}
 	etag, _ := os.ReadFile(b.path("etag"))
 	cursor := ""
-	for first := true; ; first = false {
+	messages, fetched := 0, 0
+	for page := 0; ; page++ {
+		if page == maxDrainPages {
+			res.More = true
+			return res, nil
+		}
+		first := page == 0
 		hdr := http.Header{}
 		path := b.boxPath("/messages")
 		if first && len(etag) > 0 {
@@ -138,9 +163,16 @@ func (b *Box) drain(ctx context.Context) (*Result, error) {
 			if !hexID.MatchString(m.ID) {
 				continue
 			}
-			if err := b.receiveOne(ctx, m.ID, res); err != nil {
+			if messages == maxDrainMessages || fetched >= maxDrainBytes {
+				res.More = true
+				return res, nil
+			}
+			n, err := b.receiveOne(ctx, m.ID, res)
+			if err != nil {
 				return res, err
 			}
+			messages++
+			fetched += n
 		}
 		if list.NextCursor == nil || *list.NextCursor == "" {
 			return res, nil
@@ -150,48 +182,57 @@ func (b *Box) drain(ctx context.Context) (*Result, error) {
 }
 
 // receiveOne judges one message unless its id was already handled, stores
-// the verdict, and acks it. An error is transient, or a fault of this box
-// (an unreadable key, a full disk): the message stays on the server for the
-// next drain, never judged by a box that cannot judge it.
+// the verdict, and acks it, and returns the bytes of ciphertext it fetched.
+// An error is transient, or a fault of this box (an unreadable key, a full
+// disk): the message stays on the server for the next drain, never judged by
+// a box that cannot judge it.
 //
 // Files are named by the SHA-256 of the ciphertext as computed here, never by
 // the server's id; a message whose id is not that hash is refused.
-func (b *Box) receiveOne(ctx context.Context, id string, res *Result) error {
+func (b *Box) receiveOne(ctx context.Context, id string, res *Result) (fetched int, err error) {
 	handled, err := b.seenHash(id)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if !handled {
 		var m protocol.Message
 		_, err := b.owner(ctx, http.MethodGet, b.boxPath("/messages/"+id), nil, nil, &m)
 		if Code(err) == protocol.CodeNoSuchMessage {
-			return nil // already gone
+			return 0, nil // already gone
 		}
 		if err != nil {
-			return err
+			return 0, err
 		}
-		if err := b.fetchSenderIdentity(ctx, m.From); err != nil {
-			return err
+		fetched = len(m.Ciphertext)
+		served, err := b.firstContact(ctx, m.From)
+		if err != nil {
+			return fetched, err
 		}
 		h := sha256.Sum256(m.Ciphertext)
 		local := hex.EncodeToString(h[:])
-		d, dup, why, err := b.judge(&m)
+		d, dup, why, err := b.judge(&m, served)
 		if err != nil {
-			return err
+			return fetched, err
 		}
-		if why == "" && local != id {
-			d, dup, why = nil, false, "the server's id for it is not the SHA-256 of its ciphertext"
+		if why == nil && local != id {
+			d, dup, why = nil, false, &Refusal{Code: RefusedID, Reason: "the server's id for it is not the SHA-256 of its ciphertext"}
 		}
 		switch {
-		case why != "":
+		case why != nil:
 			raw, err := json.Marshal(m)
 			if err != nil {
-				return err
+				return fetched, err
 			}
+			// The message as served, and beside it why it was refused: the
+			// reason is this client's words, so it is safe to show.
 			if err := writeFile(b.path("quarantine", local+".json"), raw); err != nil {
-				return err
+				return fetched, err
 			}
-			res.Refused = append(res.Refused, Refusal{ID: local, Reason: why})
+			if err := writeFile(b.path("quarantine", local+".reason"), []byte(why.Code+": "+why.Reason+"\n")); err != nil {
+				return fetched, err
+			}
+			why.ID = local
+			res.Refused = append(res.Refused, *why)
 		case dup:
 			res.Duplicates = append(res.Duplicates, local)
 		default:
@@ -199,10 +240,10 @@ func (b *Box) receiveOne(ctx context.Context, id string, res *Result) error {
 			// before the ack: a crash or power loss in between delivers it
 			// again, never loses it.
 			if err := writeFile(b.path("inbox", local+".json"), d.Line); err != nil {
-				return err
+				return fetched, err
 			}
 			if err := b.recordSeen(m.Ciphertext, d.Envelope); err != nil {
-				return err
+				return fetched, err
 			}
 			d.ID = local
 			res.Delivered = append(res.Delivered, *d)
@@ -210,38 +251,39 @@ func (b *Box) receiveOne(ctx context.Context, id string, res *Result) error {
 	}
 	_, err = b.owner(ctx, http.MethodDelete, b.boxPath("/messages/"+id), nil, nil, nil)
 	if Code(err) == protocol.CodeNoSuchMessage {
-		return nil
+		return fetched, nil
 	}
-	return err
+	return fetched, err
 }
 
-// fetchSenderIdentity fetches the claimed sender's identity at first contact,
-// so judge can pin it. A sender that is not an address is left to judge.
-func (b *Box) fetchSenderIdentity(ctx context.Context, from string) error {
+// firstContact fetches the identity the server serves for a claimed sender
+// this box has not pinned, for judge to check. It is held in memory and
+// nothing is written: only an identity that hashes to its address is ever
+// kept (see [Box.pin]), so a server cannot fill peers/ with senders it made
+// up. A sender that is not an address, or has no box, is left to judge.
+func (b *Box) firstContact(ctx context.Context, from string) ([]byte, error) {
 	a, err := protocol.ParseAddress(from)
 	if err != nil {
-		return nil
+		return nil, nil //nolint:nilerr // judge refuses a sender that is not an address
 	}
 	if exists(b.path("peers", a.String(), "identity.doc")) {
-		return nil
+		return nil, nil
 	}
-	var ir json.RawMessage
+	var ir protocol.IdentityResponse
 	if _, err := b.call(ctx, http.MethodGet, "/v1/"+a.String()+"/identity", nil, nil, &ir); err != nil {
 		if c := Code(err); c == protocol.CodeNoSuchMailbox || c == protocol.CodeRevoked {
-			return nil // judge refuses: nothing to pin
+			return nil, nil // judge refuses: nothing to pin
 		}
-		return err
+		return nil, err
 	}
-	if err := os.MkdirAll(b.path("peers", a.String()), 0o700); err != nil {
-		return err
-	}
-	// The response as served, as the recipe keeps it; judge pins from it.
-	return writeFile(b.path("peers", a.String(), "identity.json"), ir)
+	return ir.Identity, nil
 }
 
 // judge runs every check on one message, in this order, and returns the
-// delivery only if all of them pass; otherwise why says which failed. An
-// error is this box's own fault, not the message's: no verdict.
+// delivery only if all of them pass; otherwise why says which failed, in a
+// code and in this client's own words. An error is this box's own fault, not
+// the message's: no verdict. served is the identity the server serves for a
+// sender met for the first time.
 //
 //  1. The sender is an address.
 //  2. Its identity: the pin, or at first contact the served identity,
@@ -252,61 +294,68 @@ func (b *Box) fetchSenderIdentity(ctx context.Context, from string) error {
 //  6. Freshness: sent_at no older than protocol.TTL (33 days).
 //  7. Replay: the locally computed ciphertext hash is not in the seen-set.
 //  8. Retry: (from, msg_id) is not in the seen-set. A match is a duplicate.
-func (b *Box) judge(m *protocol.Message) (d *Delivery, dup bool, why string, err error) {
+func (b *Box) judge(m *protocol.Message, served []byte) (d *Delivery, dup bool, why *Refusal, err error) {
+	refused := func(code, reason string) (*Delivery, bool, *Refusal, error) {
+		return nil, false, &Refusal{Code: code, Reason: reason}, nil
+	}
 	from, err := protocol.ParseAddress(m.From)
 	if err != nil {
-		return nil, false, "the sender is not an address", nil
+		return refused(RefusedSender, "the sender is not an address")
 	}
-	var ir protocol.IdentityResponse
-	if j, err := os.ReadFile(b.path("peers", from.String(), "identity.json")); err == nil {
-		_ = json.Unmarshal(j, &ir) // the server's answer: unparsable is unpinnable, and pin refuses
-	}
-	id, err := b.pin(from, ir.Identity)
+	id, err := b.pin(from, served)
 	if err != nil {
-		return verdict(err)
+		var r *RefusedError
+		if errors.As(err, &r) {
+			return refused(RefusedIdentity, r.Reason)
+		}
+		return nil, false, nil, err
 	}
 	me := b.id.Address()
 	if err := protocol.Verify(id, m.Ciphertext, m.Signature, protocol.MessageNamespace(me)); err != nil {
-		return nil, false, fmt.Sprintf("the signature does not verify for %s", from), nil
+		return refused(RefusedSignature, fmt.Sprintf("the signature does not verify for %s", from))
 	}
 	ids, err := b.prekeyIdentities()
 	if err != nil {
-		return nil, false, "", err
+		return nil, false, nil, err
 	}
 	r, err := age.Decrypt(bytes.NewReader(m.Ciphertext), ids...)
 	if err != nil {
-		return nil, false, "it does not decrypt with this box's prekeys", nil
+		return refused(RefusedDecrypt, "it does not decrypt with this box's prekeys")
 	}
 	p, err := io.ReadAll(io.LimitReader(r, maxResponse))
 	if err != nil {
-		return nil, false, "it does not decrypt with this box's prekeys", nil
+		return refused(RefusedDecrypt, "it does not decrypt with this box's prekeys")
 	}
 	env, err := protocol.OpenEnvelope(p, from, me, b.now())
 	if err != nil {
-		return nil, false, err.Error(), nil
+		var e *protocol.EnvelopeError
+		if errors.As(err, &e) {
+			return refused(e.Code, e.Why)
+		}
+		return nil, false, nil, err
 	}
 	h := sha256.Sum256(m.Ciphertext)
 	seen, err := b.seenHash(hex.EncodeToString(h[:]))
 	if err != nil {
-		return nil, false, "", err
+		return nil, false, nil, err
 	}
 	if seen {
-		return nil, false, "replay: this ciphertext was already received", nil
+		return refused(RefusedReplay, "replay: this ciphertext was already received")
 	}
 	again, err := b.seenMsgID(from, env.MsgID)
 	if err != nil {
-		return nil, false, "", err
+		return nil, false, nil, err
 	}
 	if again {
-		return nil, true, "", nil
+		return nil, true, nil, nil
 	}
 	shown := *env
 	shown.Pad = ""
 	line, err := shown.Marshal()
 	if err != nil {
-		return nil, false, "", err
+		return nil, false, nil, err
 	}
-	return &Delivery{Envelope: env, Line: []byte(lineBreaks.Replace(string(line))), Plaintext: p}, false, "", nil
+	return &Delivery{Envelope: env, Line: []byte(lineBreaks.Replace(string(line))), Plaintext: p}, false, nil, nil
 }
 
 // lineBreaks escapes the characters other than LF that some readers end a
@@ -314,16 +363,6 @@ func (b *Box) judge(m *protocol.Message) (d *Delivery, dup bool, why string, err
 // raw inside a JSON string, the only place JSON allows them, so escaping
 // them keeps one message one line with the same value.
 var lineBreaks = strings.NewReplacer("\u0085", `\u0085`, " ", ` `, " ", ` `)
-
-// verdict turns a failed check into a refusal, and anything else (a file
-// this box cannot read or write) into an error.
-func verdict(err error) (*Delivery, bool, string, error) {
-	var r *RefusedError
-	if errors.As(err, &r) {
-		return nil, false, r.Reason, nil
-	}
-	return nil, false, "", err
-}
 
 // The seen-set: one line per accepted message, "<ciphertext hash> <sent_at,
 // unix seconds> <from> <msg_id>", kept until sent_at + protocol.TTL, so the

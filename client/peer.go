@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"io/fs"
 	"net/http"
@@ -69,12 +70,17 @@ func (b *Box) pin(peer protocol.Address, served []byte) (*protocol.Identity, err
 	default:
 		return nil, err
 	}
+	// The hash first: nothing else is read from a document that is not the
+	// address's own.
+	if len(doc) == 0 {
+		return nil, refuse("the server has no identity for %s", peer)
+	}
+	if protocol.Address(sha256.Sum256(doc)) != peer {
+		return nil, refuse("the identity for %s does not hash to it", peer)
+	}
 	id, err := protocol.ParseIdentity(doc)
 	if err != nil {
 		return nil, refuse("%s's identity: %v", peer, err)
-	}
-	if id.Address() != peer {
-		return nil, refuse("the identity for %s does not hash to it", peer)
 	}
 	if err := os.MkdirAll(d, 0o700); err != nil {
 		return nil, err

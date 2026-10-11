@@ -2,7 +2,9 @@ package client
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -74,7 +76,7 @@ func (b *Box) Status() (*Status, error) {
 		s.Attention = append(s.Attention, fmt.Sprintf("a new prekey signed at %s was never seen published: the server refused it or did not answer; irongall recv sends it again", since))
 	}
 	if s.Quarantine > 0 {
-		s.Attention = append(s.Attention, fmt.Sprintf("%d refused in quarantine/: each failed a check and was never delivered (a forgery, or mail this box cannot read); delete a file once looked at", s.Quarantine))
+		s.Attention = append(s.Attention, fmt.Sprintf("%d refused in quarantine/ (%s): each failed a check and was never delivered; its .reason file says which, and both files are yours to delete once looked at", s.Quarantine, b.quarantineCodes()))
 	}
 	if s.Outbox > 0 {
 		s.Attention = append(s.Attention, fmt.Sprintf("%d in outbox/ not delivered yet: irongall flush sends them again", s.Outbox))
@@ -83,4 +85,25 @@ func (b *Box) Status() (*Status, error) {
 		s.Attention = append(s.Attention, fmt.Sprintf("%d in outbox/failed/ can never be delivered: delete a file to drop it", s.OutboxFailed))
 	}
 	return s, nil
+}
+
+// quarantineCodes lists the distinct codes of the mail in quarantine/, from
+// the .reason files this client wrote. A file that does not start with a
+// code counts as "unknown": nothing else is taken from it.
+func (b *Box) quarantineCodes() string {
+	names, _ := filepath.Glob(b.path("quarantine", "*.json"))
+	var codes []string
+	for _, name := range names {
+		code := "unknown"
+		if data, err := os.ReadFile(strings.TrimSuffix(name, ".json") + ".reason"); err == nil { //nolint:gosec // a path inside the box's own directory
+			if c, _, ok := strings.Cut(string(data), ":"); ok && codeGrammar.MatchString(c) {
+				code = c
+			}
+		}
+		if !slices.Contains(codes, code) {
+			codes = append(codes, code)
+		}
+	}
+	slices.Sort(codes)
+	return strings.Join(codes, ", ")
 }

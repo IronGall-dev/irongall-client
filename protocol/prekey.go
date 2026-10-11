@@ -137,14 +137,14 @@ func ParsePrekey(statement []byte) (*Prekey, error) {
 func checkRecipient(p *Prekey) error {
 	r, err := p.Recipient()
 	if err != nil {
-		return fmt.Errorf("the prekey is not an age recipient: %v", err)
+		return errors.New("the prekey is not an age recipient")
 	}
 	fileKey := make([]byte, 16)
 	if _, err := rand.Read(fileKey); err != nil {
 		return err
 	}
 	if _, err := r.Wrap(fileKey); err != nil {
-		return fmt.Errorf("the prekey cannot be encrypted to: %v", err)
+		return errors.New("the prekey cannot be encrypted to")
 	}
 	return nil
 }
@@ -154,7 +154,7 @@ func checkRecipient(p *Prekey) error {
 // name id's own address.
 func VerifyPrekey(id *Identity, statement, signature []byte) (*Prekey, error) {
 	if err := Verify(id, statement, signature, PrekeyNamespace(id.Address())); err != nil {
-		return nil, fmt.Errorf("the prekey is not signed by its identity: %v", err)
+		return nil, errors.New("the prekey is not signed by its identity")
 	}
 	p, err := ParsePrekey(statement)
 	if err != nil {

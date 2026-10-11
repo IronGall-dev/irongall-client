@@ -58,7 +58,7 @@ func ParseIdentity(doc []byte) (*Identity, error) {
 	}
 	key, err := ssh.ParsePublicKey(wire)
 	if err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrIdentityKey, err)
+		return nil, fmt.Errorf("%w: it does not parse as a public key", ErrIdentityKey)
 	}
 	if key.Type() != ssh.KeyAlgoED25519 || !bytes.Equal(key.Marshal(), wire) {
 		return nil, fmt.Errorf("%w: it is not an ssh-ed25519 key", ErrIdentityKey)

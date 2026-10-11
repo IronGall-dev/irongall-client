@@ -35,11 +35,13 @@ ig_time(){ # <timestamp> → its Unix time, only for exactly YYYY-MM-DDTHH:MM:SS
   local s; [[ $1 =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 1
   s=$(jq -nr --arg t "$1" '$t | fromdateiso8601 | select(todate == $t)' 2> /dev/null) && [ -n "$s" ] && echo "$s"
 }
-ig_api(){ # <METHOD> <PATH> [JSON file] [curl args…] → the body on stdout. Any non-2xx: prints its code, detail (the limit hit, the seconds to wait) and hint, keeps it in $IG/error.json, returns 1
+ig_api(){ # <METHOD> <PATH> [JSON file] [curl args…] → the body on stdout. Any non-2xx: prints its code, then what the server says (its detail, with the limit hit and the seconds to wait, and its hint) in quotes, as ITS words: one line, printable ASCII, 200 characters of each at most. Keeps the answer in $IG/error.json, returns 1
   local m=$1 p=$2 f=${3-}; shift 2; [ $# -gt 0 ] && shift
   rm -f "$IG/error.json"
-  curl -sS --max-time 60 --fail-with-body -X "$m" ${f:+-H 'Content-Type: application/json' --data-binary "@$f"} "$@" "$IG_BASE$p" > "$IG/response.json" && { cat "$IG/response.json"; return 0; }
-  mv "$IG/response.json" "$IG/error.json"; jq -r '"ERROR \(.status) \(.code): \([.detail, .hint] | map(select(. != null and . != "")) | join("; "))"' "$IG/error.json" >&2 2> /dev/null || cat "$IG/error.json" >&2; return 1
+  curl -sS --max-time 60 --max-filesize 16777216 --fail-with-body -X "$m" ${f:+-H 'Content-Type: application/json' --data-binary "@$f"} "$@" "$IG_BASE$p" > "$IG/response.json" && { cat "$IG/response.json"; return 0; }
+  mv "$IG/response.json" "$IG/error.json"
+  jq -er '"ERROR \(.status | numbers) \(.code | strings | select(test("\\A[a-z0-9_]{1,40}\\z"))); the server says: \([.detail, .hint] | map(strings | gsub("[^ -~]"; " ") | .[0:200] | select(. != "")) | join("; ") | tojson)"' "$IG/error.json" >&2 2> /dev/null ||
+    echo "ERROR: the server's answer is not an error this client knows (it is kept in $IG/error.json)" >&2; return 1
 }
 ig_code(){ jq -r .code "$IG/error.json" 2> /dev/null; }   # the code of the last API error
 ig_opt(){ [ -z "$1" ] || [ "$1" = --no-pq ] || ig_refuse "unknown option $1: the only one is --no-pq (no post-quantum encryption, X25519 only)"; }
@@ -120,13 +122,13 @@ ig_idcheck(){ # <identity document> [address] → 0 only for exactly the 93-byte
 }
 ig_pin(){ # <address> <identity response> → peers/<address>/signers from the PINNED identity: hash-checked at first contact, and a pin always wins
   local B=$1 d="$IG/peers/$1" f="$IG/peers/$1/identity.doc"
-  ig_hex "$B" || ig_refuse "not an address: $B" || return 1
-  if [ ! -e "$f" ]; then
-    f="$d/new.doc"; mkdir -p "$d" && jq -er .identity "$2" 2> /dev/null | base64 -d > "$f" 2> /dev/null || ig_refuse "no identity for $B in the response" || return 1
+  ig_hex "$B" || ig_refuse "not an address" || return 1
+  if [ ! -e "$f" ]; then      # first contact: the served document stays in a scratch file, and nothing is kept under peers/ until it hashes to the address
+    f="$IG/new.doc"; jq -er .identity "$2" 2> /dev/null | base64 -d > "$f" 2> /dev/null || ig_refuse "no identity for $B in the response" || return 1
     [ "$(sha256sum < "$f" | cut -c1-64)" = "$B" ] || ig_refuse "the identity the server sent does not hash to $B" || return 1
   fi
   ig_idcheck "$f" || ig_refuse "$B's identity is not exactly the 93-byte two-line document with a valid Ed25519 key" || return 1
-  [ "$f" = "$d/identity.doc" ] || mv "$f" "$d/identity.doc" || return 1
+  [ "$f" = "$d/identity.doc" ] || { mkdir -p "$d" && mv "$f" "$d/identity.doc"; } || return 1
   printf '%s %s\n' "$B" "$(sed -n 2p "$d/identity.doc")" > "$d/signers"      # exactly one line, from checked bytes, never from server text
 }
 ig_prekeycheck(){ # <statement> <signature> <address> <signers file> → "<serial> <age recipient> <not_after as Unix time>" only for five LF-ended lines naming that address, signed by its identity, holding a key age will encrypt to; otherwise the reason, and 1
@@ -144,7 +146,7 @@ ig_prekeycheck(){ # <statement> <signature> <address> <signers file> → "<seria
 }
 ig_resolve(){ # <address> → prints "<serial> <age recipient>" only when EVERY check passes; otherwise there is nothing to encrypt to
   local B=$1 d="$IG/peers/$1" r s na
-  ig_hex "$B" || ig_refuse "not an address: $B" || return 1
+  ig_hex "$B" || ig_refuse "not an address" || return 1
   mkdir -p "$d" && ig_api GET "/v1/$B/identity" > "$d/identity.json" && ig_pin "$B" "$d/identity.json" || return 1
   jq -er .prekey "$d/identity.json" | base64 -d > "$d/prekey.txt" && jq -er .prekey_signature "$d/identity.json" | base64 -d > "$d/prekey.sig" || ig_refuse "no prekey for $B in the response" || return 1
   r=$(ig_prekeycheck "$d/prekey.txt" "$d/prekey.sig" "$B" "$d/signers") || ig_refuse "$r" || return 1
@@ -207,13 +209,15 @@ ig_recv(){ # drains the box, every page. ACCEPT → inbox/ and one line on stdou
   ig_lock || return 1
   ig_drain; local rc=$?; rmdir "$IG/lock"; ig_prune; return $rc
 }
-ig_drain(){ # stops at a transient error or a fault of this box, leaving the rest on the server for the next drain
-  local B c="" n i id; B=$(cat "$IG/address") || return 1
+ig_drain(){ # stops at a transient error or a fault of this box, leaving the rest on the server for the next drain. And at 1000 messages or 100 pages: a server that lists mail without end costs one run that much
+  local B c="" n i id k=0 pages=0; B=$(cat "$IG/address") || return 1
   if [ -e "$IG/seen" ]; then awk -v c=$(($(ig_now) - 33*86400)) '$2 >= c' "$IG/seen" > "$IG/seen.new" && mv "$IG/seen.new" "$IG/seen" && sync "$IG/seen" "$IG" || return 1; fi
   while :; do
+    [ $((pages += 1)) -le 100 ] || { echo "this run stopped at the most one drain takes: run recv again for the rest, which is still on the server" >&2; return 0; }
     ig_owner GET "/v1/$B/messages${c:+?cursor=$c}" > "$IG/list.json" && n=$(jq -er '.messages | length' "$IG/list.json") || return 1
     for ((i = 0; i < n; i++)); do
       id=$(jq -r ".messages[$i].id" "$IG/list.json"); ig_hex "$id" || continue
+      [ $((k += 1)) -le 1000 ] || { echo "this run stopped at the most one drain takes: run recv again for the rest, which is still on the server" >&2; return 0; }
       if ! grep -q "^$id " "$IG/seen" 2> /dev/null; then ig_one "$B" "$id" || return 1; fi   # an id already handled is only acked again
       ig_owner DELETE "/v1/$B/messages/$id" > /dev/null || [ "$(ig_code)" = no_such_message ] || return 1
     done
@@ -225,29 +229,31 @@ ig_one(){ # <me> <id> → 0 once the message is judged and its verdict is on dis
   rm -f "$m.json" "$m.age" "$m.sig" "$m.P"
   ig_owner GET "/v1/$B/messages/$id" > "$m.json" || { [ "$(ig_code)" = no_such_message ]; return; }      # already gone
   A=$(jq -r .from "$m.json")
-  if ig_hex "$A" && [ ! -e "$IG/peers/$A/identity.doc" ]; then      # first contact: fetch what to pin; a sender with no box has nothing, and is refused
-    mkdir -p "$IG/peers/$A" && ig_api GET "/v1/$A/identity" > "$IG/peers/$A/identity.json" || case $(ig_code) in no_such_mailbox | revoked) rm -f "$IG/peers/$A/identity.json" ;; *) return 1 ;; esac
+  rm -f "$IG/first.json"
+  if ig_hex "$A" && [ ! -e "$IG/peers/$A/identity.doc" ]; then      # first contact: fetch what to pin, into a scratch file; a sender with no box has nothing, and is refused
+    ig_api GET "/v1/$A/identity" > "$IG/first.json" || case $(ig_code) in no_such_mailbox | revoked) rm -f "$IG/first.json" ;; *) return 1 ;; esac
   fi
   h=$(jq -er .ciphertext "$m.json" 2> /dev/null | base64 -d 2> /dev/null | sha256sum | cut -c1-64)      # files are named by the hash computed here, never the server's id
   why=$(ig_judge "$B" "$A" "$m"); rc=$?
-  if [ $rc -eq 0 ] || [ $rc -eq 2 ]; then [ "$h" = "$id" ] || { why="the server's id for it is not the SHA-256 of its ciphertext"; rc=1; }; fi
+  if [ $rc -eq 0 ] || [ $rc -eq 2 ]; then [ "$h" = "$id" ] || { why="bad_id: the server's id for it is not the SHA-256 of its ciphertext"; rc=1; }; fi
   case $rc in
     0) ig_line "$m.P" > "$IG/inbox/$h.json" && sync "$IG/inbox/$h.json" "$IG/inbox" && ig_seen "$A" "$m" "$h" || return 1      # stored, then seen, both on disk before the ack: a crash delivers again, never loses
        cat "$IG/inbox/$h.json" && echo ;;
     2) echo "duplicate of a message already delivered, not delivered again: $h" >&2 ;;
     3) echo "$why: nothing is judged or acked until this box is fixed" >&2; return 1 ;;
-    *) cp "$m.json" "$IG/quarantine/$h.json" && sync "$IG/quarantine/$h.json" "$IG/quarantine" || return 1
+    *) cp "$m.json" "$IG/quarantine/$h.json" && printf '%s\n' "$why" > "$IG/quarantine/$h.reason" && sync "$IG/quarantine/$h.json" "$IG/quarantine/$h.reason" "$IG/quarantine" || return 1      # the message as served, and beside it why: "<code>: <words>", this script's own words, never the message's
        echo "REFUSED $h: $why" >&2 ;;
   esac
 }
-ig_judge(){ # <me> <sender> <message stem> → 0 only if EVERY check passes, in this order; 2 for a resend of an accepted msg_id; 1 refused, with the reason on stdout; 3 a fault of this box, no verdict
+ig_judge(){ # <me> <sender> <message stem> → 0 only if EVERY check passes, in this order; 2 for a resend of an accepted msg_id; 1 refused, with "<code>: <words>" on stdout, the words this script's own and never the message's; 3 a fault of this box, no verdict
   local B=$1 A=$2 m=$3 ids=() k h why
-  jq -er .ciphertext "$m.json" | base64 -d > "$m.age" && jq -er .signature "$m.json" | base64 -d > "$m.sig" || { echo "malformed message"; return 1; }
-  why=$(ig_pin "$A" "$IG/peers/$A/identity.json" 2>&1) || { echo "${why#REFUSED: }"; return 1; }
-  ssh-keygen -Y verify -f "$IG/peers/$A/signers" -I "$A" -n "irongall-msg-v1:$B" -s "$m.sig" < "$m.age" > /dev/null 2>&1 || { echo "the signature does not verify for $A"; return 1; }
+  jq -er .ciphertext "$m.json" | base64 -d > "$m.age" && jq -er .signature "$m.json" | base64 -d > "$m.sig" || { echo "bad_message: its ciphertext or signature is not base64"; return 1; }
+  ig_hex "$A" || { echo "bad_sender: the sender is not an address"; return 1; }
+  why=$(ig_pin "$A" "$IG/first.json" 2>&1) || { echo "bad_identity: ${why#REFUSED: }"; return 1; }
+  ssh-keygen -Y verify -f "$IG/peers/$A/signers" -I "$A" -n "irongall-msg-v1:$B" -s "$m.sig" < "$m.age" > /dev/null 2>&1 || { echo "bad_signature: the signature does not verify for $A"; return 1; }
   for k in "$IG"/prekeys/*.agekey; do [ -e "$k" ] || continue; [ -r "$k" ] || { echo "cannot read $k"; return 3; }; ids+=(-i "$k"); done
   [ ${#ids[@]} -gt 0 ] || { echo "this box has no prekeys"; return 3; }
-  age -d "${ids[@]}" < "$m.age" > "$m.P" 2> /dev/null || { echo "it does not decrypt with this box's prekeys"; return 1; }
+  age -d "${ids[@]}" < "$m.age" > "$m.P" 2> /dev/null || { echo "undecryptable: it does not decrypt with this box's prekeys"; return 1; }
   ig_envcheck "$m.P" "$A" "$B" || return 1
   [ ! -e "$IG/seen" ] || [ -r "$IG/seen" ] || { echo "cannot read $IG/seen"; return 3; }
   h=$(sha256sum < "$m.age" | cut -c1-64)
@@ -256,12 +262,14 @@ ig_judge(){ # <me> <sender> <message stem> → 0 only if EVERY check passes, in 
 }
 ig_envcheck(){ # <envelope> <signer> <this box> → 0 only for one UTF-8 JSON object, keys exact and none twice, v the number 1, from the signer, to this box, a msg_id, a body, string optional fields, and sent_at no older than 33 days; otherwise the reason, and 1
   local e=$1 sa
-  iconv -f UTF-8 -t UTF-8 < "$e" > /dev/null 2>&1 || { echo "the envelope is not UTF-8"; return 1; }
+  iconv -f UTF-8 -t UTF-8 < "$e" > /dev/null 2>&1 || { echo "bad_envelope: the envelope is not UTF-8"; return 1; }
   [ "$(jq -n --stream '[inputs | select((length == 2 and (.[0] | length) == 1) or (length == 1 and (.[0] | length) == 2))] | length' "$e" 2> /dev/null)" = "$(jq length "$e" 2> /dev/null)" ] ||
-    { echo "the envelope is not one JSON object with no key twice"; return 1; }      # its members, counted as streamed, against its length: a key twice (jq keeps the last, another reader the first) or a second value breaks the count
-  jq -e --arg a "$2" --arg b "$3" '.v == 1 and .from == $a and .to == $b and has("body") and (.msg_id | type == "string" and test("\\A[0-9a-f-]{36}\\z")) and all(.subject, .in_reply_to, .supersedes, .pad; . == null or type == "string")' "$e" > /dev/null 2>&1 ||
-    { echo "the inner from/to do not match the signer and this box (re-attribution), or the envelope is malformed"; return 1; }
-  sa=$(ig_time "$(jq -r .sent_at "$e")") && [ "$sa" -ge $(($(ig_now) - 33*86400)) ] || { echo "sent_at is older than 33 days, or malformed"; return 1; }
+    { echo "bad_envelope: the envelope is not one JSON object with no key twice"; return 1; }      # its members, counted as streamed, against its length: a key twice (jq keeps the last, another reader the first) or a second value breaks the count
+  jq -e '.v == 1 and has("body") and (.msg_id | type == "string" and test("\\A[0-9a-f-]{36}\\z")) and all(.subject, .in_reply_to, .supersedes, .pad; . == null or type == "string")' "$e" > /dev/null 2>&1 ||
+    { echo "bad_envelope: the envelope is malformed: v the number 1, a body, a msg_id, and optional fields that are strings"; return 1; }
+  jq -e --arg a "$2" --arg b "$3" '.from == $a and .to == $b' "$e" > /dev/null 2>&1 || { echo "reattributed: the inner from/to do not match the signer and this box (re-attribution)"; return 1; }
+  sa=$(ig_time "$(jq -r .sent_at "$e")") || { echo "bad_envelope: the envelope's sent_at is not a UTC timestamp to the second"; return 1; }
+  [ "$sa" -ge $(($(ig_now) - 33*86400)) ] || { echo "stale: sent_at is older than 33 days"; return 1; }
 }
 ig_line(){ # <checked envelope> [receipt] → the one line delivered: built from the checked fields, never the sender's bytes, with U+0085, U+2028 and U+2029 escaped (Python's splitlines and Node's readline end lines there). ig_sent adds the server's receipt as its last member
   jq -j --slurpfile r "${2:-/dev/null}" '{v: 1, from, to, sent_at, msg_id, body} + ([{subject}, {in_reply_to}, {supersedes}] | map(select(.[] | . != null and . != "")) | add // {}) + ($r[0] | if . then {receipt: {id, received_at, expires_at}} else {} end) | tojson | gsub("\u0085"; "\\u0085") | gsub("\u2028"; "\\u2028") | gsub("\u2029"; "\\u2029")' "$1"

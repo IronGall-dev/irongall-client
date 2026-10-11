@@ -365,7 +365,7 @@ func TestRefusedMailDoesNotFailRecv(t *testing.T) {
 	if err := run(ctx, "recv", nil, nil, &out, &errs); err != nil {
 		t.Fatalf("recv after refusing mail: %v", err)
 	}
-	if out.Len() != 0 || !strings.Contains(errs.String(), "REFUSED "+hex.EncodeToString(h[:])) {
+	if out.Len() != 0 || !strings.HasPrefix(errs.String(), "REFUSED "+hex.EncodeToString(h[:])+": bad_signature: the signature does not verify for "+a.Address().String()+"\n") {
 		t.Fatalf("stdout %q, stderr %q", out.String(), errs.String())
 	}
 	var look *needsALook
@@ -373,7 +373,7 @@ func TestRefusedMailDoesNotFailRecv(t *testing.T) {
 		t.Fatalf("status with mail in quarantine/: %v", err)
 	}
 	var st client.Status
-	if err := json.Unmarshal(out.Bytes(), &st); err != nil || st.Quarantine != 1 || len(st.Attention) != 1 || !strings.Contains(st.Attention[0], "1 refused in quarantine/") {
+	if err := json.Unmarshal(out.Bytes(), &st); err != nil || st.Quarantine != 1 || len(st.Attention) != 1 || !strings.Contains(st.Attention[0], "1 refused in quarantine/ (bad_signature)") {
 		t.Fatalf("status printed %q: %v", out.String(), err)
 	}
 }

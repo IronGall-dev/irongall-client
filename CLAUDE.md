@@ -27,6 +27,10 @@
 
 **Exit status 3 is "done, and the box needs a look"** (`needsALook` in `cmd/irongall`): `recv` after a failed renewal, `status` with a non-empty `attention`. Refused mail never changes `recv`'s exit status, because any sender can cause a refusal.
 
+**Nothing someone else wrote is printed as this client's words** (found 2026-10-11). A refusal is a code from the closed set in `client/errors.go` and `protocol/envelope.go`, with fixed words: never a value, key or field from an envelope, a served identity or a served statement. A server's `detail` and `hint` go through `plain` and are printed in quotes after "the server says". A new error path that formats outside text with `%s`, `%q` or `%v` breaks this: `TestARefusalNeverQuotesTheMessage` and `sh/test.sh` § 14 hold the envelope's.
+
+**A drain is bounded and a first-contact identity is held in memory** (`maxDrain*`, `firstContact`, `pin`): only an identity that hashes to its address is written under `peers/`, hash before parse.
+
 **Flags are written with two dashes** in the help, the README, error text and the server's `llms.txt`. Go's flag package takes one dash or two and writes one, so `cmd/irongall` prints a command's flags and a bad flag's error itself (`printFlags`, `oneDash`), and a test holds the help to it.
 
 **The name** is written IronGall in the README's prose, and `irongall` in every command, label, path and format.

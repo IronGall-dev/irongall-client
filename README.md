@@ -59,6 +59,22 @@ The box lives in `~/.config/irongall/default` (or `$IRONGALL_BOX`, `$IRONGALL_HO
 - `1`: it failed. `2`: usage.
 - `3`: mail was received as printed, and the box needs a look, because the prekey was not renewed.
 
+A refusal is one line, `REFUSED <id>: <code>: <words>`. The code names the check that failed, from the closed set below, and the words are this client's own: a refusal never prints the message's text, the sender's, or the server's, because whoever reads it may be a model and any box can send mail that is refused. The same `<code>: <words>` is kept beside the refused message, in `quarantine/<id>.reason`.
+
+| Code | The check that failed |
+|---|---|
+| `bad_sender` | the claimed sender is not an address |
+| `bad_identity` | the server has no identity for the sender, or served one that does not hash to its address |
+| `bad_signature` | the signature is not the sender's, made for this box |
+| `undecryptable` | it is not encrypted to a prekey this box holds |
+| `bad_envelope` | the envelope is not UTF-8 JSON, one object with no key twice, version 1, with a body, a `msg_id` and a `sent_at` |
+| `reattributed` | the envelope's `from` is not the verified signer, or its `to` is not this box |
+| `stale` | its `sent_at` is older than 33 days |
+| `replay` | this ciphertext was already received |
+| `bad_id` | the server's id for it is not the SHA-256 of its ciphertext |
+
+An error from the server reads `ERROR <status> <code>; the server says: "<its detail; its hint>"`. What is in the quotes is the server's wording, there because it names the limit hit and the seconds to wait: one line, printable ASCII, cut short, and no more an instruction than a message body is.
+
 A wrapper that shows stderr only when the exit status is not 0 never shows a refused forgery. Keep stderr, or run `irongall status` after `recv`: it reads the box's own files, calls no server, and prints one line of JSON whose `attention` list says each thing that needs a look, in words, exiting `3` if the list is not empty: mail in `quarantine/`, mail still in `outbox/` or moved to `outbox/failed/`, an expired prekey, and a new prekey this box signed and never saw published (`renewal_pending_since`).
 
 **The server's limits** (message size, poll rate, sends a day) are on its `llms.txt`, which states the values it enforces; a refusal names the limit, and a rate limit the seconds to wait. `irongall recv --wait` waits one out.
@@ -67,7 +83,9 @@ A wrapper that shows stderr only when the exit status is not 0 never shows a ref
 
 **The server expects a message to be fetched once and kept,** which is what `recv` does: it stores each message in `inbox/` (or `quarantine/`) and acks it. A first fetch is never limited; fetching the same message again is an allowance for catching up after a failure, a few at once and then one about every poll interval, and past it the server answers `429` with the seconds to wait. A crash at the wrong moment can deliver a message twice, never lose it, so de-duplicate on `from` + `msg_id`.
 
-**The box keeps what it received and what it sent, in plaintext, and never prunes either.** `inbox/` holds each message delivered, one line of JSON in a file named by the ciphertext's SHA-256. `sent/` holds each message the server took, in `<address>.<msg_id>.json`: the same line its recipient's `recv` delivers, with one more member, `receipt`, the server's answer (`id`, `received_at`, `expires_at`). A message still in `outbox/`, or moved to `outbox/failed/`, is not in `sent/`. `inbox/`, `quarantine/` and `sent/` are yours to prune: delete a file to forget a message.
+**One `recv` takes a bounded amount of mail:** a fixed number of messages, of bytes and of list pages (`maxDrainMessages`, `maxDrainBytes`, `maxDrainPages` in `client/recv.go`), so a server that lists mail without end cannot keep a run going or fill a disk in one go. A run that stops there says so on stderr and leaves the rest on the server for the next run.
+
+**The box keeps what it received and what it sent, in plaintext, and never prunes either.** `inbox/` holds each message delivered, one line of JSON in a file named by the ciphertext's SHA-256. `sent/` holds each message the server took, in `<address>.<msg_id>.json`: the same line its recipient's `recv` delivers, with one more member, `receipt`, the server's answer (`id`, `received_at`, `expires_at`). A message still in `outbox/`, or moved to `outbox/failed/`, is not in `sent/`. `quarantine/` holds each refused message as the server sent it, `<id>.json`, with `<id>.reason` beside it. `inbox/`, `quarantine/` and `sent/` are yours to prune: delete a file to forget a message.
 
 ## Stock tools instead of Go
 
@@ -96,6 +114,7 @@ It is kept simple enough to read in one sitting, so it lacks what the Go client 
 - **The lock is a bare `lock/` directory.** A crash leaves it behind, and you remove it by hand; the Go client takes over a lock its own crashed run left.
 - **`recv` drains once.** It never waits for mail, and every step runs several programs. The MCP server planned for the Go client will not come to the script.
 - **No `alias --rm`.** To change or drop a name, delete its line in the box's `aliases` file.
+- **A drain stops at a number of messages and of pages, with no limit in bytes,** and one refusal has a code the Go client never gives: `bad_message`, a ciphertext or signature that is not base64, which the Go client treats as a failed fetch.
 - **No `status`.** Look in the box's `quarantine/` and `outbox/` yourself. Its `recv` never renews, so it has no exit status for a failed renewal: `rekey` fails with `1`.
 - **`rekey` makes a post-quantum prekey unless told `--no-pq`**, where the Go client keeps the box's type, and a re-run reuses the key a failed attempt left, whatever type was asked for.
 - **It checks that an identity key is canonical and not of small order, but not that it is on the curve.** No signature verifies under such a key, so mail claiming it is refused all the same.
@@ -119,6 +138,7 @@ The server stores ciphertext, never holds a private key, and never sees plaintex
 - it sees who writes to whom, when, and how large each message is;
 - it can drop mail, or delay it;
 - it can keep serving a box's previous prekey until that prekey expires, at most 33 days, so senders keep encrypting to it. The client refuses a prekey older than one it has already seen, but cannot tell a withheld renewal from one the owner has not made;
+- it can list mail from senders it made up, serve any identity for them, or list mail without end. A drain is bounded, and nothing is kept of a sender whose served identity does not hash to its address, so that costs a box one bounded run and files in `quarantine/`;
 - it can refuse a box's renewals, and keep the signed statements it refuses. Each key is signed once, so that gains it no key for longer than the 33 days its one statement gives, and the box's `recv` exits `3` and its `status` says a renewal is pending for as long as it lasts.
 
 irongall.dev runs behind Cloudflare, which terminates TLS: Cloudflare sees the same, plus each box's token, which would let it drop or delay that box's mail. It cannot read or forge mail either.
@@ -150,6 +170,7 @@ The rules the client follows:
 | `protocol/`, `testdata/vectors/` | Every identity, prekey statement, signature and envelope is accepted or refused exactly as the vectors name it. The vectors are made by stock tools (`ssh-keygen`, `age`), not by this code |
 | `client/forgery_test.go` | **Each forgery the operator can make is refused**, never delivered, encrypted to or pinned: re-attribution, a forged identity at first contact, a forged signature, a swapped, expired or rolled-back prekey (the peer's or the box's own), a replay, stale mail, a bad sender, mail not encrypted to the box, an id that is not the ciphertext's hash, and a second envelope hidden on a line of its own. The table at the top of `TestForgeries` lists each with its expected refusal |
 | `client/failure_test.go` | **A failure never loses mail, and a retry is never delivered twice:** a failed fetch or ack, a re-sent envelope, a stale prekey or token, the consumer lock, prune's deletion time, a fault in the box itself (which stops the drain instead of judging mail), an outbox entry that cannot be delivered, and a body that is not UTF-8 |
+| `client/hostile_test.go` | **What a refusal says, and what a hostile server costs:** a refusal carries a code and never the sender's text (a version, a key name, a timestamp or a field the sender chose), and its reason is kept beside the quarantined message; a server's error text is printed as its own, on one line, bounded; senders a server makes up leave nothing under `peers/`; and a drain stops at its limits, keeping its retired prekeys when it did |
 | `client/sent_test.go`, `client/alias_test.go` | **The envelope's optional fields, `sent/` and aliases:** `subject`, `in_reply_to` and `supersedes` reach the recipient, and one that is not a `msg_id` is refused before any mail is made; `sent/` holds exactly what the server took, each with its receipt; a name is never moved, never an address or a link, and a name with two addresses names neither |
 | `client/renew_test.go` | **`recv` keeps the box alive and its old keys few:** it renews a prekey more than a day old, keeping its type, and not again for a day; a failed renewal never stops the drain and is retried hourly, with the statement it signed the first time and never a new one, so that a server which fails every renewal and keeps what it is sent gets each key in one statement; and every retired prekey but the newest is deleted after a drain that empties the box more than an hour after they were retired, at the renewing check-in of a box received monthly, never after a drain that failed |
 | `cmd/irongall/` | `recv` prints one line per message, built from the checked fields, never the sender's bytes; `init` and `addr` print the box's link, and `send` refuses a link to another server, or anything that is not a link, an address or an alias, before it makes any mail; `send`'s flags and the `alias` command; flags written with two dashes; `recv`'s exit status after a failed renewal (3) and after refused mail (0), and what `status` says of each |

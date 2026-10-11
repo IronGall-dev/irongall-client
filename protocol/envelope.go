@@ -33,6 +33,23 @@ var msgIDGrammar = regexp.MustCompile(`\A[0-9a-f-]{36}\z`)
 // one: what a sender may put in in_reply_to and supersedes.
 func IsMsgID(s string) bool { return msgIDGrammar.MatchString(s) }
 
+// The checks an envelope can fail, as codes: a closed set, so that whoever
+// reads a refusal reads words this code chose.
+const (
+	RefusedEnvelope    = "bad_envelope" // not UTF-8 JSON, one object with no key twice, version 1, with a body, a msg_id and a sent_at
+	RefusedAttribution = "reattributed" // its from is not the verified signer, or its to is not this box
+	RefusedStale       = "stale"        // its sent_at is older than TTL
+)
+
+// EnvelopeError is the check an envelope failed: one of the codes above and
+// fixed words. It never quotes the envelope, whose text its sender chose: a
+// refusal is read by whoever runs the client, and that may be a model.
+type EnvelopeError struct{ Code, Why string }
+
+func (e *EnvelopeError) Error() string { return e.Why }
+
+func badEnvelope(why string) error { return &EnvelopeError{RefusedEnvelope, why} }
+
 // Envelope is a message's plaintext: what is encrypted to the recipient's
 // prekey. The server never sees it.
 type Envelope struct {
@@ -118,14 +135,14 @@ func (e *Envelope) Marshal() ([]byte, error) {
 // duplicate checks need the caller's seen-set and are the caller's.
 func OpenEnvelope(plaintext []byte, signer, me Address, now time.Time) (*Envelope, error) {
 	if !utf8.Valid(plaintext) {
-		return nil, errors.New("the envelope is not UTF-8")
+		return nil, badEnvelope("the envelope is not UTF-8")
 	}
 	fields, err := objectFields(plaintext)
 	if err != nil {
 		return nil, err
 	}
 	if _, ok := fields["body"]; !ok {
-		return nil, errors.New("the envelope has no body")
+		return nil, badEnvelope("the envelope has no body")
 	}
 	var w wireEnvelope
 	for key, dst := range map[string]any{
@@ -134,27 +151,27 @@ func OpenEnvelope(plaintext []byte, signer, me Address, now time.Time) (*Envelop
 	} {
 		if raw, ok := fields[key]; ok {
 			if err := json.Unmarshal(raw, dst); err != nil {
-				return nil, fmt.Errorf("the envelope is malformed: %s: %v", key, err)
+				return nil, badEnvelope("the envelope is malformed: its " + key + " is not what that field holds")
 			}
 		}
 	}
 	w.Body = fields["body"]
 	// The raw value: a JSON string keeps its quotes, and is no number.
 	if f, err := json.Number(fields["v"]).Float64(); err != nil || f != EnvelopeVersion {
-		return nil, fmt.Errorf("unknown envelope version %s: v is the JSON number 1", fields["v"])
+		return nil, badEnvelope("unknown envelope version: v is the JSON number 1")
 	}
 	if w.From != signer || w.To != me {
-		return nil, errors.New("the inner from/to do not match the signer and this box (re-attribution)")
+		return nil, &EnvelopeError{RefusedAttribution, "the inner from/to do not match the signer and this box (re-attribution)"}
 	}
 	if !msgIDGrammar.MatchString(w.MsgID) {
-		return nil, errors.New("the envelope has no valid msg_id")
+		return nil, badEnvelope("the envelope has no valid msg_id")
 	}
 	sentAt, err := ParseTime(w.SentAt)
 	if err != nil {
-		return nil, fmt.Errorf("sent_at: %v", err)
+		return nil, badEnvelope("the envelope's sent_at is not a UTC timestamp to the second, YYYY-MM-DDTHH:MM:SSZ")
 	}
 	if sentAt.Before(now.Add(-TTL)) {
-		return nil, fmt.Errorf("sent_at is older than %d days", TTL/(24*time.Hour))
+		return nil, &EnvelopeError{RefusedStale, fmt.Sprintf("sent_at is older than %d days", TTL/(24*time.Hour))}
 	}
 	return &Envelope{
 		From:       w.From,
@@ -172,7 +189,7 @@ func OpenEnvelope(plaintext []byte, signer, me Address, now time.Time) (*Envelop
 // objectFields reads a JSON object's members by their exact keys. A key that
 // appears twice, or anything after the object, is an error.
 func objectFields(data []byte) (map[string]json.RawMessage, error) {
-	notObject := errors.New("the envelope is not a JSON object")
+	notObject := badEnvelope("the envelope is not one JSON object")
 	d := json.NewDecoder(bytes.NewReader(data))
 	if t, err := d.Token(); err != nil || t != json.Delim('{') {
 		return nil, notObject
@@ -185,7 +202,7 @@ func objectFields(data []byte) (map[string]json.RawMessage, error) {
 		}
 		key, _ := t.(string)
 		if _, dup := fields[key]; dup {
-			return nil, fmt.Errorf("the envelope has the key %q twice", key)
+			return nil, badEnvelope("the envelope has a key twice")
 		}
 		var v json.RawMessage
 		if err := d.Decode(&v); err != nil {

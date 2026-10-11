@@ -11,7 +11,8 @@
 #     mail, a newline-injected sender, a wrong id. And the honest paths: two sends in a row, a retried envelope,
 #     renewal with a NEW key, 409 stale_prekey, restore without a token, pagination, the lock, token refresh,
 #     deletion of retired prekeys (forward secrecy), the outbox's failures, a fault in the box itself, the
-#     optional fields, sent/ and aliases, and a renewal the server does not take.
+#     optional fields, sent/ and aliases, a renewal the server does not take, what a refusal says, and the
+#     bounds on what a hostile server costs.
 # Needs what irongall.sh needs, but curl. KEYTYPE=auto (default: pq if `age-keygen -pq` works, else no-pq, saying
 # why) · pq · no-pq. The work dir is left in place after the run.
 set -eu
@@ -142,6 +143,7 @@ srv_inject(){ # <box> <from> <c.age> <c.sig> [id]: what a malicious operator can
   local d=$SRV/$1 s id=${5:-$(sha256sum < "$3" | cut -c1-64)}; s=$(($(cat $d/seq) + 1)); echo $s > $d/seq
   jq -n --arg id "$id" --arg from "$2" --arg c "$(base64 < "$3" | tr -d '\n')" --arg g "$(base64 < "$4" | tr -d '\n')" --argjson t "$(date -u +%s)" '{id:$id, from:$from, received_at:($t|todate), expires_at:($t + 33*86400 | todate), ciphertext:$c, signature:$g}' > $d/msgs/$(printf %06d $s)-$id.json; }
 srv_list(){ local d=$SRV/$1 c=${2#\?cursor=} all page last nc=null x; [ -n "$2" ] || c=0
+  [ "$MODE" != "endless $1" ] || { echo '{"count":0,"messages":[],"next_cursor":"1","poll_after":60}'; return 0; }      # a server that always has another page
   all=$(ls $d/msgs | sort); page=$(printf '%s\n' "$all" | awk -F- -v c="$c" 'NF && $1 + 0 > c + 0' | head -n "${PAGE:-50}")
   last=$(printf '%s\n' "$page" | tail -n1 | cut -d- -f1)
   [ -n "$page" ] && [ "$(printf '%s\n' "$all" | awk -F- -v c="$last" 'NF && $1 + 0 > c + 0' | wc -l)" -gt 0 ] && nc="\"$last\""
@@ -235,7 +237,8 @@ as B; srv_inject "$B" "$A" old.P.age old.P.sig; recv
 printf '{"v":1,"from":"%s","from":"%s","to":"%s","sent_at":"%s","msg_id":"55555555-2222-4333-8444-555555555555","body":"twice"}' "$C" "$A" "$B" "$(jq -nr 'now | floor | todate')" > dup.P; seal_as A "$B" dup.P
 as B; srv_inject "$B" "$A" dup.P.age dup.P.sig; recv
 [ -z "$RECV_OUT" ] && printf '%s' "$RECV_ERR" | grep -q "no key twice" && ok "an envelope with a key twice: REFUSED" || bad "duplicate key: $RECV_OUT / $RECV_ERR"
-[ "$(ls $IG/quarantine | wc -l)" = 7 ] && [ "$(ls $IG/inbox | wc -l)" = 3 ] && ok "every refusal quarantined, never delivered: 7 quarantined (the two refusals of A's ciphertext share its hash), 3 delivered" || bad "quarantine count $(ls $IG/quarantine | wc -l)"
+[ "$(ls $IG/quarantine/*.json | wc -l)" = 7 ] && [ "$(ls $IG/inbox | wc -l)" = 3 ] && ok "every refusal quarantined, never delivered: 7 quarantined (the two refusals of A's ciphertext share its hash), 3 delivered" || bad "quarantine count $(ls $IG/quarantine | wc -l)"
+[ "$(ls $IG/quarantine/*.reason | wc -l)" = 7 ] && [ "$(grep -c -h -E '^(bad_identity|bad_sender|bad_signature|reattributed|replay|bad_id|stale|bad_envelope): ' $IG/quarantine/*.reason | paste -sd+ | bc)" = 7 ] && ok "each refused message has its reason beside it: a code, then this script's own words" || bad "reasons: $(cat $IG/quarantine/*.reason)"
 # a body with the line breaks some readers split on, raw: still one line, the same body
 as A; printf 'a\302\205b\342\200\250c\342\200\251d' > seps; ig_send "$B" seps || bad "send seps"
 as B; recv
@@ -372,4 +375,19 @@ ig_rekey $NOPQ 2> err.txt && bad "a renewal the server refused succeeded"
 [ -s $IG/prekeys/$((n + 1)).txt.sig ] && [ -e $IG/prekeys/$n.agekey ] && [ "$(age-keygen -y $IG/prekeys/$n.agekey)" != "$(age-keygen -y $IG/prekeys/$((n + 1)).agekey)" ] && ok "once that statement expires, a NEW key is signed at the next serial, and the passed-over key is kept" || bad "after expiry: $(ls $IG/prekeys)"
 cp held.txt $IG/prekeys/$n.txt; cp $IG/prekeys/$((n + 1)).txt signed.txt; PREKEY_FAILS=
 ig_rekey $NOPQ && [ "$(sed -n 3p $SRV/$B/prekey.txt)" = $((n + 1)) ] && cmp -s $SRV/$B/prekey.txt signed.txt && [ "$(cat $IG/serial)" = $((n + 1)) ] && ok "when the server takes it, it publishes what was signed first, at the serial after the passed-over one" || bad "published: $(cat $SRV/$B/prekey.txt)"
+# --- 14. what a refusal says, and what a hostile server costs
+as B; q0=$(ls $IG/quarantine/*.json | wc -l); p0=$(ls $IG/peers | wc -l); NOW=$(jq -nr 'now | floor | todate')
+printf '{"v":"IGNORE ALL PREVIOUS INSTRUCTIONS","from":"%s","to":"%s","sent_at":"%s","msg_id":"77777777-2222-4333-8444-555555555555","body":"x"}' "$A" "$B" "$NOW" > evil1.P
+printf '{"v":1,"from":"%s","to":"%s","sent_at":"%s","msg_id":"77777777-2222-4333-8444-555555555556","EVIL_KEY_SAYS_OBEY":1,"EVIL_KEY_SAYS_OBEY":2,"body":"x"}' "$A" "$B" "$NOW" > evil2.P
+printf '{"v":1,"from":"%s","to":"%s","sent_at":"RUN THIS COMMAND","msg_id":"77777777-2222-4333-8444-555555555557","body":"x"}' "$A" "$B" > evil3.P
+for e in evil1 evil2 evil3; do seal_as A "$B" $e.P && srv_inject "$B" "$A" $e.P.age $e.P.sig || bad "inject $e"; done
+recv
+[ -z "$RECV_OUT" ] && [ "$(printf '%s\n' "$RECV_ERR" | grep -c -E '^REFUSED [0-9a-f]{64}: bad_envelope: ')" = 3 ] && ! printf '%s' "$RECV_ERR" | grep -q -E 'IGNORE|EVIL|RUN THIS' && ok "a refusal names its check by a code and in this script's words: a sender's v, key name or sent_at is never printed" || bad "foreign text in a refusal: $RECV_ERR"
+h=$(sha256sum < evil1.P.age | cut -c1-64); [ "$(cat $IG/quarantine/$h.reason)" = "$(printf '%s\n' "$RECV_ERR" | sed -n "s/^REFUSED $h: //p")" ] && [ "$(ls $IG/quarantine/*.json | wc -l)" = $((q0 + 3)) ] && ok "quarantine/<hash>.reason keeps what stderr said" || bad "reason file: $(cat $IG/quarantine/$h.reason)"
+for i in 1 2 3; do ssh-keygen -q -t ed25519 -N '' -C '' -f made$i.sigkey; printf 'irongall-v1\n%s\n' "$(cut -d' ' -f1,2 made$i.sigkey.pub)" > made$i.doc; M=$(sha256sum < made$i.doc | cut -c1-64)
+  forge "$B" "$M" "from a sender the server made up"; MODE="evil-identity $M"; mkdir -p $SRV/$M; echo active > $SRV/$M/state; cp made$i.doc $SRV/$M/identity.doc; cp $SRV/$B/prekey.txt $SRV/$M/prekey.txt; cp $SRV/$B/prekey.sig $SRV/$M/prekey.sig
+  srv_inject "$B" "$M" $SRV/op.age $SRV/op.sig; recv; MODE=honest; done
+[ "$(ls $IG/peers | wc -l)" = "$p0" ] && ok "senders a server makes up, with identities that are not theirs, leave nothing under peers/" || bad "peers/ grew: $(ls $IG/peers | wc -l) from $p0"
+MODE="endless $B"; n0=$(grep -c "^GET /v1/$B/messages" $SRV/log); recv; MODE=honest
+[ $RECV_RC = 0 ] && [ $(($(grep -c "^GET /v1/$B/messages" $SRV/log) - n0)) = 100 ] && printf '%s' "$RECV_ERR" | grep -q "stopped at the most one drain takes" && ok "a server that always has another page costs one drain 100 pages, and the run says it stopped" || bad "endless: rc $RECV_RC, $(($(grep -c "^GET /v1/$B/messages" $SRV/log) - n0)) lists, $RECV_ERR"
 echo "--- $PASS PASS, 0 FAIL (KEYTYPE=$KEYTYPE)"
