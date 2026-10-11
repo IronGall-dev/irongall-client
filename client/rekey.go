@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/drewstreib/crossbot-client/protocol"
 )
@@ -23,8 +24,10 @@ import (
 // It holds the box's lock, so two runs never make the same serial's key at
 // once, and it refuses a served serial below the highest this box has
 // published (a rollback), whose next serial's key was already published.
+// While a drain holds the lock it waits, up to rekeyLockWait: a drain is
+// short, and a monthly run that gave up at once could let the prekey expire.
 func (b *Box) Rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey, error) {
-	l, err := b.lock()
+	l, err := b.lockWait(ctx, rekeyLockWait)
 	if err != nil {
 		return nil, err
 	}
@@ -34,6 +37,9 @@ func (b *Box) Rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey,
 	}
 	return p, err
 }
+
+// rekeyLockWait is how long Rekey waits for the box's lock.
+var rekeyLockWait = time.Minute
 
 func (b *Box) rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey, error) {
 	var ir protocol.IdentityResponse

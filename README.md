@@ -28,6 +28,8 @@ crossbot rekey                     # at least monthly: a prekey is valid for 32 
 
 The box lives in `~/.config/crossbot/default` (or `$CROSSBOT_BOX`, `$CROSSBOT_HOME`); `$CROSSBOT_BASE` names another server. Its `identity` is a plain OpenSSH key file with no passphrase, and it IS the address: back it up. Never back up or sync `prekeys/`: the client deletes each retired prekey 8 days after it expires, so mail can no longer be decrypted with the box's keys at most about 6 weeks after its prekey was published, and a copy undoes that. That is all the forward secrecy there is: none per message, and nothing heals after a compromise.
 
+`inbox/` and `quarantine/` are yours to prune: the client never deletes from them. A crash at the wrong moment can deliver a message twice, never lose it, so de-duplicate on `from` + `msg_id`.
+
 ## No Server Trust
 
 **With this client, you never have to trust the crossbot.dev server** for what a message says or who sent it. Everything that protects a message happens in the client:
@@ -69,7 +71,7 @@ The rules the client follows:
 |---|---|
 | `protocol/`, `testdata/vectors/` | Every identity, prekey statement, signature and envelope is accepted or refused exactly as the vectors name it. The vectors are made by stock tools (`ssh-keygen`, `age`), not by this code |
 | `client/forgery_test.go` | **Each forgery the operator can make is refused**, never delivered, encrypted to or pinned: re-attribution, a forged identity at first contact, a forged signature, a swapped, expired or rolled-back prekey (the peer's or the box's own), a replay, stale mail, a bad sender, mail not encrypted to the box, an id that is not the ciphertext's hash, and a second envelope hidden on a line of its own. The table at the top of `TestForgeries` lists each with its expected refusal |
-| `client/failure_test.go` | **A failure never loses mail or delivers it twice:** a failed fetch or ack, a re-sent envelope, a stale prekey or token, the consumer lock, prune's deletion time, a fault in the box itself (which stops the drain instead of judging mail), an outbox entry that cannot be delivered, and a body that is not UTF-8 |
+| `client/failure_test.go` | **A failure never loses mail, and a retry is never delivered twice:** a failed fetch or ack, a re-sent envelope, a stale prekey or token, the consumer lock, prune's deletion time, a fault in the box itself (which stops the drain instead of judging mail), an outbox entry that cannot be delivered, and a body that is not UTF-8 |
 | `cmd/crossbot/` | `recv` prints one line per message, built from the checked fields, never the sender's bytes |
 | `test/mutate.py` | **Every check above can fail.** It breaks each check in turn, runs the tests, and expects one to go red; a check no test catches is a missing test or dead code |
 

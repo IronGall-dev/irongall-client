@@ -73,6 +73,41 @@ func TestRecvPrintsTheCheckedLine(t *testing.T) {
 	}
 }
 
+// A body may hold U+0085, U+2028 or U+2029 raw, which some readers (Python's
+// str.splitlines, Node's readline) end a line at: recv escapes them, so one
+// message is still one line, with the same body.
+func TestRecvLineHasNoOtherLineBreaks(t *testing.T) {
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	opt := client.Options{Base: srv.URL}
+	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := "a\u0085b\u2028c\u2029d"
+	if _, err := a.Send(ctx, b.Address(), body); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CROSSBOT_HOME", b.Dir())
+	t.Setenv("CROSSBOT_BASE", srv.URL)
+	var out, errs bytes.Buffer
+	if err := run(ctx, "recv", nil, strings.NewReader(""), &out, &errs); err != nil {
+		t.Fatalf("recv: %v %s", err, errs.String())
+	}
+	line := strings.TrimSuffix(out.String(), "\n")
+	if strings.ContainsAny(line, "\n\u0085\u2028\u2029") {
+		t.Fatalf("recv printed a line break inside the line: %q", line)
+	}
+	var env struct{ Body string }
+	if err := json.Unmarshal([]byte(line), &env); err != nil || env.Body != body {
+		t.Fatalf("the body changed: %q, %v", env.Body, err)
+	}
+}
+
 func must(t *testing.T, name string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(name) //nolint:gosec // a test path

@@ -76,11 +76,20 @@ var undeliverable = []protocol.Code{
 // post posts the outbox entry stem, sealing it first if it is not sealed. On
 // failure the entry stays in the outbox for the next flush, unless it can
 // never be delivered: the server refused it for good, or its envelope is
-// older than any recipient accepts. Then it moves to outbox/failed/.
+// older than any recipient accepts. Then it moves to outbox/failed/. An entry
+// already that old is never posted: the server would take it and give a
+// receipt, and the recipient would refuse it.
 func (b *Box) post(ctx context.Context, to protocol.Address, stem string) (*protocol.Receipt, error) {
+	if b.expired(stem) {
+		err := refuse("its envelope is older than 8 days, and every recipient refuses that")
+		if merr := b.moveToFailed(stem); merr != nil {
+			return nil, errors.Join(err, merr)
+		}
+		return nil, fmt.Errorf("%w (it can never be delivered: moved to outbox/failed/)", err)
+	}
 	r, err := b.trySend(ctx, to, stem)
 	if err != nil {
-		if !slices.Contains(undeliverable, Code(err)) && !b.expired(stem) {
+		if !slices.Contains(undeliverable, Code(err)) {
 			return nil, fmt.Errorf("%w (kept in the outbox: retry with crossbot flush)", err)
 		}
 		if merr := b.moveToFailed(stem); merr != nil {

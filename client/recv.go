@@ -286,8 +286,14 @@ func (b *Box) judge(m *protocol.Message) (d *Delivery, dup bool, why string, err
 	if err != nil {
 		return nil, false, "", err
 	}
-	return &Delivery{Envelope: env, Line: line, Plaintext: p}, false, "", nil
+	return &Delivery{Envelope: env, Line: []byte(lineBreaks.Replace(string(line))), Plaintext: p}, false, "", nil
 }
+
+// lineBreaks escapes the characters other than LF that some readers end a
+// line at (Python's str.splitlines, Node's readline): a body can carry them
+// raw inside a JSON string, the only place JSON allows them, so escaping
+// them keeps one message one line with the same value.
+var lineBreaks = strings.NewReplacer("\u0085", `\u0085`, " ", ` `, " ", ` `)
 
 // verdict turns a failed check into a refusal, and anything else (a file
 // this box cannot read or write) into an error.
@@ -344,6 +350,8 @@ func (b *Box) seenMsgID(from protocol.Address, msgID string) (bool, error) {
 
 func (b *Box) recordSeen(ciphertext []byte, env *protocol.Envelope) error {
 	h := sha256.Sum256(ciphertext)
+	_, err := os.Stat(b.path("seen"))
+	created := errors.Is(err, fs.ErrNotExist)
 	f, err := os.OpenFile(b.path("seen"), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
 	if err != nil {
 		return err
@@ -356,7 +364,11 @@ func (b *Box) recordSeen(ciphertext []byte, env *protocol.Envelope) error {
 		f.Close() //nolint:errcheck,gosec // the sync error wins
 		return err
 	}
-	return f.Close()
+	if err := f.Close(); err != nil || !created {
+		return err
+	}
+	// A new file is durable only once its directory entry is.
+	return syncDir(b.dir)
 }
 
 func (b *Box) pruneSeen() error {

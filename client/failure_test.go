@@ -194,6 +194,7 @@ func TestLock(t *testing.T) {
 	if _, err := b.Receive(context.Background()); err == nil || !strings.Contains(err.Error(), "lock") {
 		t.Fatalf("receive under the recipe's lock: %v", err)
 	}
+	client.SetRekeyLockWait(t, 200*time.Millisecond)
 	if _, err := b.Rekey(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "lock") {
 		t.Fatalf("rekey under the recipe's lock: %v", err)
 	}
@@ -206,6 +207,24 @@ func TestLock(t *testing.T) {
 	receive(t, b)
 	if exists(lock) {
 		t.Fatal("the lock was not released")
+	}
+}
+
+// A rekey waits for a drain holding the lock rather than failing at once: a
+// monthly run that gives up on one collision lets the prekey expire.
+func TestRekeyWaitsForTheLock(t *testing.T) {
+	e := newEnv(t)
+	b := e.box(protocol.Classic)
+	lock := filepath.Join(b.Dir(), "lock")
+	if err := os.Mkdir(lock, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		_ = os.Remove(lock)
+	}()
+	if _, err := b.Rekey(context.Background(), ""); err != nil {
+		t.Fatalf("rekey after the lock was released: %v", err)
 	}
 }
 
@@ -368,6 +387,29 @@ func TestFlushNeverStopsAtABadEntry(t *testing.T) {
 	}
 	if left, _ := filepath.Glob(filepath.Join(outbox, "*.P")); len(left) != 0 {
 		t.Fatalf("an entry older than 8 days stayed: %v", left)
+	}
+}
+
+// An entry older than any recipient accepts is never posted, even when the
+// server would take it: it moves to outbox/failed/, with no receipt.
+func TestStaleOutboxEntryIsNotPosted(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	failOnce(e, http.MethodPost, "/v1/"+b.Address().String())
+	if _, err := a.Send(ctx, b.Address(), "stuck"); err == nil {
+		t.Fatal("the send should have failed")
+	}
+	e.clock.Add(protocol.TTL + time.Second)
+	rs, err := a.Flush(ctx)
+	if len(rs) != 0 || err == nil || !strings.Contains(err.Error(), "outbox/failed") {
+		t.Fatalf("flush: %d sent, %v", len(rs), err)
+	}
+	if e.srv.Count(b.Address()) != 0 {
+		t.Fatal("an entry older than 8 days was posted")
+	}
+	if failed, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "failed", b.Address().String()+".*.P")); len(failed) != 1 {
+		t.Fatal("the stale entry did not move to outbox/failed/")
 	}
 }
 

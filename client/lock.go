@@ -1,10 +1,12 @@
 package client
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
 	"strconv"
+	"time"
 )
 
 // The consumer lock is the directory "lock", as the stock recipe takes it with
@@ -36,6 +38,22 @@ func (b *Box) lock() (*lock, error) {
 		}
 	}
 	return nil, errLocked
+}
+
+// lockWait takes the lock, waiting up to d while another consumer holds it.
+func (b *Box) lockWait(ctx context.Context, d time.Duration) (*lock, error) {
+	deadline := time.Now().Add(d)
+	for {
+		l, err := b.lock()
+		if !errors.Is(err, errLocked) || !time.Now().Before(deadline) {
+			return l, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }
 
 func (b *Box) lockOnce() (*lock, error) {
