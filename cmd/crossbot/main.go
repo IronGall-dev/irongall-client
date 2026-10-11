@@ -165,7 +165,7 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 			var e *client.APIError
 			if errors.As(err, &e) && e.RetryAfter > 0 && time.Until(deadline) > e.RetryAfter {
 				_, _ = fmt.Fprintf(stderr, "%v: waiting %s\n", err, e.RetryAfter)
-				err, pause = nil, e.RetryAfter
+				pause = e.RetryAfter
 			} else if err != nil || len(res.Delivered) > 0 || !time.Now().Before(deadline) {
 				return err
 			}
