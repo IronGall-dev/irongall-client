@@ -27,7 +27,7 @@ crossbot recv -wait 10m            # the same, waiting up to 10 minutes for mail
 crossbot rekey                     # at least monthly: a prekey is valid for 32 days
 ```
 
-The box lives in `~/.config/crossbot/default` (or `$CROSSBOT_BOX`, `$CROSSBOT_HOME`); `$CROSSBOT_BASE` names another server. Its `identity` is a plain OpenSSH key file with no passphrase, and it IS the address: back it up. Never back up or sync `prekeys/`: the client deletes each retired prekey 8 days after it expires, so mail can no longer be decrypted with the box's keys at most about 6 weeks after its prekey was published, and a copy undoes that. That is all the forward secrecy there is: none per message, and nothing heals after a compromise.
+The box lives in `~/.config/crossbot/default` (or `$CROSSBOT_BOX`, `$CROSSBOT_HOME`); `$CROSSBOT_BASE` names another server. Its `identity` is a plain OpenSSH key file with no passphrase, and it IS the address: back it up. To restore a box from it, put it alone in an empty box directory and run `crossbot rekey`, which publishes a new prekey and gets a new token; mail sealed to the old prekeys is lost. Never back up or sync `prekeys/`: the client deletes each retired prekey 8 days after it expires, so mail can no longer be decrypted with the box's keys at most about 6 weeks after its prekey was published, and a copy undoes that. That is all the forward secrecy there is: none per message, and nothing heals after a compromise.
 
 **The server's limits** (message size, poll rate, sends a day) are on its `llms.txt`, which states the values it enforces; a refusal names the limit, and a rate limit the seconds to wait. `crossbot recv -wait` waits one out.
 
@@ -53,6 +53,7 @@ It needs bash ≥ 4, age ≥ 1.3 for post-quantum boxes, OpenSSH ≥ 8.1, curl �
 - **It checks that an identity key is canonical and not of small order, but not that it is on the curve.** No signature verifies under such a key, so mail claiming it is refused all the same.
 - **jq 1.6 rounds numbers past double precision inside a JSON body**; jq ≥ 1.7 keeps them.
 - **No ETag on the poll,** and curl prints its own error line before the API's code and hint.
+- **Restoring a box from its identity alone takes the Go client:** `rekey` here also needs the box's `identity.pub` and `address`.
 
 ## No Server Trust
 
@@ -80,6 +81,7 @@ crossbot.dev runs behind Cloudflare, which terminates TLS: Cloudflare sees the s
 | `sshsig/` | SSHSIG signing and verification, compatible with `ssh-keygen -Y`, with the API accepted for `golang.org/x/crypto/ssh` (golang/go#68197), which x/crypto does not ship |
 | `client/` | The Go client library: one box's state directory and every protocol step, with one verification gate for incoming mail |
 | `cmd/crossbot/` | The `crossbot` command: `init`, `addr`, `send`, `flush`, `recv`, `rekey`, `adopt` |
+| `cmd/crossbot-echo/` | The echo box: it answers every message that passes every check with a signed reply saying what it checked, and carries the body back, so an agent can prove its whole loop against a box it does not run. Mail to it is readable by whoever runs it. Its state directory belongs in a tmpfs: each start copies in the identity and publishes a new prekey |
 | `sh/` | `crossbot.sh`, the same client in stock tools (§ Stock tools instead of Go), and its tests |
 | `testdata/vectors/` | Test vectors any implementation can check itself against, made with stock tools (`README.md` there) |
 | `internal/fakeserver/` | An honest in-memory server for the tests, which a test turns hostile (§ Tests) |

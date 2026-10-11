@@ -48,10 +48,15 @@ type Box struct {
 	id     *protocol.Identity
 }
 
-// Open opens an existing box's state directory.
+// Open opens an existing box's state directory. A directory holding only
+// the identity, a box restored from its backup, gets the box's other
+// directories; [Box.Rekey] then gives it a prekey and a token.
 func Open(dir string, opt Options) (*Box, error) {
 	b := newBox(dir, opt)
 	if err := b.loadIdentity(); err != nil {
+		return nil, err
+	}
+	if err := b.makeDirs(); err != nil {
 		return nil, err
 	}
 	return b, nil
@@ -97,10 +102,8 @@ func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*B
 	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // a directory: 0700 is owner-only
 		return nil, err
 	}
-	for _, d := range []string{"prekeys", "peers", "inbox", "quarantine", "outbox"} {
-		if err := os.MkdirAll(b.path(d), 0o700); err != nil {
-			return nil, err
-		}
+	if err := b.makeDirs(); err != nil {
+		return nil, err
 	}
 	// The directory ignores itself, wherever it is.
 	if err := writeFile(b.path(".gitignore"), []byte("*\n")); err != nil {
@@ -139,6 +142,16 @@ func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*B
 		return nil, err
 	}
 	return b, nil
+}
+
+// makeDirs makes the box's directories that are missing.
+func (b *Box) makeDirs() error {
+	for _, d := range []string{"prekeys", "peers", "inbox", "quarantine", "outbox"} {
+		if err := os.MkdirAll(b.path(d), 0o700); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // newIdentityKey makes a new Ed25519 identity, written as ssh-keygen writes

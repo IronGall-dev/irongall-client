@@ -78,6 +78,21 @@ M = [
     ('protocol/envelope.go', '\tif !utf8.ValidString(body) {', '\tif false {'),
     ('client/errors.go', '[]string{e.Problem.Detail, e.Problem.Hint}', '[]string{e.Problem.Hint}'),
     ('cmd/crossbot/main.go', 'if errors.As(err, &e) && e.RetryAfter > 0 && time.Until(deadline) > e.RetryAfter {', 'if false {'),
+    # the echo box, and a box restored from its identity
+    ('cmd/crossbot-echo/main.go', '\tif client.Code(err) == protocol.CodeNoSuchMailbox {', '\tif false {'),
+    ('cmd/crossbot-echo/main.go', '\tcase err == nil && !bytes.Equal(held, key):', '\tcase err == nil && !bytes.Equal(held, key) && false:'),
+    ('cmd/crossbot-echo/main.go', '\tif e.now().Sub(e.rekeyed) >= rekeyEvery {', '\tif e.now().Sub(e.rekeyed) > rekeyEvery {'),
+    ('cmd/crossbot-echo/main.go', '\t\t\te.rekeyed = e.now()\n', ''),
+    ('cmd/crossbot-echo/main.go', '\tif _, err := e.b.Flush(ctx); err != nil && ctx.Err() == nil {', '\tif err := error(nil); err != nil && ctx.Err() == nil {'),
+    ('cmd/crossbot-echo/main.go', '\t\tif err != nil || e.now().Sub(fi.ModTime()) < replyTTL {', '\t\tif err != nil || e.now().Sub(fi.ModTime()) <= replyTTL {'),
+    ('cmd/crossbot-echo/main.go', '\tfor _, f := range failed {', '\tfor _, f := range failed[:0] {'),
+    ('cmd/crossbot-echo/main.go', '\t\tfor _, d := range res.Delivered {', '\t\tfor _, d := range res.Delivered[:0] {'),
+    ('cmd/crossbot-echo/main.go', '\te.remove(filepath.Join(e.b.Dir(), "inbox", d.ID+".json"))', ''),
+    ('cmd/crossbot-echo/main.go', '\t\t\te.remove(filepath.Join(e.b.Dir(), "quarantine", r.ID+".json"))', ''),
+    ('cmd/crossbot-echo/main.go', '\tif res != nil && res.PollAfter > 0 {', '\tif false {'),
+    ('cmd/crossbot-echo/main.go', '\tif errors.As(err, &ae) && ae.RetryAfter > 0 {', '\tif errors.As(err, &ae) && ae.RetryAfter > 0 && false {'),
+    ('cmd/crossbot-echo/main.go', 'fmt.Fprintf(&s, "body, as JSON: %s\\n", env.Body)', 'fmt.Fprintf(&s, "body, as JSON: %q\\n", env.Body)'),
+    ('client/box.go', '\tif err := b.makeDirs(); err != nil {\n\t\treturn nil, err\n\t}\n\treturn b, nil', '\treturn b, nil'),
     # crossbot.sh, the stock-tools client (sh/sh_test.go runs it)
     # Not listed: cb_pin's "a pin always wins" branch. Only one document hashes to an address, so re-pinning from
     # any served identity that passes the hash check reaches the same pin: the branch saves a re-check, nothing more.

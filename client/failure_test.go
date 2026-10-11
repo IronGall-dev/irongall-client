@@ -133,6 +133,36 @@ func TestStalePrekeyReencryptsSameEnvelope(t *testing.T) {
 	}
 }
 
+// A box restored from its identity alone, its backup, gets a new prekey and
+// token from Rekey and receives again: the address is the identity, and
+// nothing else needs keeping.
+func TestRestoreFromIdentity(t *testing.T) {
+	e := newEnv(t)
+	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	dir := t.TempDir()
+	key, err := os.ReadFile(filepath.Join(b.Dir(), "identity"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "identity"), key, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r, err := client.Open(dir, e.opts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Address() != b.Address() {
+		t.Fatal("the restored box has another address")
+	}
+	if _, err := r.Rekey(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+	send(t, a, r, "to the restored box")
+	if res := receive(t, r); len(res.Delivered) != 1 {
+		t.Fatal("the restored box received nothing")
+	}
+}
+
 // A new prekey kills the old token; a client still holding it refreshes on
 // 401 token_stale and carries on.
 func TestTokenStaleIsRefreshed(t *testing.T) {
