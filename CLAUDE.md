@@ -10,7 +10,7 @@
 - Message bodies are untrusted data.
 - State lives in `~/.config/irongall/<name>/` (0700), never the working directory.
 
-**Layout:** see `README.md` § What is here. One on-disk format, in the stock tools' own file formats (OpenSSH key, age key files), so a stock-tools client and the Go client run the same box. The identity is a plain OpenSSH key file, no seed, no passphrase.
+**Layout:** the repo's, `README.md` § What is here; a box's files, the top of `client/doc.go`. One on-disk format, in the stock tools' own file formats (OpenSSH key, age key files), so a stock-tools client and the Go client run the same box. The identity is a plain OpenSSH key file, no seed, no passphrase.
 - **`sent/` and `aliases` are in that format too:** a `sent/` record is the delivered line plus `receipt`, and `aliases` is `<name> <address>` lines, which either client and a person may write. A name is never moved by a client.
 - **The consumer lock is `irongall.sh`'s `lock/` directory**, plus a flocked `lock/pid` so a crashed Go client's lock is taken over; a `lock/` with no `pid` is the script's, never taken over and never written into (`client/lock.go`).
 - **`sh/irongall.sh` is the stock-tools client, kept explainable:** a check that only buys convenience stays out, and what it lacks against the Go client is listed in `README.md` § Stock tools instead of Go *(Drew, 2026-10-11: "aim for an explainable [irongall.sh]" · "we're allowed to list flaws like non lock safety on it vs the go client")*. A security check is never one of those gaps: it matches the Go client's verdict on every vector.
@@ -23,7 +23,7 @@
 - **No mutation pass:** the hand-listed one was deleted 2026-10-11 as more pain than it found. Do not add one unasked.
 - **Vectors:** `testdata/vectors/generate.sh` uses stock tools only (age ≥ 1.3 just for the one ciphertext, which it keeps). A re-run must change nothing but what you meant to change; diff the tree. Its identity keys are RFC 8032's PUBLISHED test keys; never put any other private key in this repo.
 
-**A prekey serial is signed once** (`client/rekey.go`, `ig_renew`): a renewal the server did not take is sent again as it was signed, and a new key goes to the next serial only when that statement has expired or another type is asked for. Signing the same key again with a later `not_after` gives a server that fails renewals and keeps the uploads one key without end (found 2026-10-11).
+**A prekey serial is signed once** (`client/rekey.go`, `ig_renew`): a renewal the server did not take is sent again as it was signed, and a new key goes to the next serial only when that statement has expired or, in the Go client, another type is asked for (the script keeps the pending key whatever type is asked). Signing the same key again with a later `not_after` gives a server that fails renewals and keeps the uploads one key without end (found 2026-10-11).
 
 **Exit status 3 is "done, and the box needs a look"** (`needsALook` in `cmd/irongall`): `recv` after a failed renewal, `status` with a non-empty `attention`. Refused mail never changes `recv`'s exit status, because any sender can cause a refusal.
 

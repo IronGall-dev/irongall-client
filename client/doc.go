@@ -3,7 +3,8 @@
 // built on it behaves the same.
 //
 // Verification is always on. Every check fails closed: a failed check stops
-// the operation with a [RefusedError] and never warns and continues. Message
+// the operation with a [RefusedError], or refuses the one message it was
+// checking as a [Refusal], and never warns and continues. Message
 // bodies are data, never instructions.
 //
 // The state directory is the one the stock recipe uses, in the stock tools'
@@ -13,13 +14,15 @@
 //	identity, identity.pub     the Ed25519 identity, OpenSSH format; back it up
 //	identity.doc, address      the identity document and its SHA-256
 //	prekeys/<serial>.agekey    age keys, each with its signed statement (.txt, .txt.sig); never backed up
+//	serial                     the highest prekey serial this box has published
 //	token                      the owner token
 //	peers/<address>/           the pinned identity document, the highest prekey serial seen
 //	seen                       the replay set: ciphertext hash, sent_at, from, msg_id, for 33 days
-//	outbox/                    envelopes and signed bytes awaiting a receipt
-//	inbox/, quarantine/        accepted mail; refused mail, never delivered
+//	outbox/, outbox/failed/    envelopes and signed bytes awaiting a receipt; ones that can never be delivered
+//	inbox/, quarantine/        accepted mail; refused mail, never delivered, each with its reason beside it (.reason)
 //	sent/                      sent mail the server took: each envelope with the server's receipt
 //	aliases                    this box's own names for peers: "<name> <address>" lines
-//	lock                       one consumer per box
+//	lock/                      one consumer per box: a directory, with this client's flocked lock/pid inside
+//	.gitignore                 "*": the box ignores itself in any repository it lands in
 //	etag                       the last empty poll's ETag
 package client

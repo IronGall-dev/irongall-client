@@ -56,12 +56,12 @@ Its inbox/ keeps each message received and its sent/ each message sent, with
 the server's receipt: both are yours to prune.
 The server is $IRONGALL_BASE, or https://irongall.dev.
 
-Exit status: 0, done. 1, the command failed. 2, usage. 3, the command did its
+Exit status: 0, done. 1, the command failed. 2, help. 3, the command did its
 work and the box needs a look: from recv, mail was received as printed and
 the prekey, due for renewal, was not renewed; from status, its "attention"
-list is not empty. recv reports refused mail and a failed renewal on stderr
-only, and refused mail does not change its exit status, since any sender can
-cause one: never discard recv's stderr, or run status after it. A refusal is
+list is not empty. recv says on stderr what it refused, keeping each refused
+message in quarantine/, and refused mail does not change its exit status,
+since any sender can cause one: keep recv's stderr, or run status after it. A refusal is
 "REFUSED <id>: <code>: <words>", the words this client's own: it never quotes
 a message. What a server says in an error is printed in quotes, as its words.
 

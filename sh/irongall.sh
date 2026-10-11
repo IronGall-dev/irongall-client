@@ -2,7 +2,7 @@
 # irongall.sh: the irongall client in stock tools (bash, age, ssh-keygen, curl, jq, iconv and coreutils).
 #
 # The same protocol, checks and on-disk box as the Go client in this repo, so either can run a box. It fails CLOSED:
-# a failed check prints one "REFUSED: <reason>" line and stops, and every API error prints its code and hint.
+# a failed check prints one "REFUSED: <reason>" line and stops (recv refuses that one message, "REFUSED <id>: <code>: <words>", and goes on), and every API error prints its code and what the server says.
 # Get it from https://github.com/IronGall-dev/irongall-client at a commit you have read, never from the irongall.dev
 # server: a server that could hand you this script could hand you one without its checks.
 #
@@ -35,7 +35,7 @@ ig_time(){ # <timestamp> → its Unix time, only for exactly YYYY-MM-DDTHH:MM:SS
   local s; [[ $1 =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 1
   s=$(jq -nr --arg t "$1" '$t | fromdateiso8601 | select(todate == $t)' 2> /dev/null) && [ -n "$s" ] && echo "$s"
 }
-ig_api(){ # <METHOD> <PATH> [JSON file] [curl args…] → the body on stdout. Any non-2xx: prints its code, then what the server says (its detail, with the limit hit and the seconds to wait, and its hint) in quotes, as ITS words: one line, printable ASCII, 200 characters of each at most. Keeps the answer in $IG/error.json, returns 1
+ig_api(){ # <METHOD> <PATH> [JSON file] [curl args…] → the body on stdout. Any non-2xx: prints its code, then what the server says (its detail, with the limit hit and the seconds to wait, and its hint) in quotes, as ITS words: one line, printable ASCII, cut short. Keeps the answer in $IG/error.json, returns 1
   local m=$1 p=$2 f=${3-}; shift 2; [ $# -gt 0 ] && shift
   rm -f "$IG/error.json"
   curl -sS --max-time 60 --max-filesize 16777216 --fail-with-body -X "$m" ${f:+-H 'Content-Type: application/json' --data-binary "@$f"} "$@" "$IG_BASE$p" > "$IG/response.json" && { cat "$IG/response.json"; return 0; }
@@ -205,11 +205,11 @@ ig_flush(){ # re-POSTs every message still in the outbox, unchanged: a retry get
 }
 
 # recipe: receive
-ig_recv(){ # drains the box, every page. ACCEPT → inbox/ and one line on stdout. REFUSED → quarantine/, never delivered. Both are acked
+ig_recv(){ # drains the box, every page up to a drain's limits. ACCEPT → inbox/ and one line on stdout. REFUSED → quarantine/, never delivered. Both are acked
   ig_lock || return 1
   ig_drain; local rc=$?; rmdir "$IG/lock"; ig_prune; return $rc
 }
-ig_drain(){ # stops at a transient error or a fault of this box, leaving the rest on the server for the next drain. And at 1000 messages or 100 pages: a server that lists mail without end costs one run that much
+ig_drain(){ # stops at a transient error or a fault of this box, leaving the rest on the server for the next drain. And at a number of messages and of pages (below): a server that lists mail without end costs one run that much
   local B c="" n i id k=0 pages=0; B=$(cat "$IG/address") || return 1
   if [ -e "$IG/seen" ]; then awk -v c=$(($(ig_now) - 33*86400)) '$2 >= c' "$IG/seen" > "$IG/seen.new" && mv "$IG/seen.new" "$IG/seen" && sync "$IG/seen" "$IG" || return 1; fi
   while :; do
@@ -280,11 +280,11 @@ ig_seen(){ # <sender> <message stem> <hash> → the message, in the replay set a
 }
 
 # recipe: new prekey (monthly)
-ig_rekey(){ # [--no-pq] → publishes a NEW prekey at the next serial, under the lock (waiting up to a minute for a drain). Needs no token, so it also recovers a box that lost its prekeys
+ig_rekey(){ # [--no-pq] → publishes a new prekey, under the lock: a NEW key at the next serial, or the statement an earlier run signed and the server did not take, sent again as it is (waiting up to a minute for a drain). Needs no token, so it also recovers a box that lost its prekeys
   ig_opt "${1-}" && ig_lock 60 || return 1
   ig_renew "${1-}"; local rc=$?; rmdir "$IG/lock"; return $rc
 }
-ig_renew(){
+ig_renew(){ # [--no-pq] → what ig_rekey does, the lock held. A serial is signed ONCE
   local A r s t na; A=$(cat "$IG/address") || return 1; mkdir -p "$IG/prekeys"
   ig_api GET "/v1/$A/identity" > "$IG/self.json" || return 1
   jq -er .prekey "$IG/self.json" | base64 -d > "$IG/self.txt" && jq -er .prekey_signature "$IG/self.json" | base64 -d > "$IG/self.sig" || ig_refuse "the server sent no prekey for this box" || return 1
