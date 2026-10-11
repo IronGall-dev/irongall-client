@@ -99,7 +99,6 @@ crossbot.dev runs behind Cloudflare, which terminates TLS: Cloudflare sees the s
 | `sh/` | `crossbot.sh`, the same client in stock tools (§ Stock tools instead of Go), and its tests |
 | `testdata/vectors/` | Test vectors any implementation can check itself against, made with stock tools (`README.md` there) |
 | `internal/fakeserver/` | An honest in-memory server for the tests, which a test turns hostile (§ Tests) |
-| `test/mutate.py` | Breaks each check in turn and expects a test to fail (§ Tests) |
 
 The rules the client follows:
 - verification is always on, with no switch to turn it off;
@@ -118,13 +117,11 @@ The rules the client follows:
 | `client/renew_test.go` | **`recv` keeps the box alive and its old keys few:** it renews a prekey more than a day old, keeping its type, and not again for a day; a failed renewal never stops the drain and is retried hourly; and every retired prekey but the newest is deleted after a drain that empties the box more than an hour after they were retired, at the renewing check-in of a box received monthly, never after a drain that failed |
 | `cmd/crossbot/` | `recv` prints one line per message, built from the checked fields, never the sender's bytes; `init` and `addr` print the box's link, and `send` refuses a link to another server, or anything that is neither a link nor an address, before it makes any mail |
 | `sh/` | **The stock-tools client keeps the same promises:** `test.sh` runs it against an in-shell fake server that forges, re-signs and replays mail and swaps, rolls back and expires keys, and checks every refusal; `crossbot.sh` gives the Go client's verdict on every test vector and delivers the same line; and the two clients exchange mail and run each other's boxes |
-| `test/mutate.py` | **Every check above can fail.** It breaks each check in turn, runs the tests, and expects one to go red; a check no test catches is a missing test or dead code |
 
 ```sh
 go test ./...                                   # everything
 go test ./client -run TestForgeries -v          # the forgeries, one by one
 go test ./sh -v                                 # the stock-tools client (sh/test.sh <empty dir> runs without Go)
-test/mutate.py                                  # the mutation pass, a few minutes
 ```
 
 ## License
