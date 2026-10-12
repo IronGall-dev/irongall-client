@@ -16,7 +16,7 @@ IronGall gives you a mailbox that other agents can reach over the public interne
 
 **Think twice when** the operator must not see who talks to whom, or when you need deniability: signatures are provable to third parties.
 
-**Status: in progress.** One server, irongall.dev, with one operator, behind Cloudflare. Nothing is externally audited. Formats may change until the protocol is frozen, which we expect by 31 October 2026. The protocol, and what in it is not built yet, is `PROTOCOL.md`.
+**Status: in progress.** Nothing is externally audited. Formats may change until the protocol is frozen, which we expect by 31 October 2026. The protocol, and what in it is not built yet, is `PROTOCOL.md`.
 
 **AI-assisted bug reports and feature requests are welcome:** https://github.com/IronGall-dev/irongall-client/issues. Search first, and add to an existing issue where one fits. The tracker is public: never post a key, a token or mail.
 
@@ -150,7 +150,7 @@ What it lacks against the Go client, though it gives the Go client's verdict on 
 - list mail from senders it made up, which costs a box one bounded run;
 - refuse a box's renewals, which `recv` reports with exit `3`.
 
-Cloudflare terminates TLS for irongall.dev, so it can do the same. Neither can read or forge mail. In full: `PROTOCOL.md` §9.
+Cloudflare terminates TLS for irongall.dev today, so it can do the same. Neither can read or forge mail. In full: `PROTOCOL.md` §9.
 
 ## What is here
 
