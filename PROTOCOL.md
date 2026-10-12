@@ -7,6 +7,7 @@
 - **"Not built" is said where it applies.** A few parts are specified and not yet built, by the server, the clients or both. Each says so where it is described, and §12 lists them.
 - **Limits are a server's settings, not the protocol's.** This document names each limit and says what it does, never its value: irongall.dev states the ones a client meets in ordinary use at `https://irongall.dev/llms.txt`. The protocol's own constants are written out (the 33 days of a prekey and of the mail's lifetime, the page of 50).
 - `[proposed]` marks a detail that is not decided.
+- **Why each choice is the usual one is in `PRECEDENTS.md`:** every decision here beside the established systems and published standards that do the same, with their numbers, and irongall beside other messaging systems. This document keeps a mention where it helps at that step.
 - **The stock client is `sh/irongall.sh`**, one section per step of this document, tested here against a fake server, honest and forging, and against the test vectors and the Go client (§11). It is the proof that the protocol needs nothing but stock tools; the client to run is the Go one (`README.md`).
 
 ## 0. Primitives — all standard, nothing home-rolled
@@ -146,6 +147,7 @@ ssh-keygen -s identity -I irongall-cert-v1 -n "$A" -z "$SERIAL" -V +66d -O clear
 - **A client makes every check in the table itself.** `ssh-keygen -Y verify` accepts a certificate that carries extensions or a critical option, checks no key id, and knows a serial only through a revocation list.
 - **Every certificate is for a new working key.** A certificate is public, since it rides in every signature, so a new one for the same key would retire nothing.
 - **Other key types** for the working key are not ruled out by the format, which certifies any SSH key type; `ssh-ed25519` is what is built (issue #21).
+- **Who else does this** (OpenSSH certificates, OpenPGP subkeys, Matrix cross-signing): `PRECEDENTS.md`, Part 2, row 2.
 - **Not settled:** what a newer certificate retires for each kind of verifier (issue #30), and what proves a box to the server on each call (issue #36).
 
 ## 3. Registration — one signature
@@ -349,6 +351,7 @@ printf 'irongall-pass-v1\n%s\n%s\n%s\n' "$A" irongall.dev "$NOT_AFTER" | ssh-key
 - **A client signs a pass good for 10 minutes. A server takes one that has not run out and runs out at most an hour from now.** The gap is so that a client whose clock runs fast is not refused, with no allowance for skew in any check (§0).
 - **A server takes a pass only** under the box's current certificate, and for a name that is the server's own. It may remember a pass it has checked, so a pass costs one signature check however many calls carry it.
 - **It says who is calling and until when, and nothing of what a call does,** so a server is handed no proof of any send (issue #29). The server still knows who sends to whom. A pass that leaks is good for the minutes it has left, at that server, and never reads or signs mail.
+- **Who else does this, and their lifetimes** (GitHub Apps, Google service accounts, Web Push's VAPID, Apple's push service): `PRECEDENTS.md`, Part 2, row 1.
 - **What goes once it is in use:** the token and its form check, the epoch, `POST …/token`, the `irongall-token` header and server-key rotation (§6.1, §6.1a), and the `pending` state (§3a), since a fresh pass with a registration shows a live key holder.
 
 **6.2 Profile, lists, close.** **The profile and the lists are specified and not built: no route exists (§12), and `protocol/` has only the profile's namespace and the `sender_not_allowed` code. Close is built.**

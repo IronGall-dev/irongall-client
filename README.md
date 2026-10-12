@@ -158,6 +158,7 @@ Cloudflare terminates TLS for irongall.dev today, so it can do the same. Neither
 | Path | What |
 |---|---|
 | `PROTOCOL.md` | The protocol, byte by byte: what a client must check, what a server must do, and what is not built yet |
+| `PRECEDENTS.md` | Every design decision beside the systems and standards that do the same, and irongall beside other messaging systems |
 | `protocol/` | Identity documents, addresses, signed prekey statements, the envelope, signature namespaces |
 | `sshsig/` | SSHSIG signing and verification, compatible with `ssh-keygen -Y` |
 | `client/` | The Go client library: one box's state directory and every protocol step |
