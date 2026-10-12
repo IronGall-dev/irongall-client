@@ -48,7 +48,7 @@ c=$(sed -n 2p B.doc | cut -c31); r=q; [ "$c" != q ] || r=p
 sed "2s/^\(.\{30\}\)./\1$r/" B.doc > B.doc.tampered
 cmp -s B.doc B.doc.tampered && bad "tamper did not change the file"
 [ "$(sha256sum < B.doc | cut -c1-64)" = "$B" ] && [ "$(sha256sum < B.doc.tampered | cut -c1-64)" != "$B" ] && ok "identity document hashes to its address; a one-character tamper does not" || bad "identity hash"
-printf 'igt1_%s' "$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=')" > token.plain    # a random stand-in for a token
+printf 'igt1_%s' "$(head -c 37 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=')" > token.plain    # a random stand-in for a token, in a token's form
 age -r "$(sed -n 4p A.prekey)" < token.plain > token.age
 age -d -i A.agekey < token.age | cmp -s - token.plain && ok "the owner decrypts its token" || bad "token"
 age -d -i C.agekey < token.age > /dev/null 2>&1 && bad "a stranger decrypted the token" || ok "a stranger cannot decrypt the token"
@@ -75,7 +75,7 @@ SRV=$W/srv; mkdir -p $SRV/tmp $SRV/op; MODE=honest
 as(){ IG=$W/box/$1; }                          # switch to box $1's state directory
 # --- the fake server: the API on files, replacing ig_api (curl) only
 srv_err(){ jq -n --argjson st "$1" --arg c "$2" --arg h "$3" '{type:("https://irongall.dev/errors/"+$c), title:$c, status:$st, detail:$h, code:$c, hint:$h}' > "$IG/error.json"; echo "ERROR $1 $2: $3" >&2; return 1; }
-srv_tok(){ printf 'igt1_%s' "$(printf 'k1:%s:%s' "$1" "$(cat $SRV/$1/epoch)" | sha256sum | cut -c1-43)"; }
+srv_tok(){ printf 'igt1_%sA' "$(printf 'k1:%s:%s' "$1" "$(cat $SRV/$1/epoch)" | sha256sum | cut -c1-49)"; }   # a token's form: igt1_ and 50 base64url characters
 srv_tokenjson(){ jq -n --arg t "$(srv_tok "$1" | age -r "$(sed -n 4p $SRV/$1/prekey.txt)" | base64 | tr -d '\n')" '{token:$t}'; }
 srv_state(){ local a=$1 st s; shift; [ -e $SRV/$a/state ] || { srv_err 404 no_such_mailbox "never registered"; return 1; }
   st=$(cat $SRV/$a/state); for s in "$@"; do [ "$st" = "$s" ] && return 0; done
@@ -422,4 +422,10 @@ age(){ command age "$@" && printf x; }      # an age whose files are one byte lo
 printf 'a size that tells' | ig_send "$Q" 2> err.txt && bad "sent at a size its padding was not made for" || grep -q "is not the 1024 bytes its padding was made for" err.txt && [ "$(grep -c "^POST /v1/$Q\$" $SRV/log)" = "$n0" ] &&
   ok "an age file that is not the size the padding was made for is REFUSED, and nothing is posted" || bad "padding: size check: $(cat err.txt)"
 unset -f age; rm -f $IG/outbox/*.P $IG/outbox/*.age
+# a message offered as the token: both are age files to the prekey, and the token is what the box sends back as its bearer
+as Q; cp $IG/token token.before
+jq -n --arg t "$(printf '{"v":1,"from":"%s","to":"%s","body":"a body the server must not read"}' "$P" "$Q" | age -r "$(sed -n 4p $SRV/$Q/prekey.txt)" | base64 | tr -d '\n')" '{token:$t}' > oracle.json
+ig_token oracle.json 2> err.txt && bad "took a message as its token" || { grep -q "is not a token" err.txt && cmp -s $IG/token token.before && [ ! -e $IG/token.new ] && ok "a message offered as the token is REFUSED: the token is untouched and nothing of the message is kept" || bad "token: a message in its place: $(cat err.txt)"; }
+jq -n --arg t "$(printf '%s\n' "$(cat token.before)" | age -r "$(sed -n 4p $SRV/$Q/prekey.txt)" | base64 | tr -d '\n')" '{token:$t}' > oracle.json
+ig_token oracle.json 2> err.txt && bad "took a token with a byte after it" || { grep -q "is not a token" err.txt && cmp -s $IG/token token.before && ok "a token with one byte more is REFUSED" || bad "token: a byte more: $(cat err.txt)"; }
 echo "--- $PASS PASS, 0 FAIL (KEYTYPE=$KEYTYPE)"

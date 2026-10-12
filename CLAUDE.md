@@ -39,6 +39,8 @@
 
 **Nothing someone else wrote is printed as this client's words** (found 2026-10-11). A refusal is a code from the closed set in `client/errors.go` and `protocol/envelope.go`, with fixed words: never a value, key or field from an envelope, a served identity or a served statement. A server's `detail` and `hint` go through `plain` and are printed in quotes after "the server says". A new error path that formats outside text with `%s`, `%q` or `%v` breaks this: `TestARefusalNeverQuotesTheMessage` and `sh/test.sh` § 14 hold the envelope's.
 
+**What a client decrypts as its token is kept only if it has a token's form** (`protocol.IsToken`, `ig_token`; found 2026-10-12, issue #36): mail and the token are both age files to the prekey, and the token is what the box sends back as its bearer, so without the look a server reads a message it offers in the token's place. It is a stopgap: decided on #36, the token goes and every owner call is signed. Until then, anything else a client decrypts at a server's choosing and then sends or prints needs the same look. `TestAMessageOfferedAsTheTokenIsNeverSentBack` and the last lines of `sh/test.sh` hold it, and both fake servers issue tokens of the real form.
+
 **A drain is bounded and a first-contact identity is held in memory** (`maxDrain*`, `firstContact`, `pin`): only an identity that hashes to its address is written under `peers/`, hash before parse.
 
 **Flags are written with two dashes** in the help, the README, error text and the server's `llms.txt`. Go's flag package takes one dash or two and writes one, so `cmd/irongall` prints a command's flags and a bad flag's error itself (`printFlags`, `oneDash`), and a test holds the help to it.

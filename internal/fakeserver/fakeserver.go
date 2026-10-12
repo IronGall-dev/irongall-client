@@ -14,6 +14,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"io"
@@ -169,9 +170,9 @@ func (b *box) newToken() {
 	if b.token != "" {
 		b.stale[b.token] = true
 	}
-	t := make([]byte, 16)
+	t := make([]byte, 37) // the size of kid ‖ epoch ‖ mac: a client refuses a token of any other form
 	_, _ = rand.Read(t)
-	b.token = "fake_" + hex.EncodeToString(t)
+	b.token = "igt1_" + base64.RawURLEncoding.EncodeToString(t)
 }
 
 // writeToken answers with the current token, encrypted to the current prekey.

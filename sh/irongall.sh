@@ -51,9 +51,11 @@ ig_owner(){ # ig_api as this box's owner: adds the token; on 401 token_stale, fe
   ig_api POST "/v1/$(cat "$IG/address")/token" > "$IG/token.json" && ig_token "$IG/token.json" || return 1
   ig_api "$1" "$2" "${3-}" -H "Authorization: Bearer $(cat "$IG/token")"
 }
-ig_token(){ # <response file> → $IG/token, decrypted with this box's prekeys
+ig_token(){ # <response file> → $IG/token, decrypted with this box's prekeys. Mail is encrypted to the same prekeys, so what comes out is kept only if it has a token's form
   local ids=() k; for k in "$IG"/prekeys/*.agekey; do [ -e "$k" ] && ids+=(-i "$k"); done
-  jq -er .token "$1" | base64 -d | age -d "${ids[@]}" > "$IG/token.new" && mv "$IG/token.new" "$IG/token" || ig_refuse "the response's token is missing or does not decrypt with this box's prekeys"
+  jq -er .token "$1" | base64 -d | age -d "${ids[@]}" > "$IG/token.new" || { rm -f "$IG/token.new"; ig_refuse "the response's token is missing or does not decrypt with this box's prekeys"; return 1; }
+  [ "$(wc -c < "$IG/token.new")" -eq 55 ] && LC_ALL=C grep -qxE 'igt1_[A-Za-z0-9_-]{49}[AQgw]' "$IG/token.new" || { rm -f "$IG/token.new"; ig_refuse "what the server sent as this box's token is not a token"; return 1; }
+  mv "$IG/token.new" "$IG/token"
 }
 ig_lock(){ # [seconds] → takes $IG/lock, one consumer per box, waiting up to that long while another holds it
   local end=$((SECONDS + ${1:-0}))

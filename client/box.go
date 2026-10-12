@@ -379,6 +379,9 @@ func (b *Box) prekeyIdentities() ([]age.Identity, error) {
 }
 
 // decryptToken decrypts an owner token sent encrypted to this box's prekeys.
+// Mail is encrypted to the same prekeys, so what comes out is returned only if
+// it has a token's form: a server can offer a stored message in a token's
+// place, and the token is what the box sends back as its bearer.
 func (b *Box) decryptToken(ciphertext []byte) ([]byte, error) {
 	ids, err := b.prekeyIdentities()
 	if err != nil {
@@ -391,6 +394,9 @@ func (b *Box) decryptToken(ciphertext []byte) ([]byte, error) {
 	tok, err := io.ReadAll(io.LimitReader(r, 1024))
 	if err != nil || len(tok) == 0 {
 		return nil, refuse("the token does not decrypt with this box's prekeys")
+	}
+	if !protocol.IsToken(tok) {
+		return nil, refuse("what the server sent as this box's token is not a token")
 	}
 	return tok, nil
 }

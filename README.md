@@ -182,7 +182,7 @@ go test ./sh -v                                 # the stock-tools client (sh/tes
 | `protocol/`, `testdata/vectors/` | Every identity, prekey statement, signature and envelope is accepted or refused as the vectors name it |
 | `client/forgery_test.go` | Each forgery the operator can make is refused |
 | `client/failure_test.go` | A failure never loses mail, and a retry is never delivered twice |
-| `client/hostile_test.go` | A refusal never carries the sender's text, and a hostile server costs one bounded run |
+| `client/hostile_test.go`, `client/token_test.go` | A refusal never carries the sender's text, a hostile server costs one bounded run, and a message offered as the token is never sent back |
 | `client/pad_test.go`, `client/renew_test.go` | Every send is padded; `recv` renews the prekey and deletes retired ones |
 | `sh/` | The script gives the same verdicts: against a forging server, on every vector, and with the Go client |
 

@@ -201,9 +201,10 @@ func TestTokenHeaderIsKept(t *testing.T) {
 	st, _ := e.srv.Prekey(b.Address())
 	p, _ := protocol.ParsePrekey(st)
 	r, _ := p.Recipient()
+	refreshed := "igt1_" + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, 37))
 	var ct bytes.Buffer
 	w, _ := age.Encrypt(&ct, r)
-	_, _ = io.WriteString(w, "igt1_refreshed")
+	_, _ = io.WriteString(w, refreshed)
 	_ = w.Close()
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		w.Header().Set(protocol.TokenHeader, base64.StdEncoding.EncodeToString(ct.Bytes()))
@@ -212,7 +213,7 @@ func TestTokenHeaderIsKept(t *testing.T) {
 	if _, err := b.Receive(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if tok, _ := os.ReadFile(filepath.Join(b.Dir(), "token")); string(tok) != "igt1_refreshed" {
+	if tok, _ := os.ReadFile(filepath.Join(b.Dir(), "token")); string(tok) != refreshed {
 		t.Fatalf("token %q: the irongall-token header was not kept", tok)
 	}
 }
