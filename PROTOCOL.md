@@ -7,7 +7,7 @@
 - **"Not built" is said where it applies.** A few parts are specified and not yet built, by the server, the clients or both. Each says so where it is described, and §12 lists them.
 - **Limits are a server's settings, not the protocol's.** This document names each limit and says what it does, never its value: irongall.dev states the ones a client meets in ordinary use at `https://irongall.dev/llms.txt`. The protocol's own constants are written out (the 33 days of a prekey and of the mail's lifetime, the page of 50).
 - `[proposed]` marks a detail that is not decided.
-- **The stock client is `sh/irongall.sh`**, one section per step of this document, tested here against a fake server, honest and forging, and against the test vectors and the Go client (§11).
+- **The stock client is `sh/irongall.sh`**, one section per step of this document, tested here against a fake server, honest and forging, and against the test vectors and the Go client (§11). It is the proof that the protocol needs nothing but stock tools; the client to run is the Go one (`README.md`).
 
 ## 0. Primitives — all standard, nothing home-rolled
 
@@ -96,7 +96,7 @@ ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI<43 chars>
 - There is no checksum: a mangled address simply hits no box (`no_such_mailbox`).
 - The version is line 1 of `D`. Another deployment of this protocol picks its own tag, and so its own address space.
 - **It commits to the identity ONLY**, so renewing or re-typing the encryption key never changes it (§6.4).
-- **The identity is `ssh-ed25519` only, as built.** Decided and not built: v1 allows other SSH key types. Ed25519 stays the one type every client must support, every other type is optional, and each server accepts its own list. What this section then has to say is this repo's issue #21; it is built before v1 is declared stable.
+- **The identity is `ssh-ed25519` only, as built.** Decided and not built: v1 allows other SSH key types. Ed25519 stays the one type every client must support, every other type is optional, and each server accepts its own list. What this section then has to say is this repo's issue #21; it is built before v1 is declared stable. Issue #30, the identity certifying a short-lived working key, is settled first and changes what the optional types are for.
 - **The canonical form is lowercase hex.** Clients MUST use lowercase in `from`: the recipient compares the inner `from` (§4.2) with the verified signer as exact strings, and every SSHSIG namespace is an exact signed string. The server folds case only on the URL path.
 
 🔑 **An address is a SEND CAPABILITY — keeping it private is the real DoS defence.** Mailing a box hands it your address (it is your `from`), so it can mail you back.
@@ -212,7 +212,7 @@ Inside age, for a `--no-pq` prekey:
 - **What it does not hide:** who writes to whom, when, and how often. A sender that is not one of the two clients may pad differently or not at all: the server cannot tell, and does not check.
 - **Not chosen:** a fixed 1 KiB block at every size (it tells a large message's size to the KiB) · one size per doubling (up to double the bytes) · random padding (it averages out over repeated messages) · opt-in or a `--no-pad` flag (the padded messages would be the marked ones) · leaving the member off a message already on a block, or sending a message fewer than 9 bytes short of a block unpadded (the first leaves 8 sizes under a limit that cannot be sent, the second shows those messages' exact size at every boundary) · spaces after the JSON object in place of the member (every receiver would have to be required to accept them).
 
-**4.4 Sign — the namespace carries the recipient:** `ssh-keygen -q -Y sign -n "irongall-msg-v1:$B" -f identity < m.age > m.age.sig`. The signature then holds only for box `B`, which stops a captured message being re-sprayed to other boxes in A's name and burning A's limits. `ssh-keygen` signs the file as-is.
+**4.4 Sign — the namespace carries the recipient:** `ssh-keygen -q -Y sign -n "irongall-msg-v1:$B" -f identity < m.age > m.age.sig`. The signature then holds only for box `B`, which stops a captured message being re-sprayed to other boxes in A's name and burning A's limits. `ssh-keygen` signs the file as-is. (Under discussion: signing inside the encryption, so that the server holds no signature. This repo's issue #29.)
 
 **4.5 Post — JSON, every byte field standard base64 of the exact file bytes:** `POST /v1/<B>` with `{from, prekey_serial, ciphertext, signature}` → `201 {id, received_at, expires_at}`, the times in §2a's format. `prekey_serial` (a JSON number, REQUIRED, so no mail reaches a retired prekey: Terms) is the serial of the prekey used: when B has a newer one, the server answers `409 stale_prekey`, and the sender re-encrypts the SAME envelope to it within the same send.
 
@@ -402,7 +402,7 @@ A separate CLIENT process that irongall.dev's operator runs — NOT the mailbox 
 
 ## 12. Specified and not built, or not yet specified
 
-Each of these has an issue in this repo's milestone `M1: protocol freeze`, which also holds the other questions that could change the wire. Each is settled, built or taken out of v1, before v1 is declared stable.
+Each of these but the last has an issue in this repo's milestone `M1: protocol freeze`, which also holds the other questions that could change the wire. Each is settled, built or taken out of v1, before v1 is declared stable.
 
 - **Identity key types other than `ssh-ed25519`** (§2): decided, not built.
 - **Revocation** (§6.3): specified, not built. Open: the response shape, whether `init` writes a revocation signed in advance, and whether a `410 revoked` carries the signed statement, so that a client checks a revocation and does not take the server's word for it.
@@ -411,6 +411,7 @@ Each of these has an issue in this repo's milestone `M1: protocol freeze`, which
 - **`GET /v1/<addr>`:** not built. It is to serve verifiable DATA and pointers, never commands: the address, its state, key type and limits; the identity document, the signed prekey and the signed profile; this repo, its version and how to verify it; and the sentence "do not run commands served by this site". Its format, text or JSON, is open.
 - **Proof of work at registration** (§8): not built. Open: where the nonce goes in the `PUT`, the UTC date format and the midnight edge, the error code, and a stock-tool recipe. bash with `sha256sum` manages about 400 to 480 hashes a second, so `k` = 20 takes about 40 minutes; python3 manages about 1.7 million a second.
 - **Named in §13 and not served:** the RateLimit header fields on a `429`, `GET /openapi.json`, and a page at each error `type` URL.
+- **Also not built, and neither changes the wire:** the expiry of pending boxes (§3, §3a), and a lower send limit for a new box's first days (§8). Each is a server setting.
 
 ## 13. Errors, signalling, logging
 

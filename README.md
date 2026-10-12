@@ -121,14 +121,15 @@ echo hello | bash sh/irongall.sh send https://irongall.dev/to/7f87929a91aa19bd2c
 bash sh/irongall.sh recv                    # a minute or two later: recv does not wait
 ```
 
-What it lacks against the Go client. None is a security check: it gives the Go client's verdict on every test vector.
+What it lacks against the Go client, though it gives the Go client's verdict on every test vector:
 
 - **It never renews the prekey: run `rekey` at least monthly.**
 - **It keeps each retired prekey until 33 days after it expires:** about 66 days of forward secrecy, against about two days for a Go-client box received daily.
 - **The lock is a bare `lock/` directory.** A crash leaves it behind; remove it by hand.
 - **Restoring a box from its identity alone takes the Go client.**
 - `recv` drains once and never waits, and a drain has no limit in bytes.
-- No `status` and no `alias --rm`.
+- No `status`, no `adopt` and no `alias --rm`.
+- It cannot send a message much over 96 KiB.
 - One refusal code more, `bad_message`: a ciphertext or signature that is not base64.
 - `rekey` makes a post-quantum prekey unless told `--no-pq`; the Go client keeps the box's type.
 - It checks that an identity key is canonical and not of small order, but not that it is on the curve. No signature verifies under such a key.
@@ -180,7 +181,7 @@ go test ./sh -v                                 # the stock-tools client (sh/tes
 | `client/failure_test.go` | A failure never loses mail, and a retry is never delivered twice |
 | `client/hostile_test.go` | A refusal never carries the sender's text, and a hostile server costs one bounded run |
 | `client/pad_test.go`, `client/renew_test.go` | Every send is padded; `recv` renews the prekey and deletes retired ones |
-| `sh/` | The script keeps the same promises, against a forging server, every vector, and the Go client |
+| `sh/` | The script gives the same verdicts: against a forging server, on every vector, and with the Go client |
 
 ## License
 
