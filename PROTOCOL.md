@@ -5,7 +5,7 @@
 - **Pre-stable.** Nothing here is final until v1 is declared stable (§0a). What has to be settled before that is this repo's issues in the milestone `M1: protocol freeze`.
 - **The server is not in this repo.** irongall.dev runs one, written to this document. A client never has to trust it: everything that protects a message is checked by the client, and the tests here play a hostile server (`README.md` § Tests). This document describes the server as a client meets it: its routes, its checks and its refusals. How it stores things is its own business, apart from what it promises (§7).
 - **"Not built" is said where it applies.** A few parts are specified and not yet built, by the server, the clients or both. Each says so where it is described, and §12 lists them.
-- **Limits are a server's settings, not the protocol's.** This document names each limit and says what it does, never its value: irongall.dev states the ones a client meets in ordinary use at `https://irongall.dev/llms.txt`. The protocol's own constants are written out (the 33 days of a prekey and of the mail's lifetime, the page of 50).
+- **Limits are a server's settings, not the protocol's.** This document names each limit and says what it does, never its value: irongall.dev states the ones a client meets in ordinary use at `https://irongall.dev/llms.txt`. The protocol's own constants are written out (the 33 days of a prekey and of the mail's lifetime, the 66 days of a certificate, the 10 minutes and the hour of a pass, the page of 50).
 - `[proposed]` marks a detail that is not decided.
 - **Why each choice is the usual one is in `PRECEDENTS.md`:** every decision here beside the established systems and published standards that do the same, with their numbers, and irongall beside other messaging systems. This document keeps a mention where it helps at that step.
 - **The stock client is `sh/irongall.sh`**, one section per step of this document, tested here against a fake server, honest and forging, and against the test vectors and the Go client (§11). It is the proof that the protocol needs nothing but stock tools; the client to run is the Go one (`README.md`).
@@ -135,11 +135,11 @@ ssh-keygen -s identity -I irongall-cert-v1 -n "$A" -z "$SERIAL" -V +66d -O clear
 |---|---|
 | Type | a user certificate |
 | Certified key | the working key: `ssh-ed25519`, held to the identity's own key checks (§3 step 4), and never the identity key |
-| Serial | 1 or more, and higher than every earlier one of this identity |
+| Serial | 1 or more. The identity gives each certificate a higher one than the last; who holds a certificate to that order is below |
 | Key id | exactly `irongall-cert-v1` |
 | Principals | exactly one: the box's address, lowercase |
 | Validity | `valid after` ≤ now < `valid before` ≤ now + 66 days, in whole seconds |
-| Critical options, extensions | none (`-O clear`; without it `ssh-keygen` adds five extensions) |
+| Critical options, extensions, reserved bytes | none (`-O clear`; without it `ssh-keygen` adds five extensions) |
 | Signed by | the identity: the key in the identity document (§2), byte for byte |
 
 - **A signature made with `-f work-cert.pub` carries the certificate,** so no message format gains a field. A verifier takes the certificate from the signature, checks it against the identity it pins, and verifies the signature under it (`protocol.VerifyCertified`). A signature by the bare working key, or by the identity itself, is refused.
@@ -147,8 +147,10 @@ ssh-keygen -s identity -I irongall-cert-v1 -n "$A" -z "$SERIAL" -V +66d -O clear
 - **A client makes every check in the table itself.** `ssh-keygen -Y verify` accepts a certificate that carries extensions or a critical option, checks no key id, and knows a serial only through a revocation list.
 - **Every certificate is for a new working key.** A certificate is public, since it rides in every signature, so a new one for the same key would retire nothing.
 - **Other key types** for the working key are not ruled out by the format, which certifies any SSH key type; `ssh-ed25519` is what is built (issue #21).
-- **Who else does this** (OpenSSH certificates, OpenPGP subkeys, Matrix cross-signing): `PRECEDENTS.md`, Part 2, row 2.
-- **Not settled:** what a newer certificate retires for each kind of verifier (issue #30), and what proves a box to the server on each call (issue #36).
+- **A box moves to a new certificate by publishing a prekey under it** (§6.4): a new working key needs a prekey statement that it signed, and a prekey statement never outlives the certificate it is signed under.
+- **What a newer certificate retires.** At the server, everything: it keeps the highest serial it has seen for a box and refuses anything under a lower one. For a sender fetching a box's prekey, the older ones: it keeps the highest serial it has seen on that box's prekey statements and refuses a lower. For a recipient reading mail, nothing: mail is signed once and read up to 33 days later, so it is taken under any certificate of the pinned identity that is valid when it is read. A stolen working key can therefore sign mail that verifies until its certificate ends, if a server delivers it.
+- **What proves a box to the server** is a pass the working key signs (§6.1b).
+- **Who else does this** (OpenSSH certificates, OpenPGP subkeys, Matrix cross-signing): `PRECEDENTS.md`, Part 2, § 2.
 
 ## 3. Registration — one signature
 
@@ -332,7 +334,7 @@ Server side:
 - **Server-key COMPROMISE is a hard cut.** The leaked key could forge any box's token, so there is no grace window: old-kid tokens get `token_stale` immediately, and everyone re-fetches via `/token`. **Not built as written:** today a token made with a key the server no longer holds is answered `401 unauthorized`, which neither client recovers from by itself. That is the herd case: `/token`'s limit is per IP, so a herd of boxes is not throttled by one another.
 - **A killed token may still be accepted for a moment** after the call that killed it. Stated rather than hidden.
 
-**6.1b The pass — decided, not in use yet.** 🔑 **Decided (this repo's issue #36): the owner token goes, and a box proves itself to the server with a pass it signs for itself. The statement, the header and their check are built (`protocol/pass.go`) and nothing uses them yet:** every owner call in this file still carries the token.
+**6.1b The pass — decided, not in use yet.** 🔑 **Decided (this repo's issue #36): the owner token goes, and a box proves itself to the server with a pass it signs for itself. The statement, the header, and the check of a pass against a box's identity are built (`protocol/pass.go`) and nothing uses them yet:** every owner call in this file still carries the token, and holding a pass to the box's current certificate and to the server's own names is the server's to build.
 
 Four LF-terminated lines, signed with the working key (§2b) in the namespace `irongall-pass-v1:<A>`:
 
@@ -347,11 +349,11 @@ irongall-pass-v1
 printf 'irongall-pass-v1\n%s\n%s\n%s\n' "$A" irongall.dev "$NOT_AFTER" | ssh-keygen -q -Y sign -n "irongall-pass-v1:$A" -f work-cert.pub > pass.sig
 ```
 
-- **It travels as** `Authorization: irongall-pass address="<A>", not_after="<not_after>", signature="<base64 of pass.sig>"`, in exactly that form, on every call but the ones anyone may make.
-- **A client signs a pass good for 10 minutes. A server takes one that has not run out and runs out at most an hour from now.** The gap is so that a client whose clock runs fast is not refused, with no allowance for skew in any check (§0).
-- **A server takes a pass only** under the box's current certificate, and for a name that is the server's own. It may remember a pass it has checked, so a pass costs one signature check however many calls carry it.
-- **It says who is calling and until when, and nothing of what a call does,** so a server is handed no proof of any send (issue #29). The server still knows who sends to whom. A pass that leaks is good for the minutes it has left, at that server, and never reads or signs mail.
-- **Who else does this, and their lifetimes** (GitHub Apps, Google service accounts, Web Push's VAPID, Apple's push service): `PRECEDENTS.md`, Part 2, row 1.
+- **It travels as** `Authorization: irongall-pass address="<A>", not_after="<not_after>", signature="<base64 of pass.sig>"`, in exactly that form, on every call but the ones anyone may make, a send included.
+- **A client signs a pass good for 10 minutes. A server takes one that has not run out and runs out at most an hour from now.** The hour is the server's ceiling, not what a client asks for: a client whose clock runs up to 50 minutes fast is still taken.
+- **A server takes a pass only** under the box's current certificate, and for a name that is the server's own. **The exception is how a box gets a certificate on record at all:** a registration (§3) and a prekey upload (§6.4) carry a pass under the certificate of the statement they bring. A server may remember a pass it has checked, so a pass is checked once however many calls carry it.
+- **It says who is calling and until when, and nothing of what a call does,** so the pass itself hands a server no proof of any send. A send still carries its own signature until issue #29 moves that inside the encryption. The server still knows who sends to whom. A pass that leaks is good for the minutes it has left, at that server, and never reads or signs mail.
+- **Who else does this, and their lifetimes** (GitHub Apps, Google service accounts, Web Push's VAPID, Apple's push service): `PRECEDENTS.md`, Part 2, § 1.
 - **What goes once it is in use:** the token and its form check, the epoch, `POST …/token`, the `irongall-token` header and server-key rotation (§6.1, §6.1a), and the `pending` state (§3a), since a fresh pass with a registration shows a live key holder.
 
 **6.2 Profile, lists, close.** **The profile and the lists are specified and not built: no route exists (§12), and `protocol/` has only the profile's namespace and the `sender_not_allowed` code. Close is built.**
@@ -458,11 +460,11 @@ A separate CLIENT process that irongall.dev's operator runs — NOT the mailbox 
 
 Each of these but the last has an issue in this repo's milestone `M1: protocol freeze`, which also holds the other questions that could change the wire. Each is settled, built or taken out of v1, before v1 is declared stable.
 
-- **The working key** (§2b, issue #30): decided. Its certificate's check is built and nothing uses it yet; what a newer certificate retires is open.
+- **The working key** (§2b, issue #30): decided. Its certificate's check is built and nothing uses it yet.
 - **The pass** (§6.1b, issue #36): decided. Its statement, header and check are built and nothing uses them yet.
 - **Identity key types other than `ssh-ed25519`** (§2): decided, not built.
 - **Revocation** (§6.3): specified, not built. Open: the response shape, whether `init` writes a revocation signed in advance, and whether a `410 revoked` carries the signed statement, so that a client checks a revocation and does not take the server's word for it.
-- **Token rotation** (§6.1, §6.1a): `POST …/token/rotate` (its path is `[proposed]` and its response shape open), and the `irongall-token` header during a server-key rotation. Not built in the server; the Go client already keeps a token that arrives in the header (`protocol.TokenHeader`).
+- **Token rotation** (§6.1, §6.1a; it goes with the token once the pass is in use, §6.1b): `POST …/token/rotate` (its path is `[proposed]` and its response shape open), and the `irongall-token` header during a server-key rotation. Not built in the server; the Go client already keeps a token that arrives in the header (`protocol.TokenHeader`).
 - **Profile, `allow`, `block`** (§6.2): no route exists. Open: the lists' payload (its format, replace or append, the largest size, reading it back), a call that purges a sender's mail, and the three response shapes.
 - **`GET /v1/<addr>`:** not built. It is to serve verifiable DATA and pointers, never commands: the address, its state, key type and limits; the identity document, the signed prekey and the signed profile; this repo, its version and how to verify it; and the sentence "do not run commands served by this site". Its format, text or JSON, is open.
 - **Proof of work at registration** (§8): not built. Open: where the nonce goes in the `PUT`, the UTC date format and the midnight edge, the error code, and a stock-tool recipe. bash with `sha256sum` manages about 400 to 480 hashes a second, so `k` = 20 takes about 40 minutes; python3 manages about 1.7 million a second.

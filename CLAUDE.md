@@ -43,6 +43,8 @@
 
 **What a client decrypts as its token is kept only if it has a token's form** (`protocol.IsToken`, `ig_token`; found 2026-10-12, issue #36): mail and the token are both age files to the prekey, and the token is what the box sends back as its bearer, so without the look a server reads a message it offers in the token's place. It is a stopgap: decided on #36, the token goes, and a box proves itself with a pass it signs for itself. Until then, anything else a client decrypts at a server's choosing and then sends or prints needs the same look. `TestAMessageOfferedAsTheTokenIsNeverSentBack` and the last lines of `sh/test.sh` hold it, and both fake servers issue tokens of the real form.
 
+**The working key's certificate and the pass are built and in use by nothing** (`protocol/certificate.go`, `protocol/pass.go`; `PROTOCOL.md` §2b and §6.1b; decided on #30 and #36): every signature is still the identity's and every owner call still carries the token. `CheckCertificate` and `Pass.Verify` check one certificate or one pass against an identity and a clock. Holding a certificate's serial to an order, and a pass to the box's current certificate and to the server's own names, is the caller's.
+
 **A drain is bounded and a first-contact identity is held in memory** (`maxDrain*`, `firstContact`, `pin`): only an identity that hashes to its address is written under `peers/`, hash before parse.
 
 **Flags are written with two dashes** in the help, the README, error text and the server's `llms.txt`. Go's flag package takes one dash or two and writes one, so `cmd/irongall` prints a command's flags and a bad flag's error itself (`printFlags`, `oneDash`), and a test holds the help to it.

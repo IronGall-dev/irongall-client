@@ -13,8 +13,9 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// A box's identity signs nothing but certificates. A certificate names a
-// working key, and the working key signs what the box says (PROTOCOL.md §2b).
+// A box's identity signs certificates and, once, a revocation: nothing else.
+// A certificate names a working key, and the working key signs what the box
+// says (PROTOCOL.md §2b).
 
 const (
 	// CertificateKeyID is the key id of every v1 certificate.
@@ -26,9 +27,9 @@ const (
 )
 
 // Every certificate error wraps one of these. ErrCertificate: it is not a
-// certificate of this identity, or it breaks a rule of the format; no clock
-// makes it good. ErrCertificateTime: it has not begun or it has ended, by the
-// verifier's own clock.
+// certificate of this identity, or it breaks a rule of the format, the limit
+// on how far ahead it may end among them. ErrCertificateTime: it has not begun
+// or it has ended, by the verifier's own clock.
 var (
 	ErrCertificate     = errors.New("bad certificate")
 	ErrCertificateTime = errors.New("the certificate is not valid now")
@@ -121,8 +122,8 @@ func checkWorkingKey(id *Identity, key ssh.PublicKey) error {
 	return nil
 }
 
-// Serial returns the certificate's serial: higher than every earlier one of
-// its identity.
+// Serial returns the certificate's serial. The identity gives each a higher
+// one than the last; holding a certificate to that order is the caller's.
 func (c *Certificate) Serial() uint64 { return c.cert.Serial }
 
 // NotAfter returns the first moment the certificate is no longer valid.

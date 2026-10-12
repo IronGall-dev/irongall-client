@@ -12,8 +12,8 @@ import (
 
 // A box proves itself to a server with a pass: a short statement of who is
 // calling, which server, and until when, signed by the box's working key. It
-// says nothing of what a call does, so a server is handed no proof of any
-// send (PROTOCOL.md §6.1b).
+// says nothing of what a call does, so the pass hands a server no proof of
+// any send (PROTOCOL.md §6.1b).
 
 const (
 	// PassTag is line 1 of every pass statement.

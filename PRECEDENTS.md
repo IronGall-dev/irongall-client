@@ -28,7 +28,7 @@
 | **Noise one-way X** (rev 34, 2018: a handshake framework, not a messaging system) | None built in: the recipient's static key is a pre-message, and whether to accept a key is "up to the application" (§14) | One-way DH pattern `e, es, s, ss` (25519/448), then AEAD | Sender compromise only: a later leak of the recipient's static key decrypts every past payload (§7.7, destination property 2) / no / no. Rev 34 has no post-quantum, and PQNoise shows that an authenticated one-way K or X cannot be built from KEMs alone | Static-static DH: only the recipient can check it; it is open to key-compromise impersonation (§7.7, source property 1), deniable and replayable | Contents; the sender's static key is encrypted to the recipient (§7.8). A relay can verify nothing |
 | **irongall, as built** | A self-certifying address (the hash of the identity) + a prekey the identity signs: no directory to trust, and substitution by the server is impossible without a hash break or a forgery | age; post-quantum hybrid (ML-KEM-768 + X25519) by default, X25519 alone by a box's choice | Bounded for every box by how often it checks in (about two days for one received daily), through mandatory renewal and deletion / no / yes | Ed25519 over the ciphertext, checked by the server and by the recipient; the inner `from` binds it; it can be shown to others | Contents only, by design |
 
-**Decided or proposed since, and not built** (Part 2, rows 1 to 3): a working key the identity certifies signs in the identity's place; a box proves itself to the server with a pass it signs for itself; and the message's signature moves inside the encryption, as in Nostr's NIP-17 and OpenPGP, so the recipient still holds proof of the sender and the server holds none.
+**Decided or proposed since, and not in use** (Part 2, § 1 to § 3): a working key the identity certifies signs in the identity's place; a box proves itself to the server with a pass it signs for itself; and the message's signature moves inside the encryption, as in Nostr's NIP-17 and OpenPGP, so the recipient still holds proof of the sender and the server holds none.
 
 **Where irongall stands**
 
@@ -80,7 +80,7 @@
 
 ## 1. How a box proves itself to the server: a pass it signs for itself
 
-**Ours** (decided 2026-10-12; issue #36; the format is built and not in use): the box signs a four-line statement with its working key: a tag, its address, the server's name, and when the pass runs out. That signature goes in `Authorization` on every call until it runs out. The client makes a pass good for 10 minutes. The server takes none that runs out more than an hour on. The server issues, stores and rotates nothing.
+**Ours** (decided 2026-10-12; issue #36; the format is built and not in use): the box signs a four-line statement with its working key: a tag, its address, the server's name, and when the pass runs out. That signature goes in `Authorization` on every call until it runs out. The client makes a pass good for 10 minutes. The server takes none that runs out more than an hour on. The server issues nothing and keeps nothing for it.
 
 | Who | What they do | Their numbers | How it is known |
 |---|---|---|---|
@@ -97,14 +97,14 @@
 - **A scheme of its own with named parameters** is VAPID's shape, not `Bearer`.
 
 **Where ours differs, and why:**
-- **SSHSIG, not a JWT.** Every signature in irongall is an OpenSSH signature, so stock `ssh-keygen` makes and checks a pass, and the certificate of row 2 travels inside the signature.
+- **SSHSIG, not a JWT.** Every signature in irongall is an OpenSSH signature, so stock `ssh-keygen` makes and checks a pass, and the certificate of § 2 travels inside the signature.
 - **The key that signs is certified, not registered.** The four above hold the caller's public key on file. Here the pass carries a certificate that chains to the identity the address is a hash of.
 
 **Considered and not chosen:**
 - **A token the server issues,** as OAuth 2.0 access tokens are (bearer tokens, RFC 6750) and as irongall has until the pass is in use. It needs issuing, storing and rotating, and one that leaks lasts until it is replaced. The OAuth 2.0 Security BCP (RFC 9700) is why that token is bound to the prekey, so that none outlives 33 days *(review 2026-10-10)*.
-- **A signature or a MAC over each request,** as AWS Signature Version 4, HTTP Message Signatures (RFC 9421) and DPoP (RFC 9449) do *(from memory; none read for this row)*. Each binds the method, the target and often the body. For a send that is the recipient and the ciphertext, which would hand the server a proof of who sent what to whom (row 3).
+- **A signature or a MAC over each request,** as AWS Signature Version 4, HTTP Message Signatures (RFC 9421) and DPoP (RFC 9449) do *(from memory; none read for this row)*. Each binds the method, the target and often the body. For a send that is the recipient and the ciphertext, which would hand the server a proof of who sent what to whom (§ 3).
 
-## 2. The identity certifies a working key, and signs nothing else
+## 2. The identity certifies a working key, and signs nothing else but a revocation
 
 **Ours** (decided 2026-10-12; issue #30; the certificate's check is built and not in use): a box's address is the hash of its identity key. The identity signs an OpenSSH certificate for a working key, valid at most 66 days, and the working key signs prekey statements, mail and passes. A certificate is checked against the verifier's own clock.
 
@@ -216,6 +216,6 @@ For rows marked `review 2026-10-10`. A row marked `read` carries its own link.
 
 # Open in this file
 
-- **To read at the source:** every row marked `from memory`; Apple's current page for row 1; the survey of 1c; and the systems of 1a whose designs move fastest (Signal, iMessage, Proton, SimpleX), last read 2026-10-10.
+- **To read at the source:** every row marked `from memory`; Apple's current page for § 1; the survey of 1c; and the systems of 1a whose designs move fastest (Signal, iMessage, Proton, SimpleX), last read 2026-10-10.
 - **Decisions with no row yet:** accounts, the echo box, the share link, the limits a client meets.
 - **The server is not in this repo,** so how irongall.dev's server is built has no row here.
