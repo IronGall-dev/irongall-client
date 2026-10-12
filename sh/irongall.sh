@@ -174,9 +174,23 @@ ig_send(){ # [--subject <text>] [--reply-to <msg_id>] [--supersedes <msg_id>] <l
     '{v:1, from:$from, to:$to, sent_at:($t|todate), msg_id:$id, body:$body} + ([{subject:$s}, {in_reply_to:$r}, {supersedes:$x}] | map(select(.[] != "")) | add // {})' > "$IG/outbox/$B.$id.P" || return 1
   ig_post "$B" "$IG/outbox/$B.$id"
 }
-ig_seal(){ # <address> <outbox stem> → <stem>.json: <stem>.P encrypted to the VERIFIED prekey, and signed for that recipient only
-  local B=$1 o=$2 r; r=$(ig_resolve "$B") || return 1
-  age -r "${r#* }" < "$o.P" > "$o.age" && ssh-keygen -q -Y sign -n "irongall-msg-v1:$B" -f "$IG/identity" < "$o.age" > "$o.sig" || return 1
+ig_agehead(){ if [[ $1 = age1pq1* ]]; then echo 1627; else echo 168; fi; }      # <age recipient> → the size of an age file's header for one key of its type: its fields are fixed-size, so it never varies
+ig_sealed(){ echo $(($(ig_agehead "$2") + 16 + $1 + 16 * ($1 > 65536 ? ($1 + 65535) / 65536 : 1))); }      # <plaintext bytes> <age recipient> → the size of the age file holding them: the header, a 16-byte nonce, and a 16-byte tag after each 64 KiB chunk
+ig_blocks(){ # <size> → the size rounded up to a whole number of blocks. A block is 1/16 of the size, rounded up to a power of two, and never under 1 KiB: 1 KiB blocks up to 16 KiB, 2 KiB up to 32 KiB, and on
+  local b=1024; while [ $((16 * b)) -lt "$1" ]; do b=$((b * 2)); done; echo $((($1 + b - 1) / b * b))
+}
+ig_padding(){ # <envelope bytes, with no pad> <age recipient> → "<filler bytes> <age file size>": the pad that makes the envelope's age file a whole number of blocks, so the server sees a message's size only to within a block. Every envelope carries the pad member, which costs 9 bytes beside its filler (,"pad":""), so the file is the next whole number of blocks at or after the envelope's with an empty pad
+  local n=$1 s c; s=$(ig_blocks "$(ig_sealed $((n + 9)) "$2")"); c=$((s - $(ig_agehead "$2") - 16))      # what a file of that size has for its chunks, each with its tag
+  echo "$((c - 16 * (c > 65552 ? (c + 65551) / 65552 : 1) - n - 9)) $s"
+}
+ig_seal(){ # <address> <outbox stem> → <stem>.json: <stem>.P padded for the VERIFIED prekey, encrypted to it, and signed for that recipient only. The envelope is read as its recipient will read it first. The padding depends on the prekey's type, so <stem>.P is kept without it
+  local B=$1 o=$2 r k n f t why
+  why=$(ig_envcheck "$o.P" "$(cat "$IG/address")" "$B") || ig_refuse "the outbox entry is not an envelope this box made for that address: $why" || return 1
+  r=$(ig_resolve "$B") || return 1; k=${r#* }
+  n=$(jq -cj 'del(.pad)' "$o.P" | wc -c) && read -r f t <<< "$(ig_padding "$n" "$k")" && [ -n "$t" ] || return 1      # two passes: measure the envelope, then pad it
+  jq -cj --argjson f "$f" 'del(.pad) | . + {pad: ("." * $f // "")}' "$o.P" | age -r "$k" > "$o.age" || return 1
+  [ "$(wc -c < "$o.age")" -eq "$t" ] || ig_refuse "the encrypted message is not the $t bytes its padding was made for: it is not sent at a size that tells its length" || return 1
+  ssh-keygen -q -Y sign -n "irongall-msg-v1:$B" -f "$IG/identity" < "$o.age" > "$o.sig" || return 1
   jq -n --arg from "$(cat "$IG/address")" --argjson n "${r%% *}" --arg c "$(ig_b64 "$o.age")" --arg s "$(ig_b64 "$o.sig")" '{from:$from, prekey_serial:$n, ciphertext:$c, signature:$s}' > "$o.json"
 }
 ig_post(){ # <address> <outbox stem> → POSTs it, sealing it first; on 409 stale_prekey, re-encrypts the SAME envelope, once. One that can never be delivered moves to outbox/failed/

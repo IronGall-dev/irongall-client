@@ -128,8 +128,14 @@ func TestStalePrekeyReencryptsSameEnvelope(t *testing.T) {
 		t.Fatalf("outbox not emptied: %v", left)
 	}
 	res := receive(t, b)
-	if len(res.Delivered) != 1 || !bytes.Equal(res.Delivered[0].Plaintext, p) {
-		t.Fatal("the re-encrypted message is not the same envelope")
+	if len(res.Delivered) != 1 {
+		t.Fatalf("delivered %d", len(res.Delivered))
+	}
+	// The same envelope, but for its padding, which is made for the prekey.
+	got := *res.Delivered[0].Envelope
+	got.Pad = ""
+	if m, err := got.Marshal(); err != nil || !bytes.Equal(m, p) {
+		t.Fatalf("the re-encrypted message is not the same envelope: %v", err)
 	}
 }
 

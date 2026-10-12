@@ -51,12 +51,16 @@ func (b *Box) Send(ctx context.Context, to protocol.Address, body string) (*prot
 }
 
 // SendWith sends one logical message: its envelope is built once, kept in the
-// outbox, encrypted to the peer's verified prekey and signed for that peer
-// only, then posted. On 409 stale_prekey it re-encrypts the SAME envelope to
-// the newer prekey, once. If the post fails, the message stays in the outbox:
-// retry with [Box.Flush], never by sending again, or the peer gets it twice.
-// Once the server has it, the envelope and the server's receipt are kept in
-// sent/.
+// outbox, padded and encrypted to the peer's verified prekey and signed for
+// that peer only, then posted. On 409 stale_prekey it re-encrypts the SAME
+// envelope to the newer prekey, once. If the post fails, the message stays in
+// the outbox: retry with [Box.Flush], never by sending again, or the peer
+// gets it twice. Once the server has it, the envelope and the server's
+// receipt are kept in sent/.
+//
+// Every message is padded, so that the server sees its size only to within a
+// block (protocol.PaddedSize). The padding is for the key the message is
+// encrypted to, so the outbox and sent/ hold the envelope without it.
 func (b *Box) SendWith(ctx context.Context, to protocol.Address, body string, f Fields) (*protocol.Receipt, error) {
 	if err := f.check(); err != nil {
 		return nil, err
@@ -243,12 +247,23 @@ func (b *Box) postSealed(ctx context.Context, to protocol.Address, stem string) 
 	return &r, nil
 }
 
-// seal encrypts the entry's envelope to the peer's VERIFIED current prekey,
-// signs the ciphertext for that peer only, and writes the request to post.
+// seal pads the entry's envelope for the peer's VERIFIED current prekey,
+// encrypts it to that prekey, signs the ciphertext for that peer only, and
+// writes the request to post.
+//
+// The envelope is read as its recipient will read it, so one the recipient
+// would refuse is never sealed. It is padded here and not when it is built
+// because the padding depends on the prekey's type: a re-encryption after
+// stale_prekey may be to a prekey of the other type, and is padded for that
+// one.
 func (b *Box) seal(ctx context.Context, to protocol.Address, stem string) error {
 	p, err := os.ReadFile(stem + ".P") //nolint:gosec // a path inside the box's own directory
 	if err != nil {
 		return err
+	}
+	env, err := protocol.OpenEnvelope(p, b.id.Address(), to, b.now())
+	if err != nil {
+		return refuse("the outbox entry is not an envelope this box made for that address: %v", err)
 	}
 	pk, err := b.Resolve(ctx, to)
 	if err != nil {
@@ -258,16 +273,23 @@ func (b *Box) seal(ctx context.Context, to protocol.Address, stem string) error 
 	if err != nil {
 		return err
 	}
+	padded, size, err := env.MarshalPadded(pk.Type())
+	if err != nil {
+		return err
+	}
 	var ct bytes.Buffer
 	w, err := age.Encrypt(&ct, r)
 	if err != nil {
 		return err
 	}
-	if _, err := w.Write(p); err != nil {
+	if _, err := w.Write(padded); err != nil {
 		return err
 	}
 	if err := w.Close(); err != nil {
 		return err
+	}
+	if ct.Len() != size {
+		return refuse("the encrypted message is %d bytes, where its padding was made for %d: it is not sent at a size that tells its length", ct.Len(), size)
 	}
 	sig, err := protocol.Sign(b.signer, ct.Bytes(), protocol.MessageNamespace(to))
 	if err != nil {

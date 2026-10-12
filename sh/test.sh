@@ -11,8 +11,8 @@
 #     mail, a newline-injected sender, a wrong id. And the honest paths: two sends in a row, a retried envelope,
 #     renewal with a NEW key, 409 stale_prekey, restore without a token, pagination, the lock, token refresh,
 #     deletion of retired prekeys (forward secrecy), the outbox's failures, a fault in the box itself, the
-#     optional fields, sent/ and aliases, a renewal the server does not take, what a refusal says, and the
-#     bounds on what a hostile server costs.
+#     optional fields, sent/ and aliases, a renewal the server does not take, what a refusal says, the
+#     bounds on what a hostile server costs, and padding.
 # Needs what irongall.sh needs, but curl. KEYTYPE=auto (default: pq if `age-keygen -pq` works, else no-pq, saying
 # why) · pq · no-pq. The work dir is left in place after the run.
 set -eu
@@ -390,4 +390,36 @@ for i in 1 2 3; do ssh-keygen -q -t ed25519 -N '' -C '' -f made$i.sigkey; printf
 [ "$(ls $IG/peers | wc -l)" = "$p0" ] && ok "senders a server makes up, with identities that are not theirs, leave nothing under peers/" || bad "peers/ grew: $(ls $IG/peers | wc -l) from $p0"
 MODE="endless $B"; n0=$(grep -c "^GET /v1/$B/messages" $SRV/log); recv; MODE=honest
 [ $RECV_RC = 0 ] && [ $(($(grep -c "^GET /v1/$B/messages" $SRV/log) - n0)) = 100 ] && printf '%s' "$RECV_ERR" | grep -q "stopped at the most one drain takes" && ok "a server that always has another page costs one drain 100 pages, and the run says it stopped" || bad "endless: rc $RECV_RC, $(($(grep -c "^GET /v1/$B/messages" $SRV/log) - n0)) lists, $RECV_ERR"
+# --- 15. padding: every message is a whole number of blocks on the wire, so the server sees its size only to within a block
+on_block(){ local b=1024; while [ $((16 * b)) -lt "$1" ]; do b=$((b * 2)); done; [ $(($1 % b)) = 0 ]; }      # this test's own arithmetic, not the script's
+first_block(){ if [[ $(sed -n 4p $SRV/$1/prekey.txt) = age1pq1* ]]; then echo 2048; else echo 1024; fi; }      # <box> → the smallest size a message to its current prekey can be
+sizes(){ local f; for f in $SRV/$1/msgs/*.json; do jq -r .ciphertext "$f" | base64 -d | wc -c; done; }      # <box> → the size of each ciphertext the server holds for it
+for X in P Q; do as $X; ig_init $NOPQ > /dev/null || bad "padding: ig_init $X"; eval "$X=\$(cat \$IG/address)"; done
+as P; for b in no yes reject approve; do printf %s "$b" | ig_send "$Q" > /dev/null || bad "padding: send $b"; done
+[ "$(sizes "$Q" | sort -u)" = "$(first_block "$Q")" ] && ok "four short bodies of different lengths are ONE size on the wire: $(first_block "$Q") bytes" || bad "padding: short bodies are $(sizes "$Q" | tr '\n' ' ')bytes"
+! grep -q '"pad"' $IG/sent/$Q.*.json && ok "sent/ keeps each envelope without its padding" || bad "padding: sent/ carries pad"
+as Q; recv; [ $RECV_RC = 0 ] && [ "$(printf '%s\n' "$RECV_OUT" | jq -sc 'map(.body)')" = '["no","yes","reject","approve"]' ] && ! printf '%s' "$RECV_OUT" | grep -q '"pad"' && jq -e '.pad | type == "string" and test("\\A\\.+\\z")' $IG/msg.P > /dev/null &&
+  ok "the recipient gets each body, on a line with no padding; the envelope it decrypted had it" || bad "padding: recv $RECV_OUT / $RECV_ERR"
+as P; for n in 100 600 2000 15000 20000 40000; do head -c $n /dev/zero | tr '\0' a | ig_send "$Q" > /dev/null || bad "padding: send $n bytes"; done
+n=0; for s in $(sizes "$Q"); do on_block "$s" || bad "padding: $s bytes of ciphertext is not a whole number of blocks"; n=$((n + 1)); done
+[ $n = 6 ] && [ "$(sizes "$Q" | sort -n | tail -n 1)" -gt 40000 ] && ok "bodies of 100 to 40,000 bytes: each ciphertext is a whole number of blocks ($(sizes "$Q" | sort -n | tr '\n' ' '| sed 's/ $//'))" || bad "padding: $n messages"
+as Q; recv; [ "$(printf '%s\n' "$RECV_OUT" | jq -sc 'map(.body | length)')" = '[100,600,2000,15000,20000,40000]' ] && ok "and each arrives whole" || bad "padding: large bodies: $RECV_ERR"
+# the arithmetic at a boundary: every envelope carries the pad member (9 bytes), so one exactly 9 bytes short of a block gets it with no filler, and one any closer goes to the next block
+[ "$(ig_padding 815 age1x)" = "0 1024" ] && [ "$(ig_padding 816 age1x)" = "1023 2048" ] && [ "$(ig_padding 824 age1x)" = "1015 2048" ] && [ "$(ig_padding 814 age1x)" = "1 1024" ] && [ "$(ig_padding 380 age1pq1x)" = "0 2048" ] && [ "$(ig_padding 381 age1pq1x)" = "1023 3072" ] &&
+  ok "at a boundary: 9 bytes short of it, a pad with no filler; any closer, the next block" || bad "padding: boundary arithmetic"
+[ "$(ig_padding 16000 age1x)" = "175 16384" ] && [ "$(ig_padding 16200 age1x)" = "2023 18432" ] && [ "$(ig_padding 65530 age1x)" = "7973 73728" ] && [ "$(ig_padding 70000 age1x)" = "3503 73728" ] && ok "past 16 KiB the block is 1/16 of the size: 16.2 KiB becomes 18, and a second 64 KiB chunk's tag is counted" || bad "padding: large arithmetic"
+# the padding is for the key a message is encrypted to: after 409 stale_prekey the same envelope is padded again, for the newer prekey
+as Q; ig_rekey --no-pq > /dev/null || bad "padding: rekey"
+as P; echo "$Q" > $SRV/stale-once; printf 'sealed twice' | ig_send "$Q" 2> err.txt && grep -q stale_prekey err.txt || bad "padding: stale_prekey: $(cat err.txt)"
+[ "$(sizes "$Q")" = 1024 ] && ok "a re-encryption after stale_prekey, to an X25519 prekey, is padded for that key: 1,024 bytes" || bad "padding: the re-encrypted message is $(sizes "$Q") bytes"
+as Q; recv; printf '%s' "$RECV_OUT" | jq -e '.body == "sealed twice"' > /dev/null && ok "and it is delivered once" || bad "padding: recv after the re-encryption: $RECV_ERR"
+# the sender reads its envelope as the recipient will, and checks the size of what age wrote
+as P; n0=$(grep -c "^POST /v1/$Q\$" $SRV/log)
+jq -cn --arg f "$P" --arg t "$A" '{v:1, from:$f, to:$t, sent_at:(now | floor | todate), msg_id:"33333333-2222-4333-8444-555555555555", body:"for another box"}' > $IG/outbox/$Q.other.P
+ig_seal "$Q" $IG/outbox/$Q.other 2> err.txt && bad "sealed an envelope addressed to another box" || grep -q "not an envelope this box made for that address: reattributed" err.txt && ok "an outbox entry whose envelope names another recipient is REFUSED, not sealed" || bad "padding: seal of a misaddressed entry: $(cat err.txt)"
+rm -f $IG/outbox/$Q.other.*
+age(){ command age "$@" && printf x; }      # an age whose files are one byte longer than this script's arithmetic says
+printf 'a size that tells' | ig_send "$Q" 2> err.txt && bad "sent at a size its padding was not made for" || grep -q "is not the 1024 bytes its padding was made for" err.txt && [ "$(grep -c "^POST /v1/$Q\$" $SRV/log)" = "$n0" ] &&
+  ok "an age file that is not the size the padding was made for is REFUSED, and nothing is posted" || bad "padding: size check: $(cat err.txt)"
+unset -f age; rm -f $IG/outbox/*.P $IG/outbox/*.age
 echo "--- $PASS PASS, 0 FAIL (KEYTYPE=$KEYTYPE)"

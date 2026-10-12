@@ -190,7 +190,7 @@ func TestADrainIsBounded(t *testing.T) {
 	t.Run("bytes", func(t *testing.T) {
 		e := newEnv(t)
 		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
-		client.SetDrainLimits(t, 1000, 4000, 100)
+		client.SetDrainLimits(t, 1000, 5000, 100) // each message below is 4,096 bytes of ciphertext
 		for range 4 {
 			send(t, a, b, strings.Repeat("x", 3000))
 		}

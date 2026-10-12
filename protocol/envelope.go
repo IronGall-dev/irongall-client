@@ -80,7 +80,7 @@ type wireEnvelope struct {
 	Subject    string          `json:"subject,omitempty"`
 	InReplyTo  string          `json:"in_reply_to,omitempty"`
 	Supersedes string          `json:"supersedes,omitempty"`
-	Pad        string          `json:"pad,omitempty"`
+	Pad        *string         `json:"pad,omitempty"` // a pointer: a pad of no filler is still a member
 }
 
 // NewEnvelope returns an envelope from one box to another with a string body,
@@ -103,6 +103,15 @@ func NewEnvelope(from, to Address, body string, now time.Time) (*Envelope, error
 // Marshal returns the envelope as compact UTF-8 JSON with no HTML escaping,
 // the form to encrypt.
 func (e *Envelope) Marshal() ([]byte, error) {
+	if e.Pad == "" {
+		return e.marshal(nil)
+	}
+	return e.marshal(&e.Pad)
+}
+
+// marshal is Marshal with the pad member as given: nil for none, and a
+// pointer to the empty string for the member with no filler.
+func (e *Envelope) marshal(pad *string) ([]byte, error) {
 	if e.Body == nil {
 		return nil, errors.New("an envelope needs a body")
 	}
@@ -116,7 +125,7 @@ func (e *Envelope) Marshal() ([]byte, error) {
 		Subject:    e.Subject,
 		InReplyTo:  e.InReplyTo,
 		Supersedes: e.Supersedes,
-		Pad:        e.Pad,
+		Pad:        pad,
 	})
 }
 
@@ -173,7 +182,7 @@ func OpenEnvelope(plaintext []byte, signer, me Address, now time.Time) (*Envelop
 	if sentAt.Before(now.Add(-TTL)) {
 		return nil, &EnvelopeError{RefusedStale, fmt.Sprintf("sent_at is older than %d days", TTL/(24*time.Hour))}
 	}
-	return &Envelope{
+	e := &Envelope{
 		From:       w.From,
 		To:         w.To,
 		SentAt:     sentAt,
@@ -182,8 +191,11 @@ func OpenEnvelope(plaintext []byte, signer, me Address, now time.Time) (*Envelop
 		Subject:    w.Subject,
 		InReplyTo:  w.InReplyTo,
 		Supersedes: w.Supersedes,
-		Pad:        w.Pad,
-	}, nil
+	}
+	if w.Pad != nil {
+		e.Pad = *w.Pad
+	}
+	return e, nil
 }
 
 // objectFields reads a JSON object's members by their exact keys. A key that

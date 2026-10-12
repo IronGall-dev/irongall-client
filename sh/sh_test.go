@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -266,6 +267,70 @@ func TestVectorsEnvelope(t *testing.T) {
 	}
 }
 
+// The script pads as the Go client does: for an envelope of any size and a
+// key of either type, the same filler and the same size on the wire. This is
+// arithmetic only, so it needs no age: a post-quantum key is told by its
+// prefix.
+func TestPaddingIsTheGoClients(t *testing.T) {
+	need(t, "bash")
+	from := protocol.Address{1}
+	bare := func(body int) *protocol.Envelope {
+		e, err := protocol.NewEnvelope(from, from, strings.Repeat("a", body), time.Unix(1_800_000_000, 0))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return e
+	}
+	empty, err := bare(0).Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Body sizes on each side of the block boundaries up to 136 KiB and of
+	// the end of an age chunk, and a spread between.
+	var bodies []int
+	for _, edge := range []int{1 << 10, 2 << 10, 3 << 10, 16 << 10, 18 << 10, 32 << 10, 36 << 10, 64 << 10, 65536 + 200, 65536 + 1659, 72 << 10, 136 << 10} {
+		for d := -1680; d <= 20; d++ {
+			if n := edge - len(empty) + d; n >= 0 && (d > -30 || d < -1640 || (d > -220 && d < -180)) {
+				bodies = append(bodies, n)
+			}
+		}
+	}
+	for n := 0; n < 200_000; n += 997 {
+		bodies = append(bodies, n)
+	}
+	for kt, key := range map[protocol.KeyType]string{protocol.Classic: "age1example", protocol.PostQuantum: "age1pq1example"} {
+		var sizes, want strings.Builder
+		for _, n := range bodies {
+			e := bare(n)
+			unpadded, err := e.Marshal()
+			if err != nil {
+				t.Fatal(err)
+			}
+			padded, sealed, err := e.MarshalPadded(kt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			filler := len(padded) - len(unpadded) - len(`,"pad":""`)
+			fmt.Fprintf(&sizes, "%d ", len(unpadded))
+			fmt.Fprintf(&want, "%d %d %d\n", len(unpadded), filler, sealed)
+		}
+		got, err := bash(t, nil, fmt.Sprintf(`for n in %s; do echo "$n $(ig_padding $n %s)"; done`, sizes.String(), key))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != want.String() {
+			g, w := strings.Split(got, "\n"), strings.Split(want.String(), "\n")
+			for i := range w {
+				if i >= len(g) || g[i] != w[i] {
+					t.Fatalf("%s: for an envelope of <bytes>, <filler> <size on the wire>: the script says %q, the Go client %q", kt, g[min(i, len(g)-1)], w[i])
+				}
+			}
+			t.Fatalf("%s: the script printed %d lines for %d sizes", kt, len(g), len(w))
+		}
+		t.Logf("%s: %d envelope sizes, the same padding from both clients", kt, len(bodies))
+	}
+}
+
 // The two clients exchange mail through the honest fake server, and each runs
 // a box the other made: one on-disk format.
 func TestWithGoClient(t *testing.T) {
@@ -333,6 +398,44 @@ func TestWithGoClient(t *testing.T) {
 	}
 	out, err = sh(shDir, "ig_recv")
 	if err != nil || !strings.Contains(out, `"body":"from Go"`) {
+		t.Fatalf("ig_recv: %q %v", out, err)
+	}
+
+	// The same body is the same size on the wire from either client, and a
+	// whole number of blocks: both pad, and pad alike.
+	var onWire []int
+	srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.Method == http.MethodPost && !strings.Contains(strings.TrimPrefix(r.URL.Path, "/v1/"), "/") {
+			body, _ := io.ReadAll(r.Body)
+			r.Body = io.NopCloser(bytes.NewReader(body))
+			var req protocol.SendRequest
+			if json.Unmarshal(body, &req) == nil {
+				onWire = append(onWire, len(req.Ciphertext))
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+	for _, body := range []string{"yes", "no", strings.Repeat("the same from both. ", 150)} {
+		if _, err := sh(shDir, fmt.Sprintf("printf %%s '%s' | ig_send %s", body, g.Address())); err != nil {
+			t.Fatalf("ig_send: %v", err)
+		}
+		if _, err := g.Send(ctx, shAddr, body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	srv.SetMiddle(nil)
+	if len(onWire) != 6 || onWire[0] != onWire[1] || onWire[1] != onWire[2] || onWire[2] != onWire[3] || onWire[4] != onWire[5] || onWire[4] <= onWire[0] {
+		t.Fatalf("the script's and the Go client's sends of yes, no and 3,000 bytes are %v bytes on the wire", onWire)
+	}
+	for _, n := range onWire {
+		if n != protocol.PaddedSize(n) {
+			t.Fatalf("%d bytes on the wire is not a whole number of blocks", n)
+		}
+	}
+	if res, err := g.Receive(ctx); err != nil || len(res.Delivered) != 3 {
+		t.Fatalf("the Go client received %+v, %v", res, err)
+	}
+	if out, err := sh(shDir, "ig_recv"); err != nil || strings.Count(out, "\n") != 3 || strings.Contains(out, `"pad"`) {
 		t.Fatalf("ig_recv: %q %v", out, err)
 	}
 
