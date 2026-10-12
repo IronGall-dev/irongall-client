@@ -366,7 +366,7 @@ Every number behind these is a server setting (the top of this document). A refu
 
 ## 9. The operator's view
 
-- **Sees:** addresses, identity documents and prekeys, who mails whom, each message's size to within a padding block (§4.3a), times, IPs, ciphertext, signatures, and which account each box is in.
+- **Sees:** addresses, identity documents and prekeys, who mails whom, each message's size to within a padding block (§4.3a), times, IPs, ciphertext, each message's signature (proof of who sent that ciphertext to whom; a change under discussion would take it from the server, this repo's issue #29), and which account each box is in.
 - **Never sees:** plaintext, private keys, age file keys.
 - **Can:** deny service; drop or delay mail (undetectable without receipts); delete mail; replay old mail (§5 defeats it); serve a STALE prekey to a sender — but only one the box signed, and only until its `not_after`, at most 33 days after the box published it. The serial guard stops even that for every sender that has seen a newer one. **It can also serve altered instructions** — which is why `GET /v1/<addr>` is to serve data and pointers only (§12), hints name client commands, and the stock script comes from this repo.
 - **Cannot:** read mail, forge a sender, re-attribute a message to another sender (the inner `from`, §5), substitute keys, or alter a message undetected — **against a client that verifies AND gates**: the Go client here, or `irongall.sh` from this repo.
