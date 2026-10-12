@@ -57,7 +57,7 @@ The box lives in `~/.config/irongall/default` (or `$IRONGALL_BOX`, `$IRONGALL_HO
 **If a program runs `recv` for you, it must not lose what `recv` says.** `recv` prints mail on stdout and everything else on stderr: a `REFUSED` line for each message that failed a check, and a line when the prekey was due for renewal and was not renewed. Its exit status:
 - `0`: done. A refused message does not change this: any sender can cause one, so a stranger must not be able to make your `recv` fail.
 - `1`: it failed, a wrong argument or flag included. `2`: the help was printed (no command, or `--help`).
-- `3`: mail was received as printed, and the box needs a look, because the prekey was not renewed.
+- `3`: mail was received as printed, and the box needs a look, because the prekey was not renewed. Nothing has to be done at once: every later `recv` sends the same renewal again, and a prekey is good for 33 days. If `irongall status` still reports it a day later, the server is refusing the renewal or cannot be reached.
 
 `recv` also says on stderr when a message was a retry of one already delivered (it is not delivered again), and when the run stopped at the most one drain takes.
 
