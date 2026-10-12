@@ -330,6 +330,27 @@ Server side:
 - **Server-key COMPROMISE is a hard cut.** The leaked key could forge any box's token, so there is no grace window: old-kid tokens get `token_stale` immediately, and everyone re-fetches via `/token`. **Not built as written:** today a token made with a key the server no longer holds is answered `401 unauthorized`, which neither client recovers from by itself. That is the herd case: `/token`'s limit is per IP, so a herd of boxes is not throttled by one another.
 - **A killed token may still be accepted for a moment** after the call that killed it. Stated rather than hidden.
 
+**6.1b The pass — decided, not in use yet.** 🔑 **Decided (this repo's issue #36): the owner token goes, and a box proves itself to the server with a pass it signs for itself. The statement, the header and their check are built (`protocol/pass.go`) and nothing uses them yet:** every owner call in this file still carries the token.
+
+Four LF-terminated lines, signed with the working key (§2b) in the namespace `irongall-pass-v1:<A>`:
+
+```
+irongall-pass-v1
+<A — the box's own address>
+<the server's name as the box calls it: the host of its URL, lowercase, with its port if it has one>
+<not_after — RFC 3339 UTC to the second>
+```
+
+```sh
+printf 'irongall-pass-v1\n%s\n%s\n%s\n' "$A" irongall.dev "$NOT_AFTER" | ssh-keygen -q -Y sign -n "irongall-pass-v1:$A" -f work-cert.pub > pass.sig
+```
+
+- **It travels as** `Authorization: irongall-pass address="<A>", not_after="<not_after>", signature="<base64 of pass.sig>"`, in exactly that form, on every call but the ones anyone may make.
+- **A client signs a pass good for 10 minutes. A server takes one that has not run out and runs out at most an hour from now.** The gap is so that a client whose clock runs fast is not refused, with no allowance for skew in any check (§0).
+- **A server takes a pass only** under the box's current certificate, and for a name that is the server's own. It may remember a pass it has checked, so a pass costs one signature check however many calls carry it.
+- **It says who is calling and until when, and nothing of what a call does,** so a server is handed no proof of any send (issue #29). The server still knows who sends to whom. A pass that leaks is good for the minutes it has left, at that server, and never reads or signs mail.
+- **What goes once it is in use:** the token and its form check, the epoch, `POST …/token`, the `irongall-token` header and server-key rotation (§6.1, §6.1a), and the `pending` state (§3a), since a fresh pass with a registration shows a live key holder.
+
 **6.2 Profile, lists, close.** **The profile and the lists are specified and not built: no route exists (§12), and `protocol/` has only the profile's namespace and the `sender_not_allowed` code. Close is built.**
 - **Profile**: signed JSON `{version, description, schema, max_size}` — `version` an integer that only ever increases, `description` free text, `schema` (optional) a JSON Schema for the envelope's `body` (§4.2), `max_size` (optional) in bytes. Readers ignore unknown fields. Sign it from stdin, `ssh-keygen -q -Y sign -n "irongall-profile-v1:$B" -f identity < profile.json > profile.sig`, then `PUT …/profile` with JSON `{profile, signature}`, both base64. `GET /v1/<addr>` serves it. Senders verify it against B's PINNED identity before following it (`ssh-keygen -Y verify -f peers/<B>/signers -I "$B" -n "irongall-profile-v1:$B" -s profile.sig < profile.json`) and keep the highest `version` they have seen. The server refuses a PUT whose `version` ≤ the current one (`409 conflict`), so an older validly-signed profile can never be served back. The profile is advisory: the server cannot see inside the ciphertext.
 - **Lists:** `PUT …/allow` and `PUT …/block` (`block` wins over `allow`).
@@ -435,6 +456,7 @@ A separate CLIENT process that irongall.dev's operator runs — NOT the mailbox 
 Each of these but the last has an issue in this repo's milestone `M1: protocol freeze`, which also holds the other questions that could change the wire. Each is settled, built or taken out of v1, before v1 is declared stable.
 
 - **The working key** (§2b, issue #30): decided. Its certificate's check is built and nothing uses it yet; what a newer certificate retires is open.
+- **The pass** (§6.1b, issue #36): decided. Its statement, header and check are built and nothing uses them yet.
 - **Identity key types other than `ssh-ed25519`** (§2): decided, not built.
 - **Revocation** (§6.3): specified, not built. Open: the response shape, whether `init` writes a revocation signed in advance, and whether a `410 revoked` carries the signed statement, so that a client checks a revocation and does not take the server's word for it.
 - **Token rotation** (§6.1, §6.1a): `POST …/token/rotate` (its path is `[proposed]` and its response shape open), and the `irongall-token` header during a server-key rotation. Not built in the server; the Go client already keeps a token that arrives in the header (`protocol.TokenHeader`).
