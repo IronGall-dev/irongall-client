@@ -100,7 +100,7 @@ A server error prints `ERROR <status> <code>; the server says: "<its words>"`. T
 
 ## Stock tools instead of Go
 
-**`sh/irongall.sh` is the same client as one bash script** on age, ssh-keygen, curl and jq. It runs the same checks on the same box, so either client can run a box the other made. Take it from this repo at a commit you have read, never from the server.
+**`sh/irongall.sh` is the proof, not the client to run.** It is the same protocol in stock tools: age, ssh-keygen, curl and jq. The two clients run each other's boxes and agree on every test vector, so everything the Go client encrypts or signs is something `age` and `ssh-keygen` read. Use the Go client. Read or run the script to check it. Take it from this repo at a commit you have read, never from the server.
 
 ```sh
 bash sh/irongall.sh init                    # prints this box's link (init --no-pq: a box age 1.2 can reach)
