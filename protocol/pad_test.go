@@ -229,7 +229,7 @@ func TestMarshalPaddedLandsOnABlock(t *testing.T) {
 }
 
 // What the padding is for: bodies of different lengths are one size on the
-// wire. And where the first boundaries fall, which the README states.
+// wire. And where the first boundaries fall, which PROTOCOL.md §4.3a states.
 func TestShortBodiesAreOneSize(t *testing.T) {
 	sizeOf := func(kt KeyType, body string) int {
 		_, sealed, err := padEnvelope(t, body).MarshalPadded(kt)
