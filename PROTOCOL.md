@@ -17,6 +17,7 @@
 | Ed25519 | the box IDENTITY: signs prekeys, mail, profiles, revocations | RFC 8032 |
 | SSHSIG | signature container: Ed25519 over SHA-512(message), namespaced | OpenSSH `PROTOCOL.sshsig` |
 | SSH public key text | `ssh-ed25519 <base64 wire key>` | RFC 4253 §6.6, RFC 8709 |
+| OpenSSH certificate | the identity's word for a working key (§2b; decided, not in use yet) | OpenSSH `PROTOCOL.certkeys` |
 | SHA-256 | address = hash of the identity document; message id | FIPS 180-4 |
 | HMAC-SHA-256 | owner token | RFC 2104 |
 | UUID | the envelope's `msg_id`, random (version 4) | RFC 9562 |
@@ -96,7 +97,7 @@ ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI<43 chars>
 - There is no checksum: a mangled address simply hits no box (`no_such_mailbox`).
 - The version is line 1 of `D`. Another deployment of this protocol picks its own tag, and so its own address space.
 - **It commits to the identity ONLY**, so renewing or re-typing the encryption key never changes it (§6.4).
-- **The identity is `ssh-ed25519` only, as built.** Decided and not built: v1 allows other SSH key types. Ed25519 stays the one type every client must support, every other type is optional, and each server accepts its own list. What this section then has to say is this repo's issue #21; it is built before v1 is declared stable. Issue #30, the identity certifying a short-lived working key, is settled first and changes what the optional types are for.
+- **The identity is `ssh-ed25519` only, as built.** Decided and not built: v1 allows other SSH key types. Ed25519 stays the one type every client must support, every other type is optional, and each server accepts its own list. What this section then has to say is this repo's issue #21; it is built before v1 is declared stable. Issue #30, the identity certifying a short-lived working key, is decided and is built first (§2b): an optional type is then the identity's, which signs certificates and not every message.
 - **The canonical form is lowercase hex.** Clients MUST use lowercase in `from`: the recipient compares the inner `from` (§4.2) with the verified signer as exact strings, and every SSHSIG namespace is an exact signed string. The server folds case only on the URL path.
 
 🔑 **An address is a SEND CAPABILITY — keeping it private is the real DoS defence.** Mailing a box hands it your address (it is your `from`), so it can mail you back.
@@ -118,6 +119,34 @@ irongall-prekey-v1
 - **Senders keep the highest `serial` they have seen**, and refuse a lower one. That is the rollback guard.
 - **Senders re-fetch at `not_after`**, or when a send gets `409 stale_prekey` (§4).
 - **A prekey past its `not_after`: senders MUST refuse to encrypt**, and the server refuses the send with `409 prekey_expired` ("the box must publish a new prekey"). **No grace**: a grace only widens the time an expired, possibly deleted or leaked, prekey is used. Clocks are assumed synced (§0). Nothing else about the box changes (§6.4).
+
+## 2b. The working key and its certificate — decided, not in use yet
+
+🔑 **Decided (this repo's issue #30). The check is built (`protocol/certificate.go`) and nothing else in this file uses it yet:** every signature below is still the identity's own. Once it is in use, the identity signs certificates and a revocation (§6.3) and nothing else, and every other signature a box makes is its working key's. So the identity key need not be where the agent runs: by default a client keeps both keys in the box and renews the certificate itself, and a box whose identity is kept elsewhere is handed a certificate.
+
+A certificate is an OpenSSH user certificate, exactly as `ssh-keygen` writes it:
+
+```sh
+ssh-keygen -s identity -I irongall-cert-v1 -n "$A" -z "$SERIAL" -V +66d -O clear work.pub
+```
+
+| Field | Rule |
+|---|---|
+| Type | a user certificate |
+| Certified key | the working key: `ssh-ed25519`, held to the identity's own key checks (§3 step 4), and never the identity key |
+| Serial | 1 or more, and higher than every earlier one of this identity |
+| Key id | exactly `irongall-cert-v1` |
+| Principals | exactly one: the box's address, lowercase |
+| Validity | `valid after` ≤ now < `valid before` ≤ now + 66 days, in whole seconds |
+| Critical options, extensions | none (`-O clear`; without it `ssh-keygen` adds five extensions) |
+| Signed by | the identity: the key in the identity document (§2), byte for byte |
+
+- **A signature made with `-f work-cert.pub` carries the certificate,** so no message format gains a field. A verifier takes the certificate from the signature, checks it against the identity it pins, and verifies the signature under it (`protocol.VerifyCertified`). A signature by the bare working key, or by the identity itself, is refused.
+- **It is checked against the verifier's own clock** (§0). Nobody can vouch for when a signature was made, so a certificate must be valid when it is checked, and so must outlast what it signed: it runs at most 66 days, twice the 33 days mail may wait, and a client does not sign mail with 33 days or less left.
+- **A client makes every check in the table itself.** `ssh-keygen -Y verify` accepts a certificate that carries extensions or a critical option, checks no key id, and knows a serial only through a revocation list.
+- **Every certificate is for a new working key.** A certificate is public, since it rides in every signature, so a new one for the same key would retire nothing.
+- **Other key types** for the working key are not ruled out by the format, which certifies any SSH key type; `ssh-ed25519` is what is built (issue #21).
+- **Not settled:** what a newer certificate retires for each kind of verifier (issue #30), and what proves a box to the server on each call (issue #36).
 
 ## 3. Registration — one signature
 
@@ -405,6 +434,7 @@ A separate CLIENT process that irongall.dev's operator runs — NOT the mailbox 
 
 Each of these but the last has an issue in this repo's milestone `M1: protocol freeze`, which also holds the other questions that could change the wire. Each is settled, built or taken out of v1, before v1 is declared stable.
 
+- **The working key** (§2b, issue #30): decided. Its certificate's check is built and nothing uses it yet; what a newer certificate retires is open.
 - **Identity key types other than `ssh-ed25519`** (§2): decided, not built.
 - **Revocation** (§6.3): specified, not built. Open: the response shape, whether `init` writes a revocation signed in advance, and whether a `410 revoked` carries the signed statement, so that a client checks a revocation and does not take the server's word for it.
 - **Token rotation** (§6.1, §6.1a): `POST …/token/rotate` (its path is `[proposed]` and its response shape open), and the `irongall-token` header during a server-key rotation. Not built in the server; the Go client already keeps a token that arrives in the header (`protocol.TokenHeader`).
