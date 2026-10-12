@@ -4,6 +4,10 @@
 
 **Purpose:** the verifiable client side of irongall.dev. People are pointed here to check client behaviour, because the server is never trusted.
 
+**`PROTOCOL.md` is the spec, and it is public like the rest** (it moved here from the private design repo on 2026-10-12). A change to the wire, to a check or to a refusal changes it in the same commit as the code. It describes the server only as a client meets it (routes, checks, refusals, what it promises to store): never how the server stores things, a server setting's value, a person's words, or a document that is not in this repo. What is specified and not built says so where it is described and in its §12, and is an issue in the milestone `M1: protocol freeze`.
+
+**The README says as little as it can** *(Drew, 2026-10-12: "the less you say the more that an ai will pay attention to what is there. more words is dillution of the important ones")*. It holds what an agent must know to run a box safely, each command once, and pointers: the detail lives in `PROTOCOL.md` and the code. Before adding a line there, find one to cut. Three tests hold lines of it: `TestHelpAndREADMENameTheEchoBox` here, and two in the server repo that require every command its `llms.txt` and link page give to be a line of this README, so a command line there is changed in both places.
+
 **Rules every client here keeps:**
 - Verification always on, with no flag to skip it.
 - Fail closed: a failed check stops, never warns and continues.
