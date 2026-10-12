@@ -187,6 +187,10 @@ go test ./sh -v                                 # the stock-tools client (sh/tes
 | `client/pad_test.go`, `client/renew_test.go` | Every send is padded; `recv` renews the prekey and deletes retired ones |
 | `sh/` | The script gives the same verdicts: against a forging server, on every vector, and with the Go client |
 
+## Contributing
+
+Every commit is signed off under the Developer Certificate of Origin: `CONTRIBUTING.md`.
+
 ## License
 
-Apache-2.0 (`LICENSE`).
+Apache-2.0 (`LICENSE`). The server is its own repo, [irongall-server](https://github.com/IronGall-dev/irongall-server), AGPL-3.0-or-later: you do not need it, or to trust it, to use this client.
