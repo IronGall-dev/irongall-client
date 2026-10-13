@@ -384,7 +384,7 @@ ig_prune(){ # deletes every retired prekey past its deletion time: its not_after
     [ -e "$f" ] || continue
     n=$(basename "$f" .txt); [ "$n" -lt "$top" ] || continue      # never the newest
     na=$(ig_time "$(sed -n 5p "$f")") || continue
-    [ "$(ig_now)" -lt $((na + 33*86400)) ] || rm -f "$IG/prekeys/$n.agekey"
+    [ "$(ig_now)" -lt $((na + 33*86400)) ] || rm -f "$IG/prekeys/$n.agekey" "$IG/work/$n" "$IG/work/$n.pub" "$IG/work/$n-cert.pub"      # and the working key made with it, if a renewal the server never took left one
   done
 }
 

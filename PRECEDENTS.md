@@ -26,9 +26,9 @@
 | **SimpleX** | No user identifiers: one-way queues whose addresses are capabilities, exchanged out of band | Double Ratchet + hybrid post-quantum (sntrup761: opt-in beta in v5.6, default for direct chats since v5.7, 2024) + a NaCl layer for each queue | yes / yes / yes | Implicit; deniable | Contents, sender, recipient, and the link between them |
 | **Nostr DMs** (NIP-17) | A secp256k1 public key is the identity | NIP-44; a signed "seal" encrypted inside an ephemeral-key "gift wrap" | no / no / no | A signature INSIDE the encryption | Contents; the sender |
 | **Noise one-way X** (rev 34, 2018: a handshake framework, not a messaging system) | None built in: the recipient's static key is a pre-message, and whether to accept a key is "up to the application" (§14) | One-way DH pattern `e, es, s, ss` (25519/448), then AEAD | Sender compromise only: a later leak of the recipient's static key decrypts every past payload (§7.7, destination property 2) / no / no. Rev 34 has no post-quantum, and PQNoise shows that an authenticated one-way K or X cannot be built from KEMs alone | Static-static DH: only the recipient can check it; it is open to key-compromise impersonation (§7.7, source property 1), deniable and replayable | Contents; the sender's static key is encrypted to the recipient (§7.8). A relay can verify nothing |
-| **irongall, as built** | A self-certifying address (the hash of the identity) + a prekey the identity signs: no directory to trust, and substitution by the server is impossible without a hash break or a forgery | age; post-quantum hybrid (ML-KEM-768 + X25519) by default, X25519 alone by a box's choice | Bounded for every box by how often it checks in (about two days for one received daily), through mandatory renewal and deletion / no / yes | Ed25519 over the ciphertext, checked by the server and by the recipient; the inner `from` binds it; it can be shown to others | Contents only, by design |
+| **irongall, as built** | A self-certifying address (the hash of the identity) + a prekey signed under a certificate of the identity: no directory to trust, and substitution by the server is impossible without a hash break or a forgery | age; post-quantum hybrid (ML-KEM-768 + X25519) by default, X25519 alone by a box's choice | Bounded for every box by how often it checks in (about two days for one received daily), through mandatory renewal and deletion / no / yes | Ed25519, by a working key the identity certifies, over the envelope and inside the encryption: checked by the recipient, never seen by the server; it names its recipient; the recipient can show it to others | Contents only, by design |
 
-**Decided or proposed since, and not in use** (Part 2, § 1 to § 3): a working key the identity certifies signs in the identity's place; a box proves itself to the server with a pass it signs for itself; and the message's signature moves inside the encryption, as in Nostr's NIP-17 and OpenPGP, so the recipient still holds proof of the sender and the server holds none.
+**How it came to this** (Part 2, § 1 to § 3): until 2026-10-13 the identity signed everything, a box held a token the server issued, and the server was handed each message's signature. Now a working key the identity certifies signs in its place; a box proves itself to the server with a pass it signs for itself; and the message's signature is inside the encryption, as in Nostr's NIP-17 and OpenPGP, so the recipient still holds proof of the sender and the server holds none.
 
 **Where irongall stands**
 
@@ -55,7 +55,7 @@
   - there is no stock command-line tool;
   - §14 says a Noise static key should not be used outside Noise.
 - **The one deployed store-and-forward use found,** Bitchat's courier path (Noise X), states that it has no forward secrecy.
-- **Taken from Noise:** §13's padding, as the envelope's `pad` member; payloads that must ignore what they do not know; its vocabulary for security properties.
+- **Taken from Noise:** §13's padding, as bytes after the message's signature; payloads that must ignore what they do not know; its vocabulary for security properties.
 
 ## 1c. Agent communication, October 2026
 
@@ -80,7 +80,7 @@
 
 ## 1. How a box proves itself to the server: a pass it signs for itself
 
-**Ours** (decided 2026-10-12; issue #36; the format is built and not in use): the box signs a four-line statement with its working key: a tag, its address, the server's name, and when the pass runs out. That signature goes in `Authorization` on every call until it runs out. The client makes a pass good for 10 minutes. The server takes none that runs out more than an hour on. The server issues nothing and keeps nothing for it.
+**Ours** (decided 2026-10-12; issue #36): the box signs a four-line statement with its working key: a tag, its address, the server's name, and when the pass runs out. That signature goes in `Authorization` on every call until it runs out. The client makes a pass good for 10 minutes. The server takes none that runs out more than an hour on. The server issues nothing and keeps nothing for it.
 
 | Who | What they do | Their numbers | How it is known |
 |---|---|---|---|
@@ -101,12 +101,12 @@
 - **The key that signs is certified, not registered.** The four above hold the caller's public key on file. Here the pass carries a certificate that chains to the identity the address is a hash of.
 
 **Considered and not chosen:**
-- **A token the server issues,** as OAuth 2.0 access tokens are (bearer tokens, RFC 6750) and as irongall has until the pass is in use. It needs issuing, storing and rotating, and one that leaks lasts until it is replaced. The OAuth 2.0 Security BCP (RFC 9700) is why that token is bound to the prekey, so that none outlives 33 days *(review 2026-10-10)*.
+- **A token the server issues,** as OAuth 2.0 access tokens are (bearer tokens, RFC 6750) and as irongall had until 2026-10-13. It needs issuing, storing and rotating, and one that leaks lasts until it is replaced. The OAuth 2.0 Security BCP (RFC 9700) is why that token is bound to the prekey, so that none outlives 33 days *(review 2026-10-10)*.
 - **A signature or a MAC over each request,** as AWS Signature Version 4, HTTP Message Signatures (RFC 9421) and DPoP (RFC 9449) do *(from memory; none read for this row)*. Each binds the method, the target and often the body. For a send that is the recipient and the ciphertext, which would hand the server a proof of who sent what to whom (§ 3).
 
 ## 2. The identity certifies a working key, and signs nothing else but a revocation
 
-**Ours** (decided 2026-10-12; issue #30; the certificate's check is built and not in use): a box's address is the hash of its identity key. The identity signs an OpenSSH certificate for a working key, valid at most 66 days, and the working key signs prekey statements, mail and passes. A certificate is checked against the verifier's own clock.
+**Ours** (decided 2026-10-12; issue #30): a box's address is the hash of its identity key. The identity signs an OpenSSH certificate for a working key, valid at most 66 days (a client asks for 65), and the working key signs prekey statements, mail and passes. A certificate is checked against the verifier's own clock.
 
 | Who | What they do | How it is known |
 |---|---|---|
@@ -123,14 +123,45 @@
 
 ## 3. The server holds no signature that proves who sent what to whom
 
-**Ours** (issue #29; proposed, not built): the sender signs the message inside the encryption. The server knows who sends to whom, since its limits depend on it, and holds nothing signed that says so.
+**Ours** (decided 2026-10-13; issue #29): the sender signs the envelope and encrypts it with the signature after it. The server knows who sends to whom, from the pass a send carries, since its limits depend on it, and holds nothing signed that says so. What is encrypted is the envelope as one line, the signature block exactly as `ssh-keygen` wrote it, then padding.
+
+**The order: sign, then encrypt, with the signature inside.**
 
 | Who | What they do | How it is known |
 |---|---|---|
+| **JOSE** | "normally producers should sign the message and then encrypt the result (thus encrypting the signature)": it keeps a signature from being stripped, and gives the signer privacy. A Nested JWT is a signed JWS carried whole as the plaintext of a JWE | RFC 7519 §11.2 and §2, read 2026-10-13 |
+| **OpenPGP** | An encrypted message holds an OpenPGP message, which may be a signed one: a one-pass signature packet, the message, the signature packet | RFC 9580 §10.3, read 2026-10-13 |
+| **S/MIME** | The signed and the enveloped formats nest, in either order. Signing first hides the signatories inside the envelope; enveloping first leaves them exposed, and lets a signature be verified without removing the envelope | RFC 8551 §3.7, read 2026-10-13 |
 | **Nostr NIP-17** | A signed "seal" is encrypted inside an ephemeral-key "gift wrap": the signature is inside | review 2026-10-10 |
-| **OpenPGP** | Sign, then encrypt: the signature is inside | from memory |
 | **Signal, WhatsApp** | Messages are authenticated with keys both sides share, so no signature exists for anyone to show | review 2026-10-10 (deniable); the mechanism from memory |
-| **iMessage** | Every message is signed by a device key | review 2026-10-10 |
+| **iMessage** | Every message is signed by a device key, where its server sees it | review 2026-10-10 |
+| **age's author** | Names the usual advice, to combine age with a signing tool such as signify or OpenSSH, and the flaw of each order; recommends no layout | words.filippo.io/dispatches/age-authentication, read 2026-10-13 |
+
+**The layout: the signed bytes as they are, then the signature.**
+
+| Who | How the signed bytes and the signature travel together | How it is known |
+|---|---|---|
+| **git** | A detached signature, the SSH format among them, is embedded in the object it signs: appended to a tag, a header of a commit. The payload is not encoded | `gitformat-signature`, read 2026-10-13 |
+| **OpenPGP, CMS** | Binary packets: the signed bytes as they are, between or beside the signature | RFC 9580 §10.3, read 2026-10-13; CMS from memory |
+| **JWS, DSSE** | One JSON object with the signed bytes and the signature as base64 members | RFC 7515 §7.2.1 and `secure-systems-lab/dsse` `envelope.md`, read 2026-10-13 |
+| **JOSE, later** | An option not to encode the payload, for cases where the encoding is "unnecessary and/or an impediment to adoption, especially when the payload is large and/or detached" | RFC 7797, abstract, read 2026-10-13 |
+
+They agree on the method and not on one byte layout: each puts its own signed-message object, whole, inside the encryption. Ours is git's, for a signed tag, because the signature is the same format and the layout costs a fixed number of bytes. The JSON object with base64 members was not taken: it makes the envelope a third larger inside every ciphertext.
+
+**What went wrong with that layout elsewhere, and the rule each gives a reader** (`PROTOCOL.md` §4.4):
+
+| What happened | The rule | How it is known |
+|---|---|---|
+| **gitsign** verified a commit or tag as go-git encoded it again, and not its raw bytes. For an object with a header given twice, git read one tree and gitsign's verifier another | The signature is checked over the envelope's line exactly as decrypted, its members are read from those same bytes, and a key given twice is refused | GHSA-7rmh-48mx-2vwc (2026-05-08), read 2026-10-13 |
+| **GitLab** took the signature header to be a commit's last, and counted what followed it as signed, so a signed commit could be altered and still be shown as signed | Each part has one place and nothing is searched for: line 1, then a signature block from line 2 to the first END line, and nothing after it is read | GitLab issue 407252 (2023-04-02), read 2026-10-13 |
+| **git before 2.20** took a commit carrying two OpenPGP signatures: it read the verifier's status lines, where a later one overrode an earlier, and discarded its exit status | One signature, verified against one identity, and the verdict is the verifier's exit status | M. Górny, "Attack on git signature verification via crafting multiple signatures" (2019-01-26), read 2026-10-13 |
+
+None of the three was a flaw in the layout: each was a verifier that read an object differently from its signer.
+
+**Where ours differs, and why:**
+- **The recipient is named in what is signed** (the namespace, and the envelope's `to`), which git has no need of. It is what stops a recipient passing a signed message on to a third box, the flaw age's author names for this order.
+- **The sender's identity document rides in the envelope,** as a JWS may carry its signer's key in its header (RFC 7515 §4.1.3, from memory). The address is its hash, so a recipient checks a sender it has never met without asking the server.
+- **A recipient decrypts before it can verify,** as with every row of the first table that signs inside. What is lost is what S/MIME's text names: a signature that can be checked without the key that decrypts.
 
 ## 4. The rest: one row a decision
 
@@ -140,8 +171,8 @@
 |---|---|---|
 | The address is the SHA-256 of the identity document: a self-certifying name | Tor v3 onion addresses; content-addressed identifiers (IPFS CIDs); Nostr public keys; did:key; SimpleX's capability addresses | review 2026-10-10 |
 | A separate key for signing and for encryption | libsodium calls separate keys "highly recommended". Joint use of one key pair has a proof for the general construction (Thormarker, ePrint 2021/509), of which age's SSH recipient is a variant | review 2026-10-10 |
-| A prekey the identity signs, renewed, with the address unchanged | Signal's signed prekeys; MLS's KeyPackages; Matrix cross-signing | review 2026-10-10 |
-| Registration proves possession of the identity key by a signature | The certificate signing request | review 2026-10-10 |
+| A prekey the box signs, with a key its identity certified, renewed, with the address unchanged | Signal's signed prekeys; MLS's KeyPackages; Matrix cross-signing | review 2026-10-10 |
+| Registration proves possession by two signatures: the identity's certificate for a working key, and a pass minutes old that the working key signs | The certificate signing request, for the first; a fresh, short-lived assertion in place of a challenge, for the second (Part 2, § 1) | review 2026-10-10; §3 |
 | Small-order and non-canonical Ed25519 keys are refused by explicit code | libsodium's practice. Go's `crypto/ed25519` and OpenSSH accept them | review 2026-10-10; §3 |
 | Small-order X25519 points are refused at registration | age itself refuses an all-zero shared secret | review 2026-10-10 |
 | One identity key type is mandatory to implement, the rest optional, and each server lists what it accepts | TLS 1.3's mandatory-to-implement algorithms (RFC 8446 §9.1); JOSE (RFC 7518 §3.1) | from memory; decided 2026-10-12, issue #21, not built |
@@ -154,11 +185,12 @@
 |---|---|---|
 | Standard primitives and nothing home-made: age v1, Ed25519, SHA-256, HMAC-SHA-256, HKDF | The C2SP age specification; RFC 8032; RFC 2104; RFC 5869 | review 2026-10-10 |
 | A signature namespace for each purpose, each naming the box it is about | SSHSIG's own namespace mechanism (OpenSSH `PROTOCOL.sshsig`) | review 2026-10-10 |
-| A signature covers exact bytes, never JSON serialized again | The canonicalization lesson of JWS and XML-DSig | review 2026-10-10 |
+| A signature covers exact bytes, never JSON serialized again | The canonicalization lesson of JWS and XML-DSig, and of git verifiers that checked a rebuilt object (Part 2, § 3) | review 2026-10-10 |
 | The envelope inside carries `from` and `to`, and the recipient refuses a mismatch | Davis, "Defective Sign & Encrypt" (USENIX 2001); Nostr NIP-17's signed seal | review 2026-10-10 |
 | The recipient is bound into the signature | The other half of Davis's fix for composing a signature with encryption | review 2026-10-10 |
 | A keyed hash is HMAC or HKDF, never `hash(secret ‖ …)`; plain SHA-256 only over public inputs | Signal, TLS 1.3, MLS, age, Certificate Transparency and Git's newer object format use SHA-256 the same way | review 2026-10-10; §0 |
-| Every message is padded to a whole number of blocks | Noise §13, padding to hide a payload's length | review 2026-10-10; §4.3a |
+| Every message is padded to a whole number of blocks, with bytes after its signature | Noise §13, padding to hide a payload's length. OpenPGP has a padding packet for the same purpose, which follows a signed message inside the encryption, outside what is signed (RFC 9580 §10.3) | review 2026-10-10; RFC 9580 read 2026-10-13; §4.3a |
+| No ratchet in v1: forward secrecy is per prekey, bounded by how often a box renews | age and OpenPGP have none; Signal, WhatsApp, iMessage and SimpleX ratchet (Part 1). A ratchet is state two parties advance together, which stock tools cannot keep and a box restored from its identity would lose | Part 1's sources; decided 2026-10-13, issue #31; §6.4 |
 
 **Expiry, rollback, retries**
 

@@ -22,7 +22,6 @@ const (
 	CodePassExpired  Code = "pass_expired" // the pass has run out, or runs out too far ahead: sign another, retry
 
 	// 403
-	CodeBadSignature     Code = "bad_signature"
 	CodeUnknownSender    Code = "unknown_sender"     // not registered, or closed
 	CodeSenderRevoked    Code = "sender_revoked"     // YOUR box is revoked
 	CodeSenderNotAllowed Code = "sender_not_allowed" // not on the box's allow list, or on its block list
@@ -62,7 +61,6 @@ var statuses = map[Code]int{
 	CodeWrongRecipientType: http.StatusBadRequest,
 	CodeUnauthorized:       http.StatusUnauthorized,
 	CodePassExpired:        http.StatusUnauthorized,
-	CodeBadSignature:       http.StatusForbidden,
 	CodeUnknownSender:      http.StatusForbidden,
 	CodeSenderRevoked:      http.StatusForbidden,
 	CodeSenderNotAllowed:   http.StatusForbidden,
