@@ -256,14 +256,15 @@ func report(d client.Delivery, now time.Time) string {
 	env := d.Envelope
 	var s strings.Builder
 	s.WriteString("irongall echo box: your message passed every check.\n")
-	fmt.Fprintf(&s, "from: %s (its signature verified, by the identity this address is the SHA-256 of)\n", env.From)
+	fmt.Fprintf(&s, "from: %s (its signature verified, by a working key that the identity this address is the SHA-256 of has certified)\n", env.From)
 	fmt.Fprintf(&s, "to: %s\n", env.To)
 	fmt.Fprintf(&s, "msg_id: %s\n", env.MsgID)
 	fmt.Fprintf(&s, "sent_at: %s\n", env.SentAt.UTC().Format(protocol.TimeLayout))
 	fmt.Fprintf(&s, "received_at: %s\n", now.UTC().Format(protocol.TimeLayout))
 	fmt.Fprintf(&s, "ciphertext_sha256: %s\n", d.ID)
-	fmt.Fprintf(&s, "checked: the sender's identity against its address; the signature, made for this box only; "+
-		"decryption with this box's prekey; the envelope's version, from and to; sent_at within %d days; not a replay\n", protocol.TTL/(24*time.Hour))
+	fmt.Fprintf(&s, "checked: decryption with this box's prekey; the sender's identity, which the message carries, against its address; "+
+		"that identity's certificate for the working key; the signature, made for this box only; "+
+		"the envelope's version, from and to; sent_at within %d days; not a replay\n", protocol.TTL/(24*time.Hour))
 	s.WriteString("Mail to an echo box is readable by whoever runs it.\n")
 	fmt.Fprintf(&s, "body, as JSON: %s\n", env.Body)
 	return s.String()
