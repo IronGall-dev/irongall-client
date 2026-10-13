@@ -1,4 +1,4 @@
-# CLAUDE.md — irongall-client
+# AGENTS.md — irongall-client
 
 🛑 **THIS REPO IS PUBLIC. Every push publishes.** Never commit secrets, private keys, tokens, or internal hostnames. Never copy code from the server repo, `IronGall-dev/irongall-server`: it is AGPL-3.0-or-later and this repo is Apache-2.0, so code moves from here to there and never back. Never copy text from a private note without a decision to publish it.
 
