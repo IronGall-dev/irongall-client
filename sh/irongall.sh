@@ -265,21 +265,26 @@ ig_listcheck(){ # <address> <identity document> <list> <signature> → the list'
   done
   echo "${L[2]}"
 }
-ig_listed(){ # <address> <certificate serial> → 0 if the list of that address's revoked certificates this box holds names the serial: peers/<address>/revoked-certs.txt and its .sig beside the pinned identity, or revoked-certs.txt for this box's own. It is checked again each time it is read. 1 if none is kept, or the one kept does not name it. 3 if one is kept and does not verify: a fault of this box, never a quiet "nothing revoked"
-  local d="$IG/peers/$1/identity.doc" f="$IG/peers/$1/revoked-certs.txt" a b
-  [ "$1" != "$(cat "$IG/address" 2> /dev/null)" ] || { d="$IG/identity.doc"; f="$IG/revoked-certs.txt"; }
+ig_listkept(){ # <address> → the version of the list of that address's revoked certificates this box holds, checked again as it is read, with the list left in $IG/kept.list. It is kept as the record that carries it, one line of JSON {identity, revoked_certificates, revoked_certificates_signature}: peers/<address>/revoked-certs.json beside the pinned identity, or revoked-certs.json for this box's own. 1 if none is kept. 3 if one is kept and does not verify under the identity this box holds for the address: a fault of this box, never a quiet "nothing revoked"
+  local d="$IG/peers/$1/identity.doc" f="$IG/peers/$1/revoked-certs.json"
+  [ "$1" != "$(cat "$IG/address" 2> /dev/null)" ] || { d="$IG/identity.doc"; f="$IG/revoked-certs.json"; }
   [ -e "$f" ] || return 1
-  ig_listcheck "$1" "$d" "$f" "$f.sig" > /dev/null || return 3
-  while IFS=- read -r a b; do [ "$2" -ge "$a" ] && [ "$2" -le "${b:-$a}" ] && return 0; done < <(tail -n +4 "$f")
+  jq -er '.revoked_certificates | strings' "$f" 2> /dev/null | base64 -d > "$IG/kept.list" 2> /dev/null && jq -er '.revoked_certificates_signature | strings' "$f" 2> /dev/null | base64 -d > "$IG/kept.lsig" 2> /dev/null &&
+    ig_listcheck "$1" "$d" "$IG/kept.list" "$IG/kept.lsig" || return 3
+}
+ig_listed(){ # <address> <certificate serial> → 0 if the list this box holds for the address names the serial. 1 if none is kept, or the one kept does not name it. 3 if one is kept and does not verify
+  local a b
+  ig_listkept "$1" > /dev/null || return
+  while IFS=- read -r a b; do [ "$2" -ge "$a" ] && [ "$2" -le "${b:-$a}" ] && return 0; done < <(tail -n +4 "$IG/kept.list")
   return 1
 }
 ig_keeplist(){ # <address> <identity document> <list> <signature> → keeps the list, if it verifies and its version is above the one this box holds: it is the whole list each time, and the highest version stands. One that does not verify, or is no newer, changes nothing. 1 only for a fault of this box
-  local d="$IG/peers/$1/identity.doc" f="$IG/peers/$1/revoked-certs.txt" v h
-  [ "$1" != "$(cat "$IG/address" 2> /dev/null)" ] || { d="$IG/identity.doc"; f="$IG/revoked-certs.txt"; }
+  local f="$IG/peers/$1/revoked-certs.json" v h
+  [ "$1" != "$(cat "$IG/address" 2> /dev/null)" ] || f="$IG/revoked-certs.json"
   v=$(ig_listcheck "$1" "$2" "$3" "$4") || return 0
-  if [ -e "$f" ]; then h=$(ig_listcheck "$1" "$d" "$f" "$f.sig") || return 1; [ "$v" -gt "$h" ] || return 0; fi
-  [ "$f" = "$IG/revoked-certs.txt" ] || ig_meet "$1" "$2" || return 1
-  cp "$4" "$f.sig" && cp "$3" "$f"      # the signature first: a list with no signature beside it is a fault when it is read, and a signature with no list is nothing
+  h=$(ig_listkept "$1"); case $? in 0) [ "$v" -gt "$h" ] || return 0 ;; 1) ;; *) return 1 ;; esac
+  [ "$f" = "$IG/revoked-certs.json" ] || ig_meet "$1" "$2" || return 1
+  ig_b64 "$2" > "$f.i" && ig_b64 "$3" > "$f.l" && ig_b64 "$4" > "$f.g" && jq -cn --rawfile i "$f.i" --rawfile l "$f.l" --rawfile g "$f.g" '{identity:$i, revoked_certificates:$l, revoked_certificates_signature:$g}' > "$f.new" && mv "$f.new" "$f" && rm -f "$f.i" "$f.l" "$f.g"      # one file, moved into place whole: a list is never kept without the signature that goes with it
 }
 ig_keep(){ # <address> <its identity document> <signature> → the revocation, kept for good: called only once ig_revcheck took it. A revoked address stays revoked
   if [ "$1" = "$(cat "$IG/address" 2> /dev/null)" ]; then cp "$3" "$IG/revoked.sig"; else ig_meet "$1" "$2" && cp "$3" "$IG/peers/$1/revoke.sig"; fi

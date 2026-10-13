@@ -634,11 +634,14 @@ as P; mkdir -p $IG/peers/$VA; OK1=$VEC/revoked/ok-one-range; OK7=$VEC/revoked/ok
 [ "$(ig_listcheck "$VA" $VEC/a/identity.doc $OK1.txt $OK1.sig)" = 1 ] && [ "$(ig_listcheck "$VA" $VEC/a/identity.doc $OK1.txt $OK1.sha256.sig)" = 1 ] && [ "$(ig_listcheck "$VA" $VEC/a/identity.doc $OK7.txt $OK7.sig)" = 7 ] || bad "a vector that is a list is not taken"
 for v in $VEC/revoked/bad-*.txt; do ! ig_listcheck "$VA" $VEC/a/identity.doc "$v" "${v%.txt}.sig" > /dev/null || bad "vector ${v##*/} is taken as a list of A's revoked certificates"; done
 ! ig_listcheck "$(cat $VEC/b/address)" $VEC/b/identity.doc $OK1.txt $OK1.sig > /dev/null && ! ig_listcheck "$VA" $VEC/b/identity.doc $OK1.txt $OK1.sig > /dev/null || bad "A's list is taken for another box, or under another identity"
-cp $VEC/a/identity.doc $IG/peers/$VA/identity.doc; cp $OK7.txt $IG/peers/$VA/revoked-certs.txt; cp $OK7.sig $IG/peers/$VA/revoked-certs.txt.sig
+rec(){ jq -cn --arg i "$(ig_b64 "$1")" --arg l "$(ig_b64 "$2")" --arg g "$(ig_b64 "$3")" '{identity:$i, revoked_certificates:$l, revoked_certificates_signature:$g}'; }      # <identity document> <list> <signature> → the record that carries a list, which is how a box keeps one
+kept(){ jq -r .revoked_certificates "$1" | base64 -d; }      # <kept record> → the list in it
+cp $VEC/a/identity.doc $IG/peers/$VA/identity.doc; rec $VEC/a/identity.doc $OK7.txt $OK7.sig > $IG/peers/$VA/revoked-certs.json
 for n in 2 5 7 9 11 999999999999999999; do ig_listed "$VA" $n || bad "serial $n is not read as listed"; done
 for n in 1 3 4 10 12 999999999999999998; do ig_listed "$VA" $n; [ $? = 1 ] || bad "serial $n is read as listed"; done
-printf '12\n' >> $IG/peers/$VA/revoked-certs.txt; ig_listed "$VA" 2; [ $? = 3 ] || bad "a kept list that does not verify is not a fault"
-rm -f $IG/peers/$VA/identity.doc $IG/peers/$VA/revoked-certs.txt $IG/peers/$VA/revoked-certs.txt.sig; rmdir $IG/peers/$VA
+rec $VEC/a/identity.doc $OK7.txt $OK1.sig > $IG/peers/$VA/revoked-certs.json; ig_listed "$VA" 2; [ $? = 3 ] || bad "a kept list under another list's signature is not a fault"
+echo '{}' > $IG/peers/$VA/revoked-certs.json; ig_listed "$VA" 2; [ $? = 3 ] || bad "a kept file that holds no list is not a fault"
+rm -f $IG/peers/$VA/identity.doc $IG/peers/$VA/revoked-certs.json; rmdir $IG/peers/$VA
 ok "a list of revoked certificates is the identity's own signature over exact text, in either hash: a malformed one, a working key's and another box's are not; a kept list names its serials exactly at 18 digits, and one that no longer verifies is a fault"
 for X in CA CB CC CD; do as $X; ig_init $NOPQ > /dev/null || bad "init $X"; eval "$X=\$(cat \$IG/address)"; done
 mklist(){ # <box> <version> <its lines> <key file> → $W/<box><version>.list, .sig and .json: a list of the box's revoked certificates and its record, made with ssh-keygen. The script applies a list and does not make one
@@ -678,8 +681,8 @@ mklist CB 1 1-2 $IG/identity; ig_api PUT "/v1/$CB/revocations" $W/CB1.json > /de
 thief "$CA" 00000000-0000-4000-8000-00000000c002 "signed by the thief, after the list"
 as CB; printf 'under the new certificate' | ig_send "$CA" || bad "CB's send under its new certificate"
 as CA; n0=$(grep -c "^GET /v1/$CB/revocations\$" $SRV/log || true); recv
-[ "$(printf '%s\n' "$RECV_OUT" | jq -r .body)" = "under the new certificate" ] && [ "$(printf '%s\n' "$RECV_ERR" | grep -c "^REFUSED .*: certificate_revoked: ")" = 1 ] && [ $(($(grep -c "^GET /v1/$CB/revocations\$" $SRV/log) - n0)) = 1 ] && cmp -s $W/CB2.list $IG/peers/$CB/revoked-certs.txt && [ ! -e $IG/peers/$CB/revoke.sig ] &&
-  ok "mail signed under a certificate its sender's identity revoked is REFUSED (certificate_revoked), and mail under its new one is delivered: one lookup for the sender, the list kept, the address not revoked" || bad "after the list: $RECV_OUT / $RECV_ERR"
+[ "$(printf '%s\n' "$RECV_OUT" | jq -r .body)" = "under the new certificate" ] && [ "$(printf '%s\n' "$RECV_ERR" | grep -c "^REFUSED .*: certificate_revoked: ")" = 1 ] && [ $(($(grep -c "^GET /v1/$CB/revocations\$" $SRV/log) - n0)) = 1 ] && kept $IG/peers/$CB/revoked-certs.json | cmp -s - $W/CB2.list && [ "$(wc -l < $IG/peers/$CB/revoked-certs.json)" = 1 ] && [ ! -e $IG/peers/$CB/revoke.sig ] &&
+  ok "mail signed under a certificate its sender's identity revoked is REFUSED (certificate_revoked), and mail under its new one is delivered: one lookup for the sender, the list kept as one record, the address not revoked" || bad "after the list: $RECV_OUT / $RECV_ERR"
 thief "$CA" 00000000-0000-4000-8000-00000000c003 "signed by the thief, the list hidden"
 REVMODE="hide $CB"; recv; REVMODE=
 [ -z "$RECV_OUT" ] && printf '%s' "$RECV_ERR" | grep -q "^REFUSED .*: certificate_revoked: " && ok "a kept list holds against a server that hides it and delivers more of what that certificate signed" || bad "hidden list: $RECV_OUT / $RECV_ERR"
@@ -692,11 +695,11 @@ grep -q "signed under a certificate its identity has revoked" err.txt && [ ! -e 
 # an older list never replaces a newer one, whatever a server shows. And a kept list that no longer verifies is a fault of the box, never a quiet "nothing revoked"
 as CB; printf 'another, for a second lookup' | ig_send "$CA" || bad "CB's send"
 as CA; cp $W/CB1.json $SRV/shown.json; REVMODE="show $CB"; recv; REVMODE=
-[ "$(printf '%s\n' "$RECV_OUT" | awk NF | wc -l)" = 1 ] && cmp -s $W/CB2.list $IG/peers/$CB/revoked-certs.txt || bad "an older list replaced a newer one: $RECV_OUT / $RECV_ERR"
+[ "$(printf '%s\n' "$RECV_OUT" | awk NF | wc -l)" = 1 ] && kept $IG/peers/$CB/revoked-certs.json | cmp -s - $W/CB2.list || bad "an older list replaced a newer one: $RECV_OUT / $RECV_ERR"
 as CB; printf 'held while the kept list is broken' | ig_send "$CA" || bad "CB's send"
-as CA; cp $IG/peers/$CB/revoked-certs.txt $W/kept.list; printf '3\n' >> $IG/peers/$CB/revoked-certs.txt; q0=$(ls $IG/quarantine | wc -l); recv
+as CA; cp $IG/peers/$CB/revoked-certs.json $W/kept.json; rec $IG/peers/$CB/identity.doc $W/CB1.list $W/CB2.sig > $IG/peers/$CB/revoked-certs.json; q0=$(ls $IG/quarantine | wc -l); recv      # the kept list swapped for another, under a signature that is not its own
 [ $RECV_RC != 0 ] && [ -z "$RECV_OUT" ] && [ "$(box_count "$CA")" = 1 ] && [ "$(ls $IG/quarantine | wc -l)" = "$q0" ] && printf '%s' "$RECV_ERR" | grep -q "does not verify" || bad "a broken kept list: rc $RECV_RC, $RECV_OUT / $RECV_ERR"
-cp $W/kept.list $IG/peers/$CB/revoked-certs.txt; recv; [ $RECV_RC = 0 ] && [ "$(printf '%s\n' "$RECV_OUT" | awk NF | wc -l)" = 1 ] &&
+cp $W/kept.json $IG/peers/$CB/revoked-certs.json; recv; [ $RECV_RC = 0 ] && [ "$(printf '%s\n' "$RECV_OUT" | awk NF | wc -l)" = 1 ] &&
   ok "an older list never replaces a newer one, whatever a server shows; a kept list that no longer verifies stops the drain as a fault of the box, with the mail still on the server" || bad "after the list was put back: $RECV_ERR"
 # a box whose CURRENT certificate is listed: the server takes no pass from it and no mail for it, until it publishes under a new one
 as CD; mklist CD 1 1 $IG/identity; ig_api PUT "/v1/$CD/revocations" $W/CD1.json > /dev/null || bad "CD's list: $(ig_code)"

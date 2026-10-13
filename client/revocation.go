@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -155,37 +156,42 @@ func (b *Box) lookupRevocation(ctx context.Context, a protocol.Address) (bool, e
 }
 
 // revokedCertsFile is where the list of a's revoked certificates is kept:
-// for a peer, beside its pinned identity; for this box, at its root.
+// for a peer, beside its pinned identity; for this box, at its root. It is
+// one file, the record that carries the list (PROTOCOL.md §6.3): the
+// identity document, the list and its signature, as one line of JSON. A list
+// and its signature in two files could be left one new and one old, a pair
+// that verifies never again.
 func (b *Box) revokedCertsFile(a protocol.Address) string {
 	if a == b.id.Address() {
-		return b.path("revoked-certs.txt")
+		return b.path("revoked-certs.json")
 	}
-	return b.path("peers", a.String(), "revoked-certs.txt")
+	return b.path("peers", a.String(), "revoked-certs.json")
 }
 
 // revokedCerts returns the list of a's revoked certificates this box holds,
 // or nil. Like a kept revocation it is checked again each time it is read: a
 // file that no longer verifies is an error, never a quiet "nothing revoked".
 func (b *Box) revokedCerts(a protocol.Address) (*protocol.RevokedCertificates, error) {
-	name := b.revokedCertsFile(a)
-	statement, err := os.ReadFile(name) //nolint:gosec // a path inside the box's own directory
+	raw, err := os.ReadFile(b.revokedCertsFile(a)) //nolint:gosec // a path inside the box's own directory
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	sig, err := os.ReadFile(name + ".sig") //nolint:gosec // a path inside the box's own directory
-	if err != nil {
-		return nil, err
+	var rec protocol.Revocations
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		return nil, fmt.Errorf("the list of revoked certificates kept for %s is not a record: %w", a, err)
 	}
+	// Checked under the identity this box holds for the address, whatever
+	// document the file carries.
 	doc := b.id.Document()
 	if a != b.id.Address() {
 		if doc, err = os.ReadFile(b.path("peers", a.String(), "identity.doc")); err != nil {
 			return nil, err
 		}
 	}
-	list, err := protocol.VerifyRevokedCertificates(a, doc, statement, sig)
+	list, err := protocol.VerifyRevokedCertificates(a, doc, rec.RevokedCertificates, rec.RevokedCertificatesSignature)
 	if err != nil {
 		return nil, fmt.Errorf("the list of revoked certificates kept for %s no longer verifies: %w", a, err)
 	}
@@ -217,13 +223,13 @@ func (b *Box) keepRevokedCerts(a protocol.Address, doc, statement, sig []byte) e
 			return err
 		}
 	}
-	// The signature first: a list with no signature beside it is an error
-	// when it is read, and a signature with no list is nothing.
-	name := b.revokedCertsFile(a)
-	if err := writeFile(name+".sig", sig); err != nil {
+	// One file, moved into place whole: the list is never kept without the
+	// signature that goes with it.
+	line, err := json.Marshal(protocol.Revocations{Identity: doc, RevokedCertificates: statement, RevokedCertificatesSignature: sig})
+	if err != nil {
 		return err
 	}
-	return writeFile(name, statement)
+	return writeFile(b.revokedCertsFile(a), append(line, '\n'))
 }
 
 // RevokeEarlier revokes every certificate this box's identity made before
