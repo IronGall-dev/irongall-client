@@ -175,6 +175,11 @@ func (s *Server) pass(w http.ResponseWriter, r *http.Request, identity []byte, u
 		problem(w, protocol.CodeUnauthorized, "no identity to check the pass against")
 		return false
 	}
+	// Run out, or running out too far ahead: either way the box signs another.
+	if p.NotAfter.After(s.now().Add(protocol.MaxPassLifetime)) {
+		problem(w, protocol.CodePassExpired, "the pass runs out too far ahead")
+		return false
+	}
 	cert, err := p.Verify(id, r.Host, s.now())
 	switch {
 	case errors.Is(err, protocol.ErrPassExpired):
