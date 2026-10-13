@@ -46,6 +46,7 @@ type box struct {
 	cert      *protocol.Certificate // the one the current statement is signed under: passes are taken under it only
 	account   string                // the account it is in, or ""
 	senders   []string              // the sender key types it declared with its current prekey
+	revoked   []byte                // the identity's revocation, once the box is revoked: it is gone for good
 	messages  map[string]*message
 	order     []string // ids, oldest first
 }
@@ -64,6 +65,8 @@ func New(t testing.TB, now func() time.Time) *Server {
 	mux.HandleFunc("POST /v1/{addr}", s.send)
 	mux.HandleFunc("GET /v1/{addr}/identity", s.identity)
 	mux.HandleFunc("PUT /v1/{addr}/prekey", s.newPrekey)
+	mux.HandleFunc("PUT /v1/{addr}/revocations", s.revoke)
+	mux.HandleFunc("GET /v1/{addr}/revocations", s.revocations)
 	mux.HandleFunc("GET /v1/{addr}/messages", s.owner(s.list))
 	mux.HandleFunc("GET /v1/{addr}/messages/{id}", s.owner(s.fetch))
 	mux.HandleFunc("DELETE /v1/{addr}/messages/{id}", s.owner(s.ack))
@@ -229,6 +232,10 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if b := s.boxes[a]; b != nil {
+		if b.revoked != nil {
+			problem(w, protocol.CodeRevoked, "this box is revoked")
+			return
+		}
 		if bytes.Equal(b.statement, req.Prekey) && bytes.Equal(b.signature, req.PrekeySignature) {
 			WriteJSON(w, http.StatusOK, struct{}{})
 			return
@@ -253,7 +260,58 @@ func (s *Server) identity(w http.ResponseWriter, r *http.Request) {
 		problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
 		return
 	}
+	if b.revoked != nil {
+		problem(w, protocol.CodeRevoked, "this box is revoked")
+		return
+	}
 	WriteJSON(w, http.StatusOK, protocol.IdentityResponse{Identity: b.identity, Prekey: b.statement, PrekeySignature: b.signature, SenderKeyTypes: b.senders})
+}
+
+// revoke takes a revocation of a box this server has: the identity's own
+// signature over the fixed statement, with no pass. The box is gone for good
+// and its mail with it. A second one changes nothing.
+func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
+	a, ok := pathAddr(w, r)
+	var req protocol.Revocations
+	if !ok || !decode(w, r, &req) {
+		return
+	}
+	if _, err := protocol.VerifyRevocation(a, req.Identity, req.Revocation); err != nil {
+		problem(w, protocol.CodeBadRevocation, "not a revocation of this address")
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b := s.boxes[a]
+	switch {
+	case b == nil:
+		problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
+	case b.revoked != nil:
+		WriteJSON(w, http.StatusOK, struct{}{})
+	default:
+		b.revoked, b.messages, b.order = req.Revocation, map[string]*message{}, nil
+		WriteJSON(w, http.StatusCreated, struct{}{})
+	}
+}
+
+// revocations answers with what is held about an address: its revocation,
+// which proves itself, or not_revoked.
+func (s *Server) revocations(w http.ResponseWriter, r *http.Request) {
+	a, ok := pathAddr(w, r)
+	if !ok {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b := s.boxes[a]
+	switch {
+	case b == nil:
+		problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
+	case b.revoked == nil:
+		problem(w, protocol.CodeNotRevoked, "no revocation of this address is held here")
+	default:
+		WriteJSON(w, http.StatusOK, protocol.Revocations{Identity: b.identity, Revocation: b.revoked})
+	}
 }
 
 func (s *Server) newPrekey(w http.ResponseWriter, r *http.Request) {
@@ -267,6 +325,10 @@ func (s *Server) newPrekey(w http.ResponseWriter, r *http.Request) {
 	b := s.boxes[a]
 	if b == nil {
 		problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
+		return
+	}
+	if b.revoked != nil {
+		problem(w, protocol.CodeRevoked, "this box is revoked")
 		return
 	}
 	p, cert, err := s.verifyPrekey(b.identity, req.Prekey, req.PrekeySignature)
@@ -312,12 +374,19 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		problem(w, protocol.CodeUnknownSender, "the sender is not registered")
 		return
 	}
+	if sender.revoked != nil {
+		problem(w, protocol.CodeSenderRevoked, "the sending box is revoked")
+		return
+	}
 	if !s.pass(w, r, sender.identity, sender.cert) {
 		return
 	}
 	switch {
 	case rcpt == nil:
 		problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
+		return
+	case rcpt.revoked != nil:
+		problem(w, protocol.CodeRevoked, "this box is revoked")
 		return
 	case req.PrekeySerial != nil && *req.PrekeySerial != rcpt.prekey.Serial:
 		problem(w, protocol.CodeStalePrekey, "a newer prekey exists")
@@ -354,6 +423,10 @@ func (s *Server) owner(h func(http.ResponseWriter, *http.Request, *box)) http.Ha
 		b := s.boxes[a]
 		if b == nil {
 			problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
+			return
+		}
+		if b.revoked != nil {
+			problem(w, protocol.CodeRevoked, "this box is revoked")
 			return
 		}
 		if s.pass(w, r, b.identity, b.cert) {

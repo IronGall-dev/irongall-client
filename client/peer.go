@@ -25,10 +25,17 @@ import (
 //     namespace, and name the peer.
 //   - Neither its serial nor its certificate's may be lower than one already
 //     seen (rollback), and it may not have expired.
+//   - A peer this box holds a revocation of is refused before anything is
+//     asked: a [RevokedError], whatever the server now serves for it.
 //
 // The identity is pinned, and the serials recorded, only after every check
 // passed: nothing is kept of a peer whose statement did not verify.
 func (b *Box) Resolve(ctx context.Context, peer protocol.Address) (*protocol.Prekey, error) {
+	if held, err := b.revoked(peer); err != nil {
+		return nil, err
+	} else if held {
+		return nil, &RevokedError{Address: peer}
+	}
 	var ir protocol.IdentityResponse
 	if _, err := b.call(ctx, http.MethodGet, "/v1/"+peer.String()+"/identity", nil, nil, &ir); err != nil {
 		return nil, err

@@ -437,20 +437,11 @@ func TestFlushNeverStopsAtABadEntry(t *testing.T) {
 	if _, err := a.Send(ctx, b.Address(), "fails once"); err == nil {
 		t.Fatal("the send should have failed")
 	}
-	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if r.Method == http.MethodPost && r.URL.Path == "/v1/"+c.Address().String() {
-			code := protocol.CodeRevoked
-			w.Header().Set("Content-Type", protocol.ProblemContentType)
-			w.WriteHeader(code.Status())
-			_ = json.NewEncoder(w).Encode(protocol.Problem{Code: code, Status: code.Status()})
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+	e.srv.SetMiddle(nil)
+	revoke(t, e, c) // revoked for good, with the revocation to show for it
 	if _, err := a.Send(ctx, c.Address(), "to a revoked box"); err == nil || !strings.Contains(err.Error(), "outbox/failed") {
 		t.Fatalf("send to a revoked box: %v", err)
 	}
-	e.srv.SetMiddle(nil)
 
 	rs, err := a.Flush(ctx)
 	if len(rs) != 1 || err == nil || !strings.Contains(err.Error(), "no_such_mailbox") {

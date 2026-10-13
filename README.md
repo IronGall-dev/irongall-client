@@ -68,6 +68,7 @@ A box is the directory `~/.config/irongall/default`: `$IRONGALL_BOX` names anoth
 - **Never send a message a second time.** One the server has not taken waits in `outbox/`, and `irongall flush` posts it again unchanged.
 - **Delivery is at least once.** De-duplicate on `from` + `msg_id`.
 - **The box keeps mail in plaintext and never prunes it:** `inbox/`, `sent/`, `quarantine/`. Delete a file to forget a message.
+- **A stolen identity is ended with `irongall revoke <address>`, for good.** Nothing undoes it, and the address written out in full is the confirmation. `irongall revocation` prints a record that does the same later with no box and no key (`irongall revoke <address> --record <file>`): keep it somewhere other than the box. `irongall revoked <file>` takes a record of another box that someone handed you (`PROTOCOL.md` §6.3).
 - **Limits are the server's.** Its `llms.txt` states them, and a refusal names the limit and the seconds to wait.
 
 Forward secrecy, padding, accounts and the rest: `PROTOCOL.md`.
@@ -96,6 +97,7 @@ A refused message goes to `quarantine/` and prints one line, `REFUSED <id>: <cod
 | `unsupported_key_type` | the sender's identity is of a key type this client does not verify |
 | `bad_signature` | it is not signed for this box by a working key the sender's identity certified, under a certificate that holds now |
 | `reattributed` | the envelope's `from` is not the address of the identity that signed it, its `to` is not this box, or the server names another sender |
+| `revoked` | this box holds a revocation of the sender that verifies: nothing signed for that address is taken, whenever it was signed |
 | `stale` | its `sent_at` is older than 33 days |
 | `future` | its `sent_at` is more than an hour ahead of this machine's clock |
 | `replay` | this ciphertext was already received |
@@ -152,7 +154,8 @@ What it lacks against the Go client, though it gives the Go client's verdict on 
 - drop or delay mail;
 - keep serving a box's previous prekey until it expires, 33 days after it was signed;
 - list mail from senders it made up, which costs a box one bounded run;
-- refuse a box's renewals, which `recv` reports with exit `3`.
+- refuse a box's renewals, which `recv` reports with exit `3`;
+- keep a box's revocation from a peer that has never seen it. It cannot make one: a client checks every revocation itself, and takes "revoked" on no server's word.
 
 Cloudflare terminates TLS for irongall.dev today, so it can do the same. Neither can read or forge mail. In full: `PROTOCOL.md` §9.
 
@@ -183,10 +186,11 @@ go test ./sh -v                                 # the stock-tools client (sh/tes
 
 | Where | What it shows |
 |---|---|
-| `protocol/`, `testdata/vectors/` | Every identity, certificate, prekey statement, pass, envelope and decrypted message is accepted or refused as the vectors name it |
+| `protocol/`, `testdata/vectors/` | Every identity, certificate, prekey statement, pass, revocation, envelope and decrypted message is accepted or refused as the vectors name it |
 | `client/forgery_test.go` | Each forgery the operator can make is refused |
 | `client/failure_test.go` | A failure never loses mail, and a retry is never delivered twice |
-| `client/hostile_test.go` | A refusal never carries the sender's text, a hostile server costs one bounded run, and a box asks the server nothing about a sender |
+| `client/hostile_test.go` | A refusal never carries the sender's text, a hostile server costs one bounded run, and a box never asks the server who a sender is |
+| `client/revocation_test.go` | A server's word revokes nothing, a revocation that verifies is kept for good, and mail from a revoked box is refused whenever it was signed |
 | `client/pad_test.go`, `client/renew_test.go` | Every send is padded; `recv` renews the prekey and deletes retired ones |
 | `sh/` | The script gives the same verdicts: against a forging server, on every vector, and with the Go client |
 

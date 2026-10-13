@@ -17,6 +17,7 @@ const (
 	CodeUnsupportedKeyType Code = "unsupported_key_type" // an identity of a key type this server does not register
 	CodeNotAge             Code = "not_age"              // the ciphertext is not an age file
 	CodeWrongRecipientType Code = "wrong_recipient_type" // not exactly one stanza of a live prekey type
+	CodeBadRevocation      Code = "bad_revocation"       // not a revocation of the address: the document does not hash to it, or the signature is not its identity's own
 
 	// 401
 	CodeUnauthorized Code = "unauthorized" // no pass, or one that is not this box's, for this server, under its current certificate
@@ -32,6 +33,7 @@ const (
 	// 404
 	CodeNoSuchMailbox Code = "no_such_mailbox" // never registered, or closed
 	CodeNoSuchMessage Code = "no_such_message" // acked or expired: treat it as gone
+	CodeNotRevoked    Code = "not_revoked"     // no revocation of this address is held here
 
 	// 409
 	CodeConflict      Code = "conflict"       // a replay that is not byte-identical
@@ -62,6 +64,7 @@ var statuses = map[Code]int{
 	CodeUnsupportedKeyType: http.StatusBadRequest,
 	CodeNotAge:             http.StatusBadRequest,
 	CodeWrongRecipientType: http.StatusBadRequest,
+	CodeBadRevocation:      http.StatusBadRequest,
 	CodeUnauthorized:       http.StatusUnauthorized,
 	CodePassExpired:        http.StatusUnauthorized,
 	CodeUnknownSender:      http.StatusForbidden,
@@ -71,6 +74,7 @@ var statuses = map[Code]int{
 	CodeAdoptKeyRefused:    http.StatusForbidden,
 	CodeNoSuchMailbox:      http.StatusNotFound,
 	CodeNoSuchMessage:      http.StatusNotFound,
+	CodeNotRevoked:         http.StatusNotFound,
 	CodeConflict:           http.StatusConflict,
 	CodeStalePrekey:        http.StatusConflict,
 	CodePrekeyExpired:      http.StatusConflict,

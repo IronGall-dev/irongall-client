@@ -115,10 +115,12 @@ func TestAnAPIErrorMarksAndBoundsTheServersWords(t *testing.T) {
 	}
 }
 
-// A server can list mail from senders it made up. A box asks the server
-// nothing about a sender, since a message carries what proves it, and keeps
+// A server can list mail from senders it made up. A box never asks the
+// server who a sender is, since a message carries what proves it, and keeps
 // nothing of one whose mail did not verify: peers/ holds only senders that
-// signed something this box delivered.
+// signed something this box delivered. The one thing it asks about a sender
+// is whether a revocation of it exists, and only once that sender's
+// signature has verified: a sender a server made up costs no call at all.
 func TestMadeUpSendersLeaveNothingInPeers(t *testing.T) {
 	e := newEnv(t)
 	a, b, o := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
@@ -136,10 +138,16 @@ func TestMadeUpSendersLeaveNothingInPeers(t *testing.T) {
 		line := e.line(a.Identity().Document(), a.Address(), b.Address(), strconv.Itoa(i))
 		e.seal(b, madeUp, line, sign(t, worker(t, o), line, b.Address()))
 	}
-	asked := 0
+	asked, lookups, madeUp := 0, 0, 0
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		if strings.HasSuffix(r.URL.Path, "/identity") {
 			asked++
+		}
+		if strings.HasSuffix(r.URL.Path, "/revocations") {
+			lookups++
+		}
+		if strings.HasPrefix(r.URL.Path, "/v1/ee") {
+			madeUp++
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -154,6 +162,9 @@ func TestMadeUpSendersLeaveNothingInPeers(t *testing.T) {
 	}
 	if asked != 0 {
 		t.Errorf("the box asked the server for an identity %d times while receiving", asked)
+	}
+	if lookups != 1 || madeUp != 0 {
+		t.Errorf("%d lookups of a revocation, want one, for the sender whose signature verified; %d calls named a sender the server made up", lookups, madeUp)
 	}
 	pinned, _ := os.ReadDir(filepath.Join(b.Dir(), "peers"))
 	if len(pinned) != 1 || pinned[0].Name() != a.Address().String() {

@@ -16,9 +16,11 @@ func ProfileNamespace(b Address) string { return "irongall-profile-v1:" + b.Stri
 // RevokeNamespace is the namespace of box a's revocation.
 func RevokeNamespace(a Address) string { return "irongall-revoke-v1:" + a.String() }
 
-// RevocationStatement is the fixed text that revokes box a forever. The server
-// rebuilds it from the URL, so it can be signed in advance and kept apart from
-// the identity key.
+// RevocationStatement is the fixed text that revokes box a forever. Whoever
+// checks a revocation rebuilds it from the address, so it can be signed in
+// advance and kept apart from the identity key. It carries no date, no reason
+// and no number, and it never changes: a copy signed years ago still
+// verifies.
 func RevocationStatement(a Address) []byte {
 	return []byte("irongall-revoke-v1\n" + a.String() + "\n")
 }

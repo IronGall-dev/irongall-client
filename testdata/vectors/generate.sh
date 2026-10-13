@@ -105,6 +105,19 @@ under c-work c/work-cert.pub "irongall-prekey-v1:$C" < c/prekey-1.txt > c/prekey
 printf 'irongall-revoke-v1\n%s\n' "$A" > a/revoke.txt
 sign a "irongall-revoke-v1:$A" < a/revoke.txt > a/revoke.sig
 
+# Revocations. A's again with the other hash SSHSIG allows, and C's, by a P-256 identity: an ECDSA
+# signature differs each time it is made, so C's is made once and kept. Then signatures every
+# implementation must refuse as a revocation of box A: by a working key under A's own certificate, by
+# another box's identity, in another namespace, and A's signature over the revocation of another box.
+mkdir -p revoke
+sign a "irongall-revoke-v1:$A" -O hashalg=sha256 < a/revoke.txt > a/revoke.sha256.sig
+printf 'irongall-revoke-v1\n%s\n' "$C" > c/revoke.txt
+[ -e c/revoke.sig ] || sign c "irongall-revoke-v1:$C" < c/revoke.txt > c/revoke.sig
+under a-work a/work-cert.pub "irongall-revoke-v1:$A" < a/revoke.txt > revoke/bad-by-a-working-key.sig
+sign b "irongall-revoke-v1:$A" < a/revoke.txt > revoke/bad-by-another-identity.sig
+sign a "irongall-prekey-v1:$A" < a/revoke.txt > revoke/bad-another-namespace.sig
+printf 'irongall-revoke-v1\n%s\n' "$B" | sign a "irongall-revoke-v1:$B" > revoke/bad-of-another-box.sig
+
 # A pass of box A for a server it calls irongall.example, good for ten minutes from NOW, and the header it travels in.
 printf 'irongall-pass-v1\n%s\nirongall.example\n2026-10-10T00:10:00Z\n' "$A" > a/pass.txt
 under a-work a/work-cert.pub "irongall-pass-v1:$A" < a/pass.txt > a/pass.sig

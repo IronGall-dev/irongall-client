@@ -158,10 +158,10 @@ func TestParseTime(t *testing.T) {
 
 func TestCodes(t *testing.T) {
 	codes := []Code{
-		CodeBadRequest, CodeBadAddress, CodeBadEncoding, CodeIdentityMismatch, CodeBadKey, CodeUnsupportedKeyType, CodeNotAge, CodeWrongRecipientType,
+		CodeBadRequest, CodeBadAddress, CodeBadEncoding, CodeIdentityMismatch, CodeBadKey, CodeUnsupportedKeyType, CodeNotAge, CodeWrongRecipientType, CodeBadRevocation,
 		CodeUnauthorized, CodePassExpired,
 		CodeUnknownSender, CodeSenderRevoked, CodeSenderNotAllowed, CodeSenderKeyType, CodeAdoptKeyRefused,
-		CodeNoSuchMailbox, CodeNoSuchMessage,
+		CodeNoSuchMailbox, CodeNoSuchMessage, CodeNotRevoked,
 		CodeConflict, CodeStalePrekey, CodePrekeyExpired,
 		CodeRevoked, CodeTooLarge,
 		CodeRateLimited, CodePairFull, CodeMailboxFull,

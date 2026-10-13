@@ -576,3 +576,98 @@ func TestFlagsAreWrittenWithTwoDashes(t *testing.T) {
 		}
 	}
 }
+
+// revocation prints a record and publishes nothing; revoke publishes one,
+// for this box only when its address is written out in full, or from a
+// record with no box at all; revoked keeps a record someone handed over.
+func TestRevocationCommands(t *testing.T) {
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	opt := client.Options{Base: srv.URL}
+	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("IRONGALL_BASE", srv.URL)
+	cmd := func(box *client.Box, name string, args ...string) (string, string, error) {
+		t.Helper()
+		dir := t.TempDir() // no box here
+		if box != nil {
+			dir = box.Dir()
+		}
+		t.Setenv("IRONGALL_HOME", dir)
+		var out, errs bytes.Buffer
+		err := run(ctx, name, args, strings.NewReader(""), &out, &errs)
+		return out.String(), errs.String(), err
+	}
+
+	// The record: one line of JSON on stdout, the warning on stderr, and the
+	// box still works.
+	out, warn, err := cmd(a, "revocation")
+	var rec protocol.Revocations
+	if err != nil || strings.Count(out, "\n") != 1 || json.Unmarshal([]byte(out), &rec) != nil || !strings.Contains(warn, "Nothing was published") {
+		t.Fatalf("revocation: %v %q %q", err, out, warn)
+	}
+	if _, err := protocol.VerifyRevocation(a.Address(), rec.Identity, rec.Revocation); err != nil {
+		t.Fatalf("the printed record does not verify: %v", err)
+	}
+	if _, err := b.Send(ctx, a.Address(), "the box is not revoked by printing its record"); err != nil {
+		t.Fatal(err)
+	}
+	record := filepath.Join(t.TempDir(), "a.json")
+	if err := os.WriteFile(record, []byte(out), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// revoke wants this box's own address, in full, and nothing else.
+	for _, args := range [][]string{nil, {b.Address().String()}, {a.Address().String()[:63]}, {srv.URL + "/to/" + a.Address().String()}, {"--record", record, b.Address().String()}, {"--record", filepath.Join(t.TempDir(), "none"), a.Address().String()}} {
+		if out, _, err := cmd(a, "revoke", args...); err == nil || out != "" {
+			t.Fatalf("revoke %q ran: %q", args, out)
+		}
+	}
+	if _, err := b.Send(ctx, a.Address(), "still not revoked"); err != nil {
+		t.Fatal(err)
+	}
+
+	// B keeps A's record, handed over: no word from the server is needed.
+	if out, _, err := cmd(b, "revoked", record); err != nil || out != "revoked "+a.Address().String()+"\n" {
+		t.Fatalf("revoked: %v %q", err, out)
+	}
+	var gone *client.RevokedError
+	if _, err := b.Send(ctx, a.Address(), "after the record was handed over"); !errors.As(err, &gone) {
+		t.Fatalf("send to a box revoked by a record: %v", err)
+	}
+	junk := filepath.Join(t.TempDir(), "junk.json")
+	if err := os.WriteFile(junk, []byte(`{"identity":"aXJvbmdhbGw=","revocation":"eA=="}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, _, err := cmd(b, "revoked", junk); err == nil || out != "" {
+		t.Fatalf("revoked took junk: %q", out)
+	}
+
+	// The record alone revokes, from a directory that holds no box.
+	if out, _, err := cmd(nil, "revoke", "--record", record, a.Address().String()); err != nil || out != "revoked "+a.Address().String()+"\n" {
+		t.Fatalf("revoke --record: %v %q", err, out)
+	}
+	c, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.Send(ctx, a.Address(), "to a box the server now holds revoked"); !errors.As(err, &gone) {
+		t.Fatalf("send to a revoked box: %v", err)
+	}
+
+	// A box revokes itself, and then knows it.
+	if out, _, err := cmd(c, "revoke", c.Address().String()); err != nil || out != "revoked "+c.Address().String()+"\n" {
+		t.Fatalf("revoke: %v %q", err, out)
+	}
+	out, _, err = cmd(c, "status")
+	var look *needsALook
+	if !errors.As(err, &look) || !strings.Contains(out, `"revoked":true`) {
+		t.Fatalf("status of a box that revoked itself: %v %q", err, out)
+	}
+}

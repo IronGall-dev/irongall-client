@@ -114,11 +114,11 @@
 | **OpenPGP** | A primary key certifies subkeys that do the signing and decrypting, so the primary can be kept offline | from memory |
 | **Matrix cross-signing** | A master key signs the keys that sign devices and other users | from memory |
 | **Signal, MLS** | A long-lived identity signs the shorter-lived keys others encrypt to: Signal's signed prekeys, MLS's KeyPackages. It is what irongall's prekey already does, one level down | review 2026-10-10 |
-| **Short-lived certificates in place of revocation** | Web PKI and workload-identity systems issue certificates that live for days or hours and are simply not renewed | from memory |
+| **Short-lived certificates in place of revocation** | The web's rule waives revocation for a certificate of at most 10 days, 7 from 2026-03-15, and Let's Encrypt's six-day certificates carry no revocation URL at all (§ 3b) | read 2026-10-13 |
 
 **Where ours differs, and why:**
 - **Validity is judged at the verifier's clock,** as X.509 validation is without a trusted timestamp, where OpenPGP judges a signature at the time the signer states (both from memory). Nobody in irongall can vouch for when a signature was made, so a stated time proves nothing.
-- **66 days is long for "short-lived".** Mail may wait 33 days and must still verify when it is read, so a certificate has to outlast the mail it signed.
+- **66 days is long for "short-lived".** Mail may wait 33 days and must still verify when it is read, so a certificate has to outlast the mail it signed. So a certificate is to be revocable, which is decided and not built (§ 3b).
 - **A newer certificate does not retire an older one for mail already signed.** It does at the server and for prekey statements.
 
 ## 3. The server holds no signature that proves who sent what to whom
@@ -205,6 +205,58 @@ None of the three was a flaw in the layout: each was a verifier that read an obj
 
 **Not read:** AWS's request-signing window and smallstep's default backdate.
 
+## 3b. Revocation: the identity signs it, every client checks it, and nothing less revokes
+
+**Ours** (decided 2026-10-13; issue #14; §6.3): an address is ended for good by its identity's own signature over a fixed statement, with no date, no reason and no number in it. The record is that signature with the identity document, so it proves itself, and a client takes an address as revoked only with a record in hand that verifies: never on a server's `410`. A verified revocation is kept, reaches back over everything that address signed, and is never undone. Any server or index may hold a record, and a client may ask more than one. Revoking one certificate is decided and not built (§12).
+
+**Who signs a revocation, and what it covers:**
+
+| Who | What they do | How it is known |
+|---|---|---|
+| **OpenPGP** | A key revokes itself (signature type 0x20) or one subkey (0x28: "calculated directly on the primary key and the subkey being revoked. A revoked subkey is not to be used"). A revocation carries a reason: superseded, compromised, retired. "If a key has been revoked because of a compromise, all signatures created by that key are suspect. However, if it was merely superseded or retired, old signatures are still valid" | read 2026-10-13, [RFC 9580](https://www.rfc-editor.org/rfc/rfc9580) §5.2.1.11, §5.2.1.12, §5.2.3.31 |
+| **X.509** | The issuer revokes one certificate by its serial, in a list it signs, numbered by "a monotonically increasing sequence number". An entry stays "until it appears on one regularly scheduled CRL issued beyond the revoked certificate's validity period". Only a hold is ever undone. An entry may carry the date the key is "known or suspected" compromised | read 2026-10-13, [RFC 5280](https://www.rfc-editor.org/rfc/rfc5280) §3.3, §5.2.3, §5.3.1, §5.3.2 |
+| **CA/Browser Forum** | A certificate needs no revocation information only when it is short-lived: at most 10 days, and at most 7 for one issued on or after 2026-03-15. Every other must be revoked within 24 hours of a key compromise | read 2026-10-13, [Baseline Requirements](https://github.com/cabforum/servercert/blob/main/docs/BR.md) §1.6.1, §4.9.1.1, §7.1.2.11.2 |
+| **Let's Encrypt** | Six-day certificates "will not include OCSP or CRL URLs": a short life "reduces the need for certificate revocation, which has historically been unreliable" | read 2026-10-13, [its announcement of 2025-01-16](https://letsencrypt.org/2025/01/16/6-day-and-ip-certs/) |
+| **OpenSSH** | A revocation list (KRL) revokes a CA's certificates by serial, by a range of serials or by key id, under a version that "increases each time the KRL is modified". It has no signature of its own: "KRL signatures are not supported by OpenSSH", and it recommends SSHSIG for one that travels | read 2026-10-13, [`PROTOCOL.krl`](https://github.com/openssh/openssh-portable/blob/master/PROTOCOL.krl) and `ssh-keygen(1)` |
+
+**A revocation made in advance:**
+
+| Who | What they do | How it is known |
+|---|---|---|
+| **GnuPG** | Makes one with every new key, unasked, and keeps it "in the openpgp-revocs.d directory below the GnuPG home directory". It carries no reason, and the file says: "if the secret key is still accessible, it is better to generate a new revocation certificate and give a reason". A colon before its armor keeps it from being imported by accident. After one made by hand it prints: "Please move it to a medium which you can hide away; if Mallory gets access to this certificate he can use it to make your key unusable" | read 2026-10-13, the [GnuPG manual](https://www.gnupg.org/documentation/manuals/gnupg/OpenPGP-Key-Management.html), `--generate-key`, and [`g10/revoke.c`](https://github.com/gpg/gnupg/blob/master/g10/revoke.c) |
+| **Sequoia** | Makes one with every new key, unasked: "The co-generated emergency revocation file will automatically be stored in `$HOME/.local/share/sequoia/revocation-certificates` if you don't specify a different location" | read 2026-10-13, [the Sequoia book](https://book.sequoia-pgp.org/sq_key_generation.html) |
+
+**Who may serve a revocation, and what a client does with no answer:**
+
+| Who | What they do | How it is known |
+|---|---|---|
+| **X.509** | "CRLs may be distributed by exactly the same means as certificates themselves, namely, via untrusted servers and untrusted communications." Its named limit is time: a revocation is not reliably seen until the next list is due | read 2026-10-13, RFC 5280 §3.3 |
+| **OCSP** | The party that answers signs the answer, so it must be the issuer, a delegate the issuer names, or one the client was told to trust: a client "MAY provide a means of locally configuring one or more OCSP signing authorities" | read 2026-10-13, [RFC 6960](https://www.rfc-editor.org/rfc/rfc6960) §4.2.2.2 |
+| **TLS** | A server hands its client the issuer's signed status in the handshake, so the client asks nobody else | read 2026-10-13, [RFC 6066](https://www.rfc-editor.org/rfc/rfc6066) §8 |
+| **keys.openpgp.org** | A keyserver run by none of the keys' owners. "Non-identity information will still be distributed for all keys", so "it's still possible to check whether the key is revoked or not". A search "returns a key only if it exactly matches", which "prevents a malicious user or spammer from easily obtaining a list of all email addresses on the server". An upload needs no proof: "an attacker gains nothing from uploading a key they don't have access to" | read 2026-10-13, [its FAQ](https://keys.openpgp.org/about/faq) |
+| **Mozilla CRLite** | A party that is no certificate authority gathers every revocation and ships the set to browsers, updated "four times per day", "replacing a network round-trip with local lookups" | read 2026-10-13, [Mozilla Security Blog, 2020-01-09](https://blog.mozilla.org/security/2020/01/09/crlite-part-1-all-web-pki-revocations-compressed/) |
+| **What went wrong on the web** | A check that passes when no answer comes is "completely useless": whoever can block the answer has a revoked certificate accepted. A check that refuses is not deployable. "If they were only valid for days then revocation would take care of itself." Let's Encrypt ended OCSP in 2025 because the responder "immediately becomes aware of which website is being visited" | read 2026-10-13, [A. Langley, 2014-04-19](https://www.imperialviolet.org/2014/04/19/revchecking.html); [Let's Encrypt, 2024-12-05](https://letsencrypt.org/2024/12/05/ending-ocsp/) |
+| **HTTP** | "A 410 response is heuristically cacheable" unless it says otherwise. Under `no-store` a cache "MUST NOT store any part of either the immediate request or the response" | read 2026-10-13, [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110) §15.5.11; [RFC 9111](https://www.rfc-editor.org/rfc/rfc9111) §5.2.2.5 |
+| **An extension point nobody uses** | "Mechanisms that aren't used are the ones that fail most often." "Only by using the extension capabilities of a protocol is the availability of that capability assured" | read 2026-10-13, [RFC 9170](https://www.rfc-editor.org/rfc/rfc9170) §2.1, §3 |
+
+**Where ours follows them:**
+- **The key revokes itself, and the revocation travels through servers nobody trusts,** as an OpenPGP key's does and as a CRL does. Here the identity signs it, as an OpenPGP key signs its own, so whoever serves one signs nothing and needs no delegation: an index can keep a revocation back and cannot make one. That is the question X.509 has to answer with a delegate or a locally trusted responder, and it does not arise.
+- **A client may ask an index run by someone else, and more than one,** which is what a keyserver is and what a browser's bundled revocation set is. A record that verifies from any one of them is final, so each one asked can only add.
+- **A lookup is for an address the asker already holds, and nothing is listed,** which is keys.openpgp.org's rule and its reason: an address here is what lets anyone write to a box (§2). So an index is filled by upload and never by copying another, where CRLite gathers everything.
+- **Another party's index is asked only when the client's owner says so.** A lookup tells that index who the asker corresponds with, which is what OCSP told a certificate authority. The mailbox server knows it already.
+- **A certificate is to be revocable** (§12): one here lives up to 65 days, because mail may wait 33 and must verify when it is read, and nothing above waives revocation past 10. It will be by serial, in one list an identity signs under a number that rises, as a CRL and a KRL are.
+- **A revoked address stays revoked.** Nothing above undoes a revocation but a hold, and there is no hold here.
+- **No cache may keep an API answer,** since a `410` is cacheable by default.
+
+**Where ours differs, and why:**
+- **No reason and no date in the statement,** where OpenPGP and X.509 carry both. A fixed text is what lets a revocation be signed years early and rebuilt by its verifier from the address alone, so nothing in it is parsed before it is trusted. And a date would be its signer's word: nobody here can vouch for when anything was signed. So there is one kind, the kind OpenPGP calls compromised, and it reaches back over everything the address signed. A box that is only retired is closed, and its key destroyed, with no statement at all.
+- **No slot for a later field,** where OpenPGP's subpackets, X.509's extensions and a KRL's extension sections each have one, with a flag meaning "refuse what you do not understand". That flag is unsafe in a revocation: a reader that refuses one it cannot fully read treats a revoked address as live. Without the flag a later field could only ever be a hint, and a slot every reader sees empty for years is the one RFC 9170 says fails when it is used. What is added later is a second statement under a new tag, beside the first, which is what GnuPG does when it says to make a new one with a reason.
+- **Neither client writes a revocation unasked,** where GnuPG and Sequoia write one with every key, under the same home. Their copy still works when the key no longer can be used, as when its passphrase is forgotten (the reason is ours to give: neither source states one). An irongall identity has no passphrase today, so a copy beside it is lost with it and stolen with it, and covers nothing. It becomes a liability once the identity is kept somewhere other than the box and the copy stays behind. A passphrase on the identity is planned (issue #50), and with one their default applies. GnuPG's guard against an accidental publish is here the address written out in full.
+- **The proof is asked for, not handed along with the refusal,** where TLS staples it. A `410` says only that a record exists, and one call fetches it from the server or from any index: one way to get a record, and the same way from every source.
+- **No answer stops a drain, and "none held" does not.** That is neither of the web's two: a client here refuses to go on without an answer, which a browser could not afford, and it can, because the server it is waiting on is the one it is already fetching mail from. What remains is the web's limit all the same: a server that answers falsely that it holds none is believed, and nothing here bounds how long a revocation can go unseen by a peer that asks one server.
+
+**Not read:** how Signal, Matrix and Keybase handle a compromised identity or device.
+
 ## 4. The rest: one row a decision
 
 **Keys and identity**
@@ -221,7 +273,7 @@ None of the three was a flaw in the layout: each was a verifier that read an obj
 | A box declares the sender key types its client verifies, and the server refuses a sender it rules out | TLS 1.3's `signature_algorithms` and `signature_algorithms_cert` extensions, in which a peer lists the signature algorithms it will verify in a handshake and in a certificate (RFC 8446 §4.2.3); SSH's `server-sig-algs`, in which a server lists the public key algorithms it accepts (RFC 8308 §3.1). Each is a list an endpoint sends on its own connection. Ours is kept by the server for two boxes that never connect, and is not signed: §2c says why that is enough | read 2026-10-13; §2c |
 | A P-256 identity key is held to what OpenSSH requires of an EC public key, by explicit code where a library does not | OpenSSH's `sshkey_ec_validate_public` (`sshkey.c`): not the point at infinity, each coordinate longer than half the bits of the group's order, the order times the point at infinity, each coordinate below the order less one. The Go SSH library checks the curve and the encoding, and takes a point with a short coordinate | read 2026-10-13 at OpenSSH `V_10_2_P1`; measured that day with `golang.org/x/crypto` v0.58.0 and OpenSSH 10.2; §2 |
 | Nothing rests on a certificate's signature having one encoding | An ECDSA signature has several: s and n − s, and either number written with leading zero bytes. Bitcoin made one form mandatory because a transaction's id hashed its signatures (BIP 62, BIP 66, BIP 146); SSH and TLS have no such rule. Here a certificate's hash names it only to the server that checked it, and no recipient trusts one | from memory, for the BIPs; measured 2026-10-13: the Go SSH library and OpenSSH 10.2 both take n − s and a padded r; §2b |
-| Revocation is permanent, signed by the identity, and can be signed in advance | OpenPGP revocation certificates, which GnuPG makes when a key is created; X.509 CRLs | review 2026-10-10; §6.3, not built |
+| Revocation is permanent, signed by the identity, and can be signed in advance | § 3b, above | read 2026-10-13; §6.3 |
 | Post-quantum by default | TLS's X25519MLKEM768, OpenSSH 10, Signal, iMessage PQ3 | review 2026-10-10 |
 
 **Encryption and signing**

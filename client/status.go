@@ -33,6 +33,9 @@ type Status struct {
 	Outbox              int    `json:"outbox"`
 	OutboxFailed        int    `json:"outbox_failed"`
 	Quarantine          int    `json:"quarantine"`
+	// Revoked is true when the box holds a revocation of its own address
+	// that verifies: the address is finished.
+	Revoked bool `json:"revoked,omitempty"`
 	// Attention says, in words, each thing that needs a look. It is empty
 	// when nothing does.
 	Attention []string `json:"attention"`
@@ -41,6 +44,13 @@ type Status struct {
 // Status reads the box's own files. It takes no lock and changes nothing.
 func (b *Box) Status() (*Status, error) {
 	s := &Status{Address: b.id.Address(), Attention: []string{}}
+	// A revoked box is finished, and that comes before anything else it holds.
+	if gone, err := b.revoked(b.id.Address()); err != nil {
+		return nil, err
+	} else if gone {
+		s.Revoked = true
+		s.Attention = append(s.Attention, "this box's address is revoked, for good, and the revocation verifies: it sends and receives nothing more. Make a new box and give its address to those who wrote to this one")
+	}
 	for dir, n := range map[string]*int{"inbox/*.json": &s.Inbox, "sent/*.json": &s.Sent, "outbox/*.P": &s.Outbox, "outbox/failed/*.P": &s.OutboxFailed, "quarantine/*.json": &s.Quarantine} {
 		names, err := filepath.Glob(b.path(filepath.FromSlash(dir)))
 		if err != nil {

@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -54,6 +55,18 @@ const usage = `usage: irongall <command> [arguments]
                            yet delivered
   adopt <key>              join the account an adopt key names, which can
                            lift this box's limits; adopt --leave leaves it
+  revocation               print this box's revocation as one line of JSON, and
+                           publish nothing. Whoever publishes that record ends
+                           this address for good, with no key: keep it somewhere
+                           other than this box, for the day the box is lost
+  revoke <address>         revoke this box's address, FOR GOOD: nothing undoes
+                           it. The address written out in full is the
+                           confirmation. --record <file> publishes a record made
+                           earlier by revocation, and needs no box here
+  revoked <file>           take a revocation of another box that someone handed
+                           you (a record as revocation prints), check it, and
+                           keep it: this box then sends that address nothing
+                           and takes nothing from it
 
 The box lives in $IRONGALL_HOME, or ${XDG_CONFIG_HOME:-~/.config}/irongall/${IRONGALL_BOX:-default}.
 Its inbox/ keeps each message received and its sent/ each message sent, with
@@ -389,12 +402,125 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 		_, err = fmt.Fprintf(stdout, "in account %s\n", acc)
 		return err
 
+	case "revocation":
+		if err := parse(); err != nil {
+			return err
+		}
+		if fs.NArg() != 0 {
+			return errors.New("usage: irongall revocation")
+		}
+		b, err := client.Open(dir, opt)
+		if err != nil {
+			return err
+		}
+		rec, err := b.Revocation()
+		if err != nil {
+			return err
+		}
+		line, err := json.Marshal(rec)
+		if err != nil {
+			return err
+		}
+		_, _ = fmt.Fprintln(stderr, "This record revokes this box's address, for good, when anyone publishes it (irongall revoke <address> --record <file>). Nothing was published. Keep it somewhere other than this box.")
+		_, err = fmt.Fprintf(stdout, "%s\n", line)
+		return err
+
+	case "revoke":
+		record := fs.String("record", "", "publish the record in this `file`, made earlier by irongall revocation, in place of signing one with this box's identity")
+		if err := parse(); err != nil {
+			return err
+		}
+		const how = "usage: irongall revoke [--record <file>] <address> (the 64-character address, in full: it is the confirmation, and a revocation cannot be undone)"
+		if fs.NArg() != 1 {
+			return errors.New(how)
+		}
+		a, err := protocol.ParseAddress(fs.Arg(0))
+		if err != nil {
+			return errors.New(how)
+		}
+		var rec *protocol.Revocations
+		if *record != "" {
+			if rec, err = readRecord(*record); err != nil {
+				return err
+			}
+			if protocol.Address(sha256.Sum256(rec.Identity)) != a {
+				return errors.New("the record is a revocation of another address than the one named: nothing was published")
+			}
+		} else {
+			b, err := client.Open(dir, opt)
+			if err != nil {
+				return err
+			}
+			if b.Address() != a {
+				return errors.New("that is not this box's address: nothing was published. irongall revoke takes this box's own address, or a record of another with --record")
+			}
+			if rec, err = b.Revocation(); err != nil {
+				return err
+			}
+		}
+		if _, err := client.Revoke(ctx, opt, rec); err != nil {
+			return err
+		}
+		// If the box revoked is the one here, it keeps the revocation too.
+		if b, err := client.Open(dir, opt); err == nil && b.Address() == a {
+			if _, err := b.KeepRevocation(rec); err != nil {
+				return err
+			}
+		}
+		_, err = fmt.Fprintf(stdout, "revoked %s\n", a)
+		return err
+
+	case "revoked":
+		if err := parse(); err != nil {
+			return err
+		}
+		if fs.NArg() != 1 {
+			return errors.New("usage: irongall revoked <file> (a record as irongall revocation prints)")
+		}
+		rec, err := readRecord(fs.Arg(0))
+		if err != nil {
+			return err
+		}
+		b, err := client.Open(dir, opt)
+		if err != nil {
+			return err
+		}
+		a, err := b.KeepRevocation(rec)
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintf(stdout, "revoked %s\n", a)
+		return err
+
 	case "help", "-h", "-help", "--help":
 		_, err := fmt.Fprint(stdout, usage)
 		return err
 	}
 	_, _ = fmt.Fprint(stderr, usage)
 	return fmt.Errorf("unknown command %q", cmd)
+}
+
+// maxRecord bounds a revocation record read from a file: one is under a
+// kilobyte.
+const maxRecord = 64 << 10
+
+// readRecord reads a revocation record: the JSON irongall revocation prints.
+// What it holds is checked by whoever uses it.
+func readRecord(name string) (*protocol.Revocations, error) {
+	f, err := os.Open(name) //nolint:gosec // a file the caller named
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close() //nolint:errcheck // read only
+	data, err := io.ReadAll(io.LimitReader(f, maxRecord+1))
+	if err != nil {
+		return nil, err
+	}
+	var rec protocol.Revocations
+	if len(data) > maxRecord || json.Unmarshal(data, &rec) != nil || len(rec.Identity) == 0 || len(rec.Revocation) == 0 {
+		return nil, errors.New("the file is not a revocation record: one is a line of JSON with \"identity\" and \"revocation\", as irongall revocation prints")
+	}
+	return &rec, nil
 }
 
 // oneDash finds a flag as the flag package's errors write it, with one dash.

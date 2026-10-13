@@ -178,7 +178,7 @@ func TestSentHoldsOnlyWhatTheServerTook(t *testing.T) {
 	// Refused for good: it moves to outbox/failed/, and never to sent/.
 	e.srv.SetMiddle(func(w http.ResponseWriter, req *http.Request, next http.Handler) {
 		if req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/v1/"+b.Address().String()) {
-			fakeserver.WriteJSON(w, http.StatusGone, protocol.Problem{Code: protocol.CodeRevoked, Status: http.StatusGone})
+			fakeserver.WriteJSON(w, http.StatusRequestEntityTooLarge, protocol.Problem{Code: protocol.CodeTooLarge, Status: http.StatusRequestEntityTooLarge})
 			return
 		}
 		next.ServeHTTP(w, req)

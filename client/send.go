@@ -115,9 +115,10 @@ func (b *Box) Flush(ctx context.Context) ([]*protocol.Receipt, error) {
 }
 
 // undeliverable are the answers that never change for this message: retrying
-// it can only fail again.
+// it can only fail again. A server saying a box is revoked is not among them:
+// that is final only once this box holds the revocation ([Box.proved]).
 var undeliverable = []protocol.Code{
-	protocol.CodeRevoked, protocol.CodeSenderRevoked, protocol.CodeBadAddress, protocol.CodeTooLarge, protocol.CodeConflict,
+	protocol.CodeBadAddress, protocol.CodeTooLarge, protocol.CodeConflict,
 }
 
 // post posts the outbox entry stem, sealing it first if it is not sealed. On
@@ -144,7 +145,11 @@ func (b *Box) post(ctx context.Context, to protocol.Address, stem string) (*prot
 	}
 	r, err := b.trySend(ctx, to, stem)
 	if err != nil {
-		if !slices.Contains(undeliverable, Code(err)) {
+		// A server's "revoked" is checked: with the revocation in hand it is
+		// final, and without one it is a call that failed.
+		err = b.proved(ctx, to, err)
+		var gone *RevokedError
+		if !errors.As(err, &gone) && !slices.Contains(undeliverable, Code(err)) {
 			return nil, fmt.Errorf("%w (kept in the outbox: retry with irongall flush)", err)
 		}
 		if merr := b.moveToFailed(stem); merr != nil {

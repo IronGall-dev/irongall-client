@@ -65,7 +65,15 @@
 
 **A box proves itself with a pass it signs, and there is no token** (`protocol/pass.go`, `pass` in `client/work.go`, `ig_pass`; `PROTOCOL.md` §6.1b; decided on #36). The pass is kept in the box and used until 30 seconds before it runs out; if a server refuses it, a client signs another and tries once more. A registration and a prekey upload carry a pass under the certificate of the statement they bring (`publish`), which is kept only once the server took it. Nothing a server sends is decrypted with a key that reads mail: the token that was (`IsToken`, found 2026-10-12) is gone.
 
-**A box asks the server nothing about a sender, and pins one only once its signature verified** (`judge`, `pin`, `ig_meet`): the envelope carries the identity document, whose hash is the sender. On a send, a peer is pinned only once its prekey statement verified. A drain is bounded (`maxDrain*`).
+**A box never asks the server who a sender is, and pins one only once its signature verified** (`judge`, `pin`, `ig_meet`): the envelope carries the identity document, whose hash is the sender. The one thing it asks about a sender is whether a revocation of it exists, once in a drain and only after that sender's signature verified. On a send, a peer is pinned only once its prekey statement verified. A drain is bounded (`maxDrain*`).
+
+**An address is revoked by its identity's own signature, and a client takes "revoked" on nothing less** (`protocol/revocation.go`, `client/revocation.go`, `ig_revcheck`, `ig_gone`, `ig_lookup`; `PROTOCOL.md` §6.3; decided on #14).
+- **A server's `revoked` or `sender_revoked` is checked, never believed:** `proved` asks for the record, and only one that verifies makes a `RevokedError`. Without one the call has failed and no state changes. 🛑 Neither code may go back into `undeliverable`.
+- **A revocation that verified is kept and never removed** (`peers/<address>/revoke.sig`, `revoked.sig` for the box's own), read again and checked again at each use. `Resolve` refuses such a peer before any request, and `judge` refuses its mail, whenever it was signed.
+- **A working key's signature is not a revocation:** `VerifyRevocation` verifies against the identity's bare key, and the script's signers line carries no `cert-authority`. `revoke/bad-by-a-working-key.sig` holds both to it.
+- **A negative answer and no answer are different things** (`lookupRevocation`, `ig_lookup`): `not_revoked` lets a drain go on, and anything else stops it with the mail still on the server.
+- **The statement is fixed text and never gains a field.** What is added later is a second statement under a new tag, beside it: a slot nobody fills is one that fails when it is used, and a rule to refuse what a reader does not understand would turn a revoked address back into a live one.
+- **`revoke` takes the address in full as its confirmation,** and neither client writes a record unasked: beside the identity it is lost and stolen with it.
 
 **Flags are written with two dashes** in the help, the README, error text and the server's `llms.txt`. Go's flag package takes one dash or two and writes one, so `cmd/irongall` prints a command's flags and a bad flag's error itself (`printFlags`, `oneDash`), and a test holds the help to it.
 

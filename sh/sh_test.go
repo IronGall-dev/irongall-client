@@ -709,3 +709,185 @@ func sameButReceipt(t *testing.T, record string, delivered []byte, id string) {
 		t.Errorf("%s holds %v, its recipient delivered %v", record, got, want)
 	}
 }
+
+// A revocation is taken or refused by the script exactly as the Go client
+// takes or refuses it, on every vector. One of the refused is a good
+// signature under the box's own certificate, which ssh-keygen verifies when
+// it is told the identity is a certificate authority: the script's signers
+// line for a revocation never says so.
+func TestVectorsRevocation(t *testing.T) {
+	need(t, scriptTools...)
+	a, aDoc := identity(t, "a")
+	b, bDoc := identity(t, "b")
+	c, cDoc := identity(t, "c")
+	addr := func(s string) protocol.Address {
+		t.Helper()
+		x, err := protocol.ParseAddress(s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return x
+	}
+	type vector struct{ addr, doc, sig string }
+	cases := []vector{
+		{a, aDoc, "a/revoke.sig"}, {a, aDoc, "a/revoke.sha256.sig"}, {c, cDoc, "c/revoke.sig"},
+		{b, aDoc, "a/revoke.sig"}, {a, bDoc, "a/revoke.sig"}, {b, bDoc, "revoke/bad-of-another-box.sig"}, {a, aDoc, "a/prekey-1.txt.sig"},
+	}
+	bads, _ := filepath.Glob(filepath.Join(vectors, "revoke", "bad-*.sig"))
+	if len(bads) != 4 {
+		t.Fatalf("%d revoke/bad-* vectors, want 4", len(bads))
+	}
+	for _, f := range bads {
+		cases = append(cases, vector{a, aDoc, "revoke/" + filepath.Base(f)})
+	}
+	taken := 0
+	for _, v := range cases {
+		doc, err := os.ReadFile(v.doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sig, err := os.ReadFile(filepath.Join(vectors, v.sig))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, goErr := protocol.VerifyRevocation(addr(v.addr), doc, sig)
+		_, shErr := bash(t, scratch(t), fmt.Sprintf(`mkdir -p "$IG"; ig_revcheck %s %s %s`, v.addr, v.doc, abs(t, filepath.Join(vectors, v.sig))))
+		if (goErr == nil) != (shErr == nil) {
+			t.Errorf("%s as a revocation of %s…: the Go client says %v, the script %v", v.sig, v.addr[:8], goErr, shErr)
+		}
+		if goErr == nil {
+			taken++
+		}
+	}
+	if taken != 3 {
+		t.Errorf("%d vectors taken as revocations, want the three that are", taken)
+	}
+	// Control: the working key's signature is one ssh-keygen takes once the
+	// identity is named a certificate authority, so it is the signers line
+	// that refuses it and not a bad signature.
+	verify := fmt.Sprintf(`mkdir -p "$IG"; printf '%%s cert-authority %%s\n' %s "$(sed -n 2p %s)" > "$IG/s" && ssh-keygen -Y verify -f "$IG/s" -I %s -n irongall-revoke-v1:%s -s %s -O verify-time=20261010000000Z < %s`,
+		a, aDoc, a, a, abs(t, filepath.Join(vectors, "revoke/bad-by-a-working-key.sig")), abs(t, filepath.Join(vectors, "a/revoke.txt")))
+	if _, err := bash(t, scratch(t), verify); err != nil {
+		t.Errorf("control: ssh-keygen refuses the working key's signature even under a cert-authority line, so the vector tests nothing: %v", err)
+	}
+}
+
+// The two clients revoke against one server and each checks the other's
+// revocation for itself: a record one makes is one the other publishes and
+// keeps, and mail from a revoked box is refused by whichever reads it.
+func TestRevocationInBothClients(t *testing.T) {
+	need(t, append(scriptTools, "curl")...)
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	opt := client.Options{Base: srv.URL}
+	kt, mode := protocol.Classic, "--no-pq"
+	if pq() {
+		kt, mode = protocol.PostQuantum, ""
+	}
+	sh := func(dir, commands string) (string, error) {
+		return bash(t, []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}, commands)
+	}
+	scriptBox := func() (string, protocol.Address) {
+		t.Helper()
+		dir := t.TempDir()
+		out, err := sh(dir, "ig_init "+mode)
+		if err != nil {
+			t.Fatalf("ig_init: %v", err)
+		}
+		a, err := protocol.ParseAddress(strings.TrimPrefix(strings.TrimSpace(out), srv.URL+protocol.LinkPath))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return dir, a
+	}
+	goBox := func() *client.Box {
+		t.Helper()
+		b, err := client.Init(ctx, t.TempDir(), opt, kt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	var gone *client.RevokedError
+
+	// The script's record is one the Go client takes, and the Go client's
+	// is one the script takes.
+	s1, s1Addr := scriptBox()
+	g1 := goBox()
+	out, err := sh(s1, "ig_revocation")
+	if err != nil {
+		t.Fatalf("ig_revocation: %v", err)
+	}
+	var fromScript protocol.Revocations
+	if err := json.Unmarshal([]byte(out), &fromScript); err != nil {
+		t.Fatalf("the script's record is not the JSON the Go client reads: %v: %q", err, out)
+	}
+	if a, err := g1.KeepRevocation(&fromScript); err != nil || a != s1Addr {
+		t.Fatalf("the Go client refuses the script's record: %v", err)
+	}
+	if _, err := g1.Send(ctx, s1Addr, "to a box whose record was handed over"); !errors.As(err, &gone) {
+		t.Fatalf("the Go client sent to it: %v", err)
+	}
+	fromGo, err := g1.Revocation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	line, _ := json.Marshal(fromGo)
+	record := filepath.Join(t.TempDir(), "g1.json")
+	if err := os.WriteFile(record, append(line, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := sh(s1, "ig_revoked "+record); err != nil || strings.TrimSpace(out) != "revoked "+g1.Address().String() {
+		t.Fatalf("the script refuses the Go client's record: %q %v", out, err)
+	}
+	if _, err := sh(s1, "printf x | ig_send "+g1.Address().String()); err == nil || !strings.Contains(err.Error(), "REVOKED: "+g1.Address().String()) {
+		t.Fatalf("the script sent to it: %v", err)
+	}
+
+	// A box the script revokes at the server: the Go client is shown the
+	// proof, checks it, and refuses the mail that box had sent it.
+	s2, s2Addr := scriptBox()
+	g2 := goBox()
+	if _, err := sh(s2, "printf 'sent before the revocation' | ig_send "+g2.Address().String()); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := sh(s2, "ig_revoke "+s2Addr.String()); err != nil || strings.TrimSpace(out) != "revoked "+s2Addr.String() {
+		t.Fatalf("ig_revoke: %q %v", out, err)
+	}
+	res, err := g2.Receive(ctx)
+	if err != nil || len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedRevoked {
+		t.Fatalf("the Go client's drain of mail from a box the script revoked: %+v %v", res, err)
+	}
+	if _, err := g2.Send(ctx, s2Addr, "to a box the script revoked"); !errors.As(err, &gone) {
+		t.Fatalf("the Go client sent to it: %v", err)
+	}
+
+	// And the other way: the Go client revokes, and the script refuses.
+	s3, _ := scriptBox()
+	g3 := goBox()
+	s3Addr, err := sh(s3, `cat "$IG/address"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	to, err := protocol.ParseAddress(strings.TrimSpace(s3Addr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g3.Send(ctx, to, "sent before the revocation"); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := g3.Revocation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Revoke(ctx, opt, rec); err != nil {
+		t.Fatal(err)
+	}
+	out, err = sh(s3, "ig_recv 2>&1")
+	if err != nil || !strings.Contains(out, ": revoked: ") || strings.Contains(out, `"body"`) {
+		t.Fatalf("the script's drain of mail from a box the Go client revoked: %q %v", out, err)
+	}
+	if _, err := sh(s3, "printf x | ig_send "+g3.Address().String()); err == nil || !strings.Contains(err.Error(), "REVOKED") {
+		t.Fatalf("the script sent to it: %v", err)
+	}
+}

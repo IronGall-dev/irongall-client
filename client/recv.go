@@ -125,6 +125,8 @@ func (b *Box) drain(ctx context.Context) (*Result, error) {
 	if err := b.pruneSeen(); err != nil {
 		return nil, err
 	}
+	// The senders this drain has asked the server about: one lookup each.
+	asked := map[protocol.Address]bool{}
 	etag, _ := os.ReadFile(b.path("etag"))
 	cursor := ""
 	messages, fetched := 0, 0
@@ -145,7 +147,8 @@ func (b *Box) drain(ctx context.Context) (*Result, error) {
 		var list protocol.MessageList
 		resp, err := b.owner(ctx, http.MethodGet, path, nil, hdr, &list)
 		if err != nil {
-			return res, err
+			// A server that says this box is revoked is asked to show it.
+			return res, b.proved(ctx, b.id.Address(), err)
 		}
 		if resp.StatusCode == http.StatusNotModified {
 			return res, nil
@@ -170,7 +173,7 @@ func (b *Box) drain(ctx context.Context) (*Result, error) {
 				res.More = true
 				return res, nil
 			}
-			n, err := b.receiveOne(ctx, m.ID, res)
+			n, err := b.receiveOne(ctx, m.ID, res, asked)
 			if err != nil {
 				return res, err
 			}
@@ -192,7 +195,7 @@ func (b *Box) drain(ctx context.Context) (*Result, error) {
 //
 // Files are named by the SHA-256 of the ciphertext as computed here, never by
 // the server's id; a message whose id is not that hash is refused.
-func (b *Box) receiveOne(ctx context.Context, id string, res *Result) (fetched int, err error) {
+func (b *Box) receiveOne(ctx context.Context, id string, res *Result, asked map[protocol.Address]bool) (fetched int, err error) {
 	handled, err := b.seenHash(id)
 	if err != nil {
 		return 0, err
@@ -209,7 +212,7 @@ func (b *Box) receiveOne(ctx context.Context, id string, res *Result) (fetched i
 		fetched = len(m.Ciphertext)
 		h := sha256.Sum256(m.Ciphertext)
 		local := hex.EncodeToString(h[:])
-		d, dup, why, err := b.judge(&m)
+		d, dup, why, err := b.judge(ctx, &m, asked)
 		if err != nil {
 			return fetched, err
 		}
@@ -269,13 +272,19 @@ func (b *Box) receiveOne(ctx context.Context, id string, res *Result) (fetched i
 //  5. The envelope: version 1, to is this box.
 //  6. Freshness: sent_at no older than protocol.TTL (33 days).
 //  7. The server's from for it is the sender that was verified.
-//  8. Replay: the locally computed ciphertext hash is not in the seen-set.
-//  9. Retry: (from, msg_id) is not in the seen-set. A match is a duplicate.
+//  8. Revocation: this box holds no revocation of the sender. The server is
+//     asked for one, once for each sender in a drain. A revocation that
+//     verifies refuses the message and every later one, whenever they were
+//     signed. A server that says it holds none has answered. No answer is an
+//     error: the message stays on the server for the next drain.
+//  9. Replay: the locally computed ciphertext hash is not in the seen-set.
+//  10. Retry: (from, msg_id) is not in the seen-set. A match is a duplicate.
 //
-// Checks 2 to 6 are protocol.OpenSigned's. Nothing is asked of the server
-// about the sender: the message carries what proves it. The sender's
-// identity is pinned only once all of that has passed.
-func (b *Box) judge(m *protocol.Message) (d *Delivery, dup bool, why *Refusal, err error) {
+// Checks 2 to 6 are protocol.OpenSigned's. Who the sender is, is never asked
+// of the server: the message carries what proves it. The one thing asked is
+// whether a revocation of that sender exists, and the answer proves itself.
+// The sender's identity is pinned only once all of that has passed.
+func (b *Box) judge(ctx context.Context, m *protocol.Message, asked map[protocol.Address]bool) (d *Delivery, dup bool, why *Refusal, err error) {
 	refused := func(code, reason string) (*Delivery, bool, *Refusal, error) {
 		return nil, false, &Refusal{Code: code, Reason: reason}, nil
 	}
@@ -304,6 +313,18 @@ func (b *Box) judge(m *protocol.Message) (d *Delivery, dup bool, why *Refusal, e
 	// held to the sender the signature proved.
 	if m.From != from.String() {
 		return refused(protocol.RefusedAttribution, "the server lists it as from another box than the one that signed it")
+	}
+	gone, err := b.revoked(from)
+	if err == nil && !gone && !asked[from] {
+		if gone, err = b.lookupRevocation(ctx, from); err == nil {
+			asked[from] = true
+		}
+	}
+	if err != nil {
+		return nil, false, nil, fmt.Errorf("whether its sender is revoked could not be asked, so the message stays on the server: %w", err)
+	}
+	if gone {
+		return refused(RefusedRevoked, "its sender's address is revoked, and the revocation verifies: nothing signed for that address is taken, whenever it was signed")
 	}
 	h := sha256.Sum256(m.Ciphertext)
 	seen, err := b.seenHash(hex.EncodeToString(h[:]))
