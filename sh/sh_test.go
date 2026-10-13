@@ -822,7 +822,7 @@ func TestRevocationInBothClients(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &fromScript); err != nil {
 		t.Fatalf("the script's record is not the JSON the Go client reads: %v: %q", err, out)
 	}
-	if a, err := g1.KeepRevocation(&fromScript); err != nil || a != s1Addr {
+	if a, _, err := g1.KeepRevocation(&fromScript); err != nil || a != s1Addr {
 		t.Fatalf("the Go client refuses the script's record: %v", err)
 	}
 	if _, err := g1.Send(ctx, s1Addr, "to a box whose record was handed over"); !errors.As(err, &gone) {
@@ -1135,5 +1135,110 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 	out, err = sh("ig_recv 2>&1")
 	if err != nil || !strings.Contains(out, `"body":"to the script's box at its second certificate"`) {
 		t.Fatalf("the script's drain after its renewal: %q %v", out, err)
+	}
+}
+
+// A seal waits in the outbox as one format, so either client checks a seal
+// the other made: each reads the certificate it names, drops it once the
+// recipient's identity has revoked that certificate, and posts one made
+// again. The server sees the old seal from neither.
+func TestAWaitingSealInBothClients(t *testing.T) {
+	need(t, append(scriptTools, "curl")...)
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	opt := client.Options{Base: srv.URL}
+	kt, mode := protocol.Classic, "--no-pq"
+	if pq() {
+		kt, mode = protocol.PostQuantum, ""
+	}
+	// posts records the certificate serial each post to a box names, and
+	// fails every post while down is set.
+	var posts []uint64
+	down := true
+	srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.Method == http.MethodPost {
+			body, _ := io.ReadAll(r.Body)
+			var req struct {
+				CertificateSerial uint64 `json:"certificate_serial"`
+			}
+			_ = json.Unmarshal(body, &req)
+			if down {
+				http.Error(w, "down", http.StatusServiceUnavailable)
+				return
+			}
+			posts = append(posts, req.CertificateSerial)
+			r.Body = io.NopCloser(bytes.NewReader(body))
+		}
+		next.ServeHTTP(w, r)
+	})
+	// theft has a box renew and revoke its first certificate, as one whose
+	// working key was taken does.
+	theft := func(b *client.Box) {
+		t.Helper()
+		if _, err := b.Rekey(ctx, kt); err != nil {
+			t.Fatal(err)
+		}
+		if list, err := b.RevokeEarlier(ctx); err != nil || list == nil || !list.Revokes(1) {
+			t.Fatalf("RevokeEarlier: %+v %v", list, err)
+		}
+	}
+	box := func() *client.Box {
+		t.Helper()
+		b, err := client.Init(ctx, t.TempDir(), opt, kt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+
+	// The Go client seals, and the script flushes the same box.
+	g, to := box(), box()
+	if _, err := g.Send(ctx, to.Address(), "sealed by the Go client"); err == nil {
+		t.Fatal("the post was meant to fail")
+	}
+	sh := func(dir, commands string) (string, error) {
+		return bash(t, []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}, commands)
+	}
+	if out, err := sh(g.Dir(), `for f in "$IG"/outbox/*.P; do ig_under "${f%.P}"; done`); err != nil || out != "1\n" {
+		t.Fatalf("the script's reading of a seal the Go client made: %q %v", out, err)
+	}
+	theft(to)
+	down = false
+	if _, err := sh(g.Dir(), "ig_flush"); err != nil {
+		t.Fatalf("the script's flush of a seal the Go client made: %v", err)
+	}
+	if len(posts) != 1 || posts[0] != 2 {
+		t.Fatalf("the script posted under certificates %v, want one post under 2", posts)
+	}
+	if res, err := to.Receive(ctx); err != nil || len(res.Delivered) != 1 || string(res.Delivered[0].Envelope.Body) != `"sealed by the Go client"` {
+		t.Fatalf("the drain after the script's flush: %+v %v", res, err)
+	}
+
+	// The script seals, and the Go client flushes the same box.
+	dir, to := t.TempDir(), box()
+	if _, err := sh(dir, "ig_init "+mode); err != nil {
+		t.Fatalf("ig_init: %v", err)
+	}
+	down, posts = true, nil
+	if _, err := sh(dir, "printf 'sealed by the script' | ig_send "+to.Address().String()); err == nil {
+		t.Fatal("the post was meant to fail")
+	}
+	if sealed, _ := filepath.Glob(filepath.Join(dir, "outbox", "*.json")); len(sealed) != 1 {
+		t.Fatalf("%d sealed entries in the script's outbox", len(sealed))
+	}
+	theft(to)
+	down = false
+	s, err := client.Open(dir, opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.Flush(ctx); err != nil || len(got) != 1 {
+		t.Fatalf("the Go client's flush of a seal the script made: %v %v", got, err)
+	}
+	if len(posts) != 1 || posts[0] != 2 {
+		t.Fatalf("the Go client posted under certificates %v, want one post under 2", posts)
+	}
+	if res, err := to.Receive(ctx); err != nil || len(res.Delivered) != 1 || string(res.Delivered[0].Envelope.Body) != `"sealed by the script"` {
+		t.Fatalf("the drain after the Go client's flush: %+v %v", res, err)
 	}
 }

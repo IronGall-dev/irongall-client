@@ -266,11 +266,11 @@ func TestARevocationHandedOver(t *testing.T) {
 		"another box's signature": {Identity: rec.Identity, Revocation: ofC.Revocation},
 		"no signature":            {Identity: rec.Identity},
 	} {
-		if _, err := a.KeepRevocation(bad); err == nil || keptRevocation(a, b.Address()) {
+		if _, _, err := a.KeepRevocation(bad); err == nil || keptRevocation(a, b.Address()) {
 			t.Fatalf("%s was kept as a revocation: %v", name, err)
 		}
 	}
-	if got, err := a.KeepRevocation(rec); err != nil || got != b.Address() {
+	if got, held, err := a.KeepRevocation(rec); err != nil || got != b.Address() || !held.Revoked || held.Certificates != nil {
 		t.Fatalf("keeping a good record: %v", err)
 	}
 	var asked atomic.Int32

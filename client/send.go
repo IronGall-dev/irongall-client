@@ -58,6 +58,12 @@ func (b *Box) Send(ctx context.Context, to protocol.Address, body string) (*prot
 // never by sending again, or the peer gets it twice. Once the server has it,
 // the envelope and the server's receipt are kept in sent/.
 //
+// Before anything is posted the server is asked what it holds about the
+// peer: a revocation of its address, or a list of its revoked certificates.
+// What verifies is kept, and the send is checked against what the box then
+// holds. With no answer nothing is posted, and the message stays in the
+// outbox.
+//
 // The signature is inside the encryption, so the server is handed none: it
 // knows the sender from the pass the post carries. Every message is padded,
 // after the signature, so that the server sees its size only to within a
@@ -82,13 +88,14 @@ func (b *Box) SendWith(ctx context.Context, to protocol.Address, body string, f 
 	if err := writeFile(stem+".P", p); err != nil {
 		return nil, err
 	}
-	return b.post(ctx, to, stem)
+	return b.post(ctx, to, stem, map[protocol.Address]bool{})
 }
 
 // Flush re-posts every message still in the outbox, unchanged: a retry of a
 // message the server already holds gets its original receipt. It tries every
 // entry; one that fails never stops the others, and the error names each
-// that failed.
+// that failed. The server is asked about each recipient once, as a send
+// asks ([Box.SendWith]).
 func (b *Box) Flush(ctx context.Context) ([]*protocol.Receipt, error) {
 	names, err := filepath.Glob(b.path("outbox", "*.P"))
 	if err != nil {
@@ -96,6 +103,8 @@ func (b *Box) Flush(ctx context.Context) ([]*protocol.Receipt, error) {
 	}
 	var receipts []*protocol.Receipt
 	var errs []error
+	// The recipients this flush has asked the server about: one lookup each.
+	asked := map[protocol.Address]bool{}
 	for _, n := range names {
 		stem := strings.TrimSuffix(n, ".P")
 		to, _, _ := strings.Cut(filepath.Base(stem), ".")
@@ -104,7 +113,7 @@ func (b *Box) Flush(ctx context.Context) ([]*protocol.Receipt, error) {
 			errs = append(errs, fmt.Errorf("%s: not an outbox entry", filepath.Base(n)))
 			continue
 		}
-		r, err := b.post(ctx, peer, stem)
+		r, err := b.post(ctx, peer, stem, asked)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", filepath.Base(stem), err))
 			continue
@@ -123,17 +132,20 @@ var undeliverable = []protocol.Code{
 
 // post posts the outbox entry stem, sealing it first if it is not sealed. On
 // failure the entry stays in the outbox for the next flush, unless it can
-// never be delivered: the server refused it for good, or its envelope is
-// older than any recipient accepts. Then it moves to outbox/failed/. An entry
-// already that old is never posted: the server would take it and give a
-// receipt, and the recipient would refuse it.
-func (b *Box) post(ctx context.Context, to protocol.Address, stem string) (*protocol.Receipt, error) {
+// never be delivered: the server refused it for good, its recipient is
+// revoked, or its envelope is older than any recipient accepts. Then it
+// moves to outbox/failed/. An entry already that old is never posted: the
+// server would take it and give a receipt, and the recipient would refuse it.
+//
+// Before an entry is posted, sealed or not, the server is asked what it
+// holds about the recipient (ask), and the entry is checked against what
+// this box then holds: nothing goes to an address it holds a revocation of,
+// and a seal made to a prekey under a certificate since revoked is made
+// again (sealStands). No answer is not "none held": nothing is posted, and
+// the entry stays.
+func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked map[protocol.Address]bool) (*protocol.Receipt, error) {
 	if b.expired(stem) {
-		err := refuse("its envelope is older than %d days, and every recipient refuses that", protocol.TTL/(24*time.Hour))
-		if merr := b.moveToFailed(stem); merr != nil {
-			return nil, errors.Join(err, merr)
-		}
-		return nil, fmt.Errorf("%w (it can never be delivered: moved to outbox/failed/)", err)
+		return nil, b.undelivered(stem, refuse("its envelope is older than %d days, and every recipient refuses that", protocol.TTL/(24*time.Hour)))
 	}
 	// An envelope dated ahead of this machine's clock was written while the
 	// clock read ahead of where it reads now. It is not posted, sealed or
@@ -142,6 +154,15 @@ func (b *Box) post(ctx context.Context, to protocol.Address, stem string) (*prot
 	// server takes, and has none to spare for one that was wrong.
 	if t, ok := b.sentAt(stem); ok && t.After(b.now()) {
 		return nil, refuse("its envelope is dated %s, ahead of this machine's clock: it was written while the clock read ahead of where it reads now, and a recipient would refuse it. It is kept in the outbox, and irongall flush sends it once the clock passes that time", t.Format(protocol.TimeLayout))
+	}
+	// The answer to this question is never read as an answer about the
+	// message: whatever code a failed lookup carries, the entry stays.
+	gone, err := b.ask(ctx, to, asked)
+	if err != nil {
+		return nil, fmt.Errorf("what the server holds about %s could not be asked, so nothing is posted: %w (kept in the outbox: retry with irongall flush)", to, err)
+	}
+	if gone {
+		return nil, b.undelivered(stem, &RevokedError{Address: to, Own: to == b.id.Address()})
 	}
 	r, err := b.trySend(ctx, to, stem)
 	if err != nil {
@@ -152,10 +173,7 @@ func (b *Box) post(ctx context.Context, to protocol.Address, stem string) (*prot
 		if !errors.As(err, &gone) && !slices.Contains(undeliverable, Code(err)) {
 			return nil, fmt.Errorf("%w (kept in the outbox: retry with irongall flush)", err)
 		}
-		if merr := b.moveToFailed(stem); merr != nil {
-			return nil, errors.Join(err, merr)
-		}
-		return nil, fmt.Errorf("%w (it can never be delivered: moved to outbox/failed/)", err)
+		return nil, b.undelivered(stem, err)
 	}
 	// Recorded before the outbox entry goes: a crash in between posts it
 	// again, gets the original receipt, and records it again.
@@ -214,8 +232,21 @@ func (b *Box) recordSent(stem string, r *protocol.Receipt) error {
 	return writeFile(b.path("sent", filepath.Base(stem)+".json"), []byte(lineBreaks.Replace(string(line))))
 }
 
+// undelivered moves an entry that can never be delivered to outbox/failed/,
+// and returns why with that said.
+func (b *Box) undelivered(stem string, why error) error {
+	if err := b.moveToFailed(stem); err != nil {
+		return errors.Join(why, err)
+	}
+	return fmt.Errorf("%w (it can never be delivered: moved to outbox/failed/)", why)
+}
+
 func (b *Box) trySend(ctx context.Context, to protocol.Address, stem string) (*protocol.Receipt, error) {
-	if !exists(stem + ".json") {
+	stands, err := b.sealStands(to, stem)
+	if err != nil {
+		return nil, err
+	}
+	if !stands {
 		if err := b.seal(ctx, to, stem); err != nil {
 			return nil, err
 		}
@@ -228,6 +259,34 @@ func (b *Box) trySend(ctx context.Context, to protocol.Address, stem string) (*p
 		r, err = b.postSealed(ctx, to, stem)
 	}
 	return r, err
+}
+
+// sealStands reports whether the entry is sealed, to a prekey this box would
+// still seal to by what it holds. An entry may wait in the outbox for days,
+// and its recipient's identity may revoke, meanwhile, the certificate its
+// prekey was signed under: that prekey may be one a thief of the working key
+// published. Such a seal is not posted. It is made again, to a prekey whose
+// statement passes every check now ([Box.Resolve]). So is one this client
+// cannot read, or one that names no certificate.
+func (b *Box) sealStands(to protocol.Address, stem string) (bool, error) {
+	j, err := os.ReadFile(stem + ".json") //nolint:gosec // a path inside the box's own directory
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	var req struct {
+		CertificateSerial *uint64 `json:"certificate_serial"`
+	}
+	if json.Unmarshal(j, &req) != nil || req.CertificateSerial == nil {
+		return false, nil
+	}
+	list, err := b.revokedCerts(to)
+	if err != nil {
+		return false, err
+	}
+	return list == nil || !list.Revokes(*req.CertificateSerial), nil
 }
 
 // expired reports whether an entry's envelope is older than protocol.TTL, the

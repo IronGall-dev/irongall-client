@@ -71,7 +71,11 @@ const usage = `usage: irongall <command> [arguments]
   revoked <file>           take a revocation of another box that someone handed
                            you (a record as revocation prints), check it, and
                            keep it: this box then sends that address nothing
-                           and takes nothing from it
+                           and takes nothing from it. A record may carry the
+                           box's list of revoked certificates, which is kept
+                           the same way. revoked --ask <link> asks the server
+                           what it holds about a box, and keeps what verifies:
+                           send does that by itself, before it posts
 
 The box lives in $IRONGALL_HOME, or ${XDG_CONFIG_HOME:-~/.config}/irongall/${IRONGALL_BOX:-default}.
 Its inbox/ keeps each message received and its sent/ each message sent, with
@@ -484,7 +488,7 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 		}
 		// If the box revoked is the one here, it keeps the revocation too.
 		if b, err := client.Open(dir, opt); err == nil && b.Address() == a {
-			if _, err := b.KeepRevocation(rec); err != nil {
+			if _, _, err := b.KeepRevocation(rec); err != nil {
 				return err
 			}
 		}
@@ -492,25 +496,46 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 		return err
 
 	case "revoked":
+		ask := fs.Bool("ask", false, "ask the server what it holds about the box a `link`, address or alias names, in place of reading a record from a file, and keep what verifies")
 		if err := parse(); err != nil {
 			return err
 		}
 		if fs.NArg() != 1 {
-			return errors.New("usage: irongall revoked <file> (a record as irongall revocation prints)")
-		}
-		rec, err := readRecord(fs.Arg(0))
-		if err != nil {
-			return err
+			return errors.New("usage: irongall revoked <file> (a record as irongall revocation prints), or irongall revoked --ask <link>")
 		}
 		b, err := client.Open(dir, opt)
 		if err != nil {
 			return err
 		}
-		a, err := b.KeepRevocation(rec)
-		if err != nil {
-			return err
+		var a protocol.Address
+		var held *client.Held
+		if *ask {
+			if a, err = b.Destination(fs.Arg(0)); err != nil {
+				return err
+			}
+			if held, err = b.Ask(ctx, a); err != nil {
+				return err
+			}
+		} else {
+			rec, err := readRecord(fs.Arg(0))
+			if err != nil {
+				return err
+			}
+			if a, held, err = b.KeepRevocation(rec); err != nil {
+				return err
+			}
 		}
-		_, err = fmt.Fprintf(stdout, "revoked %s\n", a)
+		// What the box holds, which is what it checks a send and a read
+		// against. A server's "none" is its word, and is said as that.
+		switch {
+		case held.Revoked:
+			_, err = fmt.Fprintf(stdout, "revoked %s\n", a)
+		case held.Certificates != nil:
+			_, err = fmt.Fprintf(stdout, "certificates of %s revoked, list version %d\n", a, held.Certificates.Version)
+		default:
+			_, _ = fmt.Fprintln(stderr, "That is the server's word, and a server can keep a record back: a record from the box's owner settles it (irongall revoked <file>).")
+			_, err = fmt.Fprintf(stdout, "no revocation of %s shown\n", a)
+		}
 		return err
 
 	case "help", "-h", "-help", "--help":
@@ -538,8 +563,8 @@ func readRecord(name string) (*protocol.Revocations, error) {
 		return nil, err
 	}
 	var rec protocol.Revocations
-	if len(data) > maxRecord || json.Unmarshal(data, &rec) != nil || len(rec.Identity) == 0 || len(rec.Revocation) == 0 {
-		return nil, errors.New("the file is not a revocation record: one is a line of JSON with \"identity\" and \"revocation\", as irongall revocation prints")
+	if len(data) > maxRecord || json.Unmarshal(data, &rec) != nil || len(rec.Identity) == 0 || (len(rec.Revocation) == 0 && len(rec.RevokedCertificates) == 0) {
+		return nil, errors.New("the file is not a revocation record: one is a line of JSON with \"identity\" and \"revocation\", as irongall revocation prints, or with a list of revoked certificates")
 	}
 	return &rec, nil
 }

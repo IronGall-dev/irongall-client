@@ -371,7 +371,8 @@ ig_seal(){ # <address> <outbox stem> → <stem>.json: the envelope <stem>.P sign
   [ "$(wc -c < "$o.age")" -eq "$t" ] || ig_refuse "the encrypted message is not the $t bytes its padding was made for: it is not sent at a size that tells its length" || return 1
   ig_b64 "$o.age" > "$o.b64" && { printf '{"prekey_serial":%s,"certificate_serial":%s,"ciphertext":"' "$ps" "$pc" && cat "$o.b64" && printf '"}\n'; } > "$o.json" && rm -f "$o.b64"      # the prekey is named by both serials, its own and its certificate's, written as the digits ig_resolve checked and never through jq's numbers: a jq before 1.7 rounds one above 2^53. No signature beside it: the server knows the sender from the pass the post carries
 }
-ig_post(){ # <address> <outbox stem> → POSTs it, sealing it first; on 409 stale_prekey, re-encrypts the SAME envelope, once. One that can never be delivered moves to outbox/failed/
+ig_under(){ local h; IFS= read -r -n 200 h < "$1.json" 2> /dev/null; [[ $h =~ ^\{\"prekey_serial\":[1-9][0-9]{0,17},\"certificate_serial\":([1-9][0-9]{0,17}),\"ciphertext\":\" ]] && echo "${BASH_REMATCH[1]}"; }      # <outbox stem> → the serial of the certificate its seal names, read as the digits either client wrote and never through jq's numbers. 1 for a seal this script cannot read
+ig_post(){ # <address> <outbox stem> → POSTs it, sealing it first; on 409 stale_prekey, re-encrypts the SAME envelope, once. One that can never be delivered moves to outbox/failed/. Before anything is posted, sealed or not, the server is asked what it holds about the recipient (ig_lookup), and the entry is checked against what this box then holds
   local B=$1 o=$2 sa c
   if sa=$(ig_time "$(jq -r .sent_at "$o.P" 2> /dev/null)") && [ "$sa" -lt $(($(ig_now) - 33*86400)) ]; then      # the server would take it, and every recipient refuses it
     ig_failed "$o"; ig_refuse "its envelope is older than 33 days, and every recipient refuses that: moved to outbox/failed/"; return 1
@@ -380,6 +381,15 @@ ig_post(){ # <address> <outbox stem> → POSTs it, sealing it first; on 409 stal
     ig_refuse "its envelope is dated $(jq -r .sent_at "$o.P"), ahead of this machine's clock: it was written while the clock read ahead of where it reads now, and a recipient would refuse it. It is kept in the outbox, and ig_flush sends it once the clock passes that time"; return 1
   fi
   rm -f "$IG/error.json"
+  ig_lookup "$B"; case $? in      # asked before every post: what verifies is kept, and "none held" is the server's word, kept nowhere
+    0) ig_failed "$o"; echo "REVOKED: $B is revoked, for good, and the revocation verifies, so it can never be delivered: moved to outbox/failed/" >&2; return 1 ;;
+    1) rm -f "$IG/error.json" ;;      # its 404 is an answer, and not one about the message
+    2) rm -f "$IG/error.json"; echo "what the server holds about $B could not be asked, so nothing is posted: kept in the outbox, retry with ig_flush" >&2; return 1 ;;      # no answer is not "none held". Whatever code the failed lookup carried is no answer about the message
+    *) ig_refuse "what this box keeps about $B does not verify, or could not be written: kept in the outbox"; return 1 ;;
+  esac
+  if [ -e "$o.json" ]; then      # a seal that waited: its recipient's identity may since have revoked the certificate its prekey was signed under, and that prekey may be one a thief of the working key published. Such a seal is not posted: it is made again. So is one this script cannot read
+    if c=$(ig_under "$o"); then ig_listed "$B" "$c"; case $? in 0) rm -f "$o.json" ;; 1) ;; *) ig_refuse "the list of revoked certificates kept for $B does not verify: kept in the outbox"; return 1 ;; esac; else rm -f "$o.json"; fi
+  fi
   { [ -e "$o.json" ] || ig_seal "$B" "$o"; } && ig_owner POST "/v1/$B" "$o.json" > "$IG/receipt.json" && { ig_sent "$o"; return; }
   if [ "$(ig_code)" = stale_prekey ]; then ig_seal "$B" "$o" && ig_owner POST "/v1/$B" "$o.json" > "$IG/receipt.json" && { ig_sent "$o"; return; }; fi
   c=$(ig_code)

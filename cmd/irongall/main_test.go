@@ -672,6 +672,98 @@ func TestRevocationCommands(t *testing.T) {
 	}
 }
 
+// revoked --ask asks the server what it holds about a box and says what this
+// box then holds: nothing shown, which is the server's word and is said as
+// that; a list of revoked certificates; a revocation. revoked <file> takes
+// a record that carries a list.
+func TestRevokedAsk(t *testing.T) {
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	opt := client.Options{Base: srv.URL}
+	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("IRONGALL_BASE", srv.URL)
+	cmd := func(box *client.Box, args ...string) (string, string, error) {
+		t.Helper()
+		t.Setenv("IRONGALL_HOME", box.Dir())
+		var out, errs bytes.Buffer
+		err := run(ctx, "revoked", args, strings.NewReader(""), &out, &errs)
+		return out.String(), errs.String(), err
+	}
+	addr := a.Address().String()
+
+	out, warn, err := cmd(b, "--ask", addr)
+	if err != nil || out != "no revocation of "+addr+" shown\n" || !strings.Contains(warn, "the server's word") {
+		t.Fatalf("ask about a box with nothing revoked: %v %q %q", err, out, warn)
+	}
+	if _, err := a.Rekey(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.RevokeEarlier(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// By its link, as send takes one.
+	if out, warn, err := cmd(b, "--ask", srv.URL+"/to/"+addr); err != nil || out != "certificates of "+addr+" revoked, list version 1\n" || warn != "" {
+		t.Fatalf("ask about a box with a list: %v %q %q", err, out, warn)
+	}
+
+	// The same record as a file, to a box that never asked.
+	resp, err := http.Get(srv.URL + "/v1/" + addr + "/revocations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(t.TempDir(), "a.json")
+	if err := os.WriteFile(file, rec, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out, _, err := cmd(c, file); err != nil || out != "certificates of "+addr+" revoked, list version 1\n" {
+		t.Fatalf("a list from a file: %v %q", err, out)
+	}
+
+	// A record that carries a list and no revocation revokes nothing:
+	// revoke --record publishes only what ends the address.
+	t.Setenv("IRONGALL_HOME", t.TempDir())
+	if err := run(ctx, "revoke", []string{"--record", file, addr}, strings.NewReader(""), io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "not a revocation") {
+		t.Fatalf("revoke --record with a list and no revocation: %v", err)
+	}
+	if out, _, err := cmd(b, "--ask", addr); err != nil || out != "certificates of "+addr+" revoked, list version 1\n" {
+		t.Fatalf("after it: %v %q", err, out)
+	}
+
+	// The address revoked: both say so, in the words revoked <file> has.
+	r, err := a.Revocation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Revoke(ctx, opt, r); err != nil {
+		t.Fatal(err)
+	}
+	if out, _, err := cmd(b, "--ask", addr); err != nil || out != "revoked "+addr+"\n" {
+		t.Fatalf("ask about a revoked box: %v %q", err, out)
+	}
+
+	for _, args := range [][]string{nil, {"--ask"}, {"--ask", addr, addr}, {"--ask", "not an address"}, {addr}} {
+		if out, _, err := cmd(b, args...); err == nil || out != "" {
+			t.Fatalf("revoked %q ran: %q", args, out)
+		}
+	}
+}
+
 // rekey --revoke-earlier publishes the new prekey first, then revokes every
 // certificate before it, and says what that costs the box's own unread mail.
 func TestRekeyRevokeEarlier(t *testing.T) {

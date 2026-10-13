@@ -63,19 +63,92 @@ func Revoke(ctx context.Context, opt Options, rec *protocol.Revocations) (protoc
 	return a, err
 }
 
-// KeepRevocation takes a revocation someone handed over, of this box's own
-// address or of anyone's, checks it, and keeps it. It is the answer to a
-// server that hides one: the record proves itself wherever it came from.
-func (b *Box) KeepRevocation(rec *protocol.Revocations) (protocol.Address, error) {
-	a := protocol.Address(sha256.Sum256(rec.Identity))
-	id, err := protocol.VerifyRevocation(a, rec.Identity, rec.Revocation)
-	if errors.Is(err, protocol.ErrIdentityType) {
-		return a, refuse("the record's identity is of a key type this client does not verify, so its revocation cannot be checked here")
-	}
+// Held is what a box holds about an address: what that address's identity
+// signed about it, verified here, and kept. It is what a send to the address
+// and a read of its mail are checked against, with no call to anyone.
+type Held struct {
+	// Revoked is true when the box holds a revocation of the address: it is
+	// ended, for good.
+	Revoked bool
+	// Certificates is the newest list of the address's revoked certificates
+	// the box holds, or nil. The address goes on.
+	Certificates *protocol.RevokedCertificates
+}
+
+// held returns what this box holds about a, each part checked again as it is
+// read.
+func (b *Box) held(a protocol.Address) (*Held, error) {
+	gone, err := b.revoked(a)
 	if err != nil {
-		return a, refuse("the record is not a revocation: %v", err)
+		return nil, err
 	}
-	return a, b.keepRevocation(id, rec.Revocation)
+	list, err := b.revokedCerts(a)
+	if err != nil {
+		return nil, err
+	}
+	return &Held{Revoked: gone, Certificates: list}, nil
+}
+
+// KeepRevocation takes a record someone handed over, of this box's own
+// address or of anyone's: a revocation of the address, a list of its revoked
+// certificates, or both. Each part is checked, and what verifies is kept. It
+// is the answer to a server that hides one: the record proves itself
+// wherever it came from. A record with a part that does not verify is
+// refused whole, and nothing of it is kept: whoever handed it over is told,
+// where a server's answer that does not verify counts as nothing shown.
+//
+// It returns the address and what this box then holds about it. A list no
+// newer than the one held changes nothing.
+func (b *Box) KeepRevocation(rec *protocol.Revocations) (protocol.Address, *Held, error) {
+	a := protocol.Address(sha256.Sum256(rec.Identity))
+	if len(rec.Revocation) == 0 && len(rec.RevokedCertificates) == 0 {
+		return a, nil, refuse("the record holds no revocation and no list of revoked certificates")
+	}
+	var id *protocol.Identity
+	if len(rec.Revocation) > 0 {
+		var err error
+		id, err = protocol.VerifyRevocation(a, rec.Identity, rec.Revocation)
+		if errors.Is(err, protocol.ErrIdentityType) {
+			return a, nil, refuse("the record's identity is of a key type this client does not verify, so its revocation cannot be checked here")
+		}
+		if err != nil {
+			return a, nil, refuse("the record is not a revocation: %v", err)
+		}
+	}
+	if len(rec.RevokedCertificates) > 0 {
+		_, err := protocol.VerifyRevokedCertificates(a, rec.Identity, rec.RevokedCertificates, rec.RevokedCertificatesSignature)
+		if errors.Is(err, protocol.ErrIdentityType) {
+			return a, nil, refuse("the record's identity is of a key type this client does not verify, so its list of revoked certificates cannot be checked here")
+		}
+		if err != nil {
+			return a, nil, refuse("the record's list: %v", err)
+		}
+		if err := b.keepRevokedCerts(a, rec.Identity, rec.RevokedCertificates, rec.RevokedCertificatesSignature); err != nil {
+			return a, nil, err
+		}
+	}
+	if id != nil {
+		if err := b.keepRevocation(id, rec.Revocation); err != nil {
+			return a, nil, err
+		}
+	}
+	h, err := b.held(a)
+	return a, h, err
+}
+
+// Ask asks this box's server what it holds about a, keeps what verifies, and
+// returns what the box then holds: a box may ask at any time, and whatever
+// it has verified about an address it keeps. A send asks by itself
+// ([Box.SendWith]), and so does a drain, of each sender ([Box.Receive]).
+//
+// A server that answers that it holds nothing has answered, and that is its
+// word: it can keep a record back, and nothing here tells. What the box
+// holds already stands whatever a server answers. No answer is an error.
+func (b *Box) Ask(ctx context.Context, a protocol.Address) (*Held, error) {
+	if _, err := b.lookupRevocation(ctx, a); err != nil {
+		return nil, err
+	}
+	return b.held(a)
 }
 
 // revocationFile is where a verified revocation of a is kept: for a peer,
@@ -153,6 +226,22 @@ func (b *Box) lookupRevocation(ctx context.Context, a protocol.Address) (bool, e
 		return false, nil
 	}
 	return true, b.keepRevocation(id, rec.Revocation)
+}
+
+// ask asks the server what it holds about a recipient before a message is
+// posted to it, once for each recipient in a flush, keeps what verifies, and
+// reports whether this box holds a revocation of it. asked holds the
+// recipients a flush has an answer about: for those the box reads what it
+// holds, with no call.
+func (b *Box) ask(ctx context.Context, to protocol.Address, asked map[protocol.Address]bool) (bool, error) {
+	if asked[to] {
+		return b.revoked(to)
+	}
+	gone, err := b.lookupRevocation(ctx, to)
+	if err == nil {
+		asked[to] = true
+	}
+	return gone, err
 }
 
 // revokedCertsFile is where the list of a's revoked certificates is kept:

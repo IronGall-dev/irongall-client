@@ -1,0 +1,482 @@
+package client_test
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/IronGall-dev/irongall-client/client"
+	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
+	"github.com/IronGall-dev/irongall-client/protocol"
+)
+
+// A box asks what the server holds about an address before it posts to it,
+// keeps what verifies, and checks the send against what it then holds. These
+// tests play a box whose working key was taken, and an operator that serves
+// its senders the statement the thief can read mail under.
+
+// operator stands between the boxes and the server: it records every request
+// as "METHOD path", and answers one itself when its rule does.
+type operator struct {
+	mu   sync.Mutex
+	seen []string
+	rule func(w http.ResponseWriter, r *http.Request) bool
+}
+
+// watch puts an operator in front of the server. rule may be nil.
+func watch(e *env, rule func(w http.ResponseWriter, r *http.Request) bool) *operator {
+	o := &operator{rule: rule}
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		o.mu.Lock()
+		o.seen = append(o.seen, r.Method+" "+r.URL.Path)
+		o.mu.Unlock()
+		if o.rule != nil && o.rule(w, r) {
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	return o
+}
+
+// count returns how many requests were made with this method to a path with
+// this suffix.
+func (o *operator) count(method, suffix string) int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	n := 0
+	for _, s := range o.seen {
+		if strings.HasPrefix(s, method+" ") && strings.HasSuffix(s, suffix) {
+			n++
+		}
+	}
+	return n
+}
+
+func answer(w http.ResponseWriter, code protocol.Code) bool {
+	fakeserver.WriteJSON(w, code.Status(), protocol.Problem{Code: code, Status: code.Status()})
+	return true
+}
+
+func lookupOf(a *client.Box) string { return "/v1/" + a.Address().String() + "/revocations" }
+func postTo(a *client.Box) string   { return "/v1/" + a.Address().String() }
+
+// waiting returns how many entries a box's outbox holds for an address, and
+// how many of them are sealed.
+func waiting(b *client.Box, to protocol.Address) (entries, sealed int) {
+	p, _ := filepath.Glob(filepath.Join(b.Dir(), "outbox", to.String()+".*.P"))
+	j, _ := filepath.Glob(filepath.Join(b.Dir(), "outbox", to.String()+".*.json"))
+	return len(p), len(j)
+}
+
+// theft plays a taken working key: it returns the statement A published
+// under its first certificate, as the thief's, then has A renew and revoke
+// that certificate. The address goes on.
+func theft(t *testing.T, e *env, a *client.Box) (statement, signature []byte) {
+	t.Helper()
+	statement, signature = e.srv.Prekey(a.Address())
+	if _, err := a.Rekey(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+	if list, err := a.RevokeEarlier(context.Background()); err != nil || list == nil || !list.Revokes(1) {
+		t.Fatalf("revoke earlier: %+v, %v", list, err)
+	}
+	return statement, signature
+}
+
+// helpsTheThief is an operator that serves A's senders the old statement,
+// and takes whatever is then posted to A. With hide it also answers that it
+// holds nothing about A.
+func helpsTheThief(e *env, a *client.Box, statement, signature []byte, hide bool) *operator {
+	return watch(e, func(w http.ResponseWriter, r *http.Request) bool {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == postTo(a)+"/identity":
+			fakeserver.WriteJSON(w, http.StatusOK, protocol.IdentityResponse{Identity: a.Identity().Document(), Prekey: statement, PrekeySignature: signature})
+		case r.Method == http.MethodPost && r.URL.Path == postTo(a):
+			_, _ = io.Copy(io.Discard, r.Body)
+			fakeserver.WriteJSON(w, http.StatusCreated, protocol.Receipt{ID: strings.Repeat("0", 64)})
+		case hide && r.Method == http.MethodGet && r.URL.Path == lookupOf(a):
+			return answer(w, protocol.CodeNotRevoked)
+		default:
+			return false
+		}
+		return true
+	})
+}
+
+// A sender that has never read a box's mail holds nothing about it. Asked
+// before the send, the server shows the box's list, and the sender then
+// refuses the statement under the revoked certificate: nothing is posted.
+// What the sender learned stands when the server later hides it.
+func TestASenderAsksBeforeItSends(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a := e.box(protocol.Classic)
+	statement, signature := theft(t, e, a)
+
+	// The control: a sender shown no list takes the old statement, and its
+	// mail goes to the prekey the thief holds. This is what asking is for,
+	// and what a server that hides the list can still do to a sender that
+	// has never seen it.
+	blind := e.box(protocol.Classic)
+	op := helpsTheThief(e, a, statement, signature, true)
+	if _, err := blind.Send(ctx, a.Address(), "to whoever holds the old prekey"); err != nil {
+		t.Fatalf("a sender shown no list: %v", err)
+	}
+	if op.count(http.MethodGet, lookupOf(a)) != 1 || op.count(http.MethodPost, postTo(a)) != 1 {
+		t.Fatalf("a sender shown no list asked once and posted once: %q", op.seen)
+	}
+
+	// The same operator, with the list not hidden: the sender asks first.
+	b := e.box(protocol.Classic)
+	op = helpsTheThief(e, a, statement, signature, false)
+	_, err := b.Send(ctx, a.Address(), "never posted")
+	if err == nil || !strings.Contains(err.Error(), "under a certificate its identity has revoked") || !strings.Contains(err.Error(), "kept in the outbox") {
+		t.Fatalf("a send to a statement under a revoked certificate: %v", err)
+	}
+	if op.count(http.MethodPost, postTo(a)) != 0 || !keptList(b, a.Address()) || keptRevocation(b, a.Address()) {
+		t.Fatalf("it was posted, or the list was not kept: %q", op.seen)
+	}
+	if n, sealed := waiting(b, a.Address()); n != 1 || sealed != 0 || failed(b, a.Address()) != 0 {
+		t.Fatalf("the message is not waiting unsealed in the outbox: %d, %d", n, sealed)
+	}
+
+	// What a box learned while the server showed it holds after the server
+	// hides it: C asked once, at no send, and has never seen a statement of
+	// A's, so nothing but the list it keeps refuses the old one.
+	c := e.box(protocol.Classic)
+	e.srv.SetMiddle(nil)
+	held, err := c.Ask(ctx, a.Address())
+	if err != nil || held.Revoked || held.Certificates == nil || !held.Certificates.Revokes(1) || held.Certificates.Revokes(2) {
+		t.Fatalf("ask: %+v, %v", held, err)
+	}
+	op = helpsTheThief(e, a, statement, signature, true)
+	if _, err := c.Send(ctx, a.Address(), "never posted either"); err == nil || !strings.Contains(err.Error(), "under a certificate its identity has revoked") {
+		t.Fatalf("a send after the server turned: %v", err)
+	}
+	if op.count(http.MethodPost, postTo(a)) != 0 {
+		t.Fatalf("it was posted: %q", op.seen)
+	}
+
+	// With an honest server the message that waited goes, to the statement
+	// under the certificate in use.
+	e.srv.SetMiddle(nil)
+	if got, err := b.Flush(ctx); err != nil || len(got) != 1 {
+		t.Fatalf("flush: %v, %v", got, err)
+	}
+	if res := receive(t, a); len(res.Delivered) != 1 || bodyOf(t, res.Delivered[0]) != "never posted" {
+		t.Fatalf("the box that revoked its old certificate got: %+v", res)
+	}
+}
+
+// No answer is not "none held": with no answer about the recipient nothing
+// is posted and nothing is sealed, and the message waits. Whatever code the
+// failed lookup carries is never read as an answer about the message.
+func TestNoAnswerAboutARecipientPostsNothing(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+
+	op := watch(e, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodGet && r.URL.Path == lookupOf(a) {
+			http.Error(w, "down", http.StatusServiceUnavailable)
+			return true
+		}
+		return false
+	})
+	_, err := b.Send(ctx, a.Address(), "waits for an answer")
+	if err == nil || !strings.Contains(err.Error(), "could not be asked") || !strings.Contains(err.Error(), "kept in the outbox") {
+		t.Fatalf("a send with no answer about its recipient: %v", err)
+	}
+	if op.count(http.MethodPost, postTo(a)) != 0 || op.count(http.MethodGet, "/identity") != 0 {
+		t.Fatalf("something was asked or posted after no answer: %q", op.seen)
+	}
+	if n, sealed := waiting(b, a.Address()); n != 1 || sealed != 0 {
+		t.Fatalf("the outbox: %d entries, %d sealed", n, sealed)
+	}
+
+	// A code that would end a message, had the post been answered with it.
+	for _, code := range []protocol.Code{protocol.CodeBadAddress, protocol.CodeTooLarge, protocol.CodeConflict, protocol.CodeRevoked} {
+		op = watch(e, func(w http.ResponseWriter, r *http.Request) bool {
+			return r.Method == http.MethodGet && r.URL.Path == lookupOf(a) && answer(w, code)
+		})
+		if _, err := b.Flush(ctx); err == nil || !strings.Contains(err.Error(), "kept in the outbox") {
+			t.Fatalf("a lookup answered %s: %v", code, err)
+		}
+		if n, _ := waiting(b, a.Address()); n != 1 || failed(b, a.Address()) != 0 || op.count(http.MethodPost, postTo(a)) != 0 || keptRevocation(b, a.Address()) {
+			t.Fatalf("a lookup answered %s moved the message, posted it, or revoked the address: %q", code, op.seen)
+		}
+	}
+
+	e.srv.SetMiddle(nil)
+	if got, err := b.Flush(ctx); err != nil || len(got) != 1 {
+		t.Fatalf("flush with an answer: %v, %v", got, err)
+	}
+	if res := receive(t, a); len(res.Delivered) != 1 {
+		t.Fatalf("delivered: %+v", res)
+	}
+}
+
+// postFails answers every post to a box with a 503, and lets the rest
+// through.
+func postFails(e *env, a *client.Box) {
+	watch(e, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodPost && r.URL.Path == postTo(a) {
+			http.Error(w, "down", http.StatusServiceUnavailable)
+			return true
+		}
+		return false
+	})
+}
+
+// A message can wait in the outbox, sealed, for days. Before it is posted
+// the box asks again, and the seal is checked against what the box then
+// holds: a seal to a prekey under a certificate since revoked is not posted
+// but made again, and nothing is posted to an address since revoked.
+func TestASealThatWaitedIsCheckedBeforeItIsPosted(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+
+	postFails(e, a)
+	if _, err := b.Send(ctx, a.Address(), "sealed under certificate 1"); err == nil {
+		t.Fatal("the post was meant to fail")
+	}
+	if n, sealed := waiting(b, a.Address()); n != 1 || sealed != 1 {
+		t.Fatalf("the outbox: %d entries, %d sealed", n, sealed)
+	}
+	statement, signature := theft(t, e, a)
+
+	// The operator still serves the old statement, and would take the seal
+	// as it is. The box asks, learns of the list, and posts nothing: the
+	// seal is not sent, and the statement on offer is refused.
+	op := helpsTheThief(e, a, statement, signature, false)
+	if _, err := b.Flush(ctx); err == nil || !strings.Contains(err.Error(), "under a certificate its identity has revoked") {
+		t.Fatalf("a flush of a seal under a revoked certificate: %v", err)
+	}
+	if op.count(http.MethodPost, postTo(a)) != 0 {
+		t.Fatalf("the old seal was posted: %q", op.seen)
+	}
+	if n, _ := waiting(b, a.Address()); n != 1 || failed(b, a.Address()) != 0 {
+		t.Fatal("the message did not stay in the outbox")
+	}
+
+	// With an honest server it is sealed again before it is posted: one
+	// post, naming the certificate in use, never the old seal first.
+	var posted [][]byte
+	watch(e, func(_ http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodPost && r.URL.Path == postTo(a) {
+			body, _ := io.ReadAll(r.Body)
+			posted = append(posted, body)
+			r.Body = io.NopCloser(strings.NewReader(string(body)))
+		}
+		return false
+	})
+	if got, err := b.Flush(ctx); err != nil || len(got) != 1 {
+		t.Fatalf("flush: %v, %v", got, err)
+	}
+	var req struct {
+		CertificateSerial uint64 `json:"certificate_serial"`
+	}
+	if len(posted) != 1 || json.Unmarshal(posted[0], &req) != nil || req.CertificateSerial != 2 {
+		t.Fatalf("%d posts, the first under certificate %d", len(posted), req.CertificateSerial)
+	}
+	if res := receive(t, a); len(res.Delivered) != 1 || bodyOf(t, res.Delivered[0]) != "sealed under certificate 1" {
+		t.Fatalf("delivered: %+v", res)
+	}
+
+	// An address revoked while a sealed message waits: nothing is posted.
+	c := e.box(protocol.Classic)
+	postFails(e, c)
+	if _, err := b.Send(ctx, c.Address(), "sealed before the address was revoked"); err == nil {
+		t.Fatal("the post was meant to fail")
+	}
+	revoke(t, e, c)
+	// This operator would take the post, where an honest server refuses it.
+	op = watch(e, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodPost && r.URL.Path == postTo(c) {
+			fakeserver.WriteJSON(w, http.StatusCreated, protocol.Receipt{ID: strings.Repeat("0", 64)})
+			return true
+		}
+		return false
+	})
+	if _, err := b.Flush(ctx); !isRevoked(err, c.Address(), false) || !strings.Contains(err.Error(), "moved to outbox/failed/") {
+		t.Fatalf("a flush to an address since revoked: %v", err)
+	}
+	if op.count(http.MethodPost, postTo(c)) != 0 || failed(b, c.Address()) != 1 || !keptRevocation(b, c.Address()) {
+		t.Fatalf("it was posted, or not moved, or the revocation was not kept: %q", op.seen)
+	}
+}
+
+// A seal this client cannot read, or one that names no certificate, cannot
+// be checked against a list: it is made again, never posted as it is.
+func TestASealThatCannotBeCheckedIsMadeAgain(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	for _, seal := range []string{`{"prekey_serial":1,"ciphertext":"AAAA"}`, `not JSON`} {
+		postFails(e, a)
+		if _, err := b.Send(ctx, a.Address(), "sealed again"); err == nil {
+			t.Fatal("the post was meant to fail")
+		}
+		sealed, _ := filepath.Glob(filepath.Join(b.Dir(), "outbox", a.Address().String()+".*.json"))
+		if len(sealed) != 1 {
+			t.Fatalf("%d sealed entries", len(sealed))
+		}
+		if err := os.WriteFile(sealed[0], []byte(seal), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		e.srv.SetMiddle(nil)
+		if got, err := b.Flush(ctx); err != nil || len(got) != 1 {
+			t.Fatalf("flush of a seal that reads %q: %v, %v", seal, got, err)
+		}
+		if res := receive(t, a); len(res.Delivered) != 1 || bodyOf(t, res.Delivered[0]) != "sealed again" {
+			t.Fatalf("a seal that reads %q: %+v", seal, res)
+		}
+	}
+}
+
+// A send asks once, and a flush once for each recipient, however many
+// messages wait for it.
+func TestAFlushAsksOnceForEachRecipient(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+
+	op := watch(e, nil)
+	send(t, b, a, "one send")
+	if n := op.count(http.MethodGet, lookupOf(a)); n != 1 {
+		t.Fatalf("a send asked %d times: %q", n, op.seen)
+	}
+
+	watch(e, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodPost {
+			http.Error(w, "down", http.StatusServiceUnavailable)
+			return true
+		}
+		return false
+	})
+	for _, to := range []*client.Box{a, a, c, a} {
+		if _, err := b.Send(ctx, to.Address(), "waits"); err == nil {
+			t.Fatal("the post was meant to fail")
+		}
+	}
+	op = watch(e, nil)
+	if got, err := b.Flush(ctx); err != nil || len(got) != 4 {
+		t.Fatalf("flush: %v, %v", got, err)
+	}
+	if na, nc := op.count(http.MethodGet, lookupOf(a)), op.count(http.MethodGet, lookupOf(c)); na != 1 || nc != 1 {
+		t.Fatalf("a flush of three messages to one box and one to another asked %d and %d times", na, nc)
+	}
+}
+
+// record fetches what the server holds about a box, as anyone can.
+func record(t *testing.T, e *env, a *client.Box) *protocol.Revocations {
+	t.Helper()
+	resp, err := http.Get(e.srv.URL + lookupOf(a))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // read only
+	var rec protocol.Revocations
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&rec) != nil {
+		t.Fatalf("the record of %s: %d", a.Address(), resp.StatusCode)
+	}
+	return &rec
+}
+
+// A box may ask at any time, and a record may come from anywhere: a list of
+// revoked certificates handed over in a file is kept as one from a server
+// is. The highest version stands, and a record with a part that does not
+// verify is refused whole.
+func TestAskingAtAnyTimeAndAListHandedOver(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+
+	if held, err := b.Ask(ctx, a.Address()); err != nil || held.Revoked || held.Certificates != nil {
+		t.Fatalf("ask about a box with nothing revoked: %+v, %v", held, err)
+	}
+	stolen := worker(t, a)
+	theft(t, e, a)
+	first := record(t, e, a)
+	if held, err := b.Ask(ctx, a.Address()); err != nil || held.Revoked || held.Certificates == nil || held.Certificates.Version != 1 {
+		t.Fatalf("ask after a list was published: %+v, %v", held, err)
+	}
+
+	// C never asks: the record reaches it as a file, and the server may say
+	// what it likes.
+	says(e, protocol.CodeNotRevoked, http.MethodGet, "/revocations")
+	got, held, err := c.KeepRevocation(first)
+	if err != nil || got != a.Address() || held.Revoked || held.Certificates == nil || held.Certificates.Version != 1 || !keptList(c, a.Address()) {
+		t.Fatalf("a list handed over: %+v, %v", held, err)
+	}
+	mailAs(t, e, a, c, stolen, "signed by the key that was taken")
+	if res := receive(t, c); len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedCertificate {
+		t.Fatalf("a thief's mail, the list handed over and the server hiding it: %+v", res)
+	}
+	e.srv.SetMiddle(nil)
+
+	// A later list replaces it, and the earlier one, handed over again,
+	// changes nothing.
+	if _, err := a.Rekey(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.RevokeEarlier(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, held, err := c.KeepRevocation(record(t, e, a)); err != nil || held.Certificates.Version != 2 {
+		t.Fatalf("a later list: %+v, %v", held, err)
+	}
+	if _, held, err := c.KeepRevocation(first); err != nil || held.Certificates.Version != 2 || !held.Certificates.Revokes(2) {
+		t.Fatalf("an earlier list handed over again: %+v, %v", held, err)
+	}
+
+	// A record with a part that does not verify is refused whole: a good
+	// revocation beside a list the working key signed keeps nothing.
+	d := e.box(protocol.Classic)
+	rev, err := d.Revocation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	list, err := protocol.NewRevokedCertificates(d.Address(), 1, []protocol.SerialRange{{First: 1, Last: 1}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	byWorker, err := protocol.SignRevokedCertificates(worker(t, d), list)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, bad := range map[string]*protocol.Revocations{
+		"a list a working key signed":        {Identity: rev.Identity, Revocation: rev.Revocation, RevokedCertificates: list.Statement(), RevokedCertificatesSignature: byWorker},
+		"a list with no signature":           {Identity: rev.Identity, RevokedCertificates: list.Statement()},
+		"another box's revocation, and none": {Identity: rev.Identity, Revocation: first.RevokedCertificatesSignature},
+		"nothing but the identity":           {Identity: rev.Identity},
+	} {
+		if _, _, err := c.KeepRevocation(bad); err == nil || keptRevocation(c, d.Address()) || keptList(c, d.Address()) {
+			t.Fatalf("%s was kept: %v", name, err)
+		}
+	}
+	if _, held, err := c.KeepRevocation(rev); err != nil || !held.Revoked {
+		t.Fatalf("the revocation alone: %+v, %v", held, err)
+	}
+
+	// Asking about an address the box holds a revocation of asks nobody.
+	op := watch(e, nil)
+	if held, err := c.Ask(ctx, d.Address()); err != nil || !held.Revoked || op.count(http.MethodGet, lookupOf(d)) != 0 {
+		t.Fatalf("ask about a held revocation: %+v, %v, %q", held, err, op.seen)
+	}
+	// And no answer is an error, never "nothing held".
+	watch(e, func(w http.ResponseWriter, _ *http.Request) bool {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+		return true
+	})
+	if held, err := b.Ask(ctx, c.Address()); err == nil || held != nil {
+		t.Fatalf("ask with no answer: %+v, %v", held, err)
+	}
+}

@@ -134,8 +134,9 @@ func (b *Box) identityOf(peer protocol.Address, served []byte) (*protocol.Identi
 
 // pin keeps a peer's identity document, unless it is kept already. It is
 // called only for an identity that has signed something this box verified: a
-// prekey statement it will encrypt to, or mail it delivers. So peers/<a>/
-// exists only for a peer that has signed something.
+// prekey statement it will encrypt to, mail it delivers, a revocation of its
+// address or a list of its revoked certificates. So peers/<a>/ exists only
+// for a peer that has signed something.
 func (b *Box) pin(id *protocol.Identity) error {
 	d := b.path("peers", id.Address().String())
 	if exists(d + "/identity.doc") {
