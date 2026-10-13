@@ -101,7 +101,7 @@ func TestForgeries(t *testing.T) {
 		// carries A's identity document and says it is from A. The signature
 		// is good. The certificate is the forger's.
 		line := e.line(a.Identity().Document(), a.Address(), b.Address(), "from A, says the forger")
-		e.seal(b, a.Address(), line, sign(t, worker(t, o, 1), line, b.Address()))
+		e.seal(b, a.Address(), line, sign(t, worker(t, o), line, b.Address()))
 		refusedFor(t, receive(t, b), protocol.RefusedSignature, "not signed under a certificate of the sender's identity")
 		if exists(filepath.Join(b.Dir(), "peers", a.Address().String())) {
 			t.Fatal("a sender whose signature did not verify was pinned")
@@ -111,15 +111,15 @@ func TestForgeries(t *testing.T) {
 	t.Run("a second message after the signature", func(t *testing.T) {
 		e := newEnv(t)
 		a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
-		real := e.line(a.Identity().Document(), a.Address(), b.Address(), "real, from A")
+		genuine := e.line(a.Identity().Document(), a.Address(), b.Address(), "real, from A")
 		hidden := e.line(c.Identity().Document(), c.Address(), b.Address(), "hidden, from C")
-		id := e.seal(b, a.Address(), real, sign(t, worker(t, a, 1), real, b.Address()), hidden, sign(t, worker(t, c, 1), hidden, b.Address()))
+		id := e.seal(b, a.Address(), genuine, sign(t, worker(t, a), genuine, b.Address()), hidden, sign(t, worker(t, c), hidden, b.Address()))
 		res := receive(t, b)
 		if len(res.Delivered) != 1 {
 			t.Fatalf("delivered %d, refused %v", len(res.Delivered), res.Refused)
 		}
 		d := res.Delivered[0]
-		if d.ID != id || d.Envelope.From != a.Address() || bodyOf(t, d) != "real, from A" || !bytes.Equal(d.Plaintext, real) {
+		if d.ID != id || d.Envelope.From != a.Address() || bodyOf(t, d) != "real, from A" || !bytes.Equal(d.Plaintext, genuine) {
 			t.Fatalf("what was delivered is not A's message: %s", d.Line)
 		}
 		if bytes.Contains(d.Line, []byte("\n")) || bytes.Contains(d.Line, []byte(c.Address().String())) || bytes.Contains(d.Line, []byte("identity")) {
@@ -213,7 +213,7 @@ func TestForgeries(t *testing.T) {
 	t.Run("a stolen working key, replaced since", func(t *testing.T) {
 		e := newEnv(t)
 		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
-		stolen := worker(t, b, 1) // read before the renewal deletes it
+		stolen := worker(t, b) // read before the renewal deletes it
 		old, _ := e.srv.Prekey(b.Address())
 		if _, err := b.Rekey(ctx, ""); err != nil {
 			t.Fatal(err)
@@ -290,7 +290,7 @@ func TestForgeries(t *testing.T) {
 			t.Fatal(err)
 		}
 		env.Identity = a.Identity().Document()
-		line, sig, err := protocol.SignEnvelope(env, worker(t, a, 1))
+		line, sig, err := protocol.SignEnvelope(env, worker(t, a))
 		if err != nil {
 			t.Fatal(err)
 		}

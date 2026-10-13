@@ -25,7 +25,7 @@ import (
 func mail(t *testing.T, e *env, from, to *client.Box, envelope string) string {
 	t.Helper()
 	line := []byte(envelope + "\n")
-	return e.seal(to, from.Address(), line, sign(t, worker(t, from, 1), line, to.Address()))
+	return e.seal(to, from.Address(), line, sign(t, worker(t, from), line, to.Address()))
 }
 
 // A refusal says which check failed by a code from a closed set and in this
@@ -134,7 +134,7 @@ func TestMadeUpSendersLeaveNothingInPeers(t *testing.T) {
 		}
 		// An envelope that names A, signed by another box's working key.
 		line := e.line(a.Identity().Document(), a.Address(), b.Address(), strconv.Itoa(i))
-		e.seal(b, madeUp, line, sign(t, worker(t, o, 1), line, b.Address()))
+		e.seal(b, madeUp, line, sign(t, worker(t, o), line, b.Address()))
 	}
 	asked := 0
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {

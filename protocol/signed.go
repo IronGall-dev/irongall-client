@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"bytes"
+	"encoding/base64"
 	"errors"
 	"time"
 
@@ -144,8 +145,9 @@ func OpenSigned(plaintext []byte, me Address, now time.Time) (*Signed, error) {
 }
 
 // envelopeSender reads the two members of an envelope's line that say who
-// sent it, before anything is verified: the identity document and from, as
-// the exact string it holds.
+// sent it, before anything is verified: from, as the exact string it holds,
+// and the identity document. The document travels as canonical standard
+// base64, the one encoding of its bytes, so no two readers decode it two ways.
 func envelopeSender(line []byte) (doc []byte, from string, err error) {
 	if !utf8Valid(line) {
 		return nil, "", badEnvelope("the envelope is not UTF-8")
@@ -154,19 +156,23 @@ func envelopeSender(line []byte) (doc []byte, from string, err error) {
 	if err != nil {
 		return nil, "", err
 	}
-	var w struct {
-		Identity Bytes
-		From     string
-	}
-	if raw, ok := fields["identity"]; ok {
-		if err := w.Identity.UnmarshalJSON(raw); err != nil {
-			return nil, "", &EnvelopeError{RefusedIdentity, "the envelope's identity is not base64 of an identity document"}
-		}
-	}
 	if raw, ok := fields["from"]; ok {
-		if err := unmarshalString(raw, &w.From); err != nil {
+		if err := unmarshalString(raw, &from); err != nil {
 			return nil, "", badEnvelope("the envelope is malformed: its from is not what that field holds")
 		}
 	}
-	return w.Identity, w.From, nil
+	raw, ok := fields["identity"]
+	if !ok {
+		return nil, from, nil
+	}
+	notDoc := &EnvelopeError{RefusedIdentity, "the envelope's identity is not base64 of an identity document"}
+	var b64 string
+	if err := unmarshalString(raw, &b64); err != nil {
+		return nil, "", notDoc
+	}
+	doc, err = base64.StdEncoding.Strict().DecodeString(b64)
+	if err != nil || len(doc) == 0 || base64.StdEncoding.EncodeToString(doc) != b64 {
+		return nil, "", notDoc
+	}
+	return doc, from, nil
 }

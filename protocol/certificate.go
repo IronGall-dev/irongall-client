@@ -67,8 +67,8 @@ func CheckCertificate(id *Identity, key ssh.PublicKey, now time.Time) (*Certific
 	if cert.KeyId != CertificateKeyID {
 		return nil, fmt.Errorf("%w: its key id is not %s", ErrCertificate, CertificateKeyID)
 	}
-	if cert.Serial == 0 {
-		return nil, fmt.Errorf("%w: its serial is 0", ErrCertificate)
+	if cert.Serial == 0 || cert.Serial > MaxSerial {
+		return nil, fmt.Errorf("%w: its serial is not from 1 to 18 digits", ErrCertificate)
 	}
 	if len(cert.ValidPrincipals) != 1 || cert.ValidPrincipals[0] != id.Address().String() {
 		return nil, fmt.Errorf("%w: its one principal must be the box's address", ErrCertificate)

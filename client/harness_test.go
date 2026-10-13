@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -101,26 +100,11 @@ func bodyOf(t *testing.T, d client.Delivery) string {
 	return s
 }
 
-// signer loads a box's identity key from its state directory, as an operator
-// who stole it would.
-func signer(t *testing.T, b *client.Box) ssh.Signer {
+// worker loads a new box's working key, under its certificate, from the
+// box's state directory: what the box signs its mail and its passes with.
+func worker(t *testing.T, b *client.Box) ssh.Signer {
 	t.Helper()
-	k, err := os.ReadFile(filepath.Join(b.Dir(), "identity"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	s, err := ssh.ParsePrivateKey(k)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return s
-}
-
-// worker loads working key n of a box, under its certificate, from the box's
-// state directory: what the box signs its mail and its passes with.
-func worker(t *testing.T, b *client.Box, n int) ssh.Signer {
-	t.Helper()
-	stem := filepath.Join(b.Dir(), "work", strconv.Itoa(n))
+	stem := filepath.Join(b.Dir(), "work", "1")
 	k, err := os.ReadFile(stem)
 	if err != nil {
 		t.Fatal(err)

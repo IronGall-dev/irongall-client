@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -102,32 +103,26 @@ func vectorNow(t *testing.T) (time.Time, string) {
 	return now, fmt.Sprintf("ig_now(){ echo %d; }\n", now.Unix())
 }
 
-// signers writes box's allowed-signers line, as ig_pin does, and returns its
-// address and the file.
-func signers(t *testing.T, box string) (string, string) {
+// identity returns a vector box's address and the path of its identity
+// document: what the script checks a signature against.
+func identity(t *testing.T, box string) (string, string) {
 	t.Helper()
 	addr, err := os.ReadFile(filepath.Join(vectors, box, "address"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc, err := os.ReadFile(filepath.Join(vectors, box, "identity.doc"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	a := strings.TrimSpace(string(addr))
-	f := filepath.Join(t.TempDir(), box+".signers")
-	if err := os.WriteFile(f, []byte(a+" "+strings.Split(string(doc), "\n")[1]+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return a, f
+	return strings.TrimSpace(string(addr)), abs(t, filepath.Join(vectors, box, "identity.doc"))
 }
+
+// scratch is a directory for the script's scratch files, as its box's is.
+func scratch(t *testing.T) []string { return []string{"IRONGALL_HOME=" + t.TempDir()} }
 
 // The script's verdict on every vector is the one the vectors name, as the
 // Go client's is (protocol/vectors_test.go).
 func TestVectorsIdentity(t *testing.T) {
 	need(t, scriptTools...)
 	for _, box := range []string{"a", "b"} {
-		a, _ := signers(t, box)
+		a, _ := identity(t, box)
 		if _, err := bash(t, nil, fmt.Sprintf("ig_idcheck %s %s", abs(t, filepath.Join(vectors, box, "identity.doc")), a)); err != nil {
 			t.Errorf("%s/identity.doc refused: %v", box, err)
 		}
@@ -146,18 +141,58 @@ func TestVectorsIdentity(t *testing.T) {
 	}
 }
 
+// A signature under each certificate of cert/ is refused, as the Go client
+// refuses it, and one under a box's own certificate verifies. The signatures
+// themselves are good: it is the certificate's form, its signer or its dates
+// that fail, which ssh-keygen -Y verify alone does not all check.
+func TestVectorsCertificate(t *testing.T) {
+	need(t, scriptTools...)
+	_, setNow := vectorNow(t)
+	a, aDoc := identity(t, "a")
+	b, bDoc := identity(t, "b")
+	stmt := abs(t, filepath.Join(vectors, "a/prekey-1.txt"))
+	certified := func(addr, doc, sig string) (string, error) {
+		return bash(t, scratch(t), setNow+fmt.Sprintf("ig_certified %s %s irongall-prekey-v1:%s %s %s", addr, doc, a, abs(t, sig), stmt))
+	}
+	if out, err := certified(a, aDoc, filepath.Join(vectors, "a/prekey-1.txt.sig")); err != nil || !strings.HasPrefix(out, "1 ") {
+		t.Fatalf("a/prekey-1.txt.sig under A's certificate: %q %v", out, err)
+	}
+	if _, err := certified(b, bDoc, filepath.Join(vectors, "a/prekey-1.txt.sig")); err == nil {
+		t.Error("A's certificate was taken for B's identity")
+	}
+	sigs, _ := filepath.Glob(filepath.Join(vectors, "cert", "bad-*.sig"))
+	if len(sigs) == 0 {
+		t.Fatal("no certificate vectors")
+	}
+	for _, sig := range sigs {
+		if out, err := certified(a, aDoc, sig); err == nil {
+			t.Errorf("%s: accepted: %s", filepath.Base(sig), out)
+		}
+	}
+	// Control: ssh-keygen alone takes the certificates whose fault is in
+	// their form, so the script's own reading of the fields is what refuses
+	// them.
+	for _, name := range []string{"bad-extensions", "bad-key-id", "bad-serial-zero"} {
+		verify := fmt.Sprintf(`printf '%%s cert-authority %%s\n' %s "$(sed -n 2p %s)" > "$IG/s" && ssh-keygen -Y verify -f "$IG/s" -I %s -n irongall-prekey-v1:%s -s %s -O verify-time=20261010000000Z < %s`,
+			a, aDoc, a, a, abs(t, filepath.Join(vectors, "cert", name+".sig")), stmt)
+		if _, err := bash(t, scratch(t), "mkdir -p \"$IG\"; "+verify); err != nil {
+			t.Errorf("control: ssh-keygen -Y verify refuses %s by itself: %v", name, err)
+		}
+	}
+}
+
 func TestVectorsPrekey(t *testing.T) {
 	need(t, scriptTools...)
 	now, setNow := vectorNow(t)
-	a, aSigners := signers(t, "a")
-	b, bSigners := signers(t, "b")
-	check := func(stmt, sig, addr, signers string) (serial string, notAfter int64, err error) {
-		out, err := bash(t, nil, setNow+fmt.Sprintf("ig_prekeycheck %s %s %s %s", abs(t, stmt), abs(t, sig), addr, signers))
+	a, aDoc := identity(t, "a")
+	b, bDoc := identity(t, "b")
+	check := func(stmt, sig, addr, doc string) (serial string, notAfter int64, err error) {
+		out, err := bash(t, scratch(t), setNow+fmt.Sprintf("ig_prekeycheck %s %s %s %s", abs(t, stmt), abs(t, sig), addr, doc))
 		if err != nil {
 			return "", 0, fmt.Errorf("%w %s", err, out)
 		}
 		f := strings.Fields(out)
-		if len(f) != 3 {
+		if len(f) != 4 {
 			return "", 0, fmt.Errorf("output %q", out)
 		}
 		_, err = fmt.Sscan(f[2], &notAfter)
@@ -180,13 +215,13 @@ func TestVectorsPrekey(t *testing.T) {
 	if !pq() {
 		t.Log(noPQ)
 	}
-	for _, c := range []struct{ stmt, sig, addr, signers, serial string }{
-		{"a/prekey-1.txt", "a/prekey-1.txt.sig", a, aSigners, "1"},
-		{"a/prekey-1.txt", "a/prekey-1.txt.sha256.sig", a, aSigners, "1"},
-		{"a/prekey-2.txt", "a/prekey-2.txt.sig", a, aSigners, "2"},
-		{"b/prekey-1.txt", "b/prekey-1.txt.sig", b, bSigners, "1"},
+	for _, c := range []struct{ stmt, sig, addr, doc, serial string }{
+		{"a/prekey-1.txt", "a/prekey-1.txt.sig", a, aDoc, "1"},
+		{"a/prekey-1.txt", "a/prekey-1.txt.sha256.sig", a, aDoc, "1"},
+		{"a/prekey-2.txt", "a/prekey-2.txt.sig", a, aDoc, "2"},
+		{"b/prekey-1.txt", "b/prekey-1.txt.sig", b, bDoc, "1"},
 	} {
-		s, na, err := check(filepath.Join(vectors, c.stmt), filepath.Join(vectors, c.sig), c.addr, c.signers)
+		s, na, err := check(filepath.Join(vectors, c.stmt), filepath.Join(vectors, c.sig), c.addr, c.doc)
 		if tooOld(filepath.Join(vectors, c.stmt), err) {
 			continue
 		}
@@ -194,7 +229,7 @@ func TestVectorsPrekey(t *testing.T) {
 			t.Errorf("%s with %s: serial %q, not_after %d, %v", c.stmt, c.sig, s, na, err)
 		}
 	}
-	if _, _, err := check(filepath.Join(vectors, "a/prekey-1.txt"), filepath.Join(vectors, "a/prekey-1.txt.sig"), b, bSigners); err == nil {
+	if _, _, err := check(filepath.Join(vectors, "a/prekey-1.txt"), filepath.Join(vectors, "a/prekey-1.txt.sig"), b, bDoc); err == nil {
 		t.Error("A's prekey accepted as B's")
 	}
 	stmts, _ := filepath.Glob(filepath.Join(vectors, "prekey", "*.txt"))
@@ -203,7 +238,7 @@ func TestVectorsPrekey(t *testing.T) {
 	}
 	for _, st := range stmts {
 		name := strings.TrimSuffix(filepath.Base(st), ".txt")
-		_, na, err := check(st, st+".sig", a, aSigners)
+		_, na, err := check(st, st+".sig", a, aDoc)
 		switch {
 		case !strings.HasPrefix(name, "bad-") && tooOld(st, err):
 		case strings.HasPrefix(name, "bad-"):
@@ -229,8 +264,8 @@ func TestVectorsPrekey(t *testing.T) {
 func TestVectorsEnvelope(t *testing.T) {
 	need(t, scriptTools...)
 	now, setNow := vectorNow(t)
-	a, _ := signers(t, "a")
-	b, _ := signers(t, "b")
+	a, _ := identity(t, "a")
+	b, _ := identity(t, "b")
 	A, _ := protocol.ParseAddress(a)
 	B, _ := protocol.ParseAddress(b)
 	files, _ := filepath.Glob(filepath.Join(vectors, "envelope", "*.json"))
@@ -251,7 +286,7 @@ func TestVectorsEnvelope(t *testing.T) {
 			if gerr != nil {
 				t.Fatalf("%s: the Go client refuses it: %v", name, gerr)
 			}
-			env.Pad = ""
+			env.Identity = nil
 			want, _ := env.Marshal()
 			var got, exp any
 			if json.Unmarshal([]byte(line), &got) != nil || json.Unmarshal(want, &exp) != nil || !reflect.DeepEqual(got, exp) {
@@ -267,54 +302,91 @@ func TestVectorsEnvelope(t *testing.T) {
 	}
 }
 
-// The script pads as the Go client does: for an envelope of any size and a
-// key of either type, the same filler and the same size on the wire. This is
+// What a box decrypts gets the Go client's verdict from the script, code for
+// code, for every plain/ vector: the layout, the identity the envelope
+// carries, the signature under its certificate, and the envelope. An accepted
+// one gives the same sender and the same delivered line.
+func TestVectorsPlain(t *testing.T) {
+	need(t, scriptTools...)
+	now, setNow := vectorNow(t)
+	b, _ := identity(t, "b")
+	B, _ := protocol.ParseAddress(b)
+	files, _ := filepath.Glob(filepath.Join(vectors, "plain", "*.txt"))
+	if len(files) == 0 {
+		t.Fatal("no plain vectors")
+	}
+	codes := map[string]int{}
+	for _, f := range files {
+		name := strings.TrimSuffix(filepath.Base(f), ".txt")
+		pt, _ := os.ReadFile(f) //nolint:gosec // a test vector
+		signed, gerr := protocol.OpenSigned(pt, B, now)
+		out, err := bash(t, scratch(t), setNow+fmt.Sprintf(`mkdir -p "$IG" && cp %s "$IG/msg.T" && ig_open %s "$IG/msg" && ig_line "$IG/msg.P"`, abs(t, f), b))
+		if gerr != nil {
+			var refused *protocol.EnvelopeError
+			if !errors.As(gerr, &refused) {
+				t.Fatalf("%s: the Go client: %v", name, gerr)
+			}
+			code, _, _ := strings.Cut(out, ":")
+			if err == nil || code != refused.Code {
+				t.Errorf("%s: the Go client refuses it as %s, the script says %q (%v)", name, refused.Code, strings.TrimSpace(out), err)
+			}
+			codes[refused.Code]++
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: the Go client accepts it, the script refuses: %s", name, out)
+			continue
+		}
+		sender, line, _ := strings.Cut(out, "\n")
+		shown := *signed.Envelope
+		shown.Identity = nil
+		want, _ := shown.Marshal()
+		var got, exp any
+		if sender != signed.Sender.Address().String() || json.Unmarshal([]byte(line), &got) != nil || json.Unmarshal(want, &exp) != nil || !reflect.DeepEqual(got, exp) {
+			t.Errorf("%s: the script delivers %s from %s, the Go client %s from %s", name, line, sender, want, signed.Sender.Address())
+		}
+		codes["delivered"]++
+	}
+	// Every kind of verdict was met, so a script that refused everything, or
+	// nothing, would not pass.
+	for _, c := range []string{"delivered", protocol.RefusedMessage, protocol.RefusedIdentity, protocol.RefusedSignature, protocol.RefusedAttribution} {
+		if codes[c] == 0 {
+			t.Errorf("no plain/ vector was judged %s", c)
+		}
+	}
+	t.Logf("%d plain/ vectors: %v", len(files), codes)
+}
+
+// The script pads as the Go client does: for a message of any size and a key
+// of either type, the same padding and the same size on the wire. This is
 // arithmetic only, so it needs no age: a post-quantum key is told by its
 // prefix.
 func TestPaddingIsTheGoClients(t *testing.T) {
 	need(t, "bash")
-	from := protocol.Address{1}
-	bare := func(body int) *protocol.Envelope {
-		e, err := protocol.NewEnvelope(from, from, strings.Repeat("a", body), time.Unix(1_800_000_000, 0))
-		if err != nil {
-			t.Fatal(err)
-		}
-		return e
-	}
-	empty, err := bare(0).Marshal()
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Body sizes on each side of the block boundaries up to 136 KiB and of
-	// the end of an age chunk, and a spread between.
-	var bodies []int
-	for _, edge := range []int{1 << 10, 2 << 10, 3 << 10, 16 << 10, 18 << 10, 32 << 10, 36 << 10, 64 << 10, 65536 + 200, 65536 + 1659, 72 << 10, 136 << 10} {
+	sig := bytes.Repeat([]byte{'s'}, 846)
+	// Message sizes, the envelope's line with its signature, on each side of
+	// the block boundaries up to 136 KiB and of the end of an age chunk, and
+	// a spread between.
+	var sizes []int
+	for _, edge := range []int{2 << 10, 3 << 10, 4 << 10, 16 << 10, 18 << 10, 32 << 10, 36 << 10, 64 << 10, 65536 + 200, 65536 + 1659, 72 << 10, 136 << 10} {
 		for d := -1680; d <= 20; d++ {
-			if n := edge - len(empty) + d; n >= 0 && (d > -30 || d < -1640 || (d > -220 && d < -180)) {
-				bodies = append(bodies, n)
+			if n := edge + d; n > len(sig) && (d > -30 || d < -1640 || (d > -220 && d < -180)) {
+				sizes = append(sizes, n)
 			}
 		}
 	}
-	for n := 0; n < 200_000; n += 997 {
-		bodies = append(bodies, n)
+	for n := len(sig) + 1; n < 200_000; n += 997 {
+		sizes = append(sizes, n)
 	}
 	for kt, key := range map[protocol.KeyType]string{protocol.Classic: "age1example", protocol.PostQuantum: "age1pq1example"} {
-		var sizes, want strings.Builder
-		for _, n := range bodies {
-			e := bare(n)
-			unpadded, err := e.Marshal()
-			if err != nil {
-				t.Fatal(err)
-			}
-			padded, sealed, err := e.MarshalPadded(kt)
-			if err != nil {
-				t.Fatal(err)
-			}
-			filler := len(padded) - len(unpadded) - len(`,"pad":""`)
-			fmt.Fprintf(&sizes, "%d ", len(unpadded))
-			fmt.Fprintf(&want, "%d %d %d\n", len(unpadded), filler, sealed)
+		var args, want strings.Builder
+		for _, n := range sizes {
+			line := bytes.Repeat([]byte{'e'}, n-len(sig))
+			pt, sealed := protocol.Plaintext(line, sig, kt)
+			fmt.Fprintf(&args, "%d ", n)
+			fmt.Fprintf(&want, "%d %d %d\n", n, len(pt)-n, sealed)
 		}
-		got, err := bash(t, nil, fmt.Sprintf(`for n in %s; do echo "$n $(ig_padding $n %s)"; done`, sizes.String(), key))
+		got, err := bash(t, nil, fmt.Sprintf(`for n in %s; do echo "$n $(ig_padding $n %s)"; done`, args.String(), key))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -322,12 +394,12 @@ func TestPaddingIsTheGoClients(t *testing.T) {
 			g, w := strings.Split(got, "\n"), strings.Split(want.String(), "\n")
 			for i := range w {
 				if i >= len(g) || g[i] != w[i] {
-					t.Fatalf("%s: for an envelope of <bytes>, <filler> <size on the wire>: the script says %q, the Go client %q", kt, g[min(i, len(g)-1)], w[i])
+					t.Fatalf("%s: for a message of <bytes>, <padding> <size on the wire>: the script says %q, the Go client %q", kt, g[min(i, len(g)-1)], w[i])
 				}
 			}
 			t.Fatalf("%s: the script printed %d lines for %d sizes", kt, len(g), len(w))
 		}
-		t.Logf("%s: %d envelope sizes, the same padding from both clients", kt, len(bodies))
+		t.Logf("%s: %d message sizes, the same padding from both clients", kt, len(sizes))
 	}
 }
 
@@ -435,7 +507,7 @@ func TestWithGoClient(t *testing.T) {
 	if res, err := g.Receive(ctx); err != nil || len(res.Delivered) != 3 {
 		t.Fatalf("the Go client received %+v, %v", res, err)
 	}
-	if out, err := sh(shDir, "ig_recv"); err != nil || strings.Count(out, "\n") != 3 || strings.Contains(out, `"pad"`) {
+	if out, err := sh(shDir, "ig_recv"); err != nil || strings.Count(out, "\n") != 3 || strings.Contains(out, `"identity"`) {
 		t.Fatalf("ig_recv: %q %v", out, err)
 	}
 
