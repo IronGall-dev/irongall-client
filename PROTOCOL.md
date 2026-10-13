@@ -295,7 +295,7 @@ U1NIU0lH…
    - A concurrent send of the same ciphertext that got there first is answered as step 7 does.
    - Any other failure answers 5xx. The client keeps the message in its outbox and retries.
 
-**The server checks no signature on a send: there is none for it to see.** What it holds a sender to is the pass. A live pass is a bearer credential for the minutes it has left, so whoever holds one can post in that box's name. Nothing posted that way verifies at a recipient: it spends the box's limits and delivers nothing.
+**The server checks no signature on a message: there is none for it to see.** What it holds a sender to is the pass. A live pass is a bearer credential for the minutes it has left, so whoever holds one can post in that box's name. Nothing posted that way verifies at a recipient: it spends the box's limits and delivers nothing.
 
 ## 5. Receiving — B
 
@@ -362,7 +362,7 @@ printf 'irongall-pass-v1\n%s\n%s\n%s\n' "$A" irongall.dev "$NOT_AFTER" | ssh-key
 
 - **It travels as** `Authorization: irongall-pass address="<A>", not_after="<not_after>", signature="<base64 of pass.sig>"`, in exactly that form, on every call but the ones anyone may make (`GET …/identity`, and the link page), a send included.
 - **A client signs a pass good for 10 minutes. A server takes one that has not run out and runs out at most an hour from now.** The hour is the server's ceiling, not what a client asks for: a client whose clock runs up to 50 minutes fast is still taken.
-- **A client keeps its pass in the box (`pass`) and uses it for every call until it is about to run out,** so a server checks one signature for ten minutes of calls. A server may remember a pass it has checked.
+- **A client keeps its pass in the box (`pass`) and uses it for every call until it is about to run out,** so a server verifies one pass for ten minutes of calls. A server may remember a pass it has checked.
 - **A server takes a pass only** under the box's current certificate, and for a name that is the server's own. **The exception is how a box gets a certificate on record at all:** a registration (§3) and a prekey upload (§6.4) carry a pass under the certificate of the statement they bring.
 - **When a pass is refused:** `401 pass_expired` if it has run out, or runs out more than an hour ahead; `401 unauthorized` if it is not this box's, not for this server, or not under the box's current certificate. On either, a client signs another and tries once more, and no more than once.
 - **It says who is calling and until when, and nothing of what a call does,** so the pass hands a server no proof of any send. The server still knows who sends to whom.
