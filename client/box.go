@@ -179,7 +179,7 @@ func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*B
 		return nil, err
 	}
 	if t := b.identityType; t != "" && t != b.id.Type() {
-		return nil, fmt.Errorf("this box's identity is already a %s key: its address is that key's, so its type cannot change", b.id.Type())
+		return nil, fmt.Errorf("this box's identity is already a key of the type %s: its address is that key's, so its type cannot change", b.id.Type())
 	}
 	published, err := b.publishedSerial()
 	if err != nil {
@@ -297,7 +297,7 @@ func (b *Box) loadIdentity() error {
 	}
 	id, err := protocol.IdentityOf(signer.PublicKey())
 	if errors.Is(err, protocol.ErrIdentityType) {
-		return fmt.Errorf("the identity key is a %s key, and this client runs a box on %s", signer.PublicKey().Type(), strings.Join(protocol.IdentityTypes(), " or "))
+		return fmt.Errorf("the identity key is of the type %s, and this client runs a box on %s", signer.PublicKey().Type(), strings.Join(protocol.IdentityTypes(), " or "))
 	}
 	if err != nil {
 		return err

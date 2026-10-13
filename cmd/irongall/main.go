@@ -150,7 +150,7 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 			kt = protocol.Classic
 		}
 		if opt.IdentityType = *idType; *idType != "" && *idType != protocol.IdentityEd25519 {
-			_, _ = fmt.Fprintf(stderr, "WARNING: a box whose identity is a %s key can neither write to nor hear from a box whose client does not verify that type. Every client verifies ssh-ed25519, which init makes without --identity-type.\n", *idType)
+			_, _ = fmt.Fprintf(stderr, "WARNING: a box whose identity is of the key type %s can neither write to nor hear from a box whose client does not verify that type. Every client verifies ssh-ed25519, which init makes without --identity-type.\n", *idType)
 		}
 		b, err := client.Init(ctx, dir, opt, kt)
 		if err != nil {
