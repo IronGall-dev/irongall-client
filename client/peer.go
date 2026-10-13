@@ -38,6 +38,9 @@ func (b *Box) Resolve(ctx context.Context, peer protocol.Address) (*protocol.Pre
 		return nil, err
 	}
 	p, cert, err := protocol.VerifyPrekey(id, ir.Prekey, ir.PrekeySignature, b.now())
+	if errors.Is(err, protocol.ErrCertificateNotBegun) {
+		return nil, refuse("%s's prekey: %v, by this machine's clock: a certificate starts an hour before it is made, so check the clock", peer, err)
+	}
 	if err != nil {
 		return nil, refuse("%s's prekey: %v", peer, err)
 	}

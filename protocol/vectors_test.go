@@ -227,13 +227,25 @@ func TestVectorCertificates(t *testing.T) {
 		t.Errorf("B took A's certificate: %v", err)
 	}
 	st := read(t, "a/prekey-1.txt")
+	for _, f := range glob(t, "cert/ok-*.pub") {
+		name := strings.TrimSuffix(filepath.Base(f), ".pub")
+		if _, err := CheckCertificate(a, vectorCertificate(t, "cert/"+name+".pub"), now); err != nil {
+			t.Errorf("%s: CheckCertificate: %v", name, err)
+		}
+		if _, err := VerifyCertified(a, st, read(t, "cert/"+name+".sig"), PrekeyNamespace(a.Address()), now); err != nil {
+			t.Errorf("%s: VerifyCertified: %v", name, err)
+		}
+	}
 	for _, f := range glob(t, "cert/bad-*.pub") {
 		name := strings.TrimSuffix(filepath.Base(f), ".pub")
 		key := vectorCertificate(t, "cert/"+name+".pub")
 		sig := read(t, "cert/"+name+".sig")
 		want := ErrCertificate
-		if name == "bad-ended" || name == "bad-not-begun" {
-			want = ErrCertificateTime
+		switch name {
+		case "bad-ended":
+			want = ErrCertificateEnded
+		case "bad-not-begun":
+			want = ErrCertificateNotBegun
 		}
 		if _, err := CheckCertificate(a, key, now); !errors.Is(err, want) {
 			t.Errorf("%s: CheckCertificate: %v, want %v", name, err, want)
@@ -321,8 +333,12 @@ func TestVectorBadPrekeys(t *testing.T) {
 			if err != nil || !p.Expired(now) || p.CheckLifetime(now) == nil {
 				t.Errorf("%s: want valid and expired: %v", name, err)
 			}
+		case name == "longest":
+			if err != nil || p.Expired(now) || p.CheckLifetime(now) != nil || !p.NotAfter.Equal(now.Add(MaxPrekeyLifetime)) {
+				t.Errorf("%s: want valid, not expired, and the longest a server takes: %v", name, err)
+			}
 		case name == "too-long":
-			if err != nil || p.Expired(now) || p.CheckLifetime(now) == nil {
+			if err != nil || p.Expired(now) || p.CheckLifetime(now) == nil || !p.NotAfter.Equal(now.Add(MaxPrekeyLifetime+time.Second)) {
 				t.Errorf("%s: want valid, not expired, and refused for publishing: %v", name, err)
 			}
 		default:
@@ -522,6 +538,11 @@ func TestVectorEnvelopes(t *testing.T) {
 		case strings.HasPrefix(name, "refuse-"):
 			if err == nil {
 				t.Errorf("%s: accepted", name)
+			}
+			// The two ends of the sent_at window have a code each.
+			var ee *EnvelopeError
+			if want := map[string]string{"refuse-33-days-and-1s-old": RefusedStale, "refuse-1-hour-and-1s-ahead": RefusedFuture}[name]; want != "" && (!errors.As(err, &ee) || ee.Code != want) {
+				t.Errorf("%s: refused as %v, want the code %s", name, err, want)
 			}
 		default:
 			t.Errorf("%s: unknown vector", name)

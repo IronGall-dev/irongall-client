@@ -178,7 +178,7 @@ func TestForgeries(t *testing.T) {
 	t.Run("an expired prekey", func(t *testing.T) {
 		e := newEnv(t)
 		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
-		e.clock.Add(protocol.MaxPrekeyLifetime)
+		e.clock.Add(protocol.PrekeyLifetime)
 		if _, err := a.Rekey(ctx, ""); err != nil { // a certificate that still signs mail
 			t.Fatal(err)
 		}

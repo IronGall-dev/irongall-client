@@ -26,8 +26,19 @@ const (
 	PassLifetime = 10 * time.Minute
 	// MaxPassLifetime is the longest a pass may still have to run when a
 	// server takes it. It is longer than PassLifetime so that a client whose
-	// clock runs fast is not refused, with no allowance for skew in any check.
+	// clock runs fast is not refused.
 	MaxPassLifetime = time.Hour
+	// MaxSkew is how far apart two clocks can be with everything here still
+	// working: an hour. The pass sets it. A box is taken by a server while its
+	// clock is less than PassLifetime slow and no more than MaxPassLifetime
+	// less PassLifetime fast, by the server's, and any two such clocks are
+	// less than MaxPassLifetime apart. Every check is exact at the verifier's
+	// own clock, and whoever makes a time-limited thing leaves this much room:
+	// a certificate starts MaxSkew before it is made (NewCertificate), a
+	// server takes a prekey that ends up to MaxSkew past PrekeyLifetime
+	// (MaxPrekeyLifetime), and a reader takes a sent_at up to MaxSkew ahead
+	// (OpenEnvelope). PROTOCOL.md §0.
+	MaxSkew = MaxPassLifetime
 )
 
 // Every pass error wraps one of these. ErrPass: it is not a pass of this box
@@ -181,8 +192,11 @@ func (p *Pass) VerifyUnder(sum [sha256.Size]byte, server string, now time.Time) 
 		return nil, fmt.Errorf("%w: it is another box's", ErrPass)
 	}
 	// Of a certificate's rules, the one that stops holding by itself: it ends.
-	if unix := uint64(max(now.Unix(), 0)); unix < cert.ValidAfter || unix >= cert.ValidBefore {
-		return nil, fmt.Errorf("%w: it has ended, or has not begun", ErrCertificateTime)
+	switch unix := uint64(max(now.Unix(), 0)); {
+	case unix < cert.ValidAfter:
+		return nil, ErrCertificateNotBegun
+	case unix >= cert.ValidBefore:
+		return nil, ErrCertificateEnded
 	}
 	if err := sshsig.Verify(cert, PassStatement(p.Address, server, p.NotAfter), blob, PassNamespace(p.Address)); err != nil {
 		return nil, fmt.Errorf("%w: its signature does not verify", ErrPass)

@@ -43,6 +43,7 @@ const (
 	RefusedSignature   = "bad_signature"        // not signed for this box by a working key the sender's identity certified, under a certificate valid now
 	RefusedAttribution = "reattributed"         // its from is not the address of the identity that signed it, or its to is not this box
 	RefusedStale       = "stale"                // its sent_at is older than TTL
+	RefusedFuture      = "future"               // its sent_at is more than MaxSkew ahead of the reader's clock
 )
 
 // EnvelopeError is the check an envelope failed: one of the codes above and
@@ -149,7 +150,8 @@ func (e *Envelope) Line() ([]byte, error) {
 // from is the VERIFIED signer and its to is this box (a signature holds for
 // one recipient, so a mismatch is a message passed on to a box it was not
 // written to, or one whose from names a box that did not sign it); it has a
-// body and a msg_id; and sent_at is no older than TTL at now.
+// body and a msg_id; and sent_at is no older than TTL at now, and no more than
+// MaxSkew ahead of it.
 //
 // Keys match exactly, as in jq and every other strict reader: "BODY" is an
 // unknown key, ignored, never the body. No key twice, so no two readers can
@@ -160,6 +162,24 @@ func (e *Envelope) Line() ([]byte, error) {
 // does both). Replay and duplicate checks need the caller's seen-set and are
 // the caller's.
 func OpenEnvelope(plaintext []byte, signer, me Address, now time.Time) (*Envelope, error) {
+	e, err := OpenEnvelopeRecord(plaintext, signer, me)
+	if err != nil {
+		return nil, err
+	}
+	if e.SentAt.Before(now.Add(-TTL)) {
+		return nil, &EnvelopeError{RefusedStale, fmt.Sprintf("sent_at is older than %d days", TTL/(24*time.Hour))}
+	}
+	if e.SentAt.After(now.Add(MaxSkew)) {
+		return nil, &EnvelopeError{RefusedFuture, fmt.Sprintf("sent_at is more than %d minutes ahead of this machine's clock", MaxSkew/time.Minute)}
+	}
+	return e, nil
+}
+
+// OpenEnvelopeRecord checks an envelope as OpenEnvelope does, but for its
+// sent_at, which it only parses: no clock is read. It is how a box reads back
+// an envelope it made itself, in its outbox or its sent/ record, whose age is
+// its own to judge. Nobody judging another box's mail uses it.
+func OpenEnvelopeRecord(plaintext []byte, signer, me Address) (*Envelope, error) {
 	if !utf8.Valid(plaintext) {
 		return nil, badEnvelope("the envelope is not UTF-8")
 	}
@@ -195,9 +215,6 @@ func OpenEnvelope(plaintext []byte, signer, me Address, now time.Time) (*Envelop
 	sentAt, err := ParseTime(w.SentAt)
 	if err != nil {
 		return nil, badEnvelope("the envelope's sent_at is not a UTC timestamp to the second, YYYY-MM-DDTHH:MM:SSZ")
-	}
-	if sentAt.Before(now.Add(-TTL)) {
-		return nil, &EnvelopeError{RefusedStale, fmt.Sprintf("sent_at is older than %d days", TTL/(24*time.Hour))}
 	}
 	e := &Envelope{
 		From:       w.From,

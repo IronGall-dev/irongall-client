@@ -188,6 +188,15 @@ func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*B
 	if published > 0 {
 		return b, nil
 	}
+	// A first statement an earlier attempt left, under a certificate that
+	// has not begun by this machine's clock, was made while the clock read
+	// more than an hour ahead of what it reads now. A server whose clock is
+	// right refused it for that, and would again until that time comes: the
+	// working key, its certificate and the statement are made again, by the
+	// clock as it is, for the same prekey.
+	if err := b.dropUnbegun(1); err != nil {
+		return nil, err
+	}
 	if _, err := b.makePrekey(1, kt); err != nil {
 		return nil, err
 	}
@@ -342,7 +351,7 @@ func (b *Box) makePrekey(serial uint64, kt protocol.KeyType) (*protocol.Prekey, 
 	if err != nil {
 		return nil, err
 	}
-	notAfter := b.now().UTC().Add(protocol.MaxPrekeyLifetime).Truncate(time.Second)
+	notAfter := b.now().UTC().Add(protocol.PrekeyLifetime).Truncate(time.Second)
 	if cert.NotAfter().Before(notAfter) {
 		notAfter = cert.NotAfter()
 	}

@@ -180,9 +180,28 @@ func TestVectorsCertificate(t *testing.T) {
 	if len(sigs) == 0 {
 		t.Fatal("no certificate vectors")
 	}
+	// The script's status says which way it failed, as the Go client's error
+	// does: 2 for a certificate that has ended, 3 for one that has not begun,
+	// 1 for every other.
+	status := map[string]int{"bad-ended.sig": 2, "bad-not-begun.sig": 3}
 	for _, sig := range sigs {
-		if out, err := certified(a, aDoc, sig); err == nil {
-			t.Errorf("%s: accepted: %s", filepath.Base(sig), out)
+		out, err := certified(a, aDoc, sig)
+		want := 1
+		if s, ok := status[filepath.Base(sig)]; ok {
+			want = s
+		}
+		var exit *exec.ExitError
+		if err == nil || !errors.As(err, &exit) || exit.ExitCode() != want {
+			t.Errorf("%s: %q, %v; want status %d", filepath.Base(sig), out, err, want)
+		}
+	}
+	oks, _ := filepath.Glob(filepath.Join(vectors, "cert", "ok-*.sig"))
+	if len(oks) == 0 {
+		t.Fatal("no certificate vector that is taken")
+	}
+	for _, sig := range oks {
+		if out, err := certified(a, aDoc, sig); err != nil {
+			t.Errorf("%s: refused: %s %v", filepath.Base(sig), out, err)
 		}
 	}
 	// Control: ssh-keygen alone takes the certificates whose fault is in
@@ -265,7 +284,7 @@ func TestVectorsPrekey(t *testing.T) {
 			if err != nil || na > now.Unix() {
 				t.Errorf("%s: want valid and expired: %d %v", name, na, err)
 			}
-		case name == "too-long": // valid and current: only a server refuses to publish it
+		case name == "longest", name == "too-long": // valid and current: only a server judges how far ahead one may end
 			if err != nil || na <= now.Unix() {
 				t.Errorf("%s: want valid and not expired: %d %v", name, na, err)
 			}
@@ -311,6 +330,10 @@ func TestVectorsEnvelope(t *testing.T) {
 		case strings.HasPrefix(name, "refuse-"):
 			if err == nil {
 				t.Errorf("%s: accepted", name)
+			}
+			// The two ends of the sent_at window have a code each, the Go client's.
+			if want := map[string]string{"refuse-33-days-and-1s-old": protocol.RefusedStale, "refuse-1-hour-and-1s-ahead": protocol.RefusedFuture}[name]; want != "" && !strings.HasPrefix(line, want+": ") {
+				t.Errorf("%s: refused as %q, want the code %s", name, line, want)
 			}
 		default:
 			t.Errorf("%s: unknown vector", name)

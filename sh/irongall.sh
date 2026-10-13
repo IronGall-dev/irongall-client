@@ -48,16 +48,20 @@ ig_code(){ jq -r .code "$IG/error.json" 2> /dev/null; }   # the code of the last
 ig_opt(){ [ -z "$1" ] || [ "$1" = --no-pq ] || ig_refuse "unknown option $1: the only one is --no-pq (no post-quantum encryption, X25519 only)"; }
 ig_stamp(){ jq -nr --argjson t "$1" '$t | strftime("%Y%m%d%H%M%SZ")'; }      # <Unix time> → the time as ssh-keygen takes one, in UTC
 ig_asc(){ printf %s "$1" | od -An -v -tx1 | tr -d ' \n'; }      # <text> → its bytes in hex
-ig_owner(){ # ig_api as this box: adds its pass. If the server refuses the pass (it ran out sooner by the server's clock, or is under a certificate the server no longer takes), signs another and tries once more
+ig_owner(){ # ig_api as this box: adds its pass. If the server refuses the pass (it ran out sooner by the server's clock, or is under a certificate the server no longer takes), signs another and tries once more. A pass refused twice for its time is the clock: it says what this one reads, beside the server's words
   local p; p=$(ig_pass) || return 1
   ig_api "$1" "$2" "${3-}" -H "Authorization: $p" && return 0
   case $(ig_code) in pass_expired | unauthorized) ;; *) return 1 ;; esac
-  rm -f "$IG/pass"; p=$(ig_pass) && ig_api "$1" "$2" "${3-}" -H "Authorization: $p"
+  rm -f "$IG/pass"; p=$(ig_pass) && ig_api "$1" "$2" "${3-}" -H "Authorization: $p" && return 0
+  ig_clock; return 1
 }
-ig_pass(){ # [serial] → the Authorization value of a call as this box. Without a serial: the pass kept in $IG/pass while it has more than 30 seconds left, otherwise a new one, signed by the working key in use and kept. With one: a pass signed by that working key, for the call that publishes its prekey, left in $IG/pass.new until the server has taken it
+ig_clock(){ # after a call the server refused: if it refused the pass for its time, says what this machine's clock reads. A new pass does not cure that, so it is nearly always a clock, and the server's words above give its own. Those are the server's word: a clock set by a server's lie makes an ended certificate valid again, so this sends its reader to a time source of their own
+  [ "$(ig_code)" != pass_expired ] || echo "this machine's clock reads $(jq -nr --argjson t "$(ig_now)" '$t | todate'). A server refuses a pass from a clock 10 minutes or more behind its own, or more than 50 ahead. Check this machine's clock against a time source you trust, not against the server" >&2
+}
+ig_pass(){ # [serial] → the Authorization value of a call as this box. Without a serial: the pass kept in $IG/pass while it has more than 30 seconds left and no more than the ten minutes it was signed for, otherwise a new one, signed by the working key in use and kept. With one: a pass signed by that working key, for the call that publishes its prekey, left in $IG/pass.new until the server has taken it
   local A n=${1-} na h; A=$(cat "$IG/address") || return 1
   if [ -z "$n" ]; then
-    na=$(ig_time "$(sed -n 's/.* not_after="\([^"]*\)".*/\1/p' "$IG/pass" 2> /dev/null)") && [ $((na - $(ig_now))) -gt 30 ] && { cat "$IG/pass"; return; }
+    na=$(ig_time "$(sed -n 's/.* not_after="\([^"]*\)".*/\1/p' "$IG/pass" 2> /dev/null)") && [ $((na - $(ig_now))) -gt 30 ] && [ $((na - $(ig_now))) -le 600 ] && { cat "$IG/pass"; return; }      # more than ten minutes left: this machine's clock has gone back since it was signed, so a new one, dated by the clock as it is
     n=$(cat "$IG/serial" 2> /dev/null) || ig_refuse "this box has published no prekey: run init, or rekey for a box restored from its identity" || return 1
   fi
   h=${IG_BASE#*://}; h=${h%%/*}; na=$(jq -nr --argjson t "$(ig_now)" '$t + 600 | todate')      # who is calling, which server, and until when: ten minutes
@@ -77,12 +81,12 @@ ig_lock(){ # [seconds] → takes $IG/lock, one consumer per box, waiting up to t
 }
 
 # recipe: keys and registration
-ig_work(){ # <serial> → work/<serial>, .pub and -cert.pub: a NEW working key, and the certificate this box's identity gives it, with that serial, good for 65 days. The working key signs what the box says; the identity signs certificates and nothing else
+ig_work(){ # <serial> → work/<serial>, .pub and -cert.pub: a NEW working key, and the certificate this box's identity gives it, with that serial, good from an hour ago for 65 days. The working key signs what the box says; the identity signs certificates and nothing else
   local A w="$IG/work/$1" t; A=$(cat "$IG/address") || return 1; mkdir -p "$IG/work" || return 1
   [ -s "$w" ] && [ -s "$w-cert.pub" ] && return 0
   rm -f "$w" "$w.pub" "$w-cert.pub"; t=$(ig_now)
   ssh-keygen -q -t ed25519 -N '' -C '' -f "$w" < /dev/null &&
-  ssh-keygen -q -s "$IG/identity" -I irongall-cert-v1 -n "$A" -z "$1" -V "$(ig_stamp $(((t - 59) / 60 * 60))):$(ig_stamp $((t + 65*86400)))" -O clear "$w.pub"      # one principal, the address; no option and no extension
+  ssh-keygen -q -s "$IG/identity" -I irongall-cert-v1 -n "$A" -z "$1" -V "$(ig_stamp $((t - 3600))):$(ig_stamp $((t + 65*86400)))" -O clear "$w.pub"      # one principal, the address; no option and no extension. It starts an hour back, as -V -1h:+65d dates one, so that a verifier whose clock is behind this one takes it at once
 }
 ig_prekey(){ # <serial> [--no-pq] → prekeys/<serial>.agekey and its statement, signed by a NEW working key (ig_work): a NEW key, valid for 33 days. A re-run reuses the key a failed attempt left, whatever its type
   local A p="$IG/prekeys/$1"; A=$(cat "$IG/address") || return 1
@@ -99,9 +103,13 @@ ig_init(){ # [--no-pq] → creates this box, or finishes a half-done init, and r
   printf 'irongall-v1\n%s\n' "$(cut -d' ' -f1,2 "$IG/identity.pub")" > "$IG/identity.doc"
   sha256sum < "$IG/identity.doc" | cut -c1-64 > "$IG/address" || return 1
   [ ! -s "$IG/serial" ] || { ig_addr; return; }      # registered already
-  local A p="$IG/prekeys/1" h; A=$(cat "$IG/address"); ig_prekey 1 "${1-}" || return 1
+  local A p="$IG/prekeys/1" h c; A=$(cat "$IG/address")
+  if c=$(ig_cert "$p.txt.sig" "$IG/identity.doc" "$A" 2> /dev/null) && c=${c#* } && [ "${c% *}" -gt "$(ig_now)" ]; then      # a first statement an earlier attempt left, under a certificate that has not begun by this machine's clock: made while the clock read more than an hour ahead. The working key, its certificate and the statement are made again. The prekey's own key stays: a server may have taken a registration whose answer was lost, and then mail may be waiting that only this key opens
+    rm -f "$p.txt" "$p.txt.sig" "$IG/work/1" "$IG/work/1.pub" "$IG/work/1-cert.pub" "$IG/pass.new"
+  fi
+  ig_prekey 1 "${1-}" || return 1
   jq -n --arg i "$(ig_b64 "$IG/identity.doc")" --arg p "$(ig_b64 "$p.txt")" --arg s "$(ig_b64 "$p.txt.sig")" --argjson k "$IG_SENDERS" '{identity:$i, prekey:$p, prekey_signature:$s, sender_key_types:$k}' > "$IG/register.json"
-  h=$(ig_pass 1) && ig_api PUT "/v1/$A" "$IG/register.json" -H "Authorization: $h" > /dev/null && mv "$IG/pass.new" "$IG/pass" && echo 1 > "$IG/serial" && ig_addr
+  h=$(ig_pass 1) && { ig_api PUT "/v1/$A" "$IG/register.json" -H "Authorization: $h" > /dev/null || { ig_clock; false; }; } && mv "$IG/pass.new" "$IG/pass" && echo 1 > "$IG/serial" && ig_addr
 }
 ig_addr(){ local a; a=$(cat "$IG/address") && echo "$IG_BASE/to/$a"; }      # the box's link: what to give whoever should write to it
 ig_dest(){ # <link, address or alias> → the address: 64 hex, or taken from a link to this box's server, $IG_BASE/to/<address>, or the one address $IG/aliases gives the name
@@ -169,17 +177,21 @@ ig_cert(){ # <signature> <identity document> <address> → "<serial> <valid afte
 }
 ig_str(){ [[ ${x:o:8} =~ ^[0-9a-f]{8}$ ]] || return 1; l=$((16#${x:o:8} * 2)); [ $((o + 8 + l)) -le ${#x} ] || return 1; v=${x:o+8:l}; o=$((o + 8 + l)); }      # ig_cert's: the next length-prefixed string of x, in hex, into v
 ig_u64(){ [[ ${x:o:16} =~ ^[0-7][0-9a-f]{15}$ ]] || return 1; v=$((16#${x:o:16})); o=$((o + 16)); }      # ig_cert's: the next 64-bit number of x into v. One with its top bit set is no time and no serial here
-ig_certified(){ # <address> <identity document> <namespace> <signature> <message> [at] → "<certificate serial> <its valid before>" only for a signature by a working key under a certificate of that identity that holds at the time given (now, without one): begun, not ended, and ending at most 66 days on. 1 otherwise; 2 when only the time fails. A signature by the identity itself, or by a key with no certificate, is refused
+ig_certified(){ # <address> <identity document> <namespace> <signature> <message> [at] → "<certificate serial> <its valid before>" only for a signature by a working key under a certificate of that identity that holds at the time given (now, without one): begun, not ended, and ending at most 66 days on. 1 otherwise; 2 when all that fails is that it has ended, 3 that it has not begun. A signature by the identity itself, or by a key with no certificate, is refused
   local A=$1 r n a b t=${6:-$(ig_now)}
   r=$(ig_cert "$4" "$2" "$A") || return 1; read -r n a b <<< "$r"
   printf '%s cert-authority %s\n' "$A" "$(sed -n 2p "$2")" > "$IG/signers"      # ONE line, built from checked bytes: only a certificate this identity signed, for this address
   ssh-keygen -Y verify -f "$IG/signers" -I "$A" -n "$3" -s "$4" -O verify-time="$(ig_stamp "$a")" < "$5" > /dev/null 2>&1 || return 1      # the two signatures, the identity's on the certificate and the working key's on the message, judged where the certificate begins; the time is the next line's
-  [ "$a" -le "$t" ] && [ "$t" -lt "$b" ] && [ "$b" -le $((t + 66*86400)) ] || return 2
+  [ "$a" -le "$t" ] || return 3; [ "$t" -lt "$b" ] || return 2; [ "$b" -le $((t + 66*86400)) ] || return 1
   echo "$n $b"
 }
 ig_prekeycheck(){ # <statement> <signature> <address> <identity document> [at] → "<serial> <age recipient> <not_after as Unix time> <certificate serial>" only for five LF-ended lines naming that address, signed by a working key its identity certified, not outliving that certificate, holding a key age will encrypt to; otherwise the reason, and 1
   local p=$1 B=$3 s k na c
-  c=$(ig_certified "$B" "$4" "irongall-prekey-v1:$B" "$2" "$p" ${5-}) || { echo "$B's prekey is not signed by a working key its identity certified, under a certificate that holds now"; return 1; }
+  c=$(ig_certified "$B" "$4" "irongall-prekey-v1:$B" "$2" "$p" ${5-}); case $? in 0) ;;
+    2) echo "$B's prekey: the certificate the prekey is signed under has ended"; return 1 ;;
+    3) echo "$B's prekey: the certificate the prekey is signed under has not begun, by the clock that checked it"; return 1 ;;
+    *) echo "$B's prekey is not signed by a working key its identity certified, under a certificate that holds now"; return 1 ;;
+  esac
   [ "$(wc -l < "$p")" -eq 5 ] && [ "$(tail -c 1 "$p" | od -An -tx1 | tr -d ' \n')" = 0a ] && [ "$(sed -n 1p "$p")" = irongall-prekey-v1 ] && [ "$(sed -n 2p "$p")" = "$B" ] ||
     { echo "the prekey statement is not $B's: five lines, each ending in LF"; return 1; }
   s=$(sed -n 3p "$p"); [[ $s =~ ^[1-9][0-9]{0,17}$ ]] || { echo "$B's prekey serial is malformed"; return 1; }
@@ -256,6 +268,9 @@ ig_post(){ # <address> <outbox stem> → POSTs it, sealing it first; on 409 stal
   local B=$1 o=$2 sa
   if sa=$(ig_time "$(jq -r .sent_at "$o.P" 2> /dev/null)") && [ "$sa" -lt $(($(ig_now) - 33*86400)) ]; then      # the server would take it, and every recipient refuses it
     ig_failed "$o"; ig_refuse "its envelope is older than 33 days, and every recipient refuses that: moved to outbox/failed/"; return 1
+  fi
+  if [ -n "$sa" ] && [ "$sa" -gt "$(ig_now)" ]; then      # dated ahead of this clock: written while the clock read ahead of where it reads now. Not posted, sealed or not, until the clock passes that time: a reader has an hour of room for two clocks a server takes, and none to spare for one that was wrong
+    ig_refuse "its envelope is dated $(jq -r .sent_at "$o.P"), ahead of this machine's clock: it was written while the clock read ahead of where it reads now, and a recipient would refuse it. It is kept in the outbox, and ig_flush sends it once the clock passes that time"; return 1
   fi
   rm -f "$IG/error.json"
   { [ -e "$o.json" ] || ig_seal "$B" "$o"; } && ig_owner POST "/v1/$B" "$o.json" > "$IG/receipt.json" && { ig_sent "$o"; return; }
@@ -346,7 +361,8 @@ ig_open(){ # <me> <message stem> → the sender's address, only if what was decr
   A=$(sha256sum < "$m.doc" | cut -c1-64)      # the sender: the hash of the identity document the envelope carries. The document proves itself, and the signature must now verify under it
   jq -e --arg a "$A" '.from == $a' "$m.P" > /dev/null 2>&1 || { echo "reattributed: the envelope's from is not the address of the identity it carries"; return 1; }
   ig_certified "$A" "$m.doc" "irongall-msg-v1:$B" "$m.sig" "$m.P" > /dev/null; case $? in      # over line 1 exactly as decrypted, never over anything rebuilt
-    0) ;; 2) echo "bad_signature: the certificate of the key that signed it has ended, or has not begun"; return 1 ;;
+    0) ;; 2) echo "bad_signature: the certificate of the key that signed it has ended"; return 1 ;;
+    3) echo "bad_signature: the certificate of the key that signed it has not begun, by this machine's clock"; return 1 ;;
     *) echo "bad_signature: it is not signed for this box by a working key the sender's identity certified"; return 1 ;;
   esac
   ig_envcheck "$m.P" "$A" "$B" || return 1
@@ -357,7 +373,7 @@ ig_envform(){ # <envelope> → 0 only for UTF-8 that is one JSON object with no 
   [ "$(jq -n --stream '[inputs | select((length == 2 and (.[0] | length) == 1) or (length == 1 and (.[0] | length) == 2))] | length' "$1" 2> /dev/null)" = "$(jq length "$1" 2> /dev/null)" ] ||
     { echo "bad_envelope: the envelope is not one JSON object with no key twice"; return 1; }      # its members, counted as streamed, against its length: a key twice (jq keeps the last, another reader the first) or a second value breaks the count
 }
-ig_envcheck(){ # <envelope> <signer> <this box> → 0 only for one UTF-8 JSON object, keys exact and none twice, v the number 1, from the signer, to this box, a msg_id, a body, string optional fields, and sent_at no older than 33 days; otherwise the reason, and 1
+ig_envcheck(){ # <envelope> <signer> <this box> → 0 only for one UTF-8 JSON object, keys exact and none twice, v the number 1, from the signer, to this box, a msg_id, a body, string optional fields, and sent_at no older than 33 days and no more than an hour ahead; otherwise the reason, and 1
   local e=$1 sa
   ig_envform "$e" || return 1
   jq -e '.v == 1 and has("body") and (.msg_id | type == "string" and test("\\A[0-9a-f-]{36}\\z")) and all(.subject, .in_reply_to, .supersedes, .identity; . == null or type == "string")' "$e" > /dev/null 2>&1 ||
@@ -365,6 +381,7 @@ ig_envcheck(){ # <envelope> <signer> <this box> → 0 only for one UTF-8 JSON ob
   jq -e --arg a "$2" --arg b "$3" '.from == $a and .to == $b' "$e" > /dev/null 2>&1 || { echo "reattributed: the inner from/to do not match the signer and this box (re-attribution)"; return 1; }
   sa=$(ig_time "$(jq -r .sent_at "$e")") || { echo "bad_envelope: the envelope's sent_at is not a UTC timestamp to the second"; return 1; }
   [ "$sa" -ge $(($(ig_now) - 33*86400)) ] || { echo "stale: sent_at is older than 33 days"; return 1; }
+  [ "$sa" -le $(($(ig_now) + 3600)) ] || { echo "future: sent_at is more than 60 minutes ahead of this machine's clock"; return 1; }
 }
 ig_line(){ # <checked envelope> [receipt] → the one line delivered: built from the checked fields, never the sender's bytes, with U+0085, U+2028 and U+2029 escaped (Python's splitlines and Node's readline end lines there). ig_sent adds the server's receipt as its last member
   jq -j --slurpfile r "${2:-/dev/null}" '{v: 1, from, to, sent_at, msg_id, body} + ([{subject}, {in_reply_to}, {supersedes}] | map(select(.[] | . != null and . != "")) | add // {}) + ($r[0] | if . then {receipt: {id, received_at, expires_at}} else {} end) | tojson | gsub("\u0085"; "\\u0085") | gsub("\u2028"; "\\u2028") | gsub("\u2029"; "\\u2029")' "$1"
@@ -387,10 +404,10 @@ ig_renew(){ # [--no-pq] → what ig_rekey does, the lock held. A serial is signe
   s=${r%% *}
   [ "$s" -ge "$(cat "$IG/serial" 2> /dev/null || echo 0)" ] || ig_refuse "rollback: the server serves this box's prekey serial $s, below $(cat "$IG/serial"), which this box published" || return 1
   s=$((s + 1)); t=$(ls "$IG/prekeys" | sed -n 's/\.txt\.sig$//p' | sort -n | tail -n 1)      # the highest serial this box signed: nothing at or below it is signed anew
-  if [ "${t:-0}" -ge "$s" ]; then s=$t; na=$(ig_time "$(sed -n 5p "$IG/prekeys/$s.txt")") && [ "$na" -gt "$(ig_now)" ] && [ -s "$IG/work/$s-cert.pub" ] || s=$((s + 1)); fi      # signed and never seen published: sent again AS IT IS until it expires, then the next serial. Signed again, the same key would get 33 more days from a server that keeps what it refuses
+  if [ "${t:-0}" -ge "$s" ]; then s=$t; na=$(ig_time "$(sed -n 5p "$IG/prekeys/$s.txt")") && [ "$na" -gt "$(ig_now)" ] && [ -s "$IG/work/$s-cert.pub" ] && c=$(ig_cert "$IG/prekeys/$s.txt.sig" "$IG/identity.doc" "$A") && c=${c#* } && [ "${c% *}" -le "$(ig_now)" ] || s=$((s + 1)); fi      # signed and never seen published: sent again AS IT IS until it expires, then the next serial. Signed again, the same key would get 33 more days from a server that keeps what it refuses. One under a certificate that has not begun, by this clock, was signed while the clock read over an hour ahead: a server refuses it until that time comes, so it is spent too
   [ -s "$IG/prekeys/$s.txt.sig" ] || rm -f "$IG/prekeys/$s.txt"; ig_prekey "$s" "${1-}" || return 1
   jq -n --arg p "$(ig_b64 "$IG/prekeys/$s.txt")" --arg g "$(ig_b64 "$IG/prekeys/$s.txt.sig")" --argjson k "$IG_SENDERS" '{prekey:$p, prekey_signature:$g, sender_key_types:$k}' > "$IG/rekey.json"
-  h=$(ig_pass "$s") && ig_api PUT "/v1/$A/prekey" "$IG/rekey.json" -H "Authorization: $h" > /dev/null || return 1      # a pass under the NEW certificate: that is how a box moves to one, and the server then takes no pass under an older
+  h=$(ig_pass "$s") && ig_api PUT "/v1/$A/prekey" "$IG/rekey.json" -H "Authorization: $h" > /dev/null || { ig_clock; return 1; }      # a pass under the NEW certificate: that is how a box moves to one, and the server then takes no pass under an older
   [ "$s" -le "$(cat "$IG/serial" 2> /dev/null || echo 0)" ] || echo "$s" > "$IG/serial" || return 1
   mv "$IG/pass.new" "$IG/pass" || return 1
   for f in "$IG"/work/*-cert.pub; do t=$(basename "$f" -cert.pub); [[ $t =~ ^[0-9]+$ ]] && [ "$t" -lt "$s" ] && rm -f "$IG/work/$t" "$IG/work/$t.pub" "$f"; done      # older working keys: what they signed is signed, and the server takes no pass under them

@@ -94,16 +94,16 @@ srv_state(){ local a=$1 st s; shift; [ -e $SRV/$a/state ] || { srv_err 404 no_su
 srv_pass(){ # <addr> <Authorization value> <identity doc> <certificate serial>: a pass of that box, for this server, not run out, under that certificate
   local na c now; [[ $2 =~ ^irongall-pass\ address=\"([0-9a-f]{64})\",\ not_after=\"([0-9TZ:-]{20})\",\ signature=\"([A-Za-z0-9+/]+={0,2})\"$ ]] && [ "${BASH_REMATCH[1]}" = "$1" ] || { srv_err 401 unauthorized "no pass, or not this box's"; return 1; }
   na=${BASH_REMATCH[2]}; printf %s "${BASH_REMATCH[3]}" | base64 -d > $SRV/tmp/pass.sig; printf 'irongall-pass-v1\n%s\n%s\n%s\n' "$1" "$HOST" "$na" > $SRV/tmp/pass.txt
-  now=$(date -u +%s); na=$(jq -n --arg t "$na" '$t | fromdateiso8601' 2> /dev/null) && [ "$na" -gt "$now" ] && [ "$na" -le $((now + 3600)) ] || { srv_err 401 pass_expired "the pass has run out, or runs out more than an hour from now"; return 1; }
-  c=$(ig_certified "$1" "$3" "irongall-pass-v1:$1" $SRV/tmp/pass.sig $SRV/tmp/pass.txt) || { srv_err 401 unauthorized "the pass is not signed under a certificate of this box's identity, for this server"; return 1; }
+  now=$(date -u +%s); na=$(jq -n --arg t "$na" '$t | fromdateiso8601' 2> /dev/null) && [ "$na" -gt "$now" ] && [ "$na" -le $((now + 3600)) ] || { srv_err 401 pass_expired "the pass has run out, or runs out more than an hour from now, by the server's clock, which reads $(jq -nr --argjson t "$now" '$t | todate')"; return 1; }
+  c=$(ig_certified "$1" "$3" "irongall-pass-v1:$1" $SRV/tmp/pass.sig $SRV/tmp/pass.txt "$now") || { srv_err 401 unauthorized "the pass is not signed under a certificate of this box's identity, for this server"; return 1; }
   [ "${c%% *}" = "$4" ] || { srv_err 401 unauthorized "the pass is not under the box's current certificate"; return 1; }; }
 srv_auth(){ srv_state "$1" active && srv_pass "$1" "$2" $SRV/$1/identity.doc "$(cat $SRV/$1/cert-serial)"; }      # an owner call: the box's pass, under its current certificate
 srv_check(){ # <addr> <identity doc> <statement> <sig> <current serial> <current certificate serial>: the server's prekey-statement rules; the statement's certificate serial lands in $SRV/tmp/cert-serial
   local r s na now
-  r=$(ig_prekeycheck "$3" "$4" "$1" "$2") || { case $r in *"no valid not_after"*) srv_err 400 bad_key "not_after must be RFC 3339 UTC; never is not allowed" ;; *) srv_err 400 bad_key "the statement is not this box's, signed by a working key its identity certified" ;; esac; return 1; }
+  r=$(ig_prekeycheck "$3" "$4" "$1" "$2" "$(date -u +%s)") || { case $r in *"no valid not_after"*) srv_err 400 bad_key "not_after must be RFC 3339 UTC; never is not allowed" ;; *) srv_err 400 bad_key "the statement is not this box's, signed by a working key its identity certified" ;; esac; return 1; }
   s=${r%% *}; [ "$s" -gt "$5" ] || { srv_err 409 conflict "the serial must be above $5"; return 1; }
   [ "${r##* }" -ge "$6" ] || { srv_err 400 bad_key "the certificate is older than the box's current one"; return 1; }
-  na=$(jq -n --arg t "$(sed -n 5p "$3")" '$t | fromdateiso8601'); now=$(date -u +%s); [ "$na" -gt "$now" ] && [ "$na" -le $((now + 33*86400)) ] || { srv_err 400 bad_key "not_after must be in the future and at most 33 days away"; return 1; }
+  na=$(jq -n --arg t "$(sed -n 5p "$3")" '$t | fromdateiso8601'); now=$(date -u +%s); [ "$na" -gt "$now" ] && [ "$na" -le $((now + 33*86400 + 3600)) ] || { srv_err 400 bad_key "not_after must be in the future and at most 33 days and an hour away"; return 1; }
   if grep -qxF "$(sed -n 4p "$3")" $SRV/$1/keys.used 2> /dev/null; then srv_err 400 bad_key "every prekey must be a NEW key"; return 1; fi
   echo "${r##* }" > $SRV/tmp/cert-serial; }
 srv_install(){ cp $SRV/tmp/pk.txt $SRV/$1/prekey.txt; cp $SRV/tmp/pk.sig $SRV/$1/prekey.sig; cp $SRV/tmp/cert-serial $SRV/$1/cert-serial; sed -n 4p $SRV/tmp/pk.txt >> $SRV/$1/keys.used; }
@@ -477,4 +477,45 @@ unset -f age; rm -f $IG/outbox/*.P $IG/outbox/*.age
 as P; n0=$(grep -c "^POST /v1/$Q\$" $SRV/log); real_now=$(declare -f ig_now); ig_now(){ echo $(($(date -u +%s) + 33*86400)); }
 printf 'too late to sign' | ig_send "$Q" 2> err.txt && bad "signed mail under a certificate with 32 days left" || grep -q "ends within 33 days" err.txt && [ "$(grep -c "^POST /v1/$Q\$" $SRV/log)" = "$n0" ] && ok "mail is not signed under a certificate with 33 days or less left: REFUSED, and rekey is named" || bad "certificate age: $(cat err.txt)"
 eval "$real_now"; rm -f $IG/outbox/*.P
+# --- 16. the clock: every check is exact at the clock of whoever makes it, and what a box makes leaves an hour of room. The fake server keeps the real clock; a box's is ig_now
+real_now=$(declare -f ig_now)
+for off in -540 2940; do      # 9 minutes slow, 49 fast: the edges of what a pass allows
+  ig_now(){ echo $(($(date -u +%s) + off)); }
+  as "S$off"; ig_init $NOPQ > /dev/null 2> err.txt || bad "clock $off: ig_init: $(cat err.txt)"; S=$(cat $IG/address)
+  c=$(ig_cert $IG/prekeys/1.txt.sig $IG/identity.doc "$S") && read -r n a b <<< "$c" && [ $(($(ig_now) - a)) -ge 3600 ] && [ $(($(ig_now) - a)) -le 3660 ] || bad "clock $off: the certificate does not start an hour before it was made: $c"
+  eval "$real_now"; as "F$off"; ig_init $NOPQ > /dev/null || bad "clock $off: ig_init of the box on time"; F=$(cat $IG/address)      # made this moment, on the server's clock: no certificate is newer
+  printf 'to the box whose clock is off' | ig_send "$S" > /dev/null 2> err.txt || bad "clock $off: mail to it: $(cat err.txt)"
+  ig_now(){ echo $(($(date -u +%s) + off)); }
+  as "S$off"; recv; [ "$RECV_RC" = 0 ] && printf '%s' "$RECV_OUT" | grep -q "to the box whose clock is off" || bad "clock $off: it reads: $RECV_OUT / $RECV_ERR"
+  printf 'from the box whose clock is off' | ig_send "$F" > /dev/null 2> err.txt || bad "clock $off: it sends: $(cat err.txt)"
+  ig_rekey $NOPQ 2> err.txt || bad "clock $off: it renews: $(cat err.txt)"
+  eval "$real_now"; as "F$off"; recv; [ "$RECV_RC" = 0 ] && printf '%s' "$RECV_OUT" | grep -q "from the box whose clock is off" || bad "clock $off: its mail is read: $RECV_OUT / $RECV_ERR"
+done
+ok "a box whose clock is 9 minutes slow, or 49 fast, registers, renews, and exchanges mail with a box made that moment: its certificate starts an hour back"
+off=-660; ig_now(){ echo $(($(date -u +%s) + off)); }
+as SLOW; ig_init $NOPQ > /dev/null 2> err.txt && bad "a box 11 minutes slow registered" || grep -q "pass_expired" err.txt && grep -q "the server's clock, which reads" err.txt && grep -q "this machine's clock reads .*Check this machine's clock against a time source you trust, not against the server" err.txt && ! grep -qi "set this machine's clock" err.txt &&
+  ok "a box 11 minutes slow is refused at its pass, and told what its clock reads beside the server's, and to check it against a time source of its own" || bad "clock: 11 minutes slow: $(cat err.txt)"
+# a box first made while its clock read over an hour ahead: refused, and when the clock is right the same box registers, its first prekey made again
+off=3660; ig_now(){ echo $(($(date -u +%s) + off)); }
+as FAST; ig_init $NOPQ > /dev/null 2> err.txt && bad "a box 61 minutes fast registered" || grep -q "bad_key" err.txt && k1=$(cat $IG/work/1.pub) && a1=$(cat $IG/prekeys/1.agekey) || bad "clock: 61 minutes fast: $(cat err.txt)"
+eval "$real_now"; ig_init $NOPQ > /dev/null 2> err.txt && [ "$(cat $IG/work/1.pub)" != "$k1" ] && [ "$(cat $IG/prekeys/1.agekey)" = "$a1" ] && [ "$(cat $IG/serial)" = 1 ] &&
+  ok "a box first made while its clock read 61 minutes ahead is refused; with the clock right it registers, under a new first certificate, for the same prekey: a key mail may be waiting for is never deleted" || bad "clock: after 61 minutes fast: $(cat err.txt)"
+# a renewal signed while the clock read over an hour ahead, and refused: with the clock right it is spent, and the next serial is signed. Sent again as it is, a server would refuse it until its certificate begins
+as FAST; s0=$(cat $IG/serial); off=7200; ig_now(){ echo $(($(date -u +%s) + off)); }
+ig_rekey $NOPQ 2> err.txt && bad "a renewal signed two hours ahead was taken" || [ -s $IG/prekeys/$((s0 + 1)).txt.sig ] || bad "clock: the renewal two hours ahead left no statement: $(cat err.txt)"
+eval "$real_now"; ig_rekey $NOPQ 2> err.txt && [ "$(cat $IG/serial)" = $((s0 + 2)) ] && [ "$(sed -n 3p $SRV/$(cat $IG/address)/prekey.txt)" = $((s0 + 2)) ] &&
+  ok "a renewal signed while the clock read two hours ahead is spent once the clock is right: the next serial is signed and taken" || bad "clock: renewal after two hours ahead: serial $(cat $IG/serial), $(cat err.txt)"
+# an envelope dated ahead of this machine's clock is not posted, sealed or not, until the clock passes that time
+as P; n0=$(grep -c "^POST /v1/$Q\$" $SRV/log); off=7200; ig_now(){ echo $(($(date -u +%s) + off)); }
+printf 'dated two hours ahead' | ig_send "$Q" 2> err.txt && bad "sent with a clock two hours fast" || { grep -q "pass_expired" err.txt && ls $IG/outbox/*.json > /dev/null 2>&1; } || bad "clock: send two hours fast: $(cat err.txt)"
+eval "$real_now"; ig_flush 2> err.txt && bad "an envelope dated two hours ahead was posted" || grep -q "ahead of this machine's clock" err.txt && [ "$(ls $IG/outbox/*.P | wc -l)" = 1 ] && as Q && recv && [ -z "$RECV_OUT" ] && ! printf '%s' "$RECV_ERR" | grep -q future &&
+  ok "an envelope sealed while the clock read two hours ahead is not posted once the clock is right: it waits in the outbox, and its reader is sent nothing to refuse" || bad "clock: flush of an envelope dated ahead: $(cat err.txt) / $RECV_ERR"
+as P; rm -f $IG/outbox/*.P $IG/outbox/*.json $IG/outbox/*.age $IG/outbox/*.sig
+# a kept pass with more left than it was signed for means the clock has gone back: it is not used
+as P; ig_pass > /dev/null; kept=$(cat $IG/pass); off=-1800; ig_now(){ echo $(($(date -u +%s) + off)); }
+[ "$(ig_pass)" != "$kept" ] && ok "a kept pass is not used once this machine's clock has gone back: a new one is signed, dated by the clock as it is" || bad "clock: the kept pass was used after the clock went back"
+eval "$real_now"; rm -f $IG/pass
+# sent_at more than an hour ahead of the reader's clock
+line "$P" "$Q" 00000000-0000-4000-8000-0000000000f1 "dated ahead" $W/box/P/identity.doc -3700 > ahead.P; seal_as P "$Q" ahead.P
+as Q; srv_inject "$Q" "$P" ahead.P.age; recv; [ -z "$RECV_OUT" ] && printf '%s' "$RECV_ERR" | grep -q "future: sent_at is more than 60 minutes ahead" && ok "sent_at more than an hour ahead of this machine's clock: REFUSED as future" || bad "future: $RECV_OUT / $RECV_ERR"
 echo "--- $PASS PASS, 0 FAIL (KEYTYPE=$KEYTYPE)"

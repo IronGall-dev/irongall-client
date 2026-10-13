@@ -357,7 +357,7 @@ func TestPruneDeletesRetiredKeys(t *testing.T) {
 		t.Fatal("mail to the retired key was not delivered")
 	}
 	key1 := filepath.Join(b.Dir(), "prekeys", "1.agekey")
-	e.clock.Add(protocol.MaxPrekeyLifetime + protocol.TTL - time.Second)
+	e.clock.Add(protocol.PrekeyLifetime + protocol.TTL - time.Second)
 	if err := b.Prune(); err != nil {
 		t.Fatal(err)
 	}

@@ -26,19 +26,23 @@ const (
 	MaxCertificateLifetime = 2 * TTL
 	// CertificateLifetime is how long a client makes a certificate good for:
 	// a day under the most a verifier takes, so that one asked for at the
-	// ceiling is not refused by a verifier whose clock is a moment behind,
-	// with no allowance for skew in any check. It is the pass's rule
-	// (PassLifetime, MaxPassLifetime).
+	// ceiling is not refused by a verifier whose clock is behind the maker's.
+	// It is the pass's rule (PassLifetime, MaxPassLifetime), with more room
+	// than MaxSkew asks for.
 	CertificateLifetime = MaxCertificateLifetime - 24*time.Hour
 )
 
 // Every certificate error wraps one of these. ErrCertificate: it is not a
 // certificate of this identity, or it breaks a rule of the format, the limit
 // on how far ahead it may end among them. ErrCertificateTime: it has not begun
-// or it has ended, by the verifier's own clock.
+// or it has ended, by the verifier's own clock. Which of the two it is,
+// ErrCertificateNotBegun or ErrCertificateEnded, and each is an
+// ErrCertificateTime.
 var (
-	ErrCertificate     = errors.New("bad certificate")
-	ErrCertificateTime = errors.New("the certificate is not valid now")
+	ErrCertificate         = errors.New("bad certificate")
+	ErrCertificateTime     = errors.New("the certificate is not valid now")
+	ErrCertificateNotBegun = fmt.Errorf("%w: it has not begun", ErrCertificateTime)
+	ErrCertificateEnded    = fmt.Errorf("%w: it has ended", ErrCertificateTime)
 )
 
 // Certificate is a working key's certificate that has passed CheckCertificate.
@@ -83,24 +87,28 @@ func CheckCertificate(id *Identity, key ssh.PublicKey, now time.Time) (*Certific
 		return nil, fmt.Errorf("%w: %v", ErrCertificate, err)
 	}
 
+	// The identity's signature, before any verdict on the dates: "it has not
+	// begun" is said only of a certificate the identity signed, never of
+	// bytes anyone could write. The library checks the dates with the
+	// signature, so it is asked at the moment the certificate begins.
+	if cert.ValidAfter > 1<<62 {
+		return nil, fmt.Errorf("%w: it begins at no time", ErrCertificate)
+	}
+	checker := ssh.CertChecker{Clock: func() time.Time { return time.Unix(int64(cert.ValidAfter), 0) }} //nolint:gosec // bounded above
+	if err := checker.CheckCert(id.Address().String(), cert); err != nil {
+		return nil, fmt.Errorf("%w: the identity's signature on it does not verify", ErrCertificate)
+	}
+
 	// ssh.CertTimeInfinity, the largest value, is past every bound here.
 	unix := uint64(max(now.Unix(), 0))
 	if unix < cert.ValidAfter {
-		return nil, fmt.Errorf("%w: it has not begun", ErrCertificateTime)
+		return nil, ErrCertificateNotBegun
 	}
 	if unix >= cert.ValidBefore {
-		return nil, fmt.Errorf("%w: it has ended", ErrCertificateTime)
+		return nil, ErrCertificateEnded
 	}
 	if cert.ValidBefore > unix+uint64(MaxCertificateLifetime/time.Second) {
 		return nil, fmt.Errorf("%w: it ends more than %d days from now", ErrCertificate, MaxCertificateLifetime/(24*time.Hour))
-	}
-
-	// What is left for the library is the signature: CheckCert verifies it
-	// against the key inside the certificate, which is the identity's by the
-	// comparison above.
-	checker := ssh.CertChecker{Clock: func() time.Time { return now }}
-	if err := checker.CheckCert(id.Address().String(), cert); err != nil {
-		return nil, fmt.Errorf("%w: the identity's signature on it does not verify", ErrCertificate)
 	}
 	return &Certificate{cert: cert}, nil
 }
@@ -154,9 +162,11 @@ func (c *Certificate) Marshal() []byte { return c.cert.Marshal() }
 
 // NewCertificate makes the certificate of serial for the working key work,
 // signed by identity, the signer for id's key. It is what
-// "ssh-keygen -s identity -I irongall-cert-v1 -n <address> -z <serial> -V +65d -O clear work.pub"
-// writes: valid from the start of the minute before now, as ssh-keygen dates
-// one, to CertificateLifetime after now.
+// "ssh-keygen -s identity -I irongall-cert-v1 -n <address> -z <serial> -V -1h:+65d -O clear work.pub"
+// writes: valid from MaxSkew before now to CertificateLifetime after now. It
+// starts in the past so that a verifier whose clock is behind this one takes
+// it at once; ssh-keygen's own default, a minute or two back, is not enough
+// between machines that do not share a clock.
 func NewCertificate(id *Identity, identity ssh.Signer, work ssh.PublicKey, serial uint64, now time.Time) (*Certificate, error) {
 	if !bytes.Equal(identity.PublicKey().Marshal(), id.PublicKey().Marshal()) {
 		return nil, errors.New("the signer is not the box's identity key")
@@ -168,7 +178,7 @@ func NewCertificate(id *Identity, identity ssh.Signer, work ssh.PublicKey, seria
 		CertType:        ssh.UserCert,
 		KeyId:           CertificateKeyID,
 		ValidPrincipals: []string{id.Address().String()},
-		ValidAfter:      (max(unix, 59) - 59) / 60 * 60,
+		ValidAfter:      unix - min(unix, uint64(MaxSkew/time.Second)),
 		ValidBefore:     unix + uint64(CertificateLifetime/time.Second),
 	}
 	if err := cert.SignCert(rand.Reader, identity); err != nil {

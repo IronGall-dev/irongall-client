@@ -40,6 +40,13 @@ type APIError struct {
 	Problem protocol.Problem
 	// RetryAfter is the server's Retry-After, or zero.
 	RetryAfter time.Duration
+	// Dated is the time in the answer's Date header, and Read this box's
+	// clock when the answer came: both zero unless the call carried a pass
+	// and the answer a Date. They are set side by side in the error for a
+	// pass refused for its time, and never adopted: a box checks everything
+	// against its own clock, and a server may lie about the time as about
+	// anything else.
+	Dated, Read time.Time
 }
 
 // Error is the status and code, then what the server says: its detail (which
@@ -59,9 +66,36 @@ func (e *APIError) Error() string {
 		}
 	}
 	if len(says) == 0 {
-		return fmt.Sprintf("ERROR %d %s", e.Status, code)
+		return fmt.Sprintf("ERROR %d %s", e.Status, code) + e.clock()
 	}
-	return fmt.Sprintf("ERROR %d %s; the server says: %q", e.Status, code, strings.Join(says, "; "))
+	return fmt.Sprintf("ERROR %d %s; the server says: %q", e.Status, code, strings.Join(says, "; ")) + e.clock()
+}
+
+// clock is what an error says about this machine's clock when the server
+// refused the pass for its time: what the clock reads, and the date on the
+// server's answer. A new pass does not cure that refusal, so it is nearly
+// always a clock, and a server takes a pass from a box whose clock is less
+// than PassLifetime slow and no more than MaxPassLifetime less PassLifetime
+// fast (protocol.MaxSkew).
+//
+// The date is the server's word and is given as that. A server may lie about
+// the time, and a clock set by a lie makes an ended certificate valid again
+// and stale mail fresh, so the sentence sends its reader to a time source of
+// their own and never to the server's.
+func (e *APIError) clock() string {
+	if e.Problem.Code != protocol.CodePassExpired || e.Dated.IsZero() || e.Read.IsZero() {
+		return ""
+	}
+	slow, fast := protocol.PassLifetime, protocol.MaxPassLifetime-protocol.PassLifetime
+	how := "the same"
+	switch d := e.Read.Sub(e.Dated); {
+	case d < 0:
+		how = fmt.Sprintf("%s behind that", -d)
+	case d > 0:
+		how = fmt.Sprintf("%s ahead of that", d)
+	}
+	return fmt.Sprintf("; the server dates its answer %s, and this machine's clock reads %s, %s. A server refuses a pass from a clock %d minutes or more behind its own, or more than %d ahead. Check this machine's clock against a time source you trust, not against the server",
+		e.Dated.Format(protocol.TimeLayout), e.Read.Format(protocol.TimeLayout), how, slow/time.Minute, fast/time.Minute)
 }
 
 // serverWords is the most of a server's detail or hint that is printed.

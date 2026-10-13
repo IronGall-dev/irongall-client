@@ -16,11 +16,15 @@ import (
 const (
 	// PrekeyTag is line 1 of every v1 prekey statement.
 	PrekeyTag = "irongall-prekey-v1"
-	// MaxPrekeyLifetime is the longest a prekey statement may be valid,
-	// counted from when it is published: 31 days, the longest month, plus a
-	// day a renewal may wait and a day of slip, so a box checked at least
-	// monthly never lapses.
-	MaxPrekeyLifetime = 33 * 24 * time.Hour
+	// PrekeyLifetime is how long a client makes a prekey statement valid for:
+	// 31 days, the longest month, plus a day a renewal may wait and a day of
+	// slip, so a box checked at least monthly never lapses.
+	PrekeyLifetime = 33 * 24 * time.Hour
+	// MaxPrekeyLifetime is the longest a prekey statement may still have to
+	// run when a server takes it: MaxSkew more than a client asks for, so
+	// that a client whose clock is ahead of the server's is not refused. It
+	// is the pass's rule (PassLifetime, MaxPassLifetime).
+	MaxPrekeyLifetime = PrekeyLifetime + MaxSkew
 	// MaxSerial is the largest prekey serial: 18 decimal digits.
 	MaxSerial = 999_999_999_999_999_999
 	// TimeLayout is the one timestamp format in signed statements and the
@@ -86,7 +90,7 @@ func (p *Prekey) CheckLifetime(now time.Time) error {
 		return errors.New("the prekey has already expired")
 	}
 	if p.NotAfter.After(now.Add(MaxPrekeyLifetime)) {
-		return fmt.Errorf("a prekey may be valid for at most %d days", MaxPrekeyLifetime/(24*time.Hour))
+		return fmt.Errorf("a prekey may end at most %d days and %d minutes from now", PrekeyLifetime/(24*time.Hour), MaxSkew/time.Minute)
 	}
 	return nil
 }
@@ -159,7 +163,12 @@ func VerifyPrekey(id *Identity, statement, signature []byte, now time.Time) (*Pr
 	cert, err := VerifyCertified(id, statement, signature, PrekeyNamespace(id.Address()), now)
 	switch {
 	case errors.Is(err, ErrCertificateTime):
-		return nil, nil, errors.New("the certificate the prekey is signed under has ended, or has not begun")
+		// Its own words, and still the error it was to errors.Is: a caller
+		// says whose clock judged it.
+		if errors.Is(err, ErrCertificateNotBegun) {
+			return nil, nil, &worded{"the certificate the prekey is signed under has not begun", ErrCertificateNotBegun}
+		}
+		return nil, nil, &worded{"the certificate the prekey is signed under has ended", ErrCertificateEnded}
 	case err != nil:
 		return nil, nil, errors.New("the prekey is not signed by a working key its identity certified")
 	}
@@ -189,6 +198,16 @@ func VerifyPrekeyRecord(id *Identity, statement, signature []byte) (*Prekey, *Ce
 	}
 	return VerifyPrekey(id, statement, signature, began)
 }
+
+// worded is an error that reads as its own words and is still is to
+// errors.Is.
+type worded struct {
+	words string
+	is    error
+}
+
+func (e *worded) Error() string { return e.words }
+func (e *worded) Unwrap() error { return e.is }
 
 // ParseTime parses a timestamp in TimeLayout, exactly: RFC 3339, UTC, to the
 // second, as in 2026-10-10T12:00:00Z.

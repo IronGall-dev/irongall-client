@@ -134,6 +134,14 @@ func (b *Box) post(ctx context.Context, to protocol.Address, stem string) (*prot
 		}
 		return nil, fmt.Errorf("%w (it can never be delivered: moved to outbox/failed/)", err)
 	}
+	// An envelope dated ahead of this machine's clock was written while the
+	// clock read ahead of where it reads now. It is not posted, sealed or
+	// not, until the clock passes that time: a reader takes a sent_at up to
+	// MaxSkew ahead of its own clock, which is the room for two clocks a
+	// server takes, and has none to spare for one that was wrong.
+	if t, ok := b.sentAt(stem); ok && t.After(b.now()) {
+		return nil, refuse("its envelope is dated %s, ahead of this machine's clock: it was written while the clock read ahead of where it reads now, and a recipient would refuse it. It is kept in the outbox, and irongall flush sends it once the clock passes that time", t.Format(protocol.TimeLayout))
+	}
 	r, err := b.trySend(ctx, to, stem)
 	if err != nil {
 		if !slices.Contains(undeliverable, Code(err)) {
@@ -171,10 +179,10 @@ func (b *Box) recordSent(stem string, r *protocol.Receipt) error {
 	if err != nil {
 		return errors.New("not an outbox entry")
 	}
-	// Read as its recipient reads it, at a clock that calls nothing stale,
-	// and written as its recipient's recv writes it: the checked fields,
-	// without the identity document.
-	env, err := protocol.OpenEnvelope(signed, b.id.Address(), peer, time.Time{})
+	// Read as its recipient reads it, but for its age, and written as its
+	// recipient's recv writes it: the checked fields, without the identity
+	// document.
+	env, err := protocol.OpenEnvelopeRecord(signed, b.id.Address(), peer)
 	if err != nil {
 		return errors.New("the outbox entry's envelope is not one this box made for that address")
 	}
@@ -220,18 +228,24 @@ func (b *Box) trySend(ctx context.Context, to protocol.Address, stem string) (*p
 // expired reports whether an entry's envelope is older than protocol.TTL, the
 // most a recipient accepts: past that, every recipient refuses it as stale.
 func (b *Box) expired(stem string) bool {
+	t, ok := b.sentAt(stem)
+	return ok && t.Before(b.now().Add(-protocol.TTL))
+}
+
+// sentAt returns the sent_at of an outbox entry's envelope.
+func (b *Box) sentAt(stem string) (time.Time, bool) {
 	p, err := os.ReadFile(stem + ".P") //nolint:gosec // a path inside the box's own directory
 	if err != nil {
-		return false
+		return time.Time{}, false
 	}
 	var e struct {
 		SentAt string `json:"sent_at"`
 	}
 	if json.Unmarshal(p, &e) != nil {
-		return false
+		return time.Time{}, false
 	}
 	t, err := protocol.ParseTime(e.SentAt)
-	return err == nil && t.Before(b.now().Add(-protocol.TTL))
+	return t, err == nil
 }
 
 // moveToFailed moves an outbox entry's files to outbox/failed/, where flush
@@ -282,7 +296,7 @@ func (b *Box) seal(ctx context.Context, to protocol.Address, stem string) error 
 	if err != nil {
 		return err
 	}
-	env, err := protocol.OpenEnvelope(line, b.id.Address(), to, b.now())
+	env, err := protocol.OpenEnvelopeRecord(line, b.id.Address(), to)
 	if err != nil || !bytes.Equal(env.Identity, b.id.Document()) || !bytes.HasSuffix(line, []byte("\n")) {
 		return refuse("the outbox entry is not an envelope this box made for that address")
 	}

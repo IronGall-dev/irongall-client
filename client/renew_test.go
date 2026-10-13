@@ -254,7 +254,7 @@ func TestAServerThatFailsEveryRenewalGetsEachKeyOnce(t *testing.T) {
 	serials := map[uint64]bool{}
 	for _, key := range order {
 		l := byKey[key]
-		if life := l.p.NotAfter.Sub(l.signed); life > protocol.MaxPrekeyLifetime {
+		if life := l.p.NotAfter.Sub(l.signed); life > protocol.PrekeyLifetime {
 			t.Errorf("serial %d could be encrypted to for %s after it was signed", l.p.Serial, life)
 		}
 		serials[l.p.Serial] = true

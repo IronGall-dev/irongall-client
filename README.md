@@ -97,6 +97,7 @@ A refused message goes to `quarantine/` and prints one line, `REFUSED <id>: <cod
 | `bad_signature` | it is not signed for this box by a working key the sender's identity certified, under a certificate that holds now |
 | `reattributed` | the envelope's `from` is not the address of the identity that signed it, its `to` is not this box, or the server names another sender |
 | `stale` | its `sent_at` is older than 33 days |
+| `future` | its `sent_at` is more than an hour ahead of this machine's clock |
 | `replay` | this ciphertext was already received |
 | `bad_id` | the server's id for it is not the SHA-256 of its ciphertext |
 
@@ -149,7 +150,7 @@ What it lacks against the Go client, though it gives the Go client's verdict on 
 - see who writes to whom, when, and each message's size to within a padding block;
 - post in a box's name for the minutes a pass it was shown lasts, which delivers nothing a recipient accepts;
 - drop or delay mail;
-- keep serving a box's previous prekey until it expires, at most 33 days;
+- keep serving a box's previous prekey until it expires, 33 days after it was signed;
 - list mail from senders it made up, which costs a box one bounded run;
 - refuse a box's renewals, which `recv` reports with exit `3`.
 

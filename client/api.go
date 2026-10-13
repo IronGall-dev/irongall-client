@@ -57,6 +57,9 @@ func (b *Box) call(ctx context.Context, method, path string, in any, hdr http.He
 		if s, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && s > 0 {
 			e.RetryAfter = time.Duration(s) * time.Second
 		}
+		if d, err := http.ParseTime(resp.Header.Get("Date")); err == nil && req.Header.Get("Authorization") != "" {
+			e.Dated, e.Read = d.UTC(), b.now().UTC().Truncate(time.Second)
+		}
 		return resp, e
 	}
 	if out != nil {

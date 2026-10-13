@@ -70,6 +70,9 @@ func New(t testing.TB, now func() time.Time) *Server {
 	mux.HandleFunc("PUT /v1/{addr}/account", s.owner(s.adopt))
 	mux.HandleFunc("DELETE /v1/{addr}/account", s.owner(s.leave))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Dated by the server's own clock, which a test sets: a client
+		// compares an answer's Date with its clock when a pass is refused.
+		w.Header().Set("Date", s.now().UTC().Format(http.TimeFormat))
 		s.mu.Lock()
 		m := s.middle
 		s.mu.Unlock()
@@ -159,7 +162,14 @@ func (s *Server) verifyPrekey(identity, statement, signature []byte) (*protocol.
 	if err != nil {
 		return nil, nil, err
 	}
-	return protocol.VerifyPrekey(id, statement, signature, s.now())
+	p, cert, err := protocol.VerifyPrekey(id, statement, signature, s.now())
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := p.CheckLifetime(s.now()); err != nil {
+		return nil, nil, err
+	}
+	return p, cert, nil
 }
 
 // pass checks a call's pass: it is the pass of the box whose identity

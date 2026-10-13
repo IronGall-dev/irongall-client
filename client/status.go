@@ -85,7 +85,7 @@ func (b *Box) Status() (*Status, error) {
 	if first != 0 {
 		since := "an unknown time"
 		if p, err := b.prekeyStatement(first); err == nil {
-			since = p.NotAfter.Add(-protocol.MaxPrekeyLifetime).UTC().Format(protocol.TimeLayout)
+			since = p.NotAfter.Add(-protocol.PrekeyLifetime).UTC().Format(protocol.TimeLayout)
 			s.RenewalPendingSince = since
 		}
 		s.Attention = append(s.Attention, fmt.Sprintf("a new prekey signed at %s was never seen published: the server refused it or did not answer; irongall recv sends it again", since))

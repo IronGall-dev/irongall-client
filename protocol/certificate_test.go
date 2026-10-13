@@ -71,8 +71,8 @@ func TestCertificateRoundTrip(t *testing.T) {
 	if cert.Serial() != 7 || !cert.NotAfter().Equal(now.Add(CertificateLifetime)) {
 		t.Errorf("serial %d, ends %v", cert.Serial(), cert.NotAfter())
 	}
-	if got := cert.PublicKey().(*ssh.Certificate).ValidAfter; got != uint64(time.Date(2026, 10, 12, 19, 18, 0, 0, time.UTC).Unix()) {
-		t.Errorf("begins at %d, not at the start of the minute before, as ssh-keygen dates it", got)
+	if got := cert.PublicKey().(*ssh.Certificate).ValidAfter; got != uint64(now.Add(-MaxSkew).Unix()) {
+		t.Errorf("begins at %d, not MaxSkew before it was made", got)
 	}
 	if !bytes.Equal(cert.WorkingKey().Marshal(), b.work.PublicKey().Marshal()) {
 		t.Error("the working key is not the one certified")

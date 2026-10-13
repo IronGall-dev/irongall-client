@@ -212,13 +212,13 @@ func (b *Box) current() (uint64, time.Time, error) {
 }
 
 // made returns when prekey n was made. Both clients give every prekey the
-// full lifetime, so it was made at its not_after less MaxPrekeyLifetime.
+// full lifetime, so it was made at its not_after less PrekeyLifetime.
 func (b *Box) made(n uint64) (time.Time, error) {
 	p, err := b.prekeyStatement(n)
 	if err != nil {
 		return time.Time{}, err
 	}
-	return p.NotAfter.Add(-protocol.MaxPrekeyLifetime), nil
+	return p.NotAfter.Add(-protocol.PrekeyLifetime), nil
 }
 
 // prekeyStatement returns prekey n's statement, as this box wrote it.

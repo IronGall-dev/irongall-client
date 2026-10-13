@@ -6,6 +6,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -101,6 +102,9 @@ func (b *Box) worker(n uint64) (ssh.Signer, *protocol.Certificate, error) {
 		return nil, nil, fmt.Errorf("working key %d's certificate: %w", n, err)
 	}
 	cert, err := protocol.CheckCertificate(b.id, key, b.now())
+	if errors.Is(err, protocol.ErrCertificateNotBegun) {
+		return nil, nil, refuse("this box's certificate has not begun, by this machine's clock: the clock reads earlier than when the certificate was made. Check this machine's clock against a time source you trust. If the clock is right now and was ahead then, irongall rekey makes a new working key, certificate and prekey")
+	}
 	if errors.Is(err, protocol.ErrCertificateTime) {
 		return nil, nil, refuse("this box's certificate has ended: irongall rekey makes a new working key, certificate and prekey")
 	}
@@ -158,6 +162,36 @@ func (b *Box) serverName() (string, error) {
 	return name, protocol.CheckServerName(name)
 }
 
+// dropUnbegun deletes prekey n's statement and its working key, if the
+// working key's certificate has not begun at this machine's clock, so that
+// both are made again. The prekey's own key stays, and the new statement is
+// for it: a box cannot know that a statement was never published (a server
+// may have taken a registration whose answer was lost), so mail may be
+// waiting that only this key opens.
+func (b *Box) dropUnbegun(n uint64) error {
+	line, err := os.ReadFile(b.workStem(n) + "-cert.pub")
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	key, _, _, _, err := ssh.ParseAuthorizedKey(line)
+	if err != nil {
+		return nil // not a certificate: whoever reads it next says so
+	}
+	if _, err := protocol.CheckCertificate(b.id, key, b.now()); !errors.Is(err, protocol.ErrCertificateNotBegun) {
+		return nil
+	}
+	stem := b.path("prekeys", strconv.FormatUint(n, 10))
+	for _, name := range []string{stem + ".txt.sig", stem + ".txt", b.workStem(n), b.workStem(n) + ".pub", b.workStem(n) + "-cert.pub"} {
+		if err := removeIfExists(name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // passMargin is how long a kept pass must still have to run to be used
 // again: the time a call may take to reach the server.
 const passMargin = 30 * time.Second
@@ -166,11 +200,19 @@ const passMargin = 30 * time.Second
 // in the box while it has more than passMargin left, and otherwise a new one,
 // signed by the working key in use and kept. One pass serves every call for
 // its ten minutes, so a server checks its signature once.
+//
+// A kept pass with more than PassLifetime left is not used: this box never
+// signs one that long, so this machine's clock has gone back since it was
+// signed. The new pass is dated by the clock as it is now, and a server
+// refuses it if the clock is too far behind: a box whose clock is wrong is
+// stopped at its pass, before it fetches mail it would judge by that clock.
 func (b *Box) pass() (string, error) {
 	if kept, err := os.ReadFile(b.path("pass")); err == nil {
 		h := strings.TrimSuffix(string(kept), "\n")
-		if p, err := protocol.ParsePass(h); err == nil && p.Address == b.id.Address() && p.NotAfter.Sub(b.now()) > passMargin {
-			return h, nil
+		if p, err := protocol.ParsePass(h); err == nil && p.Address == b.id.Address() {
+			if left := p.NotAfter.Sub(b.now()); left > passMargin && left <= protocol.PassLifetime {
+				return h, nil
+			}
 		}
 	}
 	signer, _, err := b.currentWorker()

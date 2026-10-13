@@ -140,7 +140,10 @@ func OpenSigned(plaintext []byte, me Address, now time.Time) (*Signed, error) {
 	cert, err := VerifyCertified(id, line, signature, MessageNamespace(me), now)
 	switch {
 	case errors.Is(err, ErrCertificateTime):
-		return nil, &EnvelopeError{RefusedSignature, "the certificate of the key that signed it has ended, or has not begun"}
+		if errors.Is(err, ErrCertificateNotBegun) {
+			return nil, &EnvelopeError{RefusedSignature, "the certificate of the key that signed it has not begun, by this machine's clock"}
+		}
+		return nil, &EnvelopeError{RefusedSignature, "the certificate of the key that signed it has ended"}
 	case errors.Is(err, ErrCertificate):
 		return nil, &EnvelopeError{RefusedSignature, "it is not signed under a certificate of the sender's identity"}
 	case err != nil:

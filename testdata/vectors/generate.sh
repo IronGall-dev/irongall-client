@@ -13,10 +13,12 @@ set -euo pipefail
 umask 077
 cd "$(dirname "$0")"
 NOW=2026-10-10T00:00:00Z
-NOT_AFTER=2026-11-12T00:00:00Z # NOW + 33 days exactly: the longest a prekey may be valid
+NOT_AFTER=2026-11-12T00:00:00Z # NOW + 33 days exactly: what a client asks for. A server takes one that ends up to an hour later
 MSG_ID=6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b
-# A certificate's validity, as ssh-keygen -V takes it. A client asks for 65 days from a minute before now.
+# A certificate's validity, as ssh-keygen -V takes it. These begin a minute before NOW, where a client
+# dates its own from an hour back (PROTOCOL.md §2b): a verifier asks only that one has begun.
 V_OK=20261009235900Z:20261214000000Z
+V_BEGINS_NOW=20261010000000Z:20261214000000Z # begins at NOW: begun
 V_SHORT=20261009235900Z:20261020000000Z    # ends 10 days after NOW: a 33-day prekey statement outlives it
 V_ENDED=20260801000000Z:20261010000000Z    # ends at NOW
 V_NOT_BEGUN=20261010000001Z:20261214000000Z
@@ -127,6 +129,9 @@ badcert bad-certifies-the-identity a a $(good "$A")
 badcert bad-ended a a-work $(good "$A" 1 "$V_ENDED")
 badcert bad-not-begun a a-work $(good "$A" 1 "$V_NOT_BEGUN")
 badcert bad-too-long a a-work $(good "$A" 1 "$V_TOO_LONG")
+# And one every implementation must take, at the edge of the rule bad-not-begun is past.
+okcert() { badcert "$@"; }
+okcert ok-begins-now a a-work $(good "$A" 1 "$V_BEGINS_NOW")
 
 # Identity documents every implementation must reject.
 GOOD=$(sed -n 2p a/identity.doc)
@@ -171,9 +176,10 @@ printf 'irongall-v1\n%s\0' "$GOOD_C" > identity/p256-nul-for-the-final-newline.d
 printf 'irongall-v1\n%s\0' "$(sed -n 2p identity/unsupported-type.doc)" > identity/nul-in-an-unknown-type.doc
 
 # Prekey statements of box A. bad-*: signature or format must be refused. expired-*: valid, but
-# expired at ./now, so a sender must not encrypt to it. too-long-*: valid and not expired, but a
-# server must refuse to publish it. Each is signed by A in A's prekey namespace unless its name
-# says otherwise.
+# expired at ./now, so a sender must not encrypt to it. longest: valid, and the longest a server
+# takes, an hour past the 33 days a client asks for. too-long: a second past that, so valid and not
+# expired, but a server must refuse to publish it. Each is signed by A in A's prekey namespace
+# unless its name says otherwise.
 PQ=$(cat input/a-1.pq)
 bad() { local name=$1; shift; printf "$@" > "prekey/$name.txt"; under a-work a/work-cert.pub "irongall-prekey-v1:$A" < "prekey/$name.txt" > "prekey/$name.txt.sig"; }
 cp a/prekey-1.txt prekey/bad-wrong-namespace.txt; under a-work a/work-cert.pub "irongall-msg-v1:$A" < a/prekey-1.txt > prekey/bad-wrong-namespace.txt.sig
@@ -204,7 +210,8 @@ bad bad-recipient-not-age 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$GOOD" "$N
 bad bad-recipient-small-order-pq 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$(cat input/small-order.pq)" "$NOT_AFTER"
 bad bad-recipient-small-order-classic 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$(cat input/small-order.classic)" "$NOT_AFTER"
 bad expired 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$PQ" "$NOW"
-bad too-long 'irongall-prekey-v1\n%s\n1\n%s\n2026-11-12T00:00:01Z\n' "$A" "$PQ"
+bad longest 'irongall-prekey-v1\n%s\n1\n%s\n2026-11-12T01:00:00Z\n' "$A" "$PQ"
+bad too-long 'irongall-prekey-v1\n%s\n1\n%s\n2026-11-12T01:00:01Z\n' "$A" "$PQ"
 
 # Envelopes, judged as a message whose signature by A verified, received by box B, at ./now.
 case_env() { local name=$1; shift; printf "$@" > "envelope/$name.json"; }
@@ -216,6 +223,8 @@ case_env accept-null-body "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"bod
 case_env accept-unknown-field "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\",\"later\":true}" "$A" "$B"
 case_env accept-33-days-old "{$H,\"sent_at\":\"2026-09-07T00:00:00Z\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
 case_env refuse-33-days-and-1s-old "{$H,\"sent_at\":\"2026-09-06T23:59:59Z\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
+case_env accept-1-hour-ahead "{$H,\"sent_at\":\"2026-10-10T01:00:00Z\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
+case_env refuse-1-hour-and-1s-ahead "{$H,\"sent_at\":\"2026-10-10T01:00:01Z\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
 case_env refuse-from-not-signer "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$B" "$B"
 case_env refuse-to-another-box "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$A"
 case_env refuse-from-uppercase "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$(printf '%s' "$A" | tr a-f A-F)" "$B"

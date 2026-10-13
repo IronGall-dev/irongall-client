@@ -92,7 +92,7 @@
 **Where ours sits among them:**
 - **10 minutes from the client** is GitHub's ceiling, the shortest of the four.
 - **An hour at the server** is Google's and Apple's figure.
-- **The gap between the two** does the job of GitHub's 60 seconds of backdating: a client whose clock is off is not refused. Here it is on the far end, since irongall's checks carry no allowance for skew.
+- **The gap between the two** does the job of GitHub's 60 seconds of backdating: a client whose clock is off is not refused. Here it is on the far end: every irongall check is exact at the verifier's clock, and the room is in what is made (§3a).
 - **The server's name in the statement** is VAPID's `aud`: a pass made for one server is no pass for another.
 - **A scheme of its own with named parameters** is VAPID's shape, not `Bearer`.
 
@@ -162,6 +162,48 @@ None of the three was a flaw in the layout: each was a verifier that read an obj
 - **The recipient is named in what is signed** (the namespace, and the envelope's `to`), which git has no need of. It is what stops a recipient passing a signed message on to a third box, the flaw age's author names for this order.
 - **The sender's identity document rides in the envelope,** as a JWS may carry its signer's key in its header (RFC 7515 §4.1.3, from memory). The address is its hash, so a recipient checks a sender it has never met without asking the server.
 - **A recipient decrypts before it can verify,** as with every row of the first table that signs inside. What is lost is what S/MIME's text names: a signature that can be checked without the key that decrypts.
+
+## 3a. Clocks: every check is exact, and whatever is made leaves an hour of room
+
+**Ours** (decided 2026-10-13; issues #40, #12 and #42): every check is exact at the clock of whoever makes it. Whoever makes a time-limited thing leaves an hour: a certificate starts an hour before it is made, a server takes a prekey statement that ends up to an hour past the 33 days a client asks for, a reader takes a `sent_at` up to an hour ahead of its clock, and a pass is asked for 10 minutes and taken up to 60 ahead. The hour is the pass's: a server takes a box whose clock is less than 10 minutes behind its own or up to 50 ahead, and no two such clocks are an hour apart. A box further off is refused at its pass and told how far its clock is from the server's (`PROTOCOL.md` §0).
+
+**The maker dates the start back, and the verifier's check is exact:**
+
+| Who | What they do | Their numbers | How it is known |
+|---|---|---|---|
+| **X.509 path validation** (RFC 5280 §6.1.3) | The verifier checks exactly | "The certificate validity period includes the current time" | read 2026-10-13: [RFC 5280](https://www.rfc-editor.org/rfc/rfc5280) |
+| **OpenSSH `ssh-keygen`** | Dates a certificate's start back by default; `sshd` checks exactly | now less 59 seconds, rounded down to the minute | read 2026-10-13: `ssh-keygen.c` at `V_10_2_P1` (`cert_valid_from = ((now - 59)/ 60) * 60`); the manual states no default |
+| **Let's Encrypt** | Dates `notBefore` back | 58 minutes 30 seconds on its own site's certificate: `notBefore` 14:34:32, signed certificate timestamps 15:33:02, 2026-09-04 | measured 2026-10-13 with `openssl s_client -connect letsencrypt.org:443`; Boulder's `issuance/cert.go` takes 0.9 of a profile's largest backdate |
+| **CA/Browser Forum Baseline Requirements** | Permit a CA to date back | a subscriber certificate's `notBefore` is "A value within 48 hours of the certificate signing operation" | read 2026-10-13: [`docs/BR.md`](https://github.com/cabforum/servercert/blob/main/docs/BR.md) |
+| **HashiCorp Vault**, PKI and SSH | Dates back | `not_before_duration`, default 30 seconds | read 2026-10-13: [Vault API, PKI](https://developer.hashicorp.com/vault/api-docs/secret/pki) and [SSH](https://developer.hashicorp.com/vault/api-docs/secret/ssh) |
+| **Kubernetes' certificate signer** | Dates back | 5 minutes | read 2026-10-13: `pkg/controller/certificates/signer/signer.go` (the code; its documentation was not read) |
+| **OpenMLS** | Dates a KeyPackage's `not_before` back | an hour, "to adapt to skewed clocks" | read 2026-10-13: `openmls/src/key_packages/lifetime.rs` |
+| **BIND `dnssec-signzone`** | Dates a signature's start back | "the current time minus 1 hour (to allow for clock skew)" | read 2026-10-13: its manual page, option `-s` |
+| **MLS** (RFC 9420 §7.2) | Expects synced clocks | clients "SHOULD maintain time synchronization (e.g., using the Network Time Protocol)" | read 2026-10-13: [RFC 9420](https://www.rfc-editor.org/rfc/rfc9420) |
+
+**The verifier of a short-lived token gives leeway:**
+
+| Who | What they do | Their numbers | How it is known |
+|---|---|---|---|
+| **JWT** (RFC 7519 §4.1.4, §4.1.5) | Leeway on `exp` and `nbf`, optional | "some small leeway, usually no more than a few minutes" | read 2026-10-13: [RFC 7519](https://www.rfc-editor.org/rfc/rfc7519) |
+| **Kerberos** (RFC 4120) | Leeway both ways on an authenticator's time | "allowable clock skew (e.g., 5 minutes)"; the recommended constant is 5 minutes | read 2026-10-13: [RFC 4120](https://www.rfc-editor.org/rfc/rfc4120) §3.1.3, §8.2 |
+| **DPoP** (RFC 9449 §11.1) | Leeway for an `iat` ahead, or a server nonce where clocks may differ more | "in the reasonably near future (on the order of seconds or minutes)" | read 2026-10-13: [RFC 9449](https://www.rfc-editor.org/rfc/rfc9449) |
+| **Mastodon's HTTP signatures** | Leeway both ways | `CLOCK_SKEW_MARGIN = 1.hour` | read 2026-10-13: `app/lib/signed_request.rb` (the code) |
+| **DKIM** (RFC 6376 §3.5) | A timestamp ahead may be refused; room at expiry is optional | "MAY ignore signatures that have a timestamp in the future"; receivers "MAY add a 'fudge factor'" | read 2026-10-13: [RFC 6376](https://www.rfc-editor.org/rfc/rfc6376) |
+| **GitHub Apps** | The maker dates `iat` back | 60 seconds, "to protect against clock drift" | §1's table |
+
+**Where ours sits among them:**
+- **An exact check, with the room left by whoever made the thing,** is how a certificate is handled in X.509 and OpenSSH. Nobody above checks exactly at both ends.
+- **An hour** is what Let's Encrypt, OpenMLS and BIND date back by: each makes things that strangers on the internet verify. Thirty seconds to five minutes (Vault, Kubernetes, OpenSSH's default) is for machines one operator runs. irongall's boxes are strangers to each other.
+- **The pass is the short-lived token.** A box is taken from under 10 minutes slow to 50 fast, by the server's clock: on the slow side that is twice Kerberos's 5 minutes, and it is the pass's own lifetime.
+- **A `sent_at` more than an hour ahead is refused,** which is Mastodon's margin and more than DPoP's minutes. An honest sender's is not that far ahead: it posts nothing dated ahead of its own clock, and a server takes its pass only while that clock is at most 50 minutes fast.
+
+**Where ours differs, and why:**
+- **No leeway at any verifier,** where JWT and Kerberos put theirs. All the room is in what is made, so every check is one comparison against the verifier's own clock, and the rule a verifier applies has no number in it to disagree about. A caller sees the same effect.
+- **A client compares its clock with the server's and does not correct by it.** The protocol is designed against a server that may be hostile, so the server's time is a thing to report as the server's word, never one to check by: a clock set by a server's lie would make an ended certificate valid again. The client's own words send its reader to a time source they trust.
+- **Before 2026-10-13** nothing was dated back but by `ssh-keygen`'s default minute, and a prekey was asked for at exactly its ceiling. Measured then: a new box worked only from about a minute slow to about a second fast, and a reader two minutes slow lost mail under a fresh certificate (issue #40). No system above is that narrow.
+
+**Not read:** AWS's request-signing window and smallstep's default backdate.
 
 ## 4. The rest: one row a decision
 
