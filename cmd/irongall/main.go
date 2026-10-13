@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/IronGall-dev/irongall-client/client"
@@ -24,7 +25,10 @@ import (
 const usage = `usage: irongall <command> [arguments]
 
   init [--no-pq]          create this box and register it; prints
-                           its link, as addr does
+                           its link, as addr does. --identity-type <type>
+                           makes its identity a key of another type than
+                           ssh-ed25519, which only a box whose client
+                           verifies that type can write to or hear from
   addr                     print this box's link, <server>/to/<address>: give it
                            to whoever should write to this box
   send <link> [file]       send a message (the body from file, or stdin); a bare
@@ -55,6 +59,9 @@ The box lives in $IRONGALL_HOME, or ${XDG_CONFIG_HOME:-~/.config}/irongall/${IRO
 Its inbox/ keeps each message received and its sent/ each message sent, with
 the server's receipt: both are yours to prune.
 The server is $IRONGALL_BASE, or https://irongall.dev.
+With each prekey a box declares which identity key types its client verifies,
+and so whose mail it takes: every type this client verifies, unless
+$IRONGALL_SENDER_KEY_TYPES says otherwise ("any": do not say).
 
 Exit status: 0, done. 1, the command failed. 2, help. 3, the command did its
 work and the box needs a look: from recv, mail was received as printed and
@@ -113,6 +120,9 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 		return err
 	}
 	opt := client.Options{Base: os.Getenv("IRONGALL_BASE")}
+	if v := os.Getenv("IRONGALL_SENDER_KEY_TYPES"); v != "" {
+		opt.SenderKeyTypes = strings.Split(v, ",")
+	}
 	// The flag package takes one dash or two and writes one. This client
 	// writes two everywhere, so it prints a command's flags and a bad flag's
 	// error itself.
@@ -131,12 +141,16 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 	switch cmd {
 	case "init":
 		noPQ := fs.Bool("no-pq", false, "make a box without post-quantum encryption (X25519 only), which age 1.2 can reach")
+		idType := fs.String("identity-type", "", "make the identity a key of this type, not ssh-ed25519: "+protocol.IdentityP256+". Every client verifies ssh-ed25519; a box of another type is reached only by boxes whose client verifies it")
 		if err := parse(); err != nil {
 			return err
 		}
 		kt := protocol.PostQuantum
 		if *noPQ {
 			kt = protocol.Classic
+		}
+		if opt.IdentityType = *idType; *idType != "" && *idType != protocol.IdentityEd25519 {
+			_, _ = fmt.Fprintf(stderr, "WARNING: a box whose identity is a %s key can neither write to nor hear from a box whose client does not verify that type. Every client verifies ssh-ed25519, which init makes without --identity-type.\n", *idType)
 		}
 		b, err := client.Init(ctx, dir, opt, kt)
 		if err != nil {

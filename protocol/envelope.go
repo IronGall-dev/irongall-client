@@ -36,12 +36,13 @@ func IsMsgID(s string) bool { return msgIDGrammar.MatchString(s) }
 // The checks an envelope can fail, as codes: a closed set, so that whoever
 // reads a refusal reads words this code chose.
 const (
-	RefusedMessage     = "bad_message"   // what was decrypted is not an envelope line and then a signature block
-	RefusedEnvelope    = "bad_envelope"  // not UTF-8 JSON, one object with no key twice, version 1, with a body, a msg_id and a sent_at
-	RefusedIdentity    = "bad_identity"  // the envelope carries no identity document, or one that breaks its format or its key checks
-	RefusedSignature   = "bad_signature" // not signed for this box by a working key the sender's identity certified, under a certificate valid now
-	RefusedAttribution = "reattributed"  // its from is not the address of the identity that signed it, or its to is not this box
-	RefusedStale       = "stale"         // its sent_at is older than TTL
+	RefusedMessage     = "bad_message"          // what was decrypted is not an envelope line and then a signature block
+	RefusedEnvelope    = "bad_envelope"         // not UTF-8 JSON, one object with no key twice, version 1, with a body, a msg_id and a sent_at
+	RefusedIdentity    = "bad_identity"         // the envelope carries no identity document, or one that breaks its format or its key checks
+	RefusedKeyType     = "unsupported_key_type" // the sender's identity is a well-formed document of a key type this client does not verify
+	RefusedSignature   = "bad_signature"        // not signed for this box by a working key the sender's identity certified, under a certificate valid now
+	RefusedAttribution = "reattributed"         // its from is not the address of the identity that signed it, or its to is not this box
+	RefusedStale       = "stale"                // its sent_at is older than TTL
 )
 
 // EnvelopeError is the check an envelope failed: one of the codes above and

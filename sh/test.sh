@@ -295,7 +295,7 @@ ssh-keygen -q -Y sign -n "irongall-prekey-v1:$EA" -f E.work-cert.pub < E.prekey 
 as A; jq -n --arg i "$(ig_b64 E.doc)" --arg p "$(ig_b64 E.prekey)" --arg s "$(ig_b64 E.prekey.sig)" '{identity:$i, prekey:$p, prekey_signature:$s}' > E.json
 LENIENT=1; ig_api PUT "/v1/$EA" E.json > /dev/null || bad "padded registration setup"; LENIENT=
 ig_send "$EA" body3 2> err.txt || true; rm -f $IG/outbox/*.P
-grep -q "93-byte" err.txt && [ "$(grep -c "^POST /v1/$EA\$" $SRV/log)" = 0 ] && [ ! -e $IG/peers/$EA ] && ok "a padded identity document that hashes to its own address is REFUSED: one key never gets a second address" || bad "padded identity: $(cat err.txt)"
+grep -q "not a two-line identity document" err.txt && [ "$(grep -c "^POST /v1/$EA\$" $SRV/log)" = 0 ] && [ ! -e $IG/peers/$EA ] && ok "a padded identity document that hashes to its own address is REFUSED: one key never gets a second address" || bad "padded identity: $(cat err.txt)"
 BW=$W/box/B/work/$(cat $W/box/B/serial)-cert.pub      # B's working key in use: what a thief of it, with the server's help, could sign
 as A; printf 'irongall-prekey-v1\n%s\n9\n%s\n2020-01-01T00:00:00Z\n' "$B" "$(sed -n 4p $SRV/$B/prekey.txt)" > $SRV/forged.txt
 ssh-keygen -q -Y sign -n "irongall-prekey-v1:$B" -f $BW < $SRV/forged.txt > $SRV/forged.sig

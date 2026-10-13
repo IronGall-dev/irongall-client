@@ -99,6 +99,35 @@ func TestVectorIdentities(t *testing.T) {
 	}
 }
 
+// Box C's identity is of the optional type, and everything a box says is
+// checked under it as under an Ed25519 one.
+func TestVectorP256Identity(t *testing.T) {
+	now := vectorNow(t)
+	c := vectorIdentity(t, "c")
+	if c.Type() != IdentityP256 || len(c.Document()) != 173 {
+		t.Errorf("c: a %s identity of %d bytes", c.Type(), len(c.Document()))
+	}
+	if got, want := c.Address().String(), strings.TrimSpace(string(read(t, "c/address"))); got != want {
+		t.Errorf("c: address %s, want %s", got, want)
+	}
+	built, err := IdentityOf(c.PublicKey())
+	if err != nil || !bytes.Equal(built.Document(), read(t, "c/identity.doc")) {
+		t.Errorf("c: IdentityOf built a different document: %v", err)
+	}
+	p, cert, err := VerifyPrekey(c, read(t, "c/prekey-1.txt"), read(t, "c/prekey-1.txt.sig"), now)
+	if err != nil || p.Serial != 1 || cert.Serial() != 1 {
+		t.Fatalf("c/prekey-1.txt: %v", err)
+	}
+	// A statement under C's certificate is not A's, and A's is not C's.
+	a := vectorIdentity(t, "a")
+	if _, _, err := VerifyPrekey(a, read(t, "c/prekey-1.txt"), read(t, "c/prekey-1.txt.sig"), now); err == nil {
+		t.Error("C's statement verified for A")
+	}
+	if _, err := VerifyCertified(c, read(t, "a/prekey-1.txt"), read(t, "a/prekey-1.txt.sig"), PrekeyNamespace(a.Address()), now); !errors.Is(err, ErrCertificate) {
+		t.Errorf("a signature under A's certificate, checked against C's identity: %v", err)
+	}
+}
+
 func TestVectorBadIdentities(t *testing.T) {
 	for _, f := range glob(t, "identity/*.doc") {
 		doc, _ := os.ReadFile(f)
@@ -108,11 +137,28 @@ func TestVectorBadIdentities(t *testing.T) {
 			t.Errorf("%s: accepted", name)
 			continue
 		}
-		// A server answers a format error with identity_mismatch and a key
-		// error with bad_key.
+		// A server answers a format error with identity_mismatch, a key
+		// error with bad_key, and a well-formed document of a type it does
+		// not register with unsupported_key_type.
 		keyCase := strings.HasPrefix(name, "small-order") || name == "non-canonical.doc" || name == "negative-zero.doc"
-		if want := map[bool]error{true: ErrIdentityKey, false: ErrIdentityFormat}[keyCase]; !errors.Is(err, want) {
+		p256Refuses := name == "p256-short-coordinate.doc" || name == "p256-coordinate-over-order.doc"
+		want := ErrIdentityFormat
+		switch {
+		case keyCase, p256Refuses, name == "p256-off-curve.doc", name == "p256-coordinate-not-reduced.doc":
+			want = ErrIdentityKey
+		case strings.HasPrefix(name, "unsupported-"):
+			want = ErrIdentityType
+		}
+		if !errors.Is(err, want) {
 			t.Errorf("%s: %v, want it to wrap %v", name, err, want)
+		}
+		// Control: these two are points on the curve in the one encoding,
+		// which the library takes, so the check OpenSSH makes has to be ours.
+		if p256Refuses {
+			wire := mustB64(t, bytes.Fields(doc)[2])
+			if key, err := ssh.ParsePublicKey(wire); err != nil || !bytes.Equal(key.Marshal(), wire) {
+				t.Errorf("%s: control: the library refuses it already: %v", name, err)
+			}
 		}
 		// Control: the key cases are well-formed documents, so the KEY check
 		// is what refused them, and edwards25519 itself decodes the point,
@@ -359,29 +405,32 @@ func TestVectorPass(t *testing.T) {
 // plainVerdicts is what B makes of each plain/ vector at ./now: "" for a
 // message that is delivered, or the code it is refused with.
 var plainVerdicts = map[string]string{
-	"accept-no-padding":                      "",
-	"accept-padded":                          "",
-	"accept-anything-after-the-signature":    "",
-	"accept-every-field":                     "",
-	"refuse-signed-for-another-box":          RefusedSignature,
-	"refuse-signed-by-the-identity":          RefusedSignature,
-	"refuse-signed-by-a-bare-working-key":    RefusedSignature,
-	"refuse-certificate-ended":               RefusedSignature,
-	"refuse-line-changed-after-signing":      RefusedSignature,
-	"refuse-another-box-s-identity-document": RefusedSignature,
-	"refuse-from-is-not-the-identity":        RefusedAttribution,
-	"refuse-to-another-box":                  RefusedAttribution,
-	"refuse-no-identity":                     RefusedIdentity,
-	"refuse-identity-not-base64":             RefusedIdentity,
-	"refuse-identity-of-small-order":         RefusedIdentity,
-	"refuse-no-line-feed":                    RefusedMessage,
-	"refuse-no-signature":                    RefusedMessage,
-	"refuse-blank-line-before-the-signature": RefusedMessage,
-	"refuse-signature-first":                 RefusedMessage,
-	"refuse-no-end-line":                     RefusedMessage,
-	"refuse-end-line-without-its-line-feed":  RefusedMessage,
-	"refuse-crlf":                            RefusedMessage,
-	"refuse-envelope-on-two-lines":           RefusedMessage,
+	"accept-no-padding":                                  "",
+	"accept-padded":                                      "",
+	"accept-anything-after-the-signature":                "",
+	"accept-every-field":                                 "",
+	"refuse-signed-for-another-box":                      RefusedSignature,
+	"refuse-signed-by-the-identity":                      RefusedSignature,
+	"refuse-signed-by-a-bare-working-key":                RefusedSignature,
+	"refuse-certificate-ended":                           RefusedSignature,
+	"refuse-line-changed-after-signing":                  RefusedSignature,
+	"refuse-another-box-s-identity-document":             RefusedSignature,
+	"refuse-from-is-not-the-identity":                    RefusedAttribution,
+	"accept-p256-sender":                                 "",
+	"refuse-unsupported-key-type":                        RefusedKeyType,
+	"refuse-from-is-not-the-identity-of-an-unknown-type": RefusedAttribution,
+	"refuse-to-another-box":                              RefusedAttribution,
+	"refuse-no-identity":                                 RefusedIdentity,
+	"refuse-identity-not-base64":                         RefusedIdentity,
+	"refuse-identity-of-small-order":                     RefusedIdentity,
+	"refuse-no-line-feed":                                RefusedMessage,
+	"refuse-no-signature":                                RefusedMessage,
+	"refuse-blank-line-before-the-signature":             RefusedMessage,
+	"refuse-signature-first":                             RefusedMessage,
+	"refuse-no-end-line":                                 RefusedMessage,
+	"refuse-end-line-without-its-line-feed":              RefusedMessage,
+	"refuse-crlf":                                        RefusedMessage,
+	"refuse-envelope-on-two-lines":                       RefusedMessage,
 }
 
 func TestVectorPlaintexts(t *testing.T) {
@@ -390,6 +439,10 @@ func TestVectorPlaintexts(t *testing.T) {
 	seen := 0
 	for _, f := range glob(t, "plain/*.txt") {
 		name := strings.TrimSuffix(filepath.Base(f), ".txt")
+		a := a
+		if name == "accept-p256-sender" {
+			a = vectorIdentity(t, "c")
+		}
 		want, known := plainVerdicts[name]
 		if !known {
 			t.Errorf("%s: unknown vector", name)

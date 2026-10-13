@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"time"
@@ -99,7 +100,9 @@ type Signed struct {
 //  2. The line is UTF-8 JSON, one object with no key twice.
 //  3. It carries an identity document: the exact format, a key that passes
 //     the key checks.
-//  4. Its from is that document's hash.
+//  4. Its from is that document's hash. A well-formed document of a key type
+//     this client does not verify is refused here, after its hash: with its
+//     own code, since nothing is wrong with it.
 //  5. The signature over the line, as decrypted, verifies in this box's
 //     message namespace, by a working key that identity certified, under a
 //     certificate valid at now.
@@ -122,11 +125,17 @@ func OpenSigned(plaintext []byte, me Address, now time.Time) (*Signed, error) {
 		return nil, &EnvelopeError{RefusedIdentity, "the envelope carries no identity document"}
 	}
 	id, err := ParseIdentity(doc)
-	if err != nil {
+	notTheSenders := &EnvelopeError{RefusedAttribution, "the envelope's from is not the address of the identity it carries"}
+	switch {
+	case errors.Is(err, ErrIdentityType):
+		if from != Address(sha256.Sum256(doc)).String() {
+			return nil, notTheSenders
+		}
+		return nil, &EnvelopeError{RefusedKeyType, "the sender's identity is of a key type this client does not verify"}
+	case err != nil:
 		return nil, &EnvelopeError{RefusedIdentity, "the envelope's identity document breaks its format or its key checks"}
-	}
-	if from != id.Address().String() {
-		return nil, &EnvelopeError{RefusedAttribution, "the envelope's from is not the address of the identity it carries"}
+	case from != id.Address().String():
+		return nil, notTheSenders
 	}
 	cert, err := VerifyCertified(id, line, signature, MessageNamespace(me), now)
 	switch {

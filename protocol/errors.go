@@ -14,6 +14,7 @@ const (
 	CodeBadEncoding        Code = "bad_encoding"         // a byte field that is not base64
 	CodeIdentityMismatch   Code = "identity_mismatch"    // the identity does not hash to the address, or breaks its grammar
 	CodeBadKey             Code = "bad_key"              // a bad key or prekey statement, or a prekey that is not new
+	CodeUnsupportedKeyType Code = "unsupported_key_type" // an identity of a key type this server does not register
 	CodeNotAge             Code = "not_age"              // the ciphertext is not an age file
 	CodeWrongRecipientType Code = "wrong_recipient_type" // not exactly one stanza of a live prekey type
 
@@ -25,6 +26,7 @@ const (
 	CodeUnknownSender    Code = "unknown_sender"     // not registered, or closed
 	CodeSenderRevoked    Code = "sender_revoked"     // YOUR box is revoked
 	CodeSenderNotAllowed Code = "sender_not_allowed" // not on the box's allow list, or on its block list
+	CodeSenderKeyType    Code = "sender_key_type"    // the box's client does not verify identities of YOUR box's key type
 	CodeAdoptKeyRefused  Code = "adopt_key_refused"  // an adopt key that is spent, expired, revoked or not this server's
 
 	// 404
@@ -57,6 +59,7 @@ var statuses = map[Code]int{
 	CodeBadEncoding:        http.StatusBadRequest,
 	CodeIdentityMismatch:   http.StatusBadRequest,
 	CodeBadKey:             http.StatusBadRequest,
+	CodeUnsupportedKeyType: http.StatusBadRequest,
 	CodeNotAge:             http.StatusBadRequest,
 	CodeWrongRecipientType: http.StatusBadRequest,
 	CodeUnauthorized:       http.StatusUnauthorized,
@@ -64,6 +67,7 @@ var statuses = map[Code]int{
 	CodeUnknownSender:      http.StatusForbidden,
 	CodeSenderRevoked:      http.StatusForbidden,
 	CodeSenderNotAllowed:   http.StatusForbidden,
+	CodeSenderKeyType:      http.StatusForbidden,
 	CodeAdoptKeyRefused:    http.StatusForbidden,
 	CodeNoSuchMailbox:      http.StatusNotFound,
 	CodeNoSuchMessage:      http.StatusNotFound,

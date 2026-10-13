@@ -121,7 +121,7 @@ func scratch(t *testing.T) []string { return []string{"IRONGALL_HOME=" + t.TempD
 // Go client's is (protocol/vectors_test.go).
 func TestVectorsIdentity(t *testing.T) {
 	need(t, scriptTools...)
-	for _, box := range []string{"a", "b"} {
+	for _, box := range []string{"a", "b", "c"} { // c's identity is a P-256 key
 		a, _ := identity(t, box)
 		if _, err := bash(t, nil, fmt.Sprintf("ig_idcheck %s %s", abs(t, filepath.Join(vectors, box, "identity.doc")), a)); err != nil {
 			t.Errorf("%s/identity.doc refused: %v", box, err)
@@ -134,10 +134,26 @@ func TestVectorsIdentity(t *testing.T) {
 	if len(docs) == 0 {
 		t.Fatal("no identity vectors")
 	}
+	// Each is refused as the Go client refuses it: with status 2 if it is a
+	// well-formed document of a key type the client does not verify, which
+	// has a refusal of its own, and with status 1 otherwise.
+	classes := map[int]int{}
 	for _, d := range docs {
-		if _, err := bash(t, nil, "ig_idcheck "+abs(t, d)); err == nil {
-			t.Errorf("%s: accepted", filepath.Base(d))
+		doc, _ := os.ReadFile(d) //nolint:gosec // a test vector
+		_, gerr := protocol.ParseIdentity(doc)
+		want := 1
+		if errors.Is(gerr, protocol.ErrIdentityType) {
+			want = 2
 		}
+		_, err := bash(t, nil, "ig_idcheck "+abs(t, d))
+		var exit *exec.ExitError
+		if gerr == nil || !errors.As(err, &exit) || exit.ExitCode() != want {
+			t.Errorf("%s: the Go client says %v; the script's status is %v, want %d", filepath.Base(d), gerr, err, want)
+		}
+		classes[want]++
+	}
+	if classes[1] == 0 || classes[2] == 0 {
+		t.Errorf("the identity vectors hold no document of each class: %v", classes)
 	}
 }
 
@@ -349,7 +365,7 @@ func TestVectorsPlain(t *testing.T) {
 	}
 	// Every kind of verdict was met, so a script that refused everything, or
 	// nothing, would not pass.
-	for _, c := range []string{"delivered", protocol.RefusedMessage, protocol.RefusedIdentity, protocol.RefusedSignature, protocol.RefusedAttribution} {
+	for _, c := range []string{"delivered", protocol.RefusedMessage, protocol.RefusedIdentity, protocol.RefusedKeyType, protocol.RefusedSignature, protocol.RefusedAttribution} {
 		if codes[c] == 0 {
 			t.Errorf("no plain/ vector was judged %s", c)
 		}
@@ -400,6 +416,76 @@ func TestPaddingIsTheGoClients(t *testing.T) {
 			t.Fatalf("%s: the script printed %d lines for %d sizes", kt, len(g), len(w))
 		}
 		t.Logf("%s: %d message sizes, the same padding from both clients", kt, len(sizes))
+	}
+}
+
+// A box whose identity is a P-256 key, the optional type, run by either
+// client, exchanges mail with a box of the other client on an Ed25519 key:
+// each verifies what the other's P-256 identity certified. The script takes
+// the identity key it finds, so its box's key is made with ssh-keygen first.
+func TestAP256BoxInBothClients(t *testing.T) {
+	need(t, append(scriptTools, "curl")...)
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	kt, mode := protocol.Classic, "--no-pq"
+	if pq() {
+		kt, mode = protocol.PostQuantum, ""
+	} else {
+		t.Log(noPQ)
+	}
+	sh := func(dir, commands string) string {
+		t.Helper()
+		out, err := bash(t, []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}, commands)
+		if err != nil {
+			t.Fatalf("%s: %v", commands, err)
+		}
+		return out
+	}
+	addr := func(link string) protocol.Address {
+		t.Helper()
+		a, err := protocol.ParseAddress(strings.TrimPrefix(strings.TrimSpace(link), srv.URL+protocol.LinkPath))
+		if err != nil {
+			t.Fatalf("not a link: %q", link)
+		}
+		return a
+	}
+	shP256, shEd := t.TempDir(), t.TempDir()
+	sp := addr(sh(shP256, `ssh-keygen -q -t ecdsa -b 256 -N '' -C '' -f "$IG/identity" < /dev/null && ig_init `+mode))
+	se := addr(sh(shEd, "ig_init "+mode))
+	doc, _ := os.ReadFile(filepath.Join(shP256, "identity.doc")) //nolint:gosec // the test's own directory
+	if id, err := protocol.ParseIdentity(doc); err != nil || id.Type() != protocol.IdentityP256 || id.Address() != sp {
+		t.Fatalf("the script's P-256 box: %v", err)
+	}
+	gp, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, IdentityType: protocol.IdentityP256}, kt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ge, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, kt)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The script's P-256 box and the Go client's Ed25519 one.
+	sh(shP256, "printf 'from the script on P-256' | ig_send "+ge.Link())
+	if res, err := ge.Receive(ctx); err != nil || len(res.Delivered) != 1 || res.Delivered[0].Envelope.From != sp {
+		t.Fatalf("the Go client received %+v, %v", res, err)
+	}
+	if _, err := ge.Send(ctx, sp, "to the script on P-256"); err != nil {
+		t.Fatal(err)
+	}
+	if out := sh(shP256, "ig_recv"); !strings.Contains(out, `"body":"to the script on P-256"`) {
+		t.Fatalf("ig_recv: %q", out)
+	}
+	// The Go client's P-256 box and the script's Ed25519 one.
+	if _, err := gp.Send(ctx, se, "from Go on P-256"); err != nil {
+		t.Fatal(err)
+	}
+	if out := sh(shEd, "ig_recv"); !strings.Contains(out, `"body":"from Go on P-256"`) || !strings.Contains(out, gp.Address().String()) {
+		t.Fatalf("ig_recv: %q", out)
+	}
+	sh(shEd, "printf 'to Go on P-256' | ig_send "+gp.Link())
+	if res, err := gp.Receive(ctx); err != nil || len(res.Delivered) != 1 || res.Delivered[0].Envelope.From != se {
+		t.Fatalf("the Go client's P-256 box received %+v, %v", res, err)
 	}
 }
 

@@ -39,7 +39,7 @@ const usage = `usage: irongall-echo --identity <key file> [--dir <dir>] [--no-pq
 Runs an echo box until interrupted: every message that passes every check
 is answered, signed, with what was checked and the body it carried.
 
-  --identity  the echo box's identity, an OpenSSH Ed25519 key file; the box
+  --identity  the echo box's identity, an OpenSSH key file; the box
               is registered at its first start
   --dir       the box's state directory, which belongs in memory (a tmpfs):
               $IRONGALL_HOME, or ${XDG_CONFIG_HOME:-~/.config}/irongall/${IRONGALL_BOX:-default}

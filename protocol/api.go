@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"slices"
 )
 
 // The API's JSON bodies. Every byte field is standard base64 of the exact
@@ -41,6 +42,20 @@ func (b *Bytes) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// AnySender is the one entry of a declaration of sender key types that is no
+// key type's name: the box does not say which types its client verifies, and
+// a server makes no check for it.
+const AnySender = "any"
+
+// AcceptsSender reports whether a box that declared the sender key types
+// declared takes mail from a box whose identity is of type t, as far as the
+// declaration says: IdentityEd25519 always, whatever was declared; any type
+// if it declared AnySender; otherwise only a type it listed. A box that
+// declared nothing takes IdentityEd25519 only (PROTOCOL.md §2).
+func AcceptsSender(declared []string, t string) bool {
+	return t == IdentityEd25519 || slices.Contains(declared, t) || slices.Contains(declared, AnySender)
+}
+
 // RegisterRequest is the body of PUT /v1/<address>: the identity document, and
 // the first prekey statement with the signature over it of a working key the
 // identity certified. The call carries a pass under that certificate.
@@ -48,6 +63,10 @@ type RegisterRequest struct {
 	Identity        Bytes `json:"identity"`
 	Prekey          Bytes `json:"prekey"`
 	PrekeySignature Bytes `json:"prekey_signature"`
+	// SenderKeyTypes declares the identity key types the box's client
+	// verifies: the senders the box takes mail from (AcceptsSender). It is
+	// not signed, and it stands until the box's next prekey replaces it.
+	SenderKeyTypes []string `json:"sender_key_types,omitempty"`
 }
 
 // PrekeyRequest is the body of PUT /v1/<address>/prekey: a new prekey
@@ -56,6 +75,9 @@ type RegisterRequest struct {
 type PrekeyRequest struct {
 	Prekey          Bytes `json:"prekey"`
 	PrekeySignature Bytes `json:"prekey_signature"`
+	// SenderKeyTypes is the declaration that comes with this prekey, in
+	// place of the one before: none, if it is left out.
+	SenderKeyTypes []string `json:"sender_key_types,omitempty"`
 }
 
 // IdentityResponse is GET /v1/<address>/identity: the identity document and
@@ -66,6 +88,10 @@ type IdentityResponse struct {
 	Identity        Bytes `json:"identity"`
 	Prekey          Bytes `json:"prekey"`
 	PrekeySignature Bytes `json:"prekey_signature"`
+	// SenderKeyTypes is what the box declared with that prekey, on the
+	// server's word: nothing signs it. A server that misstates it can only
+	// stop a message, which it can do without it.
+	SenderKeyTypes []string `json:"sender_key_types,omitempty"`
 }
 
 // SendRequest is the body of POST /v1/<recipient>: an age file encrypted to

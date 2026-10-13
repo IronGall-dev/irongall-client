@@ -3,7 +3,10 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/rand"
 	"encoding/pem"
 	"errors"
@@ -47,6 +50,21 @@ type Options struct {
 	HTTPClient *http.Client
 	// Now is the clock; time.Now if nil.
 	Now func() time.Time
+	// IdentityType is the type of identity key Init makes for a new box:
+	// protocol.IdentityEd25519 if empty, and that is the one to use. Every
+	// client verifies an Ed25519 identity; a box of any other type can
+	// neither send to nor receive from a box whose client does not verify
+	// that type. An existing identity key is used as it is, whatever this
+	// says.
+	IdentityType string
+	// SenderKeyTypes is what the box declares with each prekey it
+	// publishes: the identity key types of the senders it takes mail from
+	// (protocol.AcceptsSender). Nil: every type this client verifies, which
+	// is the one to use. The one entry protocol.AnySender is for a box that
+	// would not show which types it verifies: the server then takes mail
+	// for it from a sender of any type, and this client refuses what it
+	// cannot verify.
+	SenderKeyTypes []string
 }
 
 // Box is one box: its state directory and the server it talks to.
@@ -58,6 +76,10 @@ type Box struct {
 	// signer is the identity key. It signs certificates, and nothing else.
 	signer ssh.Signer
 	id     *protocol.Identity
+	// identityType is the type of key Init makes when the box has none.
+	identityType string
+	// senderKeyTypes is what the box declares with each prekey it publishes.
+	senderKeyTypes []string
 	// renewFailed is when Receive last failed to renew the prekey.
 	renewFailed time.Time
 }
@@ -77,7 +99,10 @@ func Open(dir string, opt Options) (*Box, error) {
 }
 
 func newBox(dir string, opt Options) *Box {
-	b := &Box{dir: dir, base: strings.TrimRight(opt.Base, "/"), http: opt.HTTPClient, now: opt.Now}
+	b := &Box{dir: dir, base: strings.TrimRight(opt.Base, "/"), http: opt.HTTPClient, now: opt.Now, identityType: opt.IdentityType, senderKeyTypes: opt.SenderKeyTypes}
+	if b.senderKeyTypes == nil {
+		b.senderKeyTypes = protocol.IdentityTypes()
+	}
 	if b.base == "" {
 		b.base = DefaultBase
 	}
@@ -153,6 +178,9 @@ func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*B
 	if err := b.loadIdentity(); err != nil {
 		return nil, err
 	}
+	if t := b.identityType; t != "" && t != b.id.Type() {
+		return nil, fmt.Errorf("this box's identity is already a %s key: its address is that key's, so its type cannot change", b.id.Type())
+	}
 	published, err := b.publishedSerial()
 	if err != nil {
 		return nil, err
@@ -163,7 +191,7 @@ func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*B
 	if _, err := b.makePrekey(1, kt); err != nil {
 		return nil, err
 	}
-	req := protocol.RegisterRequest{Identity: b.id.Document()}
+	req := protocol.RegisterRequest{Identity: b.id.Document(), SenderKeyTypes: b.senderKeyTypes}
 	if req.Prekey, err = os.ReadFile(b.path("prekeys", "1.txt")); err != nil {
 		return nil, err
 	}
@@ -217,10 +245,20 @@ func (b *Box) makeDirs() error {
 	return nil
 }
 
-// newIdentityKey makes a new Ed25519 identity, written as ssh-keygen writes
-// one with no passphrase and no comment.
+// newIdentityKey makes a new identity key, written as ssh-keygen writes one
+// with no passphrase and no comment: Ed25519, unless the box was told another
+// type this client can make.
 func (b *Box) newIdentityKey() error {
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	var priv crypto.Signer
+	var err error
+	switch b.identityType {
+	case "", protocol.IdentityEd25519:
+		_, priv, err = ed25519.GenerateKey(rand.Reader)
+	case protocol.IdentityP256:
+		priv, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	default:
+		return fmt.Errorf("this client makes no identity key of type %q: %s", b.identityType, strings.Join(protocol.IdentityTypes(), " or "))
+	}
 	if err != nil {
 		return err
 	}
@@ -228,7 +266,7 @@ func (b *Box) newIdentityKey() error {
 	if err != nil {
 		return err
 	}
-	sshPub, err := ssh.NewPublicKey(pub)
+	sshPub, err := ssh.NewPublicKey(priv.Public())
 	if err != nil {
 		return err
 	}
@@ -253,20 +291,14 @@ func (b *Box) loadIdentity() error {
 	if err != nil {
 		return fmt.Errorf("the identity key: %w", err)
 	}
-	var priv ed25519.PrivateKey
-	switch k := raw.(type) {
-	case ed25519.PrivateKey:
-		priv = k
-	case *ed25519.PrivateKey:
-		priv = *k
-	default:
-		return fmt.Errorf("the identity key is a %T, not Ed25519", raw)
-	}
-	signer, err := ssh.NewSignerFromKey(priv)
+	signer, err := ssh.NewSignerFromKey(raw)
 	if err != nil {
-		return err
+		return fmt.Errorf("the identity key: %w", err)
 	}
-	id, err := protocol.NewIdentity(priv.Public().(ed25519.PublicKey))
+	id, err := protocol.IdentityOf(signer.PublicKey())
+	if errors.Is(err, protocol.ErrIdentityType) {
+		return fmt.Errorf("the identity key is a %s key, and this client runs a box on %s", signer.PublicKey().Type(), strings.Join(protocol.IdentityTypes(), " or "))
+	}
 	if err != nil {
 		return err
 	}

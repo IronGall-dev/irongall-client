@@ -45,6 +45,7 @@ type box struct {
 	prekey    *protocol.Prekey
 	cert      *protocol.Certificate // the one the current statement is signed under: passes are taken under it only
 	account   string                // the account it is in, or ""
+	senders   []string              // the sender key types it declared with its current prekey
 	messages  map[string]*message
 	order     []string // ids, oldest first
 }
@@ -226,7 +227,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.boxes[a] = &box{identity: req.Identity, statement: req.Prekey, signature: req.PrekeySignature, prekey: p, cert: cert,
-		messages: map[string]*message{}}
+		senders: req.SenderKeyTypes, messages: map[string]*message{}}
 	WriteJSON(w, http.StatusCreated, struct{}{})
 }
 
@@ -242,7 +243,7 @@ func (s *Server) identity(w http.ResponseWriter, r *http.Request) {
 		problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
 		return
 	}
-	WriteJSON(w, http.StatusOK, protocol.IdentityResponse{Identity: b.identity, Prekey: b.statement, PrekeySignature: b.signature})
+	WriteJSON(w, http.StatusOK, protocol.IdentityResponse{Identity: b.identity, Prekey: b.statement, PrekeySignature: b.signature, SenderKeyTypes: b.senders})
 }
 
 func (s *Server) newPrekey(w http.ResponseWriter, r *http.Request) {
@@ -276,7 +277,7 @@ func (s *Server) newPrekey(w http.ResponseWriter, r *http.Request) {
 	if !s.pass(w, r, b.identity, cert) {
 		return
 	}
-	b.statement, b.signature, b.prekey, b.cert = req.Prekey, req.PrekeySignature, p, cert
+	b.statement, b.signature, b.prekey, b.cert, b.senders = req.Prekey, req.PrekeySignature, p, cert, req.SenderKeyTypes
 	WriteJSON(w, http.StatusOK, struct{}{})
 }
 

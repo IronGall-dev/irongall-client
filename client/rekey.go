@@ -98,7 +98,7 @@ func (b *Box) rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey,
 		}
 	}
 	stem := b.path("prekeys", strconv.FormatUint(next, 10))
-	var req protocol.PrekeyRequest
+	req := protocol.PrekeyRequest{SenderKeyTypes: b.senderKeyTypes}
 	if req.Prekey, err = os.ReadFile(stem + ".txt"); err != nil { //nolint:gosec // a path inside the box's own directory
 		return nil, err
 	}

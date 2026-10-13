@@ -27,6 +27,7 @@
 set -o pipefail; umask 077
 IG_BASE=${IG_BASE:-https://irongall.dev}
 IG=${IRONGALL_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/irongall/${IRONGALL_BOX:-default}}   # one box per directory; never the working directory
+IG_SENDERS='["ssh-ed25519","ecdsa-sha2-nistp256"]'   # the identity key types ig_idcheck verifies. A box declares them with each prekey it publishes, and the server then refuses it mail from a box whose identity is of any other type
 ig_refuse(){ printf 'REFUSED: %s\n' "$*" >&2; return 1; }
 ig_hex(){ [[ $1 =~ ^[0-9a-f]{64}$ ]]; }
 ig_b64(){ base64 < "$1" | tr -d '\n'; }
@@ -99,7 +100,7 @@ ig_init(){ # [--no-pq] → creates this box, or finishes a half-done init, and r
   sha256sum < "$IG/identity.doc" | cut -c1-64 > "$IG/address" || return 1
   [ ! -s "$IG/serial" ] || { ig_addr; return; }      # registered already
   local A p="$IG/prekeys/1" h; A=$(cat "$IG/address"); ig_prekey 1 "${1-}" || return 1
-  jq -n --arg i "$(ig_b64 "$IG/identity.doc")" --arg p "$(ig_b64 "$p.txt")" --arg s "$(ig_b64 "$p.txt.sig")" '{identity:$i, prekey:$p, prekey_signature:$s}' > "$IG/register.json"
+  jq -n --arg i "$(ig_b64 "$IG/identity.doc")" --arg p "$(ig_b64 "$p.txt")" --arg s "$(ig_b64 "$p.txt.sig")" --argjson k "$IG_SENDERS" '{identity:$i, prekey:$p, prekey_signature:$s, sender_key_types:$k}' > "$IG/register.json"
   h=$(ig_pass 1) && ig_api PUT "/v1/$A" "$IG/register.json" -H "Authorization: $h" > /dev/null && mv "$IG/pass.new" "$IG/pass" && echo 1 > "$IG/serial" && ig_addr
 }
 ig_addr(){ local a; a=$(cat "$IG/address") && echo "$IG_BASE/to/$a"; }      # the box's link: what to give whoever should write to it
@@ -133,11 +134,21 @@ ig_keycheck(){ # <32 bytes in hex> → 0 only for an Ed25519 key that is canonic
     c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a | c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa) return 1 ;;
   esac
 }
-ig_idcheck(){ # <identity document> [address] → 0 only for exactly the 93-byte two-line document, its Ed25519 key canonical and not of small order (and hashing to the address, given one)
-  local f=$1
-  [ "$(wc -c < "$f")" -eq 93 ] && [ "$(sed -n 1p "$f")" = irongall-v1 ] && sed -n 2p "$f" | grep -Eqx 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI[A-Za-z0-9+/]{43}' || return 1
+ig_idcheck(){ # <identity document> [address] → 0 only for a two-line document in the one exact form of its key type, its key passing that type's checks (and hashing to the address, given one). 2 for a well-formed document of a key type this script does not verify: nothing is wrong with it, and nothing it signed can be checked here. 1 for anything else
+  local f=$1 l t n
+  l=$(sed -n 2p "$f"); t=${l%% *}; n=$(wc -c < "$f")
+  [ "$(printf 'irongall-v1\n%s\n' "$l" | sha256sum)" = "$(sha256sum < "$f")" ] || return 1      # exactly the tag line and one more, each ending in LF, and not a byte else: the file against itself rebuilt from its second line. A shell variable drops a NUL, so a test of the variable alone would pass a file that holds one
   [ -z "${2-}" ] || [ "$(sha256sum < "$f" | cut -c1-64)" = "$2" ] || return 1
-  ig_keycheck "$(sed -n 2p "$f" | cut -d' ' -f2 | base64 -d | tail -c 32 | od -An -v -tx1 | tr -d ' \n')"
+  case $t in
+    ssh-ed25519)      # 93 bytes: a canonical point that is not of small order
+      [ "$n" -eq 93 ] && grep -Eqx 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI[A-Za-z0-9+/]{43}' <<< "$l" && ig_keycheck "$(printf %s "${l#* }" | base64 -d | tail -c 32 | od -An -v -tx1 | tr -d ' \n')" ;;
+    ecdsa-sha2-nistp256)      # 173 bytes: an uncompressed point. ssh-keygen refuses one that is off the curve, or has a coordinate of 128 bits or fewer, or of the group's order less one or more
+      [ "$n" -eq 173 ] && grep -Eqx 'ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBB[A-P][A-Za-z0-9+/]{84}[AEIMQUYcgkosw048]=' <<< "$l" && ssh-keygen -l -f - <<< "$l" > /dev/null 2>&1 || return 1 ;;
+    *)      # a type this script does not verify. A document all the same, if line 2 is a key type's name (printable ASCII with no comma, at most 64 characters), one space, and the base64, in its one encoding, of a wire key that begins with that name
+      [ "$n" -eq $((13 + ${#l})) ] && LC_ALL=C grep -Eqx '[!-+.-~-]{1,64} [A-Za-z0-9+/]+={0,2}' <<< "$l" && [ "$(printf %s "${l#* }" | base64 -d 2> /dev/null | base64 | tr -d '\n')" = "${l#* }" ] &&
+        [ "$(printf %s "${l#* }" | base64 -d | head -c $((4 + ${#t})) | od -An -v -tx1 | tr -d ' \n')" = "$(printf %08x "${#t}")$(ig_asc "$t")" ] && return 2
+      return 1 ;;
+  esac
 }
 ig_cert(){ # <signature> <identity document> <address> → "<serial> <valid after> <valid before>", as Unix times, for the certificate the signature carries, only if it is in its one form (below) and names that identity as its signer. Its fields are read from its bytes, in order: ssh-keygen -Y verify takes a certificate with extensions or an option, and checks no key id. Whether the identity's signature on it is good, and whether it holds now, are ig_certified's
   local x o=20 l v k n a b      # x: the bytes being read, in hex; o: how far into them; v: the field just read
@@ -153,7 +164,7 @@ ig_cert(){ # <signature> <identity document> <address> → "<serial> <valid afte
   ig_str && [ "$v" = "00000040$(ig_asc "$3")" ] || return 1      # exactly one principal: the address
   ig_u64 && a=$v && ig_u64 && b=$v || return 1      # valid after, valid before
   ig_str && [ -z "$v" ] && ig_str && [ -z "$v" ] && ig_str && [ -z "$v" ] || return 1      # no critical option, no extension, nothing reserved
-  ig_str && [ "$v" = "$(sed -n 2p "$2" | cut -d' ' -f2 | base64 -d | od -An -v -tx1 | tr -d ' \n')" ] && [ "${v: -64}" != "$k" ] || return 1      # signed by the identity's key, byte for byte, which is never the working key
+  ig_str && [ "$v" = "$(sed -n 2p "$2" | cut -d' ' -f2 | base64 -d | od -An -v -tx1 | tr -d ' \n')" ] && [ "$v" != "0000000b$(ig_asc ssh-ed25519)00000020$k" ] || return 1      # signed by the identity's key, byte for byte, which is never the working key
   echo "$n $a $b"
 }
 ig_str(){ [[ ${x:o:8} =~ ^[0-9a-f]{8}$ ]] || return 1; l=$((16#${x:o:8} * 2)); [ $((o + 8 + l)) -le ${#x} ] || return 1; v=${x:o+8:l}; o=$((o + 8 + l)); }      # ig_cert's: the next length-prefixed string of x, in hex, into v
@@ -187,7 +198,10 @@ ig_resolve(){ # <address> → prints "<serial> <age recipient>" only when EVERY 
   f="$d/identity.doc"      # a pin always wins
   [ -e "$f" ] || { f="$IG/new.doc"; jq -er .identity "$IG/peer.json" 2> /dev/null | base64 -d > "$f" 2> /dev/null || ig_refuse "no identity for $B in the response" || return 1; }
   [ "$(sha256sum < "$f" | cut -c1-64)" = "$B" ] || ig_refuse "the identity the server sent does not hash to $B" || return 1
-  ig_idcheck "$f" || ig_refuse "$B's identity is not exactly the 93-byte two-line document with a valid Ed25519 key" || return 1
+  ig_idcheck "$f"; case $? in 0) ;;
+    2) ig_refuse "$B's identity is of a key type this script does not verify, so nothing it signs can be checked here and nothing is sent"; return 1 ;;
+    *) ig_refuse "$B's identity is not a two-line identity document in the one form of its key type, with a valid key"; return 1 ;;
+  esac
   jq -er .prekey "$IG/peer.json" | base64 -d > "$IG/peer.txt" && jq -er .prekey_signature "$IG/peer.json" | base64 -d > "$IG/peer.sig" || ig_refuse "no prekey for $B in the response" || return 1
   r=$(ig_prekeycheck "$IG/peer.txt" "$IG/peer.sig" "$B" "$f") || ig_refuse "$r" || return 1
   read -r s k na c <<< "$r"
@@ -324,7 +338,11 @@ ig_open(){ # <me> <message stem> → the sender's address, only if what was decr
   jq -e '.from | . == null or type == "string"' "$m.P" > /dev/null 2>&1 || { echo "bad_envelope: the envelope is malformed: its from is not what that field holds"; return 1; }
   jq -e 'has("identity")' "$m.P" > /dev/null 2>&1 || { echo "bad_identity: the envelope carries no identity document"; return 1; }
   jq -ejr '.identity | strings' "$m.P" 2> /dev/null | base64 -d > "$m.doc" 2> /dev/null && [ -s "$m.doc" ] && [ "$(ig_b64 "$m.doc")" = "$(jq -r .identity "$m.P")" ] || { echo "bad_identity: the envelope's identity is not base64 of an identity document"; return 1; }      # the one encoding of its bytes
-  ig_idcheck "$m.doc" || { echo "bad_identity: the envelope's identity document breaks its format or its key checks"; return 1; }
+  ig_idcheck "$m.doc"; case $? in 0) ;;      # a well-formed document of a key type this script does not verify has its own code, once it is known to be the sender's
+    2) jq -e --arg a "$(sha256sum < "$m.doc" | cut -c1-64)" '.from == $a' "$m.P" > /dev/null 2>&1 || { echo "reattributed: the envelope's from is not the address of the identity it carries"; return 1; }
+       echo "unsupported_key_type: the sender's identity is of a key type this client does not verify"; return 1 ;;
+    *) echo "bad_identity: the envelope's identity document breaks its format or its key checks"; return 1 ;;
+  esac
   A=$(sha256sum < "$m.doc" | cut -c1-64)      # the sender: the hash of the identity document the envelope carries. The document proves itself, and the signature must now verify under it
   jq -e --arg a "$A" '.from == $a' "$m.P" > /dev/null 2>&1 || { echo "reattributed: the envelope's from is not the address of the identity it carries"; return 1; }
   ig_certified "$A" "$m.doc" "irongall-msg-v1:$B" "$m.sig" "$m.P" > /dev/null; case $? in      # over line 1 exactly as decrypted, never over anything rebuilt
@@ -371,7 +389,7 @@ ig_renew(){ # [--no-pq] → what ig_rekey does, the lock held. A serial is signe
   s=$((s + 1)); t=$(ls "$IG/prekeys" | sed -n 's/\.txt\.sig$//p' | sort -n | tail -n 1)      # the highest serial this box signed: nothing at or below it is signed anew
   if [ "${t:-0}" -ge "$s" ]; then s=$t; na=$(ig_time "$(sed -n 5p "$IG/prekeys/$s.txt")") && [ "$na" -gt "$(ig_now)" ] && [ -s "$IG/work/$s-cert.pub" ] || s=$((s + 1)); fi      # signed and never seen published: sent again AS IT IS until it expires, then the next serial. Signed again, the same key would get 33 more days from a server that keeps what it refuses
   [ -s "$IG/prekeys/$s.txt.sig" ] || rm -f "$IG/prekeys/$s.txt"; ig_prekey "$s" "${1-}" || return 1
-  jq -n --arg p "$(ig_b64 "$IG/prekeys/$s.txt")" --arg g "$(ig_b64 "$IG/prekeys/$s.txt.sig")" '{prekey:$p, prekey_signature:$g}' > "$IG/rekey.json"
+  jq -n --arg p "$(ig_b64 "$IG/prekeys/$s.txt")" --arg g "$(ig_b64 "$IG/prekeys/$s.txt.sig")" --argjson k "$IG_SENDERS" '{prekey:$p, prekey_signature:$g, sender_key_types:$k}' > "$IG/rekey.json"
   h=$(ig_pass "$s") && ig_api PUT "/v1/$A/prekey" "$IG/rekey.json" -H "Authorization: $h" > /dev/null || return 1      # a pass under the NEW certificate: that is how a box moves to one, and the server then takes no pass under an older
   [ "$s" -le "$(cat "$IG/serial" 2> /dev/null || echo 0)" ] || echo "$s" > "$IG/serial" || return 1
   mv "$IG/pass.new" "$IG/pass" || return 1

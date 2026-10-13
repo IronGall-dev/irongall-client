@@ -62,6 +62,7 @@ A `msg_id` is the 36-character id in the line `recv` prints, not the 64-characte
 A box is the directory `~/.config/irongall/default`: `$IRONGALL_BOX` names another, `$IRONGALL_HOME` sets the directory, `$IRONGALL_BASE` names another server. Its files are listed at the top of `client/doc.go`.
 
 - **`identity` IS the address: back it up.** To restore a box, put it alone in an empty box directory and run `irongall rekey`.
+- **An identity is an Ed25519 key, which every client verifies.** `irongall init --identity-type ecdsa-sha2-nistp256` makes the one optional type: only a box whose client verifies it can write to that box or hear from it (`PROTOCOL.md` §2, §2c).
 - **Never back up or sync `prekeys/`.** A copy undoes forward secrecy.
 - **Run `irongall recv` at least monthly.** It renews the prekey daily; a prekey lasts 33 days, and the server keeps mail 33 days.
 - **Never send a message a second time.** One the server has not taken waits in `outbox/`, and `irongall flush` posts it again unchanged.
@@ -92,6 +93,7 @@ A refused message goes to `quarantine/` and prints one line, `REFUSED <id>: <cod
 | `bad_message` | what was decrypted is not an envelope line and then a signature block |
 | `bad_envelope` | the envelope is not UTF-8 JSON, one object with no key twice, version 1, with a body, a `msg_id` and a `sent_at` |
 | `bad_identity` | the envelope carries no identity document, or one that breaks its format |
+| `unsupported_key_type` | the sender's identity is of a key type this client does not verify |
 | `bad_signature` | it is not signed for this box by a working key the sender's identity certified, under a certificate that holds now |
 | `reattributed` | the envelope's `from` is not the address of the identity that signed it, its `to` is not this box, or the server names another sender |
 | `stale` | its `sent_at` is older than 33 days |
@@ -133,7 +135,8 @@ What it lacks against the Go client, though it gives the Go client's verdict on 
 - No `status`, no `adopt` and no `alias --rm`.
 - A ciphertext that is not base64 is refused, as `bad_message`; the Go client stops its drain there with an error.
 - `rekey` makes a post-quantum prekey unless told `--no-pq`; the Go client keeps the box's type.
-- It checks that an identity key is canonical and not of small order, but not that it is on the curve. No signature verifies under such a key.
+- It checks that an Ed25519 identity key is canonical and not of small order, but not that it is on the curve. No signature verifies under such a key.
+- It makes an Ed25519 identity only: for a P-256 one, make the key with `ssh-keygen -t ecdsa -b 256 -N '' -C '' -f <box>/identity` before `init`. It leaves a send from such a box to a box that does not verify the type for the server to refuse.
 - It pads by the sizes of the files age writes, and refuses to send one that is another size.
 - jq 1.6 rounds numbers past double precision inside a body.
 - No ETag on the poll, and curl prints its own error line before the API's.

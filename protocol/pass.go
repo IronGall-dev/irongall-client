@@ -1,12 +1,14 @@
 package protocol
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"regexp"
 	"time"
 
+	"github.com/IronGall-dev/irongall-client/sshsig"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -136,6 +138,53 @@ func (p *Pass) Verify(id *Identity, server string, now time.Time) (*Certificate,
 		if errors.Is(err, ErrCertificate) || errors.Is(err, ErrCertificateTime) {
 			return nil, err
 		}
+		return nil, fmt.Errorf("%w: its signature does not verify", ErrPass)
+	}
+	return cert, nil
+}
+
+// VerifyUnder checks the pass against a certificate known by the SHA-256 of
+// its bytes, sum: the one a caller has on record for the box. The pass must
+// be for server, not run out, signed under exactly that certificate, which
+// must name the box the pass names and must not have ended, and the working
+// key's signature must verify. It returns the certificate.
+//
+// It makes one signature check, and none for a pass under another
+// certificate (ErrCertificate), so a pass that is not the box's is cheap to
+// refuse. It does NOT check the identity's signature on the certificate, nor
+// the certificate's other rules: that is CheckCertificate, which a caller
+// makes on what this returns, as Verify does in one step.
+func (p *Pass) VerifyUnder(sum [sha256.Size]byte, server string, now time.Time) (ssh.PublicKey, error) {
+	if err := CheckServerName(server); err != nil {
+		return nil, err
+	}
+	if !now.Before(p.NotAfter) {
+		return nil, ErrPassExpired
+	}
+	if p.NotAfter.After(now.Add(MaxPassLifetime)) {
+		return nil, fmt.Errorf("%w: it runs out more than %d minutes from now", ErrPass, MaxPassLifetime/time.Minute)
+	}
+	blob, err := Dearmor(p.signature)
+	if err != nil {
+		return nil, fmt.Errorf("%w: its signature is not one", ErrPass)
+	}
+	key, err := signingKey(blob)
+	if err != nil {
+		return nil, fmt.Errorf("%w: its signature is not one", ErrPass)
+	}
+	cert, ok := key.(*ssh.Certificate)
+	if !ok || sha256.Sum256(cert.Marshal()) != sum {
+		return nil, fmt.Errorf("%w: the pass is not signed under the certificate on record", ErrCertificate)
+	}
+	// The pass names a box, and the certificate names the one it is for.
+	if len(cert.ValidPrincipals) != 1 || cert.ValidPrincipals[0] != p.Address.String() {
+		return nil, fmt.Errorf("%w: it is another box's", ErrPass)
+	}
+	// Of a certificate's rules, the one that stops holding by itself: it ends.
+	if unix := uint64(max(now.Unix(), 0)); unix < cert.ValidAfter || unix >= cert.ValidBefore {
+		return nil, fmt.Errorf("%w: it has ended, or has not begun", ErrCertificateTime)
+	}
+	if err := sshsig.Verify(cert, PassStatement(p.Address, server, p.NotAfter), blob, PassNamespace(p.Address)); err != nil {
 		return nil, fmt.Errorf("%w: its signature does not verify", ErrPass)
 	}
 	return cert, nil

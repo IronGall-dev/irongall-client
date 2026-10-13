@@ -3,10 +3,13 @@ package protocol
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"math/big"
 	"regexp"
 
 	"filippo.io/edwards25519"
@@ -16,43 +19,110 @@ import (
 const (
 	// IdentityTag is line 1 of every v1 identity document.
 	IdentityTag = "irongall-v1"
-	// IdentityDocumentSize is the exact size of a v1 identity document.
+	// IdentityDocumentSize is the exact size of an ssh-ed25519 identity
+	// document. Another key type's document has another size, as exact.
 	IdentityDocumentSize = 93
 )
 
+// The identity key types this package defines: the SSH name on line 2 of an
+// identity document. Every client verifies IdentityEd25519. Every other type
+// is optional: a box of one is reached only by clients that verify it
+// (PROTOCOL.md §2).
+const (
+	IdentityEd25519 = ssh.KeyAlgoED25519
+	IdentityP256    = ssh.KeyAlgoECDSA256
+)
+
+// IdentityTypes returns the identity key types this package verifies, the one
+// every client must verify first.
+func IdentityTypes() []string { return []string{IdentityEd25519, IdentityP256} }
+
 // Every ParseIdentity error wraps one of these: the document breaks its
-// format, or its key fails the key checks. A server answers the first with
-// identity_mismatch and the second with bad_key.
+// format, its key fails the key checks, or it is a well-formed document of a
+// key type this package does not define. A server answers the first with
+// identity_mismatch, the second with bad_key and the third with
+// unsupported_key_type.
 var (
 	ErrIdentityFormat = errors.New("not an identity document")
 	ErrIdentityKey    = errors.New("bad identity key")
+	ErrIdentityType   = errors.New("an identity key type this client does not verify")
 )
 
-// identityGrammar is the whole document: the tag line, then an OpenSSH
-// Ed25519 public key with no comment, each line ending in LF, nothing after.
-var identityGrammar = regexp.MustCompile(`\Airongall-v1\nssh-ed25519 (AAAAC3NzaC1lZDI1NTE5AAAAI[A-Za-z0-9+/]{43})\n\z`)
+// identityForm is the form every identity document has, whatever its key
+// type: the tag line, then an SSH key type's name (RFC 4251 §6: printable
+// ASCII with no comma, at most 64 characters), one space and base64, each line
+// ending in LF, nothing after. It is what lets a client tell a document of a
+// type it lacks from something that is no document.
+var identityForm = regexp.MustCompile(`\A` + IdentityTag + `\n([!-+\--~]{1,64}) ([A-Za-z0-9+/]+={0,2})\n\z`)
 
-// Identity is a box's identity: its identity document, the Ed25519 key in it,
-// and the address that document hashes to.
+// A defined type: its document's one exact form, in words and as a pattern,
+// and the checks its key must pass beyond parsing as a key of that type in
+// its one encoding.
+var identityTypes = map[string]struct {
+	form  *regexp.Regexp
+	shape string
+	check func(ssh.PublicKey) error
+}{
+	// 93 bytes: the key's base64 is 68 characters, of which 25 are fixed.
+	IdentityEd25519: {
+		form:  identityGrammar,
+		shape: "it is exactly 93 bytes: \"irongall-v1\", LF, an ssh-ed25519 key with no comment, LF (look for a comment, CRLF, or a missing final newline)",
+		check: func(k ssh.PublicKey) error {
+			return checkEd25519(k.(ssh.CryptoPublicKey).CryptoPublicKey().(ed25519.PublicKey))
+		},
+	},
+	// 173 bytes: the key's base64 is 140 characters, of which 53 are fixed,
+	// the point's leading 04 (uncompressed) among them.
+	IdentityP256: {
+		form:  regexp.MustCompile(`\A` + IdentityTag + `\necdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBB[A-P][A-Za-z0-9+/]{84}[AEIMQUYcgkosw048]=\n\z`),
+		shape: "it is exactly 173 bytes: \"irongall-v1\", LF, an ecdsa-sha2-nistp256 key with no comment, LF (look for a comment, CRLF, or a missing final newline)",
+		check: func(k ssh.PublicKey) error { return checkP256(k.Marshal()) },
+	},
+}
+
+// identityGrammar is the whole ssh-ed25519 document: the tag line, then an
+// OpenSSH Ed25519 public key with no comment, each line ending in LF, nothing
+// after.
+var identityGrammar = regexp.MustCompile(`\A` + IdentityTag + `\nssh-ed25519 (AAAAC3NzaC1lZDI1NTE5AAAAI[A-Za-z0-9+/]{43})\n\z`)
+
+// Identity is a box's identity: its identity document, the key in it, and the
+// address that document hashes to.
 type Identity struct {
 	doc  []byte
 	key  ssh.PublicKey
 	addr Address
 }
 
-// ParseIdentity parses an identity document. It must be exactly the two-line,
-// 93-byte form, and its key a canonical Ed25519 point that is not of small
-// order. Go's crypto/ed25519 and OpenSSH both accept small-order and
-// non-canonical keys, so this check is explicit.
+// ParseIdentity parses an identity document. It must be exactly the two-line
+// form of its key type, the key in its one encoding, and the key must pass
+// that type's checks: for Ed25519 a canonical point that is not of small
+// order, for P-256 what OpenSSH requires of a point on the curve. Go's
+// crypto/ed25519 and OpenSSH both accept small-order and non-canonical
+// Ed25519 keys, and Go accepts P-256 points OpenSSH refuses, so each check is
+// explicit.
+//
+// A well-formed document of a type this package does not define is
+// ErrIdentityType: nothing is wrong with it, and nothing it signed can be
+// checked here.
 func ParseIdentity(doc []byte) (*Identity, error) {
-	if len(doc) != IdentityDocumentSize {
-		return nil, fmt.Errorf("%w: it is exactly 93 bytes: \"irongall-v1\", LF, an ssh-ed25519 key with no comment, LF (look for a comment, CRLF, or a missing final newline)", ErrIdentityFormat)
-	}
-	m := identityGrammar.FindSubmatch(doc)
+	m := identityForm.FindSubmatch(doc)
 	if m == nil {
-		return nil, fmt.Errorf("%w: \"irongall-v1\", LF, an ssh-ed25519 key with no comment, LF", ErrIdentityFormat)
+		return nil, fmt.Errorf("%w: it is \"irongall-v1\", LF, one SSH public key with no comment, LF (look for a comment, CRLF, or a missing final newline)", ErrIdentityFormat)
 	}
-	wire, err := base64.StdEncoding.Strict().DecodeString(string(m[1]))
+	name, b64 := string(m[1]), string(m[2])
+	wire, err := base64.StdEncoding.Strict().DecodeString(b64)
+	t, defined := identityTypes[name]
+	if !defined {
+		// A document at all? Its key is base64, in its one encoding, of an
+		// SSH wire key, which begins with its own type's name.
+		if err != nil || !bytes.HasPrefix(wire, sshString(name)) {
+			return nil, fmt.Errorf("%w: line 2 is a key type's name, a space, and that key in base64", ErrIdentityFormat)
+		}
+		return nil, ErrIdentityType
+	}
+	if !t.form.Match(doc) {
+		return nil, fmt.Errorf("%w: %s", ErrIdentityFormat, t.shape)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("%w: it is not valid base64", ErrIdentityKey)
 	}
@@ -60,11 +130,10 @@ func ParseIdentity(doc []byte) (*Identity, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: it does not parse as a public key", ErrIdentityKey)
 	}
-	if key.Type() != ssh.KeyAlgoED25519 || !bytes.Equal(key.Marshal(), wire) {
-		return nil, fmt.Errorf("%w: it is not an ssh-ed25519 key", ErrIdentityKey)
+	if key.Type() != name || !bytes.Equal(key.Marshal(), wire) {
+		return nil, fmt.Errorf("%w: it is not a key of the type it names, in that type's one encoding", ErrIdentityKey)
 	}
-	raw := key.(ssh.CryptoPublicKey).CryptoPublicKey().(ed25519.PublicKey)
-	if err := checkEd25519(raw); err != nil {
+	if err := t.check(key); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrIdentityKey, err)
 	}
 	return &Identity{
@@ -81,6 +150,12 @@ func NewIdentity(pub ed25519.PublicKey) (*Identity, error) {
 	if err != nil {
 		return nil, err
 	}
+	return IdentityOf(key)
+}
+
+// IdentityOf builds the identity document for a public key of any type this
+// package defines and parses it, with every check ParseIdentity makes.
+func IdentityOf(key ssh.PublicKey) (*Identity, error) {
 	doc := []byte(IdentityTag + "\n" + key.Type() + " " + base64.StdEncoding.EncodeToString(key.Marshal()) + "\n")
 	return ParseIdentity(doc)
 }
@@ -93,6 +168,14 @@ func (id *Identity) Address() Address { return id.addr }
 
 // PublicKey returns the identity key, for verifying its signatures.
 func (id *Identity) PublicKey() ssh.PublicKey { return id.key }
+
+// Type returns the identity's key type: the name on line 2 of its document.
+func (id *Identity) Type() string { return id.key.Type() }
+
+// sshString is s as an SSH wire string: its length in four bytes, then it.
+func sshString(s string) []byte {
+	return append(binary.BigEndian.AppendUint32(nil, uint32(len(s))), s...) //nolint:gosec // a key type's name: at most 64 bytes
+}
 
 // checkEd25519 rejects a key that is not a canonical encoding of a curve
 // point, or that is of small order, as libsodium does. A small-order key can
@@ -112,6 +195,30 @@ func checkEd25519(k ed25519.PublicKey) error {
 	}
 	if new(edwards25519.Point).MultByCofactor(p).Equal(edwards25519.NewIdentityPoint()) == 1 {
 		return errors.New("the identity key is of small order")
+	}
+	return nil
+}
+
+// checkP256 holds a P-256 key, given in SSH wire form, to what OpenSSH
+// requires of an EC public key beyond a point on the curve
+// (sshkey_ec_validate_public): each coordinate is longer than half the bits
+// of the group's order n, and below n-1. The library has already refused a
+// point that is off the curve, compressed, or written with a coordinate of
+// the field's size or more. No key made from a private key fails this; a
+// client built on OpenSSH refuses one that does, so every client must.
+func checkP256(wire []byte) error {
+	const point = 1 + 32 + 32 // 04, x, y
+	if len(wire) < point || wire[len(wire)-point] != 4 {
+		return errors.New("a P-256 key is an uncompressed point")
+	}
+	n := elliptic.P256().Params().N
+	limit := new(big.Int).Sub(n, big.NewInt(1))
+	q := wire[len(wire)-point+1:]
+	for _, c := range [][]byte{q[:32], q[32:]} {
+		v := new(big.Int).SetBytes(c)
+		if v.BitLen() <= n.BitLen()/2 || v.Cmp(limit) >= 0 {
+			return errors.New("the identity key is a point OpenSSH refuses: a coordinate is too short, or is the group's order less one or more")
+		}
 	}
 	return nil
 }

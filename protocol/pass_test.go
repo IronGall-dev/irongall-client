@@ -2,7 +2,9 @@ package protocol
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"os"
 	"os/exec"
@@ -135,6 +137,125 @@ func TestPassRoundTrip(t *testing.T) {
 	}
 	if _, err := p2.Verify(b2.id, "irongall.dev", now.Add(5*time.Minute)); !errors.Is(err, ErrCertificateTime) {
 		t.Errorf("at the moment its certificate ends: %v", err)
+	}
+}
+
+// VerifyUnder is Verify for a caller that checked the box's certificate
+// before and kept its hash: the pass must be under exactly that certificate,
+// for this server, not run out, and the working key's signature must verify.
+// It is the same for an identity of either type, since the identity's own
+// signature is not what it checks.
+func TestPassVerifyUnder(t *testing.T) {
+	now := time.Date(2026, 10, 12, 21, 30, 15, 0, time.UTC)
+	ed, edCert, edSigner := passBox(t, now)
+	p256 := p256Box(t)
+	pCert, err := NewCertificate(p256.id, p256.identity, p256.work.PublicKey(), 3, now.Add(-2*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pSigner, err := pCert.Signer(p256.work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, b := range map[string]struct {
+		box    certBox
+		cert   *Certificate
+		signer ssh.Signer
+	}{"ssh-ed25519": {ed, edCert, edSigner}, "ecdsa-sha2-nistp256": {p256, pCert, pSigner}} {
+		a := b.box.id.Address()
+		header, notAfter, err := NewPass(b.signer, a, "irongall.dev", now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pass, err := ParsePass(header)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256(b.cert.Marshal())
+		under, err := pass.VerifyUnder(sum, "irongall.dev", now)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		// What it returns is the certificate, which CheckCertificate then
+		// holds to the identity: together they are what Verify checks.
+		if checked, err := CheckCertificate(b.box.id, under, now); err != nil || sha256.Sum256(checked.Marshal()) != sum {
+			t.Fatalf("%s: the certificate VerifyUnder returned: %v", name, err)
+		}
+		// What Verify takes, VerifyUnder takes, and the certificate is the same one.
+		if got, err := pass.Verify(b.box.id, "irongall.dev", now); err != nil || sha256.Sum256(got.Marshal()) != sum {
+			t.Fatalf("%s: Verify: %v", name, err)
+		}
+		// A later certificate of the same identity for the same key: the pass is not under it.
+		later, err := NewCertificate(b.box.id, b.box.identity, b.box.work.PublicKey(), 4, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pass.VerifyUnder(sha256.Sum256(later.Marshal()), "irongall.dev", now); !errors.Is(err, ErrCertificate) {
+			t.Errorf("%s: under another certificate: %v", name, err)
+		}
+		// A pass that names another box, signed by this box's working key
+		// under this box's certificate: the certificate is for this box.
+		elsewhere, _, err := NewPass(b.signer, newCertBox(t).id.Address(), "irongall.dev", now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ep, err := ParsePass(elsewhere)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := ep.VerifyUnder(sum, "irongall.dev", now); !errors.Is(err, ErrPass) {
+			t.Errorf("%s: a pass naming another box, under this box's certificate: %v", name, err)
+		}
+		if _, err := pass.VerifyUnder(sum, "example.org", now); !errors.Is(err, ErrPass) {
+			t.Errorf("%s: for another server: %v", name, err)
+		}
+		if _, err := pass.VerifyUnder(sum, "irongall.dev", notAfter); !errors.Is(err, ErrPassExpired) {
+			t.Errorf("%s: at the moment it runs out: %v", name, err)
+		}
+		if _, err := pass.VerifyUnder(sum, "irongall.dev", notAfter.Add(-MaxPassLifetime-time.Second)); !errors.Is(err, ErrPass) {
+			t.Errorf("%s: more than an hour ahead: %v", name, err)
+		}
+		// The same statement signed by another key, in a signature that
+		// carries this certificate: the hash matches, and the signature does
+		// not verify. A signature does not cover the key it names, so the
+		// certificate can be put in place of the signer's own.
+		other := newCertBox(t)
+		bare, err := Sign(other.work, PassStatement(a, "irongall.dev", notAfter), PassNamespace(a))
+		if err != nil {
+			t.Fatal(err)
+		}
+		blob, err := Dearmor(bare)
+		if err != nil {
+			t.Fatal(err)
+		}
+		const head = len("SSHSIG") + 4 // then the signing key, as a string
+		swapped := append([]byte{}, blob[:head]...)
+		swapped = binary.BigEndian.AppendUint32(swapped, uint32(len(b.cert.Marshal())))
+		swapped = append(swapped, b.cert.Marshal()...)
+		swapped = append(swapped, blob[head+4+int(binary.BigEndian.Uint32(blob[head:])):]...)
+		fp, err := ParsePass(PassScheme + ` address="` + a.String() + `", not_after="` + notAfter.Format(TimeLayout) + `", signature="` + base64.StdEncoding.EncodeToString(Armor(swapped)) + `"`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := fp.VerifyUnder(sum, "irongall.dev", now); !errors.Is(err, ErrPass) {
+			t.Errorf("%s: a pass another key signed, carrying the certificate: %v", name, err)
+		}
+		if _, err := fp.Verify(b.box.id, "irongall.dev", now); !errors.Is(err, ErrPass) {
+			t.Errorf("%s: Verify took a pass another key signed, carrying the certificate: %v", name, err)
+		}
+		// A certificate that has ended: a pass signed under it a moment before it ends, checked a moment after.
+		end := b.cert.NotAfter()
+		late, _, err := NewPass(b.signer, a, "irongall.dev", end.Add(-time.Minute))
+		if err != nil {
+			t.Fatal(err)
+		}
+		lp, err := ParsePass(late)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := lp.VerifyUnder(sum, "irongall.dev", end); !errors.Is(err, ErrCertificateTime) {
+			t.Errorf("%s: after the certificate ended: %v", name, err)
+		}
 	}
 }
 

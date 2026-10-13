@@ -58,6 +58,12 @@ func (b *Box) Resolve(ctx context.Context, peer protocol.Address) (*protocol.Pre
 	if p.Expired(b.now()) {
 		return nil, refuse("%s's prekey has expired: its owner must publish a new one", peer)
 	}
+	// Whether the peer can verify this box is the one thing here that
+	// nothing signs: the server says what the peer declared. A server that
+	// misstates it can only stop a message, as it can without it.
+	if !protocol.AcceptsSender(ir.SenderKeyTypes, b.id.Type()) {
+		return nil, refuse("%s's client does not verify identities of this box's key type, %s, so it would refuse this box's mail: nothing is sent", peer, b.id.Type())
+	}
 	if err := b.pin(id); err != nil {
 		return nil, err
 	}
@@ -95,7 +101,10 @@ func (b *Box) identityOf(peer protocol.Address, served []byte) (*protocol.Identi
 		return nil, refuse("the identity for %s does not hash to it", peer)
 	}
 	id, err := protocol.ParseIdentity(doc)
-	if err != nil {
+	switch {
+	case errors.Is(err, protocol.ErrIdentityType):
+		return nil, refuse("%s's identity is of a key type this client does not verify, so nothing it signs can be checked here and nothing is sent", peer)
+	case err != nil:
 		return nil, refuse("%s's identity: %v", peer, err)
 	}
 	return id, nil

@@ -2,10 +2,13 @@
 # Regenerates the irongall v1 test vectors with stock tools only: bash, od, base64, fold,
 # sha256sum and ssh-keygen, plus age >= 1.3 for the one ciphertext.
 # Everything is deterministic (Ed25519 signatures are), except what is made once and kept:
-# each certificate (ssh-keygen puts a random nonce in one) and message/a-to-b.age.
-# Inputs are in input/: every Ed25519 key is a PUBLISHED test key of RFC 8032 §7.1 (the
-# identities are TEST 1 and TEST 2, the working keys TEST 3, TEST 1024 and TEST SHA(abc)),
-# and the age recipients' secret keys were discarded. Every vector is judged at the time in ./now.
+# each certificate (ssh-keygen puts a random nonce in one, and an ECDSA signature differs each
+# time it is made) and message/a-to-b.age.
+# Inputs are in input/: every Ed25519 key is a PUBLISHED test key of RFC 8032 (§7.1: the
+# identities of A and B are TEST 1 and TEST 2, their working keys TEST 3, TEST 1024 and
+# TEST SHA(abc); §7.2: C's working key is the first Ed25519ctx test's key), C's P-256 identity
+# is the PUBLISHED test key of RFC 6979 §A.2.5, and the age recipients' secret keys were
+# discarded. Every vector is judged at the time in ./now.
 set -euo pipefail
 umask 077
 cd "$(dirname "$0")"
@@ -25,26 +28,34 @@ str() { printf '%08x%s' $(( ${#1} / 2 )) "$1"; }           # an RFC 4251 string,
 bin() { printf "$(printf '%s' "$1" | sed 's/../\\x&/g')"; } # hex → bytes on stdout
 b64() { base64 | tr -d '\n'; }
 
-# An unencrypted OpenSSH Ed25519 private key file, from the seed and public key in hex.
-openssh_key() { # <seed hex> <public hex> <file>
-  local pw priv pad="" n i=1
-  pw=$(str "$(asc ssh-ed25519)")$(str "$2")
-  priv=0000000000000000$(str "$(asc ssh-ed25519)")$(str "$2")$(str "$1$2")$(str "")
+# An unencrypted OpenSSH private key file, from the public key and the private part as the format writes each, in hex.
+keyfile() { # <public key hex> <private part hex> <file>
+  local priv pad="" n i=1
+  priv=0000000000000000$1$2$(str "")
   n=$(( ${#priv} / 2 )); while (( n % 8 )); do pad+=$(printf '%02x' $i); i=$((i + 1)); n=$((n + 1)); done
   { echo '-----BEGIN OPENSSH PRIVATE KEY-----'
-    bin "$(asc openssh-key-v1)00$(str "$(asc none)")$(str "$(asc none)")$(str "")00000001$(str "$pw")$(str "$priv$pad")" | b64 | fold -w 70; echo
+    bin "$(asc openssh-key-v1)00$(str "$(asc none)")$(str "$(asc none)")$(str "")00000001$(str "$1")$(str "$priv$pad")" | b64 | fold -w 70; echo
     echo '-----END OPENSSH PRIVATE KEY-----'; } > "$3"
 }
+# An Ed25519 key file, from the seed and public key in hex.
+openssh_key() { keyfile "$(str "$(asc ssh-ed25519)")$(str "$2")" "$(str "$1$2")" "$3"; } # <seed hex> <public hex> <file>
+# A P-256 public key in SSH wire form, in hex: <the point, hex> [curve name].
+p256_wire() { printf '%s' "$(str "$(asc ecdsa-sha2-nistp256)")$(str "$(asc "${2:-nistp256}")")$(str "$1")"; }
+# A P-256 key file, from the private scalar and the public point (x then y) in hex. The scalar is written as a
+# signed number, so one whose first bit is set takes a leading 00.
+openssh_p256_key() { local d=$1; [[ $d =~ ^[89a-f] ]] && d=00$d; keyfile "$(p256_wire "04$2")" "$(str "$d")" "$3"; } # <scalar hex> <point hex> <file>
 # An identity document for a raw 32-byte Ed25519 key in hex, valid or not.
 identity_doc() { printf 'irongall-v1\nssh-ed25519 %s\n' "$(bin "$(str "$(asc ssh-ed25519)")$(str "$1")" | b64)"; }
+# An identity document for a P-256 point in hex, valid or not: <the point, hex> [curve name].
+p256_doc() { printf 'irongall-v1\necdsa-sha2-nistp256 %s\n' "$(bin "$(p256_wire "$@")" | b64)"; }
 
 KEYS=$(mktemp -d) # private keys live only here, and only while this runs
-cleanup() { local k; for k in a b a-work b-work a-work-2; do rm -f "$KEYS/$k" "$KEYS/$k.pub" "$KEYS/$k-cert.pub"; done; rmdir "$KEYS"; }
+cleanup() { local k; for k in a b c a-work b-work a-work-2 c-work; do rm -f "$KEYS/$k" "$KEYS/$k.pub" "$KEYS/$k-cert.pub"; done; rmdir "$KEYS"; }
 trap cleanup EXIT
 
 printf '%s\n' "$NOW" > now
-mkdir -p a b message identity prekey envelope cert plain
-for box in a b a-work b-work a-work-2; do
+mkdir -p a b c message identity prekey envelope cert plain
+for box in a b a-work b-work a-work-2 c-work; do
   { read -r seed; read -r pub; } < "input/$box.ed25519"
   openssh_key "$seed" "$pub" "$KEYS/$box"
   ssh-keygen -y -f "$KEYS/$box" > "$KEYS/$box.pub"
@@ -55,6 +66,15 @@ for box in a b; do
   sha256sum < "$box/identity.doc" | cut -c1-64 > "$box/address"
 done
 A=$(cat a/address); B=$(cat b/address)
+
+# Box C, whose identity is of the optional type ecdsa-sha2-nistp256.
+{ read -r scalar; read -r POINT; } < input/c.p256
+openssh_p256_key "$scalar" "$POINT" "$KEYS/c"
+ssh-keygen -y -f "$KEYS/c" > "$KEYS/c.pub"
+[ "$(cut -d' ' -f2 "$KEYS/c.pub")" = "$(bin "$(p256_wire "04$POINT")" | b64)" ] || { echo "the c key file does not hold the RFC 6979 key" >&2; exit 1; }
+printf 'irongall-v1\n%s\n' "$(cut -d' ' -f1,2 "$KEYS/c.pub")" > c/identity.doc
+sha256sum < c/identity.doc | cut -c1-64 > c/address
+C=$(cat c/address)
 
 # A certificate: what "ssh-keygen -s" writes for a working key, made once and kept without its comment.
 cert() { # <kept file> <signing key> <certified key> <ssh-keygen options…>
@@ -69,6 +89,7 @@ statement() { printf 'irongall-prekey-v1\n%s\n%s\n%s\n%s\n' "$@"; } # <address> 
 # Each box's working key, certified by its identity.
 cert a/work-cert.pub a a-work $(good "$A")
 cert b/work-cert.pub b b-work $(good "$B")
+cert c/work-cert.pub c c-work $(good "$C")
 
 # The two boxes, their prekeys and A's revocation.
 statement "$A" 1 "$(cat input/a-1.pq)" "$NOT_AFTER" > a/prekey-1.txt
@@ -77,6 +98,8 @@ statement "$B" 1 "$(cat input/b-1.pq)" "$NOT_AFTER" > b/prekey-1.txt
 for f in a/prekey-1 a/prekey-2; do under a-work a/work-cert.pub "irongall-prekey-v1:$A" < "$f.txt" > "$f.txt.sig"; done
 under a-work a/work-cert.pub "irongall-prekey-v1:$A" -O hashalg=sha256 < a/prekey-1.txt > a/prekey-1.txt.sha256.sig
 under b-work b/work-cert.pub "irongall-prekey-v1:$B" < b/prekey-1.txt > b/prekey-1.txt.sig
+statement "$C" 1 "$(cat input/c-1.classic)" "$NOT_AFTER" > c/prekey-1.txt
+under c-work c/work-cert.pub "irongall-prekey-v1:$C" < c/prekey-1.txt > c/prekey-1.txt.sig
 printf 'irongall-revoke-v1\n%s\n' "$A" > a/revoke.txt
 sign a "irongall-revoke-v1:$A" < a/revoke.txt > a/revoke.sig
 
@@ -124,6 +147,28 @@ identity_doc 26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85 > 
 identity_doc c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a > identity/small-order-8c.doc
 identity_doc c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa > identity/small-order-8d.doc
 identity_doc eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f > identity/small-order-non-canonical.doc # y = p + 1
+# The same for the P-256 type. With p the field's size and n the group's order: a point is 04, x, y, and OpenSSH
+# refuses a coordinate of 128 bits or fewer, or of n - 1 or more, which no key made from a private key has.
+GOOD_C=$(sed -n 2p c/identity.doc); X=${POINT:0:64}; Y=${POINT:64}
+Y5=459243b9aa581806fe913bce99817ade11ca503c64d9a3c533415c083248fbcc # a square root of 5^3 - 3*5 + b mod p: (5, Y5) is on the curve
+printf 'irongall-v1\n%s comment\n' "$GOOD_C" > identity/p256-comment.doc
+p256_doc "0$((2 + (0x${Y: -1} & 1)))$X" > identity/p256-compressed.doc # 02 or 03 by y's last bit, then x: the same key, in the encoding the format does not take
+p256_doc "04$POINT" nistp384 > identity/p256-curve-name-mismatch.doc
+p256_doc "04${POINT}00" > identity/p256-trailing-byte.doc
+p256_doc "04$X${Y:0:63}$(printf '%x' $((0x${Y: -1} ^ 1)))" > identity/p256-off-curve.doc # y with its last bit flipped
+p256_doc "04ffffffff00000001000000000000000000000001000000000000000000000004$Y5" > identity/p256-coordinate-not-reduced.doc # x = p + 5: the point (5, Y5), x not reduced
+p256_doc "040000000000000000000000000000000000000000000000000000000000000005$Y5" > identity/p256-short-coordinate.doc # x = 5: on the curve; the Go library takes it and OpenSSH does not
+p256_doc "04ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632554484f0c0fda434ef0a808458914f328715d7a545e198ac7eee31dffe861b5d23f" > identity/p256-coordinate-over-order.doc # x = n + 3, the first from n - 1 up that is on the curve; likewise
+# A well-formed document of a key type no client verifies: a name, and a wire key that begins with that name.
+NOTYPE=no-such-key-type@irongall.invalid
+printf 'irongall-v1\n%s %s\n' "$NOTYPE" "$(bin "$(str "$(asc "$NOTYPE")")$(str "$(asc 'not a key')")" | b64)" > identity/unsupported-type.doc
+# A NUL byte, which a shell variable drops and a C string ends at. Each of the first four is as long as a good
+# document: one line feed is gone and the NUL is in its place, or elsewhere.
+printf 'irongall-v1\n%s\0' "$GOOD" > identity/nul-for-the-final-newline.doc
+printf 'iron\0gall-v1\n%s' "$GOOD" > identity/nul-in-the-tag.doc
+printf 'irongall-v1\n%s\0%s' "${GOOD:0:40}" "${GOOD:40}" > identity/nul-in-the-key.doc
+printf 'irongall-v1\n%s\0' "$GOOD_C" > identity/p256-nul-for-the-final-newline.doc
+printf 'irongall-v1\n%s\0' "$(sed -n 2p identity/unsupported-type.doc)" > identity/nul-in-an-unknown-type.doc
 
 # Prekey statements of box A. bad-*: signature or format must be refused. expired-*: valid, but
 # expired at ./now, so a sender must not encrypt to it. too-long-*: valid and not expired, but a
@@ -225,6 +270,12 @@ refuse refuse-signed-by-the-identity message/a-to-b.line sign a "irongall-msg-v1
 refuse refuse-signed-by-a-bare-working-key message/a-to-b.line sign a-work "irongall-msg-v1:$B"
 refuse refuse-certificate-ended message/a-to-b.line under a-work cert/bad-ended.pub "irongall-msg-v1:$B"
 sed 's/"body":"hello"/"body":"hellp"/' message/a-to-b.line > "$L"; cat "$L" "$GOOD_SIG" > plain/refuse-line-changed-after-signing.txt
+# A sender whose identity is of the optional type: delivered by a client that verifies ecdsa-sha2-nistp256, and refused
+# with unsupported_key_type by one that does not. Then one of a type nobody verifies: refused so if the document is
+# the sender's, and as reattributed if it is not.
+line "$C" "$B" "$(b64 < c/identity.doc)" > "$L"; refuse accept-p256-sender "$L" under c-work c/work-cert.pub "irongall-msg-v1:$B"
+line "$(sha256sum < identity/unsupported-type.doc | cut -c1-64)" "$B" "$(b64 < identity/unsupported-type.doc)" > "$L"; refuse refuse-unsupported-key-type "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
+line "$A" "$B" "$(b64 < identity/unsupported-type.doc)" > "$L"; refuse refuse-from-is-not-the-identity-of-an-unknown-type "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
 # Who it is from. The first is the forgery an identity member invites: A's document beside a
 # certificate that B's identity signed. The signature is good and the certificate is B's own.
 refuse refuse-another-box-s-identity-document message/a-to-b.line under b-work b/work-cert.pub "irongall-msg-v1:$B"
