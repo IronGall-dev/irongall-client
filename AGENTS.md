@@ -75,6 +75,14 @@
 - **The statement is fixed text and never gains a field.** What is added later is a second statement under a new tag, beside it: a slot nobody fills is one that fails when it is used, and a rule to refuse what a reader does not understand would turn a revoked address back into a live one.
 - **`revoke` takes the address in full as its confirmation,** and neither client writes a record unasked: beside the identity it is lost and stolen with it.
 
+**One certificate is revoked by a list its identity signs, and a box's statements are ordered by certificate first** (`protocol/revokedcerts.go`, `client/revocation.go`, `ig_listcheck`, `ig_listed`, `ig_keeplist`; `PROTOCOL.md` §6.3a, §2b; decided on #51 and #48).
+- **The order is the certificate's serial, then the prekey's own** (`Resolve`, `rekey`, `ig_resolve`, `ig_renew`): a later certificate passes any serial under an earlier one, and a renewal's number is one above the served CERTIFICATE's. 🛑 Comparing prekey serials across certificates brings #48 back: one use of a taken working key, at the highest serial there is, ended the address.
+- **A send names its prekey by both serials** (`SendRequest.CertificateSerial`, `ig_seal`). The script writes them as the digits it checked, never through jq's numbers: a jq before 1.7 rounds one above 2^53.
+- **A list is verified as a revocation is, under the identity's bare key, and then parsed exactly.** `revoked/bad-by-a-working-key` holds both clients to the first. The script compares the file with itself rebuilt from its lines, and compares serials in bash, whose numbers are exact at 18 digits where awk's are not.
+- **The highest version a holder has verified stands.** A list that does not verify, or is no newer, changes nothing. A kept list is read and checked again at each use, and one that no longer verifies is an error, never "nothing revoked".
+- **A listed certificate loses everything it signed, whenever it was signed:** `judge` and `ig_judge` refuse its mail as `certificate_revoked`, and `Resolve` and `ig_resolve` refuse a prekey statement under it. The address goes on.
+- **The script applies a list and makes none** (`README.md` § Stock tools instead of Go).
+
 **Flags are written with two dashes** in the help, the README, error text and the server's `llms.txt`. Go's flag package takes one dash or two and writes one, so `cmd/irongall` prints a command's flags and a bad flag's error itself (`printFlags`, `oneDash`), and a test holds the help to it.
 
 **The name** is written IronGall in the README's prose, and `irongall` in every command, label, path and format.

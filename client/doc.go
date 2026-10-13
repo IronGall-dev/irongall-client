@@ -15,10 +15,11 @@
 //	identity.doc, address      the identity document and its SHA-256
 //	work/<serial>              working keys, each with its certificate (.pub, -cert.pub): they sign what the box says
 //	prekeys/<serial>.agekey    age keys, each with its signed statement (.txt, .txt.sig); never backed up
-//	serial                     the highest prekey serial this box has published
+//	serial                     the number of the prekey this box published last, which is its certificate's serial too
 //	pass                       the pass this box last signed for its server, used until it runs out
-//	peers/<address>/           the pinned identity document, the highest prekey serial and certificate serial seen, and revoke.sig, its revocation, once one has verified
+//	peers/<address>/           the pinned identity document, the highest prekey serial and certificate serial seen, revoke.sig, its revocation, once one has verified, and revoked-certs.txt with its .sig, the newest list of its revoked certificates that has verified
 //	revoked.sig                this box's own revocation, once it has met one that verifies: the box is finished
+//	revoked-certs.txt, .sig    this box's own list of revoked certificates and its identity's signature over it, once it has published one
 //	seen                       the replay set: ciphertext hash, sent_at, from, msg_id, for 33 days
 //	outbox/, outbox/failed/    signed envelopes awaiting a receipt; ones that can never be delivered
 //	inbox/, quarantine/        accepted mail; refused mail, never delivered, each with its reason beside it (.reason)

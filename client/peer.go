@@ -23,8 +23,12 @@ import (
 //   - The prekey statement must be signed by a working key that identity
 //     certified, under a certificate valid now, in the peer's prekey
 //     namespace, and name the peer.
-//   - Neither its serial nor its certificate's may be lower than one already
-//     seen (rollback), and it may not have expired.
+//   - It may not be ordered before one already seen (rollback): under an
+//     earlier certificate, or under the same one with a lower serial. A later
+//     certificate outranks any serial under an earlier one, so a box that
+//     moved to a new certificate is followed whatever serial it publishes.
+//   - Its certificate may not be one the peer's identity has revoked, by the
+//     list this box holds, and it may not have expired.
 //   - A peer this box holds a revocation of is refused before anything is
 //     asked: a [RevokedError], whatever the server now serves for it.
 //
@@ -55,15 +59,23 @@ func (b *Box) Resolve(ctx context.Context, peer protocol.Address) (*protocol.Pre
 	if err != nil {
 		return nil, err
 	}
-	if p.Serial < seen {
-		return nil, refuse("rollback: %s's prekey serial %d is below %d, already seen", peer, p.Serial, seen)
-	}
 	seenCert, err := b.peerSerial(peer, "cert-serial")
 	if err != nil {
 		return nil, err
 	}
+	// Ordered by certificate first, then by the prekey's own serial.
 	if cert.Serial() < seenCert {
 		return nil, refuse("rollback: %s's prekey is signed under certificate %d, below %d, already seen", peer, cert.Serial(), seenCert)
+	}
+	if cert.Serial() == seenCert && p.Serial < seen {
+		return nil, refuse("rollback: %s's prekey serial %d is below %d, already seen", peer, p.Serial, seen)
+	}
+	list, err := b.revokedCerts(peer)
+	if err != nil {
+		return nil, err
+	}
+	if list != nil && list.Revokes(cert.Serial()) {
+		return nil, refuse("%s's prekey is signed under a certificate its identity has revoked: its owner must publish a new one", peer)
 	}
 	if p.Expired(b.now()) {
 		return nil, refuse("%s's prekey has expired: its owner must publish a new one", peer)

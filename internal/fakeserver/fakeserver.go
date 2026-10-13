@@ -47,8 +47,11 @@ type box struct {
 	account   string                // the account it is in, or ""
 	senders   []string              // the sender key types it declared with its current prekey
 	revoked   []byte                // the identity's revocation, once the box is revoked: it is gone for good
-	messages  map[string]*message
-	order     []string // ids, oldest first
+	// The identity's list of revoked certificates, as put, and parsed.
+	certList, certListSig []byte
+	listed                *protocol.RevokedCertificates
+	messages              map[string]*message
+	order                 []string // ids, oldest first
 }
 
 type message struct {
@@ -276,23 +279,49 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 	if !ok || !decode(w, r, &req) {
 		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b := s.boxes[a]
+	if b == nil {
+		problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
+		return
+	}
+	// A list of revoked certificates: the address goes on. The highest
+	// version stands.
+	if len(req.RevokedCertificates) > 0 {
+		list, err := protocol.VerifyRevokedCertificates(a, req.Identity, req.RevokedCertificates, req.RevokedCertificatesSignature)
+		switch {
+		case err != nil:
+			problem(w, protocol.CodeBadRevocation, "not a list of this address's revoked certificates")
+			return
+		case b.listed != nil && bytes.Equal(b.certList, req.RevokedCertificates):
+		case b.listed != nil && list.Version <= b.listed.Version:
+			problem(w, protocol.CodeConflict, "a list of that version or a later one is held")
+			return
+		default:
+			b.certList, b.certListSig, b.listed = req.RevokedCertificates, req.RevokedCertificatesSignature, list
+		}
+		if len(req.Revocation) == 0 {
+			WriteJSON(w, http.StatusOK, struct{}{})
+			return
+		}
+	}
 	if _, err := protocol.VerifyRevocation(a, req.Identity, req.Revocation); err != nil {
 		problem(w, protocol.CodeBadRevocation, "not a revocation of this address")
 		return
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	b := s.boxes[a]
-	switch {
-	case b == nil:
-		problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
-	case b.revoked != nil:
+	if b.revoked != nil {
 		WriteJSON(w, http.StatusOK, struct{}{})
-	default:
-		b.revoked, b.messages, b.order = req.Revocation, map[string]*message{}, nil
-		WriteJSON(w, http.StatusCreated, struct{}{})
+		return
 	}
+	b.revoked, b.messages, b.order = req.Revocation, map[string]*message{}, nil
+	WriteJSON(w, http.StatusCreated, struct{}{})
 }
+
+// current reports whether the box's current certificate is one its identity
+// has not revoked: a box whose certificate is listed has no pass the server
+// takes and no prekey a sender may use, until it publishes under a new one.
+func (b *box) current() bool { return b.listed == nil || !b.listed.Revokes(b.cert.Serial()) }
 
 // revocations answers with what is held about an address: its revocation,
 // which proves itself, or not_revoked.
@@ -307,10 +336,10 @@ func (s *Server) revocations(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case b == nil:
 		problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
-	case b.revoked == nil:
+	case b.revoked == nil && b.listed == nil:
 		problem(w, protocol.CodeNotRevoked, "no revocation of this address is held here")
 	default:
-		WriteJSON(w, http.StatusOK, protocol.Revocations{Identity: b.identity, Revocation: b.revoked})
+		WriteJSON(w, http.StatusOK, protocol.Revocations{Identity: b.identity, Revocation: b.revoked, RevokedCertificates: b.certList, RevokedCertificatesSignature: b.certListSig})
 	}
 }
 
@@ -336,12 +365,17 @@ func (s *Server) newPrekey(w http.ResponseWriter, r *http.Request) {
 		problem(w, protocol.CodeBadKey, err.Error())
 		return
 	}
+	// Ordered by certificate first: a later one at any serial, or the
+	// current one at a higher serial.
 	switch {
-	case p.Serial <= b.prekey.Serial:
-		problem(w, protocol.CodeConflict, "the serial must be higher")
-		return
 	case cert.Serial() < b.cert.Serial(), cert.Serial() == b.cert.Serial() && !bytes.Equal(cert.Marshal(), b.cert.Marshal()):
 		problem(w, protocol.CodeBadKey, "the certificate is older than the box's current one")
+		return
+	case cert.Serial() == b.cert.Serial() && p.Serial <= b.prekey.Serial:
+		problem(w, protocol.CodeConflict, "the serial must be higher")
+		return
+	case b.listed != nil && b.listed.Revokes(cert.Serial()):
+		problem(w, protocol.CodeBadKey, "the certificate is one the identity revoked")
 		return
 	}
 	// A prekey upload carries a pass under the certificate of the statement
@@ -378,6 +412,10 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		problem(w, protocol.CodeSenderRevoked, "the sending box is revoked")
 		return
 	}
+	if !sender.current() {
+		problem(w, protocol.CodeUnauthorized, "the pass is under a certificate the box's identity revoked")
+		return
+	}
 	if !s.pass(w, r, sender.identity, sender.cert) {
 		return
 	}
@@ -388,7 +426,10 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 	case rcpt.revoked != nil:
 		problem(w, protocol.CodeRevoked, "this box is revoked")
 		return
-	case req.PrekeySerial != nil && *req.PrekeySerial != rcpt.prekey.Serial:
+	case !rcpt.current():
+		problem(w, protocol.CodePrekeyExpired, "the box must publish a new prekey: its current one is under a revoked certificate")
+		return
+	case req.PrekeySerial != nil && *req.PrekeySerial != rcpt.prekey.Serial, req.CertificateSerial != nil && *req.CertificateSerial != rcpt.cert.Serial():
 		problem(w, protocol.CodeStalePrekey, "a newer prekey exists")
 		return
 	}
@@ -427,6 +468,10 @@ func (s *Server) owner(h func(http.ResponseWriter, *http.Request, *box)) http.Ha
 		}
 		if b.revoked != nil {
 			problem(w, protocol.CodeRevoked, "this box is revoked")
+			return
+		}
+		if !b.current() {
+			problem(w, protocol.CodeUnauthorized, "the pass is under a certificate the box's identity revoked")
 			return
 		}
 		if s.pass(w, r, b.identity, b.cert) {

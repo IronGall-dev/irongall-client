@@ -276,7 +276,10 @@ func (b *Box) receiveOne(ctx context.Context, id string, res *Result, asked map[
 //     asked for one, once for each sender in a drain. A revocation that
 //     verifies refuses the message and every later one, whenever they were
 //     signed. A server that says it holds none has answered. No answer is an
-//     error: the message stays on the server for the next drain.
+//     error: the message stays on the server for the next drain. The same
+//     answer carries the sender's list of revoked certificates, if it has
+//     one: mail signed under a listed certificate is refused the same way,
+//     and the address goes on.
 //  9. Replay: the locally computed ciphertext hash is not in the seen-set.
 //  10. Retry: (from, msg_id) is not in the seen-set. A match is a duplicate.
 //
@@ -325,6 +328,13 @@ func (b *Box) judge(ctx context.Context, m *protocol.Message, asked map[protocol
 	}
 	if gone {
 		return refused(RefusedRevoked, "its sender's address is revoked, and the revocation verifies: nothing signed for that address is taken, whenever it was signed")
+	}
+	list, err := b.revokedCerts(from)
+	if err != nil {
+		return nil, false, nil, err
+	}
+	if list != nil && list.Revokes(signed.Certificate.Serial()) {
+		return refused(RefusedCertificate, "it is signed under a certificate its sender's identity has revoked: nothing signed under it is taken, whenever it was signed")
 	}
 	h := sha256.Sum256(m.Ciphertext)
 	seen, err := b.seenHash(hex.EncodeToString(h[:]))

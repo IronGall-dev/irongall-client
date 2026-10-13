@@ -671,3 +671,46 @@ func TestRevocationCommands(t *testing.T) {
 		t.Fatalf("status of a box that revoked itself: %v %q", err, out)
 	}
 }
+
+// rekey --revoke-earlier publishes the new prekey first, then revokes every
+// certificate before it, and says what that costs the box's own unread mail.
+func TestRekeyRevokeEarlier(t *testing.T) {
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("IRONGALL_HOME", b.Dir())
+	t.Setenv("IRONGALL_BASE", srv.URL)
+	var out, errs bytes.Buffer
+	if err := run(ctx, "rekey", []string{"--revoke-earlier"}, strings.NewReader(""), &out, &errs); err != nil {
+		t.Fatalf("rekey --revoke-earlier: %v %q", err, errs.String())
+	}
+	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	if len(lines) != 2 || !strings.HasPrefix(lines[0], "prekey 2, valid until ") || lines[1] != "certificates before 2 revoked, list version 1" || !strings.Contains(errs.String(), "send it again") {
+		t.Fatalf("its output: %q %q", out.String(), errs.String())
+	}
+	out.Reset()
+	if err := run(ctx, "rekey", []string{"--revoke-earlier"}, strings.NewReader(""), &out, &errs); err != nil || !strings.HasSuffix(out.String(), "certificates before 3 revoked, list version 2\n") {
+		t.Fatalf("a second time: %v %q", err, out.String())
+	}
+	var rec protocol.Revocations
+	resp, err := http.Get(srv.URL + "/v1/" + b.Address().String() + "/revocations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if err := json.NewDecoder(resp.Body).Decode(&rec); err != nil {
+		t.Fatal(err)
+	}
+	list, err := protocol.VerifyRevokedCertificates(b.Address(), rec.Identity, rec.RevokedCertificates, rec.RevokedCertificatesSignature)
+	if err != nil || list.Version != 2 || len(list.Ranges) != 1 || !list.Revokes(1) || !list.Revokes(2) || list.Revokes(3) || len(rec.Revocation) != 0 {
+		t.Fatalf("the list the server holds: %+v, %v", list, err)
+	}
+	// The box goes on working under the certificate it kept.
+	out.Reset()
+	if err := run(ctx, "status", nil, strings.NewReader(""), &out, &errs); err != nil || !strings.Contains(out.String(), `"attention":[]`) {
+		t.Fatalf("status after revoking earlier certificates: %v %q", err, out.String())
+	}
+}

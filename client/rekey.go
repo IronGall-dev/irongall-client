@@ -56,7 +56,7 @@ func (b *Box) rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey,
 	}
 	// Its own record, so judged as one: whether this identity ever certified
 	// the key that signed it, even if that certificate has since ended.
-	cur, _, err := protocol.VerifyPrekeyRecord(b.id, ir.Prekey, ir.PrekeySignature)
+	cur, curCert, err := protocol.VerifyPrekeyRecord(b.id, ir.Prekey, ir.PrekeySignature)
 	if err != nil {
 		return nil, refuse("this box's current prekey, as served: %v", err)
 	}
@@ -64,8 +64,12 @@ func (b *Box) rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey,
 	if err != nil {
 		return nil, err
 	}
-	if cur.Serial < published {
-		return nil, refuse("rollback: the server serves this box's prekey serial %d, below %d, which this box published", cur.Serial, published)
+	// A box's statements are ordered by certificate first, then by serial,
+	// and this box gives a renewal's certificate and prekey one number. So
+	// what it published is (published, published), and the server may serve
+	// nothing ordered before it.
+	if curCert.Serial() < published || (curCert.Serial() == published && cur.Serial < published) {
+		return nil, refuse("rollback: the server serves this box's prekey serial %d under certificate %d, before serial %d, which this box published", cur.Serial, curCert.Serial(), published)
 	}
 	if kt == "" {
 		kt = cur.Type()
@@ -79,7 +83,16 @@ func (b *Box) rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey,
 	// signed: its key stays, as a retired one, for mail it may yet decrypt.
 	// Nothing at or below the highest serial this box signed is signed anew,
 	// and that one's files are never pruned, so a serial is never used twice.
-	next := cur.Serial + 1
+	//
+	// The next number is one above the served CERTIFICATE's serial, not the
+	// served prekey's: the new statement is under a new certificate, which
+	// outranks any prekey serial under the one before. So a prekey published
+	// in this box's name at the highest serial there is, by whoever took its
+	// working key, holds nothing: the next certificate passes it.
+	if max(curCert.Serial(), published) >= protocol.MaxSerial {
+		return nil, refuse("this box's certificate serial is the highest there is, so no later certificate can be made: the address cannot renew")
+	}
+	next := max(curCert.Serial(), published) + 1
 	signed, err := b.highestSigned()
 	if err != nil {
 		return nil, err

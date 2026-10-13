@@ -341,8 +341,14 @@ func (b *Box) seal(ctx context.Context, to protocol.Address, stem string) error 
 	if ct.Len() != size {
 		return refuse("the encrypted message is %d bytes, where its padding was made for %d: it is not sent at a size that tells its length", ct.Len(), size)
 	}
+	// The prekey is named by both serials: its own, and its certificate's,
+	// which Resolve has just recorded.
 	serial := pk.Serial
-	j, err := json.Marshal(protocol.SendRequest{PrekeySerial: &serial, Ciphertext: ct.Bytes()})
+	under, err := b.peerSerial(to, "cert-serial")
+	if err != nil {
+		return err
+	}
+	j, err := json.Marshal(protocol.SendRequest{PrekeySerial: &serial, CertificateSerial: &under, Ciphertext: ct.Bytes()})
 	if err != nil {
 		return err
 	}

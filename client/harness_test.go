@@ -104,7 +104,14 @@ func bodyOf(t *testing.T, d client.Delivery) string {
 // box's state directory: what the box signs its mail and its passes with.
 func worker(t *testing.T, b *client.Box) ssh.Signer {
 	t.Helper()
-	stem := filepath.Join(b.Dir(), "work", "1")
+	return workerAt(t, b, "1")
+}
+
+// workerAt loads the working key a box made at a serial, under its
+// certificate.
+func workerAt(t *testing.T, b *client.Box, serial string) ssh.Signer {
+	t.Helper()
+	stem := filepath.Join(b.Dir(), "work", serial)
 	k, err := os.ReadFile(stem)
 	if err != nil {
 		t.Fatal(err)

@@ -13,8 +13,13 @@ import (
 )
 
 // RefusedRevoked is why mail from a revoked address is refused: this box
-// holds a revocation of the sender that verifies.
-const RefusedRevoked = "revoked"
+// holds a revocation of the sender that verifies. RefusedCertificate is why
+// mail under a revoked certificate is: its sender's address goes on, and the
+// identity has revoked the certificate the mail was signed under.
+const (
+	RefusedRevoked     = "revoked"
+	RefusedCertificate = "certificate_revoked"
+)
 
 // RevokedError is an address this box holds a revocation of. The revocation
 // verified here, so it is not the server's word: nothing is sent to that
@@ -137,11 +142,125 @@ func (b *Box) lookupRevocation(ctx context.Context, a protocol.Address) (bool, e
 	if err != nil {
 		return false, err
 	}
+	// A list of revoked certificates rides in the same record. It is taken
+	// or not on its own: the address may well go on.
+	if err := b.keepRevokedCerts(a, rec.Identity, rec.RevokedCertificates, rec.RevokedCertificatesSignature); err != nil {
+		return false, err
+	}
 	id, err := protocol.VerifyRevocation(a, rec.Identity, rec.Revocation)
 	if err != nil {
 		return false, nil
 	}
 	return true, b.keepRevocation(id, rec.Revocation)
+}
+
+// revokedCertsFile is where the list of a's revoked certificates is kept:
+// for a peer, beside its pinned identity; for this box, at its root.
+func (b *Box) revokedCertsFile(a protocol.Address) string {
+	if a == b.id.Address() {
+		return b.path("revoked-certs.txt")
+	}
+	return b.path("peers", a.String(), "revoked-certs.txt")
+}
+
+// revokedCerts returns the list of a's revoked certificates this box holds,
+// or nil. Like a kept revocation it is checked again each time it is read: a
+// file that no longer verifies is an error, never a quiet "nothing revoked".
+func (b *Box) revokedCerts(a protocol.Address) (*protocol.RevokedCertificates, error) {
+	name := b.revokedCertsFile(a)
+	statement, err := os.ReadFile(name) //nolint:gosec // a path inside the box's own directory
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	sig, err := os.ReadFile(name + ".sig") //nolint:gosec // a path inside the box's own directory
+	if err != nil {
+		return nil, err
+	}
+	doc := b.id.Document()
+	if a != b.id.Address() {
+		if doc, err = os.ReadFile(b.path("peers", a.String(), "identity.doc")); err != nil {
+			return nil, err
+		}
+	}
+	list, err := protocol.VerifyRevokedCertificates(a, doc, statement, sig)
+	if err != nil {
+		return nil, fmt.Errorf("the list of revoked certificates kept for %s no longer verifies: %w", a, err)
+	}
+	return list, nil
+}
+
+// keepRevokedCerts keeps a list of a's revoked certificates if it verifies
+// and its version is above the one this box holds. One that does not verify,
+// or is no newer, changes nothing: only the identity's own signature revokes
+// a certificate, and an older list never replaces a newer one.
+func (b *Box) keepRevokedCerts(a protocol.Address, doc, statement, sig []byte) error {
+	if len(statement) == 0 {
+		return nil
+	}
+	list, err := protocol.VerifyRevokedCertificates(a, doc, statement, sig)
+	if err != nil {
+		return nil //nolint:nilerr // what does not verify counts as nothing shown
+	}
+	held, err := b.revokedCerts(a)
+	if err != nil || (held != nil && held.Version >= list.Version) {
+		return err
+	}
+	if a != b.id.Address() {
+		id, err := protocol.ParseIdentity(doc)
+		if err != nil {
+			return nil //nolint:nilerr // VerifyRevokedCertificates parsed it
+		}
+		if err := b.pin(id); err != nil {
+			return err
+		}
+	}
+	// The signature first: a list with no signature beside it is an error
+	// when it is read, and a signature with no list is nothing.
+	name := b.revokedCertsFile(a)
+	if err := writeFile(name+".sig", sig); err != nil {
+		return err
+	}
+	return writeFile(name, statement)
+}
+
+// RevokeEarlier revokes every certificate this box's identity made before
+// the one in use: it signs a list naming them, publishes it, and keeps it.
+// It is for a box whose working key may have been taken: [Box.Rekey] first,
+// which makes a new working key under a new certificate, then this, which
+// ends what the old key could still sign. The address goes on.
+//
+// It returns the list, or nil when the box has made no earlier certificate.
+// Mail this box sent under those certificates, and that its reader has not
+// read yet, is refused too: nobody can tell it from a thief's.
+func (b *Box) RevokeEarlier(ctx context.Context) (*protocol.RevokedCertificates, error) {
+	current, err := b.publishedSerial()
+	if err != nil || current <= 1 {
+		return nil, err
+	}
+	ranges, version := []protocol.SerialRange{{First: 1, Last: current - 1}}, uint64(1)
+	held, err := b.revokedCerts(b.id.Address())
+	if err != nil {
+		return nil, err
+	}
+	if held != nil {
+		ranges, version = append(ranges, held.Ranges...), held.Version+1
+	}
+	list, err := protocol.NewRevokedCertificates(b.id.Address(), version, ranges)
+	if err != nil {
+		return nil, err
+	}
+	sig, err := protocol.SignRevokedCertificates(b.signer, list)
+	if err != nil {
+		return nil, err
+	}
+	rec := &protocol.Revocations{Identity: b.id.Document(), RevokedCertificates: list.Statement(), RevokedCertificatesSignature: sig}
+	if _, err := b.call(ctx, http.MethodPut, b.boxPath("/revocations"), rec, nil, nil); err != nil {
+		return nil, err
+	}
+	return list, b.keepRevokedCerts(b.id.Address(), rec.Identity, rec.RevokedCertificates, rec.RevokedCertificatesSignature)
 }
 
 // proved turns a server's "revoked" into something this box has checked. who

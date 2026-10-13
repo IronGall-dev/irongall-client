@@ -102,7 +102,12 @@ type SendRequest struct {
 	// has a newer one the server answers stale_prekey, and the sender
 	// encrypts the same signed envelope again.
 	PrekeySerial *uint64 `json:"prekey_serial,omitempty"`
-	Ciphertext   Bytes   `json:"ciphertext"`
+	// CertificateSerial is the serial of the certificate that prekey's
+	// statement is signed under. A prekey is named by the two together: a
+	// box's statements are ordered by certificate first, so a prekey serial
+	// can come again under a later certificate.
+	CertificateSerial *uint64 `json:"certificate_serial,omitempty"`
+	Ciphertext        Bytes   `json:"ciphertext"`
 }
 
 // AdoptRequest is the body of PUT /v1/<address>/account (with a pass): an adopt
