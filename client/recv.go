@@ -31,12 +31,15 @@ type Delivery struct {
 	ID       string // the SHA-256 of its ciphertext, as computed here
 	Envelope *protocol.Envelope
 	// Line is the envelope as ONE line of JSON, built by this client from the
-	// checked fields (pad dropped), as kept in inbox/. Print or pass on this,
-	// never Plaintext: the sender chose Plaintext's bytes, and a line-oriented
-	// reader can be shown a second envelope hidden on a line of its own.
+	// checked fields (the identity document dropped), as kept in inbox/.
+	// Print or pass on this, never Plaintext, whose bytes the sender chose.
 	Line []byte
-	// Plaintext is the envelope exactly as decrypted: the sender's bytes.
+	// Plaintext is the envelope's line exactly as the sender signed it, and
+	// Signature the signature block that verified over it: together they
+	// show anyone that this sender wrote this to this box. The client keeps
+	// neither on disk.
 	Plaintext []byte
+	Signature []byte
 }
 
 // Refusal is a message that failed a check. It was quarantined, never
@@ -204,13 +207,9 @@ func (b *Box) receiveOne(ctx context.Context, id string, res *Result) (fetched i
 			return 0, err
 		}
 		fetched = len(m.Ciphertext)
-		served, err := b.firstContact(ctx, m.From)
-		if err != nil {
-			return fetched, err
-		}
 		h := sha256.Sum256(m.Ciphertext)
 		local := hex.EncodeToString(h[:])
-		d, dup, why, err := b.judge(&m, served)
+		d, dup, why, err := b.judge(&m)
 		if err != nil {
 			return fetched, err
 		}
@@ -256,63 +255,29 @@ func (b *Box) receiveOne(ctx context.Context, id string, res *Result) (fetched i
 	return fetched, err
 }
 
-// firstContact fetches the identity the server serves for a claimed sender
-// this box has not pinned, for judge to check. It is held in memory and
-// nothing is written: only an identity that hashes to its address is ever
-// kept (see [Box.pin]), so a server cannot fill peers/ with senders it made
-// up. A sender that is not an address, or has no box, is left to judge.
-func (b *Box) firstContact(ctx context.Context, from string) ([]byte, error) {
-	a, err := protocol.ParseAddress(from)
-	if err != nil {
-		return nil, nil //nolint:nilerr // judge refuses a sender that is not an address
-	}
-	if exists(b.path("peers", a.String(), "identity.doc")) {
-		return nil, nil
-	}
-	var ir protocol.IdentityResponse
-	if _, err := b.call(ctx, http.MethodGet, "/v1/"+a.String()+"/identity", nil, nil, &ir); err != nil {
-		if c := Code(err); c == protocol.CodeNoSuchMailbox || c == protocol.CodeRevoked {
-			return nil, nil // judge refuses: nothing to pin
-		}
-		return nil, err
-	}
-	return ir.Identity, nil
-}
-
 // judge runs every check on one message, in this order, and returns the
 // delivery only if all of them pass; otherwise why says which failed, in a
 // code and in this client's own words. An error is this box's own fault, not
-// the message's: no verdict. served is the identity the server serves for a
-// sender met for the first time.
+// the message's: no verdict.
 //
-//  1. The sender is an address.
-//  2. Its identity: the pin, or at first contact the served identity,
-//     hash-checked against the address and then pinned.
-//  3. The signature, by that identity, in this box's message namespace.
-//  4. Decryption with every retained prekey.
-//  5. The envelope: version 1, from is the verified signer, to is this box.
+//  1. Decryption with every retained prekey.
+//  2. What came out is an envelope line and then a signature block.
+//  3. The line carries the sender's identity document, and its from is that
+//     document's hash.
+//  4. The signature over the line as decrypted, in this box's message
+//     namespace, by a working key that identity certified.
+//  5. The envelope: version 1, to is this box.
 //  6. Freshness: sent_at no older than protocol.TTL (33 days).
-//  7. Replay: the locally computed ciphertext hash is not in the seen-set.
-//  8. Retry: (from, msg_id) is not in the seen-set. A match is a duplicate.
-func (b *Box) judge(m *protocol.Message, served []byte) (d *Delivery, dup bool, why *Refusal, err error) {
+//  7. The server's from for it is the sender that was verified.
+//  8. Replay: the locally computed ciphertext hash is not in the seen-set.
+//  9. Retry: (from, msg_id) is not in the seen-set. A match is a duplicate.
+//
+// Checks 2 to 6 are protocol.OpenSigned's. Nothing is asked of the server
+// about the sender: the message carries what proves it. The sender's
+// identity is pinned only once all of that has passed.
+func (b *Box) judge(m *protocol.Message) (d *Delivery, dup bool, why *Refusal, err error) {
 	refused := func(code, reason string) (*Delivery, bool, *Refusal, error) {
 		return nil, false, &Refusal{Code: code, Reason: reason}, nil
-	}
-	from, err := protocol.ParseAddress(m.From)
-	if err != nil {
-		return refused(RefusedSender, "the sender is not an address")
-	}
-	id, err := b.pin(from, served)
-	if err != nil {
-		var r *RefusedError
-		if errors.As(err, &r) {
-			return refused(RefusedIdentity, r.Reason)
-		}
-		return nil, false, nil, err
-	}
-	me := b.id.Address()
-	if err := protocol.Verify(id, m.Ciphertext, m.Signature, protocol.MessageNamespace(me)); err != nil {
-		return refused(RefusedSignature, fmt.Sprintf("the signature does not verify for %s", from))
 	}
 	ids, err := b.prekeyIdentities()
 	if err != nil {
@@ -326,13 +291,19 @@ func (b *Box) judge(m *protocol.Message, served []byte) (d *Delivery, dup bool, 
 	if err != nil {
 		return refused(RefusedDecrypt, "it does not decrypt with this box's prekeys")
 	}
-	env, err := protocol.OpenEnvelope(p, from, me, b.now())
+	signed, err := protocol.OpenSigned(p, b.id.Address(), b.now())
 	if err != nil {
 		var e *protocol.EnvelopeError
 		if errors.As(err, &e) {
 			return refused(e.Code, e.Why)
 		}
 		return nil, false, nil, err
+	}
+	from, env := signed.Sender.Address(), signed.Envelope
+	// The server says who posted it, from the pass the post carried. It is
+	// held to the sender the signature proved.
+	if m.From != from.String() {
+		return refused(protocol.RefusedAttribution, "the server lists it as from another box than the one that signed it")
 	}
 	h := sha256.Sum256(m.Ciphertext)
 	seen, err := b.seenHash(hex.EncodeToString(h[:]))
@@ -342,6 +313,9 @@ func (b *Box) judge(m *protocol.Message, served []byte) (d *Delivery, dup bool, 
 	if seen {
 		return refused(RefusedReplay, "replay: this ciphertext was already received")
 	}
+	if err := b.pin(signed.Sender); err != nil {
+		return nil, false, nil, err
+	}
 	again, err := b.seenMsgID(from, env.MsgID)
 	if err != nil {
 		return nil, false, nil, err
@@ -350,12 +324,12 @@ func (b *Box) judge(m *protocol.Message, served []byte) (d *Delivery, dup bool, 
 		return nil, true, nil, nil
 	}
 	shown := *env
-	shown.Pad = ""
+	shown.Identity = nil
 	line, err := shown.Marshal()
 	if err != nil {
 		return nil, false, nil, err
 	}
-	return &Delivery{Envelope: env, Line: []byte(lineBreaks.Replace(string(line))), Plaintext: p}, false, nil, nil
+	return &Delivery{Envelope: env, Line: []byte(lineBreaks.Replace(string(line))), Plaintext: signed.Line, Signature: signed.Signature}, false, nil, nil
 }
 
 // lineBreaks escapes the characters other than LF that some readers end a

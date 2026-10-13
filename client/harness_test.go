@@ -3,16 +3,20 @@ package client_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"filippo.io/age"
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
 	"github.com/IronGall-dev/irongall-client/protocol"
@@ -60,7 +64,7 @@ func (e *env) opts() client.Options {
 	return client.Options{Base: e.srv.URL, Now: e.clock.Now}
 }
 
-// box makes, registers and activates a box.
+// box makes and registers a box.
 func (e *env) box(kt protocol.KeyType) *client.Box {
 	e.t.Helper()
 	b, err := client.Init(context.Background(), e.t.TempDir(), e.opts(), kt)
@@ -110,6 +114,101 @@ func signer(t *testing.T, b *client.Box) ssh.Signer {
 		t.Fatal(err)
 	}
 	return s
+}
+
+// worker loads working key n of a box, under its certificate, from the box's
+// state directory: what the box signs its mail and its passes with.
+func worker(t *testing.T, b *client.Box, n int) ssh.Signer {
+	t.Helper()
+	stem := filepath.Join(b.Dir(), "work", strconv.Itoa(n))
+	k, err := os.ReadFile(stem)
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := ssh.ParsePrivateKey(k)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line, err := os.ReadFile(stem + "-cert.pub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, _, _, _, err := ssh.ParseAuthorizedKey(line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := ssh.NewCertSigner(key.(*ssh.Certificate), work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// line is an envelope's line as a sender writes it: from the box whose
+// identity document it carries, to a box, sent at the test's clock.
+func (e *env) line(doc []byte, from, to protocol.Address, body string) []byte {
+	e.t.Helper()
+	env, err := protocol.NewEnvelope(from, to, body, e.clock.Now())
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	env.Identity = doc
+	l, err := env.Line()
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return l
+}
+
+// seal encrypts what a sender encrypts, an envelope's line and then whatever
+// follows it, to a box's current prekey as the server holds it, and stores it
+// in that box as mail from a sender, as only the operator can. It returns the
+// id it is stored under: the hash of the ciphertext.
+func (e *env) seal(to *client.Box, from protocol.Address, plaintext ...[]byte) string {
+	e.t.Helper()
+	ct := e.encrypt(to, plaintext...)
+	h := sha256.Sum256(ct)
+	id := hex.EncodeToString(h[:])
+	e.srv.Inject(to.Address(), id, from, ct)
+	return id
+}
+
+// encrypt encrypts the parts, one after the other, to a box's current prekey.
+func (e *env) encrypt(to *client.Box, parts ...[]byte) []byte {
+	e.t.Helper()
+	st, _ := e.srv.Prekey(to.Address())
+	p, err := protocol.ParsePrekey(st)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	r, err := p.Recipient()
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	var ct bytes.Buffer
+	w, err := age.Encrypt(&ct, r)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	for _, part := range parts {
+		if _, err := w.Write(part); err != nil {
+			e.t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		e.t.Fatal(err)
+	}
+	return ct.Bytes()
+}
+
+// sign signs an envelope's line for a recipient, as the stock tools do.
+func sign(t *testing.T, s ssh.Signer, line []byte, to protocol.Address) []byte {
+	t.Helper()
+	sig, err := protocol.Sign(s, line, protocol.MessageNamespace(to))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sig
 }
 
 // capture records the JSON body of the next request matching method and

@@ -17,38 +17,55 @@ import (
 // returns the prekey only when every check passes; until then there is
 // nothing to encrypt to.
 //
-//   - The identity is pinned at first contact, after checking it hashes to the
-//     address, and a pin always wins over what the server sends later.
-//   - The prekey statement must be signed by the pinned identity, in the peer's
-//     prekey namespace, and name the peer.
-//   - Its serial may not be lower than one already seen (rollback), and it may
-//     not have expired.
+//   - The identity is the pinned one, or at first contact the served one,
+//     which must hash to the address. A pin always wins over what the server
+//     sends later.
+//   - The prekey statement must be signed by a working key that identity
+//     certified, under a certificate valid now, in the peer's prekey
+//     namespace, and name the peer.
+//   - Neither its serial nor its certificate's may be lower than one already
+//     seen (rollback), and it may not have expired.
+//
+// The identity is pinned, and the serials recorded, only after every check
+// passed: nothing is kept of a peer whose statement did not verify.
 func (b *Box) Resolve(ctx context.Context, peer protocol.Address) (*protocol.Prekey, error) {
 	var ir protocol.IdentityResponse
 	if _, err := b.call(ctx, http.MethodGet, "/v1/"+peer.String()+"/identity", nil, nil, &ir); err != nil {
 		return nil, err
 	}
-	id, err := b.pin(peer, ir.Identity)
+	id, err := b.identityOf(peer, ir.Identity)
 	if err != nil {
 		return nil, err
 	}
-	p, err := protocol.VerifyPrekey(id, ir.Prekey, ir.PrekeySignature)
+	p, cert, err := protocol.VerifyPrekey(id, ir.Prekey, ir.PrekeySignature, b.now())
 	if err != nil {
 		return nil, refuse("%s's prekey: %v", peer, err)
 	}
-	seen, err := b.peerSerial(peer)
+	seen, err := b.peerSerial(peer, "serial")
 	if err != nil {
 		return nil, err
 	}
 	if p.Serial < seen {
 		return nil, refuse("rollback: %s's prekey serial %d is below %d, already seen", peer, p.Serial, seen)
 	}
+	seenCert, err := b.peerSerial(peer, "cert-serial")
+	if err != nil {
+		return nil, err
+	}
+	if cert.Serial() < seenCert {
+		return nil, refuse("rollback: %s's prekey is signed under certificate %d, below %d, already seen", peer, cert.Serial(), seenCert)
+	}
 	if p.Expired(b.now()) {
 		return nil, refuse("%s's prekey has expired: its owner must publish a new one", peer)
 	}
-	// Recorded only after every check passed.
+	if err := b.pin(id); err != nil {
+		return nil, err
+	}
 	d := b.path("peers", peer.String())
 	if err := writeFile(d+"/serial", []byte(strconv.FormatUint(p.Serial, 10)+"\n")); err != nil {
+		return nil, err
+	}
+	if err := writeFile(d+"/cert-serial", []byte(strconv.FormatUint(cert.Serial(), 10)+"\n")); err != nil {
 		return nil, err
 	}
 	if err := writeFile(d+"/prekey.txt", ir.Prekey); err != nil {
@@ -57,21 +74,20 @@ func (b *Box) Resolve(ctx context.Context, peer protocol.Address) (*protocol.Pre
 	return p, writeFile(d+"/prekey.sig", ir.PrekeySignature)
 }
 
-// pin returns the peer's pinned identity. At first contact the served
-// document must hash to the address and parse; it is pinned only then.
-func (b *Box) pin(peer protocol.Address, served []byte) (*protocol.Identity, error) {
-	d := b.path("peers", peer.String())
-	doc, err := os.ReadFile(d + "/identity.doc") //nolint:gosec // a path inside the box's own directory
+// identityOf returns the peer's identity: the pinned one, or, for a peer not
+// met before, the one served, held in memory. A served document must hash to
+// the address before anything else is read from it. Nothing is written:
+// [Box.pin] does that, once something the identity signed has verified.
+func (b *Box) identityOf(peer protocol.Address, served []byte) (*protocol.Identity, error) {
+	doc, err := os.ReadFile(b.path("peers", peer.String(), "identity.doc"))
 	switch {
 	case err == nil:
 		// A pin always wins.
 	case errors.Is(err, fs.ErrNotExist):
-		doc = served // pinned below, only if it hashes to the address
+		doc = served
 	default:
 		return nil, err
 	}
-	// The hash first: nothing else is read from a document that is not the
-	// address's own.
 	if len(doc) == 0 {
 		return nil, refuse("the server has no identity for %s", peer)
 	}
@@ -82,20 +98,29 @@ func (b *Box) pin(peer protocol.Address, served []byte) (*protocol.Identity, err
 	if err != nil {
 		return nil, refuse("%s's identity: %v", peer, err)
 	}
-	if err := os.MkdirAll(d, 0o700); err != nil {
-		return nil, err
-	}
-	if !exists(d + "/identity.doc") {
-		if err := writeFile(d+"/identity.doc", doc); err != nil {
-			return nil, err
-		}
-	}
 	return id, nil
 }
 
-// peerSerial returns the highest prekey serial seen for peer, or 0.
-func (b *Box) peerSerial(peer protocol.Address) (uint64, error) {
-	s, err := os.ReadFile(b.path("peers", peer.String(), "serial"))
+// pin keeps a peer's identity document, unless it is kept already. It is
+// called only for an identity that has signed something this box verified: a
+// prekey statement it will encrypt to, or mail it delivers. So peers/<a>/
+// exists only for a peer that has signed something.
+func (b *Box) pin(id *protocol.Identity) error {
+	d := b.path("peers", id.Address().String())
+	if exists(d + "/identity.doc") {
+		return nil
+	}
+	if err := os.MkdirAll(d, 0o700); err != nil {
+		return err
+	}
+	return writeFile(d+"/identity.doc", id.Document())
+}
+
+// peerSerial returns the highest serial seen for peer and kept in file:
+// "serial" for its prekey's, "cert-serial" for its certificate's. It is 0
+// when none is kept.
+func (b *Box) peerSerial(peer protocol.Address, file string) (uint64, error) {
+	s, err := os.ReadFile(b.path("peers", peer.String(), file))
 	if errors.Is(err, fs.ErrNotExist) {
 		return 0, nil
 	}

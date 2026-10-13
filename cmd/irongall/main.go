@@ -23,7 +23,7 @@ import (
 
 const usage = `usage: irongall <command> [arguments]
 
-  init [--no-pq]          create this box, register it and activate it; prints
+  init [--no-pq]          create this box and register it; prints
                            its link, as addr does
   addr                     print this box's link, <server>/to/<address>: give it
                            to whoever should write to this box

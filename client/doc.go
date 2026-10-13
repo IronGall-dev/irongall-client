@@ -11,14 +11,15 @@
 // own file formats (an OpenSSH key, age key files), so the script and this
 // library can run the same box:
 //
-//	identity, identity.pub     the Ed25519 identity, OpenSSH format; back it up
+//	identity, identity.pub     the Ed25519 identity, OpenSSH format; back it up. It signs certificates only
 //	identity.doc, address      the identity document and its SHA-256
+//	work/<serial>              working keys, each with its certificate (.pub, -cert.pub): they sign what the box says
 //	prekeys/<serial>.agekey    age keys, each with its signed statement (.txt, .txt.sig); never backed up
 //	serial                     the highest prekey serial this box has published
-//	token                      the owner token
-//	peers/<address>/           the pinned identity document, the highest prekey serial seen
+//	pass                       the pass this box last signed for its server, used until it runs out
+//	peers/<address>/           the pinned identity document, the highest prekey serial and certificate serial seen
 //	seen                       the replay set: ciphertext hash, sent_at, from, msg_id, for 33 days
-//	outbox/, outbox/failed/    envelopes and signed bytes awaiting a receipt; ones that can never be delivered
+//	outbox/, outbox/failed/    signed envelopes awaiting a receipt; ones that can never be delivered
 //	inbox/, quarantine/        accepted mail; refused mail, never delivered, each with its reason beside it (.reason)
 //	sent/                      sent mail the server took: each envelope with the server's receipt
 //	aliases                    this box's own names for peers: "<name> <address>" lines

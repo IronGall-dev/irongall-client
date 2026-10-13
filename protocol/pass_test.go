@@ -121,7 +121,7 @@ func TestPassRoundTrip(t *testing.T) {
 		t.Errorf("a not_after that was not signed: %v", err)
 	}
 	// A pass that is good, under a certificate that has ended, is refused for the certificate.
-	b2, _, signer2 := passBox(t, now.Add(-MaxCertificateLifetime+2*time.Hour+5*time.Minute))
+	b2, _, signer2 := passBox(t, now.Add(-CertificateLifetime+2*time.Hour+5*time.Minute))
 	h2, _, err := NewPass(signer2, b2.id.Address(), "irongall.dev", now)
 	if err != nil {
 		t.Fatal(err)

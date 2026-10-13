@@ -1,14 +1,9 @@
 package protocol
 
-import (
-	"errors"
-	"strings"
-)
-
 // Padding. The server sees each message's ciphertext, and so its size. A
-// sender pads every envelope, with its pad member, so that the ciphertext is
-// a whole number of blocks: the server then learns a message's size to within
-// one block, and no more.
+// sender pads every message, after the envelope and its signature, so that
+// the ciphertext is a whole number of blocks: the server then learns a
+// message's size to within one block, and no more.
 //
 // The block is 1/16 of the ciphertext's size, rounded up to a power of two,
 // and never under 1 KiB: 1 KiB blocks up to 16 KiB, 2 KiB up to 32 KiB, 4 KiB
@@ -17,17 +12,16 @@ import (
 //
 // It is the ciphertext that is measured, because the ciphertext is what the
 // server sees and what its size limit counts. age adds a fixed number of
-// bytes for a key type and a plaintext length ([SealedSize]), so the pad is
-// computed, and the sender then checks the size of what age wrote.
+// bytes for a key type and a plaintext length ([SealedSize]), so the padding
+// is computed, and the sender then checks the size of what age wrote.
+//
+// The padding is outside what is signed, where OpenPGP puts its own: a
+// message is signed once however often it is encrypted again, and a message
+// already on a block gets none.
 
 const (
 	// PadMinBlock is the smallest block, in bytes.
 	PadMinBlock = 1024
-	// padMember is what the pad member costs beside its filler: ,"pad":""
-	padMember = 9
-	// padFiller is one byte of filler: ASCII that JSON never escapes, so a
-	// pad of n of them is n bytes.
-	padFiller = "."
 
 	// An age file is a header, a 16-byte nonce, and the plaintext in chunks
 	// of 64 KiB, each followed by a 16-byte tag. A file always has one chunk,
@@ -84,44 +78,18 @@ func PaddedSize(size int) int {
 	return (size + block - 1) / block * block
 }
 
-// padTo returns what an envelope of bare bytes, marshalled with no pad member,
-// is padded to for a key of type t: the size of its age file, and the filler
-// its pad member takes. Every envelope carries the member, which costs
-// padMember bytes beside its filler, so the file is the next whole number of
-// blocks at or after the envelope's with an empty pad.
+// padTo returns what a message of bare bytes, its envelope line and its
+// signature, is padded to for a key of type t: the size of its age file, and
+// the bytes of padding that give it. The file is the next whole number of
+// blocks at or after the bare message's.
 func padTo(t KeyType, bare int) (sealed, filler int) {
-	sealed = PaddedSize(SealedSize(t, bare+padMember))
+	sealed = PaddedSize(SealedSize(t, bare))
 	for {
-		if n, ok := plaintextSize(t, sealed); ok {
-			return sealed, n - bare - padMember
+		if n, ok := plaintextSize(t, sealed); ok && n >= bare {
+			return sealed, n - bare
 		}
 		// No age file has this size: the next block. Under 3 GiB every
 		// padded size is a file's (TestEveryPaddedSizeIsAnAgeFile).
 		sealed = PaddedSize(sealed + 1)
 	}
-}
-
-// MarshalPadded returns the envelope as [Envelope.Marshal] does, with a pad
-// member whose filler makes the age file holding it, encrypted to one key of
-// type t, a whole number of blocks; and that file's size. Whatever Pad held
-// is replaced. Every envelope gets the member, with no filler when none is
-// needed: so every file is on a block, and what padding costs at a size limit
-// is the member's 9 bytes and no more.
-//
-// The caller encrypts what it returns, and checks the file's size is sealed.
-func (e *Envelope) MarshalPadded(t KeyType) (plaintext []byte, sealed int, err error) {
-	bare, err := e.marshal(nil)
-	if err != nil {
-		return nil, 0, err
-	}
-	sealed, n := padTo(t, len(bare))
-	filler := strings.Repeat(padFiller, n)
-	plaintext, err = e.marshal(&filler)
-	if err != nil {
-		return nil, 0, err
-	}
-	if len(plaintext) != len(bare)+padMember+n {
-		return nil, 0, errors.New("the padded envelope is not the size its pad was computed for")
-	}
-	return plaintext, sealed, nil
 }

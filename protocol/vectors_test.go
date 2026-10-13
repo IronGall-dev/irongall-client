@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"filippo.io/edwards25519"
+	"github.com/IronGall-dev/irongall-client/sshsig"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -134,6 +135,78 @@ func TestVectorBadIdentities(t *testing.T) {
 	}
 }
 
+// vectorCertificate parses a kept certificate, a line of "<type> <base64>".
+func vectorCertificate(t *testing.T, name string) ssh.PublicKey {
+	t.Helper()
+	key, _, _, _, err := ssh.ParseAuthorizedKey(read(t, name))
+	if err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	return key
+}
+
+// vectorWorker returns a box's working key as a signer under its kept
+// certificate: what "ssh-keygen -Y sign -f work-cert.pub" signs with.
+func vectorWorker(t *testing.T, box string) ssh.Signer {
+	t.Helper()
+	work, _ := vectorKey(t, box+"-work")
+	cert, err := CheckCertificate(vectorIdentity(t, box), vectorCertificate(t, box+"/work-cert.pub"), vectorNow(t))
+	if err != nil {
+		t.Fatalf("%s/work-cert.pub: %v", box, err)
+	}
+	s, err := cert.Signer(work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+func TestVectorCertificates(t *testing.T) {
+	now := vectorNow(t)
+	a, b := vectorIdentity(t, "a"), vectorIdentity(t, "b")
+	for _, c := range []struct {
+		id   *Identity
+		file string
+	}{{a, "a/work-cert.pub"}, {b, "b/work-cert.pub"}} {
+		cert, err := CheckCertificate(c.id, vectorCertificate(t, c.file), now)
+		if err != nil {
+			t.Errorf("%s: %v", c.file, err)
+			continue
+		}
+		if cert.Serial() != 1 || !cert.NotAfter().Equal(now.Add(CertificateLifetime)) || !cert.SignsMail(now) {
+			t.Errorf("%s: serial %d, ends %s", c.file, cert.Serial(), cert.NotAfter())
+		}
+	}
+	if _, err := CheckCertificate(b, vectorCertificate(t, "a/work-cert.pub"), now); !errors.Is(err, ErrCertificate) {
+		t.Errorf("B took A's certificate: %v", err)
+	}
+	st := read(t, "a/prekey-1.txt")
+	for _, f := range glob(t, "cert/bad-*.pub") {
+		name := strings.TrimSuffix(filepath.Base(f), ".pub")
+		key := vectorCertificate(t, "cert/"+name+".pub")
+		sig := read(t, "cert/"+name+".sig")
+		want := ErrCertificate
+		if name == "bad-ended" || name == "bad-not-begun" {
+			want = ErrCertificateTime
+		}
+		if _, err := CheckCertificate(a, key, now); !errors.Is(err, want) {
+			t.Errorf("%s: CheckCertificate: %v, want %v", name, err, want)
+		}
+		if _, err := VerifyCertified(a, st, sig, PrekeyNamespace(a.Address()), now); !errors.Is(err, want) {
+			t.Errorf("%s: VerifyCertified: %v, want %v", name, err, want)
+		}
+		// Control: the signature is good under the certificate it carries,
+		// so the certificate is what was refused.
+		blob, err := Dearmor(sig)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if err := sshsig.Verify(key, st, blob, PrekeyNamespace(a.Address())); err != nil {
+			t.Errorf("%s: control: the signature itself fails: %v", name, err)
+		}
+	}
+}
+
 func TestVectorPrekeys(t *testing.T) {
 	now := vectorNow(t)
 	a, b := vectorIdentity(t, "a"), vectorIdentity(t, "b")
@@ -149,12 +222,12 @@ func TestVectorPrekeys(t *testing.T) {
 		{a, "a/prekey-2.txt", "a/prekey-2.txt.sig", 2, Classic},
 		{b, "b/prekey-1.txt", "b/prekey-1.txt.sig", 1, PostQuantum},
 	} {
-		p, err := VerifyPrekey(c.id, read(t, c.file), read(t, c.sig))
+		p, cert, err := VerifyPrekey(c.id, read(t, c.file), read(t, c.sig), now)
 		if err != nil {
 			t.Errorf("%s: %v", c.sig, err)
 			continue
 		}
-		if p.Serial != c.serial || p.Type() != c.typ || p.Expired(now) || p.CheckLifetime(now) != nil {
+		if p.Serial != c.serial || p.Type() != c.typ || p.Expired(now) || p.CheckLifetime(now) != nil || cert.Serial() != 1 {
 			t.Errorf("%s: serial %d type %s expired %v lifetime %v", c.file, p.Serial, p.Type(), p.Expired(now), p.CheckLifetime(now))
 		}
 		if !bytes.Equal(p.Statement(), read(t, c.file)) {
@@ -164,28 +237,37 @@ func TestVectorPrekeys(t *testing.T) {
 			t.Errorf("%s: %v", c.file, err)
 		}
 	}
-	if _, err := VerifyPrekey(b, read(t, "a/prekey-1.txt"), read(t, "a/prekey-1.txt.sig")); err == nil {
+	if _, _, err := VerifyPrekey(b, read(t, "a/prekey-1.txt"), read(t, "a/prekey-1.txt.sig"), now); err == nil {
 		t.Error("B accepted A's prekey")
+	}
+	// A statement is checked at the verifier's clock: once its certificate
+	// has ended, it no longer verifies.
+	if _, _, err := VerifyPrekey(a, read(t, "a/prekey-1.txt"), read(t, "a/prekey-1.txt.sig"), now.Add(CertificateLifetime)); err == nil {
+		t.Error("a prekey statement verified after its certificate ended")
 	}
 }
 
 func TestVectorBadPrekeys(t *testing.T) {
 	now := vectorNow(t)
 	a := vectorIdentity(t, "a")
+	// These fail at the signature or its certificate; every other bad-* is
+	// well signed, so its format is what refuses it.
+	signature := map[string]bool{
+		"bad-wrong-namespace": true, "bad-signed-by-b": true, "bad-signed-by-the-identity": true,
+		"bad-signed-by-a-bare-working-key": true,
+	}
 	for _, f := range glob(t, "prekey/*.txt") {
 		name := strings.TrimSuffix(filepath.Base(f), ".txt")
 		st, _ := os.ReadFile(f)
 		sig, _ := os.ReadFile(f + ".sig")
-		p, err := VerifyPrekey(a, st, sig)
+		p, _, err := VerifyPrekey(a, st, sig, now)
 		switch {
 		case strings.HasPrefix(name, "bad-"):
 			if err == nil {
 				t.Errorf("%s: accepted", name)
 			}
-			// Control: apart from the signature cases, the signature is
-			// good, so the format check is what refused it.
-			if name != "bad-wrong-namespace" && name != "bad-signed-by-b" {
-				if err := Verify(a, st, sig, PrekeyNamespace(a.Address())); err != nil {
+			if !signature[name] {
+				if _, err := VerifyCertified(a, st, sig, PrekeyNamespace(a.Address()), now); err != nil {
 					t.Errorf("%s: control: the signature itself fails: %v", name, err)
 				}
 			}
@@ -204,23 +286,24 @@ func TestVectorBadPrekeys(t *testing.T) {
 }
 
 // TestVectorSignatures checks Go's signatures are byte-identical to the
-// ssh-keygen ones in the vectors: Ed25519 is deterministic.
+// ssh-keygen ones in the vectors: Ed25519 is deterministic, and a signature
+// under a kept certificate carries that certificate's bytes.
 func TestVectorSignatures(t *testing.T) {
 	a, b := vectorIdentity(t, "a"), vectorIdentity(t, "b")
-	sa, _ := vectorKey(t, "a")
-	sb, _ := vectorKey(t, "b")
+	ia, _ := vectorKey(t, "a")
+	wa, wb := vectorWorker(t, "a"), vectorWorker(t, "b")
 	for _, c := range []struct {
 		signer ssh.Signer
-		id     *Identity
 		msg    string
 		sig    string
 		ns     string
 	}{
-		{sa, a, "a/prekey-1.txt", "a/prekey-1.txt.sig", PrekeyNamespace(a.Address())},
-		{sa, a, "a/prekey-2.txt", "a/prekey-2.txt.sig", PrekeyNamespace(a.Address())},
-		{sb, b, "b/prekey-1.txt", "b/prekey-1.txt.sig", PrekeyNamespace(b.Address())},
-		{sa, a, "a/revoke.txt", "a/revoke.sig", RevokeNamespace(a.Address())},
-		{sa, a, "message/a-to-b.age", "message/a-to-b.age.sig", MessageNamespace(b.Address())},
+		{wa, "a/prekey-1.txt", "a/prekey-1.txt.sig", PrekeyNamespace(a.Address())},
+		{wa, "a/prekey-2.txt", "a/prekey-2.txt.sig", PrekeyNamespace(a.Address())},
+		{wb, "b/prekey-1.txt", "b/prekey-1.txt.sig", PrekeyNamespace(b.Address())},
+		{wa, "a/pass.txt", "a/pass.sig", PassNamespace(a.Address())},
+		{wa, "message/a-to-b.line", "message/a-to-b.sig", MessageNamespace(b.Address())},
+		{ia, "a/revoke.txt", "a/revoke.sig", RevokeNamespace(a.Address())},
 	} {
 		got, err := Sign(c.signer, read(t, c.msg), c.ns)
 		if err != nil {
@@ -229,29 +312,142 @@ func TestVectorSignatures(t *testing.T) {
 		if !bytes.Equal(got, read(t, c.sig)) {
 			t.Errorf("%s: Go's signature differs from ssh-keygen's:\n%s", c.sig, got)
 		}
-		if err := Verify(c.id, read(t, c.msg), read(t, c.sig), c.ns); err != nil {
-			t.Errorf("%s: %v", c.sig, err)
-		}
+	}
+	// The revocation is the identity's own signature, the one thing it signs
+	// beside certificates.
+	if err := Verify(a, read(t, "a/revoke.txt"), read(t, "a/revoke.sig"), RevokeNamespace(a.Address())); err != nil {
+		t.Errorf("a/revoke.sig: %v", err)
 	}
 	if !bytes.Equal(RevocationStatement(a.Address()), read(t, "a/revoke.txt")) {
 		t.Error("RevocationStatement differs from a/revoke.txt")
 	}
 }
 
-func TestVectorMessage(t *testing.T) {
+func TestVectorPass(t *testing.T) {
+	now := vectorNow(t)
 	a, b := vectorIdentity(t, "a"), vectorIdentity(t, "b")
+	const server = "irongall.example"
+	header := strings.TrimSuffix(string(read(t, "a/pass.authorization")), "\n")
+	got, notAfter, err := NewPass(vectorWorker(t, "a"), a.Address(), server, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != header || !notAfter.Equal(now.Add(PassLifetime)) {
+		t.Errorf("NewPass differs from a/pass.authorization:\n%s", got)
+	}
+	if !bytes.Equal(PassStatement(a.Address(), server, notAfter), read(t, "a/pass.txt")) {
+		t.Error("PassStatement differs from a/pass.txt")
+	}
+	p, err := ParsePass(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cert, err := p.Verify(a, server, now); err != nil || cert.Serial() != 1 {
+		t.Errorf("a/pass.authorization: %v", err)
+	}
+	if _, err := p.Verify(a, "another.example", now); !errors.Is(err, ErrPass) {
+		t.Errorf("a pass for one server was taken by another: %v", err)
+	}
+	if _, err := p.Verify(b, server, now); !errors.Is(err, ErrPass) {
+		t.Errorf("A's pass was taken as B's: %v", err)
+	}
+	if _, err := p.Verify(a, server, now.Add(PassLifetime)); !errors.Is(err, ErrPassExpired) {
+		t.Errorf("a pass was taken at the moment it runs out: %v", err)
+	}
+}
+
+// plainVerdicts is what B makes of each plain/ vector at ./now: "" for a
+// message that is delivered, or the code it is refused with.
+var plainVerdicts = map[string]string{
+	"accept-no-padding":                      "",
+	"accept-padded":                          "",
+	"accept-anything-after-the-signature":    "",
+	"accept-every-field":                     "",
+	"refuse-signed-for-another-box":          RefusedSignature,
+	"refuse-signed-by-the-identity":          RefusedSignature,
+	"refuse-signed-by-a-bare-working-key":    RefusedSignature,
+	"refuse-certificate-ended":               RefusedSignature,
+	"refuse-line-changed-after-signing":      RefusedSignature,
+	"refuse-another-box-s-identity-document": RefusedSignature,
+	"refuse-from-is-not-the-identity":        RefusedAttribution,
+	"refuse-to-another-box":                  RefusedAttribution,
+	"refuse-no-identity":                     RefusedIdentity,
+	"refuse-identity-not-base64":             RefusedIdentity,
+	"refuse-identity-of-small-order":         RefusedIdentity,
+	"refuse-no-line-feed":                    RefusedMessage,
+	"refuse-no-signature":                    RefusedMessage,
+	"refuse-blank-line-before-the-signature": RefusedMessage,
+	"refuse-signature-first":                 RefusedMessage,
+	"refuse-no-end-line":                     RefusedMessage,
+	"refuse-end-line-without-its-line-feed":  RefusedMessage,
+	"refuse-crlf":                            RefusedMessage,
+	"refuse-envelope-on-two-lines":           RefusedMessage,
+}
+
+func TestVectorPlaintexts(t *testing.T) {
+	now := vectorNow(t)
+	a, b := vectorIdentity(t, "a"), vectorIdentity(t, "b")
+	seen := 0
+	for _, f := range glob(t, "plain/*.txt") {
+		name := strings.TrimSuffix(filepath.Base(f), ".txt")
+		want, known := plainVerdicts[name]
+		if !known {
+			t.Errorf("%s: unknown vector", name)
+			continue
+		}
+		seen++
+		pt, _ := os.ReadFile(f)
+		m, err := OpenSigned(pt, b.Address(), now)
+		var refused *EnvelopeError
+		switch {
+		case want == "" && err != nil:
+			t.Errorf("%s: %v", name, err)
+		case want == "" && (m.Sender.Address() != a.Address() || m.Envelope.From != a.Address() || m.Certificate.Serial() != 1):
+			t.Errorf("%s: delivered as from %s", name, m.Sender.Address())
+		case want != "" && err == nil:
+			t.Errorf("%s: accepted", name)
+		case want != "" && (!errors.As(err, &refused) || refused.Code != want):
+			t.Errorf("%s: refused as %v, want %s", name, err, want)
+		}
+		// The line that was checked is the first line as it arrived, byte
+		// for byte: nothing is verified or read from a rebuilt copy.
+		if err == nil && !bytes.HasPrefix(pt, m.Line) {
+			t.Errorf("%s: the line that was verified is not the bytes that arrived", name)
+		}
+	}
+	if seen != len(plainVerdicts) {
+		t.Errorf("%d of %d plain/ vectors are present", seen, len(plainVerdicts))
+	}
+	// What follows the first END line is never read: the second signature
+	// block in this vector is B's, and the message is still A's.
+	if m, err := OpenSigned(read(t, "plain/accept-anything-after-the-signature.txt"), b.Address(), now); err != nil || !bytes.Equal(m.Signature, read(t, "message/a-to-b.sig")) {
+		t.Errorf("the signature taken is not the first block: %v", err)
+	}
+}
+
+func TestVectorMessage(t *testing.T) {
+	now := vectorNow(t)
+	a, b := vectorIdentity(t, "a"), vectorIdentity(t, "b")
+	// Go builds the same plaintext as the stock tools did: the line, the
+	// signature under the kept certificate, and the padding for B's prekey.
+	env := &Envelope{From: a.Address(), To: b.Address(), SentAt: now, MsgID: "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b", Identity: a.Document(), Body: []byte(`"hello"`)}
+	line, sig, err := SignEnvelope(env, vectorWorker(t, "a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(line, read(t, "message/a-to-b.line")) || !bytes.Equal(sig, read(t, "message/a-to-b.sig")) {
+		t.Errorf("SignEnvelope differs from message/a-to-b.line and .sig:\n%s%s", line, sig)
+	}
+	pt, sealed := Plaintext(line, sig, PostQuantum)
 	m := read(t, "message/a-to-b.age")
-	if err := Verify(a, m, read(t, "message/a-to-b.age.sig"), MessageNamespace(b.Address())); err != nil {
-		t.Fatalf("control: %v", err)
-	}
-	if err := Verify(a, m, read(t, "message/a-to-b.age.for-another-box.sig"), MessageNamespace(b.Address())); err == nil {
-		t.Error("a signature for another box verified for B")
-	}
-	if err := Verify(b, m, read(t, "message/a-to-b.age.sig"), MessageNamespace(b.Address())); err == nil {
-		t.Error("A's signature verified as B's")
+	if !bytes.Equal(pt, read(t, "message/a-to-b.plain")) || sealed != len(m) {
+		t.Errorf("Plaintext differs from message/a-to-b.plain: %d bytes for a file of %d, want %d", len(pt), sealed, len(m))
 	}
 	if !bytes.HasPrefix(m, []byte("age-encryption.org/v1\n-> mlkem768x25519 ")) {
 		t.Error("the message is not a post-quantum age file")
+	}
+	if len(m) != PaddedSize(len(m)) {
+		t.Errorf("the message is %d bytes, not a whole number of blocks", len(m))
 	}
 }
 

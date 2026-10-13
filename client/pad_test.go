@@ -33,16 +33,18 @@ func posted(e *env, b protocol.Address) *[][]byte {
 }
 
 // Every send is padded: what the server gets is a whole number of blocks, and
-// bodies of different lengths are one size. The recipient's line, the
-// sender's sent/ record and its outbox carry no padding.
+// bodies of different lengths are one size. The padding is after the
+// signature, so the recipient's line, the sender's sent/ record and its
+// outbox never held any; and the line and the record carry no identity
+// document either.
 func TestSendPadsEveryMessage(t *testing.T) {
 	for _, c := range []struct {
 		kt     protocol.KeyType
 		first  int // the smallest block's size for this key type
 		bodies []string
 	}{
-		{protocol.PostQuantum, 2048, []string{"no", "yes", "reject", "approve", strings.Repeat("a", 136)}},
-		{protocol.Classic, 1024, []string{"no", "yes", "reject", "approve", strings.Repeat("a", 571)}},
+		{protocol.PostQuantum, 3072, []string{"no", "yes", "reject", "approve", strings.Repeat("a", 184)}},
+		{protocol.Classic, 2048, []string{"no", "yes", "reject", "approve", strings.Repeat("a", 619)}},
 	} {
 		e := newEnv(t)
 		a, b := e.box(protocol.Classic), e.box(c.kt)
@@ -73,17 +75,18 @@ func TestSendPadsEveryMessage(t *testing.T) {
 			if bodyOf(t, d) != c.bodies[i] {
 				t.Errorf("%s: delivered %q, sent %q", c.kt, bodyOf(t, d), c.bodies[i])
 			}
-			if strings.Contains(string(d.Line), `"pad"`) {
-				t.Errorf("%s: the delivered line carries the padding: %s", c.kt, d.Line)
+			if strings.Contains(string(d.Line), `"identity"`) || strings.Contains(string(d.Line), "....") {
+				t.Errorf("%s: the delivered line carries the identity document or the padding: %s", c.kt, d.Line)
 			}
-			// The last body fills its block but for the member itself, whose filler is then empty.
-			if !strings.Contains(string(d.Plaintext), `,"pad":"`) || (d.Envelope.Pad == "") != (i == len(c.bodies)-1) {
-				t.Errorf("%s: the envelope of a %d-byte body came with %d bytes of filler", c.kt, len(c.bodies[i]), len(d.Envelope.Pad))
+			// What was signed is one line, the envelope with the sender's
+			// identity document, and no padding is part of it.
+			if !bytes.HasSuffix(d.Plaintext, []byte("}\n")) || bytes.Count(d.Plaintext, []byte("\n")) != 1 || !strings.Contains(string(d.Plaintext), `"identity":"`) {
+				t.Errorf("%s: what was signed is not the envelope's one line: %q", c.kt, d.Plaintext)
 			}
 		}
 		for name, rec := range sentRecords(t, a) {
-			if strings.Contains(string(rec), `"pad"`) {
-				t.Errorf("%s: sent/%s carries the padding", c.kt, name)
+			if strings.Contains(string(rec), `"identity"`) || strings.Contains(string(rec), "....") {
+				t.Errorf("%s: sent/%s carries the identity document or the padding", c.kt, name)
 			}
 		}
 	}
@@ -91,15 +94,15 @@ func TestSendPadsEveryMessage(t *testing.T) {
 
 // The padding is made for the key a message is encrypted to. After
 // stale_prekey the newer prekey may be of the other type, whose age file is
-// 1,459 bytes smaller or larger: the same envelope is padded again, for that
-// one, and lands on a block again.
+// 1,459 bytes smaller or larger: the same signed envelope is padded again,
+// for that one, and lands on a block again.
 func TestAReencryptionToTheOtherKeyTypeIsPaddedAgain(t *testing.T) {
 	for _, c := range []struct {
 		from, to      protocol.KeyType
 		before, after int
 	}{
-		{protocol.PostQuantum, protocol.Classic, 2048, 1024},
-		{protocol.Classic, protocol.PostQuantum, 1024, 2048},
+		{protocol.PostQuantum, protocol.Classic, 3072, 2048},
+		{protocol.Classic, protocol.PostQuantum, 2048, 3072},
 	} {
 		e := newEnv(t)
 		a, b := e.box(protocol.Classic), e.box(c.from)
@@ -113,9 +116,6 @@ func TestAReencryptionToTheOtherKeyTypeIsPaddedAgain(t *testing.T) {
 			t.Fatalf("outbox holds %d", len(outbox))
 		}
 		p, _ := os.ReadFile(outbox[0])
-		if strings.Contains(string(p), `"pad"`) {
-			t.Fatalf("the outbox's envelope carries padding: %s", p)
-		}
 		if sealed, _ := os.ReadFile(strings.TrimSuffix(outbox[0], ".P") + ".age"); len(sealed) != c.before {
 			t.Fatalf("%s: sealed at %d bytes, want %d", c.from, len(sealed), c.before)
 		}
@@ -134,10 +134,8 @@ func TestAReencryptionToTheOtherKeyTypeIsPaddedAgain(t *testing.T) {
 		if len(res.Delivered) != 1 || bodyOf(t, res.Delivered[0]) != "kept" {
 			t.Fatalf("%s → %s: delivered %d", c.from, c.to, len(res.Delivered))
 		}
-		got := *res.Delivered[0].Envelope
-		got.Pad = ""
-		if m, err := got.Marshal(); err != nil || string(m) != string(p) {
-			t.Fatalf("%s → %s: the re-encrypted message is not the same envelope", c.from, c.to)
+		if !bytes.Equal(res.Delivered[0].Plaintext, p) {
+			t.Fatalf("%s → %s: the re-encrypted message is not the same signed envelope", c.from, c.to)
 		}
 	}
 }

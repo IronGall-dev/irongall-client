@@ -36,9 +36,12 @@ func IsMsgID(s string) bool { return msgIDGrammar.MatchString(s) }
 // The checks an envelope can fail, as codes: a closed set, so that whoever
 // reads a refusal reads words this code chose.
 const (
-	RefusedEnvelope    = "bad_envelope" // not UTF-8 JSON, one object with no key twice, version 1, with a body, a msg_id and a sent_at
-	RefusedAttribution = "reattributed" // its from is not the verified signer, or its to is not this box
-	RefusedStale       = "stale"        // its sent_at is older than TTL
+	RefusedMessage     = "bad_message"   // what was decrypted is not an envelope line and then a signature block
+	RefusedEnvelope    = "bad_envelope"  // not UTF-8 JSON, one object with no key twice, version 1, with a body, a msg_id and a sent_at
+	RefusedIdentity    = "bad_identity"  // the envelope carries no identity document, or one that breaks its format or its key checks
+	RefusedSignature   = "bad_signature" // not signed for this box by a working key the sender's identity certified, under a certificate valid now
+	RefusedAttribution = "reattributed"  // its from is not the address of the identity that signed it, or its to is not this box
+	RefusedStale       = "stale"         // its sent_at is older than TTL
 )
 
 // EnvelopeError is the check an envelope failed: one of the codes above and
@@ -50,8 +53,9 @@ func (e *EnvelopeError) Error() string { return e.Why }
 
 func badEnvelope(why string) error { return &EnvelopeError{RefusedEnvelope, why} }
 
-// Envelope is a message's plaintext: what is encrypted to the recipient's
-// prekey. The server never sees it.
+// Envelope is a message: one line of JSON, which the sender's working key
+// signs. It is encrypted to the recipient's prekey with that signature after
+// it (signed.go), so the server sees neither.
 type Envelope struct {
 	From   Address
 	To     Address
@@ -66,7 +70,12 @@ type Envelope struct {
 	Subject    string // optional
 	InReplyTo  string // optional: the msg_id replied to
 	Supersedes string // optional: a msg_id of the same sender this replaces
-	Pad        string // optional, ignored: padding to hide the length
+
+	// Identity is the sender's identity document, exactly as hashed: it is
+	// how a recipient checks a sender it has never met without asking the
+	// server. From is its hash. A signed envelope always carries it; the line
+	// a client delivers is built without it.
+	Identity []byte
 }
 
 // wireEnvelope is the JSON form, in the field order the stock recipe writes.
@@ -76,11 +85,11 @@ type wireEnvelope struct {
 	To         Address         `json:"to"`
 	SentAt     string          `json:"sent_at"`
 	MsgID      string          `json:"msg_id"`
+	Identity   Bytes           `json:"identity,omitempty"`
 	Body       json.RawMessage `json:"body"`
 	Subject    string          `json:"subject,omitempty"`
 	InReplyTo  string          `json:"in_reply_to,omitempty"`
 	Supersedes string          `json:"supersedes,omitempty"`
-	Pad        *string         `json:"pad,omitempty"` // a pointer: a pad of no filler is still a member
 }
 
 // NewEnvelope returns an envelope from one box to another with a string body,
@@ -100,18 +109,9 @@ func NewEnvelope(from, to Address, body string, now time.Time) (*Envelope, error
 	return &Envelope{From: from, To: to, SentAt: now.UTC().Truncate(time.Second), MsgID: id, Body: b}, nil
 }
 
-// Marshal returns the envelope as compact UTF-8 JSON with no HTML escaping,
-// the form to encrypt.
+// Marshal returns the envelope as compact UTF-8 JSON with no HTML escaping
+// and no line feed after it.
 func (e *Envelope) Marshal() ([]byte, error) {
-	if e.Pad == "" {
-		return e.marshal(nil)
-	}
-	return e.marshal(&e.Pad)
-}
-
-// marshal is Marshal with the pad member as given: nil for none, and a
-// pointer to the empty string for the member with no filler.
-func (e *Envelope) marshal(pad *string) ([]byte, error) {
 	if e.Body == nil {
 		return nil, errors.New("an envelope needs a body")
 	}
@@ -121,27 +121,43 @@ func (e *Envelope) marshal(pad *string) ([]byte, error) {
 		To:         e.To,
 		SentAt:     e.SentAt.UTC().Format(TimeLayout),
 		MsgID:      e.MsgID,
+		Identity:   e.Identity,
 		Body:       e.Body,
 		Subject:    e.Subject,
 		InReplyTo:  e.InReplyTo,
 		Supersedes: e.Supersedes,
-		Pad:        pad,
 	})
 }
 
-// OpenEnvelope parses a decrypted envelope and checks it, in this order: it is
-// UTF-8 JSON, one object with no key twice; it is version 1, as a JSON number;
-// its from is the VERIFIED signer and its to is this box (a mismatch means
-// someone re-signed another sender's ciphertext as their own); it has a body
-// and a msg_id; and sent_at is no older than TTL at now.
+// Line returns the envelope as the one line that is signed and sent: Marshal,
+// then a line feed. Compact JSON holds no line feed of its own, since JSON
+// escapes one inside a string.
+func (e *Envelope) Line() ([]byte, error) {
+	if len(e.Identity) == 0 {
+		return nil, errors.New("an envelope to sign carries its sender's identity document")
+	}
+	p, err := e.Marshal()
+	if err != nil {
+		return nil, err
+	}
+	return append(p, '\n'), nil
+}
+
+// OpenEnvelope parses an envelope and checks it, in this order: it is UTF-8
+// JSON, one object with no key twice; it is version 1, as a JSON number; its
+// from is the VERIFIED signer and its to is this box (a signature holds for
+// one recipient, so a mismatch is a message passed on to a box it was not
+// written to, or one whose from names a box that did not sign it); it has a
+// body and a msg_id; and sent_at is no older than TTL at now.
 //
 // Keys match exactly, as in jq and every other strict reader: "BODY" is an
 // unknown key, ignored, never the body. No key twice, so no two readers can
 // take different values from the envelope's fields. The body itself is the
 // verified sender's own JSON, passed on as it is.
 //
-// The caller has already verified the signature and decrypted. Replay and
-// duplicate checks need the caller's seen-set and are the caller's.
+// The caller has verified the signature over these same bytes (OpenSigned
+// does both). Replay and duplicate checks need the caller's seen-set and are
+// the caller's.
 func OpenEnvelope(plaintext []byte, signer, me Address, now time.Time) (*Envelope, error) {
 	if !utf8.Valid(plaintext) {
 		return nil, badEnvelope("the envelope is not UTF-8")
@@ -156,7 +172,7 @@ func OpenEnvelope(plaintext []byte, signer, me Address, now time.Time) (*Envelop
 	var w wireEnvelope
 	for key, dst := range map[string]any{
 		"from": &w.From, "to": &w.To, "sent_at": &w.SentAt, "msg_id": &w.MsgID,
-		"subject": &w.Subject, "in_reply_to": &w.InReplyTo, "supersedes": &w.Supersedes, "pad": &w.Pad,
+		"subject": &w.Subject, "in_reply_to": &w.InReplyTo, "supersedes": &w.Supersedes, "identity": &w.Identity,
 	} {
 		if raw, ok := fields[key]; ok {
 			if err := json.Unmarshal(raw, dst); err != nil {
@@ -191,9 +207,7 @@ func OpenEnvelope(plaintext []byte, signer, me Address, now time.Time) (*Envelop
 		Subject:    w.Subject,
 		InReplyTo:  w.InReplyTo,
 		Supersedes: w.Supersedes,
-	}
-	if w.Pad != nil {
-		e.Pad = *w.Pad
+		Identity:   w.Identity,
 	}
 	return e, nil
 }
@@ -229,6 +243,16 @@ func objectFields(data []byte) (map[string]json.RawMessage, error) {
 		return nil, notObject
 	}
 	return fields, nil
+}
+
+func utf8Valid(b []byte) bool { return utf8.Valid(b) }
+
+// unmarshalString reads a JSON string, and nothing else, into dst.
+func unmarshalString(raw json.RawMessage, dst *string) error {
+	if len(raw) == 0 || raw[0] != '"' {
+		return errors.New("not a JSON string")
+	}
+	return json.Unmarshal(raw, dst)
 }
 
 // NewMsgID returns a random UUID, version 4 (RFC 9562 §5.4), in lowercase.

@@ -1,16 +1,23 @@
 #!/usr/bin/env bash
 # Regenerates the irongall v1 test vectors with stock tools only: bash, od, base64, fold,
-# sha256sum and ssh-keygen (OpenSSH >= 8.1), plus age >= 1.3 for the one ciphertext.
-# Everything is deterministic (Ed25519 signatures are), except message/a-to-b.age, which is
-# made once and kept. Inputs are in input/: the two identity keys are the PUBLISHED test keys
-# of RFC 8032 §7.1 (TEST 1 and TEST 2), and the age recipients' secret keys were discarded.
-# Every vector is judged at the time in ./now.
+# sha256sum and ssh-keygen, plus age >= 1.3 for the one ciphertext.
+# Everything is deterministic (Ed25519 signatures are), except what is made once and kept:
+# each certificate (ssh-keygen puts a random nonce in one) and message/a-to-b.age.
+# Inputs are in input/: every Ed25519 key is a PUBLISHED test key of RFC 8032 §7.1 (the
+# identities are TEST 1 and TEST 2, the working keys TEST 3, TEST 1024 and TEST SHA(abc)),
+# and the age recipients' secret keys were discarded. Every vector is judged at the time in ./now.
 set -euo pipefail
 umask 077
 cd "$(dirname "$0")"
 NOW=2026-10-10T00:00:00Z
 NOT_AFTER=2026-11-12T00:00:00Z # NOW + 33 days exactly: the longest a prekey may be valid
 MSG_ID=6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b
+# A certificate's validity, as ssh-keygen -V takes it. A client asks for 65 days from a minute before now.
+V_OK=20261009235900Z:20261214000000Z
+V_SHORT=20261009235900Z:20261020000000Z    # ends 10 days after NOW: a 33-day prekey statement outlives it
+V_ENDED=20260801000000Z:20261010000000Z    # ends at NOW
+V_NOT_BEGUN=20261010000001Z:20261214000000Z
+V_TOO_LONG=20261009235900Z:20261215000001Z # ends 66 days and a second after NOW
 
 # Hex helpers. Binary goes through hex strings, never through shell variables.
 asc() { printf '%s' "$1" | od -An -tx1 | tr -d ' \n'; }
@@ -32,33 +39,71 @@ openssh_key() { # <seed hex> <public hex> <file>
 identity_doc() { printf 'irongall-v1\nssh-ed25519 %s\n' "$(bin "$(str "$(asc ssh-ed25519)")$(str "$1")" | b64)"; }
 
 KEYS=$(mktemp -d) # private keys live only here, and only while this runs
-cleanup() { rm -f "$KEYS/a" "$KEYS/b" "$KEYS/a.pub" "$KEYS/b.pub"; rmdir "$KEYS"; }
+cleanup() { local k; for k in a b a-work b-work a-work-2; do rm -f "$KEYS/$k" "$KEYS/$k.pub" "$KEYS/$k-cert.pub"; done; rmdir "$KEYS"; }
 trap cleanup EXIT
 
 printf '%s\n' "$NOW" > now
-mkdir -p a b message identity prekey envelope
-for box in a b; do
+mkdir -p a b message identity prekey envelope cert plain
+for box in a b a-work b-work a-work-2; do
   { read -r seed; read -r pub; } < "input/$box.ed25519"
   openssh_key "$seed" "$pub" "$KEYS/$box"
   ssh-keygen -y -f "$KEYS/$box" > "$KEYS/$box.pub"
   [ "$(cut -d' ' -f2 "$KEYS/$box.pub")" = "$(bin "$(str "$(asc ssh-ed25519)")$(str "$pub")" | b64)" ] || { echo "the $box key file does not hold the RFC 8032 key" >&2; exit 1; }
+done
+for box in a b; do
   printf 'irongall-v1\n%s\n' "$(cut -d' ' -f1,2 "$KEYS/$box.pub")" > "$box/identity.doc"
   sha256sum < "$box/identity.doc" | cut -c1-64 > "$box/address"
 done
 A=$(cat a/address); B=$(cat b/address)
 
-sign() { ssh-keygen -q -Y sign -n "$2" -f "$KEYS/$1" "${@:3}"; } # <box> <namespace> [-O …] < message > signature
+# A certificate: what "ssh-keygen -s" writes for a working key, made once and kept without its comment.
+cert() { # <kept file> <signing key> <certified key> <ssh-keygen options…>
+  local keep=$1 ca=$2 key=$3; shift 3
+  [ -e "$keep" ] || { ssh-keygen -q -s "$KEYS/$ca" "$@" "$KEYS/$key.pub" && cut -d' ' -f1,2 "$KEYS/$key-cert.pub" > "$keep"; }
+}
+good() { echo -I irongall-cert-v1 -n "$1" -z "${2:-1}" -V "${3:-$V_OK}" -O clear; } # <address> [serial] [validity] → the options of a certificate every check passes
+sign() { ssh-keygen -q -Y sign -n "$2" -f "$KEYS/$1" "${@:3}"; } # <key> <namespace> [-O …] < message > signature, by a bare key: an identity's, for a revocation
+under() { cp "$2" "$KEYS/$1-cert.pub"; ssh-keygen -q -Y sign -n "$3" -f "$KEYS/$1-cert.pub" "${@:4}"; } # <working key> <certificate> <namespace> [-O …] < message > signature under that certificate
 statement() { printf 'irongall-prekey-v1\n%s\n%s\n%s\n%s\n' "$@"; } # <address> <serial> <recipient> <not_after>
+
+# Each box's working key, certified by its identity.
+cert a/work-cert.pub a a-work $(good "$A")
+cert b/work-cert.pub b b-work $(good "$B")
 
 # The two boxes, their prekeys and A's revocation.
 statement "$A" 1 "$(cat input/a-1.pq)" "$NOT_AFTER" > a/prekey-1.txt
 statement "$A" 2 "$(cat input/a-2.classic)" "$NOT_AFTER" > a/prekey-2.txt
 statement "$B" 1 "$(cat input/b-1.pq)" "$NOT_AFTER" > b/prekey-1.txt
-for f in a/prekey-1 a/prekey-2; do sign a "irongall-prekey-v1:$A" < "$f.txt" > "$f.txt.sig"; done
-sign a "irongall-prekey-v1:$A" -O hashalg=sha256 < a/prekey-1.txt > a/prekey-1.txt.sha256.sig
-sign b "irongall-prekey-v1:$B" < b/prekey-1.txt > b/prekey-1.txt.sig
+for f in a/prekey-1 a/prekey-2; do under a-work a/work-cert.pub "irongall-prekey-v1:$A" < "$f.txt" > "$f.txt.sig"; done
+under a-work a/work-cert.pub "irongall-prekey-v1:$A" -O hashalg=sha256 < a/prekey-1.txt > a/prekey-1.txt.sha256.sig
+under b-work b/work-cert.pub "irongall-prekey-v1:$B" < b/prekey-1.txt > b/prekey-1.txt.sig
 printf 'irongall-revoke-v1\n%s\n' "$A" > a/revoke.txt
 sign a "irongall-revoke-v1:$A" < a/revoke.txt > a/revoke.sig
+
+# A pass of box A for a server it calls irongall.example, good for ten minutes from NOW, and the header it travels in.
+printf 'irongall-pass-v1\n%s\nirongall.example\n2026-10-10T00:10:00Z\n' "$A" > a/pass.txt
+under a-work a/work-cert.pub "irongall-pass-v1:$A" < a/pass.txt > a/pass.sig
+printf 'irongall-pass address="%s", not_after="2026-10-10T00:10:00Z", signature="%s"\n' "$A" "$(b64 < a/pass.sig)" > a/pass.authorization
+
+# Certificates every implementation must refuse for box A at ./now, each with a signature made under
+# it over a/prekey-1.txt in A's prekey namespace: the signature itself is good, the certificate is not.
+badcert() { # <name> <signing key> <certified key> <ssh-keygen options…>
+  local name=$1 key=$3
+  cert "cert/$name.pub" "${@:2}"
+  under "$key" "cert/$name.pub" "irongall-prekey-v1:$A" < a/prekey-1.txt > "cert/$name.sig"
+}
+badcert bad-extensions a a-work -I irongall-cert-v1 -n "$A" -z 1 -V "$V_OK" # no -O clear: ssh-keygen adds five extensions
+badcert bad-critical-option a a-work $(good "$A") -O force-command=true
+badcert bad-key-id a a-work -I irongall-cert-v2 -n "$A" -z 1 -V "$V_OK" -O clear
+badcert bad-two-principals a a-work -I irongall-cert-v1 -n "$A,$B" -z 1 -V "$V_OK" -O clear
+badcert bad-principal-another-box a a-work $(good "$B")
+badcert bad-serial-zero a a-work $(good "$A" 0)
+badcert bad-host-certificate a a-work $(good "$A") -h
+badcert bad-signed-by-b b a-work $(good "$A")
+badcert bad-certifies-the-identity a a $(good "$A")
+badcert bad-ended a a-work $(good "$A" 1 "$V_ENDED")
+badcert bad-not-begun a a-work $(good "$A" 1 "$V_NOT_BEGUN")
+badcert bad-too-long a a-work $(good "$A" 1 "$V_TOO_LONG")
 
 # Identity documents every implementation must reject.
 GOOD=$(sed -n 2p a/identity.doc)
@@ -85,9 +130,14 @@ identity_doc eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f > 
 # server must refuse to publish it. Each is signed by A in A's prekey namespace unless its name
 # says otherwise.
 PQ=$(cat input/a-1.pq)
-bad() { local name=$1; shift; printf "$@" > "prekey/$name.txt"; sign a "irongall-prekey-v1:$A" < "prekey/$name.txt" > "prekey/$name.txt.sig"; }
-cp a/prekey-1.txt prekey/bad-wrong-namespace.txt; sign a "irongall-msg-v1:$A" < a/prekey-1.txt > prekey/bad-wrong-namespace.txt.sig
-cp a/prekey-1.txt prekey/bad-signed-by-b.txt; sign b "irongall-prekey-v1:$A" < a/prekey-1.txt > prekey/bad-signed-by-b.txt.sig
+bad() { local name=$1; shift; printf "$@" > "prekey/$name.txt"; under a-work a/work-cert.pub "irongall-prekey-v1:$A" < "prekey/$name.txt" > "prekey/$name.txt.sig"; }
+cp a/prekey-1.txt prekey/bad-wrong-namespace.txt; under a-work a/work-cert.pub "irongall-msg-v1:$A" < a/prekey-1.txt > prekey/bad-wrong-namespace.txt.sig
+cp a/prekey-1.txt prekey/bad-signed-by-b.txt; under b-work b/work-cert.pub "irongall-prekey-v1:$A" < a/prekey-1.txt > prekey/bad-signed-by-b.txt.sig
+cp a/prekey-1.txt prekey/bad-signed-by-the-identity.txt; sign a "irongall-prekey-v1:$A" < a/prekey-1.txt > prekey/bad-signed-by-the-identity.txt.sig
+cp a/prekey-1.txt prekey/bad-signed-by-a-bare-working-key.txt; sign a-work "irongall-prekey-v1:$A" < a/prekey-1.txt > prekey/bad-signed-by-a-bare-working-key.txt.sig
+# A statement may not outlive the certificate it is signed under: this one's certificate ends in 10 days.
+cert prekey/bad-outlives-its-certificate.cert.pub a a-work-2 $(good "$A" 2 "$V_SHORT")
+cp a/prekey-1.txt prekey/bad-outlives-its-certificate.txt; under a-work-2 prekey/bad-outlives-its-certificate.cert.pub "irongall-prekey-v1:$A" < a/prekey-1.txt > prekey/bad-outlives-its-certificate.txt.sig
 bad bad-names-another-box 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$B" "$PQ" "$NOT_AFTER"
 bad bad-serial-zero 'irongall-prekey-v1\n%s\n0\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
 bad bad-serial-leading-zero 'irongall-prekey-v1\n%s\n01\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
@@ -111,11 +161,11 @@ bad bad-recipient-small-order-classic 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$A"
 bad expired 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$PQ" "$NOW"
 bad too-long 'irongall-prekey-v1\n%s\n1\n%s\n2026-11-12T00:00:01Z\n' "$A" "$PQ"
 
-# Decrypted envelopes, judged as a message signed by A, received by box B, at ./now.
+# Envelopes, judged as a message whose signature by A verified, received by box B, at ./now.
 case_env() { local name=$1; shift; printf "$@" > "envelope/$name.json"; }
 H='"v":1,"from":"%s","to":"%s"'
 case_env accept-minimal "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
-case_env accept-every-field "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\",\"subject\":\"hi\",\"in_reply_to\":\"$MSG_ID\",\"supersedes\":\"$MSG_ID\",\"pad\":\"xxxx\"}" "$A" "$B"
+case_env accept-every-field "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\",\"subject\":\"hi\",\"in_reply_to\":\"$MSG_ID\",\"supersedes\":\"$MSG_ID\",\"identity\":\"$(b64 < a/identity.doc)\"}" "$A" "$B"
 case_env accept-json-body "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":{\"task\":\"ping\",\"n\":1}}" "$A" "$B"
 case_env accept-null-body "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":null}" "$A" "$B"
 case_env accept-unknown-field "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\",\"later\":true}" "$A" "$B"
@@ -141,8 +191,55 @@ case_env refuse-duplicate-key "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\
 case_env refuse-two-objects "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}{}" "$A" "$B"
 case_env refuse-not-utf8 "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"\xff\xfe\"}" "$A" "$B"
 
-# A message from A to B: envelope/accept-minimal.json encrypted to B's prekey, made once and
-# kept (age is randomised), then signed for B only.
-[ -e message/a-to-b.age ] || age -r "$(cat input/b-1.pq)" -o message/a-to-b.age < envelope/accept-minimal.json
-sign a "irongall-msg-v1:$B" < message/a-to-b.age > message/a-to-b.age.sig
-sign a "irongall-msg-v1:$A" < message/a-to-b.age > message/a-to-b.age.for-another-box.sig
+# A message from A to B. What is encrypted is three parts: the envelope as one line, the
+# signature over that line as ssh-keygen wrote it, and padding. The line carries A's identity
+# document, and the signature is by A's working key, for B only.
+ID_A=$(b64 < a/identity.doc); ID_B=$(b64 < b/identity.doc)
+line() { printf '{"v":1,"from":"%s","to":"%s","sent_at":"%s","msg_id":"%s","identity":"%s","body":"hello"}\n' "$1" "$2" "$NOW" "$MSG_ID" "$3"; } # <from> <to> <identity, base64>
+line "$A" "$B" "$ID_A" > message/a-to-b.line
+under a-work a/work-cert.pub "irongall-msg-v1:$B" < message/a-to-b.line > message/a-to-b.sig
+# Padding makes the age file a whole number of 1 KiB blocks (PROTOCOL.md §4.3a). To a post-quantum
+# key a file of one chunk is its plaintext and 1,659 bytes more.
+n=$(( $(wc -c < message/a-to-b.line) + $(wc -c < message/a-to-b.sig) ))
+SEALED=$(( (1659 + n + 1023) / 1024 * 1024 ))
+{ cat message/a-to-b.line message/a-to-b.sig; head -c $((SEALED - 1659 - n)) /dev/zero | tr '\0' .; } > message/a-to-b.plain
+[ -e message/a-to-b.age ] || age -r "$(cat input/b-1.pq)" -o message/a-to-b.age < message/a-to-b.plain
+[ "$(wc -c < message/a-to-b.age)" -eq "$SEALED" ] || { echo "message/a-to-b.age is not the $SEALED bytes its padding was made for" >&2; exit 1; }
+
+# What box B decrypts, judged at ./now: accept-* are delivered, refuse-* are not.
+GOOD_SIG=message/a-to-b.sig
+cat message/a-to-b.line "$GOOD_SIG" > plain/accept-no-padding.txt
+cp message/a-to-b.plain plain/accept-padded.txt
+{ cat message/a-to-b.line "$GOOD_SIG"; cat message/a-to-b.line; under b-work b/work-cert.pub "irongall-msg-v1:$B" < message/a-to-b.line; echo "nothing after the first END line is read"; } > plain/accept-anything-after-the-signature.txt
+printf '{"v":1,"from":"%s","to":"%s","sent_at":"%s","msg_id":"%s","identity":"%s","body":{"task":"ping"},"subject":"hi","in_reply_to":"%s","supersedes":"%s","later":true}\n' "$A" "$B" "$NOW" "$MSG_ID" "$ID_A" "$MSG_ID" "$MSG_ID" > plain/every-field.line
+{ cat plain/every-field.line; under a-work a/work-cert.pub "irongall-msg-v1:$B" < plain/every-field.line; } > plain/accept-every-field.txt
+rm plain/every-field.line
+refuse() { # <name> <line file> <signature command…>: the line, then the signature the command makes over it
+  local name=$1 l=$2; shift 2
+  { cat "$l"; "$@" < "$l"; } > "plain/$name.txt"
+}
+L=$(mktemp)
+# The signature.
+refuse refuse-signed-for-another-box message/a-to-b.line under a-work a/work-cert.pub "irongall-msg-v1:$A"
+refuse refuse-signed-by-the-identity message/a-to-b.line sign a "irongall-msg-v1:$B"
+refuse refuse-signed-by-a-bare-working-key message/a-to-b.line sign a-work "irongall-msg-v1:$B"
+refuse refuse-certificate-ended message/a-to-b.line under a-work cert/bad-ended.pub "irongall-msg-v1:$B"
+sed 's/"body":"hello"/"body":"hellp"/' message/a-to-b.line > "$L"; cat "$L" "$GOOD_SIG" > plain/refuse-line-changed-after-signing.txt
+# Who it is from. The first is the forgery an identity member invites: A's document beside a
+# certificate that B's identity signed. The signature is good and the certificate is B's own.
+refuse refuse-another-box-s-identity-document message/a-to-b.line under b-work b/work-cert.pub "irongall-msg-v1:$B"
+line "$B" "$B" "$ID_A" > "$L"; refuse refuse-from-is-not-the-identity "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
+printf '{"v":1,"from":"%s","to":"%s","sent_at":"%s","msg_id":"%s","body":"hello"}\n' "$A" "$B" "$NOW" "$MSG_ID" > "$L"; refuse refuse-no-identity "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
+line "$A" "$B" "not base64" > "$L"; refuse refuse-identity-not-base64 "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
+line "$(sha256sum < identity/small-order-1.doc | cut -c1-64)" "$B" "$(b64 < identity/small-order-1.doc)" > "$L"; refuse refuse-identity-of-small-order "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
+line "$A" "$A" "$ID_A" > "$L"; refuse refuse-to-another-box "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
+# The layout. Each part has one place, and nothing is searched for.
+head -c -1 message/a-to-b.line > plain/refuse-no-line-feed.txt
+cp message/a-to-b.line plain/refuse-no-signature.txt
+{ cat message/a-to-b.line; echo; cat "$GOOD_SIG"; } > plain/refuse-blank-line-before-the-signature.txt
+cat "$GOOD_SIG" message/a-to-b.line > plain/refuse-signature-first.txt
+{ cat message/a-to-b.line; grep -v -e '-----END' "$GOOD_SIG"; } > plain/refuse-no-end-line.txt
+{ cat message/a-to-b.line; head -c -1 "$GOOD_SIG"; } > plain/refuse-end-line-without-its-line-feed.txt
+sed 's/$/\r/' message/a-to-b.line > "$L"; { cat "$L"; under a-work a/work-cert.pub "irongall-msg-v1:$B" < "$L" | sed 's/$/\r/'; } > plain/refuse-crlf.txt
+printf '{\n"v":1,"from":"%s","to":"%s","sent_at":"%s","msg_id":"%s","identity":"%s","body":"hello"}\n' "$A" "$B" "$NOW" "$MSG_ID" "$ID_A" > "$L"; refuse refuse-envelope-on-two-lines "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
+rm -f "$L"

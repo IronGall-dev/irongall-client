@@ -1,6 +1,6 @@
 // Package fakeserver is an in-memory irongall server for the client's tests:
 // honest, and just enough of the API for a client to register, renew its
-// prekey, send, list, fetch and ack. It is NOT the irongall.dev server, and
+// prekey, send, list, fetch and ack, each call carrying its box's pass. It is NOT the irongall.dev server, and
 // checks little of what that server checks.
 //
 // A test plays the hostile operator two ways: with SetMiddle, a function that
@@ -14,18 +14,16 @@ import (
 	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"filippo.io/age"
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
@@ -45,9 +43,8 @@ type box struct {
 	statement []byte
 	signature []byte
 	prekey    *protocol.Prekey
-	token     string          // the current owner token
-	account   string          // the account it is in, or ""
-	stale     map[string]bool // earlier tokens: token_stale
+	cert      *protocol.Certificate // the one the current statement is signed under: passes are taken under it only
+	account   string                // the account it is in, or ""
 	messages  map[string]*message
 	order     []string // ids, oldest first
 }
@@ -55,7 +52,6 @@ type box struct {
 type message struct {
 	from       protocol.Address
 	ciphertext []byte
-	signature  []byte
 	receivedAt time.Time
 }
 
@@ -67,7 +63,6 @@ func New(t testing.TB, now func() time.Time) *Server {
 	mux.HandleFunc("POST /v1/{addr}", s.send)
 	mux.HandleFunc("GET /v1/{addr}/identity", s.identity)
 	mux.HandleFunc("PUT /v1/{addr}/prekey", s.newPrekey)
-	mux.HandleFunc("POST /v1/{addr}/token", s.tokenCall)
 	mux.HandleFunc("GET /v1/{addr}/messages", s.owner(s.list))
 	mux.HandleFunc("GET /v1/{addr}/messages/{id}", s.owner(s.fetch))
 	mux.HandleFunc("DELETE /v1/{addr}/messages/{id}", s.owner(s.ack))
@@ -117,11 +112,11 @@ func (s *Server) Prekey(a protocol.Address) (statement, signature []byte) {
 
 // Inject stores a message in a box under id, as only the operator can: no
 // check at all.
-func (s *Server) Inject(to protocol.Address, id string, from protocol.Address, ciphertext, signature []byte) {
+func (s *Server) Inject(to protocol.Address, id string, from protocol.Address, ciphertext []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	b := s.boxes[to]
-	b.messages[id] = &message{from: from, ciphertext: ciphertext, signature: signature, receivedAt: s.now()}
+	b.messages[id] = &message{from: from, ciphertext: ciphertext, receivedAt: s.now()}
 	b.order = append(b.order, id)
 }
 
@@ -156,41 +151,43 @@ func pathAddr(w http.ResponseWriter, r *http.Request) (protocol.Address, bool) {
 	return a, true
 }
 
-// verifyPrekey checks a statement against the box's identity.
-func verifyPrekey(identity, statement, signature []byte) (*protocol.Prekey, error) {
+// verifyPrekey checks a statement against the box's identity, and returns
+// the certificate it is signed under.
+func (s *Server) verifyPrekey(identity, statement, signature []byte) (*protocol.Prekey, *protocol.Certificate, error) {
 	id, err := protocol.ParseIdentity(identity)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return protocol.VerifyPrekey(id, statement, signature)
+	return protocol.VerifyPrekey(id, statement, signature, s.now())
 }
 
-// newToken mints a new owner token; the one it replaces turns stale.
-func (b *box) newToken() {
-	if b.token != "" {
-		b.stale[b.token] = true
-	}
-	t := make([]byte, 37) // the size of kid ‖ epoch ‖ mac: a client refuses a token of any other form
-	_, _ = rand.Read(t)
-	b.token = "igt1_" + base64.RawURLEncoding.EncodeToString(t)
-}
-
-// writeToken answers with the current token, encrypted to the current prekey.
-func writeToken(w http.ResponseWriter, status int, b *box) {
-	r, err := b.prekey.Recipient()
+// pass checks a call's pass: it is the pass of the box whose identity
+// document is given, made for this server as the caller named it, and signed
+// under the certificate under. It writes the refusal and reports false if not.
+func (s *Server) pass(w http.ResponseWriter, r *http.Request, identity []byte, under *protocol.Certificate) bool {
+	p, err := protocol.ParsePass(r.Header.Get("Authorization"))
 	if err != nil {
-		problem(w, protocol.CodeBadKey, err.Error())
-		return
+		problem(w, protocol.CodeUnauthorized, "no pass, or not a pass")
+		return false
 	}
-	var ct bytes.Buffer
-	enc, err := age.Encrypt(&ct, r)
+	id, err := protocol.ParseIdentity(identity)
 	if err != nil {
-		problem(w, protocol.CodeBadKey, err.Error())
-		return
+		problem(w, protocol.CodeUnauthorized, "no identity to check the pass against")
+		return false
 	}
-	_, _ = io.WriteString(enc, b.token)
-	_ = enc.Close()
-	WriteJSON(w, status, protocol.TokenResponse{Token: ct.Bytes()})
+	cert, err := p.Verify(id, r.Host, s.now())
+	switch {
+	case errors.Is(err, protocol.ErrPassExpired):
+		problem(w, protocol.CodePassExpired, "the pass has run out")
+		return false
+	case err != nil:
+		problem(w, protocol.CodeUnauthorized, "not this box's pass for this server")
+		return false
+	case !bytes.Equal(cert.Marshal(), under.Marshal()):
+		problem(w, protocol.CodeUnauthorized, "the pass is not under the box's current certificate")
+		return false
+	}
+	return true
 }
 
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
@@ -203,26 +200,29 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		problem(w, protocol.CodeIdentityMismatch, "the identity does not hash to the address")
 		return
 	}
-	p, err := verifyPrekey(req.Identity, req.Prekey, req.PrekeySignature)
+	p, cert, err := s.verifyPrekey(req.Identity, req.Prekey, req.PrekeySignature)
 	if err != nil {
 		problem(w, protocol.CodeBadKey, err.Error())
+		return
+	}
+	// A registration carries a pass under the certificate of the statement
+	// it brings: that is what shows a live holder of the working key.
+	if !s.pass(w, r, req.Identity, cert) {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if b := s.boxes[a]; b != nil {
 		if bytes.Equal(b.statement, req.Prekey) && bytes.Equal(b.signature, req.PrekeySignature) {
-			writeToken(w, http.StatusOK, b)
+			WriteJSON(w, http.StatusOK, struct{}{})
 			return
 		}
 		problem(w, protocol.CodeConflict, "registered with another prekey")
 		return
 	}
-	b := &box{identity: req.Identity, statement: req.Prekey, signature: req.PrekeySignature, prekey: p,
-		stale: map[string]bool{}, messages: map[string]*message{}}
-	b.newToken()
-	s.boxes[a] = b
-	writeToken(w, http.StatusCreated, b)
+	s.boxes[a] = &box{identity: req.Identity, statement: req.Prekey, signature: req.PrekeySignature, prekey: p, cert: cert,
+		messages: map[string]*message{}}
+	WriteJSON(w, http.StatusCreated, struct{}{})
 }
 
 func (s *Server) identity(w http.ResponseWriter, r *http.Request) {
@@ -253,33 +253,26 @@ func (s *Server) newPrekey(w http.ResponseWriter, r *http.Request) {
 		problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
 		return
 	}
-	p, err := verifyPrekey(b.identity, req.Prekey, req.PrekeySignature)
+	p, cert, err := s.verifyPrekey(b.identity, req.Prekey, req.PrekeySignature)
 	if err != nil {
 		problem(w, protocol.CodeBadKey, err.Error())
 		return
 	}
-	if p.Serial <= b.prekey.Serial {
+	switch {
+	case p.Serial <= b.prekey.Serial:
 		problem(w, protocol.CodeConflict, "the serial must be higher")
 		return
-	}
-	b.statement, b.signature, b.prekey = req.Prekey, req.PrekeySignature, p
-	b.newToken()
-	writeToken(w, http.StatusOK, b)
-}
-
-func (s *Server) tokenCall(w http.ResponseWriter, r *http.Request) {
-	a, ok := pathAddr(w, r)
-	if !ok {
+	case cert.Serial() < b.cert.Serial(), cert.Serial() == b.cert.Serial() && !bytes.Equal(cert.Marshal(), b.cert.Marshal()):
+		problem(w, protocol.CodeBadKey, "the certificate is older than the box's current one")
 		return
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	b := s.boxes[a]
-	if b == nil {
-		problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
+	// A prekey upload carries a pass under the certificate of the statement
+	// it brings: that is how a box moves to a new certificate.
+	if !s.pass(w, r, b.identity, cert) {
 		return
 	}
-	writeToken(w, http.StatusOK, b)
+	b.statement, b.signature, b.prekey, b.cert = req.Prekey, req.PrekeySignature, p, cert
+	WriteJSON(w, http.StatusOK, struct{}{})
 }
 
 func (s *Server) send(w http.ResponseWriter, r *http.Request) {
@@ -288,28 +281,30 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 	if !ok || !decode(w, r, &req) {
 		return
 	}
-	from, err := protocol.ParseAddress(req.From)
+	// The sender is the box the pass names. The message's signature is inside
+	// the ciphertext, where this server cannot see it.
+	p, err := protocol.ParsePass(r.Header.Get("Authorization"))
 	if err != nil {
-		problem(w, protocol.CodeBadAddress, "from is not an address")
+		problem(w, protocol.CodeUnauthorized, "no pass, or not a pass")
 		return
 	}
+	from := p.Address
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rcpt, sender := s.boxes[to], s.boxes[from]
+	if sender == nil {
+		problem(w, protocol.CodeUnknownSender, "the sender is not registered")
+		return
+	}
+	if !s.pass(w, r, sender.identity, sender.cert) {
+		return
+	}
 	switch {
 	case rcpt == nil:
 		problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
 		return
-	case sender == nil:
-		problem(w, protocol.CodeUnknownSender, "the sender is not registered")
-		return
 	case req.PrekeySerial != nil && *req.PrekeySerial != rcpt.prekey.Serial:
 		problem(w, protocol.CodeStalePrekey, "a newer prekey exists")
-		return
-	}
-	id, _ := protocol.ParseIdentity(sender.identity)
-	if err := protocol.Verify(id, req.Ciphertext, req.Signature, protocol.MessageNamespace(to)); err != nil {
-		problem(w, protocol.CodeBadSignature, "the signature does not verify for the sender")
 		return
 	}
 	h := sha256.Sum256(req.Ciphertext)
@@ -318,7 +313,7 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, http.StatusOK, receipt(key, m))
 		return
 	}
-	m := &message{from: from, ciphertext: req.Ciphertext, signature: req.Signature, receivedAt: s.now()}
+	m := &message{from: from, ciphertext: req.Ciphertext, receivedAt: s.now()}
 	rcpt.messages[key] = m
 	rcpt.order = append(rcpt.order, key)
 	WriteJSON(w, http.StatusCreated, receipt(key, m))
@@ -330,7 +325,8 @@ func receipt(id string, m *message) protocol.Receipt {
 
 func formatTime(t time.Time) string { return t.UTC().Format(protocol.TimeLayout) }
 
-// owner authenticates an owner call: the current token, or 401.
+// owner authenticates an owner call: a pass of the box, under its current
+// certificate, or 401.
 func (s *Server) owner(h func(http.ResponseWriter, *http.Request, *box)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		a, ok := pathAddr(w, r)
@@ -344,14 +340,8 @@ func (s *Server) owner(h func(http.ResponseWriter, *http.Request, *box)) http.Ha
 			problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
 			return
 		}
-		tok, _ := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		switch {
-		case tok == b.token:
+		if s.pass(w, r, b.identity, b.cert) {
 			h(w, r, b)
-		case b.stale[tok]:
-			problem(w, protocol.CodeTokenStale, "the token has moved on")
-		default:
-			problem(w, protocol.CodeUnauthorized, "not this box's token")
 		}
 	}
 }
@@ -389,7 +379,7 @@ func (s *Server) fetch(w http.ResponseWriter, r *http.Request, b *box) {
 		return
 	}
 	WriteJSON(w, http.StatusOK, protocol.Message{ID: id, From: m.from.String(), ReceivedAt: formatTime(m.receivedAt),
-		ExpiresAt: formatTime(m.receivedAt.Add(protocol.TTL)), Ciphertext: m.ciphertext, Signature: m.signature})
+		ExpiresAt: formatTime(m.receivedAt.Add(protocol.TTL)), Ciphertext: m.ciphertext})
 }
 
 func (s *Server) ack(w http.ResponseWriter, r *http.Request, b *box) {

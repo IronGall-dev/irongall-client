@@ -3,14 +3,11 @@ package client
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/IronGall-dev/irongall-client/protocol"
@@ -70,49 +67,27 @@ func (b *Box) call(ctx context.Context, method, path string, in any, hdr http.He
 	return resp, nil
 }
 
-// owner makes a request as the box's owner, with in as its JSON body when not
-// nil. On 401 token_stale it fetches the current token, decrypts it, and
-// retries once. A refreshed token carried in an irongall-token header is kept.
+// owner makes a request as this box, with in as its JSON body when not nil:
+// a call that carries the box's pass. If the server refuses the pass, because
+// it ran out sooner by the server's clock or was signed under a certificate
+// the server no longer takes, the box signs another and tries once more.
 func (b *Box) owner(ctx context.Context, method, path string, in any, hdr http.Header, out any) (*http.Response, error) {
-	resp, err := b.ownerOnce(ctx, method, path, in, hdr, out)
-	if Code(err) != protocol.CodeTokenStale {
-		return resp, err
-	}
-	if err := b.RefreshToken(ctx); err != nil {
-		return nil, err
-	}
-	return b.ownerOnce(ctx, method, path, in, hdr, out)
-}
-
-func (b *Box) ownerOnce(ctx context.Context, method, path string, in any, hdr http.Header, out any) (*http.Response, error) {
-	tok, err := os.ReadFile(b.path("token"))
-	if err != nil {
-		return nil, fmt.Errorf("no token: %w", err)
-	}
-	h := http.Header{}
-	for k, v := range hdr {
-		h[k] = v
-	}
-	h.Set("Authorization", "Bearer "+strings.TrimSpace(string(tok)))
-	resp, err := b.call(ctx, method, path, in, h, out)
-	if resp != nil {
-		if v := resp.Header.Get(protocol.TokenHeader); v != "" {
-			// A refresh that does not decrypt is ignored: the token_stale
-			// rule still covers it.
-			if ct, err := base64.StdEncoding.DecodeString(v); err == nil {
-				_ = b.storeToken(ct)
-			}
+	for attempt := 0; ; attempt++ {
+		pass, err := b.pass()
+		if err != nil {
+			return nil, err
+		}
+		h := http.Header{}
+		for k, v := range hdr {
+			h[k] = v
+		}
+		h.Set("Authorization", pass)
+		resp, err := b.call(ctx, method, path, in, h, out)
+		if c := Code(err); attempt > 0 || (c != protocol.CodePassExpired && c != protocol.CodeUnauthorized) {
+			return resp, err
+		}
+		if err := removeIfExists(b.path("pass")); err != nil {
+			return nil, err
 		}
 	}
-	return resp, err
-}
-
-// RefreshToken fetches the box's current owner token and keeps it. It is what
-// a client does on 401 token_stale.
-func (b *Box) RefreshToken(ctx context.Context) error {
-	var tr protocol.TokenResponse
-	if _, err := b.call(ctx, http.MethodPost, b.boxPath("/token"), nil, nil, &tr); err != nil {
-		return err
-	}
-	return b.storeToken(tr.Token)
 }

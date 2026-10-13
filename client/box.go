@@ -8,7 +8,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -52,10 +51,11 @@ type Options struct {
 
 // Box is one box: its state directory and the server it talks to.
 type Box struct {
-	dir    string
-	base   string
-	http   *http.Client
-	now    func() time.Time
+	dir  string
+	base string
+	http *http.Client
+	now  func() time.Time
+	// signer is the identity key. It signs certificates, and nothing else.
 	signer ssh.Signer
 	id     *protocol.Identity
 	// renewFailed is when Receive last failed to renew the prekey.
@@ -64,7 +64,7 @@ type Box struct {
 
 // Open opens an existing box's state directory. A directory holding only
 // the identity, a box restored from its backup, gets the box's other
-// directories; [Box.Rekey] then gives it a prekey and a token.
+// directories; [Box.Rekey] then gives it a working key and a prekey.
 func Open(dir string, opt Options) (*Box, error) {
 	b := newBox(dir, opt)
 	if err := b.loadIdentity(); err != nil {
@@ -125,9 +125,10 @@ func (b *Box) path(elem ...string) string {
 }
 
 // Init creates a box in dir, or finishes an init that stopped half way:
-// it makes the identity and the first prekey (of type kt) if they are
-// missing, registers the box, and activates it with one owner call. Run again
-// on a finished box, it changes nothing.
+// it makes the identity, the first working key with its certificate, and the
+// first prekey (of type kt) if they are missing, and registers the box. The
+// registration carries a pass the working key signs, so the box is in use at
+// once. Run again on a finished box, it changes nothing.
 func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*Box, error) {
 	b := newBox(dir, opt)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -152,36 +153,63 @@ func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*B
 	if err := b.loadIdentity(); err != nil {
 		return nil, err
 	}
+	published, err := b.publishedSerial()
+	if err != nil {
+		return nil, err
+	}
+	if published > 0 {
+		return b, nil
+	}
 	if _, err := b.makePrekey(1, kt); err != nil {
 		return nil, err
 	}
-	if !exists(b.path("token")) {
-		req := protocol.RegisterRequest{Identity: b.id.Document()}
-		var err error
-		if req.Prekey, err = os.ReadFile(b.path("prekeys", "1.txt")); err != nil {
-			return nil, err
-		}
-		if req.PrekeySignature, err = os.ReadFile(b.path("prekeys", "1.txt.sig")); err != nil {
-			return nil, err
-		}
-		var tr protocol.TokenResponse
-		if _, err := b.call(ctx, http.MethodPut, b.boxPath(""), req, nil, &tr); err != nil {
-			return nil, err
-		}
-		if err := b.storeToken(tr.Token); err != nil {
-			return nil, err
-		}
+	req := protocol.RegisterRequest{Identity: b.id.Document()}
+	if req.Prekey, err = os.ReadFile(b.path("prekeys", "1.txt")); err != nil {
+		return nil, err
 	}
-	// The first owner call activates the box.
-	if _, err := b.owner(ctx, http.MethodGet, b.boxPath("/messages"), nil, nil, nil); err != nil {
+	if req.PrekeySignature, err = os.ReadFile(b.path("prekeys", "1.txt.sig")); err != nil {
+		return nil, err
+	}
+	// A registration carries a pass under the certificate of the statement
+	// it brings. A second run of a registration the server took is the same
+	// request, and is answered as the first was.
+	if err := b.publish(ctx, http.MethodPut, b.boxPath(""), req, 1); err != nil {
 		return nil, err
 	}
 	return b, nil
 }
 
+// publish sends a registration or a new prekey, whose statement working key
+// n signed, with a pass that key signs: the server takes a pass under the
+// certificate of the statement a call brings, which is how a box gets a
+// certificate on record. Once the server has taken it, n is the prekey this
+// box published last, its working key is the one in use, and older working
+// keys go.
+func (b *Box) publish(ctx context.Context, method, path string, req any, n uint64) error {
+	signer, _, err := b.worker(n)
+	if err != nil {
+		return err
+	}
+	pass, err := b.signPass(signer)
+	if err != nil {
+		return err
+	}
+	if _, err := b.call(ctx, method, path, req, http.Header{"Authorization": {pass}}, nil); err != nil {
+		return err
+	}
+	if err := b.recordPublished(n); err != nil {
+		return err
+	}
+	// The pass is under the certificate the server now holds this box to.
+	if err := b.keepPass(pass); err != nil {
+		return err
+	}
+	return b.dropWork(n)
+}
+
 // makeDirs makes the box's directories that are missing.
 func (b *Box) makeDirs() error {
-	for _, d := range []string{"prekeys", "peers", "inbox", "quarantine", "outbox", "sent"} {
+	for _, d := range []string{"work", "prekeys", "peers", "inbox", "quarantine", "outbox", "sent"} {
 		if err := os.MkdirAll(b.path(d), 0o700); err != nil {
 			return err
 		}
@@ -256,8 +284,10 @@ func (b *Box) loadIdentity() error {
 }
 
 // makePrekey makes prekey serial, a NEW key of type kt valid for 33 days, and
-// its signed statement, unless its statement is already signed. A key an
-// earlier attempt made and never signed is reused.
+// its statement, signed by a NEW working key under a new certificate, unless
+// its statement is already signed. A key an earlier attempt made and never
+// signed is reused. A statement never outlives the certificate it is signed
+// under.
 func (b *Box) makePrekey(serial uint64, kt protocol.KeyType) (*protocol.Prekey, error) {
 	stem := b.path("prekeys", fmt.Sprint(serial))
 	if exists(stem + ".txt.sig") {
@@ -276,13 +306,16 @@ func (b *Box) makePrekey(serial uint64, kt protocol.KeyType) (*protocol.Prekey, 
 	if err != nil {
 		return nil, err
 	}
-	p := &protocol.Prekey{
-		Address:  b.id.Address(),
-		Serial:   serial,
-		Key:      recipient,
-		NotAfter: b.now().UTC().Add(protocol.MaxPrekeyLifetime).Truncate(time.Second),
+	worker, cert, err := b.makeWork(serial)
+	if err != nil {
+		return nil, err
 	}
-	sig, err := protocol.Sign(b.signer, p.Statement(), protocol.PrekeyNamespace(b.id.Address()))
+	notAfter := b.now().UTC().Add(protocol.MaxPrekeyLifetime).Truncate(time.Second)
+	if cert.NotAfter().Before(notAfter) {
+		notAfter = cert.NotAfter()
+	}
+	p := &protocol.Prekey{Address: b.id.Address(), Serial: serial, Key: recipient, NotAfter: notAfter}
+	sig, err := protocol.Sign(worker, p.Statement(), protocol.PrekeyNamespace(b.id.Address()))
 	if err != nil {
 		return nil, err
 	}
@@ -376,37 +409,6 @@ func (b *Box) prekeyIdentities() ([]age.Identity, error) {
 		return nil, errors.New("this box holds no prekeys: publish a new one with irongall rekey")
 	}
 	return all, nil
-}
-
-// decryptToken decrypts an owner token sent encrypted to this box's prekeys.
-// Mail is encrypted to the same prekeys, so what comes out is returned only if
-// it has a token's form: a server can offer a stored message in a token's
-// place, and the token is what the box sends back as its bearer.
-func (b *Box) decryptToken(ciphertext []byte) ([]byte, error) {
-	ids, err := b.prekeyIdentities()
-	if err != nil {
-		return nil, err
-	}
-	r, err := age.Decrypt(bytes.NewReader(ciphertext), ids...)
-	if err != nil {
-		return nil, refuse("the token does not decrypt with this box's prekeys")
-	}
-	tok, err := io.ReadAll(io.LimitReader(r, 1024))
-	if err != nil || len(tok) == 0 {
-		return nil, refuse("the token does not decrypt with this box's prekeys")
-	}
-	if !protocol.IsToken(tok) {
-		return nil, refuse("what the server sent as this box's token is not a token")
-	}
-	return tok, nil
-}
-
-func (b *Box) storeToken(ciphertext []byte) error {
-	tok, err := b.decryptToken(ciphertext)
-	if err != nil {
-		return err
-	}
-	return writeFile(b.path("token"), tok)
 }
 
 func (b *Box) boxPath(rest string) string { return "/v1/" + b.id.Address().String() + rest }

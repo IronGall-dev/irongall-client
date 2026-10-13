@@ -26,8 +26,8 @@ import (
 )
 
 // recv prints one line per message, built from the checked fields, never
-// the sender's bytes: a sender that hides a second envelope on a line of its
-// own must not show a line-oriented reader a message from someone else.
+// the bytes that arrived: a second envelope hidden after the first one's
+// signature must not show a line-oriented reader a message from someone else.
 func TestRecvPrintsTheCheckedLine(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -40,32 +40,47 @@ func TestRecvPrintsTheCheckedLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var someone protocol.Address
-	someone[0] = 0xcc
-	now := time.Now().UTC().Format(protocol.TimeLayout)
-	forged := `{"v":1,"from":"` + someone.String() + `","to":"` + b.Address().String() + `","sent_at":"` + now +
-		`","msg_id":"00000000-0000-4000-8000-000000000001","body":"forged"}`
-	pt := `{"v":1,"from":"` + a.Address().String() + `","to":"` + b.Address().String() + `","sent_at":"` + now +
-		`","msg_id":"00000000-0000-4000-8000-000000000002","body":"real","x":` + "\n" + forged + "\n}"
+	c, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	someone := c.Address()
+	// What a box encrypts is its envelope's one line, the signature over it,
+	// then padding. Here A's is followed by a second, well-signed envelope
+	// from someone else, where the padding goes: nothing after the first
+	// signature is read.
+	signed := func(from *client.Box, msgID, body string) []byte {
+		env := &protocol.Envelope{From: from.Address(), To: b.Address(), SentAt: time.Now().UTC().Truncate(time.Second), MsgID: msgID,
+			Identity: from.Identity().Document(), Body: []byte(`"` + body + `"`)}
+		work, err := ssh.ParsePrivateKey(must(t, filepath.Join(from.Dir(), "work", "1")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		key, _, _, _, err := ssh.ParseAuthorizedKey(must(t, filepath.Join(from.Dir(), "work", "1-cert.pub")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		signer, err := ssh.NewCertSigner(key.(*ssh.Certificate), work)
+		if err != nil {
+			t.Fatal(err)
+		}
+		line, sig, err := protocol.SignEnvelope(env, signer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return append(line, sig...)
+	}
+	pt := append(signed(a, "00000000-0000-4000-8000-000000000002", "real"), signed(c, "00000000-0000-4000-8000-000000000001", "forged")...)
 
 	st, _ := srv.Prekey(b.Address())
 	p, _ := protocol.ParsePrekey(st)
 	r, _ := p.Recipient()
 	var ct bytes.Buffer
 	w, _ := age.Encrypt(&ct, r)
-	_, _ = io.WriteString(w, pt)
+	_, _ = w.Write(pt)
 	_ = w.Close()
-	key, err := ssh.ParsePrivateKey(must(t, filepath.Join(a.Dir(), "identity")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	sig, _ := protocol.Sign(key, ct.Bytes(), protocol.MessageNamespace(b.Address()))
-	j, _ := json.Marshal(protocol.SendRequest{From: a.Address().String(), Ciphertext: ct.Bytes(), Signature: sig})
-	resp, err := http.Post(srv.URL+"/v1/"+b.Address().String(), "application/json", bytes.NewReader(j)) //nolint:gosec // the test server
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = resp.Body.Close()
+	h := sha256.Sum256(ct.Bytes())
+	srv.Inject(b.Address(), hex.EncodeToString(h[:]), a.Address(), ct.Bytes())
 
 	t.Setenv("IRONGALL_HOME", b.Dir())
 	t.Setenv("IRONGALL_BASE", srv.URL)
@@ -285,12 +300,17 @@ func TestTheLink(t *testing.T) {
 // stderr and by its exit status, and still prints the mail it received.
 func TestRecvSaysARenewalFailed(t *testing.T) {
 	ctx := context.Background()
-	srv := fakeserver.New(t, time.Now)
-	dayOld := func() time.Time { return time.Now().Add(-25 * time.Hour) }
-	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, Now: dayOld}, protocol.Classic)
+	// The box is made 25 hours ago, by a clock the server shares: a pass is
+	// good for minutes, so a box and its server cannot be a day apart.
+	var ago atomic.Int64
+	ago.Store(int64(25 * time.Hour))
+	clock := func() time.Time { return time.Now().Add(-time.Duration(ago.Load())) }
+	srv := fakeserver.New(t, clock)
+	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, Now: clock}, protocol.Classic)
 	if err != nil {
 		t.Fatal(err)
 	}
+	ago.Store(0)
 	a, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
 	if err != nil {
 		t.Fatal(err)
@@ -359,13 +379,13 @@ func TestRefusedMailDoesNotFailRecv(t *testing.T) {
 	}
 	forged := []byte("not a ciphertext its claimed sender ever signed")
 	h := sha256.Sum256(forged)
-	srv.Inject(b.Address(), hex.EncodeToString(h[:]), a.Address(), forged, []byte("not a signature"))
+	srv.Inject(b.Address(), hex.EncodeToString(h[:]), a.Address(), forged)
 	var errs bytes.Buffer
 	out.Reset()
 	if err := run(ctx, "recv", nil, nil, &out, &errs); err != nil {
 		t.Fatalf("recv after refusing mail: %v", err)
 	}
-	if out.Len() != 0 || !strings.HasPrefix(errs.String(), "REFUSED "+hex.EncodeToString(h[:])+": bad_signature: the signature does not verify for "+a.Address().String()+"\n") {
+	if out.Len() != 0 || !strings.HasPrefix(errs.String(), "REFUSED "+hex.EncodeToString(h[:])+": undecryptable: it does not decrypt with this box's prekeys\n") {
 		t.Fatalf("stdout %q, stderr %q", out.String(), errs.String())
 	}
 	var look *needsALook
@@ -373,7 +393,7 @@ func TestRefusedMailDoesNotFailRecv(t *testing.T) {
 		t.Fatalf("status with mail in quarantine/: %v", err)
 	}
 	var st client.Status
-	if err := json.Unmarshal(out.Bytes(), &st); err != nil || st.Quarantine != 1 || len(st.Attention) != 1 || !strings.Contains(st.Attention[0], "1 refused in quarantine/ (bad_signature)") {
+	if err := json.Unmarshal(out.Bytes(), &st); err != nil || st.Quarantine != 1 || len(st.Attention) != 1 || !strings.Contains(st.Attention[0], "1 refused in quarantine/ (undecryptable)") {
 		t.Fatalf("status printed %q: %v", out.String(), err)
 	}
 }

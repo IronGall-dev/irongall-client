@@ -21,9 +21,15 @@ const (
 	// CertificateKeyID is the key id of every v1 certificate.
 	CertificateKeyID = "irongall-cert-v1"
 	// MaxCertificateLifetime is the longest a certificate may still have to
-	// run: twice the TTL, so that a certificate with more than a TTL left
-	// outlasts the mail it signs.
+	// run when a verifier takes it: twice the TTL, so that a certificate with
+	// more than a TTL left outlasts the mail it signs.
 	MaxCertificateLifetime = 2 * TTL
+	// CertificateLifetime is how long a client makes a certificate good for:
+	// a day under the most a verifier takes, so that one asked for at the
+	// ceiling is not refused by a verifier whose clock is a moment behind,
+	// with no allowance for skew in any check. It is the pass's rule
+	// (PassLifetime, MaxPassLifetime).
+	CertificateLifetime = MaxCertificateLifetime - 24*time.Hour
 )
 
 // Every certificate error wraps one of these. ErrCertificate: it is not a
@@ -131,6 +137,11 @@ func (c *Certificate) NotAfter() time.Time {
 	return time.Unix(int64(c.cert.ValidBefore), 0).UTC() //nolint:gosec // CheckCertificate bounded it to 66 days from a clock reading
 }
 
+// SignsMail reports whether mail may still be signed under the certificate at
+// now: it has more than TTL left, so it outlasts the mail, which may wait
+// that long to be read.
+func (c *Certificate) SignsMail(now time.Time) bool { return c.NotAfter().Sub(now) > TTL }
+
 // PublicKey returns the certificate as the key its signatures verify under.
 func (c *Certificate) PublicKey() ssh.PublicKey { return c.cert }
 
@@ -143,9 +154,9 @@ func (c *Certificate) Marshal() []byte { return c.cert.Marshal() }
 
 // NewCertificate makes the certificate of serial for the working key work,
 // signed by identity, the signer for id's key. It is what
-// "ssh-keygen -s identity -I irongall-cert-v1 -n <address> -z <serial> -V +66d -O clear work.pub"
+// "ssh-keygen -s identity -I irongall-cert-v1 -n <address> -z <serial> -V +65d -O clear work.pub"
 // writes: valid from the start of the minute before now, as ssh-keygen dates
-// one, to MaxCertificateLifetime after now.
+// one, to CertificateLifetime after now.
 func NewCertificate(id *Identity, identity ssh.Signer, work ssh.PublicKey, serial uint64, now time.Time) (*Certificate, error) {
 	if !bytes.Equal(identity.PublicKey().Marshal(), id.PublicKey().Marshal()) {
 		return nil, errors.New("the signer is not the box's identity key")
@@ -158,7 +169,7 @@ func NewCertificate(id *Identity, identity ssh.Signer, work ssh.PublicKey, seria
 		KeyId:           CertificateKeyID,
 		ValidPrincipals: []string{id.Address().String()},
 		ValidAfter:      (max(unix, 59) - 59) / 60 * 60,
-		ValidBefore:     unix + uint64(MaxCertificateLifetime/time.Second),
+		ValidBefore:     unix + uint64(CertificateLifetime/time.Second),
 	}
 	if err := cert.SignCert(rand.Reader, identity); err != nil {
 		return nil, err
@@ -194,6 +205,26 @@ func VerifyCertified(id *Identity, message, signature []byte, namespace string, 
 		return nil, err
 	}
 	return cert, nil
+}
+
+// CertificateBegan returns when the certificate an armored signature carries
+// began: the moment to verify a signature at when the question is whether the
+// identity ever certified its key, and not whether it is good now. A box
+// reading its own record asks that; nobody judging another box's word does.
+func CertificateBegan(signature []byte) (time.Time, error) {
+	blob, err := Dearmor(signature)
+	if err != nil {
+		return time.Time{}, err
+	}
+	key, err := signingKey(blob)
+	if err != nil {
+		return time.Time{}, err
+	}
+	cert, ok := key.(*ssh.Certificate)
+	if !ok || cert.ValidAfter > 1<<62 {
+		return time.Time{}, fmt.Errorf("%w: the signing key is not a certificate", ErrCertificate)
+	}
+	return time.Unix(int64(cert.ValidAfter), 0).UTC(), nil
 }
 
 // signingKey returns the public key an SSHSIG blob says it was signed with:

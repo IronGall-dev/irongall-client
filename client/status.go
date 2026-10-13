@@ -19,6 +19,11 @@ type Status struct {
 	// last: zero and empty if it holds none.
 	PrekeySerial   uint64 `json:"prekey_serial"`
 	PrekeyNotAfter string `json:"prekey_not_after"`
+	// CertificateSerial and CertificateNotAfter are the certificate of the
+	// working key in use, the one made with that prekey: zero and empty if
+	// the box holds none it can sign with.
+	CertificateSerial   uint64 `json:"certificate_serial"`
+	CertificateNotAfter string `json:"certificate_not_after"`
 	// RenewalPendingSince is when this box signed the oldest new prekey it
 	// still holds and has not seen published: empty if every renewal went
 	// through.
@@ -52,6 +57,16 @@ func (b *Box) Status() (*Status, error) {
 		s.PrekeySerial, s.PrekeyNotAfter = serial, cur.NotAfter.UTC().Format(protocol.TimeLayout)
 		if cur.Expired(b.now()) {
 			s.Attention = append(s.Attention, fmt.Sprintf("the prekey expired at %s: senders are refused until irongall recv or irongall rekey renews it", s.PrekeyNotAfter))
+		}
+	}
+	if _, cert, werr := b.currentWorker(); werr != nil {
+		if err == nil && perr == nil {
+			s.Attention = append(s.Attention, "this box holds no working key it can sign with, or its certificate has ended: it cannot poll or send until irongall rekey makes new ones")
+		}
+	} else {
+		s.CertificateSerial, s.CertificateNotAfter = cert.Serial(), cert.NotAfter().Format(protocol.TimeLayout)
+		if !cert.SignsMail(b.now()) {
+			s.Attention = append(s.Attention, fmt.Sprintf("the certificate ends at %s, too soon to sign mail: sends are refused until irongall recv or irongall rekey renews it", s.CertificateNotAfter))
 		}
 	}
 	// A statement signed for a serial above the published one is a renewal

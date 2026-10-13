@@ -50,17 +50,18 @@ func (b *Box) Send(ctx context.Context, to protocol.Address, body string) (*prot
 	return b.SendWith(ctx, to, body, Fields{})
 }
 
-// SendWith sends one logical message: its envelope is built once, kept in the
-// outbox, padded and encrypted to the peer's verified prekey and signed for
-// that peer only, then posted. On 409 stale_prekey it re-encrypts the SAME
-// envelope to the newer prekey, once. If the post fails, the message stays in
-// the outbox: retry with [Box.Flush], never by sending again, or the peer
-// gets it twice. Once the server has it, the envelope and the server's
-// receipt are kept in sent/.
+// SendWith sends one logical message: its envelope is built once and kept in
+// the outbox, signed for that peer only by this box's working key, encrypted
+// with that signature to the peer's verified prekey, then posted. On 409
+// stale_prekey it encrypts the SAME envelope to the newer prekey, once. If
+// the post fails, the message stays in the outbox: retry with [Box.Flush],
+// never by sending again, or the peer gets it twice. Once the server has it,
+// the envelope and the server's receipt are kept in sent/.
 //
-// Every message is padded, so that the server sees its size only to within a
-// block (protocol.PaddedSize). The padding is for the key the message is
-// encrypted to, so the outbox and sent/ hold the envelope without it.
+// The signature is inside the encryption, so the server is handed none: it
+// knows the sender from the pass the post carries. Every message is padded,
+// after the signature, so that the server sees its size only to within a
+// block (protocol.PaddedSize).
 func (b *Box) SendWith(ctx context.Context, to protocol.Address, body string, f Fields) (*protocol.Receipt, error) {
 	if err := f.check(); err != nil {
 		return nil, err
@@ -70,7 +71,10 @@ func (b *Box) SendWith(ctx context.Context, to protocol.Address, body string, f 
 		return nil, err
 	}
 	env.Subject, env.InReplyTo, env.Supersedes = f.Subject, f.InReplyTo, f.Supersedes
-	p, err := env.Marshal()
+	// The envelope carries this box's identity document, so its recipient
+	// can check a sender it has never met without asking the server.
+	env.Identity = b.id.Document()
+	p, err := env.Line()
 	if err != nil {
 		return nil, err
 	}
@@ -158,7 +162,24 @@ func (b *Box) post(ctx context.Context, to protocol.Address, stem string) (*prot
 // recv delivers it, with one more member, "receipt", the server's answer.
 // The client never deletes from sent/.
 func (b *Box) recordSent(stem string, r *protocol.Receipt) error {
-	p, err := os.ReadFile(stem + ".P") //nolint:gosec // a path inside the box's own directory
+	signed, err := os.ReadFile(stem + ".P") //nolint:gosec // a path inside the box's own directory
+	if err != nil {
+		return err
+	}
+	to, _, _ := strings.Cut(filepath.Base(stem), ".")
+	peer, err := protocol.ParseAddress(to)
+	if err != nil {
+		return errors.New("not an outbox entry")
+	}
+	// Read as its recipient reads it, at a clock that calls nothing stale,
+	// and written as its recipient's recv writes it: the checked fields,
+	// without the identity document.
+	env, err := protocol.OpenEnvelope(signed, b.id.Address(), peer, time.Time{})
+	if err != nil {
+		return errors.New("the outbox entry's envelope is not one this box made for that address")
+	}
+	env.Identity = nil
+	p, err := env.Marshal()
 	if err != nil {
 		return err
 	}
@@ -166,9 +187,7 @@ func (b *Box) recordSent(stem string, r *protocol.Receipt) error {
 	if err != nil {
 		return err
 	}
-	// The envelope is this box's own compact JSON object, so the receipt
-	// goes in as its last member.
-	p = bytes.TrimSpace(p)
+	// The receipt goes in as the last member.
 	if !json.Valid(p) || !bytes.HasSuffix(p, []byte("}")) {
 		return errors.New("the outbox entry's envelope is not a JSON object")
 	}
@@ -240,30 +259,41 @@ func (b *Box) postSealed(ctx context.Context, to protocol.Address, stem string) 
 	if err := json.Unmarshal(j, &req); err != nil {
 		return nil, err
 	}
+	// The post carries this box's pass: that is how the server knows the
+	// sender.
 	var r protocol.Receipt
-	if _, err := b.call(ctx, http.MethodPost, "/v1/"+to.String(), req, nil, &r); err != nil {
+	if _, err := b.owner(ctx, http.MethodPost, "/v1/"+to.String(), req, nil, &r); err != nil {
 		return nil, err
 	}
 	return &r, nil
 }
 
-// seal pads the entry's envelope for the peer's VERIFIED current prekey,
-// encrypts it to that prekey, signs the ciphertext for that peer only, and
-// writes the request to post.
+// seal signs the entry's envelope for the peer only, with the working key
+// in use, and encrypts the envelope, the signature and the padding to the
+// peer's VERIFIED current prekey, then writes the request to post.
 //
 // The envelope is read as its recipient will read it, so one the recipient
-// would refuse is never sealed. It is padded here and not when it is built
-// because the padding depends on the prekey's type: a re-encryption after
-// stale_prekey may be to a prekey of the other type, and is padded for that
-// one.
+// would refuse is never sealed. The padding is made here, for the prekey's
+// type: an encryption after stale_prekey may be to a prekey of the other
+// type. It is outside what is signed, so the signature is over the envelope
+// as the outbox keeps it.
 func (b *Box) seal(ctx context.Context, to protocol.Address, stem string) error {
-	p, err := os.ReadFile(stem + ".P") //nolint:gosec // a path inside the box's own directory
+	line, err := os.ReadFile(stem + ".P") //nolint:gosec // a path inside the box's own directory
 	if err != nil {
 		return err
 	}
-	env, err := protocol.OpenEnvelope(p, b.id.Address(), to, b.now())
+	env, err := protocol.OpenEnvelope(line, b.id.Address(), to, b.now())
+	if err != nil || !bytes.Equal(env.Identity, b.id.Document()) || !bytes.HasSuffix(line, []byte("\n")) {
+		return refuse("the outbox entry is not an envelope this box made for that address")
+	}
+	worker, cert, err := b.currentWorker()
 	if err != nil {
-		return refuse("the outbox entry is not an envelope this box made for that address: %v", err)
+		return err
+	}
+	// Mail may wait 33 days to be read, and its certificate must still be
+	// valid then.
+	if !cert.SignsMail(b.now()) {
+		return refuse("this box's certificate ends within %d days, too soon to sign mail that may wait that long: irongall rekey makes a new one, as irongall recv does daily", protocol.TTL/(24*time.Hour))
 	}
 	pk, err := b.Resolve(ctx, to)
 	if err != nil {
@@ -273,16 +303,17 @@ func (b *Box) seal(ctx context.Context, to protocol.Address, stem string) error 
 	if err != nil {
 		return err
 	}
-	padded, size, err := env.MarshalPadded(pk.Type())
+	sig, err := protocol.Sign(worker, line, protocol.MessageNamespace(to))
 	if err != nil {
 		return err
 	}
+	plaintext, size := protocol.Plaintext(line, sig, pk.Type())
 	var ct bytes.Buffer
 	w, err := age.Encrypt(&ct, r)
 	if err != nil {
 		return err
 	}
-	if _, err := w.Write(padded); err != nil {
+	if _, err := w.Write(plaintext); err != nil {
 		return err
 	}
 	if err := w.Close(); err != nil {
@@ -291,17 +322,8 @@ func (b *Box) seal(ctx context.Context, to protocol.Address, stem string) error 
 	if ct.Len() != size {
 		return refuse("the encrypted message is %d bytes, where its padding was made for %d: it is not sent at a size that tells its length", ct.Len(), size)
 	}
-	sig, err := protocol.Sign(b.signer, ct.Bytes(), protocol.MessageNamespace(to))
-	if err != nil {
-		return err
-	}
 	serial := pk.Serial
-	j, err := json.Marshal(protocol.SendRequest{
-		From:         b.id.Address().String(),
-		PrekeySerial: &serial,
-		Ciphertext:   ct.Bytes(),
-		Signature:    sig,
-	})
+	j, err := json.Marshal(protocol.SendRequest{PrekeySerial: &serial, Ciphertext: ct.Bytes()})
 	if err != nil {
 		return err
 	}

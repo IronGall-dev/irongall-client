@@ -17,12 +17,14 @@ import (
 )
 
 // Rekey publishes a NEW prekey at the next serial, of type kt, or of the
-// current prekey's type if kt is empty. If an earlier Rekey signed one and
-// the server did not take it, that one is sent again, unchanged, until it
-// expires: a key is signed once, so no key is encrypted to for more than 33
-// days whatever the server does with what it was sent. It needs no token, only the identity,
-// so it also recovers a box that lost its prekeys or its token. The new token
-// it returns, encrypted to the new prekey, replaces the old one, which dies.
+// current prekey's type if kt is empty, signed by a NEW working key under a
+// new certificate. If an earlier Rekey signed one and the server did not
+// take it, that one is sent again, unchanged, until it expires: a key is
+// signed once, so no key is encrypted to for more than 33 days whatever the
+// server does with what it was sent. It needs only the identity, so it also
+// recovers a box that lost its prekeys or its working key. The upload carries
+// a pass under the new certificate, and the server then takes no pass under
+// an older one.
 // [Box.Receive] renews the prekey once it is more than a day old, so a box
 // received at least monthly never lapses; Rekey is for a new key type, for
 // recovery, and for boxes that are only ever sent from.
@@ -52,7 +54,9 @@ func (b *Box) rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey,
 	if _, err := b.call(ctx, http.MethodGet, b.boxPath("/identity"), nil, nil, &ir); err != nil {
 		return nil, err
 	}
-	cur, err := protocol.VerifyPrekey(b.id, ir.Prekey, ir.PrekeySignature)
+	// Its own record, so judged as one: whether this identity ever certified
+	// the key that signed it, even if that certificate has since ended.
+	cur, _, err := protocol.VerifyPrekeyRecord(b.id, ir.Prekey, ir.PrekeySignature)
 	if err != nil {
 		return nil, refuse("this box's current prekey, as served: %v", err)
 	}
@@ -101,14 +105,7 @@ func (b *Box) rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey,
 	if req.PrekeySignature, err = os.ReadFile(stem + ".txt.sig"); err != nil { //nolint:gosec // a path inside the box's own directory
 		return nil, err
 	}
-	var tr protocol.TokenResponse
-	if _, err := b.call(ctx, http.MethodPut, b.boxPath("/prekey"), req, nil, &tr); err != nil {
-		return nil, err
-	}
-	if err := b.recordPublished(next); err != nil {
-		return nil, err
-	}
-	if err := b.storeToken(tr.Token); err != nil {
+	if err := b.publish(ctx, http.MethodPut, b.boxPath("/prekey"), req, next); err != nil {
 		return nil, err
 	}
 	return p, b.Prune()
@@ -116,7 +113,8 @@ func (b *Box) rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey,
 
 // signedPrekey looks at what an earlier attempt left for a serial. If it
 // signed a statement that can still be sent, that statement is returned: the
-// box's own, for this serial and the key it holds, of type kt, not expired.
+// box's own, for this serial and the key it holds, of type kt, not expired,
+// under a certificate that is valid now and whose working key the box holds.
 // If it signed one that cannot be, the serial is spent. If it signed nothing,
 // neither: a key it made and never signed is free to use.
 func (b *Box) signedPrekey(serial uint64, kt protocol.KeyType) (p *protocol.Prekey, spent bool, err error) {
@@ -132,9 +130,12 @@ func (b *Box) signedPrekey(serial uint64, kt protocol.KeyType) (p *protocol.Prek
 	if err != nil {
 		return nil, false, err
 	}
-	p, err = protocol.VerifyPrekey(b.id, st, sig)
+	p, _, err = protocol.VerifyPrekey(b.id, st, sig, b.now())
 	if err != nil || p.Serial != serial || p.Type() != kt || p.Expired(b.now()) {
 		return nil, true, nil //nolint:nilerr // a statement that does not verify is one this box will not send
+	}
+	if _, _, err := b.worker(serial); err != nil {
+		return nil, true, nil //nolint:nilerr // a statement whose working key this box cannot sign a pass with
 	}
 	if held, err := ageRecipient(stem + ".agekey"); err != nil || held != p.Key {
 		return nil, true, nil //nolint:nilerr // a statement for a key this box does not hold
@@ -288,11 +289,17 @@ func (b *Box) dropRetired(began time.Time) error {
 	return nil
 }
 
-// removePrekey deletes a prekey's key and its statement.
+// removePrekey deletes a prekey's key and its statement, and the working key
+// made with it, if a renewal the server never took left one.
 func (b *Box) removePrekey(n uint64) error {
 	stem := b.path("prekeys", strconv.FormatUint(n, 10))
 	for _, ext := range []string{".agekey", ".txt", ".txt.sig"} {
 		if err := removeIfExists(stem + ext); err != nil {
+			return err
+		}
+	}
+	for _, ext := range []string{"", ".pub", "-cert.pub"} {
+		if err := removeIfExists(b.workStem(n) + ext); err != nil {
 			return err
 		}
 	}

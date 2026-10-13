@@ -11,11 +11,6 @@ import (
 // Addresses and message ids travel as strings, so a client can refuse one bad
 // entry without losing the rest of a response.
 
-// TokenHeader carries a refreshed owner token on any owner response during a
-// server-key rotation: standard base64 of an age file encrypted to the box's
-// current prekey, like TokenResponse.Token.
-const TokenHeader = "irongall-token" //nolint:gosec // a header name, not a credential
-
 // ErrNotBase64 is returned when a byte field is not standard base64.
 var ErrNotBase64 = errors.New("a byte field is not standard base64 of the exact bytes")
 
@@ -47,7 +42,8 @@ func (b *Bytes) UnmarshalJSON(data []byte) error {
 }
 
 // RegisterRequest is the body of PUT /v1/<address>: the identity document, and
-// the first prekey statement with the identity's signature over it.
+// the first prekey statement with the signature over it of a working key the
+// identity certified. The call carries a pass under that certificate.
 type RegisterRequest struct {
 	Identity        Bytes `json:"identity"`
 	Prekey          Bytes `json:"prekey"`
@@ -55,22 +51,17 @@ type RegisterRequest struct {
 }
 
 // PrekeyRequest is the body of PUT /v1/<address>/prekey: a new prekey
-// statement, signed by the identity.
+// statement, signed by a working key the identity certified. The call carries
+// a pass under that certificate, which is how a box moves to a new one.
 type PrekeyRequest struct {
 	Prekey          Bytes `json:"prekey"`
 	PrekeySignature Bytes `json:"prekey_signature"`
 }
 
-// TokenResponse carries the owner token, as an age file encrypted to the
-// box's current prekey, so only the prekey's holder can read it.
-type TokenResponse struct {
-	Token Bytes `json:"token"`
-}
-
 // IdentityResponse is GET /v1/<address>/identity: the identity document and
 // the current prekey statement with its signature. None of it is trusted
-// until checked: the document against the address, the statement against the
-// document.
+// until checked: the document against the address, the signature's
+// certificate against the document, the statement against the certificate.
 type IdentityResponse struct {
 	Identity        Bytes `json:"identity"`
 	Prekey          Bytes `json:"prekey"`
@@ -78,19 +69,17 @@ type IdentityResponse struct {
 }
 
 // SendRequest is the body of POST /v1/<recipient>: an age file encrypted to
-// the recipient's prekey, and the sender's signature over it in the
-// recipient's message namespace.
+// the recipient's prekey. The sender is the box whose pass the call carries.
+// The message's signature is inside the file, so the server is handed none.
 type SendRequest struct {
-	From string `json:"from"`
 	// PrekeySerial is the serial of the prekey encrypted to. When the box
 	// has a newer one the server answers stale_prekey, and the sender
-	// re-encrypts the same envelope.
+	// encrypts the same signed envelope again.
 	PrekeySerial *uint64 `json:"prekey_serial,omitempty"`
 	Ciphertext   Bytes   `json:"ciphertext"`
-	Signature    Bytes   `json:"signature"`
 }
 
-// AdoptRequest is the body of PUT /v1/<address>/account (Bearer): an adopt
+// AdoptRequest is the body of PUT /v1/<address>/account (with a pass): an adopt
 // key an account minted. The box joins that account, which may lift its
 // limits.
 type AdoptRequest struct {
@@ -128,12 +117,13 @@ type MessageInfo struct {
 	ExpiresAt  string `json:"expires_at"`
 }
 
-// Message is GET /v1/<address>/messages/<id>.
+// Message is GET /v1/<address>/messages/<id>. From is the box whose pass the
+// send carried, on the server's word: a recipient holds it to the sender it
+// verifies inside the ciphertext.
 type Message struct {
 	ID         string `json:"id"`
 	From       string `json:"from"`
 	ReceivedAt string `json:"received_at"`
 	ExpiresAt  string `json:"expires_at"`
 	Ciphertext Bytes  `json:"ciphertext"`
-	Signature  Bytes  `json:"signature"`
 }

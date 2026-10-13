@@ -68,7 +68,7 @@ func TestCertificateRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cert.Serial() != 7 || !cert.NotAfter().Equal(now.Add(MaxCertificateLifetime)) {
+	if cert.Serial() != 7 || !cert.NotAfter().Equal(now.Add(CertificateLifetime)) {
 		t.Errorf("serial %d, ends %v", cert.Serial(), cert.NotAfter())
 	}
 	if got := cert.PublicKey().(*ssh.Certificate).ValidAfter; got != uint64(time.Date(2026, 10, 12, 19, 18, 0, 0, time.UTC).Unix()) {
@@ -277,7 +277,7 @@ func TestCertificateAgainstSSHKeygen(t *testing.T) {
 	now := time.Now()
 
 	// ssh-keygen's certificate and signature, checked here.
-	must(nil, "-q", "-s", "identity", "-I", CertificateKeyID, "-n", a, "-z", "7", "-V", "+66d", "-O", "clear", "work.pub")
+	must(nil, "-q", "-s", "identity", "-I", CertificateKeyID, "-n", a, "-z", "7", "-V", "+65d", "-O", "clear", "work.pub")
 	sig := must(msg, "-Y", "sign", "-n", ns, "-f", "work-cert.pub")
 	cert, err := VerifyCertified(id, msg, sig, ns, now)
 	if err != nil {
@@ -291,7 +291,7 @@ func TestCertificateAgainstSSHKeygen(t *testing.T) {
 	if err := os.Rename(filepath.Join(dir, "work-cert.pub"), filepath.Join(dir, "clear-cert.pub")); err != nil {
 		t.Fatal(err)
 	}
-	must(nil, "-q", "-s", "identity", "-I", CertificateKeyID, "-n", a, "-z", "8", "-V", "+66d", "work.pub")
+	must(nil, "-q", "-s", "identity", "-I", CertificateKeyID, "-n", a, "-z", "8", "-V", "+65d", "work.pub")
 	sig = must(msg, "-Y", "sign", "-n", ns, "-f", "work-cert.pub")
 	if _, err := VerifyCertified(id, msg, sig, ns, now); !errors.Is(err, ErrCertificate) {
 		t.Errorf("a certificate with ssh-keygen's default extensions: %v", err)

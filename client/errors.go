@@ -22,17 +22,15 @@ func refuse(format string, args ...any) error {
 	return &RefusedError{Reason: fmt.Sprintf(format, args...)}
 }
 
-// Why a message was refused, as codes: with protocol.RefusedEnvelope,
-// RefusedAttribution and RefusedStale, a closed set. A refusal's words are
-// this client's own and never quote the message, its claimed sender's text
-// or the server's: whoever reads a refusal may be a model.
+// Why a message was refused, as codes: with protocol's (bad_message,
+// bad_envelope, bad_identity, bad_signature, reattributed, stale), a closed
+// set. A refusal's words are this client's own and never quote the message,
+// its claimed sender's text or the server's: whoever reads a refusal may be a
+// model.
 const (
-	RefusedSender    = "bad_sender"    // the claimed sender is not an address
-	RefusedIdentity  = "bad_identity"  // no identity for the sender, or one that is not its address's
-	RefusedSignature = "bad_signature" // the signature is not the sender's, for this box
-	RefusedDecrypt   = "undecryptable" // not encrypted to a prekey this box holds
-	RefusedReplay    = "replay"        // this ciphertext was already received
-	RefusedID        = "bad_id"        // the server's id for it is not the SHA-256 of its ciphertext
+	RefusedDecrypt = "undecryptable" // not encrypted to a prekey this box holds
+	RefusedReplay  = "replay"        // this ciphertext was already received
+	RefusedID      = "bad_id"        // the server's id for it is not the SHA-256 of its ciphertext
 )
 
 // APIError is a non-2xx answer from the server. Problem is the RFC 9457 body

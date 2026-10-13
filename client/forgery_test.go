@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -16,101 +15,141 @@ import (
 	"testing"
 	"time"
 
-	"filippo.io/age"
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
-// TestForgeries plays the operator, who controls every byte the server sends.
-// Each forgery must be refused by the client: never delivered, never
-// encrypted to, never pinned. Refused mail is quarantined and acked, so it
-// leaves the server, and the refusal never blocks the claimed sender.
+// TestForgeries plays the operator, who controls every byte the server sends
+// and stores. Each forgery must be refused by the client: never delivered,
+// never encrypted to, never pinned. Refused mail is quarantined and acked, so
+// it leaves the server, and the refusal never blocks the claimed sender.
 //
-//	re-attribution                       A's ciphertext, re-signed as C's     → refused: the inner from is A
-//	forged identity at first contact     C's identity served as A's           → refused, nothing pinned
-//	forged signature from a pinned sender C's message relabelled as A's       → refused: A's pinned key did not sign it
-//	swapped prekey                       C's valid prekey served as B's       → the send refuses to encrypt
-//	an expired prekey                    B's prekey past its not_after        → the send refuses to encrypt
-//	rollback of a peer's prekey          B's older prekey served again        → the send refuses (serial went down)
-//	rollback of the box's own prekey     the box's own older prekey served    → rekey refuses (it published a higher one)
-//	replay under a new id                a delivered ciphertext, stored again → refused as a replay
-//	sent_at older than 33 days           an envelope dated 33 days and 1 s ago → refused as stale
-//	sender not an address                a from that is not 64 hex            → refused
-//	not encrypted to this box            A's message to C, signed for B       → refused: it does not decrypt
-//	an id that is not the hash           a message listed under another id    → refused; files are named by the hash
-//	a second envelope on its own line    a valid envelope hiding another      → delivered, printed as one line of the checked fields
+//	a sender the server relabels          A's message listed as C's            → refused: C did not sign it
+//	a from that is not an address         the server's from is a path          → refused, and nothing is named by it
+//	mail made in another box's name       O signs an envelope carrying A's identity → refused: not under a certificate of A's identity
+//	a second message after the signature  C's signed envelope in the padding   → A's is delivered, and nothing after its signature is read
+//	a forged identity on a send           C's identity served as B's           → the send refuses, nothing pinned
+//	swapped prekey                        C's valid prekey served as B's       → the send refuses to encrypt
+//	an expired prekey                     B's prekey past its not_after        → the send refuses to encrypt
+//	rollback of a peer's prekey           B's older prekey served again        → the send refuses (serial went down)
+//	a stolen working key, replaced since  a new prekey under B's old certificate → the send refuses (certificate serial went down)
+//	rollback of the box's own prekey      the box's own older prekey served    → rekey refuses (it published a higher one)
+//	replay under a new id                 a delivered ciphertext, stored again → refused as a replay
+//	sent_at older than 33 days            an envelope dated 33 days and 1 s ago → refused as stale
+//	not encrypted to this box             A's message to C, stored in B's box  → refused: it does not decrypt
+//	an id that is not the hash            a message listed under another id    → refused; files are named by the hash
 func TestForgeries(t *testing.T) {
 	ctx := context.Background()
-	refusedFor := func(t *testing.T, res *client.Result, why string) {
+	refusedFor := func(t *testing.T, res *client.Result, code, why string) {
 		t.Helper()
-		if len(res.Delivered) != 0 || len(res.Refused) != 1 || !strings.Contains(res.Refused[0].Reason, why) {
-			t.Fatalf("delivered %d, refused %v; want refused for %q", len(res.Delivered), res.Refused, why)
+		if len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != code || !strings.Contains(res.Refused[0].Reason, why) {
+			t.Fatalf("delivered %d, refused %v; want refused as %s for %q", len(res.Delivered), res.Refused, code, why)
 		}
 	}
+	// relabel makes the server say every message in b's box is from another
+	// sender: it rewrites the list and the fetch.
+	relabel := func(e *env, was, now string) {
+		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if r.Method != http.MethodGet || !strings.Contains(r.URL.Path, "/messages") {
+				next.ServeHTTP(w, r)
+				return
+			}
+			rec := httptest.NewRecorder()
+			next.ServeHTTP(rec, r)
+			for k, v := range rec.Header() {
+				w.Header()[k] = v
+			}
+			w.WriteHeader(rec.Code)
+			_, _ = w.Write(bytes.ReplaceAll(rec.Body.Bytes(), []byte(was), []byte(now)))
+		})
+	}
 
-	t.Run("re-attribution", func(t *testing.T) {
+	t.Run("a sender the server relabels", func(t *testing.T) {
 		e := newEnv(t)
 		a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
-		cs := signer(t, c)
-		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-			if r.Method == http.MethodPost && r.URL.Path == "/v1/"+b.Address().String() {
-				var req protocol.SendRequest
-				_ = json.NewDecoder(r.Body).Decode(&req)
-				req.From = c.Address().String()
-				req.Signature, _ = protocol.Sign(cs, req.Ciphertext, protocol.MessageNamespace(b.Address()))
-				j, _ := json.Marshal(req)
-				r.Body = io.NopCloser(bytes.NewReader(j))
-				r.ContentLength = int64(len(j))
-			}
-			next.ServeHTTP(w, r)
-		})
 		send(t, a, b, "from A")
-		e.srv.SetMiddle(nil)
+		relabel(e, a.Address().String(), c.Address().String())
 		res := receive(t, b)
-		refusedFor(t, res, "re-attribution")
+		refusedFor(t, res, protocol.RefusedAttribution, "another box than the one that signed")
 		if !exists(filepath.Join(b.Dir(), "quarantine", res.Refused[0].ID+".json")) {
 			t.Fatal("not quarantined")
 		}
 		if e.srv.Count(b.Address()) != 0 {
 			t.Fatal("refused mail was not acked")
 		}
-	})
-
-	t.Run("forged identity at first contact", func(t *testing.T) {
-		e := newEnv(t)
-		a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
-		send(t, a, b, "hi")
-		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-			if r.URL.Path == "/v1/"+a.Address().String()+"/identity" {
-				fakeserver.WriteJSON(w, http.StatusOK, protocol.IdentityResponse{Identity: c.Identity().Document()})
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
-		refusedFor(t, receive(t, b), "does not hash")
-		if exists(filepath.Join(b.Dir(), "peers", a.Address().String(), "identity.doc")) {
-			t.Fatal("a forged identity was pinned")
+		if exists(filepath.Join(b.Dir(), "peers", c.Address().String())) {
+			t.Fatal("the box the server named was pinned")
 		}
 	})
 
-	t.Run("forged signature from a pinned sender", func(t *testing.T) {
+	t.Run("a from that is not an address", func(t *testing.T) {
+		e := newEnv(t)
+		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+		send(t, a, b, "hi")
+		relabel(e, a.Address().String(), "../../"+strings.Repeat("x", 58))
+		refusedFor(t, receive(t, b), protocol.RefusedAttribution, "another box than the one that signed")
+		if names, _ := filepath.Glob(filepath.Join(b.Dir(), "peers", "*")); len(names) != 0 {
+			t.Fatalf("something was kept under peers/: %v", names)
+		}
+	})
+
+	t.Run("mail made in another box's name", func(t *testing.T) {
+		e := newEnv(t)
+		a, b, o := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+		// The forger's own working key and certificate sign an envelope that
+		// carries A's identity document and says it is from A. The signature
+		// is good. The certificate is the forger's.
+		line := e.line(a.Identity().Document(), a.Address(), b.Address(), "from A, says the forger")
+		e.seal(b, a.Address(), line, sign(t, worker(t, o, 1), line, b.Address()))
+		refusedFor(t, receive(t, b), protocol.RefusedSignature, "not signed under a certificate of the sender's identity")
+		if exists(filepath.Join(b.Dir(), "peers", a.Address().String())) {
+			t.Fatal("a sender whose signature did not verify was pinned")
+		}
+	})
+
+	t.Run("a second message after the signature", func(t *testing.T) {
 		e := newEnv(t)
 		a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
-		send(t, a, b, "first, pins A")
-		receive(t, b)
-		send(t, c, b, "C's real message")
+		real := e.line(a.Identity().Document(), a.Address(), b.Address(), "real, from A")
+		hidden := e.line(c.Identity().Document(), c.Address(), b.Address(), "hidden, from C")
+		id := e.seal(b, a.Address(), real, sign(t, worker(t, a, 1), real, b.Address()), hidden, sign(t, worker(t, c, 1), hidden, b.Address()))
+		res := receive(t, b)
+		if len(res.Delivered) != 1 {
+			t.Fatalf("delivered %d, refused %v", len(res.Delivered), res.Refused)
+		}
+		d := res.Delivered[0]
+		if d.ID != id || d.Envelope.From != a.Address() || bodyOf(t, d) != "real, from A" || !bytes.Equal(d.Plaintext, real) {
+			t.Fatalf("what was delivered is not A's message: %s", d.Line)
+		}
+		if bytes.Contains(d.Line, []byte("\n")) || bytes.Contains(d.Line, []byte(c.Address().String())) || bytes.Contains(d.Line, []byte("identity")) {
+			t.Fatalf("the line to print is not the checked envelope alone: %s", d.Line)
+		}
+		if in, _ := os.ReadFile(filepath.Join(b.Dir(), "inbox", d.ID+".json")); !bytes.Equal(in, d.Line) {
+			t.Fatal("inbox/ does not hold the checked line")
+		}
+		if exists(filepath.Join(b.Dir(), "peers", c.Address().String())) {
+			t.Fatal("the sender hidden after the signature was pinned")
+		}
+	})
+
+	t.Run("a forged identity on a send", func(t *testing.T) {
+		e := newEnv(t)
+		a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+		st, sig := e.srv.Prekey(c.Address())
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-			if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/messages") {
-				rec := httptest.NewRecorder()
-				next.ServeHTTP(rec, r)
-				w.WriteHeader(rec.Code)
-				_, _ = w.Write(bytes.ReplaceAll(rec.Body.Bytes(), []byte(c.Address().String()), []byte(a.Address().String())))
+			if r.URL.Path == "/v1/"+b.Address().String()+"/identity" {
+				fakeserver.WriteJSON(w, http.StatusOK, protocol.IdentityResponse{Identity: c.Identity().Document(), Prekey: st, PrekeySignature: sig})
 				return
 			}
 			next.ServeHTTP(w, r)
 		})
-		refusedFor(t, receive(t, b), "signature does not verify")
+		if _, err := a.Send(ctx, b.Address(), "secret"); err == nil || !strings.Contains(err.Error(), "does not hash") {
+			t.Fatalf("send: %v, want a refusal of the identity", err)
+		}
+		if exists(filepath.Join(a.Dir(), "peers", b.Address().String())) {
+			t.Fatal("a forged identity was pinned")
+		}
 	})
 
 	t.Run("swapped prekey", func(t *testing.T) {
@@ -131,12 +170,18 @@ func TestForgeries(t *testing.T) {
 		if e.srv.Count(b.Address()) != 0 {
 			t.Fatal("something was sent")
 		}
+		if exists(filepath.Join(a.Dir(), "peers", b.Address().String())) {
+			t.Fatal("a peer whose prekey did not verify was pinned")
+		}
 	})
 
 	t.Run("an expired prekey", func(t *testing.T) {
 		e := newEnv(t)
 		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 		e.clock.Add(protocol.MaxPrekeyLifetime)
+		if _, err := a.Rekey(ctx, ""); err != nil { // a certificate that still signs mail
+			t.Fatal(err)
+		}
 		if _, err := a.Send(ctx, b.Address(), "too late"); err == nil || !strings.Contains(err.Error(), "expired") {
 			t.Fatalf("send: %v, want a refusal of the expired prekey", err)
 		}
@@ -162,6 +207,39 @@ func TestForgeries(t *testing.T) {
 		})
 		if _, err := a.Send(ctx, b.Address(), "secret"); err == nil || !strings.Contains(err.Error(), "rollback") {
 			t.Fatalf("send: %v, want a rollback refusal", err)
+		}
+	})
+
+	t.Run("a stolen working key, replaced since", func(t *testing.T) {
+		e := newEnv(t)
+		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+		stolen := worker(t, b, 1) // read before the renewal deletes it
+		old, _ := e.srv.Prekey(b.Address())
+		if _, err := b.Rekey(ctx, ""); err != nil {
+			t.Fatal(err)
+		}
+		send(t, a, b, "sees certificate 2")
+		// The thief, with a server's help, offers a prekey of its own under
+		// the old certificate, which has weeks to run: a higher prekey
+		// serial than any A has seen, so only the certificate's gives it away.
+		p, err := protocol.ParsePrekey(old)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p.Serial = 9
+		sig, err := protocol.Sign(stolen, p.Statement(), protocol.PrekeyNamespace(b.Address()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if r.URL.Path == "/v1/"+b.Address().String()+"/identity" {
+				fakeserver.WriteJSON(w, http.StatusOK, protocol.IdentityResponse{Identity: b.Identity().Document(), Prekey: p.Statement(), PrekeySignature: sig})
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+		if _, err := a.Send(ctx, b.Address(), "secret"); err == nil || !strings.Contains(err.Error(), "under certificate 1, below 2") {
+			t.Fatalf("send: %v, want a refusal of the older certificate", err)
 		}
 	})
 
@@ -200,58 +278,38 @@ func TestForgeries(t *testing.T) {
 		var req protocol.SendRequest
 		_ = json.Unmarshal(*sent, &req)
 		other := sha256.Sum256([]byte("another id"))
-		e.srv.Inject(b.Address(), hex.EncodeToString(other[:]), a.Address(), req.Ciphertext, req.Signature)
-		refusedFor(t, receive(t, b), "replay")
+		e.srv.Inject(b.Address(), hex.EncodeToString(other[:]), a.Address(), req.Ciphertext)
+		refusedFor(t, receive(t, b), client.RefusedReplay, "replay")
 	})
 
 	t.Run("sent_at older than 33 days", func(t *testing.T) {
 		e := newEnv(t)
-		b := e.box(protocol.Classic)
-		past := e.opts()
-		past.Now = func() time.Time { return e.clock.Now().Add(-protocol.TTL - time.Second) }
-		a := e.box(protocol.Classic)
-		old, err := client.Open(a.Dir(), past)
+		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+		env, err := protocol.NewEnvelope(a.Address(), b.Address(), "stale", e.clock.Now().Add(-protocol.TTL-time.Second))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := old.Send(ctx, b.Address(), "stale"); err != nil {
+		env.Identity = a.Identity().Document()
+		line, sig, err := protocol.SignEnvelope(env, worker(t, a, 1))
+		if err != nil {
 			t.Fatal(err)
 		}
-		refusedFor(t, receive(t, b), "older than 33 days")
-	})
-
-	t.Run("sender not an address", func(t *testing.T) {
-		e := newEnv(t)
-		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
-		send(t, a, b, "hi")
-		bad := []byte("../../" + strings.Repeat("x", 58))
-		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-			if r.Method != http.MethodGet || !strings.Contains(r.URL.Path, "/messages/") {
-				next.ServeHTTP(w, r)
-				return
-			}
-			rec := httptest.NewRecorder()
-			next.ServeHTTP(rec, r)
-			w.WriteHeader(rec.Code)
-			_, _ = w.Write(bytes.ReplaceAll(rec.Body.Bytes(), []byte(a.Address().String()), bad))
-		})
-		refusedFor(t, receive(t, b), "not an address")
+		e.seal(b, a.Address(), line, sig)
+		refusedFor(t, receive(t, b), protocol.RefusedStale, "older than 33 days")
 	})
 
 	t.Run("not encrypted to this box", func(t *testing.T) {
 		e := newEnv(t)
 		a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
-		// A's envelope for B, encrypted to C's prekey, signed by A for B: the
-		// operator holding A's key could do this.
+		// A's message to C, stored in B's box as it is.
 		sent := capture(e, http.MethodPost, "/v1/"+c.Address().String())
 		send(t, a, c, "for C's key")
 		e.srv.SetMiddle(nil)
 		var req protocol.SendRequest
 		_ = json.Unmarshal(*sent, &req)
-		sig, _ := protocol.Sign(signer(t, a), req.Ciphertext, protocol.MessageNamespace(b.Address()))
 		id := sha256.Sum256(req.Ciphertext)
-		e.srv.Inject(b.Address(), hex.EncodeToString(id[:]), a.Address(), req.Ciphertext, sig)
-		refusedFor(t, receive(t, b), "does not decrypt")
+		e.srv.Inject(b.Address(), hex.EncodeToString(id[:]), a.Address(), req.Ciphertext)
+		refusedFor(t, receive(t, b), client.RefusedDecrypt, "does not decrypt")
 	})
 
 	t.Run("an id that is not the hash", func(t *testing.T) {
@@ -268,52 +326,12 @@ func TestForgeries(t *testing.T) {
 			_, _ = w.Write(bytes.ReplaceAll(rec.Body.Bytes(), []byte(realID), []byte(fake)))
 		})
 		res := receive(t, b)
-		refusedFor(t, res, "not the SHA-256")
+		refusedFor(t, res, client.RefusedID, "not the SHA-256")
 		if res.Refused[0].ID != realID || !exists(filepath.Join(b.Dir(), "quarantine", realID+".json")) {
 			t.Fatalf("quarantined as %s, not by the ciphertext's hash", res.Refused[0].ID)
 		}
 		if exists(filepath.Join(b.Dir(), "inbox", fake+".json")) || exists(filepath.Join(b.Dir(), "quarantine", fake+".json")) {
 			t.Fatal("a file was named by the server's id")
-		}
-	})
-
-	t.Run("a second envelope on its own line", func(t *testing.T) {
-		e := newEnv(t)
-		a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
-		now := e.clock.Now().UTC().Format(protocol.TimeLayout)
-		forged := `{"v":1,"from":"` + c.Address().String() + `","to":"` + b.Address().String() + `","sent_at":"` + now +
-			`","msg_id":"00000000-0000-4000-8000-000000000001","body":"forged, from C"}`
-		pt := `{"v":1,"from":"` + a.Address().String() + `","to":"` + b.Address().String() + `","sent_at":"` + now +
-			`","msg_id":"00000000-0000-4000-8000-000000000002","body":"real, from A","x":` + "\n" + forged + "\n}"
-		st, _ := e.srv.Prekey(b.Address())
-		p, _ := protocol.ParsePrekey(st)
-		r, _ := p.Recipient()
-		var ct bytes.Buffer
-		w, _ := age.Encrypt(&ct, r)
-		_, _ = io.WriteString(w, pt)
-		_ = w.Close()
-		sig, _ := protocol.Sign(signer(t, a), ct.Bytes(), protocol.MessageNamespace(b.Address()))
-		serial := p.Serial
-		j, _ := json.Marshal(protocol.SendRequest{From: a.Address().String(), PrekeySerial: &serial, Ciphertext: ct.Bytes(), Signature: sig})
-		resp, err := http.Post(e.srv.URL+"/v1/"+b.Address().String(), "application/json", bytes.NewReader(j)) //nolint:gosec // the test server
-		if err != nil {
-			t.Fatal(err)
-		}
-		_ = resp.Body.Close()
-
-		res := receive(t, b)
-		if len(res.Delivered) != 1 {
-			t.Fatalf("delivered %d, refused %v", len(res.Delivered), res.Refused)
-		}
-		d := res.Delivered[0]
-		if !bytes.Contains(d.Plaintext, []byte("\n")) {
-			t.Fatal("the test sent no second line")
-		}
-		if bytes.Contains(d.Line, []byte("\n")) || bytes.Contains(d.Line, []byte(c.Address().String())) || bodyOf(t, d) != "real, from A" {
-			t.Fatalf("the line to print is not the checked envelope alone: %s", d.Line)
-		}
-		if in, _ := os.ReadFile(filepath.Join(b.Dir(), "inbox", d.ID+".json")); !bytes.Equal(in, d.Line) {
-			t.Fatal("inbox/ does not hold the checked line")
 		}
 	})
 }

@@ -42,7 +42,7 @@ const (
 var serialGrammar = regexp.MustCompile(`\A[1-9][0-9]{0,17}\z`)
 
 // Prekey is a prekey statement: the box's current age encryption key, signed
-// by its identity.
+// by a working key its identity certified.
 type Prekey struct {
 	Address  Address   // the box the key belongs to
 	Serial   uint64    // strictly increasing per box; the first is 1
@@ -149,21 +149,45 @@ func checkRecipient(p *Prekey) error {
 	return nil
 }
 
-// VerifyPrekey verifies a prekey statement signed by id, and parses it. The
-// signature must be id's, in id's prekey namespace, and the statement must
-// name id's own address.
-func VerifyPrekey(id *Identity, statement, signature []byte) (*Prekey, error) {
-	if err := Verify(id, statement, signature, PrekeyNamespace(id.Address())); err != nil {
-		return nil, errors.New("the prekey is not signed by its identity")
+// VerifyPrekey verifies a prekey statement of the box whose identity is id,
+// at now, and parses it. The signature must be by a working key that identity
+// certified, under a certificate valid at now, in id's prekey namespace; the
+// statement must name id's own address; and it must not outlive the
+// certificate it is signed under. It returns the certificate too: whoever
+// keeps the highest serial it has seen for the box compares.
+func VerifyPrekey(id *Identity, statement, signature []byte, now time.Time) (*Prekey, *Certificate, error) {
+	cert, err := VerifyCertified(id, statement, signature, PrekeyNamespace(id.Address()), now)
+	switch {
+	case errors.Is(err, ErrCertificateTime):
+		return nil, nil, errors.New("the certificate the prekey is signed under has ended, or has not begun")
+	case err != nil:
+		return nil, nil, errors.New("the prekey is not signed by a working key its identity certified")
 	}
 	p, err := ParsePrekey(statement)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if p.Address != id.Address() {
-		return nil, errors.New("the prekey statement names another box")
+		return nil, nil, errors.New("the prekey statement names another box")
 	}
-	return p, nil
+	if p.NotAfter.After(cert.NotAfter()) {
+		return nil, nil, errors.New("the prekey statement outlives the certificate it is signed under")
+	}
+	return p, cert, nil
+}
+
+// VerifyPrekeyRecord verifies a prekey statement as VerifyPrekey does, at the
+// moment its certificate began and not at now. It answers whether the
+// identity ever certified the key that signed the statement, which is what a
+// box asks of its own record: a box that was away for longer than a
+// certificate lasts still has to read its serial to publish the next one.
+// Nobody judging another box's prekey uses it.
+func VerifyPrekeyRecord(id *Identity, statement, signature []byte) (*Prekey, *Certificate, error) {
+	began, err := CertificateBegan(signature)
+	if err != nil {
+		return nil, nil, errors.New("the prekey is not signed by a working key its identity certified")
+	}
+	return VerifyPrekey(id, statement, signature, began)
 }
 
 // ParseTime parses a timestamp in TimeLayout, exactly: RFC 3339, UTC, to the

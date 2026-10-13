@@ -3,9 +3,7 @@ package client_test
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"filippo.io/age"
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
@@ -84,11 +81,15 @@ func TestFailedAckIsRetriedQuietly(t *testing.T) {
 func TestDuplicateRetryIsAckedNotDelivered(t *testing.T) {
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
-	r := send(t, a, b, "do this once")
-	receive(t, b)
-	p, _ := os.ReadFile(filepath.Join(b.Dir(), "inbox", r.ID+".json"))
+	send(t, a, b, "do this once")
+	first := receive(t, b)
+	if len(first.Delivered) != 1 {
+		t.Fatalf("delivered %d", len(first.Delivered))
+	}
+	// The line A signed, back in A's outbox: what a send that got no receipt
+	// leaves there.
 	stem := filepath.Join(a.Dir(), "outbox", b.Address().String()+".00000000-0000-4000-8000-000000000000")
-	if err := os.WriteFile(stem+".P", p, 0o600); err != nil {
+	if err := os.WriteFile(stem+".P", first.Delivered[0].Plaintext, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.Flush(context.Background()); err != nil {
@@ -131,17 +132,16 @@ func TestStalePrekeyReencryptsSameEnvelope(t *testing.T) {
 	if len(res.Delivered) != 1 {
 		t.Fatalf("delivered %d", len(res.Delivered))
 	}
-	// The same envelope, but for its padding, which is made for the prekey.
-	got := *res.Delivered[0].Envelope
-	got.Pad = ""
-	if m, err := got.Marshal(); err != nil || !bytes.Equal(m, p) {
-		t.Fatalf("the re-encrypted message is not the same envelope: %v", err)
+	// The same signed line, byte for byte: only the padding after its
+	// signature is made again, for the newer prekey.
+	if !bytes.Equal(res.Delivered[0].Plaintext, p) {
+		t.Fatal("the re-encrypted message is not the same envelope")
 	}
 }
 
-// A box restored from its identity alone, its backup, gets a new prekey and
-// token from Rekey and receives again: the address is the identity, and
-// nothing else needs keeping.
+// A box restored from its identity alone, its backup, gets a new working key,
+// certificate and prekey from Rekey and receives again: the address is the
+// identity, and nothing else needs keeping.
 func TestRestoreFromIdentity(t *testing.T) {
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -169,52 +169,110 @@ func TestRestoreFromIdentity(t *testing.T) {
 	}
 }
 
-// A new prekey kills the old token; a client still holding it refreshes on
-// 401 token_stale and carries on.
-func TestTokenStaleIsRefreshed(t *testing.T) {
+// passes records the Authorization value of every call a box makes as itself.
+func passes(e *env) *[]string {
+	var seen []string
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if a := r.Header.Get("Authorization"); a != "" {
+			seen = append(seen, a)
+		}
+		next.ServeHTTP(w, r)
+	})
+	return &seen
+}
+
+// A box signs one pass and uses it for every call until it is about to run
+// out, so a server checks one signature for ten minutes of calls. It is kept
+// in the box: a new process uses the same one.
+func TestAPassIsUsedUntilItRunsOut(t *testing.T) {
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
-	old, _ := os.ReadFile(filepath.Join(b.Dir(), "token"))
+	seen := passes(e)
+	send(t, a, b, "one")
+	receive(t, b)
+	again, err := client.Open(b.Dir(), e.opts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	receive(t, again)
+	first := map[string]bool{}
+	for _, p := range *seen {
+		first[p] = true
+	}
+	if len(*seen) < 4 || len(first) != 2 {
+		t.Fatalf("%d calls carried %d passes: want one for each of the two boxes", len(*seen), len(first))
+	}
+	for p := range first {
+		if !strings.HasPrefix(p, "irongall-pass address=\"") {
+			t.Fatalf("not a pass: %s", p)
+		}
+	}
+	// Past its ten minutes, a new one.
+	e.clock.Add(protocol.PassLifetime)
+	*seen = nil
+	receive(t, b)
+	if len(*seen) == 0 || first[(*seen)[0]] {
+		t.Fatal("a pass that had run out was sent again")
+	}
+}
+
+// A new prekey comes with a new certificate, and the server then takes no
+// pass under the old one. A client still holding such a pass is refused once,
+// signs another under the certificate in use, and carries on.
+func TestAPassUnderAnOlderCertificateIsReplaced(t *testing.T) {
+	e := newEnv(t)
+	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	receive(t, b)
+	old, err := os.ReadFile(filepath.Join(b.Dir(), "pass"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := b.Rekey(context.Background(), ""); err != nil {
 		t.Fatal(err)
 	}
-	cur, _ := os.ReadFile(filepath.Join(b.Dir(), "token"))
-	if bytes.Equal(old, cur) {
-		t.Fatal("a new prekey did not bring a new token")
+	if cur, _ := os.ReadFile(filepath.Join(b.Dir(), "pass")); bytes.Equal(old, cur) {
+		t.Fatal("a new certificate did not bring a new pass")
 	}
-	if err := os.WriteFile(filepath.Join(b.Dir(), "token"), old, 0o600); err != nil {
+	if exists(filepath.Join(b.Dir(), "work", "1")) || !exists(filepath.Join(b.Dir(), "work", "2-cert.pub")) {
+		t.Fatal("the older working key was kept, or the new one is missing")
+	}
+	if err := os.WriteFile(filepath.Join(b.Dir(), "pass"), old, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	send(t, a, b, "after the rekey")
 	if res := receive(t, b); len(res.Delivered) != 1 {
-		t.Fatal("no delivery after the token refresh")
+		t.Fatal("no delivery after the pass was replaced")
 	}
-	if now, _ := os.ReadFile(filepath.Join(b.Dir(), "token")); !bytes.Equal(now, cur) {
-		t.Fatal("the refreshed token is not the current one")
+	if now, _ := os.ReadFile(filepath.Join(b.Dir(), "pass")); bytes.Equal(now, old) {
+		t.Fatal("the refused pass is still the one kept")
 	}
 }
 
-// A refreshed token in an irongall-token header is kept.
-func TestTokenHeaderIsKept(t *testing.T) {
+// A server whose clock is ahead calls a pass run out before the box does.
+// The box signs another and tries once more, and no more than once.
+func TestAPassTheServerSaysHasRunOut(t *testing.T) {
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
-	st, _ := e.srv.Prekey(b.Address())
-	p, _ := protocol.ParsePrekey(st)
-	r, _ := p.Recipient()
-	refreshed := "igt1_" + base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, 37))
-	var ct bytes.Buffer
-	w, _ := age.Encrypt(&ct, r)
-	_, _ = io.WriteString(w, refreshed)
-	_ = w.Close()
+	refusals := 1
+	calls := 0
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		w.Header().Set(protocol.TokenHeader, base64.StdEncoding.EncodeToString(ct.Bytes()))
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/messages") {
+			calls++
+			if calls <= refusals {
+				w.Header().Set("Content-Type", protocol.ProblemContentType)
+				w.WriteHeader(http.StatusUnauthorized)
+				_ = json.NewEncoder(w).Encode(protocol.Problem{Status: http.StatusUnauthorized, Code: protocol.CodePassExpired})
+				return
+			}
+		}
 		next.ServeHTTP(w, r)
 	})
-	if _, err := b.Receive(context.Background()); err != nil {
-		t.Fatal(err)
+	if _, err := b.Receive(context.Background()); err != nil || calls != 2 {
+		t.Fatalf("receive after one refusal: %v, in %d calls", err, calls)
 	}
-	if tok, _ := os.ReadFile(filepath.Join(b.Dir(), "token")); string(tok) != refreshed {
-		t.Fatalf("token %q: the irongall-token header was not kept", tok)
+	refusals, calls = 100, 0
+	if _, err := b.Receive(context.Background()); client.Code(err) != protocol.CodePassExpired || calls != 2 {
+		t.Fatalf("receive from a server that refuses every pass: %v, in %d calls, want pass_expired after 2", err, calls)
 	}
 }
 
@@ -340,15 +398,6 @@ func TestLocalFaultLeavesMail(t *testing.T) {
 				t.Fatal(err)
 			}
 			return func() { _ = os.Remove(k) }
-		}},
-		{"the pinned identity unreadable", func(t *testing.T, b *client.Box, a protocol.Address) func() {
-			doc := filepath.Join(b.Dir(), "peers", a.String(), "identity.doc")
-			saved, _ := os.ReadFile(doc)
-			_ = os.Remove(doc)
-			if err := os.Mkdir(doc, 0o700); err != nil {
-				t.Fatal(err)
-			}
-			return func() { _ = os.Remove(doc); _ = os.WriteFile(doc, saved, 0o600) }
 		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {

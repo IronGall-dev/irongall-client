@@ -18,18 +18,18 @@ const (
 	CodeWrongRecipientType Code = "wrong_recipient_type" // not exactly one stanza of a live prekey type
 
 	// 401
-	CodeUnauthorized Code = "unauthorized" // no token, or a bad one
-	CodeTokenStale   Code = "token_stale"  // POST …/token, decrypt, retry
+	CodeUnauthorized Code = "unauthorized" // no pass, or one that is not this box's, for this server, under its current certificate
+	CodePassExpired  Code = "pass_expired" // the pass has run out, or runs out too far ahead: sign another, retry
 
 	// 403
 	CodeBadSignature     Code = "bad_signature"
-	CodeUnknownSender    Code = "unknown_sender"     // not registered, not yet active, or closed
+	CodeUnknownSender    Code = "unknown_sender"     // not registered, or closed
 	CodeSenderRevoked    Code = "sender_revoked"     // YOUR box is revoked
 	CodeSenderNotAllowed Code = "sender_not_allowed" // not on the box's allow list, or on its block list
 	CodeAdoptKeyRefused  Code = "adopt_key_refused"  // an adopt key that is spent, expired, revoked or not this server's
 
 	// 404
-	CodeNoSuchMailbox Code = "no_such_mailbox" // never registered, still pending, or closed
+	CodeNoSuchMailbox Code = "no_such_mailbox" // never registered, or closed
 	CodeNoSuchMessage Code = "no_such_message" // acked or expired: treat it as gone
 
 	// 409
@@ -61,7 +61,7 @@ var statuses = map[Code]int{
 	CodeNotAge:             http.StatusBadRequest,
 	CodeWrongRecipientType: http.StatusBadRequest,
 	CodeUnauthorized:       http.StatusUnauthorized,
-	CodeTokenStale:         http.StatusUnauthorized,
+	CodePassExpired:        http.StatusUnauthorized,
 	CodeBadSignature:       http.StatusForbidden,
 	CodeUnknownSender:      http.StatusForbidden,
 	CodeSenderRevoked:      http.StatusForbidden,

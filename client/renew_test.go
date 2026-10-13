@@ -225,10 +225,16 @@ func TestAServerThatFailsEveryRenewalGetsEachKeyOnce(t *testing.T) {
 	seen := 0
 	for day := 1; day <= 75; day++ {
 		e.clock.Add(24 * time.Hour)
-		receive(t, b)
+		// The certificate the server holds this box to was made on day 0
+		// and lasts 65 days. Once it has ended the box can sign no pass the
+		// server takes, so it cannot poll: it still offers a new prekey,
+		// under a new certificate, each day.
+		if _, err := b.Receive(context.Background()); (err != nil) != (day >= 65) {
+			t.Fatalf("day %d: receive: %v", day, err)
+		}
 		for ; seen < len(*kept); seen++ {
 			k := (*kept)[seen]
-			p, err := protocol.VerifyPrekey(b.Identity(), k.Prekey, k.PrekeySignature)
+			p, _, err := protocol.VerifyPrekey(b.Identity(), k.Prekey, k.PrekeySignature, e.clock.Now())
 			if err != nil {
 				t.Fatalf("day %d: an upload does not verify: %v", day, err)
 			}
@@ -267,7 +273,9 @@ func TestAServerThatFailsEveryRenewalGetsEachKeyOnce(t *testing.T) {
 		}
 		next.ServeHTTP(w, r)
 	})
-	if _, err := a.Resolve(context.Background(), b.Address()); err == nil || !strings.Contains(err.Error(), "expired") {
+	// Its certificate, made the same day, has ended too, and that is what a
+	// sender meets first.
+	if _, err := a.Resolve(context.Background(), b.Address()); err == nil || !strings.Contains(err.Error(), "has ended") {
 		t.Fatalf("a sender given the first key's statement on day 75: %v", err)
 	}
 	// Signed on day 2, expired on day 35, deleted on day 68: with its
