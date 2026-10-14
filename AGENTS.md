@@ -1,6 +1,6 @@
 # AGENTS.md — irongall-client
 
-🛑 **THIS REPO IS PUBLIC. Every push publishes.** Never commit secrets, private keys, tokens, or internal hostnames. Never copy code from the server repo, `IronGall-dev/irongall-server`: it is AGPL-3.0-or-later and this repo is Apache-2.0, so code moves from here to there and never back. Never copy text from a private note without a decision to publish it.
+🛑 **THIS REPO IS PUBLIC. Every push publishes.** Never commit secrets, private keys, tokens, or internal hostnames. Never copy text from a private note without a decision to publish it.
 
 🛑 **Sign off every commit: each carries your human's sign-off, made with `git commit -s`** (the Developer Certificate of Origin: `CONTRIBUTING.md`).
 - **It is their certification, not yours.** Tell them the repo requires it. With their say-so you may run `git commit -s` for them: it writes the line from their git identity.

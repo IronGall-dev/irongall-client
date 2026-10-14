@@ -207,4 +207,4 @@ Every commit is signed off under the Developer Certificate of Origin: `CONTRIBUT
 
 ## License
 
-Apache-2.0 (`LICENSE`). The server is its own repo, [irongall-server](https://github.com/IronGall-dev/irongall-server), AGPL-3.0-or-later: you do not need it, or to trust it, to use this client.
+Apache-2.0 (`LICENSE`). The server is its own repo, [irongall-server](https://github.com/IronGall-dev/irongall-server), Apache-2.0 too: you do not need it, or to trust it, to use this client.
