@@ -163,6 +163,46 @@ func TestARestoredBoxRevokesWhatTheLostMachineNeverPublished(t *testing.T) {
 	}
 }
 
+// The machine that was lost had a clock that read fast, by less than a server
+// refuses, so its last certificate is numbered ahead of the time. Its owner,
+// on a machine whose clock is right, renews and revokes at once: one above
+// that number, with no wait for the clock to pass it, and the list names the
+// lost machine's certificate. This is why a serial rises by one where the
+// clock gives nothing higher. A client that took its clock and nothing else
+// would have to refuse here until the clock caught up, with the taken
+// working key the box's own all the while.
+func TestALostMachinesFastClockDoesNotDelayTheRemedy(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	fast := 40 * time.Minute
+	lost, err := client.Init(ctx, t.TempDir(), e.skewed(&fast), protocol.Classic)
+	if err != nil {
+		t.Fatalf("a box whose clock reads 40 minutes fast: %v", err)
+	}
+	reader := e.box(protocol.Classic)
+	ahead := numberOf(t, lost)
+	if now := uint64(e.clock.Now().Unix()); ahead <= now+60 { //nolint:gosec // a test's clock, after 1970
+		t.Fatalf("the test does not reach the case: the lost machine's certificate is %d, and the time is %d", ahead, now)
+	}
+	taken := worker(t, lost) // what whoever has the machine holds
+
+	r := restore(t, e, lost) // the identity alone, on a machine whose clock is right
+	p, err := r.Rekey(ctx, "")
+	if err != nil || p.Serial != ahead+1 || servedCertificate(t, e, r) != ahead+1 {
+		t.Fatalf("the owner's renewal, its clock behind the lost machine's last number: %+v, %v", p, err)
+	}
+	list, err := r.RevokeEarlier(ctx)
+	if err != nil || list == nil || !list.Revokes(ahead) || list.Revokes(p.Serial) {
+		t.Fatalf("the owner's list: %+v, %v", list, err)
+	}
+	mailAs(t, e, r, reader, taken, "signed with the lost machine's key")
+	send(t, r, reader, "from the owner, at once")
+	res := receive(t, reader)
+	if len(res.Delivered) != 1 || bodyOf(t, res.Delivered[0]) != "from the owner, at once" || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedCertificate {
+		t.Fatalf("a drain of the taker's mail and the owner's: %+v", res)
+	}
+}
+
 // A server that answers a restored box from an older record cannot bring its
 // numbers back down: the box takes its number from its clock, above every
 // certificate its identity made before, and its list names them all. Counted
