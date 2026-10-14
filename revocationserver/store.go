@@ -87,7 +87,7 @@ func (s *store) read(a protocol.Address) (*protocol.Revocations, error) {
 		return nil, err
 	}
 	var rec protocol.Revocations
-	if err := json.Unmarshal(raw, &rec); err != nil || rec.Identity == nil || (rec.Revocation == nil && rec.RevokedCertificates == nil) {
+	if err := protocol.Unmarshal(raw, &rec); err != nil || rec.Identity == nil || (rec.Revocation == nil && rec.RevokedCertificates == nil) {
 		return nil, fmt.Errorf("the file kept for %s is not a record", a)
 	}
 	return &rec, nil

@@ -642,7 +642,9 @@ grep -q "REVOKED: $RD is revoked" err.txt && [ "$(grep -c "$RD" $SRV/log)" = "$n
 as RB; printf 'waits for an answer' | ig_send "$RC" || bad "RB's send"
 as RC; REVMODE="silent $RB"; recv; REVMODE=
 [ $RECV_RC != 0 ] && [ -z "$RECV_OUT" ] && [ "$(box_count "$RC")" = 1 ] && [ -z "$(ls $IG/quarantine)" ] && printf '%s' "$RECV_ERR" | grep -q "could not be asked" || bad "no answer: rc $RECV_RC, $RECV_OUT / $RECV_ERR"
-recv; [ $RECV_RC = 0 ] && [ "$(printf '%s\n' "$RECV_OUT" | awk NF | wc -l)" = 1 ] && ok "no answer on whether a sender is revoked stops the drain with the message still on the server; the next drain asks again and delivers it" || bad "after the answer: $RECV_ERR"
+for v in $VEC/answer/record-bad-*.json; do cp $v $SRV/shown.json; REVMODE="show $RB"; recv; REVMODE=      # nor is a 2xx whose body is no record, as PROTOCOL.md §0b reads one
+  [ $RECV_RC != 0 ] && [ -z "$RECV_OUT" ] && [ "$(box_count "$RC")" = 1 ] && [ -z "$(ls $IG/quarantine)" ] || bad "$(basename $v) served as the answer: rc $RECV_RC, $RECV_OUT / $RECV_ERR"; done
+recv; [ $RECV_RC = 0 ] && [ "$(printf '%s\n' "$RECV_OUT" | awk NF | wc -l)" = 1 ] && ok "no answer on whether a sender is revoked, and a 2xx that is no record, stop the drain with the message still on the server; the next drain asks again and delivers it" || bad "after the answer: $RECV_ERR"
 # a record handed over proves itself: the answer to a server that holds none. And the record alone revokes, with no box
 ig_revoked $W/wk.json 2> err.txt && bad "a working key's record was kept"; ig_revoked $W/mixed.json 2> err.txt && bad "a mixed record was kept"; [ ! -e $IG/peers/$RB/revoke.sig ] || bad "something that is not a revocation was kept"
 n0=$(wc -l < $SRV/log); [ "$(ig_revoked $W/rb.json)" = "revoked $RB" ] && [ -s $IG/peers/$RB/revoke.sig ] || bad "revoked: the record was not kept"
@@ -660,12 +662,12 @@ for v in $VEC/revoked/bad-*.txt; do ! ig_listcheck "$VA" $VEC/a/identity.doc "$v
 rec(){ jq -cn --arg i "$(ig_b64 "$1")" --arg l "$(ig_b64 "$2")" --arg g "$(ig_b64 "$3")" '{identity:$i, revoked_certificates:$l, revoked_certificates_signature:$g}'; }      # <identity document> <list> <signature> → the record that carries a list, which is how a box keeps one
 kept(){ jq -r .revoked_certificates "$1" | base64 -d; }      # <kept record> → the list in it
 cp $VEC/a/identity.doc $IG/peers/$VA/identity.doc; rec $VEC/a/identity.doc $OK7.txt $OK7.sig > $IG/peers/$VA/revoked-certs.json
-for n in 2 5 7 9 11 999999999999999999; do ig_listed "$VA" $n || bad "serial $n is not read as listed"; done
-for n in 1 3 4 10 12 999999999999999998; do ig_listed "$VA" $n; [ $? = 1 ] || bad "serial $n is read as listed"; done
+for n in 2 5 7 9 11 9007199254740991; do ig_listed "$VA" $n || bad "serial $n is not read as listed"; done
+for n in 1 3 4 10 12 9007199254740990; do ig_listed "$VA" $n; [ $? = 1 ] || bad "serial $n is read as listed"; done
 rec $VEC/a/identity.doc $OK7.txt $OK1.sig > $IG/peers/$VA/revoked-certs.json; ig_listed "$VA" 2; [ $? = 3 ] || bad "a kept list under another list's signature is not a fault"
 echo '{}' > $IG/peers/$VA/revoked-certs.json; ig_listed "$VA" 2; [ $? = 3 ] || bad "a kept file that holds no list is not a fault"
 rm -f $IG/peers/$VA/identity.doc $IG/peers/$VA/revoked-certs.json; rmdir $IG/peers/$VA
-ok "a list of revoked certificates is the identity's own signature over exact text, in either hash: a malformed one, a working key's and another box's are not; a kept list names its serials exactly at 18 digits, and one that no longer verifies is a fault"
+ok "a list of revoked certificates is the identity's own signature over exact text, in either hash: a malformed one, a working key's and another box's are not; a kept list names its serials exactly at 2^53 - 1, and one that no longer verifies is a fault"
 for X in CA CB CC CD; do as $X; ig_init $NOPQ > /dev/null || bad "init $X"; eval "$X=\$(cat \$IG/address)"; done
 mklist(){ # <box> <version> <its lines> <key file> → $W/<box><version>.list, .sig and .json: a list of the box's revoked certificates and its record, made with ssh-keygen. The script applies a list and does not make one
   local a; a=$(cat $W/box/$1/address); printf 'irongall-revoked-certs-v1\n%s\n%s\n%s\n' "$a" "$2" "$3" > $W/$1$2.list; ssh-keygen -q -Y sign -n "irongall-revoked-certs-v1:$a" -f "$4" < $W/$1$2.list > $W/$1$2.sig
@@ -675,13 +677,13 @@ thief(){ # <to> <msg_id> <body> → mail the thief signs as CB with the working 
 as CB; printf 'signed under the first certificate, and read after it was revoked' | ig_send "$CC" || bad "CB's send"
 as CA; printf 'before the theft' | ig_send "$CB" && grep -q "^{\"prekey_serial\":$(num CB),\"certificate_serial\":$(num CB),\"ciphertext\":\"" $SRV/last-send.json && ok "a send names its prekey by both serials: its own, and its certificate's" || bad "the send's body: $(head -c 80 $SRV/last-send.json)"
 # CB's working key is taken. With it the thief holds a pass, and publishes a prekey of its own under CB's certificate, at the highest serial there is
-as CB; nCB1=$(num CB); cp $IG/work/$nCB1 $W/taken; cp $IG/work/$nCB1-cert.pub $W/taken-cert.pub; TOP=999999999999999999
+as CB; nCB1=$(num CB); cp $IG/work/$nCB1 $W/taken; cp $IG/work/$nCB1-cert.pub $W/taken-cert.pub; TOP=9007199254740991
 printf 'irongall-prekey-v1\n%s\n%s\n%s\n%s\n' "$CB" $TOP "$(sed -n 4p $SRV/op/prekey.txt)" "$NA" > $W/top.txt; ssh-keygen -q -Y sign -n "irongall-prekey-v1:$CB" -f $W/taken-cert.pub < $W/top.txt > $W/top.sig
 jq -n --arg p "$(ig_b64 $W/top.txt)" --arg g "$(ig_b64 $W/top.sig)" '{prekey:$p, prekey_signature:$g}' > $W/top.json
 h=$(ig_pass "$nCB1") && ig_api PUT "/v1/$CB/prekey" $W/top.json -H "Authorization: $h" > /dev/null && [ "$(sed -n 3p $SRV/$CB/prekey.txt)" = $TOP ] || bad "the thief's prekey was not taken: $(ig_code)"; rm -f $IG/pass.new
 as CA; printf 'encrypted to the thief' | ig_send "$CB" && [ "$(cat $IG/peers/$CB/serial)" = $TOP ] && grep -q "^{\"prekey_serial\":$TOP,\"certificate_serial\":$nCB1,\"ciphertext\":\"" $SRV/last-send.json || bad "CA's send to the thief's prekey"
 MODE="rollback $CB"; printf x | ig_send "$CB" 2> err.txt && bad "sent to an earlier prekey"; MODE=honest; rm -f $IG/outbox/*.P
-grep -q "prekey serial $nCB1 is below one already seen" err.txt && ok "under one certificate the order is the prekey's own serial, exact at 18 digits: an earlier statement is REFUSED once a later one was seen" || bad "rollback under one certificate: $(cat err.txt)"
+grep -q "prekey serial $nCB1 is below one already seen" err.txt && ok "under one certificate the order is the prekey's own serial, exact at 2^53 - 1: an earlier statement is REFUSED once a later one was seen" || bad "rollback under one certificate: $(cat err.txt)"
 # the owner renews as ever: the next certificate passes the thief's statement, and senders follow
 as CB; ig_rekey $NOPQ 2> err.txt && nCB2=$(num CB) && [ "$nCB2" -gt "$nCB1" ] && [ "$nCB2" -lt $TOP ] && [ "$(sed -n 3p $SRV/$CB/prekey.txt)" = "$nCB2" ] && [ "$(cat $SRV/$CB/cert-serial)" = "$nCB2" ] &&
   ok "a prekey published with a taken working key at the highest serial there is holds nothing: the box's next certificate passes it, at a number far below" || bad "rekey past the top serial: $(cat err.txt)"
@@ -765,8 +767,8 @@ as SB; recv; [ "$(printf '%s\n' "$RECV_OUT" | jq -r .body)" = "never sealed to t
 # a seal that waited. SA seals to SF, and the post fails; SF's working key is taken, SF renews and revokes. The old seal is never posted
 as SA; SEND_FAILS="503 unavailable"; printf 'sealed before the theft' | ig_send "$SF" 2> err.txt && bad "the post was meant to fail"; SEND_FAILS=
 o=$(ls $IG/outbox/$SF.*.P); o=${o%.P}; nSF1=$(num SF); [ "$(ig_under "$o")" = "$nSF1" ] || bad "the waiting seal names certificate $(ig_under "$o")"
-printf '{"prekey_serial":7,"certificate_serial":999999999999999999,"ciphertext":"AAAA"}\n' > $W/u.json; [ "$(ig_under $W/u)" = 999999999999999999 ] || bad "a seal's certificate serial is not read exactly at 18 digits, or the prekey's is read for it"
-for j in '{"certificate_serial":3,"prekey_serial":7,"ciphertext":"AAAA"}' '{"prekey_serial":7,"ciphertext":"AAAA"}' '{"prekey_serial":7,"certificate_serial":03,"ciphertext":"AAAA"}' '{"prekey_serial":7, "certificate_serial":3,"ciphertext":"AAAA"}'; do printf '%s\n' "$j" > $W/u.json; ! ig_under $W/u > /dev/null || bad "a seal in another form was read: $j"; done
+printf '{"prekey_serial":7,"certificate_serial":9007199254740991,"ciphertext":"AAAA"}\n' > $W/u.json; [ "$(ig_under $W/u)" = 9007199254740991 ] || bad "a seal's certificate serial is not read exactly at 2^53 - 1, or the prekey's is read for it"
+for j in '{"prekey_serial":7,"certificate_serial":9007199254740992,"ciphertext":"AAAA"}' '{"prekey_serial":9007199254740992,"certificate_serial":3,"ciphertext":"AAAA"}' '{"certificate_serial":3,"prekey_serial":7,"ciphertext":"AAAA"}' '{"prekey_serial":7,"ciphertext":"AAAA"}' '{"prekey_serial":7,"certificate_serial":03,"ciphertext":"AAAA"}' '{"prekey_serial":7, "certificate_serial":3,"ciphertext":"AAAA"}'; do printf '%s\n' "$j" > $W/u.json; ! ig_under $W/u > /dev/null || bad "a seal in another form was read: $j"; done
 as SF; ig_rekey $NOPQ 2> err.txt || bad "SF's renewal: $(cat err.txt)"; mklist SF 1 $nSF1 $IG/identity; ig_api PUT "/v1/$SF/revocations" $W/SF1.json > /dev/null || bad "SF's list: $(ig_code)"
 as SA; n0=$(posts "$SF"); MODE="rollback $SF"; ig_flush 2> err.txt && bad "flushed a seal under a revoked certificate"; MODE=honest
 grep -q "signed under a certificate its identity has revoked" err.txt && [ "$(posts "$SF")" = "$n0" ] && [ -e "$o.P" ] && [ ! -e "$o.json" ] || bad "a waiting seal, the old statement still served: $(cat err.txt)"

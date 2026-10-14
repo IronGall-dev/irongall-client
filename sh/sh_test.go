@@ -387,6 +387,94 @@ func TestVectorsEnvelope(t *testing.T) {
 	}
 }
 
+// Every json/ vector gets the same verdict from the script as from the Go
+// client, and the one its name gives: ok-* is a JSON text as the protocol
+// reads one (PROTOCOL.md §0b), bad-* is not.
+func TestVectorsJSON(t *testing.T) {
+	need(t, scriptTools...)
+	files, _ := filepath.Glob(filepath.Join(vectors, "json", "*.json"))
+	if len(files) != 42 {
+		t.Fatalf("%d json/ vectors, want 42", len(files))
+	}
+	var script strings.Builder
+	for _, f := range files {
+		fmt.Fprintf(&script, "ig_json %s && echo 0 || echo 1\n", abs(t, f))
+	}
+	out, err := bash(t, nil, script.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	verdicts := strings.Fields(out)
+	if len(verdicts) != len(files) {
+		t.Fatalf("%d verdicts for %d vectors", len(verdicts), len(files))
+	}
+	for i, f := range files {
+		name := strings.TrimSuffix(filepath.Base(f), ".json")
+		data, _ := os.ReadFile(f) //nolint:gosec // a test vector
+		goTakes, shTakes := protocol.Unmarshal(data, &struct{}{}) == nil, verdicts[i] == "0"
+		if goTakes != shTakes || goTakes != strings.HasPrefix(name, "ok-") {
+			t.Errorf("%s: the Go client takes it: %v, the script: %v", name, goTakes, shTakes)
+		}
+	}
+}
+
+// answerBytes names each kind of answer's byte members, which the script
+// reads with ig_bytes.
+var answerBytes = map[string]string{
+	"identity": "identity prekey prekey_signature",
+	"message":  "ciphertext",
+	"record":   "identity revocation revoked_certificates revoked_certificates_signature",
+}
+
+// answerTypes is what the Go client reads each kind of answer into.
+var answerTypes = map[string]func() any{
+	"identity": func() any { return new(protocol.IdentityResponse) },
+	"list":     func() any { return new(protocol.MessageList) },
+	"message":  func() any { return new(protocol.Message) },
+	"record":   func() any { return new(protocol.Revocations) },
+	"receipt":  func() any { return new(protocol.Receipt) },
+	"problem":  func() any { return new(protocol.Problem) },
+}
+
+// Every answer/ vector, a whole answer of a server, is taken or is no answer
+// alike to the script and the Go client, as its name says: the script reads
+// it with ig_shape and each byte member with ig_bytes, the Go client into
+// the type it reads that answer into.
+func TestVectorsAnswer(t *testing.T) {
+	need(t, scriptTools...)
+	files, _ := filepath.Glob(filepath.Join(vectors, "answer", "*.json"))
+	if len(files) != 37 {
+		t.Fatalf("%d answer/ vectors, want 37", len(files))
+	}
+	dir := t.TempDir()
+	var script strings.Builder
+	for _, f := range files {
+		kind, _, _ := strings.Cut(filepath.Base(f), "-")
+		fmt.Fprintf(&script, "{ ig_shape %s %s", abs(t, f), kind)
+		for _, m := range strings.Fields(answerBytes[kind]) {
+			fmt.Fprintf(&script, " && ig_bytes %s %s %s", abs(t, f), m, filepath.Join(dir, m))
+		}
+		script.WriteString("; } && echo 0 || echo 1\n")
+	}
+	out, err := bash(t, nil, script.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	verdicts := strings.Fields(out)
+	if len(verdicts) != len(files) {
+		t.Fatalf("%d verdicts for %d vectors", len(verdicts), len(files))
+	}
+	for i, f := range files {
+		name := strings.TrimSuffix(filepath.Base(f), ".json")
+		kind, verdict, _ := strings.Cut(name, "-")
+		data, _ := os.ReadFile(f) //nolint:gosec // a test vector
+		goTakes, shTakes := protocol.Unmarshal(data, answerTypes[kind]()) == nil, verdicts[i] == "0"
+		if goTakes != shTakes || goTakes != strings.HasPrefix(verdict, "ok") {
+			t.Errorf("%s: the Go client takes it: %v, the script: %v", name, goTakes, shTakes)
+		}
+	}
+}
+
 // What a box decrypts gets the Go client's verdict from the script, code for
 // code, for every plain/ vector: the layout, the identity the envelope
 // carries, the signature under its certificate, and the envelope. An accepted
@@ -1142,8 +1230,8 @@ func TestVectorsRevokedCertificates(t *testing.T) {
 		{a, aDoc, "ok-one-range.txt", "ok-serials-and-ranges.sig"},
 	}
 	bads, _ := filepath.Glob(filepath.Join(vectors, "revoked", "bad-*.txt"))
-	if len(bads) != 21 {
-		t.Fatalf("%d revoked/bad-* vectors, want 21", len(bads))
+	if len(bads) != 23 {
+		t.Fatalf("%d revoked/bad-* vectors, want 23", len(bads))
 	}
 	for _, f := range bads {
 		name := strings.TrimSuffix(filepath.Base(f), ".txt")
@@ -1186,7 +1274,7 @@ func TestVectorsRevokedCertificates(t *testing.T) {
 		t.Fatalf("%d vectors taken as lists, want the three that are", taken)
 	}
 
-	// A kept list names the same serials to both, at 18 digits too.
+	// A kept list names the same serials to both, at 2^53 - 1 too.
 	box := t.TempDir()
 	kept := filepath.Join(box, "peers", a)
 	if err := os.MkdirAll(kept, 0o700); err != nil {
@@ -1216,7 +1304,7 @@ func TestVectorsRevokedCertificates(t *testing.T) {
 	}
 	keep(read(filepath.Join(vectors, "revoked", "ok-serials-and-ranges.txt")), read(filepath.Join(vectors, "revoked", "ok-serials-and-ranges.sig")))
 	env := []string{"IRONGALL_HOME=" + box}
-	for _, serial := range []uint64{1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 999999999999999998, protocol.MaxSerial} {
+	for _, serial := range []uint64{1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, protocol.MaxSerial - 1, protocol.MaxSerial} {
 		out, err := bash(t, env, fmt.Sprintf(`ig_listed %s %d; echo $?`, a, serial))
 		if err != nil {
 			t.Fatal(err)

@@ -24,7 +24,7 @@
 #
 # It gives up conveniences the Go client has: recv drains once and never waits for mail, and each step runs several
 # programs. Needs bash >= 4, age >= 1.3 (1.2 makes and reaches --no-pq boxes only), OpenSSH
-# >= 9.1, curl >= 7.76, jq >= 1.6, iconv, and coreutils (sha256sum, base64, od, sync).
+# >= 9.1, curl >= 7.76, jq >= 1.7, iconv, and coreutils (sha256sum, base64, od, sync).
 
 # recipe: setup
 set -o pipefail; umask 077
@@ -44,10 +44,30 @@ ig_api(){ # <METHOD> <PATH> [JSON file] [curl args…] → the body on stdout. A
   rm -f "$IG/error.json"
   curl -sS --max-time 60 --max-filesize 16777216 --fail-with-body -X "$m" ${f:+-H 'Content-Type: application/json' --data-binary "@$f"} "$@" "$IG_BASE$p" > "$IG/response.json" && { cat "$IG/response.json"; return 0; }
   mv "$IG/response.json" "$IG/error.json"
-  jq -er '"ERROR \(.status | numbers) \(.code | strings | select(test("\\A[a-z0-9_]{1,40}\\z"))); the server says: \([.detail, .hint] | map(strings | gsub("[^ -~]"; " ") | .[0:200] | select(. != "")) | join("; ") | tojson)"' "$IG/error.json" >&2 2> /dev/null ||
+  ig_shape "$IG/error.json" problem && jq -er '"ERROR \(.status | numbers) \(.code | strings | select(test("\\A[a-z0-9_]{1,40}\\z"))); the server says: \([.detail, .hint] | map(strings | gsub("[^ -~]"; " ") | .[0:200] | select(. != "")) | join("; ") | tojson)"' "$IG/error.json" >&2 2> /dev/null ||
     echo "ERROR: the server's answer is not an error this client knows (it is kept in $IG/error.json)" >&2; return 1
 }
-ig_code(){ jq -r .code "$IG/error.json" 2> /dev/null; }   # the code of the last API error
+ig_code(){ ig_shape "$IG/error.json" problem && jq -r '.code // empty' "$IG/error.json" 2> /dev/null; }   # the code of the last API error, from an answer the Go client would read the same
+ig_json(){ # <file> → 0 only for a JSON text as PROTOCOL.md §0b reads one: UTF-8 with no byte-order mark; one object; every number in JSON's own grammar; no member named twice in any object; nested at most 32 deep; and no Unicode noncharacter in a name or a string (I-JSON, RFC 7493). jq skips a byte-order mark and takes NaN, 01, +1 and .5, which JSON does not, so the numbers are read from the text, its strings taken out
+  local n
+  iconv -f UTF-8 -t UTF-8 < "$1" > /dev/null 2>&1 && ! LC_ALL=C grep -Eq $'[\xf5-\xff]|\xf4[\x90-\xbf]' "$1" && [ "$(od -An -N3 -tx1 "$1" | tr -d ' \n')" != efbbbf ] || return 1      # glibc's iconv takes a code point above U+10FFFF, which UTF-8 has none of
+  ! LC_ALL=C sed -E 's/"([^"\\]|\\.)*"//g' "$1" | tr '{}\133\135,: \t\r' '\n\n\n\n\n\n\n\n\n' | LC_ALL=C grep -Eqv '^$|^(true|false|null|-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?)$' || return 1
+  n=$(jq -n --stream '[inputs | if length == 2 then .[0] else .[0][:-1] end | select(length > 0 and (.[-1] | type) == "string")] | length' "$1" 2> /dev/null) &&      # every member of every object, as written: one named twice is counted twice here, and once below
+    jq -en --argjson n "$n" '[inputs] | length == 1 and (.[0] | type == "object" and ([.. | objects | length] | add) == $n and ([paths(type == "object" or type == "array") | length] | max // 0) < 32 and ([.. | strings, (objects | keys[])] | all(test("[\\x{FDD0}-\\x{FDEF}\\x{FFFE}\\x{FFFF}\\x{1FFFE}\\x{1FFFF}\\x{2FFFE}\\x{2FFFF}\\x{3FFFE}\\x{3FFFF}\\x{4FFFE}\\x{4FFFF}\\x{5FFFE}\\x{5FFFF}\\x{6FFFE}\\x{6FFFF}\\x{7FFFE}\\x{7FFFF}\\x{8FFFE}\\x{8FFFF}\\x{9FFFE}\\x{9FFFF}\\x{AFFFE}\\x{AFFFF}\\x{BFFFE}\\x{BFFFF}\\x{CFFFE}\\x{CFFFF}\\x{DFFFE}\\x{DFFFF}\\x{EFFFE}\\x{EFFFF}\\x{FFFFE}\\x{FFFFF}\\x{10FFFE}\\x{10FFFF}]") | not)))' "$1" > /dev/null 2>&1
+}
+ig_shape(){ # <answer> <identity|list|message|record|receipt|problem> → 0 only for an answer of that kind as the Go client reads one: a JSON text ig_json takes, each member the Go client reads of its type, and null as if the member were left out. An integer is from 0 to 2^53 - 1, written as one: jq from 1.7 gives back 1.0 and 1e2 as written, though it reads 0.5e1 as 5, which the Go client refuses. A byte member is a string, read by ig_bytes. Members it does not read are ignored
+  ig_json "$1" && jq -e --arg k "$2" 'def s: . == null or type == "string"; def n: . == null or (type == "number" and . == floor and . >= 0 and . <= 9007199254740991 and (tostring | test("\\A(0|[1-9][0-9]*)\\z")));
+    {identity: (all(.identity, .prekey, .prekey_signature; s) and (.sender_key_types | . == null or (type == "array" and all(.[]; s)))),
+     list: (all(.count, .poll_after; n) and (.next_cursor | s) and (.messages | . == null or (type == "array" and all(.[]; . == null or (type == "object" and all(.id, .from, .received_at, .expires_at; s) and (.size | n)))))),
+     message: all(.id, .from, .received_at, .expires_at, .ciphertext; s),
+     record: all(.identity, .revocation, .revoked_certificates, .revoked_certificates_signature; s),
+     receipt: all(.id, .received_at, .expires_at; s),
+     problem: (all(.type, .title, .detail, .code, .hint, .oldest_expires_at; s) and all(.status, .unacked; n))}[$k]' "$1" > /dev/null 2>&1
+}
+ig_bytes(){ # <answer> <member> <file> → the member's bytes into the file, only for base64 in its one encoding (RFC 4648 §3): padded, nothing outside the alphabet, a line break included, and the unused bits zero, which is what encoding the bytes again gives back. A member null or left out is no bytes. 1 for anything else
+  jq -ejr --arg m "$2" '.[$m] | if . == null then "" else strings end' "$1" > "$3.b64" 2> /dev/null && base64 -d < "$3.b64" > "$3" 2> /dev/null && [ "$(ig_b64 "$3" | sha256sum)" = "$(sha256sum < "$3.b64")" ] || { rm -f "$3.b64"; return 1; }
+  rm -f "$3.b64"
+}
 ig_opt(){ [ -z "$1" ] || [ "$1" = --no-pq ] || ig_refuse "unknown option $1: the only one is --no-pq (no post-quantum encryption, X25519 only)"; }
 ig_stamp(){ jq -nr --argjson t "$1" '$t | strftime("%Y%m%d%H%M%SZ")'; }      # <Unix time> → the time as ssh-keygen takes one, in UTC
 ig_asc(){ printf %s "$1" | od -An -v -tx1 | tr -d ' \n'; }      # <text> → its bytes in hex
@@ -195,7 +215,7 @@ ig_cert(){ # <signature> <identity document> <address> → "<serial> <valid afte
   ig_str && [ "$v" = "$(ig_asc ssh-ed25519-cert-v01@openssh.com)" ] || return 1      # a certificate for an Ed25519 key
   ig_str || return 1      # the nonce
   ig_str && k=$v && ig_keycheck "$k" || return 1      # the working key, held to the identity's own key checks
-  ig_u64 && n=$v && [ "$n" -ge 1 ] && [ "$n" -le 999999999999999999 ] || return 1      # the serial: 1 or more, at most 18 digits, as a prekey's
+  ig_u64 && n=$v && [ "$n" -ge 1 ] && [ "$n" -le 9007199254740991 ] || return 1      # the serial: from 1 to 2^53 - 1, as a prekey's
   [ "${x:o:8}" = 00000001 ] || return 1; o=$((o + 8))      # a user certificate
   ig_str && [ "$v" = "$(ig_asc irongall-cert-v1)" ] || return 1      # the key id
   ig_str && [ "$v" = "00000040$(ig_asc "$3")" ] || return 1      # exactly one principal: the address
@@ -224,7 +244,7 @@ ig_prekeycheck(){ # <statement> <signature> <address> <identity document> [at] �
   esac
   [ "$(wc -l < "$p")" -eq 5 ] && [ "$(tail -c 1 "$p" | od -An -tx1 | tr -d ' \n')" = 0a ] && [ "$(sed -n 1p "$p")" = irongall-prekey-v1 ] && [ "$(sed -n 2p "$p")" = "$B" ] ||
     { echo "the prekey statement is not $B's: five lines, each ending in LF"; return 1; }
-  s=$(sed -n 3p "$p"); [[ $s =~ ^[1-9][0-9]{0,17}$ ]] || { echo "$B's prekey serial is malformed"; return 1; }
+  s=$(sed -n 3p "$p"); [[ $s =~ ^[1-9][0-9]{0,15}$ ]] && [ "$s" -le 9007199254740991 ] || { echo "$B's prekey serial is malformed"; return 1; }      # from 1 to 2^53 - 1: a send names it as a JSON number
   k=$(sed -n 4p "$p")
   if ! age -r "$k" < /dev/null > /dev/null 2>&1; then
     if [[ $k = age1pq1* ]]; then echo "$B's prekey is post-quantum, and this age ($(age --version 2> /dev/null)) cannot encrypt to one: that takes age >= 1.3"; else echo "$B's prekey is not an age key that age will encrypt to"; fi; return 1
@@ -241,14 +261,16 @@ ig_resolve(){ # <address> → prints "<serial> <age recipient> <certificate seri
     3) ig_refuse "the revocation kept for $B does not verify"; return 1 ;;
   esac
   ig_api GET "/v1/$B/identity" > "$IG/peer.json" || return 1
+  ig_shape "$IG/peer.json" identity && ig_bytes "$IG/peer.json" identity "$IG/new.doc" && ig_bytes "$IG/peer.json" prekey "$IG/peer.txt" && ig_bytes "$IG/peer.json" prekey_signature "$IG/peer.sig" ||
+    ig_refuse "the server's answer for $B is not one this client reads: a JSON object as PROTOCOL.md §0b reads one, each byte field base64 in its one encoding" || return 1
   f="$d/identity.doc"      # a pin always wins
-  [ -e "$f" ] || { f="$IG/new.doc"; jq -er .identity "$IG/peer.json" 2> /dev/null | base64 -d > "$f" 2> /dev/null || ig_refuse "no identity for $B in the response" || return 1; }
+  [ -e "$f" ] || { f="$IG/new.doc"; [ -s "$f" ] || ig_refuse "no identity for $B in the response" || return 1; }
   [ "$(sha256sum < "$f" | cut -c1-64)" = "$B" ] || ig_refuse "the identity the server sent does not hash to $B" || return 1
   ig_idcheck "$f"; case $? in 0) ;;
     2) ig_refuse "$B's identity is of a key type this script does not verify, so nothing it signs can be checked here and nothing is sent"; return 1 ;;
     *) ig_refuse "$B's identity is not a two-line identity document in the one form of its key type, with a valid key"; return 1 ;;
   esac
-  jq -er .prekey "$IG/peer.json" | base64 -d > "$IG/peer.txt" && jq -er .prekey_signature "$IG/peer.json" | base64 -d > "$IG/peer.sig" || ig_refuse "no prekey for $B in the response" || return 1
+  [ -s "$IG/peer.txt" ] && [ -s "$IG/peer.sig" ] || ig_refuse "no prekey for $B in the response" || return 1
   r=$(ig_prekeycheck "$IG/peer.txt" "$IG/peer.sig" "$B" "$f") || ig_refuse "$r" || return 1
   read -r s k na c <<< "$r"
   sc=$(cat "$d/cert-serial" 2> /dev/null || echo 0)      # a box's statements are ordered by their certificate first, then by their own serial: a later certificate outranks any serial under an earlier one, so a box that moved to a new certificate is followed whatever serial it publishes
@@ -277,18 +299,19 @@ ig_gone(){ # <address> → 0 if this box holds a revocation of it: peers/<addres
   [ -e "$s" ] || return 1
   ig_revcheck "$1" "$d" "$s" || return 3
 }
-ig_listcheck(){ # <address> <identity document> <list> <signature> → the list's version, only for a list of that address's revoked certificates: signed by its identity's OWN key, as a revocation of the address is (no cert-authority, so a certificate cannot revoke another, or itself), and in its one exact form. The tag, the address and a version, each on a line, then at least one line that is a serial or first-last with first below last, each beginning above where the line before it ended. A number is 1 to 18 digits with no leading zero, compared by bash, whose numbers are exact to 18 digits where awk's are not
+ig_listcheck(){ # <address> <identity document> <list> <signature> → the list's version, only for a list of that address's revoked certificates: signed by its identity's OWN key, as a revocation of the address is (no cert-authority, so a certificate cannot revoke another, or itself), and in its one exact form. The tag, the address and a version, each on a line, then at least one line that is a serial or first-last with first below last, each beginning above where the line before it ended. A number is from 1 to 2^53 - 1 with no leading zero, compared by bash, whose numbers are exact there where awk's are not
   local L i p=0 a b x k
   ig_idcheck "$2" "$1" && ig_sshsig "$4" || return 1
   printf '%s %s\n' "$1" "$(sed -n 2p "$2")" > "$IG/signers"
   ssh-keygen -Y verify -f "$IG/signers" -I "$1" -n "irongall-revoked-certs-v1:$1" -s "$4" < "$3" > /dev/null 2>&1 || return 1
   mapfile -t L < "$3"
   [ "$(printf '%s\n' "${L[@]}" | sha256sum)" = "$(sha256sum < "$3")" ] || return 1      # the file against itself rebuilt from its lines: every line ends in LF, and nothing is in it that a shell variable drops (a NUL)
-  [ ${#L[@]} -ge 4 ] && [ "${L[0]}" = irongall-revoked-certs-v1 ] && [ "${L[1]}" = "$1" ] && [[ ${L[2]} =~ ^[1-9][0-9]{0,17}$ ]] || return 1
+  [ ${#L[@]} -ge 4 ] && [ "${L[0]}" = irongall-revoked-certs-v1 ] && [ "${L[1]}" = "$1" ] && [[ ${L[2]} =~ ^[1-9][0-9]{0,15}$ ]] && [ "${L[2]}" -le 9007199254740991 ] || return 1
   for ((i = 3; i < ${#L[@]}; i++)); do
-    [[ ${L[i]} =~ ^([1-9][0-9]{0,17})(-([1-9][0-9]{0,17}))?$ ]] || return 1
+    [[ ${L[i]} =~ ^([1-9][0-9]{0,15})(-([1-9][0-9]{0,15}))?$ ]] || return 1
     a=${BASH_REMATCH[1]}; b=${BASH_REMATCH[3]:-$a}
     [ -z "${BASH_REMATCH[2]}" ] || [ "$a" -lt "$b" ] || return 1
+    [ "$b" -le 9007199254740991 ] || return 1
     [ "$a" -gt "$p" ] || return 1; p=$b
   done
   echo "${L[2]}"
@@ -297,7 +320,7 @@ ig_listkept(){ # <address> → the version of the list of that address's revoked
   local d="$IG/peers/$1/identity.doc" f="$IG/peers/$1/revoked-certs.json"
   [ "$1" != "$(cat "$IG/address" 2> /dev/null)" ] || { d="$IG/identity.doc"; f="$IG/revoked-certs.json"; }
   [ -e "$f" ] || return 1
-  jq -er '.revoked_certificates | strings' "$f" 2> /dev/null | base64 -d > "$IG/kept.list" 2> /dev/null && jq -er '.revoked_certificates_signature | strings' "$f" 2> /dev/null | base64 -d > "$IG/kept.lsig" 2> /dev/null &&
+  ig_shape "$f" record && ig_bytes "$f" revoked_certificates "$IG/kept.list" && ig_bytes "$f" revoked_certificates_signature "$IG/kept.lsig" &&
     ig_listcheck "$1" "$d" "$IG/kept.list" "$IG/kept.lsig" || return 3
 }
 ig_listed(){ # <address> <certificate serial> → 0 if the list this box holds for the address names the serial. 1 if none is kept, or the one kept does not name it. 3 if one is kept and does not verify
@@ -319,8 +342,14 @@ ig_keep(){ # <address> <its identity document> <signature> → the revocation, k
 }
 ig_record(){ # <record> → the address it is a revocation of, only if it verifies; its parts are left in $IG/rev.doc and $IG/rev.sig. A record is one line of JSON, {identity, revocation}: the identity document and the signature, each base64
   local A
-  jq -er '.identity | strings' "$1" 2> /dev/null | base64 -d > "$IG/rev.doc" 2> /dev/null && jq -er '.revocation | strings' "$1" 2> /dev/null | base64 -d > "$IG/rev.sig" 2> /dev/null || return 1
+  ig_isrecord "$1" && ig_bytes "$1" identity "$IG/rev.doc" && ig_bytes "$1" revocation "$IG/rev.sig" || return 1
   A=$(sha256sum < "$IG/rev.doc" | cut -c1-64) && ig_revcheck "$A" "$IG/rev.doc" "$IG/rev.sig" && echo "$A"
+}
+ig_isrecord(){ # <file> → 0 only for a record as the Go client reads one: an answer ig_shape takes as a record, and each of its four byte members base64 in its one encoding, or left out. What it holds is checked by whoever uses it
+  local m r=0
+  ig_shape "$1" record || return 1
+  for m in identity revocation revoked_certificates revoked_certificates_signature; do ig_bytes "$1" $m "$IG/record.part" || { r=1; break; }; done
+  rm -f "$IG/record.part"; return $r
 }
 ig_revservers(){ # → the revocation servers this box asks beside its own server, and publishes to (PROTOCOL.md §6.3), one to a line: those $IG_REVOCATION_SERVERS names, with spaces or commas between; or else those the box's revocation-servers file names, one to a line; or else irongall.dev's own for a box on irongall.dev, and none for a box on any other server. The one word "none" is none. Each is https://host or https://host:port, in lowercase, with nothing after it, and each learns which addresses this box asks about: name one run by anyone but your server's operator only if you mean to tell it. Read from the file each time: state lives in files
   local l=${IG_REVOCATION_SERVERS-} s seen=" "; local -a a
@@ -337,8 +366,8 @@ ig_revservers(){ # → the revocation servers this box asks beside its own serve
   done
 }
 ig_take(){ # <address> → keeps what verifies of $IG/rev.json, a server's answer about the address: a list of its revoked certificates, a revocation of the address, or both. 0: this box now holds a revocation of the address. 1: it does not: what the answer showed of one does not verify, which counts as nothing shown. 3: a fault of this box
-  if jq -er '.identity | strings' "$IG/rev.json" 2> /dev/null | base64 -d > "$IG/rev.doc" 2> /dev/null && jq -er '.revoked_certificates | strings' "$IG/rev.json" 2> /dev/null | base64 -d > "$IG/rev.list" 2> /dev/null &&
-    jq -er '.revoked_certificates_signature | strings' "$IG/rev.json" 2> /dev/null | base64 -d > "$IG/rev.lsig" 2> /dev/null; then      # a list of revoked certificates rides in the same record. It is taken or not on its own: the address may well go on
+  if ig_bytes "$IG/rev.json" identity "$IG/rev.doc" && ig_bytes "$IG/rev.json" revoked_certificates "$IG/rev.list" && [ -s "$IG/rev.list" ] &&
+    ig_bytes "$IG/rev.json" revoked_certificates_signature "$IG/rev.lsig"; then      # a list of revoked certificates rides in the same record. It is taken or not on its own: the address may well go on
     ig_keeplist "$1" "$IG/rev.doc" "$IG/rev.list" "$IG/rev.lsig" || return 3
   fi
   [ "$(ig_record "$IG/rev.json")" = "$1" ] || return 1
@@ -348,10 +377,10 @@ ig_lookup(){ # <address> → asks what is held about the address, of this box's 
   local s l r
   ig_gone "$1"; case $? in 0) return 0 ;; 3) return 3 ;; esac
   l=$(ig_revservers) || return 3
-  if ig_api GET "/v1/$1/revocations" > "$IG/rev.json" 2> /dev/null; then ig_take "$1"; r=$?; [ $r = 1 ] || return $r
+  if ig_api GET "/v1/$1/revocations" > "$IG/rev.json" 2> /dev/null; then ig_isrecord "$IG/rev.json" || return 2; ig_take "$1"; r=$?; [ $r = 1 ] || return $r      # a 2xx that is no record is no answer, as one that is no JSON is
   else case $(ig_code) in not_revoked | no_such_mailbox) ;; *) return 2 ;; esac; fi
   while IFS= read -r s <&3; do [ -n "$s" ] || continue
-    if IG_BASE=$s ig_api GET "/v1/$1/revocations" "" --max-time 10 > "$IG/rev.json" 2> /dev/null; then ig_take "$1"; r=$?; [ $r = 1 ] || return $r
+    if IG_BASE=$s ig_api GET "/v1/$1/revocations" "" --max-time 10 > "$IG/rev.json" 2> /dev/null && ig_isrecord "$IG/rev.json"; then ig_take "$1"; r=$?; [ $r = 1 ] || return $r
     else case $(ig_code) in not_revoked | no_such_mailbox) ;; *) echo "the revocation server $s gave no answer, which changes nothing here" >&2 ;; esac; fi
   done 3<<< "$l"
   return 1
@@ -429,7 +458,7 @@ ig_seal(){ # <address> <outbox stem> → <stem>.json: the envelope <stem>.P sign
   [ "$(wc -c < "$o.age")" -eq "$t" ] || ig_refuse "the encrypted message is not the $t bytes its padding was made for: it is not sent at a size that tells its length" || return 1
   ig_b64 "$o.age" > "$o.b64" && { printf '{"prekey_serial":%s,"certificate_serial":%s,"ciphertext":"' "$ps" "$pc" && cat "$o.b64" && printf '"}\n'; } > "$o.json" && rm -f "$o.b64"      # the prekey is named by both serials, its own and its certificate's, written as the digits ig_resolve checked and never through jq's numbers: a jq before 1.7 rounds one above 2^53. No signature beside it: the server knows the sender from the pass the post carries
 }
-ig_under(){ local h; IFS= read -r -n 200 h < "$1.json" 2> /dev/null; [[ $h =~ ^\{\"prekey_serial\":[1-9][0-9]{0,17},\"certificate_serial\":([1-9][0-9]{0,17}),\"ciphertext\":\" ]] && echo "${BASH_REMATCH[1]}"; }      # <outbox stem> → the serial of the certificate its seal names, read as the digits either client wrote and never through jq's numbers. 1 for a seal this script cannot read
+ig_under(){ local h; IFS= read -r -n 200 h < "$1.json" 2> /dev/null; [[ $h =~ ^\{\"prekey_serial\":([1-9][0-9]{0,15}),\"certificate_serial\":([1-9][0-9]{0,15}),\"ciphertext\":\" ]] && [ "${BASH_REMATCH[1]}" -le 9007199254740991 ] && [ "${BASH_REMATCH[2]}" -le 9007199254740991 ] && echo "${BASH_REMATCH[2]}"; }      # <outbox stem> → the serial of the certificate its seal names, read as the digits either client wrote and never through jq's numbers. 1 for a seal this script cannot read
 ig_post(){ # <address> <outbox stem> → POSTs it, sealing it first; on 409 stale_prekey, re-encrypts the SAME envelope, once. One that can never be delivered moves to outbox/failed/. Before anything is posted, sealed or not, the server is asked what it holds about the recipient (ig_lookup), and the entry is checked against what this box then holds
   local B=$1 o=$2 sa c
   if sa=$(ig_time "$(jq -r .sent_at "$o.P" 2> /dev/null)") && [ "$sa" -lt $(($(ig_now) - 33*86400)) ]; then      # the server would take it, and every recipient refuses it
@@ -448,8 +477,8 @@ ig_post(){ # <address> <outbox stem> → POSTs it, sealing it first; on 409 stal
   if [ -e "$o.json" ]; then      # a seal that waited: its recipient's identity may since have revoked the certificate its prekey was signed under, and that prekey may be one a thief of the working key published. Such a seal is not posted: it is made again. So is one this script cannot read
     if c=$(ig_under "$o"); then ig_listed "$B" "$c"; case $? in 0) rm -f "$o.json" ;; 1) ;; *) ig_refuse "the list of revoked certificates kept for $B does not verify: kept in the outbox"; return 1 ;; esac; else rm -f "$o.json"; fi
   fi
-  { [ -e "$o.json" ] || ig_seal "$B" "$o"; } && ig_owner POST "/v1/$B" "$o.json" > "$IG/receipt.json" && { ig_sent "$o"; return; }
-  if [ "$(ig_code)" = stale_prekey ]; then ig_seal "$B" "$o" && ig_owner POST "/v1/$B" "$o.json" > "$IG/receipt.json" && { ig_sent "$o"; return; }; fi
+  { [ -e "$o.json" ] || ig_seal "$B" "$o"; } && ig_owner POST "/v1/$B" "$o.json" > "$IG/receipt.json" && ig_shape "$IG/receipt.json" receipt && { ig_sent "$o"; return; }
+  if [ "$(ig_code)" = stale_prekey ]; then ig_seal "$B" "$o" && ig_owner POST "/v1/$B" "$o.json" > "$IG/receipt.json" && ig_shape "$IG/receipt.json" receipt && { ig_sent "$o"; return; }; fi
   c=$(ig_code)
   case $c in revoked) ig_lookup "$B" ;; sender_revoked) ig_lookup "$(cat "$IG/address")" ;; esac      # a server's "revoked" is checked: with the revocation in hand it is final, and without one it is a call that failed
   if ig_gone "$B" || ig_gone "$(cat "$IG/address")"; then ig_failed "$o"; echo "REVOKED: the revocation verifies, so it can never be delivered: moved to outbox/failed/" >&2; return 1; fi
@@ -483,7 +512,8 @@ ig_drain(){ # stops at a transient error or a fault of this box, leaving the res
   if [ -e "$IG/seen" ]; then awk -v c=$(($(ig_now) - 33*86400)) '$2 >= c' "$IG/seen" > "$IG/seen.new" && mv "$IG/seen.new" "$IG/seen" && sync "$IG/seen" "$IG" || return 1; fi
   while :; do
     [ $((pages += 1)) -le 100 ] || { echo "this run stopped at the most one drain takes: run recv again for the rest, which is still on the server" >&2; return 0; }
-    ig_owner GET "/v1/$B/messages${c:+?cursor=$c}" > "$IG/list.json" && n=$(jq -er '.messages | length' "$IG/list.json") || { ig_own; return 1; }
+    ig_owner GET "/v1/$B/messages${c:+?cursor=$c}" > "$IG/list.json" || { ig_own; return 1; }
+    ig_shape "$IG/list.json" list && n=$(jq -r '.messages | length' "$IG/list.json") || { echo "the server's list of messages is not one this client reads, as PROTOCOL.md §0b reads JSON: the mail stays on the server" >&2; return 1; }
     for ((i = 0; i < n; i++)); do
       id=$(jq -r ".messages[$i].id" "$IG/list.json"); ig_hex "$id" || continue
       [ $((k += 1)) -le 1000 ] || { echo "this run stopped at the most one drain takes: run recv again for the rest, which is still on the server" >&2; return 0; }
@@ -497,7 +527,8 @@ ig_one(){ # <me> <id> → 0 once the message is judged and its verdict is on dis
   local B=$1 id=$2 m="$IG/msg" A why rc h
   rm -f "$m.json" "$m.age" "$m.sig" "$m.P" "$m.T" "$m.doc"
   ig_owner GET "/v1/$B/messages/$id" > "$m.json" || { [ "$(ig_code)" = no_such_message ]; return; }      # already gone
-  h=$(jq -er .ciphertext "$m.json" 2> /dev/null | base64 -d 2> /dev/null | sha256sum | cut -c1-64)      # files are named by the hash computed here, never the server's id
+  ig_shape "$m.json" message && ig_bytes "$m.json" ciphertext "$m.age" || { echo "the server's answer for message $id is not one this client reads, as PROTOCOL.md §0b reads JSON: it stays on the server" >&2; return 1; }      # the server's fault, not the sender's: no verdict, and no ack
+  h=$(sha256sum < "$m.age" | cut -c1-64)      # files are named by the hash computed here, never the server's id
   why=$(ig_judge "$B" "$(jq -r .from "$m.json")" "$m"); rc=$?
   if [ $rc -eq 0 ] || [ $rc -eq 2 ]; then [ "$h" = "$id" ] || { why="bad_id: the server's id for it is not the SHA-256 of its ciphertext"; rc=1; }; fi
   case $rc in
@@ -512,7 +543,7 @@ ig_one(){ # <me> <id> → 0 once the message is judged and its verdict is on dis
 }
 ig_judge(){ # <me> <the server's from> <message stem> → 0 only if EVERY check passes, in this order; 2 for a resend of an accepted msg_id; 1 refused, with "<code>: <words>" on stdout, the words this script's own and never the message's; 3 a fault of this box, no verdict; 4 no answer from the server on whether the sender is revoked, no verdict. Who the sender is, is never asked of the server: the message carries what proves it. The one thing asked is whether a revocation of that sender exists, and the answer proves itself
   local B=$1 m=$3 ids=() k h A c
-  jq -er .ciphertext "$m.json" | base64 -d > "$m.age" || { echo "bad_message: its ciphertext is not base64"; return 1; }
+  ig_bytes "$m.json" ciphertext "$m.age" || { echo "bad_message: its ciphertext is not base64 in its one encoding"; return 1; }
   for k in "$IG"/prekeys/*.agekey; do [ -e "$k" ] || continue; [ -r "$k" ] || { echo "cannot read $k"; return 3; }; ids+=(-i "$k"); done
   [ ${#ids[@]} -gt 0 ] || { echo "this box has no prekeys"; return 3; }
   age -d "${ids[@]}" < "$m.age" > "$m.T" 2> /dev/null || { echo "undecryptable: it does not decrypt with this box's prekeys"; return 1; }
@@ -561,10 +592,8 @@ ig_open(){ # <me> <message stem> → the sender's address, only if what was decr
   ig_envcheck "$m.P" "$A" "$B" || return 1
   echo "$A"
 }
-ig_envform(){ # <envelope> → 0 only for UTF-8 that is one JSON object with no key twice; otherwise the reason, and 1
-  iconv -f UTF-8 -t UTF-8 < "$1" > /dev/null 2>&1 || { echo "bad_envelope: the envelope is not UTF-8"; return 1; }
-  [ "$(jq -n --stream '[inputs | select((length == 2 and (.[0] | length) == 1) or (length == 1 and (.[0] | length) == 2))] | length' "$1" 2> /dev/null)" = "$(jq length "$1" 2> /dev/null)" ] ||
-    { echo "bad_envelope: the envelope is not one JSON object with no key twice"; return 1; }      # its members, counted as streamed, against its length: a key twice (jq keeps the last, another reader the first) or a second value breaks the count
+ig_envform(){ # <envelope> → 0 only for a JSON text as every reader takes one (ig_json): UTF-8, one object, no key twice in any object in it, nested at most 32 deep. Otherwise the reason, and 1
+  ig_json "$1" || { echo "bad_envelope: the envelope is not one JSON object in UTF-8 with no key twice, as PROTOCOL.md §0b reads one"; return 1; }
 }
 ig_envcheck(){ # <envelope> <signer> <this box> → 0 only for one UTF-8 JSON object, keys exact and none twice, v the number 1, from the signer, to this box, a msg_id, a body, string optional fields, and sent_at no older than 33 days and no more than an hour ahead; otherwise the reason, and 1
   local e=$1 sa
@@ -592,14 +621,16 @@ ig_rekey(){ # [--no-pq] → publishes a new prekey, signed by a new working key 
 ig_renew(){ # [--no-pq] → what ig_rekey does, the lock held. A serial is signed ONCE
   local A r s t na h c f cs p new; A=$(cat "$IG/address") || return 1; mkdir -p "$IG/prekeys"
   ig_api GET "/v1/$A/identity" > "$IG/self.json" || return 1
-  jq -er .prekey "$IG/self.json" | base64 -d > "$IG/self.txt" && jq -er .prekey_signature "$IG/self.json" | base64 -d > "$IG/self.sig" || ig_refuse "the server sent no prekey for this box" || return 1
+  ig_shape "$IG/self.json" identity && ig_bytes "$IG/self.json" identity "$IG/self.doc" && ig_bytes "$IG/self.json" prekey "$IG/self.txt" && ig_bytes "$IG/self.json" prekey_signature "$IG/self.sig" ||
+    ig_refuse "the server's answer for this box is not one this client reads: a JSON object as PROTOCOL.md §0b reads one, each byte field base64 in its one encoding" || return 1
+  [ -s "$IG/self.txt" ] && [ -s "$IG/self.sig" ] || ig_refuse "the server sent no prekey for this box" || return 1
   c=$(ig_cert "$IG/self.sig" "$IG/identity.doc" "$A") && c=${c#* } && r=$(ig_prekeycheck "$IG/self.txt" "$IG/self.sig" "$A" "$IG/identity.doc" "${c% *}") || ig_refuse "this box's current prekey, as served: ${r:-it is not signed under a certificate of this identity}" || return 1      # its own record, judged where its certificate begins: whether this identity ever certified the key that signed it, even if that certificate has since ended
   s=${r%% *}; cs=${r##* }; p=$(cat "$IG/serial" 2> /dev/null || echo 0)      # a box's statements are ordered by certificate first, then by serial, and this box gives a renewal's certificate and prekey one number: what it published is (p, p), and the server may serve nothing ordered before it
   [ "$cs" -gt "$p" ] || { [ "$cs" -eq "$p" ] && [ "$s" -ge "$p" ]; } || ig_refuse "rollback: the server serves this box's prekey serial $s under certificate $cs, before serial $p, which this box published" || return 1
-  s=$((cs > p ? cs : p)); [ "$s" -lt 999999999999999999 ] || ig_refuse "this box's certificate serial is the highest there is, so no later certificate can be made: the address cannot renew" || return 1
+  s=$((cs > p ? cs : p)); [ "$s" -lt 9007199254740991 ] || ig_refuse "this box's certificate serial is the highest there is, so no later certificate can be made: the address cannot renew" || return 1
   t=$(ls "$IG/prekeys" | sed -n 's/\.agekey$//p; s/\.txt\.sig$//p' | sort -n | tail -n 1); new=1      # s is the highest number this box knows of, and the new statement goes above it: above the served CERTIFICATE's serial, never the served prekey's, since it is under a new certificate, which outranks any prekey serial under the one before. So a prekey published in this box's name at the highest serial there is holds nothing. t is the highest number this box began a prekey at
   if [ "${t:-0}" -gt "$s" ]; then s=$t; new=; [ ! -s "$IG/prekeys/$s.txt.sig" ] || { na=$(ig_time "$(sed -n 5p "$IG/prekeys/$s.txt")") && [ "$na" -gt "$(ig_now)" ] && [ -s "$IG/work/$s-cert.pub" ] && c=$(ig_cert "$IG/prekeys/$s.txt.sig" "$IG/identity.doc" "$A") && c=${c#* } && [ "${c% *}" -le "$(ig_now)" ]; } || new=1; fi      # a number an earlier run took, and that nothing has passed since, is kept. Signed and never seen published: sent again AS IT IS until it expires, then a new number. Signed again, the same key would get 33 more days from a server that keeps what it refuses. One under a certificate that has not begun, by this clock, was signed while the clock read over an hour ahead: a server refuses it until that time comes, so it is spent too. Never signed: its key is used
-  if [ -n "$new" ]; then [ "$s" -lt 999999999999999999 ] || ig_refuse "this box's certificate serial is the highest there is, so no later certificate can be made: the address cannot renew" || return 1; t=$(ig_now); s=$((t > s ? t : s + 1)); fi      # a new number: this machine's clock, in seconds, or one above the highest this box knows of when the clock gives nothing higher. An identity is a key and keeps no record of what it signed, and a box restored from it knows only what the server shows: by the clock, its certificate is above every one made before, on whatever machine. A verifier never reads a serial as a time, it only compares two
+  if [ -n "$new" ]; then [ "$s" -lt 9007199254740991 ] || ig_refuse "this box's certificate serial is the highest there is, so no later certificate can be made: the address cannot renew" || return 1; t=$(ig_now); s=$((t > s ? t : s + 1)); fi      # a new number: this machine's clock, in seconds, or one above the highest this box knows of when the clock gives nothing higher. An identity is a key and keeps no record of what it signed, and a box restored from it knows only what the server shows: by the clock, its certificate is above every one made before, on whatever machine. A verifier never reads a serial as a time, it only compares two
   [ -s "$IG/prekeys/$s.txt.sig" ] || rm -f "$IG/prekeys/$s.txt"; ig_prekey "$s" "${1-}" || return 1
   jq -n --arg p "$(ig_b64 "$IG/prekeys/$s.txt")" --arg g "$(ig_b64 "$IG/prekeys/$s.txt.sig")" --argjson k "$IG_SENDERS" '{prekey:$p, prekey_signature:$g, sender_key_types:$k}' > "$IG/rekey.json"
   h=$(ig_pass "$s") && ig_api PUT "/v1/$A/prekey" "$IG/rekey.json" -H "Authorization: $h" > /dev/null || { ig_clock; return 1; }      # a pass under the NEW certificate: that is how a box moves to one, and the server then takes no pass under an older

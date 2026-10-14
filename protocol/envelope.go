@@ -5,9 +5,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
 	"regexp"
 	"time"
 	"unicode/utf8"
@@ -230,35 +230,21 @@ func OpenEnvelopeRecord(plaintext []byte, signer, me Address) (*Envelope, error)
 	return e, nil
 }
 
-// objectFields reads a JSON object's members by their exact keys. A key that
-// appears twice, or anything after the object, is an error.
+// objectFields reads an envelope's members by their exact names, once it is
+// a JSON text as the protocol reads one (Unmarshal): one object, UTF-8, no
+// name twice in any object in it, nested at most MaxDepth deep. A member is
+// left as its raw JSON for the caller to read.
 func objectFields(data []byte) (map[string]json.RawMessage, error) {
-	notObject := badEnvelope("the envelope is not one JSON object")
-	d := json.NewDecoder(bytes.NewReader(data))
-	if t, err := d.Token(); err != nil || t != json.Delim('{') {
-		return nil, notObject
+	switch why := checkJSON(data); why {
+	case "":
+	case whyTwice:
+		return nil, badEnvelope("the envelope has a key twice")
+	default:
+		return nil, badEnvelope("the envelope is not one JSON object as the protocol reads one: " + why)
 	}
-	fields := map[string]json.RawMessage{}
-	for d.More() {
-		t, err := d.Token()
-		if err != nil {
-			return nil, notObject
-		}
-		key, _ := t.(string)
-		if _, dup := fields[key]; dup {
-			return nil, badEnvelope("the envelope has a key twice")
-		}
-		var v json.RawMessage
-		if err := d.Decode(&v); err != nil {
-			return nil, notObject
-		}
-		fields[key] = v
-	}
-	if t, err := d.Token(); err != nil || t != json.Delim('}') {
-		return nil, notObject
-	}
-	if _, err := d.Token(); err != io.EOF {
-		return nil, notObject
+	var fields map[string]json.RawMessage
+	if err := jsonv2.Unmarshal(data, &fields); err != nil {
+		return nil, badEnvelope("the envelope is not one JSON object")
 	}
 	return fields, nil
 }

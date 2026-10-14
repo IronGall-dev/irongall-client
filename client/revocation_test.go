@@ -241,6 +241,29 @@ func TestNoAnswerAboutASenderStopsTheDrain(t *testing.T) {
 	if q, _ := os.ReadDir(filepath.Join(b.Dir(), "quarantine")); len(q) != 0 {
 		t.Fatal("a message nobody could judge was quarantined")
 	}
+	// Nor has a 2xx whose body is no record, as PROTOCOL.md §0b reads one.
+	bad, _ := filepath.Glob("../testdata/vectors/answer/record-bad-*.json")
+	if len(bad) == 0 {
+		t.Fatal("no answer/record-bad-* vectors")
+	}
+	for _, f := range bad {
+		body, err := os.ReadFile(f) //nolint:gosec // a test vector
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if strings.HasSuffix(r.URL.Path, "/revocations") {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write(body)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+		res, err := b.Receive(context.Background())
+		if err == nil || len(res.Delivered) != 0 || len(res.Refused) != 0 || e.srv.Count(b.Address()) != 1 {
+			t.Errorf("%s served as the answer: %v, %+v, %d left on the server", filepath.Base(f), err, res, e.srv.Count(b.Address()))
+		}
+	}
 	e.srv.SetMiddle(nil)
 	if res := receive(t, b); len(res.Delivered) != 1 {
 		t.Fatalf("once the server answered: %+v", res)

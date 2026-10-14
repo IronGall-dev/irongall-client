@@ -97,7 +97,7 @@ func NewRevokedCertificates(a Address, version uint64, ranges []SerialRange) (*R
 }
 
 // ParseRevokedCertificates parses a list exactly: the tag, a lowercase
-// address and a version of 1 to 18 digits, each on a line ending in LF, then
+// address and a version from 1 to MaxSerial, each on a line ending in LF, then
 // at least one line that is a serial or "first-last" with first below last,
 // each beginning above where the line before it ended. Nothing else is a
 // list: no blank line, no CR, no leading zero, no byte after the last LF.
@@ -135,14 +135,14 @@ func ParseRevokedCertificates(statement []byte) (*RevokedCertificates, error) {
 	return r, nil
 }
 
-// parseSerial reads a serial as a prekey statement writes one: 1 to 18
-// digits, the first not zero.
+// parseSerial reads a serial as a prekey statement writes one: a decimal
+// integer from 1 to MaxSerial, with no leading zero.
 func parseSerial(s []byte) (uint64, bool) {
 	if !serialGrammar.Match(s) {
 		return 0, false
 	}
 	n, err := strconv.ParseUint(string(s), 10, 64)
-	return n, err == nil
+	return n, err == nil && n <= MaxSerial
 }
 
 // SignRevokedCertificates signs a list with the identity key of its address.

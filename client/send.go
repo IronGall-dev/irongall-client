@@ -279,7 +279,7 @@ func (b *Box) sealStands(to protocol.Address, stem string) (bool, error) {
 	var req struct {
 		CertificateSerial *uint64 `json:"certificate_serial"`
 	}
-	if json.Unmarshal(j, &req) != nil || req.CertificateSerial == nil {
+	if protocol.Unmarshal(j, &req) != nil || req.CertificateSerial == nil {
 		return false, nil
 	}
 	list, err := b.revokedCerts(to)
@@ -305,7 +305,7 @@ func (b *Box) sentAt(stem string) (time.Time, bool) {
 	var e struct {
 		SentAt string `json:"sent_at"`
 	}
-	if json.Unmarshal(p, &e) != nil {
+	if protocol.Unmarshal(p, &e) != nil {
 		return time.Time{}, false
 	}
 	t, err := protocol.ParseTime(e.SentAt)
@@ -334,7 +334,7 @@ func (b *Box) postSealed(ctx context.Context, to protocol.Address, stem string) 
 		return nil, err
 	}
 	var req protocol.SendRequest
-	if err := json.Unmarshal(j, &req); err != nil {
+	if err := protocol.Unmarshal(j, &req); err != nil {
 		return nil, err
 	}
 	// The post carries this box's pass: that is how the server knows the

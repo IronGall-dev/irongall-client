@@ -302,6 +302,13 @@ func TestWhatIsNotARecordIsRefused(t *testing.T) {
 		"two values":             {string(good) + string(good), protocol.CodeBadRequest},
 		"not JSON":               {`revoke it`, protocol.CodeBadRequest},
 		"not base64":             {`{"identity":"!","revocation":"AAAA"}`, protocol.CodeBadEncoding},
+		"base64 with no padding": {`{"identity":"AAAA","revocation":"AA"}`, protocol.CodeBadEncoding},
+		"its unused bits set":    {`{"identity":"AAAA","revocation":"AB=="}`, protocol.CodeBadEncoding},
+		"base64 wrapped":         {`{"identity":"AAAA\nAAAA","revocation":"AAAA"}`, protocol.CodeBadEncoding},
+		"a name in another case": {strings.Replace(string(good), `"revocation"`, `"Revocation"`, 1), protocol.CodeBadRequest},
+		"a name twice":           {strings.Replace(string(good), `{`, `{"revocation":"AAAA",`, 1), protocol.CodeBadRequest},
+		"a bracket after it":     {string(good) + `]`, protocol.CodeBadRequest},
+		"NaN beside it":          {strings.Replace(string(good), `{`, `{"x":NaN,`, 1), protocol.CodeBadRequest},
 		"over the largest body":  {`{"identity":"` + strings.Repeat("A", 8192) + `"}`, protocol.CodeTooLarge},
 		"an empty list is a bad": {`{"identity":"` + b64(p.doc) + `","revoked_certificates":"","revoked_certificates_signature":"` + b64(list.RevokedCertificatesSignature) + `"}`, protocol.CodeBadRevocation},
 	} {

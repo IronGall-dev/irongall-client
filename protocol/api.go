@@ -3,6 +3,7 @@ package protocol
 import (
 	"encoding/base64"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"slices"
 )
@@ -13,10 +14,12 @@ import (
 // entry without losing the rest of a response.
 
 // ErrNotBase64 is returned when a byte field is not standard base64.
-var ErrNotBase64 = errors.New("a byte field is not standard base64 of the exact bytes")
+var ErrNotBase64 = errors.New("a byte field is not standard base64 of the exact bytes, in its one encoding")
 
-// Bytes is a byte field: standard base64 on the wire. Line breaks inside the
-// base64 are ignored, so wrapped base64 decodes exactly.
+// Bytes is a byte field: standard base64 on the wire, in its one encoding
+// (RFC 4648 §3): padded, with nothing outside the alphabet, a line break
+// included, and the unused bits of its last character zero. So a field has
+// one text, and no two readers decode it two ways.
 type Bytes []byte
 
 // MarshalJSON implements [json.Marshaler].
@@ -25,17 +28,19 @@ func (b Bytes) MarshalJSON() ([]byte, error) {
 }
 
 // UnmarshalJSON implements [json.Unmarshaler]. JSON null leaves the field
-// unset; anything but a base64 string is [ErrNotBase64].
+// unset; anything but a string of base64 in its one encoding is
+// [ErrNotBase64]. The string is the one encoding when encoding what it
+// decodes to gives it back.
 func (b *Bytes) UnmarshalJSON(data []byte) error {
 	if string(data) == "null" {
 		return nil
 	}
 	var s string
-	if err := json.Unmarshal(data, &s); err != nil {
+	if err := jsonv2.Unmarshal(data, &s); err != nil {
 		return ErrNotBase64
 	}
 	v, err := base64.StdEncoding.DecodeString(s)
-	if err != nil {
+	if err != nil || base64.StdEncoding.EncodeToString(v) != s {
 		return ErrNotBase64
 	}
 	*b = v

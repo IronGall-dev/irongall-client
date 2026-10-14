@@ -360,18 +360,15 @@ func (s *Server) body(w http.ResponseWriter, r *http.Request, v any) error {
 		}
 		return refuse(protocol.CodeBadRequest, "", "the request body could not be read")
 	}
-	d := json.NewDecoder(bytes.NewReader(data))
-	d.DisallowUnknownFields()
-	if err := d.Decode(v); err != nil {
-		if errors.Is(err, protocol.ErrNotBase64) {
-			return refuse(protocol.CodeBadEncoding, "base64 of the exact file bytes", "a byte field is not standard base64")
-		}
-		return refuse(protocol.CodeBadRequest, hintRecord, "the body is not the JSON object expected")
+	switch err := protocol.UnmarshalRequest(data, v); {
+	case err == nil:
+		return nil
+	case errors.Is(err, protocol.ErrNotBase64):
+		return refuse(protocol.CodeBadEncoding, "base64 of the exact file bytes", "a byte field is not standard base64 in its one encoding")
+	case errors.Is(err, protocol.ErrUnknownMember):
+		return refuse(protocol.CodeBadRequest, hintRecord, "%v", err)
 	}
-	if d.More() {
-		return refuse(protocol.CodeBadRequest, hintRecord, "the body holds more than one JSON value")
-	}
-	return nil
+	return refuse(protocol.CodeBadRequest, hintRecord, "the body is not the JSON object expected, read as PROTOCOL.md §0b reads one")
 }
 
 // pathAddress reads the address in the path: 64 hex characters, folded to

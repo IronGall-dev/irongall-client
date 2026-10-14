@@ -25,8 +25,11 @@ const (
 	// that a client whose clock is ahead of the server's is not refused. It
 	// is the pass's rule (PassLifetime, MaxPassLifetime).
 	MaxPrekeyLifetime = PrekeyLifetime + MaxSkew
-	// MaxSerial is the largest prekey serial: 18 decimal digits.
-	MaxSerial = 999_999_999_999_999_999
+	// MaxSerial is the largest serial, of a prekey or a certificate, and the
+	// largest number in a list of revoked certificates: MaxInteger, 2^53 − 1,
+	// since a send names a prekey by its two serials as JSON numbers, and
+	// RFC 7493 promises no reader holds a larger integer exactly.
+	MaxSerial = MaxInteger
 	// TimeLayout is the one timestamp format in signed statements and the
 	// envelope: RFC 3339, UTC, to the second.
 	TimeLayout = "2006-01-02T15:04:05Z"
@@ -43,7 +46,9 @@ const (
 	Classic KeyType = "X25519"
 )
 
-var serialGrammar = regexp.MustCompile(`\A[1-9][0-9]{0,17}\z`)
+// serialGrammar is a serial's text: a decimal integer with no leading zero,
+// of at most 16 digits. Its value is held to MaxSerial after.
+var serialGrammar = regexp.MustCompile(`\A[1-9][0-9]{0,15}\z`)
 
 // Prekey is a prekey statement: the box's current age encryption key, signed
 // by a working key its identity certified.
@@ -97,7 +102,7 @@ func (p *Prekey) CheckLifetime(now time.Time) error {
 
 // ParsePrekey parses a prekey statement. It must be exactly five LF-terminated
 // lines with nothing after them, its serial a decimal integer with no leading
-// zero and at most 18 digits, its key an age recipient in canonical form that
+// zero and at most MaxSerial, its key an age recipient in canonical form that
 // can be encrypted to (so no small-order X25519 point, in either key type), and
 // its not_after a UTC timestamp to the second.
 func ParsePrekey(statement []byte) (*Prekey, error) {
@@ -115,12 +120,9 @@ func ParsePrekey(statement []byte) (*Prekey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("line 2 of a prekey statement: %v", err)
 	}
-	if !serialGrammar.MatchString(lines[2]) {
-		return nil, errors.New("a prekey serial is a decimal integer with no leading zero, at most 18 digits")
-	}
-	serial, err := strconv.ParseUint(lines[2], 10, 64)
-	if err != nil {
-		return nil, err
+	serial, ok := parseSerial([]byte(lines[2]))
+	if !ok {
+		return nil, errors.New("a prekey serial is a decimal integer with no leading zero, from 1 to 2^53 − 1")
 	}
 	notAfter, err := ParseTime(lines[4])
 	if err != nil {

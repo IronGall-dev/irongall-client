@@ -3,7 +3,7 @@
 #
 #   docker build -t irongall-revocation-server .
 #   docker run -v <a directory uid 65532 can write>:/data irongall-revocation-server --dir /data --listen 0.0.0.0:8080
-FROM golang:1.26.6-trixie AS build
+FROM golang:1.27.2-trixie AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download

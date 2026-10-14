@@ -137,7 +137,7 @@ mkdir -p revoked
 list() { local f=$1 addr=$2 version=$3; shift 3; { printf 'irongall-revoked-certs-v1\n%s\n%s\n' "$addr" "$version"; [ $# -eq 0 ] || printf '%s\n' "$@"; } > "revoked/$f.txt"; }   # <name> <address> <version> [lines…]
 listsig() { sign a "irongall-revoked-certs-v1:$A" < "revoked/$1.txt" > "revoked/$1.sig"; }
 list ok-one-range "$A" 1 1-4; listsig ok-one-range
-list ok-serials-and-ranges "$A" 7 2 5-9 11 999999999999999999; listsig ok-serials-and-ranges
+list ok-serials-and-ranges "$A" 7 2 5-9 11 9007199254740991; listsig ok-serials-and-ranges # the last is 2^53 - 1, the highest serial
 sign a "irongall-revoked-certs-v1:$A" -O hashalg=sha256 < revoked/ok-one-range.txt > revoked/ok-one-range.sha256.sig
 cp revoked/ok-one-range.txt revoked/bad-by-a-working-key.txt; under a-work a/work-cert.pub "irongall-revoked-certs-v1:$A" < revoked/bad-by-a-working-key.txt > revoked/bad-by-a-working-key.sig
 cp revoked/ok-one-range.txt revoked/bad-another-namespace.txt; sign a "irongall-revoke-v1:$A" < revoked/bad-another-namespace.txt > revoked/bad-another-namespace.sig
@@ -149,6 +149,8 @@ list bad-version-leading-zero "$A" 01 1-4; listsig bad-version-leading-zero
 list bad-serial-zero "$A" 1 0-4; listsig bad-serial-zero
 list bad-serial-leading-zero "$A" 1 01-4; listsig bad-serial-leading-zero
 list bad-serial-19-digits "$A" 1 1000000000000000000; listsig bad-serial-19-digits
+list bad-serial-above-2-53 "$A" 1 9007199254740992; listsig bad-serial-above-2-53
+list bad-version-above-2-53 "$A" 9007199254740992 1; listsig bad-version-above-2-53
 list bad-range-backwards "$A" 1 4-1; listsig bad-range-backwards
 list bad-range-of-one "$A" 1 4-4; listsig bad-range-of-one
 list bad-descending "$A" 1 5 3; listsig bad-descending
@@ -179,6 +181,7 @@ badcert bad-key-id a a-work -I irongall-cert-v2 -n "$A" -z 1 -V "$V_OK" -O clear
 badcert bad-two-principals a a-work -I irongall-cert-v1 -n "$A,$B" -z 1 -V "$V_OK" -O clear
 badcert bad-principal-another-box a a-work $(good "$B")
 badcert bad-serial-zero a a-work $(good "$A" 0)
+badcert bad-serial-above-2-53 a a-work $(good "$A" 9007199254740992)
 badcert bad-host-certificate a a-work $(good "$A") -h
 badcert bad-signed-by-b b a-work $(good "$A")
 badcert bad-certifies-the-identity a a $(good "$A")
@@ -284,6 +287,7 @@ bad bad-names-another-box 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$B" "$PQ" "$NOT
 bad bad-serial-zero 'irongall-prekey-v1\n%s\n0\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
 bad bad-serial-leading-zero 'irongall-prekey-v1\n%s\n01\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
 bad bad-serial-19-digits 'irongall-prekey-v1\n%s\n1000000000000000000\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
+bad bad-serial-above-2-53 'irongall-prekey-v1\n%s\n9007199254740992\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER" # a send names it as a JSON number, and 2^53 - 1 is the most one holds exactly
 bad bad-serial-negative 'irongall-prekey-v1\n%s\n-1\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
 bad bad-never 'irongall-prekey-v1\n%s\n1\n%s\nnever\n' "$A" "$PQ"
 bad bad-time-lowercase-z 'irongall-prekey-v1\n%s\n1\n%s\n2026-11-11T00:00:00z\n' "$A" "$PQ"
@@ -335,6 +339,16 @@ case_env refuse-version-string "{\"v\":\"1\",\"from\":\"%s\",\"to\":\"%s\",\"sen
 case_env refuse-duplicate-key "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\",\"from\":\"%s\"}" "$B" "$B" "$A"
 case_env refuse-two-objects "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}{}" "$A" "$B"
 case_env refuse-not-utf8 "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"\xff\xfe\"}" "$A" "$B"
+# The envelope is a JSON text as PROTOCOL.md §0b reads one, the sender's body in it included (json/ has each rule alone).
+E="{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":"
+case_env accept-body-nested-to-32 "$E$(printf '%.0s[' $(seq 31))$(printf '%.0s]' $(seq 31))}" "$A" "$B"
+case_env refuse-body-nested-to-33 "$E$(printf '%.0s[' $(seq 32))$(printf '%.0s]' $(seq 32))}" "$A" "$B"
+case_env refuse-key-twice-in-the-body "$E{\"x\":1,\"x\":2}}" "$A" "$B"
+case_env refuse-nan-in-the-body "${E}NaN}" "$A" "$B"
+case_env refuse-leading-zero-in-the-body "$E[01]}" "$A" "$B"
+case_env refuse-noncharacter-in-the-body "$E\"\\\\uffff\"}" "$A" "$B"
+case_env refuse-above-u10ffff-in-the-body "$E\"\xf4\x90\x80\x80\"}" "$A" "$B"
+case_env refuse-byte-order-mark "\xef\xbb\xbf{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
 
 # A message from A to B. What is encrypted is three parts: the envelope as one line, the
 # signature over that line as ssh-keygen wrote it, and padding. The line carries A's identity
@@ -397,3 +411,98 @@ cat "$GOOD_SIG" message/a-to-b.line > plain/refuse-signature-first.txt
 sed 's/$/\r/' message/a-to-b.line > "$L"; { cat "$L"; under a-work a/work-cert.pub "irongall-msg-v1:$B" < "$L" | sed 's/$/\r/'; } > plain/refuse-crlf.txt
 printf '{\n"v":1,"from":"%s","to":"%s","sent_at":"%s","msg_id":"%s","identity":"%s","body":"hello"}\n' "$A" "$B" "$NOW" "$MSG_ID" "$ID_A" > "$L"; refuse refuse-envelope-on-two-lines "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
 rm -f "$L"
+
+# JSON texts as every reader takes one (PROTOCOL.md §0b): ok-* are taken and bad-* refused, by the server, the Go client
+# and the script alike, whatever they hold. Each breaks one rule, or none.
+mkdir -p json
+jt() { local name=$1; shift; printf "$@" > "json/$name.json"; } # <name> <printf format…>: \\ in the format is one backslash in the text
+deep() { printf '{"a":'; printf '%.0s[' $(seq "$1"); printf '%.0s]' $(seq "$1"); printf '}'; } # an object holding arrays nested <n> deep inside it
+jt ok-object '{"a":1}\n'
+jt ok-empty '{}'
+jt ok-whitespace '{ "a" :\t[ 1 ,\r\n 2 ] }\n'
+jt ok-numbers '{"a":[0,-0,1.5,-1e10,1E+2,0.5e-3,9007199254740993]}' # outside a member the protocol defines, any JSON number
+jt ok-escapes '{"a":"\\u0000\\\\\\"\\/\\b\\f\\n\\r\\t\\u00e9"}'
+jt ok-surrogate-pair '{"a":"\\ud83d\\ude00"}'
+jt ok-beside-the-noncharacters '{"a":"\xef\xb7\x8f\xef\xb7\xb0\xef\xbf\xbd"}' # U+FDCF, U+FDF0 and U+FFFD
+jt ok-same-name-in-two-objects '{"a":{"x":1},"b":[{"x":2}],"x":3}'
+jt ok-empty-containers '{"a":{},"b":[]}'
+deep 31 > json/ok-nested-32-deep.json
+deep 32 > json/bad-nested-33-deep.json
+jt bad-byte-order-mark '\xef\xbb\xbf{"a":1}'
+jt bad-not-utf8 '{"a":"\xff"}'
+jt bad-overlong-utf8 '{"a":"\xc0\xaf"}'
+jt bad-surrogate-in-utf8 '{"a":"\xed\xa0\x80"}'
+jt bad-above-u10ffff '{"a":"\xf4\x90\x80\x80"}' # glibc's iconv takes it
+jt bad-five-byte-utf8 '{"a":"\xf8\x88\x80\x80\x80"}'
+jt bad-lone-surrogate-escaped '{"a":"\\ud800"}'
+jt bad-noncharacter '{"a":"\xef\xbf\xbf"}'
+jt bad-noncharacter-escaped '{"a":"\\ufdd0"}'
+jt bad-noncharacter-plane-16 '{"a":"\\udbff\\udfff"}'
+jt bad-noncharacter-in-a-name '{"\\ufffe":1}'
+jt bad-control-character '{"a":"\x01"}'
+jt bad-name-twice '{"a":1,"a":2}'
+jt bad-name-twice-nested '{"b":[{"x":1,"x":1}]}'
+jt bad-name-twice-escaped '{"a":1,"\\u0061":2}'
+jt bad-two-values '{}{}'
+jt bad-trailing-bracket '{"a":1}]'
+jt bad-trailing-brace '{"a":1}}'
+jt bad-an-array '[]'
+jt bad-a-string '"x"'
+jt bad-empty ''
+jt bad-nan '{"a":NaN}'
+jt bad-nan-lowercase '{"a":nan}'
+jt bad-infinity '{"a":-Infinity}'
+jt bad-leading-zero '{"a":01}'
+jt bad-plus '{"a":+1}'
+jt bad-point-first '{"a":.5}'
+jt bad-point-last '{"a":1.}'
+jt bad-trailing-comma '{"a":1,}'
+jt bad-single-quotes "{'a':1}"
+jt bad-vertical-tab '{"a":\v1}'
+
+# Whole answers of a server, as each client reads them (PROTOCOL.md §0b): <kind>-ok-* are taken and <kind>-bad-* are no
+# answer, to the Go client and the script alike. A member a client does not know is ignored; one it reads is of its
+# type or null, which is as if it were left out; a byte member is base64 in its one encoding.
+mkdir -p answer
+at() { local name=$1; shift; printf "$@" > "answer/$name.json"; }
+REV=$(b64 < a/revoke.sig); P1=$(b64 < a/prekey-1.txt); P1S=$(b64 < a/prekey-1.txt.sig); CT=$(b64 < message/a-to-b.age); HASH=$(sha256sum < message/a-to-b.age | cut -c1-64)
+wrap() { printf '%s' "$1" | fold -w 64 | sed 's/$/\\n/' | tr -d '\n' | sed 's/\\n$//'; } # base64 with a JSON \n escape after each 64 characters
+NOPAD=${REV%%=*}; LASTBITS=$(printf '%s' "$REV" | sed 's/A==$/B==/; s/Q==$/R==/; s/g==$/h==/; s/w==$/x==/') # the revocation is 403 bytes: two = of padding, and 4 unused bits
+[ "$NOPAD" != "$REV" ] && [ "$LASTBITS" != "$REV" ] || { echo "a/revoke.sig is not base64 with padding and unused bits, which the bad answers need" >&2; exit 1; }
+at record-ok-revocation '{"identity":"%s","revocation":"%s"}' "$ID_A" "$REV"
+at record-ok-null-members '{"identity":null,"revocation":null,"revoked_certificates":null,"revoked_certificates_signature":null}'
+at record-ok-unknown-member '{"identity":"%s","revocation":"%s","later":[1,{"x":true}]}' "$ID_A" "$REV"
+at record-ok-names-in-another-case '{"Identity":"%s","REVOCATION":"%s"}' "$ID_A" "$REV" # members it does not know: a record that shows nothing
+at record-ok-empty-object '{}'
+at record-bad-empty ''
+at record-bad-an-array '[]'
+at record-bad-identity-a-number '{"identity":5,"revocation":"%s"}' "$REV"
+at record-bad-revocation-unpadded '{"identity":"%s","revocation":"%s"}' "$ID_A" "$NOPAD"
+at record-bad-revocation-unused-bits-set '{"identity":"%s","revocation":"%s"}' "$ID_A" "$LASTBITS"
+at record-bad-identity-wrapped '{"identity":"%s","revocation":"%s"}' "$(wrap "$ID_A")" "$REV"
+at record-bad-identity-twice '{"identity":"%s","identity":"%s","revocation":"%s"}' "$ID_A" "$ID_B" "$REV"
+at record-bad-null-after-a-value '{"identity":"%s","revocation":"%s","revocation":null}' "$ID_A" "$REV"
+at record-bad-nan-beside-it '{"identity":"%s","revocation":"%s","later":NaN}' "$ID_A" "$REV"
+at record-bad-a-second-value '{"identity":"%s","revocation":"%s"}{}' "$ID_A" "$REV"
+at identity-ok '{"identity":"%s","prekey":"%s","prekey_signature":"%s"}' "$ID_A" "$P1" "$P1S"
+at identity-ok-sender-key-types '{"identity":"%s","prekey":"%s","prekey_signature":"%s","sender_key_types":["ecdsa-sha2-nistp256"]}' "$ID_A" "$P1" "$P1S"
+at identity-bad-sender-key-types-a-string '{"identity":"%s","prekey":"%s","prekey_signature":"%s","sender_key_types":"any"}' "$ID_A" "$P1" "$P1S"
+at identity-bad-signature-unpadded '{"identity":"%s","prekey":"%s","prekey_signature":"%s"}' "$ID_A" "$P1" "${P1S%%=*}"
+at identity-bad-prekey-a-number '{"identity":"%s","prekey":1,"prekey_signature":"%s"}' "$ID_A" "$P1S"
+at list-ok '{"count":1,"messages":[{"id":"%s","from":"%s","size":%s,"received_at":"%s","expires_at":"2026-11-12T00:00:00Z"}],"next_cursor":null,"poll_after":60}' "$HASH" "$A" "$(wc -c < message/a-to-b.age)" "$NOW"
+at list-ok-empty '{"count":0,"messages":[],"next_cursor":null,"poll_after":60}'
+at list-bad-count-negative '{"count":-1,"messages":[],"next_cursor":null,"poll_after":60}'
+at list-bad-count-above-2-53 '{"count":9007199254740992,"messages":[],"next_cursor":null,"poll_after":60}'
+at list-bad-count-a-fraction '{"count":0.5,"messages":[],"next_cursor":null,"poll_after":60}'
+at list-bad-count-written-with-a-fraction '{"count":1.0,"messages":[],"next_cursor":null,"poll_after":60}' # an integer member is written as one
+at list-bad-size-a-string '{"count":1,"messages":[{"id":"%s","from":"%s","size":"2048"}],"next_cursor":null,"poll_after":60}' "$HASH" "$A"
+at list-bad-messages-an-object '{"count":0,"messages":{},"next_cursor":null,"poll_after":60}'
+at list-bad-cursor-a-number '{"count":0,"messages":[],"next_cursor":7,"poll_after":60}'
+at message-ok '{"id":"%s","from":"%s","received_at":"%s","expires_at":"2026-11-12T00:00:00Z","ciphertext":"%s"}' "$HASH" "$A" "$NOW" "$CT"
+at message-bad-ciphertext-wrapped '{"id":"%s","from":"%s","ciphertext":"%s"}' "$HASH" "$A" "$(wrap "$CT")"
+at message-bad-from-a-number '{"id":"%s","from":5,"ciphertext":"%s"}' "$HASH" "$CT"
+at receipt-ok '{"id":"%s","received_at":"%s","expires_at":"2026-11-12T00:00:00Z"}' "$HASH" "$NOW"
+at receipt-bad-id-an-array '{"id":["%s"],"received_at":"%s"}' "$HASH" "$NOW"
+at problem-ok '{"type":"https://irongall.dev/errors/not_revoked","title":"Not revoked","status":404,"detail":"no revocation of this address is held here","code":"not_revoked","hint":"nothing to do"}'
+at problem-bad-code-twice '{"type":"https://irongall.dev/errors/not_revoked","status":404,"code":"not_revoked","code":"revoked"}'
+at problem-bad-status-a-string '{"status":"404","code":"not_revoked"}'

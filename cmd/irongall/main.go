@@ -650,7 +650,7 @@ func readRecord(name string) (*protocol.Revocations, error) {
 		return nil, err
 	}
 	var rec protocol.Revocations
-	if len(data) > maxRecord || json.Unmarshal(data, &rec) != nil || len(rec.Identity) == 0 || (len(rec.Revocation) == 0 && len(rec.RevokedCertificates) == 0) {
+	if len(data) > maxRecord || protocol.Unmarshal(data, &rec) != nil || len(rec.Identity) == 0 || (len(rec.Revocation) == 0 && len(rec.RevokedCertificates) == 0) {
 		return nil, errors.New("the file is not a revocation record: one is a line of JSON with \"identity\" and \"revocation\", as irongall revocation prints, or with a list of revoked certificates")
 	}
 	return &rec, nil

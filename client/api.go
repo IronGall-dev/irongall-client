@@ -60,7 +60,7 @@ func (b *Box) callAt(ctx context.Context, base, method, path string, in any, hdr
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		e := &APIError{Status: resp.StatusCode}
-		_ = json.Unmarshal(data, &e.Problem) // a body that is not problem+json leaves the code empty
+		_ = protocol.Unmarshal(data, &e.Problem) // a body that is not problem+json, read as any answer is, leaves the code empty
 		if s, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && s > 0 {
 			e.RetryAfter = time.Duration(s) * time.Second
 		}
@@ -70,7 +70,7 @@ func (b *Box) callAt(ctx context.Context, base, method, path string, in any, hdr
 		return resp, e
 	}
 	if out != nil {
-		if err := json.Unmarshal(data, out); err != nil {
+		if err := protocol.Unmarshal(data, out); err != nil {
 			return resp, fmt.Errorf("%s %s: the response is not the JSON expected: %w", method, path, err)
 		}
 	}

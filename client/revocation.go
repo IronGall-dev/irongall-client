@@ -277,7 +277,7 @@ func (b *Box) revokedCerts(a protocol.Address) (*protocol.RevokedCertificates, e
 		return nil, err
 	}
 	var rec protocol.Revocations
-	if err := json.Unmarshal(raw, &rec); err != nil {
+	if err := protocol.Unmarshal(raw, &rec); err != nil {
 		return nil, fmt.Errorf("the list of revoked certificates kept for %s is not a record: %w", a, err)
 	}
 	// Checked under the identity this box holds for the address, whatever
