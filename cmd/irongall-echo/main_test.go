@@ -318,21 +318,23 @@ func TestEchoRenewsItsPrekey(t *testing.T) {
 	}
 	first := serial()
 	x = e.echo() // a restart
-	if s := serial(); s != first+1 {
-		t.Fatalf("a restart published serial %d after %d", s, first)
+	second := serial()
+	if second <= first {
+		t.Fatalf("a restart published serial %d after %d", second, first)
 	}
 	e.clock.Add(24 * time.Hour)
 	x.once(context.Background())
-	if s := serial(); s != first+1 {
+	if s := serial(); s != second {
 		t.Fatal("a poll inside a day renewed the prekey")
 	}
 	e.clock.Add(time.Second)
 	x.once(context.Background())
-	if s := serial(); s != first+2 {
-		t.Fatalf("no new prekey after a day: serial %d", s)
+	third := serial()
+	if third <= second {
+		t.Fatalf("no new prekey after a day: serial %d", third)
 	}
 	x.once(context.Background())
-	if s := serial(); s != first+2 {
+	if s := serial(); s != third {
 		t.Fatal("renewed again at the next poll, not a day later")
 	}
 }

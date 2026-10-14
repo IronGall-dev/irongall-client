@@ -218,6 +218,7 @@ func TestARevocationServerShowsAListTheMailboxServerHides(t *testing.T) {
 	e := newEnv(t)
 	rs := newRevServer(t)
 	a := e.boxWith(e.listing(rs.URL))
+	taken := numberOf(t, a)
 	statement, signature := theft(t, e, a)
 	if got := rs.holds(t, a.Address()); got == nil || got.RevokedCertificates == nil || got.Revocation != nil {
 		t.Fatal("rekey --revoke-earlier did not publish the list to the revocation server")
@@ -248,7 +249,7 @@ func TestARevocationServerShowsAListTheMailboxServerHides(t *testing.T) {
 	// A question at any time asks both, and keeps what either shows.
 	c := e.boxWith(e.listing(rs.URL))
 	held, err := c.Ask(ctx, a.Address())
-	if err != nil || held.Revoked || held.Certificates == nil || !held.Certificates.Revokes(1) || held.Certificates.Revokes(2) {
+	if err != nil || held.Revoked || held.Certificates == nil || !held.Certificates.Revokes(taken) || held.Certificates.Revokes(numberOf(t, a)) {
 		t.Fatalf("ask: %+v, %v", held, err)
 	}
 }
@@ -479,13 +480,14 @@ func TestAListNotEverywhereIsKeptAndPublishedAgain(t *testing.T) {
 	e := newEnv(t)
 	rs := newRevServer(t)
 	a := e.boxWith(e.listing(rs.URL))
+	first := numberOf(t, a)
 	if _, err := a.Rekey(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
 	rs.set(down)
 	list, err := a.RevokeEarlier(ctx)
 	var part *client.NotPublishedError
-	if list == nil || !list.Revokes(1) || !errors.As(err, &part) || part.Failed[0].Server != rs.URL {
+	if list == nil || !list.Revokes(first) || !errors.As(err, &part) || part.Failed[0].Server != rs.URL {
 		t.Fatalf("revoke earlier with the revocation server down: %+v, %v", list, err)
 	}
 	kept := filepath.Join(a.Dir(), "revoked-certs.json")

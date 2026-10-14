@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -197,7 +198,7 @@ func TestForgeries(t *testing.T) {
 		if _, err := b.Rekey(ctx, ""); err != nil {
 			t.Fatal(err)
 		}
-		send(t, a, b, "sees serial 2")
+		send(t, a, b, "sees the second prekey")
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if r.URL.Path == "/v1/"+b.Address().String()+"/identity" {
 				fakeserver.WriteJSON(w, http.StatusOK, protocol.IdentityResponse{Identity: b.Identity().Document(), Prekey: st, PrekeySignature: sig})
@@ -214,11 +215,12 @@ func TestForgeries(t *testing.T) {
 		e := newEnv(t)
 		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 		stolen := worker(t, b) // read before the renewal deletes it
+		first := numberOf(t, b)
 		old, _ := e.srv.Prekey(b.Address())
 		if _, err := b.Rekey(ctx, ""); err != nil {
 			t.Fatal(err)
 		}
-		send(t, a, b, "sees certificate 2")
+		send(t, a, b, "sees the second certificate")
 		// The thief, with a server's help, offers a prekey of its own under
 		// the old certificate, which has weeks to run: a higher prekey
 		// serial than any A has seen, so only the certificate's gives it away.
@@ -226,7 +228,7 @@ func TestForgeries(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		p.Serial = 9
+		p.Serial = protocol.MaxSerial
 		sig, err := protocol.Sign(stolen, p.Statement(), protocol.PrekeyNamespace(b.Address()))
 		if err != nil {
 			t.Fatal(err)
@@ -238,7 +240,7 @@ func TestForgeries(t *testing.T) {
 			}
 			next.ServeHTTP(w, r)
 		})
-		if _, err := a.Send(ctx, b.Address(), "secret"); err == nil || !strings.Contains(err.Error(), "under certificate 1, below 2") {
+		if _, err := a.Send(ctx, b.Address(), "secret"); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("under certificate %d, below %d", first, numberOf(t, b))) {
 			t.Fatalf("send: %v, want a refusal of the older certificate", err)
 		}
 	})
@@ -251,8 +253,8 @@ func TestForgeries(t *testing.T) {
 			t.Fatal(err)
 		}
 		published, _ := e.srv.Prekey(b.Address())
-		// Serial 1 again: rekey would take serial 2, whose key it already
-		// published, and publish it again under a new statement.
+		// The first statement again: rekey would number from it, at or below
+		// what this box published, and publish over its own later statement.
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if r.URL.Path == "/v1/"+b.Address().String()+"/identity" {
 				fakeserver.WriteJSON(w, http.StatusOK, protocol.IdentityResponse{Identity: b.Identity().Document(), Prekey: st, PrekeySignature: sig})

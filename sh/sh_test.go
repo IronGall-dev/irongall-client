@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -921,13 +922,14 @@ func TestARevocationServerInBothClients(t *testing.T) {
 	// The Go client's list of revoked certificates, at the revocation
 	// server alone as far as the script is shown: it keeps the list.
 	g3 := goBox(rs.URL)
+	first := numberOf(t, g3)
 	if _, err := g3.Rekey(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
 	if list, err := g3.RevokeEarlier(ctx); err != nil || list == nil {
 		t.Fatalf("revoke earlier: %+v, %v", list, err)
 	}
-	if out, err := sh(s2, fmt.Sprintf("ig_lookup %s; echo $?; ig_listed %s 1; echo $?; ig_listed %s 2; echo $?", g3.Address(), g3.Address(), g3.Address())); err != nil || out != "1\n0\n1\n" {
+	if out, err := sh(s2, fmt.Sprintf("ig_lookup %s; echo $?; ig_listed %s %d; echo $?; ig_listed %s %d; echo $?", g3.Address(), g3.Address(), first, g3.Address(), numberOf(t, g3))); err != nil || out != "1\n0\n1\n" {
 		t.Fatalf("the script, shown the Go client's list by the revocation server alone: %v %q", err, out)
 	}
 
@@ -1243,6 +1245,7 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 		t.Fatal(err)
 	}
 	gAddr := g.Address().String()
+	first := numberOf(t, g)
 
 	// Mail under the Go box's first certificate, then a renewal and the list
 	// that revokes every certificate before the new one, then mail under
@@ -1254,7 +1257,7 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 		t.Fatal(err)
 	}
 	list, err := g.RevokeEarlier(ctx)
-	if err != nil || list == nil || !list.Revokes(1) || list.Revokes(2) {
+	if err != nil || list == nil || !list.Revokes(first) || list.Revokes(numberOf(t, g)) {
 		t.Fatalf("RevokeEarlier: %+v %v", list, err)
 	}
 	if _, err := g.Send(ctx, script, "under the second certificate"); err != nil {
@@ -1289,7 +1292,7 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 	if res, err := g2.Receive(ctx); err != nil || len(res.Delivered) != 1 {
 		t.Fatalf("the second Go box's drain: %+v %v", res, err)
 	}
-	if out, err := bash(t, []string{"IRONGALL_HOME=" + g2.Dir()}, fmt.Sprintf(`ig_listed %s 1; echo $?; ig_listed %s 2; echo $?`, gAddr, gAddr)); err != nil || out != "0\n1\n" {
+	if out, err := bash(t, []string{"IRONGALL_HOME=" + g2.Dir()}, fmt.Sprintf(`ig_listed %s %d; echo $?; ig_listed %s %d; echo $?`, gAddr, first, gAddr, numberOf(t, g))); err != nil || out != "0\n1\n" {
 		t.Fatalf("the script's reading of a list the Go client kept: %q %v", out, err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "peers", gAddr, "revoke.sig")); err == nil {
@@ -1302,7 +1305,7 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 	if _, err := sh("printf 'to the box at its second certificate' | ig_send " + gAddr); err != nil {
 		t.Fatalf("the script's send to a box that moved to a later certificate: %v", err)
 	}
-	if out, err := sh(fmt.Sprintf(`cat "$IG/peers/%s/serial" "$IG/peers/%s/cert-serial"`, gAddr, gAddr)); err != nil || out != "2\n2\n" {
+	if out, err := sh(fmt.Sprintf(`cat "$IG/peers/%s/serial" "$IG/peers/%s/cert-serial"`, gAddr, gAddr)); err != nil || out != fmt.Sprintf("%d\n%d\n", numberOf(t, g), numberOf(t, g)) {
 		t.Fatalf("what the script recorded of the box's statement: %q %v", out, err)
 	}
 	res, err := g.Receive(ctx)
@@ -1360,10 +1363,11 @@ func TestAWaitingSealInBothClients(t *testing.T) {
 	// working key was taken does.
 	theft := func(b *client.Box) {
 		t.Helper()
+		first := numberOf(t, b)
 		if _, err := b.Rekey(ctx, kt); err != nil {
 			t.Fatal(err)
 		}
-		if list, err := b.RevokeEarlier(ctx); err != nil || list == nil || !list.Revokes(1) {
+		if list, err := b.RevokeEarlier(ctx); err != nil || list == nil || !list.Revokes(first) || list.Revokes(numberOf(t, b)) {
 			t.Fatalf("RevokeEarlier: %+v %v", list, err)
 		}
 	}
@@ -1384,7 +1388,7 @@ func TestAWaitingSealInBothClients(t *testing.T) {
 	sh := func(dir, commands string) (string, error) {
 		return bash(t, []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}, commands)
 	}
-	if out, err := sh(g.Dir(), `for f in "$IG"/outbox/*.P; do ig_under "${f%.P}"; done`); err != nil || out != "1\n" {
+	if out, err := sh(g.Dir(), `for f in "$IG"/outbox/*.P; do ig_under "${f%.P}"; done`); err != nil || out != fmt.Sprintf("%d\n", numberOf(t, to)) {
 		t.Fatalf("the script's reading of a seal the Go client made: %q %v", out, err)
 	}
 	theft(to)
@@ -1392,8 +1396,8 @@ func TestAWaitingSealInBothClients(t *testing.T) {
 	if _, err := sh(g.Dir(), "ig_flush"); err != nil {
 		t.Fatalf("the script's flush of a seal the Go client made: %v", err)
 	}
-	if len(posts) != 1 || posts[0] != 2 {
-		t.Fatalf("the script posted under certificates %v, want one post under 2", posts)
+	if len(posts) != 1 || posts[0] != numberOf(t, to) {
+		t.Fatalf("the script posted under certificates %v, want one post under %d", posts, numberOf(t, to))
 	}
 	if res, err := to.Receive(ctx); err != nil || len(res.Delivered) != 1 || string(res.Delivered[0].Envelope.Body) != `"sealed by the Go client"` {
 		t.Fatalf("the drain after the script's flush: %+v %v", res, err)
@@ -1420,10 +1424,26 @@ func TestAWaitingSealInBothClients(t *testing.T) {
 	if got, err := s.Flush(ctx); err != nil || len(got) != 1 {
 		t.Fatalf("the Go client's flush of a seal the script made: %v %v", got, err)
 	}
-	if len(posts) != 1 || posts[0] != 2 {
-		t.Fatalf("the Go client posted under certificates %v, want one post under 2", posts)
+	if len(posts) != 1 || posts[0] != numberOf(t, to) {
+		t.Fatalf("the Go client posted under certificates %v, want one post under %d", posts, numberOf(t, to))
 	}
 	if res, err := to.Receive(ctx); err != nil || len(res.Delivered) != 1 || string(res.Delivered[0].Envelope.Body) != `"sealed by the script"` {
 		t.Fatalf("the drain after the Go client's flush: %+v %v", res, err)
 	}
+}
+
+// numberOf is the number of the prekey a Go box published last, which is its
+// working key's and its certificate's too: its serial file. A box takes each
+// number from its clock, so a test reads the number and never assumes one.
+func numberOf(t *testing.T, b *client.Box) uint64 {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(b.Dir(), "serial"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := strconv.ParseUint(strings.TrimSpace(string(raw)), 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
 }

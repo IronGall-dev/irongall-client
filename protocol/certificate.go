@@ -187,6 +187,26 @@ func NewCertificate(id *Identity, identity ssh.Signer, work ssh.PublicKey, seria
 	return CheckCertificate(id, cert, now)
 }
 
+// SerialAt is the serial a client gives a certificate it makes at now, for a
+// box whose highest serial it knows of is above, or 0 if it knows of none:
+// the seconds since 1970 at its own clock, or one above that serial when the
+// clock gives nothing higher (PROTOCOL.md §2b).
+//
+// An identity is a key, and a key keeps no record of what it signed: a box
+// restored from its identity alone knows only what a server shows it, which
+// may be an older record, and no server has seen a certificate that was made
+// and not yet published. The clock is what such a box still has. Numbered by
+// it, the certificate made later has the higher serial whichever machine made
+// the earlier one, so the serials below a new certificate are those of every
+// certificate made before it, known to its maker or not.
+//
+// A verifier never reads a serial as a time. It compares two of them, and a
+// higher one is later: so a clock that reads behind, or one that once read
+// ahead, still gives a serial that rises, by one.
+func SerialAt(now time.Time, above uint64) uint64 {
+	return max(uint64(max(now.Unix(), 0)), above+1)
+}
+
 // Signer returns the signer whose signatures carry the certificate: work, the
 // working key's own signer, under c.
 func (c *Certificate) Signer(work ssh.Signer) (ssh.Signer, error) {

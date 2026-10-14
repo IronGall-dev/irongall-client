@@ -80,10 +80,11 @@ func waiting(b *client.Box, to protocol.Address) (entries, sealed int) {
 func theft(t *testing.T, e *env, a *client.Box) (statement, signature []byte) {
 	t.Helper()
 	statement, signature = e.srv.Prekey(a.Address())
+	taken := numberOf(t, a)
 	if _, err := a.Rekey(context.Background(), ""); err != nil {
 		t.Fatal(err)
 	}
-	if list, err := a.RevokeEarlier(context.Background()); err != nil || list == nil || !list.Revokes(1) {
+	if list, err := a.RevokeEarlier(context.Background()); err != nil || list == nil || !list.Revokes(taken) || list.Revokes(numberOf(t, a)) {
 		t.Fatalf("revoke earlier: %+v, %v", list, err)
 	}
 	return statement, signature
@@ -117,6 +118,7 @@ func TestASenderAsksBeforeItSends(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	a := e.box(protocol.Classic)
+	taken := numberOf(t, a)
 	statement, signature := theft(t, e, a)
 
 	// The control: a sender shown no list takes the old statement, and its
@@ -152,7 +154,7 @@ func TestASenderAsksBeforeItSends(t *testing.T) {
 	c := e.box(protocol.Classic)
 	e.srv.SetMiddle(nil)
 	held, err := c.Ask(ctx, a.Address())
-	if err != nil || held.Revoked || held.Certificates == nil || !held.Certificates.Revokes(1) || held.Certificates.Revokes(2) {
+	if err != nil || held.Revoked || held.Certificates == nil || !held.Certificates.Revokes(taken) || held.Certificates.Revokes(numberOf(t, a)) {
 		t.Fatalf("ask: %+v, %v", held, err)
 	}
 	op = helpsTheThief(e, a, statement, signature, true)
@@ -244,7 +246,7 @@ func TestASealThatWaitedIsCheckedBeforeItIsPosted(t *testing.T) {
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 
 	postFails(e, a)
-	if _, err := b.Send(ctx, a.Address(), "sealed under certificate 1"); err == nil {
+	if _, err := b.Send(ctx, a.Address(), "sealed under the first certificate"); err == nil {
 		t.Fatal("the post was meant to fail")
 	}
 	if n, sealed := waiting(b, a.Address()); n != 1 || sealed != 1 {
@@ -283,10 +285,10 @@ func TestASealThatWaitedIsCheckedBeforeItIsPosted(t *testing.T) {
 	var req struct {
 		CertificateSerial uint64 `json:"certificate_serial"`
 	}
-	if len(posted) != 1 || json.Unmarshal(posted[0], &req) != nil || req.CertificateSerial != 2 {
+	if len(posted) != 1 || json.Unmarshal(posted[0], &req) != nil || req.CertificateSerial != numberOf(t, a) {
 		t.Fatalf("%d posts, the first under certificate %d", len(posted), req.CertificateSerial)
 	}
-	if res := receive(t, a); len(res.Delivered) != 1 || bodyOf(t, res.Delivered[0]) != "sealed under certificate 1" {
+	if res := receive(t, a); len(res.Delivered) != 1 || bodyOf(t, res.Delivered[0]) != "sealed under the first certificate" {
 		t.Fatalf("delivered: %+v", res)
 	}
 
@@ -424,6 +426,7 @@ func TestAskingAtAnyTimeAndAListHandedOver(t *testing.T) {
 
 	// A later list replaces it, and the earlier one, handed over again,
 	// changes nothing.
+	second := numberOf(t, a)
 	if _, err := a.Rekey(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -433,7 +436,7 @@ func TestAskingAtAnyTimeAndAListHandedOver(t *testing.T) {
 	if _, held, err := c.KeepRevocation(record(t, e, a)); err != nil || held.Certificates.Version != 2 {
 		t.Fatalf("a later list: %+v, %v", held, err)
 	}
-	if _, held, err := c.KeepRevocation(first); err != nil || held.Certificates.Version != 2 || !held.Certificates.Revokes(2) {
+	if _, held, err := c.KeepRevocation(first); err != nil || held.Certificates.Version != 2 || !held.Certificates.Revokes(second) {
 		t.Fatalf("an earlier list handed over again: %+v, %v", held, err)
 	}
 

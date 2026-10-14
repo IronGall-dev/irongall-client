@@ -36,19 +36,24 @@ func servedSerial(t *testing.T, e *env, b *client.Box) uint64 {
 func TestReceiveRenewsADayOldPrekey(t *testing.T) {
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
+	first := numberOf(t, b)
 	e.clock.Add(24 * time.Hour)
-	if res := receive(t, b); res.Renewed != nil || servedSerial(t, e, b) != 1 {
+	if res := receive(t, b); res.Renewed != nil || servedSerial(t, e, b) != first {
 		t.Fatal("renewed a prekey only a day old")
 	}
 	e.clock.Add(time.Second)
 	res := receive(t, b)
-	if res.Renewed == nil || res.Renewed.Serial != 2 || servedSerial(t, e, b) != 2 {
+	if res.Renewed == nil || res.Renewed.Serial <= first || servedSerial(t, e, b) != res.Renewed.Serial {
 		t.Fatalf("no renewal of a prekey more than a day old: %+v", res)
+	}
+	// The new number is the box's clock, in seconds.
+	if now := e.clock.Now().Unix(); now < 0 || res.Renewed.Serial != uint64(now) {
+		t.Fatalf("the renewal's number is %d, and the box's clock reads %d", res.Renewed.Serial, now)
 	}
 	if res.Renewed.Type() != protocol.Classic {
 		t.Fatalf("the renewal changed the box's key type to %s", res.Renewed.Type())
 	}
-	if res := receive(t, b); res.Renewed != nil || servedSerial(t, e, b) != 2 {
+	if again := receive(t, b); again.Renewed != nil || servedSerial(t, e, b) != res.Renewed.Serial {
 		t.Fatal("renewed again at the next receive")
 	}
 }
@@ -86,7 +91,7 @@ func TestReceiveRetriesAFailedRenewalHourly(t *testing.T) {
 		t.Fatal("tried again inside the hour after a failure")
 	}
 	e.clock.Add(time.Hour)
-	if res := receive(t, b); res.Renewed == nil || servedSerial(t, e, b) != 2 {
+	if res := receive(t, b); res.Renewed == nil || servedSerial(t, e, b) != res.Renewed.Serial {
 		t.Fatal("not renewed once the server took it")
 	}
 }
@@ -99,21 +104,24 @@ func TestReceiveKeepsOnePriorPrekey(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
-	key := func(n int) string { return filepath.Join(b.Dir(), "prekeys", strconv.Itoa(n)) }
-	send(t, a, b, "to key 1")
+	key := func(n uint64) string { return prekeyFile(b, n, "") }
+	k1 := numberOf(t, b)
+	send(t, a, b, "to the first key")
 	e.clock.Add(25 * time.Hour)
 	if res := receive(t, b); res.Renewed == nil || len(res.Delivered) != 1 {
 		t.Fatalf("renewed %v, delivered %d", res.Renewed, len(res.Delivered))
 	}
-	send(t, a, b, "to key 2")
-	if _, err := b.Rekey(ctx, ""); err != nil { // retires key 2 at once
+	k2 := numberOf(t, b)
+	send(t, a, b, "to the second key")
+	if _, err := b.Rekey(ctx, ""); err != nil { // retires the second key at once
 		t.Fatal(err)
 	}
+	k3 := numberOf(t, b)
 	e.clock.Add(time.Hour)
 	if res := receive(t, b); len(res.Delivered) != 1 {
 		t.Fatal("mail to the newest retired prekey was not delivered")
 	}
-	if !exists(key(1) + ".agekey") {
+	if !exists(key(k1) + ".agekey") {
 		t.Fatal("deleted an hour after the newest retired prekey was made, not more")
 	}
 	e.clock.Add(time.Second)
@@ -121,16 +129,16 @@ func TestReceiveKeepsOnePriorPrekey(t *testing.T) {
 	if _, err := b.Receive(ctx); err == nil {
 		t.Fatal("the failed drain succeeded")
 	}
-	if !exists(key(1) + ".agekey") {
+	if !exists(key(k1) + ".agekey") {
 		t.Fatal("a drain that did not empty the box deleted a prekey")
 	}
 	receive(t, b)
 	for _, f := range []string{".agekey", ".txt", ".txt.sig"} {
-		if exists(key(1) + f) {
-			t.Fatalf("prekey 1's %s was kept", f)
+		if exists(key(k1) + f) {
+			t.Fatalf("the first prekey's %s was kept", f)
 		}
 	}
-	if !exists(key(2)+".agekey") || !exists(key(3)+".agekey") {
+	if !exists(key(k2)+".agekey") || !exists(key(k3)+".agekey") {
 		t.Fatal("deleted the newest retired prekey or the current one")
 	}
 }
@@ -140,17 +148,21 @@ func TestReceiveKeepsOnePriorPrekey(t *testing.T) {
 func TestMonthlyBoxDeletesAtTheRenewingCheckIn(t *testing.T) {
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
-	key1 := filepath.Join(b.Dir(), "prekeys", "1.agekey")
-	for range 2 {
+	key1 := prekeyFile(b, numberOf(t, b), ".agekey")
+	var second uint64
+	for i := range 2 {
 		e.clock.Add(30 * 24 * time.Hour)
 		if res := receive(t, b); res.Renewed == nil {
 			t.Fatal("a monthly check-in did not renew")
+		}
+		if i == 0 {
+			second = numberOf(t, b)
 		}
 	}
 	if exists(key1) {
 		t.Fatal("key 1 outlived the second renewal after it was retired")
 	}
-	if !exists(filepath.Join(b.Dir(), "prekeys", "2.agekey")) {
+	if !exists(prekeyFile(b, second, ".agekey")) {
 		t.Fatal("the newest retired prekey was deleted")
 	}
 }
@@ -198,7 +210,7 @@ func TestAFailedRenewalIsSentAgainUnchanged(t *testing.T) {
 		}
 	}
 	e.srv.SetMiddle(nil)
-	if res := receive(t, b); res.Renewed == nil || res.Renewed.Serial != 2 {
+	if res := receive(t, b); res.Renewed == nil || res.Renewed.Serial != begunAt(t, b) {
 		t.Fatalf("not renewed once the server took it: %+v", res.Renewed)
 	}
 	if st, sig := e.srv.Prekey(b.Address()); !bytes.Equal(st, (*kept)[0].Prekey) || !bytes.Equal(sig, (*kept)[0].PrekeySignature) {
@@ -300,7 +312,8 @@ func TestAKeyNeverSignedIsUsed(t *testing.T) {
 	if _, err := b.Rekey(context.Background(), ""); err == nil {
 		t.Fatal("the rekey should have failed")
 	}
-	stem := filepath.Join(b.Dir(), "prekeys", "2")
+	at := begunAt(t, b)
+	stem := prekeyFile(b, at, "")
 	key, _ := os.ReadFile(stem + ".agekey")
 	for _, signed := range []string{".txt", ".txt.sig"} { // as a crash before the signature would leave it
 		if err := os.Remove(stem + signed); err != nil {
@@ -308,7 +321,7 @@ func TestAKeyNeverSignedIsUsed(t *testing.T) {
 		}
 	}
 	p, err := b.Rekey(context.Background(), "")
-	if err != nil || p.Serial != 2 {
+	if err != nil || p.Serial != at {
 		t.Fatalf("rekey: %+v, %v", p, err)
 	}
 	if now, _ := os.ReadFile(stem + ".agekey"); len(key) == 0 || !bytes.Equal(now, key) || !strings.Contains(string(key), p.Key) {

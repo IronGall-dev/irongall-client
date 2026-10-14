@@ -121,6 +121,26 @@
 - **66 days is long for "short-lived".** Mail may wait 33 days and must still verify when it is read, so a certificate has to outlast the mail it signed. So a certificate is to be revocable, which is decided and not built (§ 3b).
 - **A newer certificate does not retire an older one for mail already signed.** It does at the server and for prekey statements.
 
+## 2a. A certificate's serial is taken from its maker's clock
+
+**Ours** (decided 2026-10-14; issue #63): a client numbers a certificate by its own clock, in seconds since 1970, or one above the highest serial it knows of for the box when the clock gives nothing higher. A verifier compares two serials and reads neither as a time. So a box restored from its identity alone, which knows only what a server shows it, makes a certificate numbered above every one made before, and a list of the serials below it names them all.
+
+| Who | What they do | How it is known |
+|---|---|---|
+| **X.509** | A serial "MUST be unique for each certificate issued by a given CA (i.e., the issuer name and serial number identify a unique certificate)". The issuer keeps that promise from its own record of what it issued, and nothing orders two serials | RFC 5280 §4.1.2.2, read 2026-10-14 |
+| **The web's certificate authorities** | A serial carries at least 64 bits from a random source, so it is unique without a count | from memory |
+| **OpenSSH certificates** | "serial is an optional certificate serial number set by the CA to provide an abbreviated way to refer to certificates from that CA." How a CA numbers is left to it, and a KRL is there "to revoke certificates by serial number or key ID" under the CA's key | `PROTOCOL.certkeys` at `V_9_9_P1` (the file is not on `master`) and `PROTOCOL.krl` on `master`, read 2026-10-14 |
+| **BIND 9, a zone's serial** | With `serial-update-method unixtime`, "the SOA serial number is set to the number of seconds since the Unix epoch, unless the serial number is already greater than or equal to that value, in which case it is simply incremented by one." It is the rule here | The manual's `doc/arm/reference.rst` on `main`, read 2026-10-14. That a zone's secondaries only compare serials: from memory |
+| **PowerDNS, signing as it answers** | `SOA-EDIT` `EPOCH` "Sets the SOA serial to the number of seconds since the epoch." Its reason is ours, a signer that keeps no count to raise: "With PowerDNS in Live-signing mode, the SOA serial is not increased by default when the RRSIG dates are rolled." | `docs/dnssec/operational.rst` on `master`, read 2026-10-14 |
+| **RFC 1912** | For a zone's serial, "The recommended syntax is YYYYMMDDnn" | §2.2, read 2026-10-14 |
+| **WireGuard's handshake** | "we include a TAI64N timestamp in the first message", encrypted, and "The server keeps track of the greatest timestamp received per client and discards packets containing timestamps less than or equal to it." A number from the sender's clock, held to an order by a receiver that compares and reads no time | wireguard.com/protocol, read 2026-10-14 |
+
+**Where ours differs, and why:**
+- **X.509's issuer keeps records, and an irongall identity is a key.** A certificate authority is never restored from its key alone; a box is, and that is what its recovery promises (`PROTOCOL.md` §6.4). The record a restored box could consult is its server's, which the protocol does not trust and which never saw a certificate made and not published.
+- **X.509 needs a serial to be unique, and irongall also needs it to be ordered:** a box's statements are ordered by their certificate's serial (`PROTOCOL.md` §2b). A random serial, which is how an authority does without a count, gives no order. The clock is what a key with no records has that rises.
+- **It is the serial, and not the certificate's own `valid after`, that carries the order.** Every verifier reads `valid after` as a time, so it cannot go one above the last when a clock reads behind. Nobody reads a serial as a time. And the list of revoked certificates stays a list of serials, which is what a KRL holds: it has no line for "made before a time".
+- **What it rests on** is the clock of whoever holds the identity, and the spec says where that gives way: a clock that read ahead, a restore with a clock that reads behind at a server showing an older record, and two machines in one second.
+
 ## 3. The server holds no signature that proves who sent what to whom
 
 **Ours** (decided 2026-10-13; issue #29): the sender signs the envelope and encrypts it with the signature after it. The server knows who sends to whom, from the pass a send carries, since its limits depend on it, and holds nothing signed that says so. What is encrypted is the envelope as one line, the signature block exactly as `ssh-keygen` wrote it, then padding.

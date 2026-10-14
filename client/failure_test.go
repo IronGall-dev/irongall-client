@@ -227,13 +227,14 @@ func TestAPassUnderAnOlderCertificateIsReplaced(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	first := numberOf(t, b)
 	if _, err := b.Rekey(context.Background(), ""); err != nil {
 		t.Fatal(err)
 	}
 	if cur, _ := os.ReadFile(filepath.Join(b.Dir(), "pass")); bytes.Equal(old, cur) {
 		t.Fatal("a new certificate did not bring a new pass")
 	}
-	if exists(filepath.Join(b.Dir(), "work", "1")) || !exists(filepath.Join(b.Dir(), "work", "2-cert.pub")) {
+	if exists(workFile(b, first, "")) || !exists(workFile(b, numberOf(t, b), "-cert.pub")) {
 		t.Fatal("the older working key was kept, or the new one is missing")
 	}
 	if err := os.WriteFile(filepath.Join(b.Dir(), "pass"), old, 0o600); err != nil {
@@ -349,14 +350,14 @@ func TestLiveLockExcludes(t *testing.T) {
 func TestPruneDeletesRetiredKeys(t *testing.T) {
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
-	send(t, a, b, "to key 1")
+	send(t, a, b, "to the first key")
+	key1 := prekeyFile(b, numberOf(t, b), ".agekey")
 	if _, err := b.Rekey(context.Background(), ""); err != nil {
 		t.Fatal(err)
 	}
 	if res := receive(t, b); len(res.Delivered) != 1 {
 		t.Fatal("mail to the retired key was not delivered")
 	}
-	key1 := filepath.Join(b.Dir(), "prekeys", "1.agekey")
 	e.clock.Add(protocol.PrekeyLifetime + protocol.TTL - time.Second)
 	if err := b.Prune(); err != nil {
 		t.Fatal(err)
@@ -371,7 +372,7 @@ func TestPruneDeletesRetiredKeys(t *testing.T) {
 	if exists(key1) {
 		t.Fatal("not deleted at not_after + 33 days")
 	}
-	if !exists(filepath.Join(b.Dir(), "prekeys", "2.agekey")) {
+	if !exists(prekeyFile(b, numberOf(t, b), ".agekey")) {
 		t.Fatal("the current key was deleted")
 	}
 }
@@ -501,7 +502,8 @@ func TestRekeyMakesTheTypeAskedFor(t *testing.T) {
 	if _, err := b.Rekey(ctx, ""); err == nil {
 		t.Fatal("the rekey should have failed")
 	}
-	left := filepath.Join(b.Dir(), "prekeys", "2")
+	leftAt := begunAt(t, b)
+	left := prekeyFile(b, leftAt, "")
 	signed, _ := os.ReadFile(left + ".txt")
 	e.srv.SetMiddle(nil)
 	p, err := b.Rekey(ctx, protocol.PostQuantum)
@@ -510,7 +512,7 @@ func TestRekeyMakesTheTypeAskedFor(t *testing.T) {
 	}
 	st, _ := e.srv.Prekey(b.Address())
 	served, _ := protocol.ParsePrekey(st)
-	if p.Type() != protocol.PostQuantum || served.Type() != protocol.PostQuantum || served.Serial != 3 {
+	if p.Type() != protocol.PostQuantum || served.Type() != protocol.PostQuantum || served.Serial <= leftAt {
 		t.Fatalf("published serial %d of type %s", served.Serial, served.Type())
 	}
 	if now, _ := os.ReadFile(left + ".txt"); len(signed) == 0 || !bytes.Equal(now, signed) || !exists(left+".agekey") {

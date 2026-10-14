@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -203,29 +204,43 @@ func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*B
 	if published > 0 {
 		return b, nil
 	}
+	// The box's first prekey, working key and certificate take their number
+	// as every later one does, from this machine's clock (protocol.SerialAt):
+	// a second machine handed the same identity then makes no certificate of
+	// a serial the first one used. An attempt that got as far as a key keeps
+	// the number it took, so a registration whose answer was lost is sent
+	// again as it was.
+	first, err := b.highestBegun()
+	if err != nil {
+		return nil, err
+	}
+	if first == 0 {
+		first = protocol.SerialAt(b.now(), 0)
+	}
 	// A first statement an earlier attempt left, under a certificate that
 	// has not begun by this machine's clock, was made while the clock read
 	// more than an hour ahead of what it reads now. A server whose clock is
 	// right refused it for that, and would again until that time comes: the
 	// working key, its certificate and the statement are made again, by the
 	// clock as it is, for the same prekey.
-	if err := b.dropUnbegun(1); err != nil {
+	if err := b.dropUnbegun(first); err != nil {
 		return nil, err
 	}
-	if _, err := b.makePrekey(1, kt); err != nil {
+	if _, err := b.makePrekey(first, kt); err != nil {
 		return nil, err
 	}
+	stem := b.path("prekeys", strconv.FormatUint(first, 10))
 	req := protocol.RegisterRequest{Identity: b.id.Document(), SenderKeyTypes: b.senderKeyTypes}
-	if req.Prekey, err = os.ReadFile(b.path("prekeys", "1.txt")); err != nil {
+	if req.Prekey, err = os.ReadFile(stem + ".txt"); err != nil { //nolint:gosec // a path inside the box's own directory
 		return nil, err
 	}
-	if req.PrekeySignature, err = os.ReadFile(b.path("prekeys", "1.txt.sig")); err != nil {
+	if req.PrekeySignature, err = os.ReadFile(stem + ".txt.sig"); err != nil { //nolint:gosec // a path inside the box's own directory
 		return nil, err
 	}
 	// A registration carries a pass under the certificate of the statement
 	// it brings. A second run of a registration the server took is the same
 	// request, and is answered as the first was.
-	if err := b.publish(ctx, http.MethodPut, b.boxPath(""), req, 1); err != nil {
+	if err := b.publish(ctx, http.MethodPut, b.boxPath(""), req, first); err != nil {
 		return nil, err
 	}
 	return b, nil

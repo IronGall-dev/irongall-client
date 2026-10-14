@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -100,18 +101,76 @@ func bodyOf(t *testing.T, d client.Delivery) string {
 	return s
 }
 
-// worker loads a new box's working key, under its certificate, from the
-// box's state directory: what the box signs its mail and its passes with.
+// numberOf is the number of the prekey a box published last, which is its
+// working key's and its certificate's too: its serial file. A box takes each
+// number from its clock (protocol.SerialAt), so a test reads the number and
+// never assumes one.
+func numberOf(t *testing.T, b *client.Box) uint64 {
+	t.Helper()
+	s, err := os.ReadFile(filepath.Join(b.Dir(), "serial"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := strconv.ParseUint(strings.TrimSpace(string(s)), 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// begunAt is the highest number a box holds a prekey's key for, published or
+// not: after a renewal the server did not take, the number that attempt took.
+func begunAt(t *testing.T, b *client.Box) uint64 {
+	t.Helper()
+	names, err := filepath.Glob(filepath.Join(b.Dir(), "prekeys", "*.agekey"))
+	if err != nil || len(names) == 0 {
+		t.Fatalf("no prekey in %s: %v", b.Dir(), err)
+	}
+	var top uint64
+	for _, name := range names {
+		n, err := strconv.ParseUint(strings.TrimSuffix(filepath.Base(name), ".agekey"), 10, 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		top = max(top, n)
+	}
+	return top
+}
+
+// only returns the one file a pattern matches.
+func only(t *testing.T, pattern string) string {
+	t.Helper()
+	names, err := filepath.Glob(pattern)
+	if err != nil || len(names) != 1 {
+		t.Fatalf("%s matches %d files: %v", pattern, len(names), err)
+	}
+	return names[0]
+}
+
+// prekeyFile names a box's file for prekey n: ext is ".agekey", ".txt" or
+// ".txt.sig".
+func prekeyFile(b *client.Box, n uint64, ext string) string {
+	return filepath.Join(b.Dir(), "prekeys", strconv.FormatUint(n, 10)+ext)
+}
+
+// workFile names a box's file for working key n: ext is "", ".pub" or
+// "-cert.pub".
+func workFile(b *client.Box, n uint64, ext string) string {
+	return filepath.Join(b.Dir(), "work", strconv.FormatUint(n, 10)+ext)
+}
+
+// worker loads the working key a box has in use, under its certificate, from
+// the box's state directory: what the box signs its mail and its passes with.
 func worker(t *testing.T, b *client.Box) ssh.Signer {
 	t.Helper()
-	return workerAt(t, b, "1")
+	return workerAt(t, b, numberOf(t, b))
 }
 
 // workerAt loads the working key a box made at a serial, under its
 // certificate.
-func workerAt(t *testing.T, b *client.Box, serial string) ssh.Signer {
+func workerAt(t *testing.T, b *client.Box, serial uint64) ssh.Signer {
 	t.Helper()
-	stem := filepath.Join(b.Dir(), "work", serial)
+	stem := workFile(b, serial, "")
 	k, err := os.ReadFile(stem)
 	if err != nil {
 		t.Fatal(err)

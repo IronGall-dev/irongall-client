@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -40,21 +42,20 @@ func TestRevokeEarlierEndsWhatAnOldWorkingKeySigns(t *testing.T) {
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	stolen := worker(t, a) // read before the renewal deletes it
-	send(t, a, b, "sent under certificate 1, and unread")
-	if list, err := a.RevokeEarlier(ctx); err != nil || list != nil {
-		t.Fatalf("a box with one certificate has none earlier to revoke: %+v, %v", list, err)
-	}
+	first := numberOf(t, a)
+	send(t, a, b, "sent under the first certificate, and unread")
 	if _, err := a.Rekey(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
+	second := numberOf(t, a)
 	list, err := a.RevokeEarlier(ctx)
-	if err != nil || list == nil || list.Version != 1 || !list.Revokes(1) || list.Revokes(2) {
+	if err != nil || list == nil || list.Version != 1 || !list.Revokes(first) || list.Revokes(second) {
 		t.Fatalf("revoke earlier: %+v, %v", list, err)
 	}
-	send(t, a, b, "sent under certificate 2")
+	send(t, a, b, "sent under the second certificate")
 
 	res := receive(t, b)
-	if len(res.Delivered) != 1 || bodyOf(t, res.Delivered[0]) != "sent under certificate 2" || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedCertificate {
+	if len(res.Delivered) != 1 || bodyOf(t, res.Delivered[0]) != "sent under the second certificate" || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedCertificate {
 		t.Fatalf("a drain of mail under a revoked certificate and under the current one: %+v", res)
 	}
 	if !keptList(b, a.Address()) || keptRevocation(b, a.Address()) {
@@ -80,7 +81,7 @@ func TestRevokeEarlierEndsWhatAnOldWorkingKeySigns(t *testing.T) {
 	if _, err := a.Rekey(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
-	if list, err := a.RevokeEarlier(ctx); err != nil || list.Version != 2 || len(list.Ranges) != 1 || !list.Revokes(2) || list.Revokes(3) {
+	if list, err := a.RevokeEarlier(ctx); err != nil || list.Version != 2 || len(list.Ranges) != 1 || !list.Revokes(second) || list.Revokes(numberOf(t, a)) {
 		t.Fatalf("the second list: %+v, %v", list, err)
 	}
 }
@@ -104,7 +105,7 @@ func TestOnlyTheIdentitysNewestListCounts(t *testing.T) {
 	}
 
 	// What a working key can sign: a list naming the box's own certificate.
-	forged, err := protocol.NewRevokedCertificates(a.Address(), 9, []protocol.SerialRange{{First: 1, Last: 3}})
+	forged, err := protocol.NewRevokedCertificates(a.Address(), 9, []protocol.SerialRange{{First: 1, Last: numberOf(t, a)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -135,7 +136,7 @@ func TestOnlyTheIdentitysNewestListCounts(t *testing.T) {
 		t.Fatalf("the record of a box with a list and no revocation: %+v, %v", firstList, err)
 	}
 	_ = resp.Body.Close()
-	second := workerAt(t, a, "2") // read before the next renewal deletes it
+	second := workerAt(t, a, numberOf(t, a)) // read before the next renewal deletes it
 	if _, err := a.Rekey(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -171,6 +172,7 @@ func TestALaterCertificateOutranksAnyPrekeySerial(t *testing.T) {
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	stolen := worker(t, a)
+	first := numberOf(t, a)
 	st, _ := e.srv.Prekey(a.Address())
 	p, err := protocol.ParsePrekey(st)
 	if err != nil {
@@ -194,13 +196,13 @@ func TestALaterCertificateOutranksAnyPrekeySerial(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 
-	// B fetches it, and is pinned at the last serial under certificate 1.
+	// B fetches it, and is pinned at the last serial under the first certificate.
 	if _, err := b.Resolve(ctx, a.Address()); err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	// A renews: a new certificate, at the next number, far below that serial.
+	// A renews: a new certificate, at a later number, far below that serial.
 	got, err := a.Rekey(ctx, "")
-	if err != nil || got.Serial != 2 {
+	if err != nil || got.Serial <= first || got.Serial >= protocol.MaxSerial {
 		t.Fatalf("a renewal after a prekey at the last serial: %+v, %v", got, err)
 	}
 	// B follows the box to the later certificate, and mail reaches A again.
@@ -216,7 +218,7 @@ func TestALaterCertificateOutranksAnyPrekeySerial(t *testing.T) {
 		}
 		next.ServeHTTP(w, r)
 	})
-	if _, err := b.Send(ctx, a.Address(), "to the thief's prekey"); err == nil || !strings.Contains(err.Error(), "under certificate 1, below 2") {
+	if _, err := b.Send(ctx, a.Address(), "to the thief's prekey"); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("under certificate %d, below %d", first, got.Serial)) {
 		t.Fatalf("the earlier certificate served again: %v", err)
 	}
 }
@@ -234,7 +236,7 @@ func TestASendNamesBothSerials(t *testing.T) {
 	if err := json.Unmarshal(*sent, &req); err != nil {
 		t.Fatal(err)
 	}
-	if string(req["prekey_serial"]) != "2" || string(req["certificate_serial"]) != "2" || len(req) != 3 {
+	if n := strconv.FormatUint(numberOf(t, b), 10); string(req["prekey_serial"]) != n || string(req["certificate_serial"]) != n || len(req) != 3 {
 		t.Fatalf("a send's members: %s", *sent)
 	}
 }

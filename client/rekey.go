@@ -16,15 +16,17 @@ import (
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
-// Rekey publishes a NEW prekey at the next serial, of type kt, or of the
-// current prekey's type if kt is empty, signed by a NEW working key under a
-// new certificate. If an earlier Rekey signed one and the server did not
-// take it, that one is sent again, unchanged, until it expires: a key is
+// Rekey publishes a NEW prekey, of type kt, or of the current prekey's type
+// if kt is empty, signed by a NEW working key under a new certificate. The
+// three share one number, which this machine's clock gives
+// ([protocol.SerialAt]). If an earlier Rekey signed one and the server did
+// not take it, that one is sent again, unchanged, until it expires: a key is
 // signed once, so no key is encrypted to for more than 33 days whatever the
 // server does with what it was sent. It needs only the identity, so it also
-// recovers a box that lost its prekeys or its working key. The upload carries
-// a pass under the new certificate, and the server then takes no pass under
-// an older one.
+// recovers a box that lost its prekeys or its working key, and such a box
+// needs no record of the numbers the lost machine used. The upload carries a
+// pass under the new certificate, and the server then takes no pass under an
+// older one.
 // [Box.Receive] renews the prekey once it is more than a day old, so a box
 // received at least monthly never lapses; Rekey is for a new key type, for
 // recovery, and for boxes that are only ever sent from.
@@ -79,31 +81,49 @@ func (b *Box) rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey,
 	// not_after counted from now, it would hand a server that fails every
 	// renewal and keeps what it was sent the same key for 33 more days at
 	// each retry, without end. Once such a statement can no longer be sent
-	// (it expired, or a key of another type is wanted), the next serial is
-	// signed: its key stays, as a retired one, for mail it may yet decrypt.
-	// Nothing at or below the highest serial this box signed is signed anew,
-	// and that one's files are never pruned, so a serial is never used twice.
+	// (it expired, or a key of another type is wanted), a new number is
+	// taken, above it: its key stays, as a retired one, for mail it may yet
+	// decrypt. Nothing at or below the highest serial this box signed is
+	// signed anew, and that one's files are never pruned, so a serial is
+	// never used twice.
 	//
-	// The next number is one above the served CERTIFICATE's serial, not the
+	// The number must be above the served CERTIFICATE's serial, not the
 	// served prekey's: the new statement is under a new certificate, which
 	// outranks any prekey serial under the one before. So a prekey published
 	// in this box's name at the highest serial there is, by whoever took its
 	// working key, holds nothing: the next certificate passes it.
-	if max(curCert.Serial(), published) >= protocol.MaxSerial {
+	known := max(curCert.Serial(), published)
+	if known >= protocol.MaxSerial {
 		return nil, refuse("this box's certificate serial is the highest there is, so no later certificate can be made: the address cannot renew")
 	}
-	next := max(curCert.Serial(), published) + 1
-	signed, err := b.highestSigned()
+	// A number an earlier attempt took, and that nothing has passed since,
+	// is kept: its statement is the one sent again, and a key made for it
+	// and never signed is used. Any other renewal takes a new number, from
+	// this machine's clock (protocol.SerialAt): a box restored from its
+	// identity knows only what the server shows it, and the clock puts its
+	// certificate above every one made before, on whatever machine.
+	begun, err := b.highestBegun()
 	if err != nil {
 		return nil, err
 	}
-	next = max(next, signed)
-	p, spent, err := b.signedPrekey(next, kt)
-	if err != nil {
-		return nil, err
+	var next uint64
+	var p *protocol.Prekey
+	if begun > known {
+		signed, spent, err := b.signedPrekey(begun, kt)
+		if err != nil {
+			return nil, err
+		}
+		if spent {
+			known = begun // the new number is above the spent one too
+		} else {
+			next, p = begun, signed
+		}
 	}
-	if spent {
-		next++
+	if next == 0 {
+		if known >= protocol.MaxSerial {
+			return nil, refuse("this box's certificate serial is the highest there is, so no later certificate can be made: the address cannot renew")
+		}
+		next = protocol.SerialAt(b.now(), known)
 	}
 	if p == nil {
 		if p, err = b.makePrekey(next, kt); err != nil {
@@ -156,17 +176,20 @@ func (b *Box) signedPrekey(serial uint64, kt protocol.KeyType) (p *protocol.Prek
 	return p, false, nil
 }
 
-// highestSigned returns the highest serial this box holds a signed statement
-// for, or 0.
-func (b *Box) highestSigned() (uint64, error) {
-	names, err := filepath.Glob(b.path("prekeys", "*.txt.sig"))
-	if err != nil {
-		return 0, err
-	}
+// highestBegun returns the highest serial this box has begun a prekey at: one
+// it holds a key or a signed statement for, published or not. It is 0 when
+// the box holds none.
+func (b *Box) highestBegun() (uint64, error) {
 	var top uint64
-	for _, name := range names {
-		if n, err := strconv.ParseUint(strings.TrimSuffix(filepath.Base(name), ".txt.sig"), 10, 64); err == nil && exists(name) {
-			top = max(top, n)
+	for _, ext := range []string{".agekey", ".txt.sig"} {
+		names, err := filepath.Glob(b.path("prekeys", "*"+ext))
+		if err != nil {
+			return 0, err
+		}
+		for _, name := range names {
+			if n, err := strconv.ParseUint(strings.TrimSuffix(filepath.Base(name), ext), 10, 64); err == nil {
+				top = max(top, n)
+			}
 		}
 	}
 	return top, nil
@@ -212,14 +235,15 @@ const retiredGrace = time.Hour
 const renewRetry = time.Hour
 
 // current returns the serial of the prekey this box published last, and
-// when that prekey was made. A box that has never renewed has published
-// only serial 1.
+// when that prekey was made.
 func (b *Box) current() (uint64, time.Time, error) {
 	n, err := b.publishedSerial()
 	if err != nil {
 		return 0, time.Time{}, err
 	}
-	n = max(n, 1)
+	if n == 0 {
+		return 0, time.Time{}, errors.New("this box has published no prekey")
+	}
 	made, err := b.made(n)
 	return n, made, err
 }

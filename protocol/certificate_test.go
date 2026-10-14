@@ -333,3 +333,29 @@ func TestCertificateAgainstSSHKeygen(t *testing.T) {
 		t.Error("ssh-keygen verified with the identity listed as an ordinary key")
 	}
 }
+
+// A certificate's serial is its maker's clock, in seconds, or one above the
+// highest serial the maker knows of when the clock gives nothing higher: it
+// rises whatever the clock does, and is never 0.
+func TestSerialAt(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		now   int64
+		above uint64
+		want  uint64
+	}{
+		{"a new box: the clock", 1_800_000_000, 0, 1_800_000_000},
+		{"the clock has moved on: the clock", 1_800_000_000, 1_700_000_000, 1_800_000_000},
+		{"a box numbered by a count before: the clock", 1_800_000_000, 7, 1_800_000_000},
+		{"one below the clock: the clock", 1_800_000_000, 1_799_999_999, 1_800_000_000},
+		{"the same second: one above", 1_800_000_000, 1_800_000_000, 1_800_000_001},
+		{"the clock reads behind the last: one above", 1_800_000_000, 1_900_000_000, 1_900_000_001},
+		{"a clock at 1970: never 0", 0, 0, 1},
+		{"a clock before 1970: never 0", -5, 0, 1},
+		{"a clock before 1970, and a serial known", -5, 41, 42},
+	} {
+		if got := SerialAt(time.Unix(c.now, 0), c.above); got != c.want {
+			t.Errorf("%s: SerialAt(%d, %d) = %d, want %d", c.name, c.now, c.above, got, c.want)
+		}
+	}
+}

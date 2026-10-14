@@ -335,7 +335,13 @@ func (b *Box) keepRevokedCerts(a protocol.Address, doc, statement, sig []byte) e
 // which makes a new working key under a new certificate, then this, which
 // ends what the old key could still sign. The address goes on.
 //
-// It returns the list, or nil when the box has made no earlier certificate.
+// The list is every serial below the one in use. A box numbers a certificate
+// by its clock ([protocol.SerialAt]), so that range names every certificate
+// made before this one on any machine, whether this box knows of it or not:
+// one a lost machine made and never published is in it.
+//
+// It returns the list, or nil when the certificate in use has serial 1, which
+// nothing is below.
 // Mail this box sent under those certificates, and that its reader has not
 // read yet, is refused too: nobody can tell it from a thief's.
 func (b *Box) RevokeEarlier(ctx context.Context) (*protocol.RevokedCertificates, error) {

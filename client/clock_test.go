@@ -185,7 +185,7 @@ func TestABoxWhoseClockGoesBackFetchesNothing(t *testing.T) {
 	}
 	// Control: at that clock the mail would be refused, so the stop above is
 	// what kept it. The certificate it is signed under has not begun.
-	began, cerr := protocol.CertificateBegan(mustRead(t, filepath.Join(sender.Dir(), "prekeys", "1.txt.sig")))
+	began, cerr := protocol.CertificateBegan(mustRead(t, prekeyFile(sender, numberOf(t, sender), ".txt.sig")))
 	if cerr != nil || !began.After(e.clock.Now().Add(off)) {
 		t.Fatalf("the sender's certificate began %v, which is not after the reader's clock: the test does not reach the case", began)
 	}
@@ -277,14 +277,15 @@ func TestInitNeverDropsAKeyMailMayBeWaitingFor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	key := mustRead(t, filepath.Join(dir, "prekeys", "1.agekey"))
+	keyFile := only(t, filepath.Join(dir, "prekeys", "*.agekey"))
+	key := mustRead(t, keyFile)
 	if _, err := e.box(protocol.Classic).Send(ctx, address, "to the first prekey"); err != nil {
 		t.Fatalf("mail to the box the server registered: %v", err)
 	}
 
 	off = -2 * time.Hour
 	_, _ = client.Init(ctx, dir, e.skewed(&off), protocol.Classic) // refused: its pass has run out by the server's clock
-	if got := mustRead(t, filepath.Join(dir, "prekeys", "1.agekey")); string(got) != string(key) {
+	if got := mustRead(t, keyFile); string(got) != string(key) {
 		t.Fatal("init replaced the first prekey's key, which mail was waiting for")
 	}
 	off = 0

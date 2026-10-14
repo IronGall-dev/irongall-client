@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -52,11 +53,11 @@ func TestRecvPrintsTheCheckedLine(t *testing.T) {
 	signed := func(from *client.Box, msgID, body string) []byte {
 		env := &protocol.Envelope{From: from.Address(), To: b.Address(), SentAt: time.Now().UTC().Truncate(time.Second), MsgID: msgID,
 			Identity: from.Identity().Document(), Body: []byte(`"` + body + `"`)}
-		work, err := ssh.ParsePrivateKey(must(t, filepath.Join(from.Dir(), "work", "1")))
+		work, err := ssh.ParsePrivateKey(must(t, filepath.Join(from.Dir(), "work", inUse(t, from))))
 		if err != nil {
 			t.Fatal(err)
 		}
-		key, _, _, _, err := ssh.ParseAuthorizedKey(must(t, filepath.Join(from.Dir(), "work", "1-cert.pub")))
+		key, _, _, _, err := ssh.ParseAuthorizedKey(must(t, filepath.Join(from.Dir(), "work", inUse(t, from)+"-cert.pub")))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -775,16 +776,19 @@ func TestRekeyRevokeEarlier(t *testing.T) {
 	}
 	t.Setenv("IRONGALL_HOME", b.Dir())
 	t.Setenv("IRONGALL_BASE", srv.URL)
+	// A box takes each number from its clock, so the test reads them.
+	first := inUse(t, b)
 	var out, errs bytes.Buffer
 	if err := run(ctx, "rekey", []string{"--revoke-earlier"}, strings.NewReader(""), &out, &errs); err != nil {
 		t.Fatalf("rekey --revoke-earlier: %v %q", err, errs.String())
 	}
+	second := inUse(t, b)
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
-	if len(lines) != 2 || !strings.HasPrefix(lines[0], "prekey 2, valid until ") || lines[1] != "certificates before 2 revoked, list version 1" || !strings.Contains(errs.String(), "send it again") {
+	if len(lines) != 2 || !strings.HasPrefix(lines[0], "prekey "+second+", valid until ") || lines[1] != "certificates before "+second+" revoked, list version 1" || !strings.Contains(errs.String(), "send it again") {
 		t.Fatalf("its output: %q %q", out.String(), errs.String())
 	}
 	out.Reset()
-	if err := run(ctx, "rekey", []string{"--revoke-earlier"}, strings.NewReader(""), &out, &errs); err != nil || !strings.HasSuffix(out.String(), "certificates before 3 revoked, list version 2\n") {
+	if err := run(ctx, "rekey", []string{"--revoke-earlier"}, strings.NewReader(""), &out, &errs); err != nil || !strings.HasSuffix(out.String(), "certificates before "+inUse(t, b)+" revoked, list version 2\n") {
 		t.Fatalf("a second time: %v %q", err, out.String())
 	}
 	var rec protocol.Revocations
@@ -797,7 +801,7 @@ func TestRekeyRevokeEarlier(t *testing.T) {
 		t.Fatal(err)
 	}
 	list, err := protocol.VerifyRevokedCertificates(b.Address(), rec.Identity, rec.RevokedCertificates, rec.RevokedCertificatesSignature)
-	if err != nil || list.Version != 2 || len(list.Ranges) != 1 || !list.Revokes(1) || !list.Revokes(2) || list.Revokes(3) || len(rec.Revocation) != 0 {
+	if err != nil || list.Version != 2 || len(list.Ranges) != 1 || !list.Revokes(number(t, first)) || !list.Revokes(number(t, second)) || list.Revokes(number(t, inUse(t, b))) || len(rec.Revocation) != 0 {
 		t.Fatalf("the list the server holds: %+v, %v", list, err)
 	}
 	// The box goes on working under the certificate it kept.
@@ -805,4 +809,22 @@ func TestRekeyRevokeEarlier(t *testing.T) {
 	if err := run(ctx, "status", nil, strings.NewReader(""), &out, &errs); err != nil || !strings.Contains(out.String(), `"attention":[]`) {
 		t.Fatalf("status after revoking earlier certificates: %v %q", err, out.String())
 	}
+}
+
+// inUse is the number of the prekey a box published last, which is its
+// working key's and its certificate's too, as its serial file has it. A box
+// takes each number from its clock, so a test reads it and never assumes one.
+func inUse(t *testing.T, b *client.Box) string {
+	t.Helper()
+	return strings.TrimSpace(string(must(t, filepath.Join(b.Dir(), "serial"))))
+}
+
+// number reads a serial's digits.
+func number(t *testing.T, digits string) uint64 {
+	t.Helper()
+	n, err := strconv.ParseUint(digits, 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
 }

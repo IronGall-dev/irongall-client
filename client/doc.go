@@ -15,7 +15,7 @@
 //	identity.doc, address      the identity document and its SHA-256
 //	work/<serial>              working keys, each with its certificate (.pub, -cert.pub): they sign what the box says
 //	prekeys/<serial>.agekey    age keys, each with its signed statement (.txt, .txt.sig); never backed up
-//	serial                     the number of the prekey this box published last, which is its certificate's serial too
+//	serial                     the number of the prekey this box published last, which is its certificate's serial too: the box's clock gave it
 //	pass                       the pass this box last signed for its server, used until it runs out
 //	peers/<address>/           the pinned identity document, the highest prekey serial and certificate serial seen, revoke.sig, its revocation, once one has verified, and revoked-certs.json, the newest list of its revoked certificates that has verified
 //	revoked.sig                this box's own revocation, once it has met one that verifies: the box is finished

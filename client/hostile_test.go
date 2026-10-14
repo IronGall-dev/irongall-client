@@ -228,6 +228,7 @@ func TestADrainIsBounded(t *testing.T) {
 	t.Run("keeps retired prekeys", func(t *testing.T) {
 		e := newEnv(t)
 		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+		key1 := prekeyFile(b, numberOf(t, b), ".agekey")
 		for range 2 {
 			if _, err := b.Rekey(ctx, ""); err != nil {
 				t.Fatal(err)
@@ -237,12 +238,11 @@ func TestADrainIsBounded(t *testing.T) {
 		client.SetDrainLimits(t, 1, 1<<30, 100)
 		send(t, a, b, "one")
 		send(t, a, b, "two")
-		key1 := filepath.Join(b.Dir(), "prekeys", "1.agekey")
 		if res := receive(t, b); !res.More || !exists(key1) {
-			t.Fatalf("a drain that stopped at a limit: more %v, key 1 kept %v", res.More, exists(key1))
+			t.Fatalf("a drain that stopped at a limit: more %v, the first key kept %v", res.More, exists(key1))
 		}
 		if res := receive(t, b); res.More || exists(key1) {
-			t.Fatalf("the drain that emptied the box: more %v, key 1 kept %v", res.More, exists(key1))
+			t.Fatalf("the drain that emptied the box: more %v, the first key kept %v", res.More, exists(key1))
 		}
 	})
 }
