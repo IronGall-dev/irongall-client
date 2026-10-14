@@ -126,7 +126,7 @@ func (b *Box) drain(ctx context.Context) (*Result, error) {
 		return nil, err
 	}
 	// The senders this drain has asked the server about: one lookup each.
-	asked := map[protocol.Address]bool{}
+	asked := newLookups()
 	etag, _ := os.ReadFile(b.path("etag"))
 	cursor := ""
 	messages, fetched := 0, 0
@@ -148,7 +148,7 @@ func (b *Box) drain(ctx context.Context) (*Result, error) {
 		resp, err := b.owner(ctx, http.MethodGet, path, nil, hdr, &list)
 		if err != nil {
 			// A server that says this box is revoked is asked to show it.
-			return res, b.proved(ctx, b.id.Address(), err)
+			return res, b.proved(ctx, b.id.Address(), err, asked)
 		}
 		if resp.StatusCode == http.StatusNotModified {
 			return res, nil
@@ -195,7 +195,7 @@ func (b *Box) drain(ctx context.Context) (*Result, error) {
 //
 // Files are named by the SHA-256 of the ciphertext as computed here, never by
 // the server's id; a message whose id is not that hash is refused.
-func (b *Box) receiveOne(ctx context.Context, id string, res *Result, asked map[protocol.Address]bool) (fetched int, err error) {
+func (b *Box) receiveOne(ctx context.Context, id string, res *Result, asked *lookups) (fetched int, err error) {
 	handled, err := b.seenHash(id)
 	if err != nil {
 		return 0, err
@@ -279,7 +279,9 @@ func (b *Box) receiveOne(ctx context.Context, id string, res *Result, asked map[
 //     error: the message stays on the server for the next drain. The same
 //     answer carries the sender's list of revoked certificates, if it has
 //     one: mail signed under a listed certificate is refused the same way,
-//     and the address goes on.
+//     and the address goes on. Each revocation server the box lists is
+//     asked after its own, and can only add: a record it shows is kept, and
+//     no answer from it changes nothing.
 //  9. Replay: the locally computed ciphertext hash is not in the seen-set.
 //  10. Retry: (from, msg_id) is not in the seen-set. A match is a duplicate.
 //
@@ -287,7 +289,7 @@ func (b *Box) receiveOne(ctx context.Context, id string, res *Result, asked map[
 // of the server: the message carries what proves it. The one thing asked is
 // whether a revocation of that sender exists, and the answer proves itself.
 // The sender's identity is pinned only once all of that has passed.
-func (b *Box) judge(ctx context.Context, m *protocol.Message, asked map[protocol.Address]bool) (d *Delivery, dup bool, why *Refusal, err error) {
+func (b *Box) judge(ctx context.Context, m *protocol.Message, asked *lookups) (d *Delivery, dup bool, why *Refusal, err error) {
 	refused := func(code, reason string) (*Delivery, bool, *Refusal, error) {
 		return nil, false, &Refusal{Code: code, Reason: reason}, nil
 	}
@@ -318,9 +320,9 @@ func (b *Box) judge(ctx context.Context, m *protocol.Message, asked map[protocol
 		return refused(protocol.RefusedAttribution, "the server lists it as from another box than the one that signed it")
 	}
 	gone, err := b.revoked(from)
-	if err == nil && !gone && !asked[from] {
-		if gone, err = b.lookupRevocation(ctx, from); err == nil {
-			asked[from] = true
+	if err == nil && !gone && !asked.answered[from] {
+		if gone, err = b.lookupRevocation(ctx, from, asked); err == nil {
+			asked.answered[from] = true
 		}
 	}
 	if err != nil {

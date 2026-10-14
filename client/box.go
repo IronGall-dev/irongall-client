@@ -65,6 +65,17 @@ type Options struct {
 	// for it from a sender of any type, and this client refuses what it
 	// cannot verify.
 	SenderKeyTypes []string
+	// RevocationServers are the revocation servers the box asks beside its
+	// own server, and publishes to: each a server's URL, as https://host or
+	// https://host:port. Nil: the ones the box's revocation-servers file
+	// names, or else DefaultRevocationServer for a box whose server is
+	// DefaultBase and none for any other ([Box.RevocationServers]). An empty
+	// list that is not nil: none, and the box asks its own server only.
+	RevocationServers []string
+	// NoAnswer, if not nil, is told of each revocation server that gave no
+	// answer, with why, once in a command. Nothing changes for it: a box
+	// does not wait on a revocation server as it waits on its own.
+	NoAnswer func(server string, err error)
 }
 
 // Box is one box: its state directory and the server it talks to.
@@ -80,6 +91,10 @@ type Box struct {
 	identityType string
 	// senderKeyTypes is what the box declares with each prekey it publishes.
 	senderKeyTypes []string
+	// revocationServers is what Options named, or nil; noAnswer is told of
+	// one that gave no answer.
+	revocationServers []string
+	noAnswer          func(server string, err error)
 	// renewFailed is when Receive last failed to renew the prekey.
 	renewFailed time.Time
 }
@@ -99,7 +114,7 @@ func Open(dir string, opt Options) (*Box, error) {
 }
 
 func newBox(dir string, opt Options) *Box {
-	b := &Box{dir: dir, base: strings.TrimRight(opt.Base, "/"), http: opt.HTTPClient, now: opt.Now, identityType: opt.IdentityType, senderKeyTypes: opt.SenderKeyTypes}
+	b := &Box{dir: dir, base: strings.TrimRight(opt.Base, "/"), http: opt.HTTPClient, now: opt.Now, identityType: opt.IdentityType, senderKeyTypes: opt.SenderKeyTypes, revocationServers: opt.RevocationServers, noAnswer: opt.NoAnswer}
 	if b.senderKeyTypes == nil {
 		b.senderKeyTypes = protocol.IdentityTypes()
 	}

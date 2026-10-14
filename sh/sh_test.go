@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +23,7 @@ import (
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
 	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/IronGall-dev/irongall-client/revocationserver"
 )
 
 const vectors = "../testdata/vectors"
@@ -54,6 +56,12 @@ func abs(t *testing.T, name string) string {
 		t.Fatal(err)
 	}
 	return p
+}
+
+// exists reports whether name is a file that is not empty.
+func exists(name string) bool {
+	fi, err := os.Stat(name)
+	return err == nil && fi.Size() > 0
 }
 
 // bash runs commands after sourcing irongall.sh, with env added.
@@ -769,6 +777,183 @@ func TestVectorsRevocation(t *testing.T) {
 		a, aDoc, a, a, abs(t, filepath.Join(vectors, "revoke/bad-by-a-working-key.sig")), abs(t, filepath.Join(vectors, "a/revoke.txt")))
 	if _, err := bash(t, scratch(t), verify); err != nil {
 		t.Errorf("control: ssh-keygen refuses the working key's signature even under a cert-authority line, so the vector tests nothing: %v", err)
+	}
+}
+
+// The two clients with a real revocation server beside the mailbox server,
+// which the script reaches with curl: one box, listed for both clients in
+// its revocation-servers file. Each publishes its revocation there, each is
+// shown there what the mailbox server hides, and a revocation server that
+// is gone changes nothing for either.
+func TestARevocationServerInBothClients(t *testing.T) {
+	need(t, append(scriptTools, "curl")...)
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	x, err := revocationserver.Open(revocationserver.Options{Dir: t.TempDir(), WritesPerHour: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rs := httptest.NewServer(x.Handler())
+	t.Cleanup(func() { rs.Close(); _ = x.Close() })
+	held := func(a protocol.Address) *protocol.Revocations {
+		t.Helper()
+		resp, err := http.Get(rs.URL + "/v1/" + a.String() + "/revocations")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close() //nolint:errcheck // a test
+		var rec protocol.Revocations
+		if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&rec) != nil {
+			return nil
+		}
+		return &rec
+	}
+	// The mailbox server's operator takes every revocation, says it did,
+	// and keeps none: it goes on serving the box.
+	srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/revocations") {
+			fakeserver.WriteJSON(w, http.StatusCreated, struct{}{})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	kt, mode := protocol.Classic, "--no-pq"
+	if pq() {
+		kt, mode = protocol.PostQuantum, ""
+	}
+	opt := client.Options{Base: srv.URL}
+	sh := func(dir, commands string) (string, error) {
+		return bash(t, []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}, commands)
+	}
+	// lists writes the box's revocation-servers file: the one setting, for
+	// whichever client runs the box.
+	lists := func(dir string, servers ...string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, "revocation-servers"), []byte(strings.Join(servers, "\n")+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	scriptBox := func(servers ...string) (string, protocol.Address) {
+		t.Helper()
+		dir := t.TempDir()
+		out, err := sh(dir, "ig_init "+mode)
+		if err != nil {
+			t.Fatalf("ig_init: %v", err)
+		}
+		a, err := protocol.ParseAddress(strings.TrimPrefix(strings.TrimSpace(out), srv.URL+protocol.LinkPath))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(servers) > 0 {
+			lists(dir, servers...)
+		}
+		return dir, a
+	}
+	goBox := func(servers ...string) *client.Box {
+		t.Helper()
+		b, err := client.Init(ctx, t.TempDir(), opt, kt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(servers) > 0 {
+			lists(b.Dir(), servers...)
+		}
+		return b
+	}
+	var gone *client.RevokedError
+
+	// Both clients read the one file, and say the same of it.
+	both, bothAddr := scriptBox(rs.URL)
+	asGo, err := client.Open(both, opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromGo, err := asGo.RevocationServers()
+	fromSh, shErr := sh(both, "ig_revservers")
+	if err != nil || shErr != nil || len(fromGo) != 1 || fromGo[0] != rs.URL || strings.TrimSpace(fromSh) != rs.URL {
+		t.Fatalf("the box's revocation servers: the Go client %q (%v), the script %q (%v)", fromGo, err, fromSh, shErr)
+	}
+
+	// The script revokes its box: the revocation reaches the revocation
+	// server, and the mailbox server hides it.
+	if out, err := sh(both, "ig_revoke "+bothAddr.String()); err != nil || strings.TrimSpace(out) != "revoked "+bothAddr.String() {
+		t.Fatalf("the script's revoke: %v %q", err, out)
+	}
+	if rec := held(bothAddr); rec == nil {
+		t.Fatal("the script's revocation did not reach the revocation server")
+	} else if _, err := protocol.VerifyRevocation(bothAddr, rec.Identity, rec.Revocation); err != nil {
+		t.Fatalf("what the script published does not verify: %v", err)
+	}
+	// The controls: asking the mailbox server alone, each client posts.
+	if _, err := goBox().Send(ctx, bothAddr, "from a Go box that asks its own server alone"); err != nil {
+		t.Fatalf("the Go control: %v", err)
+	}
+	blind, _ := scriptBox()
+	if _, err := sh(blind, "printf 'from a script box that asks its own server alone' | ig_send "+bothAddr.String()); err != nil {
+		t.Fatalf("the script's control: %v", err)
+	}
+	// Listing the revocation server, neither does.
+	g := goBox(rs.URL)
+	if _, err := g.Send(ctx, bothAddr, "never posted"); !errors.As(err, &gone) {
+		t.Fatalf("the Go client sent to an address the revocation server holds a revocation of: %v", err)
+	}
+	s2, _ := scriptBox(rs.URL)
+	if _, err := sh(s2, "printf 'never posted' | ig_send "+bothAddr.String()); err == nil || !strings.Contains(err.Error(), "REVOKED: "+bothAddr.String()+" is revoked") {
+		t.Fatalf("the script sent to an address the revocation server holds a revocation of: %v", err)
+	}
+	if !exists(filepath.Join(s2, "peers", bothAddr.String(), "revoke.sig")) {
+		t.Fatal("the script did not keep the revocation the revocation server showed")
+	}
+
+	// The Go client revokes a box, and the script is shown it the same way.
+	g2 := goBox(rs.URL)
+	rec, err := g2.Revocation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g2.Revoke(ctx, rec); err != nil || held(g2.Address()) == nil {
+		t.Fatalf("the Go client's revoke: %v", err)
+	}
+	if _, err := sh(s2, "printf 'never posted' | ig_send "+g2.Address().String()); err == nil || !strings.Contains(err.Error(), "REVOKED: "+g2.Address().String()+" is revoked") {
+		t.Fatalf("the script sent to an address the Go client revoked: %v", err)
+	}
+
+	// The Go client's list of revoked certificates, at the revocation
+	// server alone as far as the script is shown: it keeps the list.
+	g3 := goBox(rs.URL)
+	if _, err := g3.Rekey(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	if list, err := g3.RevokeEarlier(ctx); err != nil || list == nil {
+		t.Fatalf("revoke earlier: %+v, %v", list, err)
+	}
+	if out, err := sh(s2, fmt.Sprintf("ig_lookup %s; echo $?; ig_listed %s 1; echo $?; ig_listed %s 2; echo $?", g3.Address(), g3.Address(), g3.Address())); err != nil || out != "1\n0\n1\n" {
+		t.Fatalf("the script, shown the Go client's list by the revocation server alone: %v %q", err, out)
+	}
+
+	// The revocation server gone: both clients send, and both revoke at the
+	// mailbox server and say that the revocation server did not take it.
+	rs.Close()
+	g4, target := goBox(rs.URL), goBox()
+	if _, err := g4.Send(ctx, target.Address(), "goes anyway"); err != nil {
+		t.Fatalf("the Go client, with the revocation server gone: %v", err)
+	}
+	s3, s3Addr := scriptBox(rs.URL)
+	if _, err := sh(s3, "printf 'goes anyway' | ig_send "+target.Address().String()); err != nil {
+		t.Fatalf("the script, with the revocation server gone: %v", err)
+	}
+	if out, err := sh(s3, "ig_revoke "+s3Addr.String()); err == nil || out != "" || !strings.Contains(err.Error(), "NOT taken by the revocation server "+rs.URL) {
+		t.Fatalf("the script's revoke with the revocation server gone: %v %q", err, out)
+	}
+	if !exists(filepath.Join(s3, "revoked.sig")) {
+		t.Fatal("the script's box does not hold the revocation its own server took")
+	}
+	var part *client.NotPublishedError
+	if rec, err = g4.Revocation(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g4.Revoke(ctx, rec); !errors.As(err, &part) || len(part.Took) != 1 || part.Failed[0].Server != rs.URL {
+		t.Fatalf("the Go client's revoke with the revocation server gone: %v", err)
 	}
 }
 

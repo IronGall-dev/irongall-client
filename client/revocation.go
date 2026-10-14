@@ -50,17 +50,24 @@ func (b *Box) Revocation() (*protocol.Revocations, error) {
 	return &protocol.Revocations{Identity: b.id.Document(), Revocation: sig}, nil
 }
 
-// Revoke publishes a revocation to the server opt names: the address the
-// record is for is revoked there, for good. It needs no box and no key, only
-// the record, so a box that is lost can still be revoked with a record made
-// in advance. The record is checked here first.
+// Revoke publishes a revocation to the server opt names, and to each
+// revocation server it lists: the address the record is for is revoked
+// there, for good. It needs no box and no key, only the record, so a box
+// that is lost can still be revoked with a record made in advance. The
+// record is checked here first. It is [Publish], of a record that must
+// carry a revocation of the address.
 func Revoke(ctx context.Context, opt Options, rec *protocol.Revocations) (protocol.Address, error) {
+	return newBox("", opt).Revoke(ctx, rec)
+}
+
+// Revoke is [Revoke] as this box: to its own server and to the revocation
+// servers it lists.
+func (b *Box) Revoke(ctx context.Context, rec *protocol.Revocations) (protocol.Address, error) {
 	a := protocol.Address(sha256.Sum256(rec.Identity))
 	if _, err := protocol.VerifyRevocation(a, rec.Identity, rec.Revocation); err != nil {
 		return a, refuse("the record is not a revocation: %v", err)
 	}
-	_, err := newBox("", opt).call(ctx, http.MethodPut, "/v1/"+a.String()+"/revocations", rec, nil, nil)
-	return a, err
+	return b.Publish(ctx, rec)
 }
 
 // Held is what a box holds about an address: what that address's identity
@@ -136,16 +143,18 @@ func (b *Box) KeepRevocation(rec *protocol.Revocations) (protocol.Address, *Held
 	return a, h, err
 }
 
-// Ask asks this box's server what it holds about a, keeps what verifies, and
+// Ask asks this box's server what it holds about a, and each revocation
+// server the box lists ([Box.RevocationServers]), keeps what verifies, and
 // returns what the box then holds: a box may ask at any time, and whatever
 // it has verified about an address it keeps. A send asks by itself
 // ([Box.SendWith]), and so does a drain, of each sender ([Box.Receive]).
 //
 // A server that answers that it holds nothing has answered, and that is its
 // word: it can keep a record back, and nothing here tells. What the box
-// holds already stands whatever a server answers. No answer is an error.
+// holds already stands whatever a server answers. No answer from the box's
+// own server is an error; none from a revocation server changes nothing.
 func (b *Box) Ask(ctx context.Context, a protocol.Address) (*Held, error) {
-	if _, err := b.lookupRevocation(ctx, a); err != nil {
+	if _, err := b.lookupRevocation(ctx, a, newLookups()); err != nil {
 		return nil, err
 	}
 	return b.held(a)
@@ -195,15 +204,21 @@ func (b *Box) revoked(a protocol.Address) (bool, error) {
 	return true, nil
 }
 
-// lookupRevocation asks the server what it holds about a, and keeps a
-// revocation that verifies. It reports whether this box now holds one.
+// lookupRevocation asks what is held about a, of this box's own server and
+// then of each revocation server the box lists, and keeps what verifies. It
+// reports whether this box now holds a revocation of a.
 //
-// The three answers are kept apart. A revocation that verifies is final. A
-// server that says it holds none (not_revoked, or no such box) has answered,
-// and the caller goes on. Anything else is no answer: an error, which the
-// caller stops on. What a server sends that does not verify counts as holding
-// none: only a statement the identity signed can revoke an address.
-func (b *Box) lookupRevocation(ctx context.Context, a protocol.Address) (bool, error) {
+// The own server's three answers are kept apart. A revocation that verifies
+// is final. A server that says it holds none (not_revoked, or no such box)
+// has answered, and the caller goes on. Anything else is no answer: an error,
+// which the caller stops on. What a server sends that does not verify counts
+// as holding none: only a statement the identity signed can revoke an
+// address.
+//
+// A revocation server is asked once the box's own has answered, and can only
+// add (askRevocationServers): its record is kept as any is, and neither its
+// "none held" nor its silence changes what the caller does.
+func (b *Box) lookupRevocation(ctx context.Context, a protocol.Address, l *lookups) (bool, error) {
 	if held, err := b.revoked(a); held || err != nil {
 		return held, err
 	}
@@ -211,35 +226,28 @@ func (b *Box) lookupRevocation(ctx context.Context, a protocol.Address) (bool, e
 	_, err := b.call(ctx, http.MethodGet, "/v1/"+a.String()+"/revocations", nil, nil, &rec)
 	switch Code(err) {
 	case protocol.CodeNotRevoked, protocol.CodeNoSuchMailbox:
-		return false, nil
+		err, rec = nil, protocol.Revocations{}
 	}
 	if err != nil {
 		return false, err
 	}
-	// A list of revoked certificates rides in the same record. It is taken
-	// or not on its own: the address may well go on.
-	if err := b.keepRevokedCerts(a, rec.Identity, rec.RevokedCertificates, rec.RevokedCertificatesSignature); err != nil {
-		return false, err
+	if gone, err := b.take(a, &rec); gone || err != nil {
+		return gone, err
 	}
-	id, err := protocol.VerifyRevocation(a, rec.Identity, rec.Revocation)
-	if err != nil {
-		return false, nil
-	}
-	return true, b.keepRevocation(id, rec.Revocation)
+	return b.askRevocationServers(ctx, a, l)
 }
 
-// ask asks the server what it holds about a recipient before a message is
-// posted to it, once for each recipient in a flush, keeps what verifies, and
-// reports whether this box holds a revocation of it. asked holds the
-// recipients a flush has an answer about: for those the box reads what it
-// holds, with no call.
-func (b *Box) ask(ctx context.Context, to protocol.Address, asked map[protocol.Address]bool) (bool, error) {
-	if asked[to] {
+// ask asks what is held about a recipient before a message is posted to it,
+// once for each recipient in a flush, keeps what verifies, and reports
+// whether this box holds a revocation of it. l holds the recipients a flush
+// has an answer about: for those the box reads what it holds, with no call.
+func (b *Box) ask(ctx context.Context, to protocol.Address, l *lookups) (bool, error) {
+	if l.answered[to] {
 		return b.revoked(to)
 	}
-	gone, err := b.lookupRevocation(ctx, to)
+	gone, err := b.lookupRevocation(ctx, to, l)
 	if err == nil {
-		asked[to] = true
+		l.answered[to] = true
 	}
 	return gone, err
 }
@@ -352,10 +360,18 @@ func (b *Box) RevokeEarlier(ctx context.Context) (*protocol.RevokedCertificates,
 		return nil, err
 	}
 	rec := &protocol.Revocations{Identity: b.id.Document(), RevokedCertificates: list.Statement(), RevokedCertificatesSignature: sig}
-	if _, err := b.call(ctx, http.MethodPut, b.boxPath("/revocations"), rec, nil, nil); err != nil {
+	// To this box's server and to each revocation server it lists. Once any
+	// of them has taken the list it is out, at that version, and this box
+	// keeps it: the next one it signs is numbered above it.
+	perr := b.publishRecord(ctx, b.id.Address(), rec)
+	var part *NotPublishedError
+	if perr != nil && (!errors.As(perr, &part) || len(part.Took) == 0) {
+		return nil, perr
+	}
+	if err := b.keepRevokedCerts(b.id.Address(), rec.Identity, rec.RevokedCertificates, rec.RevokedCertificatesSignature); err != nil {
 		return nil, err
 	}
-	return list, b.keepRevokedCerts(b.id.Address(), rec.Identity, rec.RevokedCertificates, rec.RevokedCertificatesSignature)
+	return list, perr
 }
 
 // proved turns a server's "revoked" into something this box has checked. who
@@ -363,7 +379,7 @@ func (b *Box) RevokeEarlier(ctx context.Context) (*protocol.RevokedCertificates,
 // that this box is, the server is asked for the revocation: one that verifies
 // makes it a [RevokedError], which is final. With none, the error says so and
 // stays what it was, a call that failed: a server's word revokes nothing.
-func (b *Box) proved(ctx context.Context, who protocol.Address, err error) error {
+func (b *Box) proved(ctx context.Context, who protocol.Address, err error, l *lookups) error {
 	switch Code(err) {
 	case protocol.CodeRevoked:
 	case protocol.CodeSenderRevoked:
@@ -371,7 +387,7 @@ func (b *Box) proved(ctx context.Context, who protocol.Address, err error) error
 	default:
 		return err
 	}
-	held, lerr := b.lookupRevocation(ctx, who)
+	held, lerr := b.lookupRevocation(ctx, who, l)
 	if lerr != nil {
 		return fmt.Errorf("%w; asking for the revocation failed: %w", err, lerr)
 	}

@@ -45,7 +45,9 @@ is answered, signed, with what was checked and the body it carried.
               $IRONGALL_HOME, or ${XDG_CONFIG_HOME:-~/.config}/irongall/${IRONGALL_BOX:-default}
   --no-pq     publish prekeys without post-quantum encryption (X25519 only)
 
-The server is $IRONGALL_BASE, or https://irongall.dev.
+The server is $IRONGALL_BASE, or https://irongall.dev. The revocation
+servers it asks beside that one are $IRONGALL_REVOCATION_SERVERS, as for
+irongall.
 `
 
 // replyTTL is how long a reply that could not be posted is retried before it
@@ -95,7 +97,17 @@ func run(ctx context.Context, args []string, logw io.Writer) error {
 		kt = protocol.Classic
 	}
 	opt := client.Options{Base: os.Getenv("IRONGALL_BASE")}
-	e, err := start(ctx, *dir, *identity, opt, kt, log.New(logw, "", log.LstdFlags|log.LUTC))
+	logger := log.New(logw, "", log.LstdFlags|log.LUTC)
+	if v := os.Getenv("IRONGALL_REVOCATION_SERVERS"); v != "" {
+		var err error
+		if opt.RevocationServers, err = client.ParseRevocationServers(v); err != nil {
+			return fmt.Errorf("$IRONGALL_REVOCATION_SERVERS: %w", err)
+		}
+	}
+	opt.NoAnswer = func(server string, err error) {
+		logger.Printf("the revocation server %s gave no answer, which changes nothing here: %v", server, err)
+	}
+	e, err := start(ctx, *dir, *identity, opt, kt, logger)
 	if err != nil {
 		return err
 	}

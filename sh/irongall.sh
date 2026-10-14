@@ -294,15 +294,37 @@ ig_record(){ # <record> → the address it is a revocation of, only if it verifi
   jq -er '.identity | strings' "$1" 2> /dev/null | base64 -d > "$IG/rev.doc" 2> /dev/null && jq -er '.revocation | strings' "$1" 2> /dev/null | base64 -d > "$IG/rev.sig" 2> /dev/null || return 1
   A=$(sha256sum < "$IG/rev.doc" | cut -c1-64) && ig_revcheck "$A" "$IG/rev.doc" "$IG/rev.sig" && echo "$A"
 }
-ig_lookup(){ # <address> → asks the server what it holds about the address, and keeps a revocation that verifies, and a list of its revoked certificates that does. 0: this box holds a revocation of the address, and that is final. 1: the server answered that it holds none, or showed something that does not verify, which comes to the same: only the identity's own signature revokes. 2: no answer, which is not "none". 3: a fault of this box: what it keeps for the address does not verify, or cannot be written
-  ig_gone "$1"; case $? in 0) return 0 ;; 3) return 3 ;; esac
-  if ! ig_api GET "/v1/$1/revocations" > "$IG/rev.json" 2> /dev/null; then case $(ig_code) in not_revoked | no_such_mailbox) return 1 ;; *) return 2 ;; esac; fi
+ig_revservers(){ # → the revocation servers this box asks beside its own server, and publishes to (PROTOCOL.md §6.3), one to a line: those $IG_REVOCATION_SERVERS names, with spaces or commas between; or else those the box's revocation-servers file names, one to a line; or else irongall.dev's own for a box on irongall.dev, and none for a box on any other server. The one word "none" is none. Each is https://host or https://host:port, in lowercase, with nothing after it, and each learns which addresses this box asks about: name one run by anyone but your server's operator only if you mean to tell it. Read from the file each time: state lives in files
+  local l=${IG_REVOCATION_SERVERS-} s seen=" "; local -a a
+  [ -n "$l" ] || [ ! -s "$IG/revocation-servers" ] || l=$(cat "$IG/revocation-servers") || return 1
+  [ -n "$l" ] || [ "$IG_BASE" != https://irongall.dev ] || l=https://revocations.irongall.dev
+  l=${l//,/ }; l=${l//$'\n'/ }; l=${l//$'\r'/ }; read -ra a <<< "$l"
+  [ "${#a[@]}" != 1 ] || [ "${a[0]}" != none ] || return 0
+  for s in "${a[@]}"; do
+    [[ $s =~ ^https?://(\[[0-9a-f:]+\]|[a-z0-9]([a-z0-9.-]*[a-z0-9])?)(:[0-9]{1,5})?$ ]] || { ig_refuse "this box's list of revocation servers names something that is not one: each is https://host or https://host:port, in lowercase, with nothing after it, and the one word none means none"; return 1; }
+    [ "$s" = "$IG_BASE" ] || [[ $seen = *" $s "* ]] || echo "$s"      # the box's own server is asked anyway, and each of the others once
+    seen="$seen$s "
+  done
+}
+ig_take(){ # <address> → keeps what verifies of $IG/rev.json, a server's answer about the address: a list of its revoked certificates, a revocation of the address, or both. 0: this box now holds a revocation of the address. 1: it does not: what the answer showed of one does not verify, which counts as nothing shown. 3: a fault of this box
   if jq -er '.identity | strings' "$IG/rev.json" 2> /dev/null | base64 -d > "$IG/rev.doc" 2> /dev/null && jq -er '.revoked_certificates | strings' "$IG/rev.json" 2> /dev/null | base64 -d > "$IG/rev.list" 2> /dev/null &&
     jq -er '.revoked_certificates_signature | strings' "$IG/rev.json" 2> /dev/null | base64 -d > "$IG/rev.lsig" 2> /dev/null; then      # a list of revoked certificates rides in the same record. It is taken or not on its own: the address may well go on
     ig_keeplist "$1" "$IG/rev.doc" "$IG/rev.list" "$IG/rev.lsig" || return 3
   fi
   [ "$(ig_record "$IG/rev.json")" = "$1" ] || return 1
   ig_keep "$1" "$IG/rev.doc" "$IG/rev.sig" || return 3
+}
+ig_lookup(){ # <address> → asks what is held about the address, of this box's server and then of each revocation server it lists (ig_revservers), and keeps a revocation that verifies, and a list of its revoked certificates that does. 0: this box holds a revocation of the address, and that is final. 1: the server answered that it holds none, or showed something that does not verify, which comes to the same: only the identity's own signature revokes. 2: no answer from the box's own server, which is not "none". 3: a fault of this box: what it keeps for the address does not verify, or cannot be written, or its list of revocation servers cannot be read. A revocation server can only add: what it shows is checked and kept as anything is, and neither its "none held" nor its silence changes the answer. It is asked with no pass, for ten seconds at most
+  local s l r
+  ig_gone "$1"; case $? in 0) return 0 ;; 3) return 3 ;; esac
+  l=$(ig_revservers) || return 3
+  if ig_api GET "/v1/$1/revocations" > "$IG/rev.json" 2> /dev/null; then ig_take "$1"; r=$?; [ $r = 1 ] || return $r
+  else case $(ig_code) in not_revoked | no_such_mailbox) ;; *) return 2 ;; esac; fi
+  while IFS= read -r s <&3; do [ -n "$s" ] || continue
+    if IG_BASE=$s ig_api GET "/v1/$1/revocations" "" --max-time 10 > "$IG/rev.json" 2> /dev/null; then ig_take "$1"; r=$?; [ $r = 1 ] || return $r
+    else case $(ig_code) in not_revoked | no_such_mailbox) ;; *) echo "the revocation server $s gave no answer, which changes nothing here" >&2 ;; esac; fi
+  done 3<<< "$l"
+  return 1
 }
 ig_own(){ # after a call as this box failed: if the server said this box is revoked, asks it for the revocation, and says which it is. A server's word revokes nothing
   [ "$(ig_code)" = revoked ] || return 0
@@ -314,8 +336,8 @@ ig_revocation(){ # → this box's revocation as one line of JSON, {identity, rev
   printf 'irongall-revoke-v1\n%s\n' "$A" | ssh-keygen -q -Y sign -n "irongall-revoke-v1:$A" -f "$IG/identity" > "$IG/rev.new" 2> /dev/null || ig_refuse "this box's identity key did not sign" || return 1
   jq -cn --arg i "$(ig_b64 "$IG/identity.doc")" --arg s "$(ig_b64 "$IG/rev.new")" '{identity:$i, revocation:$s}'; rm -f "$IG/rev.new"
 }
-ig_revoke(){ # <address> [record] → revokes the address at the server, FOR GOOD: nothing undoes it. Without a record it is this box's own address, written out in full as the confirmation, and its identity signs now. With one, a record ig_revocation made earlier is published as it is, which needs no box here: only the file
-  local A=${1-} f=${2-}
+ig_revoke(){ # <address> [record] → revokes the address at the server and at each revocation server this box lists, FOR GOOD: nothing undoes it. Without a record it is this box's own address, written out in full as the confirmation, and its identity signs now. With one, a record ig_revocation made earlier is published as it is, which needs no box here: only the file. Every server is tried whatever the others answer, and it fails, saying which did not take it, unless every one did: run it again
+  local A=${1-} f=${2-} s l took= r=0
   ig_hex "$A" || ig_refuse "revoke takes the 64-character address in full: it is the confirmation, and a revocation cannot be undone" || return 1
   mkdir -p "$IG" || return 1
   if [ -z "$f" ]; then
@@ -323,8 +345,14 @@ ig_revoke(){ # <address> [record] → revokes the address at the server, FOR GOO
     f="$IG/revoke.json"; ig_revocation > "$f" || return 1
   fi
   [ "$(ig_record "$f")" = "$A" ] || ig_refuse "the record is not a revocation of $A: nothing was published" || return 1
-  ig_api PUT "/v1/$A/revocations" "$f" > /dev/null || return 1
-  [ "$A" != "$(cat "$IG/address" 2> /dev/null)" ] || ig_keep "$A" "$IG/rev.doc" "$IG/rev.sig" || return 1
+  l=$(ig_revservers) || return 1
+  if ig_api PUT "/v1/$A/revocations" "$f" > /dev/null; then took=$IG_BASE; else r=1; echo "NOT taken by $IG_BASE" >&2; fi
+  while IFS= read -r s <&3; do [ -n "$s" ] || continue
+    if IG_BASE=$s ig_api PUT "/v1/$A/revocations" "$f" --max-time 10 > /dev/null; then took="$took $s"; else r=1; echo "NOT taken by the revocation server $s" >&2; fi
+  done 3<<< "$l"
+  [ -n "$took" ] || return 1      # once any server has taken it, it is out: if the box it is about is the one here, it keeps it too
+  [ "$A" != "$(cat "$IG/address" 2> /dev/null)" ] || { [ "$(ig_record "$f")" = "$A" ] && ig_keep "$A" "$IG/rev.doc" "$IG/rev.sig"; } || return 1
+  [ $r = 0 ] || { echo "the revocation of $A is not at every server: whoever asks one that did not take it is not shown it. Run this again: a server that holds it answers as before" >&2; return 1; }
   echo "revoked $A"
 }
 ig_revoked(){ # <record> → keeps a revocation of another box that someone handed over, once it verifies: nothing is sent to that address or taken from it again, whatever a server says. It is the answer to a server that hides a revocation

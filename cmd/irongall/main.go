@@ -15,6 +15,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -67,20 +68,36 @@ const usage = `usage: irongall <command> [arguments]
   revoke <address>         revoke this box's address, FOR GOOD: nothing undoes
                            it. The address written out in full is the
                            confirmation. --record <file> publishes a record made
-                           earlier by revocation, and needs no box here
+                           earlier by revocation, and needs no box here. It
+                           goes to the server and to each revocation server,
+                           and the command fails, saying which, unless every
+                           one took it: run it again
   revoked <file>           take a revocation of another box that someone handed
                            you (a record as revocation prints), check it, and
                            keep it: this box then sends that address nothing
                            and takes nothing from it. A record may carry the
                            box's list of revoked certificates, which is kept
                            the same way. revoked --ask <link> asks the server
-                           what it holds about a box, and keeps what verifies:
-                           send does that by itself, before it posts
+                           and each revocation server what it holds about a
+                           box, and keeps what verifies: send does that by
+                           itself, before it posts. revoked --publish <file>
+                           sends a record that carries a list of revoked
+                           certificates, and no revocation, to the server and
+                           each revocation server: this box's own
+                           revoked-certs.json, when a server did not take it
 
 The box lives in $IRONGALL_HOME, or ${XDG_CONFIG_HOME:-~/.config}/irongall/${IRONGALL_BOX:-default}.
 Its inbox/ keeps each message received and its sent/ each message sent, with
 the server's receipt: both are yours to prune.
 The server is $IRONGALL_BASE, or https://irongall.dev.
+Beside its server a box asks revocation servers whether an address is revoked,
+and publishes its own revocations to them: those $IRONGALL_REVOCATION_SERVERS
+names (URLs with spaces or commas between, or "none"), or else those its
+revocation-servers file names, one to a line. With neither, a box on
+irongall.dev asks ` + client.DefaultRevocationServer + `, which irongall.dev's
+operator runs, and a box on another server asks none. A revocation server
+learns which addresses a box asks about: name one run by anyone else only if
+you mean to tell it. No answer from one changes nothing, and status lists them.
 With each prekey a box declares which identity key types its client verifies,
 and so whose mail it takes: every type this client verifies, unless
 $IRONGALL_SENDER_KEY_TYPES says otherwise ("any": do not say).
@@ -144,6 +161,15 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 	opt := client.Options{Base: os.Getenv("IRONGALL_BASE")}
 	if v := os.Getenv("IRONGALL_SENDER_KEY_TYPES"); v != "" {
 		opt.SenderKeyTypes = strings.Split(v, ",")
+	}
+	if v := os.Getenv("IRONGALL_REVOCATION_SERVERS"); v != "" {
+		if opt.RevocationServers, err = client.ParseRevocationServers(v); err != nil {
+			return fmt.Errorf("$IRONGALL_REVOCATION_SERVERS: %w", err)
+		}
+	}
+	// Said, and nothing more: a box does not wait on a revocation server.
+	opt.NoAnswer = func(server string, err error) {
+		_, _ = fmt.Fprintf(stderr, "the revocation server %s gave no answer, which changes nothing here: %v\n", server, err)
 	}
 	// The flag package takes one dash or two and writes one. This client
 	// writes two everywhere, so it prints a command's flags and a bad flag's
@@ -391,13 +417,18 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 		// the box is using.
 		list, err := b.RevokeEarlier(ctx)
 		switch {
-		case err != nil:
+		case list == nil && err != nil:
 			return fmt.Errorf("the new prekey is published, and the earlier certificates are NOT revoked: %w", err)
 		case list == nil:
 			_, err = fmt.Fprintln(stdout, "no earlier certificate to revoke")
 			return err
 		}
 		_, _ = fmt.Fprintln(stderr, "Mail this box sent before now, and that its reader has not read yet, was signed under a certificate just revoked and will be refused: send it again.")
+		// A server took the list, and not every one: it is out, this box
+		// keeps it, and the record it keeps is what publishes it again.
+		if err != nil {
+			return fmt.Errorf("the new prekey is published, and the list that revokes the certificates before %d, version %d, is not everywhere: %w. This box keeps the list, and this publishes it again: irongall revoked --publish %s", p.Serial, list.Version, err, filepath.Join(b.Dir(), "revoked-certs.json"))
+		}
 		_, err = fmt.Fprintf(stdout, "certificates before %d revoked, list version %d\n", p.Serial, list.Version)
 		return err
 
@@ -463,6 +494,9 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 		if err != nil {
 			return errors.New(how)
 		}
+		// The box here, if there is one: a record is published to the
+		// revocation servers it lists. With --record none is needed.
+		b, openErr := client.Open(dir, opt)
 		var rec *protocol.Revocations
 		if *record != "" {
 			if rec, err = readRecord(*record); err != nil {
@@ -472,9 +506,8 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 				return errors.New("the record is a revocation of another address than the one named: nothing was published")
 			}
 		} else {
-			b, err := client.Open(dir, opt)
-			if err != nil {
-				return err
+			if openErr != nil {
+				return openErr
 			}
 			if b.Address() != a {
 				return errors.New("that is not this box's address: nothing was published. irongall revoke takes this box's own address, or a record of another with --record")
@@ -483,25 +516,41 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 				return err
 			}
 		}
-		if _, err := client.Revoke(ctx, opt, rec); err != nil {
-			return err
+		// To the server and to each revocation server, every one whatever
+		// the others answer.
+		var perr error
+		if openErr == nil {
+			_, perr = b.Revoke(ctx, rec)
+		} else {
+			_, perr = client.Revoke(ctx, opt, rec)
 		}
-		// If the box revoked is the one here, it keeps the revocation too.
-		if b, err := client.Open(dir, opt); err == nil && b.Address() == a {
+		var part *client.NotPublishedError
+		if perr != nil && (!errors.As(perr, &part) || len(part.Took) == 0) {
+			return perr
+		}
+		// Once any server has taken it, it is out. If the box it is about is
+		// the one here, it keeps it too.
+		if openErr == nil && b.Address() == a {
 			if _, _, err := b.KeepRevocation(rec); err != nil {
 				return err
 			}
+		}
+		// Not everywhere is a failure, and says who took it and who did not:
+		// the same command again is the cure.
+		if perr != nil {
+			return perr
 		}
 		_, err = fmt.Fprintf(stdout, "revoked %s\n", a)
 		return err
 
 	case "revoked":
-		ask := fs.Bool("ask", false, "ask the server what it holds about the box a `link`, address or alias names, in place of reading a record from a file, and keep what verifies")
+		ask := fs.Bool("ask", false, "ask the server, and each revocation server this box lists, what it holds about the box a `link`, address or alias names, in place of reading a record from a file, and keep what verifies")
+		publish := fs.Bool("publish", false, "send the record in the `file`, which carries a list of revoked certificates and no revocation, to the server and to each revocation server this box lists, and keep it")
 		if err := parse(); err != nil {
 			return err
 		}
-		if fs.NArg() != 1 {
-			return errors.New("usage: irongall revoked <file> (a record as irongall revocation prints), or irongall revoked --ask <link>")
+		if fs.NArg() != 1 || (*ask && *publish) {
+			return errors.New("usage: irongall revoked <file> (a record as irongall revocation prints), irongall revoked --ask <link>, or irongall revoked --publish <file>")
 		}
 		b, err := client.Open(dir, opt)
 		if err != nil {
@@ -509,6 +558,29 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 		}
 		var a protocol.Address
 		var held *client.Held
+		if *publish {
+			rec, err := readRecord(fs.Arg(0))
+			if err != nil {
+				return err
+			}
+			// What ends an address goes out only with that address written
+			// in full, as its confirmation.
+			if len(rec.Revocation) > 0 {
+				return errors.New("the record carries a revocation of its address, which nothing undoes: nothing was published. irongall revoke --record <file> <address> publishes one, with the address in full as the confirmation")
+			}
+			if a, _, err = b.KeepRevocation(rec); err != nil {
+				return err
+			}
+			list, err := protocol.ParseRevokedCertificates(rec.RevokedCertificates)
+			if err != nil {
+				return err
+			}
+			if _, err := b.Publish(ctx, rec); err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(stdout, "published the list of revoked certificates of %s, version %d\n", a, list.Version)
+			return err
+		}
 		if *ask {
 			if a, err = b.Destination(fs.Arg(0)); err != nil {
 				return err
@@ -533,7 +605,7 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 		case held.Certificates != nil:
 			_, err = fmt.Fprintf(stdout, "certificates of %s revoked, list version %d\n", a, held.Certificates.Version)
 		default:
-			_, _ = fmt.Fprintln(stderr, "That is the server's word, and a server can keep a record back: a record from the box's owner settles it (irongall revoked <file>).")
+			_, _ = fmt.Fprintln(stderr, "That is the word of whoever was asked, this box's server and the revocation servers it lists, and any of them can keep a record back: a record from the box's owner settles it (irongall revoked <file>).")
 			_, err = fmt.Fprintf(stdout, "no revocation of %s shown\n", a)
 		}
 		return err

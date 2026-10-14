@@ -374,7 +374,7 @@ func TestRefusedMailDoesNotFailRecv(t *testing.T) {
 	t.Setenv("IRONGALL_HOME", b.Dir())
 	t.Setenv("IRONGALL_BASE", srv.URL)
 	var out bytes.Buffer
-	if err := run(ctx, "status", nil, nil, &out, io.Discard); err != nil || !strings.Contains(out.String(), `"quarantine":0,"attention":[]`) {
+	if err := run(ctx, "status", nil, nil, &out, io.Discard); err != nil || !strings.Contains(out.String(), `"quarantine":0,"revocation_servers":[],"attention":[]`) {
 		t.Fatalf("status of a new box: %v %q", err, out.String())
 	}
 	forged := []byte("not a ciphertext its claimed sender ever signed")
@@ -699,7 +699,7 @@ func TestRevokedAsk(t *testing.T) {
 	addr := a.Address().String()
 
 	out, warn, err := cmd(b, "--ask", addr)
-	if err != nil || out != "no revocation of "+addr+" shown\n" || !strings.Contains(warn, "the server's word") {
+	if err != nil || out != "no revocation of "+addr+" shown\n" || !strings.Contains(warn, "the word of whoever was asked") {
 		t.Fatalf("ask about a box with nothing revoked: %v %q %q", err, out, warn)
 	}
 	if _, err := a.Rekey(ctx, ""); err != nil {

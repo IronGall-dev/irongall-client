@@ -17,10 +17,17 @@ import (
 // the bound only stops a server from filling memory.
 const maxResponse = 16 << 20
 
-// call makes one API request. A request body is sent as JSON; a 2xx response
-// body is decoded into out when out is not nil. Any status outside 2xx and
-// 304 is an *APIError. It returns the response, whose body is consumed.
+// call makes one API request of this box's server. A request body is sent as
+// JSON; a 2xx response body is decoded into out when out is not nil. Any
+// status outside 2xx and 304 is an *APIError. It returns the response, whose
+// body is consumed.
 func (b *Box) call(ctx context.Context, method, path string, in any, hdr http.Header, out any) (*http.Response, error) {
+	return b.callAt(ctx, b.base, method, path, in, hdr, out)
+}
+
+// callAt is call, of the server at base: this box's own, or a revocation
+// server, which is sent no pass.
+func (b *Box) callAt(ctx context.Context, base, method, path string, in any, hdr http.Header, out any) (*http.Response, error) {
 	var body io.Reader
 	if in != nil {
 		j, err := json.Marshal(in)
@@ -29,7 +36,7 @@ func (b *Box) call(ctx context.Context, method, path string, in any, hdr http.He
 		}
 		body = bytes.NewReader(j)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, b.base+path, body)
+	req, err := http.NewRequestWithContext(ctx, method, base+path, body)
 	if err != nil {
 		return nil, err
 	}

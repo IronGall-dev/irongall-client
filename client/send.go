@@ -88,7 +88,7 @@ func (b *Box) SendWith(ctx context.Context, to protocol.Address, body string, f 
 	if err := writeFile(stem+".P", p); err != nil {
 		return nil, err
 	}
-	return b.post(ctx, to, stem, map[protocol.Address]bool{})
+	return b.post(ctx, to, stem, newLookups())
 }
 
 // Flush re-posts every message still in the outbox, unchanged: a retry of a
@@ -104,7 +104,7 @@ func (b *Box) Flush(ctx context.Context) ([]*protocol.Receipt, error) {
 	var receipts []*protocol.Receipt
 	var errs []error
 	// The recipients this flush has asked the server about: one lookup each.
-	asked := map[protocol.Address]bool{}
+	asked := newLookups()
 	for _, n := range names {
 		stem := strings.TrimSuffix(n, ".P")
 		to, _, _ := strings.Cut(filepath.Base(stem), ".")
@@ -143,7 +143,7 @@ var undeliverable = []protocol.Code{
 // and a seal made to a prekey under a certificate since revoked is made
 // again (sealStands). No answer is not "none held": nothing is posted, and
 // the entry stays.
-func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked map[protocol.Address]bool) (*protocol.Receipt, error) {
+func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked *lookups) (*protocol.Receipt, error) {
 	if b.expired(stem) {
 		return nil, b.undelivered(stem, refuse("its envelope is older than %d days, and every recipient refuses that", protocol.TTL/(24*time.Hour)))
 	}
@@ -168,7 +168,7 @@ func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked 
 	if err != nil {
 		// A server's "revoked" is checked: with the revocation in hand it is
 		// final, and without one it is a call that failed.
-		err = b.proved(ctx, to, err)
+		err = b.proved(ctx, to, err, asked)
 		var gone *RevokedError
 		if !errors.As(err, &gone) && !slices.Contains(undeliverable, Code(err)) {
 			return nil, fmt.Errorf("%w (kept in the outbox: retry with irongall flush)", err)
