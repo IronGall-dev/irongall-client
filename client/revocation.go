@@ -331,9 +331,9 @@ func (b *Box) keepRevokedCerts(a protocol.Address, doc, statement, sig []byte) e
 
 // RevokeEarlier revokes every certificate this box's identity made before
 // the one in use: it signs a list naming them, publishes it, and keeps it.
-// It is for a box whose working key may have been taken: [Box.Rekey] first,
-// which makes a new working key under a new certificate, then this, which
-// ends what the old key could still sign. The address goes on.
+// [Box.RenewAndRevoke] is the whole remedy for a box whose working key may
+// have been taken, and is what "irongall rekey --revoke-earlier" runs; this
+// is its second half alone, for a box that has renewed already.
 //
 // The list is every serial below the one in use. A box numbers a certificate
 // by its clock ([protocol.SerialAt]), so that range names every certificate
@@ -346,38 +346,167 @@ func (b *Box) keepRevokedCerts(a protocol.Address, doc, statement, sig []byte) e
 // read yet, is refused too: nobody can tell it from a thief's.
 func (b *Box) RevokeEarlier(ctx context.Context) (*protocol.RevokedCertificates, error) {
 	current, err := b.publishedSerial()
-	if err != nil || current <= 1 {
-		return nil, err
-	}
-	ranges, version := []protocol.SerialRange{{First: 1, Last: current - 1}}, uint64(1)
-	held, err := b.revokedCerts(b.id.Address())
 	if err != nil {
 		return nil, err
 	}
-	if held != nil {
-		ranges, version = append(ranges, held.Ranges...), held.Version+1
-	}
-	list, err := protocol.NewRevokedCertificates(b.id.Address(), version, ranges)
+	return b.revokeBelow(ctx, current)
+}
+
+// A Remedy is what [Box.RenewAndRevoke] did.
+type Remedy struct {
+	// Below is the serial of the certificate this call made. The list names
+	// every certificate below it.
+	Below uint64
+	// Prekey is the new prekey, if the server took it.
+	Prekey *protocol.Prekey
+	// NotRenewed is why the server did not take it, or nil.
+	NotRenewed error
+	// List is the list of revoked certificates, if a server took it.
+	List *protocol.RevokedCertificates
+}
+
+// RenewAndRevoke is the remedy for a box whose working key may have been
+// taken, with the address kept: a new prekey under a new working key and a
+// new certificate, and a list, signed by the identity, of every certificate
+// before that one.
+//
+// It sends nothing an earlier renewal left: whoever copied the box while one
+// waited holds its working key too.
+//
+// The list is published when the server took the new prekey, and also when
+// it refused it for the box's renewals of the day (rate_limited). A holder
+// of the working key can spend those, so a remedy that waited on the renewal
+// would wait on the taker. The list then names the certificate the box is
+// using: the server takes nothing more under it, mail to the box is refused
+// until its new prekey is taken, and [Box.Receive] and [Box.Rekey] send that
+// one again. For any other failure of the renewal nothing is revoked, and
+// the Remedy says why: a server reaches its count of renewals only after it
+// has taken this box's new certificate and its pass as timely, so that
+// refusal is the one that shows the box's clock within what the server
+// allows, and a list numbered by a clock that reads ahead would name
+// certificates not yet made.
+//
+// The error is why the list is not at every server, or why there is none.
+func (b *Box) RenewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy, error) {
+	l, err := b.lockWait(ctx, rekeyLockWait)
 	if err != nil {
 		return nil, err
 	}
-	sig, err := protocol.SignRevokedCertificates(b.signer, list)
-	if err != nil {
-		return nil, err
+	r, err := b.renewAndRevoke(ctx, kt)
+	if e := l.release(); err == nil {
+		err = e
 	}
-	rec := &protocol.Revocations{Identity: b.id.Document(), RevokedCertificates: list.Statement(), RevokedCertificatesSignature: sig}
-	// To this box's server and to each revocation server it lists. Once any
-	// of them has taken the list it is out, at that version, and this box
-	// keeps it: the next one it signs is numbered above it.
-	perr := b.publishRecord(ctx, b.id.Address(), rec)
+	return r, err
+}
+
+func (b *Box) renewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy, error) {
+	p, made, rerr := b.rekey(ctx, kt, true)
+	if made == 0 {
+		return nil, rerr // it made no new certificate: nothing is named
+	}
+	r := &Remedy{Below: made, Prekey: p, NotRenewed: rerr}
+	if rerr != nil && Code(rerr) != protocol.CodeRateLimited {
+		return r, rerr
+	}
+	list, err := b.revokeBelow(ctx, made)
+	r.List = list
+	return r, err
+}
+
+// ownListNames reports whether this box holds a list of its own that names
+// certificate n. A list it cannot read names nothing here: whoever reads it
+// to apply it says so.
+func (b *Box) ownListNames(n uint64) bool {
+	list, err := b.revokedCerts(b.id.Address())
+	return err == nil && list != nil && list.Revokes(n)
+}
+
+// askOwn asks what is held of this box's own list, of its server and of each
+// revocation server it lists, and keeps what verifies: the list this box
+// signs next is then numbered above every version it has been shown. A box
+// restored from its identity holds none of its own, and neither does one
+// whose list was taken with the answer lost. No answer from the box's own
+// server stops nothing here: the list still goes to whoever takes it.
+func (b *Box) askOwn(ctx context.Context) error {
+	own := b.id.Address()
+	var rec protocol.Revocations
+	if _, err := b.call(ctx, http.MethodGet, "/v1/"+own.String()+"/revocations", nil, nil, &rec); err == nil {
+		if _, err := b.take(own, &rec); err != nil {
+			return err
+		}
+	} else if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	_, err := b.askRevocationServers(ctx, own, newLookups())
+	return err
+}
+
+// revokeBelow signs, publishes and keeps the list of every certificate of
+// this box's identity below serial, with what the box's list named before.
+// It returns nil when nothing is below.
+//
+// It asks first what is held ([Box.askOwn]), so that its version is above
+// the highest it has been shown. A server that holds a version it did not
+// show answers conflict: the box asks once more and signs again.
+func (b *Box) revokeBelow(ctx context.Context, serial uint64) (*protocol.RevokedCertificates, error) {
+	if serial <= 1 {
+		return nil, nil
+	}
+	own := b.id.Address()
+	for try := 0; ; try++ {
+		if err := b.askOwn(ctx); err != nil {
+			return nil, err
+		}
+		ranges, version := []protocol.SerialRange{{First: 1, Last: serial - 1}}, uint64(1)
+		held, err := b.revokedCerts(own)
+		if err != nil {
+			return nil, err
+		}
+		if held != nil {
+			ranges, version = append(ranges, held.Ranges...), held.Version+1
+		}
+		list, err := protocol.NewRevokedCertificates(own, version, ranges)
+		if err != nil {
+			return nil, err
+		}
+		sig, err := protocol.SignRevokedCertificates(b.signer, list)
+		if err != nil {
+			return nil, err
+		}
+		rec := &protocol.Revocations{Identity: b.id.Document(), RevokedCertificates: list.Statement(), RevokedCertificatesSignature: sig}
+		// To this box's server and to each revocation server it lists. Once
+		// any of them has taken the list it is out, at that version, and
+		// this box keeps it: the next one it signs is numbered above it.
+		perr := b.publishRecord(ctx, own, rec)
+		var part *NotPublishedError
+		if perr != nil && (!errors.As(perr, &part) || len(part.Took) == 0) {
+			if try == 0 && conflicted(perr) {
+				continue
+			}
+			return nil, perr
+		}
+		if err := b.keepRevokedCerts(own, rec.Identity, rec.RevokedCertificates, rec.RevokedCertificatesSignature); err != nil {
+			return nil, err
+		}
+		return list, perr
+	}
+}
+
+// conflicted reports whether a server refused a record as no newer than the
+// one it holds.
+func conflicted(err error) bool {
+	if Code(err) == protocol.CodeConflict {
+		return true
+	}
 	var part *NotPublishedError
-	if perr != nil && (!errors.As(perr, &part) || len(part.Took) == 0) {
-		return nil, perr
+	if errors.As(err, &part) {
+		for _, f := range part.Failed {
+			if Code(f.Err) == protocol.CodeConflict {
+				return true
+			}
+		}
 	}
-	if err := b.keepRevokedCerts(b.id.Address(), rec.Identity, rec.RevokedCertificates, rec.RevokedCertificatesSignature); err != nil {
-		return nil, err
-	}
-	return list, perr
+	return false
 }
 
 // proved turns a server's "revoked" into something this box has checked. who

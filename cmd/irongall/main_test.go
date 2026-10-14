@@ -811,6 +811,50 @@ func TestRekeyRevokeEarlier(t *testing.T) {
 	}
 }
 
+// rekey --revoke-earlier when the server refuses the new prekey for the day's
+// renewals: the list goes out all the same, the command says the box takes no
+// mail until the new prekey is taken, and fails. Refused for anything else,
+// it revokes nothing and says so.
+func TestRekeyRevokeEarlierWhenTheRenewalIsRefused(t *testing.T) {
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := inUse(t, b)
+	t.Setenv("IRONGALL_HOME", b.Dir())
+	t.Setenv("IRONGALL_BASE", srv.URL)
+	refuse := func(code protocol.Code) {
+		srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/prekey") {
+				fakeserver.WriteJSON(w, code.Status(), protocol.Problem{Code: code, Status: code.Status()})
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+
+	refuse(protocol.CodeUnavailable)
+	var out, errs bytes.Buffer
+	err = run(ctx, "rekey", []string{"--revoke-earlier"}, strings.NewReader(""), &out, &errs)
+	if err == nil || !strings.Contains(err.Error(), "nothing is revoked") || out.Len() != 0 {
+		t.Fatalf("refused as unavailable: %v, stdout %q", err, out.String())
+	}
+
+	refuse(protocol.CodeRateLimited)
+	out.Reset()
+	err = run(ctx, "rekey", []string{"--revoke-earlier"}, strings.NewReader(""), &out, &errs)
+	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
+	if err == nil || !strings.Contains(err.Error(), "NOT published") || !strings.Contains(err.Error(), "takes no mail") || len(lines) != 1 || !strings.HasPrefix(lines[0], "certificates before ") || !strings.HasSuffix(lines[0], " revoked, list version 1") {
+		t.Fatalf("refused for the day's renewals: %v, stdout %q", err, out.String())
+	}
+	below := number(t, strings.TrimSuffix(strings.TrimPrefix(lines[0], "certificates before "), " revoked, list version 1"))
+	if below <= number(t, first) || inUse(t, b) != first {
+		t.Fatalf("the list ends below %d, with %s in use and %s recorded", below, first, inUse(t, b))
+	}
+}
+
 // inUse is the number of the prekey a box published last, which is its
 // working key's and its certificate's too, as its serial file has it. A box
 // takes each number from its clock, so a test reads it and never assumes one.

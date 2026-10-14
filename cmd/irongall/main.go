@@ -53,7 +53,10 @@ const usage = `usage: irongall <command> [arguments]
                            then revokes every certificate before it, for a box
                            whose working key may have been taken: the address
                            goes on, and mail this box sent that is still unread
-                           is refused with the rest, so send it again
+                           is refused with the rest, so send it again. If the
+                           server refuses the new prekey for the day's
+                           renewals, they are revoked all the same, and the box
+                           takes no mail until the new prekey is taken
   status                   say what this box holds and what needs a look, as one
                            line of JSON, from its own files and with no call
                            to the server: its prekey, a renewal that has not
@@ -388,7 +391,7 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 	case "rekey":
 		noPQ := fs.Bool("no-pq", false, "switch to a prekey without post-quantum encryption (X25519 only)")
 		pq := fs.Bool("pq", false, "switch to a post-quantum prekey")
-		earlier := fs.Bool("revoke-earlier", false, "after the new prekey is published, revoke every certificate before its own: for a box whose working key may have been taken")
+		earlier := fs.Bool("revoke-earlier", false, "also revoke every certificate before the new one, for a box whose working key may have been taken; if the server refuses the new prekey for the day's renewals, they are revoked all the same")
 		if err := parse(); err != nil {
 			return err
 		}
@@ -405,21 +408,29 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 		if err != nil {
 			return err
 		}
-		p, err := b.Rekey(ctx, kt)
-		if err != nil {
+		if !*earlier {
+			p, err := b.Rekey(ctx, kt)
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintf(stdout, "prekey %d, valid until %s\n", p.Serial, p.NotAfter.Format(protocol.TimeLayout))
 			return err
 		}
-		if _, err := fmt.Fprintf(stdout, "prekey %d, valid until %s\n", p.Serial, p.NotAfter.Format(protocol.TimeLayout)); err != nil || !*earlier {
-			return err
+		r, err := b.RenewAndRevoke(ctx, kt)
+		if r == nil {
+			return fmt.Errorf("no new prekey, and nothing is revoked: %w", err)
 		}
-		// Only once the new prekey is published under the new certificate:
-		// the list then names every certificate before it, and never the one
-		// the box is using.
-		list, err := b.RevokeEarlier(ctx)
+		if r.Prekey != nil {
+			if _, err := fmt.Fprintf(stdout, "prekey %d, valid until %s\n", r.Prekey.Serial, r.Prekey.NotAfter.Format(protocol.TimeLayout)); err != nil {
+				return err
+			}
+		}
 		switch {
-		case list == nil && err != nil:
+		case r.List == nil && r.NotRenewed != nil:
+			return fmt.Errorf("the new prekey is NOT published, and nothing is revoked: %w. A list goes out without the new prekey only when the server refuses it for the day's renewals", r.NotRenewed)
+		case r.List == nil && err != nil:
 			return fmt.Errorf("the new prekey is published, and the earlier certificates are NOT revoked: %w", err)
-		case list == nil:
+		case r.List == nil:
 			_, err = fmt.Fprintln(stdout, "no earlier certificate to revoke")
 			return err
 		}
@@ -427,10 +438,14 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 		// A server took the list, and not every one: it is out, this box
 		// keeps it, and the record it keeps is what publishes it again.
 		if err != nil {
-			return fmt.Errorf("the new prekey is published, and the list that revokes the certificates before %d, version %d, is not everywhere: %w. This box keeps the list, and this publishes it again: irongall revoked --publish %s", p.Serial, list.Version, err, filepath.Join(b.Dir(), "revoked-certs.json"))
+			return fmt.Errorf("the list that revokes the certificates before %d, version %d, is not everywhere: %w. This box keeps the list, and this publishes it again: irongall revoked --publish %s", r.Below, r.List.Version, err, filepath.Join(dir, "revoked-certs.json"))
 		}
-		_, err = fmt.Fprintf(stdout, "certificates before %d revoked, list version %d\n", p.Serial, list.Version)
-		return err
+		if _, err := fmt.Fprintf(stdout, "certificates before %d revoked, list version %d\n", r.Below, r.List.Version); err != nil || r.NotRenewed == nil {
+			return err
+		}
+		// The list went out without the new prekey: the box is dark until
+		// the server takes it.
+		return fmt.Errorf("the new prekey is NOT published: %w. Every certificate before %d is revoked, the one this box was using among them, so it takes no mail until the new prekey is taken: irongall rekey sends it again, and so does irongall recv", r.NotRenewed, r.Below)
 
 	case "adopt":
 		leave := fs.Bool("leave", false, "leave the box's account")
