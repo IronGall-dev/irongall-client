@@ -28,7 +28,7 @@ import (
 //     certificate outranks any serial under an earlier one, so a box that
 //     moved to a new certificate is followed whatever serial it publishes.
 //   - Its certificate may not be one the peer's identity has revoked, by the
-//     list this box holds, and it may not have expired.
+//     revocation this box holds, and it may not have expired.
 //   - A peer this box holds a revocation of is refused before anything is
 //     asked: a [RevokedError], whatever the server now serves for it.
 //
@@ -70,11 +70,11 @@ func (b *Box) Resolve(ctx context.Context, peer protocol.Address) (*protocol.Pre
 	if cert.Serial() == seenCert && p.Serial < seen {
 		return nil, refuse("rollback: %s's prekey serial %d is below %d, already seen", peer, p.Serial, seen)
 	}
-	list, err := b.revokedCerts(peer)
+	certs, err := b.revokedCerts(peer)
 	if err != nil {
 		return nil, err
 	}
-	if list != nil && list.Revokes(cert.Serial()) {
+	if certs != nil && certs.Revokes(cert.Serial()) {
 		return nil, refuse("%s's prekey is signed under a certificate its identity has revoked: its owner must publish a new one", peer)
 	}
 	if p.Expired(b.now()) {
@@ -135,7 +135,7 @@ func (b *Box) identityOf(peer protocol.Address, served []byte) (*protocol.Identi
 // pin keeps a peer's identity document, unless it is kept already. It is
 // called only for an identity that has signed something this box verified: a
 // prekey statement it will encrypt to, mail it delivers, a revocation of its
-// address or a list of its revoked certificates. So peers/<a>/ exists only
+// address or of its certificates. So peers/<a>/ exists only
 // for a peer that has signed something.
 func (b *Box) pin(id *protocol.Identity) error {
 	d := b.path("peers", id.Address().String())

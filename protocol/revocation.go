@@ -23,10 +23,10 @@ type Revocations struct {
 	// Revocation is the identity's signature over RevocationStatement, in
 	// RevokeNamespace: the address is revoked, for good.
 	Revocation Bytes `json:"revocation,omitempty"`
-	// RevokedCertificates is the address's list of revoked certificates, and
-	// RevokedCertificatesSignature the identity's signature over it
-	// (VerifyRevokedCertificates): the address goes on, and nothing signed
-	// under a listed certificate is taken.
+	// RevokedCertificates is the address's revocation of its certificates
+	// through a serial, and RevokedCertificatesSignature the identity's
+	// signature over it (VerifyRevokedCertificates): the address goes on, and
+	// nothing signed under a revoked certificate is taken.
 	RevokedCertificates          Bytes `json:"revoked_certificates,omitempty"`
 	RevokedCertificatesSignature Bytes `json:"revoked_certificates_signature,omitempty"`
 }

@@ -47,7 +47,7 @@ type box struct {
 	account   string                // the account it is in, or ""
 	senders   []string              // the sender key types it declared with its current prekey
 	revoked   []byte                // the identity's revocation, once the box is revoked: it is gone for good
-	// The identity's list of revoked certificates, as put, and parsed.
+	// The identity's revocation of its certificates, as put, and parsed.
 	certList, certListSig []byte
 	listed                *protocol.RevokedCertificates
 	messages              map[string]*message
@@ -286,20 +286,20 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 		problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
 		return
 	}
-	// A list of revoked certificates: the address goes on. The highest
-	// version stands.
+	// A revocation of certificates: the address goes on. The highest serial
+	// it runs through stands.
 	if len(req.RevokedCertificates) > 0 {
-		list, err := protocol.VerifyRevokedCertificates(a, req.Identity, req.RevokedCertificates, req.RevokedCertificatesSignature)
+		certs, err := protocol.VerifyRevokedCertificates(a, req.Identity, req.RevokedCertificates, req.RevokedCertificatesSignature)
 		switch {
 		case err != nil:
-			problem(w, protocol.CodeBadRevocation, "not a list of this address's revoked certificates")
+			problem(w, protocol.CodeBadRevocation, "not a revocation of this address's certificates")
 			return
 		case b.listed != nil && bytes.Equal(b.certList, req.RevokedCertificates):
-		case b.listed != nil && list.Version <= b.listed.Version:
-			problem(w, protocol.CodeConflict, "a list of that version or a later one is held")
+		case b.listed != nil && certs.Through <= b.listed.Through:
+			problem(w, protocol.CodeConflict, "a revocation through that serial or a higher one is held")
 			return
 		default:
-			b.certList, b.certListSig, b.listed = req.RevokedCertificates, req.RevokedCertificatesSignature, list
+			b.certList, b.certListSig, b.listed = req.RevokedCertificates, req.RevokedCertificatesSignature, certs
 		}
 		if len(req.Revocation) == 0 {
 			WriteJSON(w, http.StatusOK, struct{}{})
@@ -319,7 +319,7 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 }
 
 // current reports whether the box's current certificate is one its identity
-// has not revoked: a box whose certificate is listed has no pass the server
+// has not revoked: a box whose certificate is revoked has no pass the server
 // takes and no prekey a sender may use, until it publishes under a new one.
 func (b *box) current() bool { return b.listed == nil || !b.listed.Revokes(b.cert.Serial()) }
 

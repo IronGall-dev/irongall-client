@@ -5,12 +5,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
 	"github.com/IronGall-dev/irongall-client/protocol"
+	"golang.org/x/crypto/ssh"
 )
 
 // A box numbers a certificate by its own clock, and the prekey and working
@@ -24,6 +26,12 @@ import (
 // alone, on another machine.
 func restore(t *testing.T, e *env, b *client.Box) *client.Box {
 	t.Helper()
+	return restoreWith(t, e, b, e.clock.Now)
+}
+
+// restoreWith is restore on a machine whose clock is now.
+func restoreWith(t *testing.T, e *env, b *client.Box, now func() time.Time) *client.Box {
+	t.Helper()
 	dir := t.TempDir()
 	key, err := os.ReadFile(filepath.Join(b.Dir(), "identity"))
 	if err != nil {
@@ -32,7 +40,9 @@ func restore(t *testing.T, e *env, b *client.Box) *client.Box {
 	if err := os.WriteFile(filepath.Join(dir, "identity"), key, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	r, err := client.Open(dir, e.opts())
+	opt := e.opts()
+	opt.Now = now
+	r, err := client.Open(dir, opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,11 +120,11 @@ func TestABoxNumbersByItsClock(t *testing.T) {
 // key under a certificate nobody else has seen. The identity, restored on
 // another machine, knows only what the server shows it, which is the
 // statement before that one. Numbered by a count from what the server shows,
-// its new certificate would take the lost one's serial, and no list could
+// its new certificate would take the lost one's serial, and no revocation could
 // name the lost one apart from the box's own. Numbered by its clock it is
-// above the lost one, the list of everything before it names the lost one,
+// above the lost one, the revocation of everything before it covers the lost one,
 // and what the machine's taker signs with that key is refused by whoever
-// holds the list.
+// holds the revocation.
 func TestARestoredBoxRevokesWhatTheLostMachineNeverPublished(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
@@ -140,18 +150,18 @@ func TestARestoredBoxRevokesWhatTheLostMachineNeverPublished(t *testing.T) {
 	if now := uint64(e.clock.Now().Unix()); p.Serial != now || p.Serial <= waiting { //nolint:gosec // a test's clock, after 1970
 		t.Fatalf("the restored box numbered its certificate %d: its clock reads %d, and the lost machine's is %d", p.Serial, now, waiting)
 	}
-	list, err := r.RevokeEarlier(ctx)
-	if err != nil || list == nil || !list.Revokes(first) || !list.Revokes(waiting) || list.Revokes(p.Serial) {
-		t.Fatalf("the restored box's list: %+v, %v", list, err)
+	certs, err := r.RevokeEarlier(ctx)
+	if err != nil || certs == nil || !certs.Revokes(first) || !certs.Revokes(waiting) || certs.Revokes(p.Serial) {
+		t.Fatalf("the restored box's revocation of its certificates: %+v, %v", certs, err)
 	}
 
-	// The control: the taken key is good under its certificate, so the list
-	// is what refuses it. A reader shown no list delivers what it signs.
+	// The control: the taken key is good under its certificate, so the
+	// revocation is what refuses it. A reader shown none delivers what it signs.
 	control := e.box(protocol.Classic)
 	says(e, protocol.CodeNotRevoked, http.MethodGet, "/revocations")
 	mailAs(t, e, r, control, taken, "signed with the key the lost machine never published")
 	if res := receive(t, control); len(res.Delivered) != 1 {
-		t.Fatalf("the control: mail under the lost machine's certificate, no list shown: %+v", res)
+		t.Fatalf("the control: mail under the lost machine's certificate, no revocation shown: %+v", res)
 	}
 	e.srv.SetMiddle(nil)
 
@@ -191,9 +201,9 @@ func TestALostMachinesFastClockDoesNotDelayTheRemedy(t *testing.T) {
 	if err != nil || p.Serial != ahead+1 || servedCertificate(t, e, r) != ahead+1 {
 		t.Fatalf("the owner's renewal, its clock behind the lost machine's last number: %+v, %v", p, err)
 	}
-	list, err := r.RevokeEarlier(ctx)
-	if err != nil || list == nil || !list.Revokes(ahead) || list.Revokes(p.Serial) {
-		t.Fatalf("the owner's list: %+v, %v", list, err)
+	certs, err := r.RevokeEarlier(ctx)
+	if err != nil || certs == nil || !certs.Revokes(ahead) || certs.Revokes(p.Serial) {
+		t.Fatalf("the owner's revocation of certificates: %+v, %v", certs, err)
 	}
 	mailAs(t, e, r, reader, taken, "signed with the lost machine's key")
 	send(t, r, reader, "from the owner, at once")
@@ -205,9 +215,9 @@ func TestALostMachinesFastClockDoesNotDelayTheRemedy(t *testing.T) {
 
 // A server that answers a restored box from an older record cannot bring its
 // numbers back down: the box takes its number from its clock, above every
-// certificate its identity made before, and its list names them all. Counted
+// certificate its identity made before, and its revocation covers them all. Counted
 // from what it was shown, it would have taken a serial used before, and its
-// list would have stopped below the certificate in use at the time.
+// revocation would have stopped below the certificate in use at the time.
 func TestARestoredBoxShownAnOlderRecordNumbersAboveItAll(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
@@ -235,24 +245,24 @@ func TestARestoredBoxShownAnOlderRecordNumbersAboveItAll(t *testing.T) {
 		t.Fatalf("a restored box shown the statement of certificate %d, where %d was in use: %+v, %v", first, third, p, err)
 	}
 	e.srv.SetMiddle(nil)
-	list, err := r.RevokeEarlier(ctx)
-	if err != nil || list == nil || !list.Revokes(first) || !list.Revokes(third) || list.Revokes(p.Serial) {
-		t.Fatalf("its list: %+v, %v", list, err)
+	certs, err := r.RevokeEarlier(ctx)
+	if err != nil || certs == nil || !certs.Revokes(first) || !certs.Revokes(third) || certs.Revokes(p.Serial) {
+		t.Fatalf("its revocation of certificates: %+v, %v", certs, err)
 	}
 }
 
-// The list of every certificate before the one in use is a range that ends
-// one below it, whether this box made any of them or not: a box cannot know
-// what another machine made for its identity, and by the clock all of it is
-// numbered below. The address goes on.
+// The revocation of every certificate before the one in use runs through
+// the serial one below it, whether this box made any of them or not: a box
+// cannot know what another machine made for its identity, and by the clock
+// all of it is numbered below. The address goes on.
 func TestRevokeEarlierNamesEverySerialBelowTheOneInUse(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	n := numberOf(t, a)
-	list, err := a.RevokeEarlier(ctx)
-	if err != nil || list == nil || list.Version != 1 || len(list.Ranges) != 1 || list.Ranges[0] != (protocol.SerialRange{First: 1, Last: n - 1}) || list.Revokes(n) {
-		t.Fatalf("a new box's list: %+v, %v", list, err)
+	certs, err := a.RevokeEarlier(ctx)
+	if err != nil || certs == nil || certs.Through != n-1 || certs.Revokes(n) {
+		t.Fatalf("a new box's revocation of its certificates: %+v, %v", certs, err)
 	}
 	send(t, a, b, "under the certificate in use")
 	send(t, b, a, "to the box that revoked everything before it")
@@ -261,5 +271,57 @@ func TestRevokeEarlierNamesEverySerialBelowTheOneInUse(t *testing.T) {
 	}
 	if res := receive(t, a); len(res.Delivered) != 1 {
 		t.Fatalf("the box no longer receives: %+v", res)
+	}
+}
+
+// A box never makes a certificate its own identity has revoked. A revocation
+// through a serial far above its clock, a slip of a digit, passes its next
+// certificate above it, and the box goes on; one through the highest serial
+// there is leaves no certificate to make, and the box says so.
+func TestARenewalIsNumberedAboveTheBoxsOwnRevocation(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	key, err := os.ReadFile(filepath.Join(a.Dir(), "identity"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := ssh.ParsePrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revokeThrough := func(through uint64) {
+		t.Helper()
+		certs, err := protocol.NewRevokedCertificates(a.Address(), through)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sig, err := protocol.SignRevokedCertificates(id, certs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rec := &protocol.Revocations{Identity: a.Identity().Document(), RevokedCertificates: certs.Statement(), RevokedCertificatesSignature: sig}
+		if _, _, err := a.KeepRevocation(rec); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := a.Publish(ctx, rec); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ahead := numberOf(t, a) + 1_000_000
+	revokeThrough(ahead)
+	p, err := a.Rekey(ctx, "")
+	if err != nil || p.Serial != ahead+1 {
+		t.Fatalf("a renewal after a revocation through %d: %+v, %v", ahead, p, err)
+	}
+	send(t, b, a, "to a box whose identity revoked past its clock")
+	if res := receive(t, a); len(res.Delivered) != 1 {
+		t.Fatalf("the box after its renewal: %+v", res)
+	}
+
+	revokeThrough(protocol.MaxSerial)
+	if _, err := a.Rekey(ctx, ""); err == nil || !strings.Contains(err.Error(), "revoked its certificates through the highest serial there is") {
+		t.Fatalf("a renewal after a revocation through the highest serial: %v", err)
 	}
 }

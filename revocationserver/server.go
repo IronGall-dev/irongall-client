@@ -1,6 +1,6 @@
 // Package revocationserver is a revocation server: a small server that keeps
 // what an address's identity has signed about it, a revocation of the address
-// or a list of its revoked certificates, and hands it to whoever asks for
+// or of its certificates, and hands it to whoever asks for
 // that address (PROTOCOL.md §6.3, "Revocation servers").
 //
 // It is to revocations what a keyserver is to keys, and it is no mailbox
@@ -130,7 +130,7 @@ func (s *Server) Held() int { return s.store.count() }
 const about = `irongall revocation server
 
 It keeps what an address's identity has signed about it: a revocation of the
-address, a list of its revoked certificates, or both. It answers for an
+address, a revocation of its certificates, or both. It answers for an
 address its asker already holds, and it lists nothing.
 
   GET /v1/<address>/revocations   the record held, or 404 not_revoked
@@ -199,8 +199,9 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) error {
 }
 
 const (
-	hintRecord = "a record is the identity document with what the identity key itself signed: a revocation of the address (irongall revocation makes it), a list of its revoked certificates (irongall rekey --revoke-earlier), or both"
+	hintRecord = "a record is the identity document with what the identity key itself signed: a revocation of the address (irongall revocation makes it), a revocation of its certificates (irongall rekey --revoke-earlier), or both"
 	hintFull   = "publish it at another revocation server, and tell this one's operator"
+	hintHigher = "GET the same path for the one held: it covers every certificate yours does"
 )
 
 // put is PUT /v1/<address>/revocations: a record, kept once every part of it
@@ -208,11 +209,11 @@ const (
 // authority, and whoever holds a record may bring it.
 //
 // A revocation of the address is kept for good: 201 the first time, 200
-// after. A list of revoked certificates is the whole list each time, and the
-// highest version stands: one that is not above the list held is 409, and
-// the same list again changes nothing. A revoked address takes no list. A
-// body may carry both, and everything in it is checked before anything is
-// kept.
+// after. A revocation of certificates runs through a serial, and the highest
+// stands: one through a lower serial than the one held is 409, and the same
+// one again changes nothing. A revoked address takes no revocation of its
+// certificates. A body may carry both, and everything in it is checked
+// before anything is kept.
 //
 // What is already held, sent again, is answered with no signature checked.
 // Everything else counts against its caller before it is checked, whether
@@ -226,14 +227,14 @@ func (s *Server) put(w http.ResponseWriter, r *http.Request) error {
 	if err := s.body(w, r, &req); err != nil {
 		return err
 	}
-	hasList := req.RevokedCertificates != nil || req.RevokedCertificatesSignature != nil
+	hasCerts := req.RevokedCertificates != nil || req.RevokedCertificatesSignature != nil
 	switch {
 	case req.Identity == nil:
 		return refuse(protocol.CodeBadRequest, hintRecord, "missing field \"identity\"")
-	case hasList && (req.RevokedCertificates == nil || req.RevokedCertificatesSignature == nil):
-		return refuse(protocol.CodeBadRequest, hintRecord, "a list of revoked certificates comes with its signature: \"revoked_certificates\" and \"revoked_certificates_signature\"")
-	case !hasList && req.Revocation == nil:
-		return refuse(protocol.CodeBadRequest, hintRecord, "the record holds no revocation and no list of revoked certificates")
+	case hasCerts && (req.RevokedCertificates == nil || req.RevokedCertificatesSignature == nil):
+		return refuse(protocol.CodeBadRequest, hintRecord, "a revocation of certificates comes with its signature: \"revoked_certificates\" and \"revoked_certificates_signature\"")
+	case !hasCerts && req.Revocation == nil:
+		return refuse(protocol.CodeBadRequest, hintRecord, "the record holds no revocation of the address and none of its certificates")
 	}
 	if protocol.Address(sha256.Sum256(req.Identity)) != a {
 		return refuse(protocol.CodeIdentityMismatch, hintRecord, "the identity document does not hash to the address")
@@ -252,10 +253,10 @@ func (s *Server) put(w http.ResponseWriter, r *http.Request) error {
 		p.retryAfter = wait
 		return p
 	}
-	var list *protocol.RevokedCertificates
-	if hasList {
-		if list, err = protocol.VerifyRevokedCertificates(a, req.Identity, req.RevokedCertificates, req.RevokedCertificatesSignature); err != nil {
-			return unverified(err, "this is not a list of this address's revoked certificates")
+	var certs *protocol.RevokedCertificates
+	if hasCerts {
+		if certs, err = protocol.VerifyRevokedCertificates(a, req.Identity, req.RevokedCertificates, req.RevokedCertificatesSignature); err != nil {
+			return unverified(err, "this is not a revocation of this address's certificates")
 		}
 	}
 	if req.Revocation != nil {
@@ -278,16 +279,16 @@ func (s *Server) put(w http.ResponseWriter, r *http.Request) error {
 		keep = *held
 	}
 	status, changed := http.StatusOK, false
-	// A revoked address takes no list: it is ended, and a list says which of
-	// its certificates still stand.
-	if list != nil && keep.Revocation == nil && !bytes.Equal(req.RevokedCertificates, keep.RevokedCertificates) {
+	// A revoked address takes no revocation of its certificates: it is
+	// ended, and that says which of its certificates still stand.
+	if certs != nil && keep.Revocation == nil && !bytes.Equal(req.RevokedCertificates, keep.RevokedCertificates) {
 		if keep.RevokedCertificates != nil {
 			was, err := protocol.ParseRevokedCertificates(keep.RevokedCertificates)
 			if err != nil {
-				return fmt.Errorf("the list kept for %s: %w", a, err)
+				return fmt.Errorf("the revocation of certificates kept for %s: %w", a, err)
 			}
-			if list.Version <= was.Version {
-				return refuse(protocol.CodeConflict, "sign the whole list again under a version above the one held", "a list of version %d is held, and a later one must be above it", was.Version)
+			if certs.Through <= was.Through {
+				return refuse(protocol.CodeConflict, hintHigher, "a revocation of this address's certificates through serial %d is held, and nothing revokes fewer", was.Through)
 			}
 		}
 		keep.RevokedCertificates, keep.RevokedCertificatesSignature, changed = req.RevokedCertificates, req.RevokedCertificatesSignature, true
@@ -306,16 +307,16 @@ func (s *Server) put(w http.ResponseWriter, r *http.Request) error {
 		if err := s.store.write(a, &keep); err != nil {
 			return err
 		}
-		s.logf("kept for %s: revoked=%t list=%t", a, keep.Revocation != nil, keep.RevokedCertificates != nil)
+		s.logf("kept for %s: revoked=%t certificates=%t", a, keep.Revocation != nil, keep.RevokedCertificates != nil)
 	}
 	writeJSON(w, status, struct{}{})
 	return nil
 }
 
 // answered answers a record from what is held alone, with no signature
-// checked, when that settles it: a revoked address takes no list, and what is
-// held byte for byte was verified when it was kept. It reports whether it
-// answered.
+// checked, when that settles it: a revoked address takes no revocation of its
+// certificates, and what is held byte for byte was verified when it was kept.
+// It reports whether it answered.
 func answered(w http.ResponseWriter, req, held *protocol.Revocations) (bool, error) {
 	if held.Revocation != nil && req.Revocation == nil {
 		return true, revoked()
@@ -336,9 +337,10 @@ func answered(w http.ResponseWriter, req, held *protocol.Revocations) (bool, err
 	return true, nil
 }
 
-// revoked is the answer to a list for an address whose revocation is held.
+// revoked is the answer to a revocation of certificates for an address whose
+// revocation is held.
 func revoked() *problem {
-	return refuse(protocol.CodeRevoked, "the address is revoked, for good: GET the same path for the record, and check it", "a revocation of this address is held here, and a revoked address takes no list")
+	return refuse(protocol.CodeRevoked, "the address is revoked, for good: GET the same path for the record, and check it", "a revocation of this address is held here, and a revoked address takes no revocation of its certificates")
 }
 
 // unverified is the answer to a part of a record that did not verify.

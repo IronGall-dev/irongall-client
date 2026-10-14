@@ -59,7 +59,7 @@ func (b *Box) Send(ctx context.Context, to protocol.Address, body string) (*prot
 // the envelope and the server's receipt are kept in sent/.
 //
 // Before anything is posted the server is asked what it holds about the
-// peer: a revocation of its address, or a list of its revoked certificates.
+// peer: a revocation of its address, or of its certificates.
 // What verifies is kept, and the send is checked against what the box then
 // holds. With no answer nothing is posted, and the message stays in the
 // outbox.
@@ -282,11 +282,11 @@ func (b *Box) sealStands(to protocol.Address, stem string) (bool, error) {
 	if protocol.Unmarshal(j, &req) != nil || req.CertificateSerial == nil {
 		return false, nil
 	}
-	list, err := b.revokedCerts(to)
+	certs, err := b.revokedCerts(to)
 	if err != nil {
 		return false, err
 	}
-	return list == nil || !list.Revokes(*req.CertificateSerial), nil
+	return certs == nil || !certs.Revokes(*req.CertificateSerial), nil
 }
 
 // expired reports whether an entry's envelope is older than protocol.TTL, the

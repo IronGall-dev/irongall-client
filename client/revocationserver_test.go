@@ -211,9 +211,9 @@ func TestARevocationServerShowsWhatTheMailboxServerHides(t *testing.T) {
 }
 
 // A taken working key, and a mailbox server that serves senders the thief's
-// statement and hides the list that revokes its certificate. The list is at
+// statement and hides the revocation of its certificate. The revocation is at
 // the revocation server, where the box's owner published it.
-func TestARevocationServerShowsAListTheMailboxServerHides(t *testing.T) {
+func TestARevocationServerShowsRevokedCertificatesTheMailboxServerHides(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	rs := newRevServer(t)
@@ -221,7 +221,7 @@ func TestARevocationServerShowsAListTheMailboxServerHides(t *testing.T) {
 	taken := numberOf(t, a)
 	statement, signature := theft(t, e, a)
 	if got := rs.holds(t, a.Address()); got == nil || got.RevokedCertificates == nil || got.Revocation != nil {
-		t.Fatal("rekey --revoke-earlier did not publish the list to the revocation server")
+		t.Fatal("rekey --revoke-earlier did not publish the revocation of certificates to the revocation server")
 	}
 
 	// The control: asking the mailbox server alone, a sender posts to the
@@ -391,7 +391,7 @@ func TestWhatARevocationServerShowsIsChecked(t *testing.T) {
 	for name, rec := range map[string]protocol.Revocations{
 		"another box's revocation":                *foreign,
 		"another box's signature under this name": {Identity: b.Identity().Document(), Revocation: foreign.Revocation},
-		"a list nobody signed":                    {Identity: b.Identity().Document(), RevokedCertificates: []byte("irongall-revoked-certs-v1\n" + b.Address().String() + "\n1\n1\n"), RevokedCertificatesSignature: foreign.Revocation},
+		"certificates nobody revoked":             {Identity: b.Identity().Document(), RevokedCertificates: []byte(protocol.RevokedCertsTag + "\n" + b.Address().String() + "\n1\n"), RevokedCertificatesSignature: foreign.Revocation},
 	} {
 		rs.set(func(w http.ResponseWriter, _ *http.Request) bool {
 			fakeserver.WriteJSON(w, http.StatusOK, rec)
@@ -473,9 +473,9 @@ func TestARecordIsPublishedAtEveryServer(t *testing.T) {
 	}
 }
 
-// A list of revoked certificates that not every server took is out all the
+// A revocation of certificates that not every server took is out all the
 // same: the box keeps it, and the record it keeps publishes it again.
-func TestAListNotEverywhereIsKeptAndPublishedAgain(t *testing.T) {
+func TestRevokedCertificatesNotEverywhereAreKeptAndPublishedAgain(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	rs := newRevServer(t)

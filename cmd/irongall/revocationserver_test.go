@@ -81,7 +81,7 @@ func TestTheCommandsWithARevocationServer(t *testing.T) {
 		t.Fatalf("send with the revocation server down: %v %q %q", err, out, warn)
 	}
 
-	// rekey --revoke-earlier with it down: the list is at the box's own
+	// rekey --revoke-earlier with it down: the revocation is at the box's own
 	// server, the command fails and says where it is not, and how to send
 	// it there.
 	out, _, err = cmd(a, "rekey", "--revoke-earlier")
@@ -95,16 +95,16 @@ func TestTheCommandsWithARevocationServer(t *testing.T) {
 	}
 	down.Store(false)
 	if holds(a.Address()) != http.StatusNotFound {
-		t.Fatal("the revocation server holds a list it never took")
+		t.Fatal("the revocation server holds a revocation of certificates it never took")
 	}
-	if out, _, err := cmd(a, "revoked", "--publish", kept); err != nil || out != "published the list of revoked certificates of "+a.Address().String()+", version 1\n" {
+	if out, _, err := cmd(a, "revoked", "--publish", kept); err != nil || !strings.HasPrefix(out, "published the revocation of the certificates of "+a.Address().String()+" through ") {
 		t.Fatalf("revoked --publish: %v %q", err, out)
 	}
 	if holds(a.Address()) != http.StatusOK {
-		t.Fatal("the list did not reach the revocation server")
+		t.Fatal("the revocation of certificates did not reach the revocation server")
 	}
 	// With every server up, one command does it.
-	if out, _, err := cmd(a, "rekey", "--revoke-earlier"); err != nil || !strings.Contains(out, "revoked, list version 2\n") {
+	if out, _, err := cmd(a, "rekey", "--revoke-earlier"); err != nil || !strings.Contains(out, " revoked\n") || !strings.Contains(out, "certificates through ") {
 		t.Fatalf("rekey --revoke-earlier: %v %q", err, out)
 	}
 
@@ -128,7 +128,7 @@ func TestTheCommandsWithARevocationServer(t *testing.T) {
 	}
 
 	// What ends an address is never published without that address written
-	// out: revoked --publish takes a list and nothing more.
+	// out: revoked --publish takes a revocation of certificates and nothing more.
 	rec, _, err := cmd(b, "revocation")
 	if err != nil {
 		t.Fatal(err)

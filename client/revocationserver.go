@@ -116,12 +116,13 @@ func newLookups() *lookups {
 	return &lookups{answered: map[protocol.Address]bool{}, silent: map[string]bool{}}
 }
 
-// take keeps what verifies of a record a server showed for a: a list of its
-// revoked certificates, a revocation of the address, or both. It reports
+// take keeps what verifies of a record a server showed for a: a revocation of
+// its certificates, of the address, or both. It reports
 // whether the box now holds a revocation of a. What does not verify counts
 // as nothing shown: only the identity's own signature revokes.
 func (b *Box) take(a protocol.Address, rec *protocol.Revocations) (bool, error) {
-	// The list is taken or not on its own: the address may well go on.
+	// A revocation of certificates is taken or not on its own: the address may
+	// well go on.
 	if err := b.keepRevokedCerts(a, rec.Identity, rec.RevokedCertificates, rec.RevokedCertificatesSignature); err != nil {
 		return false, err
 	}
@@ -226,7 +227,7 @@ func (e *NotPublishedError) Unwrap() []error {
 }
 
 // Publish publishes a record to the server opt names and to each revocation
-// server it lists: a revocation of an address, a list of its revoked
+// server it lists: a revocation of an address, a revocation of its
 // certificates, or both. It needs no box and no key, only the record, so a
 // box that is lost can still be revoked with a record made in advance
 // ([Box.Revocation]). Each part is checked here first, and a record with a
@@ -244,7 +245,7 @@ func Publish(ctx context.Context, opt Options, rec *protocol.Revocations) (proto
 func (b *Box) Publish(ctx context.Context, rec *protocol.Revocations) (protocol.Address, error) {
 	a := protocol.Address(sha256.Sum256(rec.Identity))
 	if len(rec.Revocation) == 0 && len(rec.RevokedCertificates) == 0 {
-		return a, refuse("the record holds no revocation and no list of revoked certificates")
+		return a, refuse("the record holds no revocation of the address and none of its certificates")
 	}
 	if len(rec.Revocation) > 0 {
 		if _, err := protocol.VerifyRevocation(a, rec.Identity, rec.Revocation); err != nil {
@@ -253,7 +254,7 @@ func (b *Box) Publish(ctx context.Context, rec *protocol.Revocations) (protocol.
 	}
 	if len(rec.RevokedCertificates) > 0 {
 		if _, err := protocol.VerifyRevokedCertificates(a, rec.Identity, rec.RevokedCertificates, rec.RevokedCertificatesSignature); err != nil {
-			return a, refuse("the record's list: %v", err)
+			return a, refuse("the record's revocation of certificates: %v", err)
 		}
 	}
 	return a, b.publishRecord(ctx, a, rec)

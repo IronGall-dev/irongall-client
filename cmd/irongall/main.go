@@ -78,15 +78,15 @@ const usage = `usage: irongall <command> [arguments]
   revoked <file>           take a revocation of another box that someone handed
                            you (a record as revocation prints), check it, and
                            keep it: this box then sends that address nothing
-                           and takes nothing from it. A record may carry the
-                           box's list of revoked certificates, which is kept
+                           and takes nothing from it. A record may carry a
+                           revocation of the box's certificates, which is kept
                            the same way. revoked --ask <link> asks the server
                            and each revocation server what it holds about a
                            box, and keeps what verifies: send does that by
                            itself, before it posts. revoked --publish <file>
-                           sends a record that carries a list of revoked
-                           certificates, and no revocation, to the server and
-                           each revocation server: this box's own
+                           sends a record that carries a revocation of
+                           certificates, and none of the address, to the
+                           server and each revocation server: this box's own
                            revoked-certs.json, when a server did not take it
 
 The box lives in $IRONGALL_HOME, or ${XDG_CONFIG_HOME:-~/.config}/irongall/${IRONGALL_BOX:-default}.
@@ -426,25 +426,25 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 			}
 		}
 		switch {
-		case r.List == nil && r.NotRenewed != nil:
-			return fmt.Errorf("the new prekey is NOT published, and nothing is revoked: %w. A list goes out without the new prekey only when the server refuses it for the day's renewals", r.NotRenewed)
-		case r.List == nil && err != nil:
+		case r.Revoked == nil && r.NotRenewed != nil:
+			return fmt.Errorf("the new prekey is NOT published, and nothing is revoked: %w. The revocation goes out without the new prekey only when the server refuses it for the day's renewals", r.NotRenewed)
+		case r.Revoked == nil && err != nil:
 			return fmt.Errorf("the new prekey is published, and the earlier certificates are NOT revoked: %w", err)
-		case r.List == nil:
+		case r.Revoked == nil:
 			_, err = fmt.Fprintln(stdout, "no earlier certificate to revoke")
 			return err
 		}
 		_, _ = fmt.Fprintln(stderr, "Mail this box sent before now, and that its reader has not read yet, was signed under a certificate just revoked and will be refused: send it again.")
-		// A server took the list, and not every one: it is out, this box
-		// keeps it, and the record it keeps is what publishes it again.
+		// A server took the revocation, and not every one: it is out, this
+		// box keeps it, and the record it keeps is what publishes it again.
 		if err != nil {
-			return fmt.Errorf("the list that revokes the certificates before %d, version %d, is not everywhere: %w. This box keeps the list, and this publishes it again: irongall revoked --publish %s", r.Below, r.List.Version, err, filepath.Join(dir, "revoked-certs.json"))
+			return fmt.Errorf("the revocation of the certificates through %d is not everywhere: %w. This box keeps it, and this publishes it again: irongall revoked --publish %s", r.Revoked.Through, err, filepath.Join(dir, "revoked-certs.json"))
 		}
-		if _, err := fmt.Fprintf(stdout, "certificates before %d revoked, list version %d\n", r.Below, r.List.Version); err != nil || r.NotRenewed == nil {
+		if _, err := fmt.Fprintf(stdout, "certificates through %d revoked\n", r.Revoked.Through); err != nil || r.NotRenewed == nil {
 			return err
 		}
-		// The list went out without the new prekey: the box is dark until
-		// the server takes it.
+		// The revocation went out without the new prekey: the box is dark
+		// until the server takes it.
 		return fmt.Errorf("the new prekey is NOT published: %w. Every certificate before %d is revoked, the one this box was using among them, so it takes no mail until the new prekey is taken: irongall rekey sends it again, and so does irongall recv", r.NotRenewed, r.Below)
 
 	case "adopt":
@@ -560,7 +560,7 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 
 	case "revoked":
 		ask := fs.Bool("ask", false, "ask the server, and each revocation server this box lists, what it holds about the box a `link`, address or alias names, in place of reading a record from a file, and keep what verifies")
-		publish := fs.Bool("publish", false, "send the record in the `file`, which carries a list of revoked certificates and no revocation, to the server and to each revocation server this box lists, and keep it")
+		publish := fs.Bool("publish", false, "send the record in the `file`, which carries a revocation of certificates and none of the address, to the server and to each revocation server this box lists, and keep it")
 		if err := parse(); err != nil {
 			return err
 		}
@@ -586,14 +586,14 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 			if a, _, err = b.KeepRevocation(rec); err != nil {
 				return err
 			}
-			list, err := protocol.ParseRevokedCertificates(rec.RevokedCertificates)
+			certs, err := protocol.ParseRevokedCertificates(rec.RevokedCertificates)
 			if err != nil {
 				return err
 			}
 			if _, err := b.Publish(ctx, rec); err != nil {
 				return err
 			}
-			_, err = fmt.Fprintf(stdout, "published the list of revoked certificates of %s, version %d\n", a, list.Version)
+			_, err = fmt.Fprintf(stdout, "published the revocation of the certificates of %s through %d\n", a, certs.Through)
 			return err
 		}
 		if *ask {
@@ -618,7 +618,7 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 		case held.Revoked:
 			_, err = fmt.Fprintf(stdout, "revoked %s\n", a)
 		case held.Certificates != nil:
-			_, err = fmt.Fprintf(stdout, "certificates of %s revoked, list version %d\n", a, held.Certificates.Version)
+			_, err = fmt.Fprintf(stdout, "certificates of %s revoked through %d\n", a, held.Certificates.Through)
 		default:
 			_, _ = fmt.Fprintln(stderr, "That is the word of whoever was asked, this box's server and the revocation servers it lists, and any of them can keep a record back: a record from the box's owner settles it (irongall revoked <file>).")
 			_, err = fmt.Fprintf(stdout, "no revocation of %s shown\n", a)
@@ -651,7 +651,7 @@ func readRecord(name string) (*protocol.Revocations, error) {
 	}
 	var rec protocol.Revocations
 	if len(data) > maxRecord || protocol.Unmarshal(data, &rec) != nil || len(rec.Identity) == 0 || (len(rec.Revocation) == 0 && len(rec.RevokedCertificates) == 0) {
-		return nil, errors.New("the file is not a revocation record: one is a line of JSON with \"identity\" and \"revocation\", as irongall revocation prints, or with a list of revoked certificates")
+		return nil, errors.New("the file is not a revocation record: one is a line of JSON with \"identity\" and \"revocation\", as irongall revocation prints, or with a revocation of its certificates")
 	}
 	return &rec, nil
 }

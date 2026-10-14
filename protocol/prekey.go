@@ -26,7 +26,7 @@ const (
 	// is the pass's rule (PassLifetime, MaxPassLifetime).
 	MaxPrekeyLifetime = PrekeyLifetime + MaxSkew
 	// MaxSerial is the largest serial, of a prekey or a certificate, and the
-	// largest number in a list of revoked certificates: MaxInteger, 2^53 − 1,
+	// largest a revocation of certificates runs through: MaxInteger, 2^53 − 1,
 	// since a send names a prekey by its two serials as JSON numbers, and
 	// RFC 7493 promises no reader holds a larger integer exactly.
 	MaxSerial = MaxInteger

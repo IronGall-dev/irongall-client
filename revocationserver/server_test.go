@@ -68,11 +68,11 @@ func (p *who) revocation(t *testing.T) *protocol.Revocations {
 	return &protocol.Revocations{Identity: p.doc, Revocation: sig}
 }
 
-// list returns the record that carries a list of the address's revoked
-// certificates: the serials first to last, under a version.
-func (p *who) list(t *testing.T, version, first, last uint64) *protocol.Revocations {
+// certs returns the record that carries a revocation of the address's
+// certificates through a serial.
+func (p *who) certs(t *testing.T, through uint64) *protocol.Revocations {
 	t.Helper()
-	l, err := protocol.NewRevokedCertificates(p.addr, version, []protocol.SerialRange{{First: first, Last: last}})
+	l, err := protocol.NewRevokedCertificates(p.addr, through)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,14 +266,14 @@ func TestWhatDoesNotVerifyIsNotKept(t *testing.T) {
 	want(t, s.put(p.addr, &protocol.Revocations{Identity: p.doc, Revocation: sig}), http.StatusBadRequest, protocol.CodeBadRevocation)
 	// A record of another address, good in itself.
 	want(t, s.put(p.addr, other.revocation(t)), http.StatusBadRequest, protocol.CodeIdentityMismatch)
-	// A good revocation with a list whose signature is not the list's:
-	// everything is checked before anything is kept.
+	// A good revocation with a revocation of certificates whose signature is
+	// another's: everything is checked before anything is kept.
 	both := p.revocation(t)
-	both.RevokedCertificates = p.list(t, 1, 1, 3).RevokedCertificates
-	both.RevokedCertificatesSignature = p.list(t, 2, 1, 3).RevokedCertificatesSignature
+	both.RevokedCertificates = p.certs(t, 3).RevokedCertificates
+	both.RevokedCertificatesSignature = p.certs(t, 4).RevokedCertificatesSignature
 	want(t, s.put(p.addr, both), http.StatusBadRequest, protocol.CodeBadRevocation)
-	// A good list with a revocation that is not one.
-	both = p.list(t, 1, 1, 3)
+	// A good revocation of certificates with a revocation that is not one.
+	both = p.certs(t, 3)
 	both.Revocation = sig
 	want(t, s.put(p.addr, both), http.StatusBadRequest, protocol.CodeBadRevocation)
 
@@ -289,15 +289,15 @@ func TestWhatIsNotARecordIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	list := p.list(t, 1, 1, 3)
+	certs := p.certs(t, 3)
 	for name, c := range map[string]struct {
 		body string
 		code protocol.Code
 	}{
 		"no identity":            {`{"revocation":"AAAA"}`, protocol.CodeBadRequest},
 		"nothing signed":         {`{"identity":"AAAA"}`, protocol.CodeBadRequest},
-		"a list, no signature":   {`{"identity":"AAAA","revoked_certificates":"AAAA"}`, protocol.CodeBadRequest},
-		"a signature, no list":   {`{"identity":"AAAA","revoked_certificates_signature":"AAAA"}`, protocol.CodeBadRequest},
+		"certs, no signature":    {`{"identity":"AAAA","revoked_certificates":"AAAA"}`, protocol.CodeBadRequest},
+		"a signature, no certs":  {`{"identity":"AAAA","revoked_certificates_signature":"AAAA"}`, protocol.CodeBadRequest},
 		"an unknown member":      {`{"identity":"AAAA","revocation":"AAAA","reason":"x"}`, protocol.CodeBadRequest},
 		"two values":             {string(good) + string(good), protocol.CodeBadRequest},
 		"not JSON":               {`revoke it`, protocol.CodeBadRequest},
@@ -310,7 +310,7 @@ func TestWhatIsNotARecordIsRefused(t *testing.T) {
 		"a bracket after it":     {string(good) + `]`, protocol.CodeBadRequest},
 		"NaN beside it":          {strings.Replace(string(good), `{`, `{"x":NaN,`, 1), protocol.CodeBadRequest},
 		"over the largest body":  {`{"identity":"` + strings.Repeat("A", 8192) + `"}`, protocol.CodeTooLarge},
-		"an empty list is a bad": {`{"identity":"` + b64(p.doc) + `","revoked_certificates":"","revoked_certificates_signature":"` + b64(list.RevokedCertificatesSignature) + `"}`, protocol.CodeBadRevocation},
+		"empty certs are a bad":  {`{"identity":"` + b64(p.doc) + `","revoked_certificates":"","revoked_certificates_signature":"` + b64(certs.RevokedCertificatesSignature) + `"}`, protocol.CodeBadRevocation},
 	} {
 		got := s.do(http.MethodPut, path(p.addr), []byte(c.body))
 		if got.status != c.code.Status() || got.code != c.code {
@@ -329,29 +329,28 @@ func b64(b []byte) string {
 	return strings.Trim(string(j), `"`)
 }
 
-func TestAListTheHighestVersionStands(t *testing.T) {
+func TestTheHighestRevocationOfCertificatesStands(t *testing.T) {
 	s := start(t, nil)
 	p := newWho(t)
 
-	v1, v2 := p.list(t, 1, 1, 3), p.list(t, 2, 1, 5)
-	want(t, s.put(p.addr, v1), http.StatusOK, "")
+	through3, through5 := p.certs(t, 3), p.certs(t, 5)
+	want(t, s.put(p.addr, through3), http.StatusOK, "")
 	served := s.held(p.addr)
 	if served == nil || served.Revocation != nil {
-		t.Fatal("a list alone: the address goes on, and the list is served")
+		t.Fatal("certificates revoked alone: the address goes on, and the revocation is served")
 	}
 	l, err := protocol.VerifyRevokedCertificates(p.addr, served.Identity, served.RevokedCertificates, served.RevokedCertificatesSignature)
-	if err != nil || l.Version != 1 || !l.Revokes(3) || l.Revokes(4) {
-		t.Fatalf("the list served: %v, %+v", err, l)
+	if err != nil || l.Through != 3 || !l.Revokes(3) || l.Revokes(4) {
+		t.Fatalf("the revocation served: %v, %+v", err, l)
 	}
-	want(t, s.put(p.addr, v2), http.StatusOK, "")
-	// An older list never replaces a newer one, and neither does another
-	// list of the version held.
-	want(t, s.put(p.addr, v1), http.StatusConflict, protocol.CodeConflict)
-	want(t, s.put(p.addr, p.list(t, 2, 1, 9)), http.StatusConflict, protocol.CodeConflict)
-	// The list held, again, changes nothing.
-	want(t, s.put(p.addr, v2), http.StatusOK, "")
-	if served := s.held(p.addr); !bytes.Equal(served.RevokedCertificates, v2.RevokedCertificates) || !bytes.Equal(served.RevokedCertificatesSignature, v2.RevokedCertificatesSignature) {
-		t.Fatal("the list held is not version 2 as it was signed")
+	want(t, s.put(p.addr, through5), http.StatusOK, "")
+	// A lower one never replaces a higher one: what was revoked stays so.
+	want(t, s.put(p.addr, through3), http.StatusConflict, protocol.CodeConflict)
+	want(t, s.put(p.addr, p.certs(t, 4)), http.StatusConflict, protocol.CodeConflict)
+	// The one held, again, changes nothing.
+	want(t, s.put(p.addr, through5), http.StatusOK, "")
+	if served := s.held(p.addr); !bytes.Equal(served.RevokedCertificates, through5.RevokedCertificates) || !bytes.Equal(served.RevokedCertificatesSignature, through5.RevokedCertificatesSignature) {
+		t.Fatal("the revocation held is not the one through 5 as it was signed")
 	}
 }
 
@@ -360,17 +359,17 @@ func TestAListTheHighestVersionStands(t *testing.T) {
 func TestAnEmptyPartIsNotAPartHeld(t *testing.T) {
 	s := start(t, nil)
 	p, q := newWho(t), newWho(t)
-	want(t, s.put(p.addr, p.list(t, 1, 1, 3)), http.StatusOK, "")
+	want(t, s.put(p.addr, p.certs(t, 3)), http.StatusOK, "")
 	want(t, s.put(q.addr, q.revocation(t)), http.StatusCreated, "")
 	rev := b64(q.revocation(t).Revocation)
 	for name, c := range map[string]struct {
 		addr protocol.Address
 		body string
 	}{
-		"an empty revocation, of an address with a list held":         {p.addr, `{"identity":"` + b64(p.doc) + `","revocation":""}`},
-		"an empty list, with the revocation held":                     {q.addr, `{"identity":"` + b64(q.doc) + `","revocation":"` + rev + `","revoked_certificates":"","revoked_certificates_signature":""}`},
-		"an empty signature on the list held":                         {p.addr, `{"identity":"` + b64(p.doc) + `","revoked_certificates":"` + b64(p.list(t, 1, 1, 3).RevokedCertificates) + `","revoked_certificates_signature":""}`},
-		"an empty revocation beside the list held, signature and all": {p.addr, `{"identity":"` + b64(p.doc) + `","revocation":"","revoked_certificates":"` + b64(p.list(t, 1, 1, 3).RevokedCertificates) + `","revoked_certificates_signature":"` + b64(p.list(t, 1, 1, 3).RevokedCertificatesSignature) + `"}`},
+		"an empty revocation, of an address with certs revoked":        {p.addr, `{"identity":"` + b64(p.doc) + `","revocation":""}`},
+		"empty certs, with the revocation held":                        {q.addr, `{"identity":"` + b64(q.doc) + `","revocation":"` + rev + `","revoked_certificates":"","revoked_certificates_signature":""}`},
+		"an empty signature on the certs held":                         {p.addr, `{"identity":"` + b64(p.doc) + `","revoked_certificates":"` + b64(p.certs(t, 3).RevokedCertificates) + `","revoked_certificates_signature":""}`},
+		"an empty revocation beside the certs held, signature and all": {p.addr, `{"identity":"` + b64(p.doc) + `","revocation":"","revoked_certificates":"` + b64(p.certs(t, 3).RevokedCertificates) + `","revoked_certificates_signature":"` + b64(p.certs(t, 3).RevokedCertificatesSignature) + `"}`},
 	} {
 		got := s.do(http.MethodPut, path(c.addr), []byte(c.body))
 		if got.status != http.StatusBadRequest || got.code != protocol.CodeBadRevocation {
@@ -382,36 +381,37 @@ func TestAnEmptyPartIsNotAPartHeld(t *testing.T) {
 	}
 }
 
-func TestARevokedAddressTakesNoList(t *testing.T) {
+func TestARevokedAddressTakesNoRevocationOfCertificates(t *testing.T) {
 	s := start(t, nil)
 	p := newWho(t)
 
-	// A list first, then the revocation: both are held, as a mailbox server
-	// holds both.
-	want(t, s.put(p.addr, p.list(t, 1, 1, 3)), http.StatusOK, "")
+	// Certificates revoked first, then the address: both are held, as a
+	// mailbox server holds both.
+	want(t, s.put(p.addr, p.certs(t, 3)), http.StatusOK, "")
 	want(t, s.put(p.addr, p.revocation(t)), http.StatusCreated, "")
 	if served := s.held(p.addr); served.Revocation == nil || served.RevokedCertificates == nil {
-		t.Fatal("the revocation replaced the list")
+		t.Fatal("the revocation of the address replaced that of its certificates")
 	}
-	// A list for a revoked address, whether or not it verifies.
-	want(t, s.put(p.addr, p.list(t, 2, 1, 5)), http.StatusGone, protocol.CodeRevoked)
-	junk := p.list(t, 3, 1, 5)
+	// Certificates of a revoked address, whether or not it verifies.
+	want(t, s.put(p.addr, p.certs(t, 5)), http.StatusGone, protocol.CodeRevoked)
+	junk := p.certs(t, 6)
 	junk.RevokedCertificatesSignature = []byte("no signature")
 	want(t, s.put(p.addr, junk), http.StatusGone, protocol.CodeRevoked)
-	// With the revocation beside it the body is taken, and the list is not.
-	both := p.list(t, 2, 1, 5)
+	// With the revocation beside it the body is taken, and the revocation of
+	// certificates is not.
+	both := p.certs(t, 5)
 	both.Revocation = p.revocation(t).Revocation
 	want(t, s.put(p.addr, both), http.StatusOK, "")
 	l, err := protocol.ParseRevokedCertificates(s.held(p.addr).RevokedCertificates)
-	if err != nil || l.Version != 1 {
-		t.Fatalf("a revoked address took a list: %v, %+v", err, l)
+	if err != nil || l.Through != 3 {
+		t.Fatalf("a revoked address took a revocation of its certificates: %v, %+v", err, l)
 	}
 }
 
 func TestOneBodyMayCarryBoth(t *testing.T) {
 	s := start(t, nil)
 	p := newWho(t)
-	both := p.list(t, 1, 1, 3)
+	both := p.certs(t, 3)
 	both.Revocation = p.revocation(t).Revocation
 	want(t, s.put(p.addr, both), http.StatusCreated, "")
 	served := s.held(p.addr)
@@ -465,15 +465,15 @@ func TestWritesAreLimitedForEachCaller(t *testing.T) {
 	// Another caller has its own count, and so has each IPv6 /64.
 	want(t, s.put(b.addr, b.revocation(t), "X-Caller", "192.0.2.2"), http.StatusCreated, "")
 	want(t, s.put(c.addr, c.revocation(t), "X-Caller", "2001:db8:0:1::1"), http.StatusCreated, "")
-	want(t, s.put(c.addr, c.list(t, 1, 1, 2), "X-Caller", "2001:db8:0:1::2"), http.StatusGone, protocol.CodeRevoked)
-	want(t, s.put(d.addr, d.list(t, 1, 1, 2), "X-Caller", "2001:db8:0:1::3"), http.StatusOK, "")
-	want(t, s.put(d.addr, d.list(t, 2, 1, 2), "X-Caller", "2001:db8:0:1:ffff::4"), http.StatusTooManyRequests, protocol.CodeRateLimited)
-	want(t, s.put(d.addr, d.list(t, 2, 1, 2), "X-Caller", "2001:db8:0:2::1"), http.StatusOK, "")
+	want(t, s.put(c.addr, c.certs(t, 2), "X-Caller", "2001:db8:0:1::2"), http.StatusGone, protocol.CodeRevoked)
+	want(t, s.put(d.addr, d.certs(t, 2), "X-Caller", "2001:db8:0:1::3"), http.StatusOK, "")
+	want(t, s.put(d.addr, d.certs(t, 3), "X-Caller", "2001:db8:0:1:ffff::4"), http.StatusTooManyRequests, protocol.CodeRateLimited)
+	want(t, s.put(d.addr, d.certs(t, 3), "X-Caller", "2001:db8:0:2::1"), http.StatusOK, "")
 	// The window closes an hour after the caller's first.
 	s.clock.Add(time.Hour - time.Second)
-	want(t, s.put(d.addr, d.list(t, 3, 1, 2), one...), http.StatusTooManyRequests, protocol.CodeRateLimited)
+	want(t, s.put(d.addr, d.certs(t, 4), one...), http.StatusTooManyRequests, protocol.CodeRateLimited)
 	s.clock.Add(time.Second)
-	want(t, s.put(d.addr, d.list(t, 3, 1, 2), one...), http.StatusOK, "")
+	want(t, s.put(d.addr, d.certs(t, 4), one...), http.StatusOK, "")
 }
 
 func TestACallersNameIsTakenOnlyFromATrustedProxy(t *testing.T) {
@@ -492,7 +492,7 @@ func TestACallersNameIsTakenOnlyFromATrustedProxy(t *testing.T) {
 func TestAFullServerTakesOnlyWhatItHolds(t *testing.T) {
 	s := start(t, func(o *revocationserver.Options) { o.MaxAddresses = 1 })
 	a, b := newWho(t), newWho(t)
-	want(t, s.put(a.addr, a.list(t, 1, 1, 3)), http.StatusOK, "")
+	want(t, s.put(a.addr, a.certs(t, 3)), http.StatusOK, "")
 	got := s.put(b.addr, b.revocation(t))
 	want(t, got, http.StatusServiceUnavailable, protocol.CodeUnavailable)
 	if got.header.Get("Retry-After") == "" {
@@ -503,7 +503,7 @@ func TestAFullServerTakesOnlyWhatItHolds(t *testing.T) {
 	}
 	// An address it holds is still served and still updated: its revocation
 	// is the one that must never be turned away.
-	want(t, s.put(a.addr, a.list(t, 2, 1, 5)), http.StatusOK, "")
+	want(t, s.put(a.addr, a.certs(t, 5)), http.StatusOK, "")
 	want(t, s.put(a.addr, a.revocation(t)), http.StatusCreated, "")
 	if served := s.held(a.addr); served == nil || served.Revocation == nil {
 		t.Fatal("a full server did not take the revocation of an address it holds")
@@ -520,7 +520,7 @@ func TestAFileThatIsNoRecordIsAnError(t *testing.T) {
 	}
 	// Never a quiet "nothing held": the server held one.
 	want(t, s.do(http.MethodGet, path(p.addr), nil), http.StatusServiceUnavailable, protocol.CodeUnavailable)
-	want(t, s.put(p.addr, p.list(t, 1, 1, 3)), http.StatusServiceUnavailable, protocol.CodeUnavailable)
+	want(t, s.put(p.addr, p.certs(t, 3)), http.StatusServiceUnavailable, protocol.CodeUnavailable)
 }
 
 func TestOnlyItsOwnFilesAreRecords(t *testing.T) {

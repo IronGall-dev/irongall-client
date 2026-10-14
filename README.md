@@ -100,7 +100,7 @@ A refused message goes to `quarantine/` and prints one line, `REFUSED <id>: <cod
 | `bad_signature` | it is not signed for this box by a working key the sender's identity certified, under a certificate that holds now |
 | `reattributed` | the envelope's `from` is not the address of the identity that signed it, its `to` is not this box, or the server names another sender |
 | `revoked` | this box holds a revocation of the sender that verifies: nothing signed for that address is taken, whenever it was signed |
-| `certificate_revoked` | it is signed under a certificate its sender's identity has revoked, by a list this box holds that verifies: the address goes on, and nothing signed under that certificate is taken, whenever it was signed |
+| `certificate_revoked` | it is signed under a certificate its sender's identity has revoked, by a revocation this box holds that verifies: the address goes on, and nothing signed under that certificate is taken, whenever it was signed |
 | `stale` | its `sent_at` is older than 33 days |
 | `future` | its `sent_at` is more than an hour ahead of this machine's clock |
 | `replay` | this ciphertext was already received |
@@ -139,7 +139,7 @@ What it lacks against the Go client, though it gives the Go client's verdict on 
 - **Restoring a box from its identity alone takes the Go client.**
 - `recv` drains once and never waits, and a drain has no limit in bytes.
 - No `status`, no `adopt` and no `alias --rm`.
-- It applies a list of revoked certificates and makes none: its `rekey` has no `--revoke-earlier`, and its `revoked` takes no list from a file and has no `--ask` and no `--publish`. A revocation server that gave no answer is asked again for the next address.
+- It applies a revocation of certificates and makes none: its `rekey` has no `--revoke-earlier`, and its `revoked` takes none from a file and has no `--ask` and no `--publish`. A revocation server that gave no answer is asked again for the next address.
 - `rekey` makes a post-quantum prekey unless told `--no-pq`; the Go client keeps the box's type.
 - It checks that an Ed25519 identity key is canonical and not of small order, but not that it is on the curve. No signature verifies under such a key.
 - It makes an Ed25519 identity only: for a P-256 one, make the key with `ssh-keygen -t ecdsa -b 256 -N '' -C '' -f <box>/identity` before `init`. It leaves a send from such a box to a box that does not verify the type for the server to refuse.
@@ -158,7 +158,7 @@ What it lacks against the Go client, though it gives the Go client's verdict on 
 - keep serving a box's previous prekey until it expires, 33 days after it was signed;
 - list mail from senders it made up, which costs a box one bounded run;
 - refuse a box's renewals, which `recv` reports with exit `3`;
-- keep a box's revocation, or its list of revoked certificates, from a peer that has never seen it. It cannot make either: a client checks every one itself, and takes "revoked" on no server's word. The revocation server irongall.dev runs beside it is the same operator's, and no witness against it: one that someone else runs would be (`PROTOCOL.md` §6.3).
+- keep a box's revocation, or its revocation of certificates, from a peer that has never seen it. It cannot make either: a client checks every one itself, and takes "revoked" on no server's word. The revocation server irongall.dev runs beside it is the same operator's, and no witness against it: one that someone else runs would be (`PROTOCOL.md` §6.3).
 
 Cloudflare terminates TLS for irongall.dev today, so it can do the same. Neither can read or forge mail. In full: `PROTOCOL.md` §9.
 
@@ -190,12 +190,12 @@ go test ./sh -v                                 # the stock-tools client (sh/tes
 
 | Where | What it shows |
 |---|---|
-| `protocol/`, `testdata/vectors/` | Every identity, certificate, prekey statement, pass, revocation, list of revoked certificates, envelope and decrypted message is accepted or refused as the vectors name it |
+| `protocol/`, `testdata/vectors/` | Every identity, certificate, prekey statement, pass, revocation of an address or of certificates, envelope and decrypted message is accepted or refused as the vectors name it |
 | `client/forgery_test.go` | Each forgery the operator can make is refused |
 | `client/failure_test.go` | A failure never loses mail, and a retry is never delivered twice |
 | `client/hostile_test.go` | A refusal never carries the sender's text, a hostile server costs one bounded run, and a box never asks the server who a sender is |
 | `client/revocation_test.go` | A server's word revokes nothing, a revocation that verifies is kept for good, and mail from a revoked box is refused whenever it was signed |
-| `client/revokedcerts_test.go` | Mail under a certificate its sender's identity revoked is refused and the address goes on, only the newest list counts, a later certificate passes any prekey serial under an earlier one, and a send names both serials |
+| `client/revokedcerts_test.go` | Mail under a certificate its sender's identity revoked is refused and the address goes on, only the highest revocation counts and nothing lowers it, a later certificate passes any prekey serial under an earlier one, and a send names both serials |
 | `client/ask_test.go` | A sender asks what the server holds about its recipient before every post and keeps what verifies, no answer posts nothing, and a seal that waited is checked again before it goes |
 | `client/pad_test.go`, `client/renew_test.go` | Every send is padded; `recv` renews the prekey and deletes retired ones |
 | `sh/` | The script gives the same verdicts: against a forging server, on every vector, and with the Go client |

@@ -15,7 +15,7 @@ import (
 // keeps and a revocation server takes (PROTOCOL.md §6.3), as one line of JSON, at
 // <dir>/<first two hex characters>/<address>.json. A file is written whole
 // and moved into place, so a reader sees the record before or the record
-// after, and a list is never kept without its signature.
+// after, and a statement is never kept without its signature.
 //
 // Which addresses have a file is held in memory, read from the directory
 // once, when the server opens. Nearly every address a revocation server is

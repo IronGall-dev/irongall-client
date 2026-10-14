@@ -48,9 +48,9 @@ func TestRevokeEarlierEndsWhatAnOldWorkingKeySigns(t *testing.T) {
 		t.Fatal(err)
 	}
 	second := numberOf(t, a)
-	list, err := a.RevokeEarlier(ctx)
-	if err != nil || list == nil || list.Version != 1 || !list.Revokes(first) || list.Revokes(second) {
-		t.Fatalf("revoke earlier: %+v, %v", list, err)
+	certs, err := a.RevokeEarlier(ctx)
+	if err != nil || certs == nil || certs.Through != second-1 || !certs.Revokes(first) || certs.Revokes(second) {
+		t.Fatalf("revoke earlier: %+v, %v", certs, err)
 	}
 	send(t, a, b, "sent under the second certificate")
 
@@ -59,14 +59,15 @@ func TestRevokeEarlierEndsWhatAnOldWorkingKeySigns(t *testing.T) {
 		t.Fatalf("a drain of mail under a revoked certificate and under the current one: %+v", res)
 	}
 	if !keptList(b, a.Address()) || keptRevocation(b, a.Address()) {
-		t.Fatal("the list was not kept, or the address was taken as revoked")
+		t.Fatal("the revocation of certificates was not kept, or the address was taken as revoked")
 	}
 
-	// The operator now hides the list and delivers what the thief signs.
+	// The operator now hides the revocation and delivers what the thief
+	// signs.
 	says(e, protocol.CodeNotRevoked, http.MethodGet, "/revocations")
 	mailAs(t, e, a, b, stolen, "signed by the key that was taken")
 	if res := receive(t, b); len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedCertificate {
-		t.Fatalf("a thief's mail under the revoked certificate, the list hidden: %+v", res)
+		t.Fatalf("a thief's mail under the revoked certificate, the revocation hidden: %+v", res)
 	}
 	e.srv.SetMiddle(nil)
 
@@ -76,20 +77,20 @@ func TestRevokeEarlierEndsWhatAnOldWorkingKeySigns(t *testing.T) {
 		t.Fatalf("the box no longer receives: %+v", res)
 	}
 
-	// A second time, after another renewal: one list, a higher version,
-	// naming everything before the certificate in use.
+	// A second time, after another renewal: through a higher serial,
+	// everything before the certificate in use.
 	if _, err := a.Rekey(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
-	if list, err := a.RevokeEarlier(ctx); err != nil || list.Version != 2 || len(list.Ranges) != 1 || !list.Revokes(second) || list.Revokes(numberOf(t, a)) {
-		t.Fatalf("the second list: %+v, %v", list, err)
+	if certs, err := a.RevokeEarlier(ctx); err != nil || certs.Through != numberOf(t, a)-1 || !certs.Revokes(second) {
+		t.Fatalf("the second revocation: %+v, %v", certs, err)
 	}
 }
 
-// A list is the identity's to sign, and the newest one a reader has verified
-// stands: what a server shows that a working key signed, or that is an older
-// list of the identity's own, changes nothing.
-func TestOnlyTheIdentitysNewestListCounts(t *testing.T) {
+// A revocation of certificates is the identity's to sign, and the highest one
+// a reader has verified stands: what a server shows that a working key
+// signed, or that is a lower one of the identity's own, changes nothing.
+func TestOnlyTheIdentitysHighestRevocationCounts(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -104,8 +105,9 @@ func TestOnlyTheIdentitysNewestListCounts(t *testing.T) {
 		})
 	}
 
-	// What a working key can sign: a list naming the box's own certificate.
-	forged, err := protocol.NewRevokedCertificates(a.Address(), 9, []protocol.SerialRange{{First: 1, Last: numberOf(t, a)}})
+	// What a working key can sign: a revocation of the box's own
+	// certificate.
+	forged, err := protocol.NewRevokedCertificates(a.Address(), numberOf(t, a))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,11 +118,12 @@ func TestOnlyTheIdentitysNewestListCounts(t *testing.T) {
 	show(protocol.Revocations{Identity: doc, RevokedCertificates: forged.Statement(), RevokedCertificatesSignature: byWorker})
 	send(t, a, b, "under certificate 1, which a working key cannot revoke")
 	if res := receive(t, b); len(res.Delivered) != 1 || keptList(b, a.Address()) {
-		t.Fatalf("a list a working key signed was applied or kept: %+v", res)
+		t.Fatalf("a revocation a working key signed was applied or kept: %+v", res)
 	}
 	e.srv.SetMiddle(nil)
 
-	// The identity's first list names certificate 1; its second, 1 and 2.
+	// The identity's first revocation covers certificate 1; its second, 1
+	// and 2.
 	if _, err := a.Rekey(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -133,7 +136,7 @@ func TestOnlyTheIdentitysNewestListCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&firstList); err != nil || len(firstList.RevokedCertificates) == 0 || len(firstList.Revocation) != 0 {
-		t.Fatalf("the record of a box with a list and no revocation: %+v, %v", firstList, err)
+		t.Fatalf("the record of a box with its certificates revoked and its address not: %+v, %v", firstList, err)
 	}
 	_ = resp.Body.Close()
 	second := workerAt(t, a, numberOf(t, a)) // read before the next renewal deletes it
@@ -143,23 +146,24 @@ func TestOnlyTheIdentitysNewestListCounts(t *testing.T) {
 	if _, err := a.RevokeEarlier(ctx); err != nil {
 		t.Fatal(err)
 	}
-	mailAs(t, e, a, b, second, "under certificate 2, which the second list names")
+	mailAs(t, e, a, b, second, "under certificate 2, which the second revocation covers")
 	if res := receive(t, b); len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedCertificate {
-		t.Fatalf("mail under a listed certificate: %+v", res)
+		t.Fatalf("mail under a revoked certificate: %+v", res)
 	}
 
-	// A server serves the first list again, which did not name certificate
-	// 2. B holds the second, and an older list never replaces a newer one.
+	// A server serves the first revocation again, which did not cover
+	// certificate 2. B holds the second, and a lower one never replaces a
+	// higher one: what was revoked stays revoked.
 	show(firstList)
-	mailAs(t, e, a, b, second, "under certificate 2, with the older list shown again")
+	mailAs(t, e, a, b, second, "under certificate 2, with the lower revocation shown again")
 	if res := receive(t, b); len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedCertificate {
-		t.Fatalf("an older list replaced the newer one: %+v", res)
+		t.Fatalf("a lower revocation replaced the higher one: %+v", res)
 	}
-	// And with nothing shown at all, the kept list still stands.
+	// And with nothing shown at all, the kept revocation still stands.
 	show(protocol.Revocations{Identity: doc})
-	mailAs(t, e, a, b, second, "under certificate 2, with no list shown")
+	mailAs(t, e, a, b, second, "under certificate 2, with no revocation shown")
 	if res := receive(t, b); len(res.Delivered) != 0 || len(res.Refused) != 1 {
-		t.Fatalf("the kept list did not hold once the server stopped showing it: %+v", res)
+		t.Fatalf("the kept revocation did not hold once the server stopped showing it: %+v", res)
 	}
 }
 

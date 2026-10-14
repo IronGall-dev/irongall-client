@@ -110,6 +110,19 @@ func (b *Box) renew(ctx context.Context, kt protocol.KeyType, unused bool) (*pro
 	// in this box's name at the highest serial there is, by whoever took its
 	// working key, holds nothing: the next certificate passes it.
 	known := max(curCert.Serial(), published)
+	// And above every serial this box's identity has revoked: a certificate
+	// numbered there would be revoked as it was made, and the box could not
+	// renew until its identity revoked fewer, which it never does.
+	own, err := b.revokedCerts(b.id.Address())
+	if err != nil {
+		return nil, 0, err
+	}
+	if own != nil && own.Through >= protocol.MaxSerial {
+		return nil, 0, refuse("this box's identity has revoked its certificates through the highest serial there is, so no later certificate can be made: the address cannot renew")
+	}
+	if own != nil {
+		known = max(known, own.Through)
+	}
 	if known >= protocol.MaxSerial {
 		return nil, 0, refuse("this box's certificate serial is the highest there is, so no later certificate can be made: the address cannot renew")
 	}
@@ -293,12 +306,12 @@ func (b *Box) prekeyStatement(n uint64) (*protocol.Prekey, error) {
 
 // renewIfDue publishes a new prekey, of the current type, when the current
 // one is more than renewAfter old or cannot be read, or when this box's own
-// list names the certificate it is using: such a box takes no mail until it
-// publishes under a new one, and [Box.RenewAndRevoke] leaves it so when the
-// server refused its renewal. The caller holds the lock. A failure is
+// identity has revoked the certificate it is using: such a box takes no mail
+// until it publishes under a new one, and [Box.RenewAndRevoke] leaves it so
+// when the server refused its renewal. The caller holds the lock. A failure is
 // retried after renewRetry.
 func (b *Box) renewIfDue(ctx context.Context) (*protocol.Prekey, error) {
-	if n, made, err := b.current(); err == nil && b.now().Sub(made) <= renewAfter && !b.ownListNames(n) {
+	if n, made, err := b.current(); err == nil && b.now().Sub(made) <= renewAfter && !b.ownRevokes(n) {
 		return nil, nil
 	}
 	if !b.renewFailed.IsZero() && b.now().Sub(b.renewFailed) < renewRetry {

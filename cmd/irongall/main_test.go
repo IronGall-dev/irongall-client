@@ -675,8 +675,8 @@ func TestRevocationCommands(t *testing.T) {
 
 // revoked --ask asks the server what it holds about a box and says what this
 // box then holds: nothing shown, which is the server's word and is said as
-// that; a list of revoked certificates; a revocation. revoked <file> takes
-// a record that carries a list.
+// that; a revocation of certificates; a revocation of the address. revoked
+// <file> takes a record that carries one.
 func TestRevokedAsk(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -706,12 +706,14 @@ func TestRevokedAsk(t *testing.T) {
 	if _, err := a.Rekey(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.RevokeEarlier(ctx); err != nil {
+	certs, err := a.RevokeEarlier(ctx)
+	if err != nil {
 		t.Fatal(err)
 	}
+	held := "certificates of " + addr + " revoked through " + strconv.FormatUint(certs.Through, 10) + "\n"
 	// By its link, as send takes one.
-	if out, warn, err := cmd(b, "--ask", srv.URL+"/to/"+addr); err != nil || out != "certificates of "+addr+" revoked, list version 1\n" || warn != "" {
-		t.Fatalf("ask about a box with a list: %v %q %q", err, out, warn)
+	if out, warn, err := cmd(b, "--ask", srv.URL+"/to/"+addr); err != nil || out != held || warn != "" {
+		t.Fatalf("ask about a box with its certificates revoked: %v %q %q", err, out, warn)
 	}
 
 	// The same record as a file, to a box that never asked.
@@ -732,17 +734,18 @@ func TestRevokedAsk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, _, err := cmd(c, file); err != nil || out != "certificates of "+addr+" revoked, list version 1\n" {
-		t.Fatalf("a list from a file: %v %q", err, out)
+	if out, _, err := cmd(c, file); err != nil || out != held {
+		t.Fatalf("a revocation of certificates from a file: %v %q", err, out)
 	}
 
-	// A record that carries a list and no revocation revokes nothing:
-	// revoke --record publishes only what ends the address.
+	// A record that carries certificates revoked and no revocation of the
+	// address revokes nothing: revoke --record publishes only what ends the
+	// address.
 	t.Setenv("IRONGALL_HOME", t.TempDir())
 	if err := run(ctx, "revoke", []string{"--record", file, addr}, strings.NewReader(""), io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "not a revocation") {
-		t.Fatalf("revoke --record with a list and no revocation: %v", err)
+		t.Fatalf("revoke --record with certificates revoked and no revocation: %v", err)
 	}
-	if out, _, err := cmd(b, "--ask", addr); err != nil || out != "certificates of "+addr+" revoked, list version 1\n" {
+	if out, _, err := cmd(b, "--ask", addr); err != nil || out != held {
 		t.Fatalf("after it: %v %q", err, out)
 	}
 
@@ -784,11 +787,12 @@ func TestRekeyRevokeEarlier(t *testing.T) {
 	}
 	second := inUse(t, b)
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
-	if len(lines) != 2 || !strings.HasPrefix(lines[0], "prekey "+second+", valid until ") || lines[1] != "certificates before "+second+" revoked, list version 1" || !strings.Contains(errs.String(), "send it again") {
+	below := func(n string) string { return strconv.FormatUint(number(t, n)-1, 10) }
+	if len(lines) != 2 || !strings.HasPrefix(lines[0], "prekey "+second+", valid until ") || lines[1] != "certificates through "+below(second)+" revoked" || !strings.Contains(errs.String(), "send it again") {
 		t.Fatalf("its output: %q %q", out.String(), errs.String())
 	}
 	out.Reset()
-	if err := run(ctx, "rekey", []string{"--revoke-earlier"}, strings.NewReader(""), &out, &errs); err != nil || !strings.HasSuffix(out.String(), "certificates before "+inUse(t, b)+" revoked, list version 2\n") {
+	if err := run(ctx, "rekey", []string{"--revoke-earlier"}, strings.NewReader(""), &out, &errs); err != nil || !strings.HasSuffix(out.String(), "certificates through "+below(inUse(t, b))+" revoked\n") {
 		t.Fatalf("a second time: %v %q", err, out.String())
 	}
 	var rec protocol.Revocations
@@ -800,9 +804,9 @@ func TestRekeyRevokeEarlier(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&rec); err != nil {
 		t.Fatal(err)
 	}
-	list, err := protocol.VerifyRevokedCertificates(b.Address(), rec.Identity, rec.RevokedCertificates, rec.RevokedCertificatesSignature)
-	if err != nil || list.Version != 2 || len(list.Ranges) != 1 || !list.Revokes(number(t, first)) || !list.Revokes(number(t, second)) || list.Revokes(number(t, inUse(t, b))) || len(rec.Revocation) != 0 {
-		t.Fatalf("the list the server holds: %+v, %v", list, err)
+	certs, err := protocol.VerifyRevokedCertificates(b.Address(), rec.Identity, rec.RevokedCertificates, rec.RevokedCertificatesSignature)
+	if err != nil || certs.Through != number(t, inUse(t, b))-1 || !certs.Revokes(number(t, first)) || !certs.Revokes(number(t, second)) || len(rec.Revocation) != 0 {
+		t.Fatalf("the revocation of certificates the server holds: %+v, %v", certs, err)
 	}
 	// The box goes on working under the certificate it kept.
 	out.Reset()
@@ -812,7 +816,7 @@ func TestRekeyRevokeEarlier(t *testing.T) {
 }
 
 // rekey --revoke-earlier when the server refuses the new prekey for the day's
-// renewals: the list goes out all the same, the command says the box takes no
+// renewals: the revocation goes out all the same, the command says the box takes no
 // mail until the new prekey is taken, and fails. Refused for anything else,
 // it revokes nothing and says so.
 func TestRekeyRevokeEarlierWhenTheRenewalIsRefused(t *testing.T) {
@@ -846,12 +850,12 @@ func TestRekeyRevokeEarlierWhenTheRenewalIsRefused(t *testing.T) {
 	out.Reset()
 	err = run(ctx, "rekey", []string{"--revoke-earlier"}, strings.NewReader(""), &out, &errs)
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
-	if err == nil || !strings.Contains(err.Error(), "NOT published") || !strings.Contains(err.Error(), "takes no mail") || len(lines) != 1 || !strings.HasPrefix(lines[0], "certificates before ") || !strings.HasSuffix(lines[0], " revoked, list version 1") {
+	if err == nil || !strings.Contains(err.Error(), "NOT published") || !strings.Contains(err.Error(), "takes no mail") || len(lines) != 1 || !strings.HasPrefix(lines[0], "certificates through ") || !strings.HasSuffix(lines[0], " revoked") {
 		t.Fatalf("refused for the day's renewals: %v, stdout %q", err, out.String())
 	}
-	below := number(t, strings.TrimSuffix(strings.TrimPrefix(lines[0], "certificates before "), " revoked, list version 1"))
-	if below <= number(t, first) || inUse(t, b) != first {
-		t.Fatalf("the list ends below %d, with %s in use and %s recorded", below, first, inUse(t, b))
+	through := number(t, strings.TrimSuffix(strings.TrimPrefix(lines[0], "certificates through "), " revoked"))
+	if through < number(t, first) || inUse(t, b) != first {
+		t.Fatalf("the revocation runs through %d, with %s in use and %s recorded", through, first, inUse(t, b))
 	}
 }
 

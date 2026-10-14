@@ -1044,18 +1044,18 @@ func TestARevocationServerInBothClients(t *testing.T) {
 		t.Fatalf("the script sent to an address the Go client revoked: %v", err)
 	}
 
-	// The Go client's list of revoked certificates, at the revocation
-	// server alone as far as the script is shown: it keeps the list.
+	// The Go client's revocation of its certificates, at the revocation
+	// server alone as far as the script is shown: it keeps it.
 	g3 := goBox(rs.URL)
 	first := numberOf(t, g3)
 	if _, err := g3.Rekey(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
-	if list, err := g3.RevokeEarlier(ctx); err != nil || list == nil {
-		t.Fatalf("revoke earlier: %+v, %v", list, err)
+	if certs, err := g3.RevokeEarlier(ctx); err != nil || certs == nil {
+		t.Fatalf("revoke earlier: %+v, %v", certs, err)
 	}
-	if out, err := sh(s2, fmt.Sprintf("ig_lookup %s; echo $?; ig_listed %s %d; echo $?; ig_listed %s %d; echo $?", g3.Address(), g3.Address(), first, g3.Address(), numberOf(t, g3))); err != nil || out != "1\n0\n1\n" {
-		t.Fatalf("the script, shown the Go client's list by the revocation server alone: %v %q", err, out)
+	if out, err := sh(s2, fmt.Sprintf("ig_lookup %s; echo $?; ig_certrevoked %s %d; echo $?; ig_certrevoked %s %d; echo $?", g3.Address(), g3.Address(), first, g3.Address(), numberOf(t, g3))); err != nil || out != "1\n0\n1\n" {
+		t.Fatalf("the script, shown the Go client's revocation of certificates by the revocation server alone: %v %q", err, out)
 	}
 
 	// The revocation server gone: both clients send, and both revoke at the
@@ -1204,12 +1204,12 @@ func TestRevocationInBothClients(t *testing.T) {
 	}
 }
 
-// A list of revoked certificates is taken or refused by the script exactly
-// as the Go client takes or refuses it, on every vector, and a list both
-// take has one version and names the same serials for both. One of the
-// refused is a good signature under the box's own certificate: the script's
-// signers line for a list, as for a revocation, never names the identity a
-// certificate authority.
+// A revocation of certificates is taken or refused by the script exactly as
+// the Go client takes or refuses it, on every vector, and one both take runs
+// through the same serial for both. One of the refused is a good signature
+// under the box's own certificate: the script's signers line for it, as for
+// a revocation of the address, never names the identity a certificate
+// authority.
 func TestVectorsRevokedCertificates(t *testing.T) {
 	need(t, scriptTools...)
 	a, aDoc := identity(t, "a")
@@ -1222,30 +1222,30 @@ func TestVectorsRevokedCertificates(t *testing.T) {
 		}
 		return x
 	}
-	type vector struct{ addr, doc, list, sig string }
+	type vector struct{ addr, doc, statement, sig string }
 	cases := []vector{
-		{a, aDoc, "ok-one-range.txt", "ok-one-range.sig"}, {a, aDoc, "ok-one-range.txt", "ok-one-range.sha256.sig"},
-		{a, aDoc, "ok-serials-and-ranges.txt", "ok-serials-and-ranges.sig"},
-		{b, bDoc, "ok-one-range.txt", "ok-one-range.sig"}, {a, bDoc, "ok-one-range.txt", "ok-one-range.sig"}, {b, aDoc, "ok-one-range.txt", "ok-one-range.sig"},
-		{a, aDoc, "ok-one-range.txt", "ok-serials-and-ranges.sig"},
+		{a, aDoc, "ok-through-4.txt", "ok-through-4.sig"}, {a, aDoc, "ok-through-4.txt", "ok-through-4.sha256.sig"},
+		{a, aDoc, "ok-through-the-highest.txt", "ok-through-the-highest.sig"},
+		{b, bDoc, "ok-through-4.txt", "ok-through-4.sig"}, {a, bDoc, "ok-through-4.txt", "ok-through-4.sig"}, {b, aDoc, "ok-through-4.txt", "ok-through-4.sig"},
+		{a, aDoc, "ok-through-4.txt", "ok-through-the-highest.sig"},
 	}
 	bads, _ := filepath.Glob(filepath.Join(vectors, "revoked", "bad-*.txt"))
-	if len(bads) != 23 {
-		t.Fatalf("%d revoked/bad-* vectors, want 23", len(bads))
+	if len(bads) != 20 {
+		t.Fatalf("%d revoked/bad-* vectors, want 20", len(bads))
 	}
 	for _, f := range bads {
 		name := strings.TrimSuffix(filepath.Base(f), ".txt")
 		cases = append(cases, vector{a, aDoc, name + ".txt", name + ".sig"})
 	}
 	taken := 0
-	var many *protocol.RevokedCertificates
+	var four *protocol.RevokedCertificates
 	for _, v := range cases {
-		list, sig := filepath.Join(vectors, "revoked", v.list), filepath.Join(vectors, "revoked", v.sig)
+		statement, sig := filepath.Join(vectors, "revoked", v.statement), filepath.Join(vectors, "revoked", v.sig)
 		doc, err := os.ReadFile(v.doc)
 		if err != nil {
 			t.Fatal(err)
 		}
-		statement, err := os.ReadFile(list)
+		text, err := os.ReadFile(statement)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1253,28 +1253,28 @@ func TestVectorsRevokedCertificates(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, goErr := protocol.VerifyRevokedCertificates(addr(v.addr), doc, statement, signature)
-		out, shErr := bash(t, scratch(t), fmt.Sprintf(`mkdir -p "$IG"; ig_listcheck %s %s %s %s`, v.addr, v.doc, abs(t, list), abs(t, sig)))
+		got, goErr := protocol.VerifyRevokedCertificates(addr(v.addr), doc, text, signature)
+		out, shErr := bash(t, scratch(t), fmt.Sprintf(`mkdir -p "$IG"; ig_certscheck %s %s %s %s`, v.addr, v.doc, abs(t, statement), abs(t, sig)))
 		if (goErr == nil) != (shErr == nil) {
-			t.Errorf("%s with %s as a list of %s…: the Go client says %v, the script %v", v.list, v.sig, v.addr[:8], goErr, shErr)
+			t.Errorf("%s with %s as a revocation of %s…'s certificates: the Go client says %v, the script %v", v.statement, v.sig, v.addr[:8], goErr, shErr)
 			continue
 		}
 		if goErr != nil {
 			continue
 		}
 		taken++
-		if strings.TrimSpace(out) != fmt.Sprint(got.Version) {
-			t.Errorf("%s: the Go client reads version %d, the script %q", v.list, got.Version, out)
+		if strings.TrimSpace(out) != fmt.Sprint(got.Through) {
+			t.Errorf("%s: the Go client reads through %d, the script %q", v.statement, got.Through, out)
 		}
-		if v.list == "ok-serials-and-ranges.txt" {
-			many = got
+		if v.statement == "ok-through-4.txt" {
+			four = got
 		}
 	}
-	if taken != 3 || many == nil {
-		t.Fatalf("%d vectors taken as lists, want the three that are", taken)
+	if taken != 3 || four == nil {
+		t.Fatalf("%d vectors taken as revocations of certificates, want the three that are", taken)
 	}
 
-	// A kept list names the same serials to both, at 2^53 - 1 too.
+	// A kept one revokes the same serials for both, at 2^53 - 1 too.
 	box := t.TempDir()
 	kept := filepath.Join(box, "peers", a)
 	if err := os.MkdirAll(kept, 0o700); err != nil {
@@ -1288,7 +1288,7 @@ func TestVectorsRevokedCertificates(t *testing.T) {
 		}
 		return data
 	}
-	// A box keeps a list as the record that carries it, one line of JSON.
+	// A box keeps it as the record that carries it, one line of JSON.
 	keep := func(statement, sig []byte) {
 		t.Helper()
 		line, err := json.Marshal(protocol.Revocations{Identity: read(aDoc), RevokedCertificates: statement, RevokedCertificatesSignature: sig})
@@ -1302,46 +1302,51 @@ func TestVectorsRevokedCertificates(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(kept, "identity.doc"), read(aDoc), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	keep(read(filepath.Join(vectors, "revoked", "ok-serials-and-ranges.txt")), read(filepath.Join(vectors, "revoked", "ok-serials-and-ranges.sig")))
 	env := []string{"IRONGALL_HOME=" + box}
-	for _, serial := range []uint64{1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, protocol.MaxSerial - 1, protocol.MaxSerial} {
-		out, err := bash(t, env, fmt.Sprintf(`ig_listed %s %d; echo $?`, a, serial))
-		if err != nil {
-			t.Fatal(err)
-		}
-		want := "1"
-		if many.Revokes(serial) {
-			want = "0"
-		}
-		if strings.TrimSpace(out) != want {
-			t.Errorf("serial %d: the Go client says listed is %v, and the script's ig_listed returned %s", serial, many.Revokes(serial), strings.TrimSpace(out))
+	for _, c := range []struct {
+		name  string
+		certs *protocol.RevokedCertificates
+	}{{"ok-through-4", four}, {"ok-through-the-highest", &protocol.RevokedCertificates{Through: protocol.MaxSerial}}} {
+		keep(read(filepath.Join(vectors, "revoked", c.name+".txt")), read(filepath.Join(vectors, "revoked", c.name+".sig")))
+		for _, serial := range []uint64{1, 3, 4, 5, protocol.MaxSerial - 1, protocol.MaxSerial} {
+			out, err := bash(t, env, fmt.Sprintf(`ig_certrevoked %s %d; echo $?`, a, serial))
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "1"
+			if c.certs.Revokes(serial) {
+				want = "0"
+			}
+			if strings.TrimSpace(out) != want {
+				t.Errorf("%s, serial %d: the Go client says revoked is %v, and the script's ig_certrevoked returned %s", c.name, serial, c.certs.Revokes(serial), strings.TrimSpace(out))
+			}
 		}
 	}
-	// A kept list that no longer verifies is a fault, never "not listed":
-	// one under another list's signature, and a file that holds no list.
-	keep(read(filepath.Join(vectors, "revoked", "ok-serials-and-ranges.txt")), read(filepath.Join(vectors, "revoked", "ok-one-range.sig")))
-	if out, err := bash(t, env, fmt.Sprintf(`ig_listed %s 3; echo $?`, a)); err != nil || strings.TrimSpace(out) != "3" {
-		t.Errorf("a kept list under another list's signature: ig_listed returned %q %v, want 3", out, err)
+	// A kept one that no longer verifies is a fault, never "not revoked":
+	// one under another's signature, and a file that holds none.
+	keep(read(filepath.Join(vectors, "revoked", "ok-through-4.txt")), read(filepath.Join(vectors, "revoked", "ok-through-the-highest.sig")))
+	if out, err := bash(t, env, fmt.Sprintf(`ig_certrevoked %s 3; echo $?`, a)); err != nil || strings.TrimSpace(out) != "3" {
+		t.Errorf("a kept revocation under another's signature: ig_certrevoked returned %q %v, want 3", out, err)
 	}
 	if err := os.WriteFile(filepath.Join(kept, "revoked-certs.json"), []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := bash(t, env, fmt.Sprintf(`ig_listed %s 3; echo $?`, a)); err != nil || strings.TrimSpace(out) != "3" {
-		t.Errorf("a kept file that holds no list: ig_listed returned %q %v, want 3", out, err)
+	if out, err := bash(t, env, fmt.Sprintf(`ig_certrevoked %s 3; echo $?`, a)); err != nil || strings.TrimSpace(out) != "3" {
+		t.Errorf("a kept file that holds no revocation of certificates: ig_certrevoked returned %q %v, want 3", out, err)
 	}
 
 	// Control: the working key's signature is one ssh-keygen takes once the
 	// identity is named a certificate authority, so it is the signers line
 	// that refuses it and not a bad signature.
-	verify := fmt.Sprintf(`mkdir -p "$IG"; printf '%%s cert-authority %%s\n' %s "$(sed -n 2p %s)" > "$IG/s" && ssh-keygen -Y verify -f "$IG/s" -I %s -n irongall-revoked-certs-v1:%s -s %s -O verify-time=20261010000000Z < %s`,
-		a, aDoc, a, a, abs(t, filepath.Join(vectors, "revoked/bad-by-a-working-key.sig")), abs(t, filepath.Join(vectors, "revoked/bad-by-a-working-key.txt")))
+	verify := fmt.Sprintf(`mkdir -p "$IG"; printf '%%s cert-authority %%s\n' %s "$(sed -n 2p %s)" > "$IG/s" && ssh-keygen -Y verify -f "$IG/s" -I %s -n %s:%s -s %s -O verify-time=20261010000000Z < %s`,
+		a, aDoc, a, protocol.RevokedCertsTag, a, abs(t, filepath.Join(vectors, "revoked/bad-by-a-working-key.sig")), abs(t, filepath.Join(vectors, "revoked/bad-by-a-working-key.txt")))
 	if _, err := bash(t, scratch(t), verify); err != nil {
 		t.Errorf("control: ssh-keygen refuses the working key's signature even under a cert-authority line, so the vector tests nothing: %v", err)
 	}
 }
 
-// One certificate revoked, across the two clients and one server: the Go
-// client's list is one the script checks for itself, keeps and applies, and
+// Certificates revoked, across the two clients and one server: the Go
+// client's revocation is one the script checks for itself, keeps and applies, and
 // each follows the other to a later certificate, naming a prekey by both
 // serials.
 func TestRevokedCertificatesInBothClients(t *testing.T) {
@@ -1372,8 +1377,8 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 	gAddr := g.Address().String()
 	first := numberOf(t, g)
 
-	// Mail under the Go box's first certificate, then a renewal and the list
-	// that revokes every certificate before the new one, then mail under
+	// Mail under the Go box's first certificate, then a renewal and the
+	// revocation of every certificate before the new one, then mail under
 	// the second: the script reads all of it in one drain.
 	if _, err := g.Send(ctx, script, "under the first certificate"); err != nil {
 		t.Fatal(err)
@@ -1381,9 +1386,9 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 	if _, err := g.Rekey(ctx, kt); err != nil {
 		t.Fatal(err)
 	}
-	list, err := g.RevokeEarlier(ctx)
-	if err != nil || list == nil || !list.Revokes(first) || list.Revokes(numberOf(t, g)) {
-		t.Fatalf("RevokeEarlier: %+v %v", list, err)
+	certs, err := g.RevokeEarlier(ctx)
+	if err != nil || certs == nil || !certs.Revokes(first) || certs.Revokes(numberOf(t, g)) {
+		t.Fatalf("RevokeEarlier: %+v %v", certs, err)
 	}
 	if _, err := g.Send(ctx, script, "under the second certificate"); err != nil {
 		t.Fatal(err)
@@ -1393,35 +1398,35 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 		t.Fatalf("the script's drain of mail from a box that revoked its first certificate: %q %v", out, err)
 	}
 	// The script keeps it as the Go client does: one file, the record that
-	// carries the list, which verifies with nothing else.
+	// carries it, which verifies with nothing else.
 	raw, err := os.ReadFile(filepath.Join(dir, "peers", gAddr, "revoked-certs.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var kept protocol.Revocations
-	if err := json.Unmarshal(raw, &kept); err != nil || bytes.Count(raw, []byte("\n")) != 1 || !bytes.Equal(kept.RevokedCertificates, list.Statement()) {
-		t.Fatalf("the script did not keep the Go client's list as one record: %q %v", raw, err)
+	if err := json.Unmarshal(raw, &kept); err != nil || bytes.Count(raw, []byte("\n")) != 1 || !bytes.Equal(kept.RevokedCertificates, certs.Statement()) {
+		t.Fatalf("the script did not keep the Go client's revocation of certificates as one record: %q %v", raw, err)
 	}
 	if _, err := protocol.VerifyRevokedCertificates(g.Address(), kept.Identity, kept.RevokedCertificates, kept.RevokedCertificatesSignature); err != nil {
 		t.Fatalf("the record the script kept does not verify: %v", err)
 	}
-	// And the script reads a list the Go client kept: a second Go box takes
-	// the same mail, and the script, run in that box, names the same serials.
+	// And the script reads one the Go client kept: a second Go box takes the
+	// same mail, and the script, run in that box, revokes the same serials.
 	g2, err := client.Init(ctx, t.TempDir(), opt, kt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := g.Send(ctx, g2.Address(), "to a Go box, which keeps the list"); err != nil {
+	if _, err := g.Send(ctx, g2.Address(), "to a Go box, which keeps the revocation"); err != nil {
 		t.Fatal(err)
 	}
 	if res, err := g2.Receive(ctx); err != nil || len(res.Delivered) != 1 {
 		t.Fatalf("the second Go box's drain: %+v %v", res, err)
 	}
-	if out, err := bash(t, []string{"IRONGALL_HOME=" + g2.Dir()}, fmt.Sprintf(`ig_listed %s %d; echo $?; ig_listed %s %d; echo $?`, gAddr, first, gAddr, numberOf(t, g))); err != nil || out != "0\n1\n" {
-		t.Fatalf("the script's reading of a list the Go client kept: %q %v", out, err)
+	if out, err := bash(t, []string{"IRONGALL_HOME=" + g2.Dir()}, fmt.Sprintf(`ig_certrevoked %s %d; echo $?; ig_certrevoked %s %d; echo $?`, gAddr, first, gAddr, numberOf(t, g))); err != nil || out != "0\n1\n" {
+		t.Fatalf("the script's reading of a revocation of certificates the Go client kept: %q %v", out, err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "peers", gAddr, "revoke.sig")); err == nil {
-		t.Fatal("the script took a list of certificates as a revocation of the address")
+		t.Fatal("the script took a revocation of certificates as a revocation of the address")
 	}
 
 	// The script writes to the Go box under its second certificate, and the

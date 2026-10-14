@@ -130,38 +130,36 @@ sign a "irongall-prekey-v1:$A" < a/revoke.txt > revoke/bad-another-namespace.sig
 X=$(blob a/revoke.sig); armor "$(plusl "$X" $((${#X} - 64)))" > revoke/bad-s-plus-l.sig      # A's own, with L added to its S
 printf 'irongall-revoke-v1\n%s\n' "$B" | sign a "irongall-revoke-v1:$B" > revoke/bad-of-another-box.sig
 
-# Lists of box A's revoked certificates (PROTOCOL.md §6.3a): the tag, the address, a version, then one serial or
-# range of serials a line, signed by A's identity itself in A's list namespace. Then what is not one. Each bad-* is
-# signed by A's identity in that namespace, so only what its name says is wrong with it, but for the first two.
+# Revocations of box A's certificates (PROTOCOL.md §6.3a): the tag, the address and the serial every certificate up
+# to and including which is revoked, each on a line, signed by A's identity itself in A's namespace for them. Then what
+# is not one. Each bad-* is signed by A's identity in that namespace, so only what its name says is wrong with it, but
+# for the first two.
 mkdir -p revoked
-list() { local f=$1 addr=$2 version=$3; shift 3; { printf 'irongall-revoked-certs-v1\n%s\n%s\n' "$addr" "$version"; [ $# -eq 0 ] || printf '%s\n' "$@"; } > "revoked/$f.txt"; }   # <name> <address> <version> [lines…]
-listsig() { sign a "irongall-revoked-certs-v1:$A" < "revoked/$1.txt" > "revoked/$1.sig"; }
-list ok-one-range "$A" 1 1-4; listsig ok-one-range
-list ok-serials-and-ranges "$A" 7 2 5-9 11 9007199254740991; listsig ok-serials-and-ranges # the last is 2^53 - 1, the highest serial
-sign a "irongall-revoked-certs-v1:$A" -O hashalg=sha256 < revoked/ok-one-range.txt > revoked/ok-one-range.sha256.sig
-cp revoked/ok-one-range.txt revoked/bad-by-a-working-key.txt; under a-work a/work-cert.pub "irongall-revoked-certs-v1:$A" < revoked/bad-by-a-working-key.txt > revoked/bad-by-a-working-key.sig
-cp revoked/ok-one-range.txt revoked/bad-another-namespace.txt; sign a "irongall-revoke-v1:$A" < revoked/bad-another-namespace.txt > revoked/bad-another-namespace.sig
-list bad-another-address "$B" 1 1-4; listsig bad-another-address
-cp revoked/ok-one-range.txt revoked/bad-s-plus-l.txt; X=$(blob revoked/ok-one-range.sig); armor "$(plusl "$X" $((${#X} - 64)))" > revoked/bad-s-plus-l.sig      # a good list, its signature with L added to S
-list bad-no-serials "$A" 1; listsig bad-no-serials
-list bad-version-zero "$A" 0 1-4; listsig bad-version-zero
-list bad-version-leading-zero "$A" 01 1-4; listsig bad-version-leading-zero
-list bad-serial-zero "$A" 1 0-4; listsig bad-serial-zero
-list bad-serial-leading-zero "$A" 1 01-4; listsig bad-serial-leading-zero
-list bad-serial-19-digits "$A" 1 1000000000000000000; listsig bad-serial-19-digits
-list bad-serial-above-2-53 "$A" 1 9007199254740992; listsig bad-serial-above-2-53
-list bad-version-above-2-53 "$A" 9007199254740992 1; listsig bad-version-above-2-53
-list bad-range-backwards "$A" 1 4-1; listsig bad-range-backwards
-list bad-range-of-one "$A" 1 4-4; listsig bad-range-of-one
-list bad-descending "$A" 1 5 3; listsig bad-descending
-list bad-overlap "$A" 1 1-4 4-6; listsig bad-overlap
-list bad-blank-line "$A" 1 1-4 "" 6; listsig bad-blank-line
-list bad-trailing-space "$A" 1 "1-4 "; listsig bad-trailing-space
-printf 'irongall-revoked-certs-v1\r\n%s\r\n1\r\n1-4\r\n' "$A" > revoked/bad-crlf.txt; listsig bad-crlf
-printf 'irongall-revoked-certs-v1\n%s\n1\n1-4' "$A" > revoked/bad-no-final-newline.txt; listsig bad-no-final-newline
-printf 'irongall-revoked-certs-v2\n%s\n1\n1-4\n' "$A" > revoked/bad-another-tag.txt; listsig bad-another-tag
-list bad-address-in-uppercase "$(tr a-f A-F <<< "$A")" 1 1-4; listsig bad-address-in-uppercase
-printf 'irongall-revoked-certs-v1\n%s\n1\n1-4\0\n' "$A" > revoked/bad-nul.txt; listsig bad-nul      # a NUL, which a shell variable drops: a reader that tests the variable alone takes it
+through() { printf 'irongall-revoke-certs-v1\n%s\n%s\n' "$2" "$3" > "revoked/$1.txt"; }   # <name> <address> <serial>
+thsig() { sign a "irongall-revoke-certs-v1:$A" < "revoked/$1.txt" > "revoked/$1.sig"; }
+through ok-through-4 "$A" 4; thsig ok-through-4
+through ok-through-the-highest "$A" 9007199254740991; thsig ok-through-the-highest      # 2^53 - 1, the highest serial
+sign a "irongall-revoke-certs-v1:$A" -O hashalg=sha256 < revoked/ok-through-4.txt > revoked/ok-through-4.sha256.sig
+cp revoked/ok-through-4.txt revoked/bad-by-a-working-key.txt; under a-work a/work-cert.pub "irongall-revoke-certs-v1:$A" < revoked/bad-by-a-working-key.txt > revoked/bad-by-a-working-key.sig
+cp revoked/ok-through-4.txt revoked/bad-another-namespace.txt; sign a "irongall-revoke-v1:$A" < revoked/bad-another-namespace.txt > revoked/bad-another-namespace.sig
+through bad-another-address "$B" 4; thsig bad-another-address
+cp revoked/ok-through-4.txt revoked/bad-s-plus-l.txt; X=$(blob revoked/ok-through-4.sig); armor "$(plusl "$X" $((${#X} - 64)))" > revoked/bad-s-plus-l.sig      # a good one, its signature with L added to S
+printf 'irongall-revoke-certs-v1\n%s\n' "$A" > revoked/bad-no-serial.txt; thsig bad-no-serial
+through bad-serial-zero "$A" 0; thsig bad-serial-zero
+through bad-serial-leading-zero "$A" 04; thsig bad-serial-leading-zero
+through bad-serial-19-digits "$A" 1000000000000000000; thsig bad-serial-19-digits
+through bad-serial-above-2-53 "$A" 9007199254740992; thsig bad-serial-above-2-53
+through bad-a-range "$A" 1-4; thsig bad-a-range
+through bad-a-sign "$A" +4; thsig bad-a-sign
+through bad-trailing-space "$A" "4 "; thsig bad-trailing-space
+printf 'irongall-revoke-certs-v1\n%s\n4\n6\n' "$A" > revoked/bad-a-second-serial.txt; thsig bad-a-second-serial
+printf 'irongall-revoke-certs-v1\n%s\n4\n\n' "$A" > revoked/bad-blank-line.txt; thsig bad-blank-line
+printf 'irongall-revoked-certs-v1\n%s\n1\n1-4\n' "$A" > revoked/bad-a-list.txt; thsig bad-a-list      # the list a certificate was revoked by until 2026-10-14
+printf 'irongall-revoke-certs-v1\r\n%s\r\n4\r\n' "$A" > revoked/bad-crlf.txt; thsig bad-crlf
+printf 'irongall-revoke-certs-v1\n%s\n4' "$A" > revoked/bad-no-final-newline.txt; thsig bad-no-final-newline
+printf 'irongall-revoke-certs-v2\n%s\n4\n' "$A" > revoked/bad-another-tag.txt; thsig bad-another-tag
+through bad-address-in-uppercase "$(tr a-f A-F <<< "$A")" 4; thsig bad-address-in-uppercase
+printf 'irongall-revoke-certs-v1\n%s\n4\0\n' "$A" > revoked/bad-nul.txt; thsig bad-nul      # a NUL, which a shell variable drops: a reader that tests the variable alone takes it
 
 # A pass of box A for a server it calls irongall.example, good for ten minutes from NOW, and the header it travels in.
 printf 'irongall-pass-v1\n%s\nirongall.example\n2026-10-10T00:10:00Z\n' "$A" > a/pass.txt

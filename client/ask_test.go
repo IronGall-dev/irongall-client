@@ -84,8 +84,8 @@ func theft(t *testing.T, e *env, a *client.Box) (statement, signature []byte) {
 	if _, err := a.Rekey(context.Background(), ""); err != nil {
 		t.Fatal(err)
 	}
-	if list, err := a.RevokeEarlier(context.Background()); err != nil || list == nil || !list.Revokes(taken) || list.Revokes(numberOf(t, a)) {
-		t.Fatalf("revoke earlier: %+v, %v", list, err)
+	if certs, err := a.RevokeEarlier(context.Background()); err != nil || certs == nil || !certs.Revokes(taken) || certs.Revokes(numberOf(t, a)) {
+		t.Fatalf("revoke earlier: %+v, %v", certs, err)
 	}
 	return statement, signature
 }
@@ -377,6 +377,17 @@ func TestAFlushAsksOnceForEachRecipient(t *testing.T) {
 	}
 }
 
+// throughOf is the serial a record's revocation of certificates runs
+// through, read from its statement.
+func throughOf(t *testing.T, rec *protocol.Revocations) uint64 {
+	t.Helper()
+	certs, err := protocol.ParseRevokedCertificates(rec.RevokedCertificates)
+	if err != nil {
+		t.Fatalf("the record's revocation of certificates: %v", err)
+	}
+	return certs.Through
+}
+
 // record fetches what the server holds about a box, as anyone can.
 func record(t *testing.T, e *env, a *client.Box) *protocol.Revocations {
 	t.Helper()
@@ -392,11 +403,11 @@ func record(t *testing.T, e *env, a *client.Box) *protocol.Revocations {
 	return &rec
 }
 
-// A box may ask at any time, and a record may come from anywhere: a list of
-// revoked certificates handed over in a file is kept as one from a server
-// is. The highest version stands, and a record with a part that does not
-// verify is refused whole.
-func TestAskingAtAnyTimeAndAListHandedOver(t *testing.T) {
+// A box may ask at any time, and a record may come from anywhere: a
+// revocation of certificates handed over in a file is kept as one from a
+// server is. The highest serial it runs through stands, and a record with a
+// part that does not verify is refused whole.
+func TestAskingAtAnyTimeAndARevocationHandedOver(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
@@ -407,25 +418,26 @@ func TestAskingAtAnyTimeAndAListHandedOver(t *testing.T) {
 	stolen := worker(t, a)
 	theft(t, e, a)
 	first := record(t, e, a)
-	if held, err := b.Ask(ctx, a.Address()); err != nil || held.Revoked || held.Certificates == nil || held.Certificates.Version != 1 {
-		t.Fatalf("ask after a list was published: %+v, %v", held, err)
+	firstThrough := throughOf(t, first)
+	if held, err := b.Ask(ctx, a.Address()); err != nil || held.Revoked || held.Certificates == nil || held.Certificates.Through != firstThrough {
+		t.Fatalf("ask after a revocation of certificates was published: %+v, %v", held, err)
 	}
 
 	// C never asks: the record reaches it as a file, and the server may say
 	// what it likes.
 	says(e, protocol.CodeNotRevoked, http.MethodGet, "/revocations")
 	got, held, err := c.KeepRevocation(first)
-	if err != nil || got != a.Address() || held.Revoked || held.Certificates == nil || held.Certificates.Version != 1 || !keptList(c, a.Address()) {
-		t.Fatalf("a list handed over: %+v, %v", held, err)
+	if err != nil || got != a.Address() || held.Revoked || held.Certificates == nil || held.Certificates.Through != firstThrough || !keptList(c, a.Address()) {
+		t.Fatalf("a revocation of certificates handed over: %+v, %v", held, err)
 	}
 	mailAs(t, e, a, c, stolen, "signed by the key that was taken")
 	if res := receive(t, c); len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedCertificate {
-		t.Fatalf("a thief's mail, the list handed over and the server hiding it: %+v", res)
+		t.Fatalf("a thief's mail, the revocation handed over and the server hiding it: %+v", res)
 	}
 	e.srv.SetMiddle(nil)
 
-	// A later list replaces it, and the earlier one, handed over again,
-	// changes nothing.
+	// One through a higher serial replaces it, and the lower one, handed
+	// over again, changes nothing: what was revoked stays revoked.
 	second := numberOf(t, a)
 	if _, err := a.Rekey(ctx, ""); err != nil {
 		t.Fatal(err)
@@ -433,33 +445,38 @@ func TestAskingAtAnyTimeAndAListHandedOver(t *testing.T) {
 	if _, err := a.RevokeEarlier(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, held, err := c.KeepRevocation(record(t, e, a)); err != nil || held.Certificates.Version != 2 {
-		t.Fatalf("a later list: %+v, %v", held, err)
+	later := throughOf(t, record(t, e, a))
+	if later <= firstThrough {
+		t.Fatalf("the later revocation runs through %d, not above %d", later, firstThrough)
 	}
-	if _, held, err := c.KeepRevocation(first); err != nil || held.Certificates.Version != 2 || !held.Certificates.Revokes(second) {
-		t.Fatalf("an earlier list handed over again: %+v, %v", held, err)
+	if _, held, err := c.KeepRevocation(record(t, e, a)); err != nil || held.Certificates.Through != later {
+		t.Fatalf("a later revocation of certificates: %+v, %v", held, err)
+	}
+	if _, held, err := c.KeepRevocation(first); err != nil || held.Certificates.Through != later || !held.Certificates.Revokes(second) {
+		t.Fatalf("a lower one handed over again: %+v, %v", held, err)
 	}
 
 	// A record with a part that does not verify is refused whole: a good
-	// revocation beside a list the working key signed keeps nothing.
+	// revocation beside a revocation of certificates the working key signed
+	// keeps nothing.
 	d := e.box(protocol.Classic)
 	rev, err := d.Revocation()
 	if err != nil {
 		t.Fatal(err)
 	}
-	list, err := protocol.NewRevokedCertificates(d.Address(), 1, []protocol.SerialRange{{First: 1, Last: 1}})
+	certs, err := protocol.NewRevokedCertificates(d.Address(), 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	byWorker, err := protocol.SignRevokedCertificates(worker(t, d), list)
+	byWorker, err := protocol.SignRevokedCertificates(worker(t, d), certs)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for name, bad := range map[string]*protocol.Revocations{
-		"a list a working key signed":        {Identity: rev.Identity, Revocation: rev.Revocation, RevokedCertificates: list.Statement(), RevokedCertificatesSignature: byWorker},
-		"a list with no signature":           {Identity: rev.Identity, RevokedCertificates: list.Statement()},
-		"another box's revocation, and none": {Identity: rev.Identity, Revocation: first.RevokedCertificatesSignature},
-		"nothing but the identity":           {Identity: rev.Identity},
+		"certificates revoked by a working key":  {Identity: rev.Identity, Revocation: rev.Revocation, RevokedCertificates: certs.Statement(), RevokedCertificatesSignature: byWorker},
+		"certificates revoked with no signature": {Identity: rev.Identity, RevokedCertificates: certs.Statement()},
+		"another box's revocation, and none":     {Identity: rev.Identity, Revocation: first.RevokedCertificatesSignature},
+		"nothing but the identity":               {Identity: rev.Identity},
 	} {
 		if _, _, err := c.KeepRevocation(bad); err == nil || keptRevocation(c, d.Address()) || keptList(c, d.Address()) {
 			t.Fatalf("%s was kept: %v", name, err)

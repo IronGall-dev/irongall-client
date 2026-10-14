@@ -276,9 +276,9 @@ ig_resolve(){ # <address> → prints "<serial> <age recipient> <certificate seri
   sc=$(cat "$d/cert-serial" 2> /dev/null || echo 0)      # a box's statements are ordered by their certificate first, then by their own serial: a later certificate outranks any serial under an earlier one, so a box that moved to a new certificate is followed whatever serial it publishes
   [ "$c" -ge "$sc" ] || ig_refuse "rollback: $B's prekey is signed under certificate $c, below one already seen" || return 1
   [ "$c" -gt "$sc" ] || [ "$s" -ge "$(cat "$d/serial" 2> /dev/null || echo 0)" ] || ig_refuse "rollback: $B's prekey serial $s is below one already seen" || return 1
-  ig_listed "$B" "$c"; case $? in      # by the list this box holds: only the identity's own signature revokes a certificate
+  ig_certrevoked "$B" "$c"; case $? in      # by what this box holds: only the identity's own signature revokes a certificate
     0) ig_refuse "$B's prekey is signed under a certificate its identity has revoked: its owner must publish a new one"; return 1 ;;
-    3) ig_refuse "the list of revoked certificates kept for $B does not verify"; return 1 ;;
+    3) ig_refuse "the revocation of certificates kept for $B does not verify"; return 1 ;;
   esac
   [ "$na" -gt "$(ig_now)" ] || ig_refuse "$B's prekey has expired: its owner must publish a new one" || return 1
   ig_meet "$B" "$f" && echo "$s" > "$d/serial" && echo "$c" > "$d/cert-serial" && cp "$IG/peer.txt" "$d/prekey.txt" && cp "$IG/peer.sig" "$d/prekey.sig" || return 1      # recorded only after every check passed
@@ -299,43 +299,35 @@ ig_gone(){ # <address> → 0 if this box holds a revocation of it: peers/<addres
   [ -e "$s" ] || return 1
   ig_revcheck "$1" "$d" "$s" || return 3
 }
-ig_listcheck(){ # <address> <identity document> <list> <signature> → the list's version, only for a list of that address's revoked certificates: signed by its identity's OWN key, as a revocation of the address is (no cert-authority, so a certificate cannot revoke another, or itself), and in its one exact form. The tag, the address and a version, each on a line, then at least one line that is a serial or first-last with first below last, each beginning above where the line before it ended. A number is from 1 to 2^53 - 1 with no leading zero, compared by bash, whose numbers are exact there where awk's are not
-  local L i p=0 a b x k
+ig_certscheck(){ # <address> <identity document> <statement> <signature> → the serial it revokes through, only for a revocation of that address's certificates: signed by its identity's OWN key, as a revocation of the address is (no cert-authority, so a certificate cannot revoke another, or itself), and in its one exact form, the tag, the address and a serial, each on a line ending in LF, and nothing else. The serial is from 1 to 2^53 - 1 with no leading zero, compared by bash, whose numbers are exact there where awk's are not
+  local L
   ig_idcheck "$2" "$1" && ig_sshsig "$4" || return 1
   printf '%s %s\n' "$1" "$(sed -n 2p "$2")" > "$IG/signers"
-  ssh-keygen -Y verify -f "$IG/signers" -I "$1" -n "irongall-revoked-certs-v1:$1" -s "$4" < "$3" > /dev/null 2>&1 || return 1
+  ssh-keygen -Y verify -f "$IG/signers" -I "$1" -n "irongall-revoke-certs-v1:$1" -s "$4" < "$3" > /dev/null 2>&1 || return 1
   mapfile -t L < "$3"
   [ "$(printf '%s\n' "${L[@]}" | sha256sum)" = "$(sha256sum < "$3")" ] || return 1      # the file against itself rebuilt from its lines: every line ends in LF, and nothing is in it that a shell variable drops (a NUL)
-  [ ${#L[@]} -ge 4 ] && [ "${L[0]}" = irongall-revoked-certs-v1 ] && [ "${L[1]}" = "$1" ] && [[ ${L[2]} =~ ^[1-9][0-9]{0,15}$ ]] && [ "${L[2]}" -le 9007199254740991 ] || return 1
-  for ((i = 3; i < ${#L[@]}; i++)); do
-    [[ ${L[i]} =~ ^([1-9][0-9]{0,15})(-([1-9][0-9]{0,15}))?$ ]] || return 1
-    a=${BASH_REMATCH[1]}; b=${BASH_REMATCH[3]:-$a}
-    [ -z "${BASH_REMATCH[2]}" ] || [ "$a" -lt "$b" ] || return 1
-    [ "$b" -le 9007199254740991 ] || return 1
-    [ "$a" -gt "$p" ] || return 1; p=$b
-  done
+  [ ${#L[@]} -eq 3 ] && [ "${L[0]}" = irongall-revoke-certs-v1 ] && [ "${L[1]}" = "$1" ] && [[ ${L[2]} =~ ^[1-9][0-9]{0,15}$ ]] && [ "${L[2]}" -le 9007199254740991 ] || return 1
   echo "${L[2]}"
 }
-ig_listkept(){ # <address> → the version of the list of that address's revoked certificates this box holds, checked again as it is read, with the list left in $IG/kept.list. It is kept as the record that carries it, one line of JSON {identity, revoked_certificates, revoked_certificates_signature}: peers/<address>/revoked-certs.json beside the pinned identity, or revoked-certs.json for this box's own. 1 if none is kept. 3 if one is kept and does not verify under the identity this box holds for the address: a fault of this box, never a quiet "nothing revoked"
+ig_certskept(){ # <address> → the serial through which this box holds that address's certificates revoked, checked again as it is read. It is kept as the record that carries it, one line of JSON {identity, revoked_certificates, revoked_certificates_signature}: peers/<address>/revoked-certs.json beside the pinned identity, or revoked-certs.json for this box's own. 1 if none is kept. 3 if one is kept and does not verify under the identity this box holds for the address: a fault of this box, never a quiet "nothing revoked"
   local d="$IG/peers/$1/identity.doc" f="$IG/peers/$1/revoked-certs.json"
   [ "$1" != "$(cat "$IG/address" 2> /dev/null)" ] || { d="$IG/identity.doc"; f="$IG/revoked-certs.json"; }
   [ -e "$f" ] || return 1
-  ig_shape "$f" record && ig_bytes "$f" revoked_certificates "$IG/kept.list" && ig_bytes "$f" revoked_certificates_signature "$IG/kept.lsig" &&
-    ig_listcheck "$1" "$d" "$IG/kept.list" "$IG/kept.lsig" || return 3
+  ig_shape "$f" record && ig_bytes "$f" revoked_certificates "$IG/kept.certs" && ig_bytes "$f" revoked_certificates_signature "$IG/kept.csig" &&
+    ig_certscheck "$1" "$d" "$IG/kept.certs" "$IG/kept.csig" || return 3
 }
-ig_listed(){ # <address> <certificate serial> → 0 if the list this box holds for the address names the serial. 1 if none is kept, or the one kept does not name it. 3 if one is kept and does not verify
-  local a b
-  ig_listkept "$1" > /dev/null || return
-  while IFS=- read -r a b; do [ "$2" -ge "$a" ] && [ "$2" -le "${b:-$a}" ] && return 0; done < <(tail -n +4 "$IG/kept.list")
-  return 1
+ig_certrevoked(){ # <address> <certificate serial> → 0 if the address's identity has revoked the certificate, by what this box holds. 1 if nothing is kept, or what is kept runs below it. 3 if what is kept does not verify
+  local x
+  x=$(ig_certskept "$1") || return
+  [ "$2" -le "$x" ]
 }
-ig_keeplist(){ # <address> <identity document> <list> <signature> → keeps the list, if it verifies and its version is above the one this box holds: it is the whole list each time, and the highest version stands. One that does not verify, or is no newer, changes nothing. 1 only for a fault of this box
+ig_keepcerts(){ # <address> <identity document> <statement> <signature> → keeps the revocation of the address's certificates, if it verifies and runs through a higher serial than the one this box holds: the highest stands, and a certificate once revoked stays so. One that does not verify, or runs no higher, changes nothing. 1 only for a fault of this box
   local f="$IG/peers/$1/revoked-certs.json" v h
   [ "$1" != "$(cat "$IG/address" 2> /dev/null)" ] || f="$IG/revoked-certs.json"
-  v=$(ig_listcheck "$1" "$2" "$3" "$4") || return 0
-  h=$(ig_listkept "$1"); case $? in 0) [ "$v" -gt "$h" ] || return 0 ;; 1) ;; *) return 1 ;; esac
+  v=$(ig_certscheck "$1" "$2" "$3" "$4") || return 0
+  h=$(ig_certskept "$1"); case $? in 0) [ "$v" -gt "$h" ] || return 0 ;; 1) ;; *) return 1 ;; esac
   [ "$f" = "$IG/revoked-certs.json" ] || ig_meet "$1" "$2" || return 1
-  ig_b64 "$2" > "$f.i" && ig_b64 "$3" > "$f.l" && ig_b64 "$4" > "$f.g" && jq -cn --rawfile i "$f.i" --rawfile l "$f.l" --rawfile g "$f.g" '{identity:$i, revoked_certificates:$l, revoked_certificates_signature:$g}' > "$f.new" && mv "$f.new" "$f" && rm -f "$f.i" "$f.l" "$f.g"      # one file, moved into place whole: a list is never kept without the signature that goes with it
+  ig_b64 "$2" > "$f.i" && ig_b64 "$3" > "$f.l" && ig_b64 "$4" > "$f.g" && jq -cn --rawfile i "$f.i" --rawfile l "$f.l" --rawfile g "$f.g" '{identity:$i, revoked_certificates:$l, revoked_certificates_signature:$g}' > "$f.new" && mv "$f.new" "$f" && rm -f "$f.i" "$f.l" "$f.g"      # one file, moved into place whole: a statement is never kept without the signature that goes with it
 }
 ig_keep(){ # <address> <its identity document> <signature> → the revocation, kept for good: called only once ig_revcheck took it. A revoked address stays revoked
   if [ "$1" = "$(cat "$IG/address" 2> /dev/null)" ]; then cp "$3" "$IG/revoked.sig"; else ig_meet "$1" "$2" && cp "$3" "$IG/peers/$1/revoke.sig"; fi
@@ -365,10 +357,10 @@ ig_revservers(){ # → the revocation servers this box asks beside its own serve
     seen="$seen$s "
   done
 }
-ig_take(){ # <address> → keeps what verifies of $IG/rev.json, a server's answer about the address: a list of its revoked certificates, a revocation of the address, or both. 0: this box now holds a revocation of the address. 1: it does not: what the answer showed of one does not verify, which counts as nothing shown. 3: a fault of this box
-  if ig_bytes "$IG/rev.json" identity "$IG/rev.doc" && ig_bytes "$IG/rev.json" revoked_certificates "$IG/rev.list" && [ -s "$IG/rev.list" ] &&
-    ig_bytes "$IG/rev.json" revoked_certificates_signature "$IG/rev.lsig"; then      # a list of revoked certificates rides in the same record. It is taken or not on its own: the address may well go on
-    ig_keeplist "$1" "$IG/rev.doc" "$IG/rev.list" "$IG/rev.lsig" || return 3
+ig_take(){ # <address> → keeps what verifies of $IG/rev.json, a server's answer about the address: a revocation of its certificates, of the address, or both. 0: this box now holds a revocation of the address. 1: it does not: what the answer showed of one does not verify, which counts as nothing shown. 3: a fault of this box
+  if ig_bytes "$IG/rev.json" identity "$IG/rev.doc" && ig_bytes "$IG/rev.json" revoked_certificates "$IG/rev.certs" && [ -s "$IG/rev.certs" ] &&
+    ig_bytes "$IG/rev.json" revoked_certificates_signature "$IG/rev.csig"; then      # a revocation of certificates rides in the same record. It is taken or not on its own: the address may well go on
+    ig_keepcerts "$1" "$IG/rev.doc" "$IG/rev.certs" "$IG/rev.csig" || return 3
   fi
   [ "$(ig_record "$IG/rev.json")" = "$1" ] || return 1
   ig_keep "$1" "$IG/rev.doc" "$IG/rev.sig" || return 3
@@ -475,7 +467,7 @@ ig_post(){ # <address> <outbox stem> → POSTs it, sealing it first; on 409 stal
     *) ig_refuse "what this box keeps about $B does not verify, or could not be written: kept in the outbox"; return 1 ;;
   esac
   if [ -e "$o.json" ]; then      # a seal that waited: its recipient's identity may since have revoked the certificate its prekey was signed under, and that prekey may be one a thief of the working key published. Such a seal is not posted: it is made again. So is one this script cannot read
-    if c=$(ig_under "$o"); then ig_listed "$B" "$c"; case $? in 0) rm -f "$o.json" ;; 1) ;; *) ig_refuse "the list of revoked certificates kept for $B does not verify: kept in the outbox"; return 1 ;; esac; else rm -f "$o.json"; fi
+    if c=$(ig_under "$o"); then ig_certrevoked "$B" "$c"; case $? in 0) rm -f "$o.json" ;; 1) ;; *) ig_refuse "the revocation of certificates kept for $B does not verify: kept in the outbox"; return 1 ;; esac; else rm -f "$o.json"; fi
   fi
   { [ -e "$o.json" ] || ig_seal "$B" "$o"; } && ig_owner POST "/v1/$B" "$o.json" > "$IG/receipt.json" && ig_shape "$IG/receipt.json" receipt && { ig_sent "$o"; return; }
   if [ "$(ig_code)" = stale_prekey ]; then ig_seal "$B" "$o" && ig_owner POST "/v1/$B" "$o.json" > "$IG/receipt.json" && ig_shape "$IG/receipt.json" receipt && { ig_sent "$o"; return; }; fi
@@ -557,9 +549,9 @@ ig_judge(){ # <me> <the server's from> <message stem> → 0 only if EVERY check 
     3) echo "the revocation kept for $A does not verify"; return 3 ;;
   esac
   c=$(ig_cert "$m.sig" "$m.doc" "$A") || { echo "cannot read the certificate of a signature that verified"; return 3; }
-  ig_listed "$A" "${c%% *}"; case $? in      # the same answer carried the sender's list of revoked certificates, if it has one: the address goes on, and what a listed certificate signed is refused the same way
+  ig_certrevoked "$A" "${c%% *}"; case $? in      # the same answer carried the sender's revocation of its certificates, if it has one: the address goes on, and what a revoked certificate signed is refused the same way
     0) echo "certificate_revoked: it is signed under a certificate its sender's identity has revoked: nothing signed under it is taken, whenever it was signed"; return 1 ;;
-    3) echo "the list of revoked certificates kept for $A does not verify"; return 3 ;;
+    3) echo "the revocation of certificates kept for $A does not verify"; return 3 ;;
   esac
   [ ! -e "$IG/seen" ] || [ -r "$IG/seen" ] || { echo "cannot read $IG/seen"; return 3; }
   h=$(sha256sum < "$m.age" | cut -c1-64)
@@ -619,7 +611,7 @@ ig_rekey(){ # [--no-pq] → publishes a new prekey, signed by a new working key 
   ig_renew "${1-}"; local rc=$?; rmdir "$IG/lock"; return $rc
 }
 ig_renew(){ # [--no-pq] → what ig_rekey does, the lock held. A serial is signed ONCE
-  local A r s t na h c f cs p new; A=$(cat "$IG/address") || return 1; mkdir -p "$IG/prekeys"
+  local A r s t na h c f cs p new x; A=$(cat "$IG/address") || return 1; mkdir -p "$IG/prekeys"
   ig_api GET "/v1/$A/identity" > "$IG/self.json" || return 1
   ig_shape "$IG/self.json" identity && ig_bytes "$IG/self.json" identity "$IG/self.doc" && ig_bytes "$IG/self.json" prekey "$IG/self.txt" && ig_bytes "$IG/self.json" prekey_signature "$IG/self.sig" ||
     ig_refuse "the server's answer for this box is not one this client reads: a JSON object as PROTOCOL.md §0b reads one, each byte field base64 in its one encoding" || return 1
@@ -627,7 +619,13 @@ ig_renew(){ # [--no-pq] → what ig_rekey does, the lock held. A serial is signe
   c=$(ig_cert "$IG/self.sig" "$IG/identity.doc" "$A") && c=${c#* } && r=$(ig_prekeycheck "$IG/self.txt" "$IG/self.sig" "$A" "$IG/identity.doc" "${c% *}") || ig_refuse "this box's current prekey, as served: ${r:-it is not signed under a certificate of this identity}" || return 1      # its own record, judged where its certificate begins: whether this identity ever certified the key that signed it, even if that certificate has since ended
   s=${r%% *}; cs=${r##* }; p=$(cat "$IG/serial" 2> /dev/null || echo 0)      # a box's statements are ordered by certificate first, then by serial, and this box gives a renewal's certificate and prekey one number: what it published is (p, p), and the server may serve nothing ordered before it
   [ "$cs" -gt "$p" ] || { [ "$cs" -eq "$p" ] && [ "$s" -ge "$p" ]; } || ig_refuse "rollback: the server serves this box's prekey serial $s under certificate $cs, before serial $p, which this box published" || return 1
-  s=$((cs > p ? cs : p)); [ "$s" -lt 9007199254740991 ] || ig_refuse "this box's certificate serial is the highest there is, so no later certificate can be made: the address cannot renew" || return 1
+  s=$((cs > p ? cs : p))
+  x=$(ig_certskept "$A"); case $? in      # above every serial this box's identity has revoked too: a certificate numbered there would be revoked as it was made
+    0) [ "$x" -lt 9007199254740991 ] || ig_refuse "this box's identity has revoked its certificates through the highest serial there is, so no later certificate can be made: the address cannot renew" || return 1; [ "$x" -le "$s" ] || s=$x ;;
+    1) ;;
+    *) ig_refuse "the revocation of certificates kept for this box does not verify"; return 1 ;;
+  esac
+  [ "$s" -lt 9007199254740991 ] || ig_refuse "this box's certificate serial is the highest there is, so no later certificate can be made: the address cannot renew" || return 1
   t=$(ls "$IG/prekeys" | sed -n 's/\.agekey$//p; s/\.txt\.sig$//p' | sort -n | tail -n 1); new=1      # s is the highest number this box knows of, and the new statement goes above it: above the served CERTIFICATE's serial, never the served prekey's, since it is under a new certificate, which outranks any prekey serial under the one before. So a prekey published in this box's name at the highest serial there is holds nothing. t is the highest number this box began a prekey at
   if [ "${t:-0}" -gt "$s" ]; then s=$t; new=; [ ! -s "$IG/prekeys/$s.txt.sig" ] || { na=$(ig_time "$(sed -n 5p "$IG/prekeys/$s.txt")") && [ "$na" -gt "$(ig_now)" ] && [ -s "$IG/work/$s-cert.pub" ] && c=$(ig_cert "$IG/prekeys/$s.txt.sig" "$IG/identity.doc" "$A") && c=${c#* } && [ "${c% *}" -le "$(ig_now)" ]; } || new=1; fi      # a number an earlier run took, and that nothing has passed since, is kept. Signed and never seen published: sent again AS IT IS until it expires, then a new number. Signed again, the same key would get 33 more days from a server that keeps what it refuses. One under a certificate that has not begun, by this clock, was signed while the clock read over an hour ahead: a server refuses it until that time comes, so it is spent too. Never signed: its key is used
   if [ -n "$new" ]; then [ "$s" -lt 9007199254740991 ] || ig_refuse "this box's certificate serial is the highest there is, so no later certificate can be made: the address cannot renew" || return 1; t=$(ig_now); s=$((t > s ? t : s + 1)); fi      # a new number: this machine's clock, in seconds, or one above the highest this box knows of when the clock gives nothing higher. An identity is a key and keeps no record of what it signed, and a box restored from it knows only what the server shows: by the clock, its certificate is above every one made before, on whatever machine. A verifier never reads a serial as a time, it only compares two

@@ -277,8 +277,8 @@ func (b *Box) receiveOne(ctx context.Context, id string, res *Result, asked *loo
 //     verifies refuses the message and every later one, whenever they were
 //     signed. A server that says it holds none has answered. No answer is an
 //     error: the message stays on the server for the next drain. The same
-//     answer carries the sender's list of revoked certificates, if it has
-//     one: mail signed under a listed certificate is refused the same way,
+//     answer carries the sender's revocation of its certificates, if it has
+//     one: mail signed under a revoked certificate is refused the same way,
 //     and the address goes on. Each revocation server the box lists is
 //     asked after its own, and can only add: a record it shows is kept, and
 //     no answer from it changes nothing.
@@ -331,11 +331,11 @@ func (b *Box) judge(ctx context.Context, m *protocol.Message, asked *lookups) (d
 	if gone {
 		return refused(RefusedRevoked, "its sender's address is revoked, and the revocation verifies: nothing signed for that address is taken, whenever it was signed")
 	}
-	list, err := b.revokedCerts(from)
+	certs, err := b.revokedCerts(from)
 	if err != nil {
 		return nil, false, nil, err
 	}
-	if list != nil && list.Revokes(signed.Certificate.Serial()) {
+	if certs != nil && certs.Revokes(signed.Certificate.Serial()) {
 		return refused(RefusedCertificate, "it is signed under a certificate its sender's identity has revoked: nothing signed under it is taken, whenever it was signed")
 	}
 	h := sha256.Sum256(m.Ciphertext)
