@@ -120,7 +120,7 @@ func Verify(pub ssh.PublicKey, message, signature []byte, namespace string) erro
 	}
 	keyBytes, ok1 := r.string()
 	ns, ok2 := r.string()
-	reserved, ok3 := r.string()
+	_, ok3 := r.string() // reserved
 	hashAlg, ok4 := r.string()
 	sigBytes, ok5 := r.string()
 	if !ok1 || !ok2 || !ok3 || !ok4 || !ok5 {
@@ -164,9 +164,12 @@ func Verify(pub ssh.PublicKey, message, signature []byte, namespace string) erro
 		}
 	}
 
-	// The reserved field is ignored, as the specification says, but it is part
-	// of the signed data.
-	return pub.Verify(signedData(string(ns), string(reserved), string(hashAlg), h), sig)
+	// The reserved field is ignored, as the specification says ("Implementations
+	// should ignore the reserved field if it is not empty"), and as OpenSSH's
+	// sshsig_wrap_verify does it: the blob's is skipped, and the data the key
+	// signed has an empty one. So a signature made over a reserved string that
+	// is not empty is refused, as "ssh-keygen -Y verify" refuses it.
+	return pub.Verify(signedData(string(ns), "", string(hashAlg), h), sig)
 }
 
 func isRSA(pub ssh.PublicKey) bool {

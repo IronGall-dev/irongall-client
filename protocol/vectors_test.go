@@ -385,6 +385,29 @@ func TestVectorSignatures(t *testing.T) {
 	}
 }
 
+// One signature in the forms sig/ holds: each ok-* is read as "ssh-keygen -Y
+// verify" reads it and verifies, and each bad-* is refused (PROTOCOL.md §3).
+// sh/sh_test.go holds the script to the same verdicts, and ssh-keygen too but
+// for the ones it takes and a verifier here does not.
+func TestVectorSignatureForms(t *testing.T) {
+	now := vectorNow(t)
+	a := vectorIdentity(t, "a")
+	stmt := read(t, "a/prekey-1.txt")
+	for _, f := range glob(t, "sig/*.sig") {
+		name := "sig/" + filepath.Base(f)
+		_, err := VerifyCertified(a, stmt, read(t, name), PrekeyNamespace(a.Address()), now)
+		if ok := strings.HasPrefix(filepath.Base(f), "ok-"); ok != (err == nil) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if n := len(read(t, "sig/ok-4096-bytes.sig")); n != MaxSignature {
+		t.Errorf("sig/ok-4096-bytes.sig is %d bytes, not the bound", n)
+	}
+	if n := len(read(t, "sig/bad-4097-bytes.sig")); n != MaxSignature+1 {
+		t.Errorf("sig/bad-4097-bytes.sig is %d bytes, not one over the bound", n)
+	}
+}
+
 func TestVectorPass(t *testing.T) {
 	now := vectorNow(t)
 	a, b := vectorIdentity(t, "a"), vectorIdentity(t, "b")
@@ -447,6 +470,8 @@ var plainVerdicts = map[string]string{
 	"refuse-end-line-without-its-line-feed":              RefusedMessage,
 	"refuse-crlf":                                        RefusedMessage,
 	"refuse-envelope-on-two-lines":                       RefusedMessage,
+	"accept-whitespace-in-the-signature":                 "",
+	"refuse-signature-over-4096-bytes":                   RefusedSignature,
 }
 
 func TestVectorPlaintexts(t *testing.T) {

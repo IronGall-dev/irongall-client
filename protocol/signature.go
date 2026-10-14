@@ -18,6 +18,14 @@ const (
 	armorWidth = 70 // ssh-keygen's line length
 )
 
+// MaxSignature is the most bytes an armored signature may be (PROTOCOL.md
+// §3). A field that carries one counts every byte it holds; in a message it is
+// the block from the BEGIN line through the END line. Dearmor refuses a longer
+// one before reading it, so every verifier here does. It is several times the
+// largest signature a key type here makes, and it rises only with a new key
+// type, whose signatures a client without that type cannot verify anyway.
+const MaxSignature = 4096
+
 // Sign signs message in namespace and returns the signature armored
 // byte-for-byte as "ssh-keygen -Y sign" writes it.
 func Sign(s ssh.Signer, message []byte, namespace string) ([]byte, error) {
@@ -53,12 +61,15 @@ func Armor(blob []byte) []byte {
 	return b.Bytes()
 }
 
-// Dearmor returns the SSHSIG blob inside an armored signature. It accepts what
-// "ssh-keygen -Y verify" accepts (OpenSSH's sshsig_dearmor): the BEGIN line
-// first, ending in LF or CRLF, then base64 with any whitespace, then LF and
-// the END line. Anything after the END line is ignored; it is not part of the
-// signature.
+// Dearmor returns the SSHSIG blob inside an armored signature of at most
+// MaxSignature bytes. It reads it as "ssh-keygen -Y verify" does (OpenSSH's
+// sshsig_dearmor): the BEGIN line first, ending in LF or CRLF, then base64
+// with any whitespace, then LF and the END line. Anything after the END line
+// is ignored; it is not part of the signature, but it counts toward the bound.
 func Dearmor(armored []byte) ([]byte, error) {
+	if len(armored) > MaxSignature {
+		return nil, errors.New("a signature is longer than the most a signature may be")
+	}
 	rest, ok := bytes.CutPrefix(armored, []byte(armorBegin[:len(armorBegin)-1]))
 	if ok {
 		if r, crlf := bytes.CutPrefix(rest, []byte("\r\n")); crlf {

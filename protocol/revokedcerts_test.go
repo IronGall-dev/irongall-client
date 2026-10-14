@@ -46,8 +46,8 @@ func TestVectorRevokedCertificates(t *testing.T) {
 	}
 
 	bad := glob(t, "revoked/bad-*.txt")
-	if len(bad) != 20 {
-		t.Fatalf("%d revoked/bad-* vectors, want 20", len(bad))
+	if len(bad) != 21 {
+		t.Fatalf("%d revoked/bad-* vectors, want 21", len(bad))
 	}
 	for _, f := range bad {
 		name := "revoked/" + strings.TrimSuffix(filepath.Base(f), ".txt")

@@ -11,6 +11,7 @@ import (
 	"crypto/sha512"
 	"encoding/binary"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -208,6 +209,7 @@ func TestRejects(t *testing.T) {
 		"hash label swapped":         {s.PublicKey(), build(pk, ns, "", "sha256", good, 1), ns},
 		"key swapped in blob":        {s.PublicKey(), build(other.PublicKey().Marshal(), ns, "", "sha512", good, 1), ns},
 		"trailing data in signature": {s.PublicKey(), build(pk, ns, "", "sha512", sigWithJunk, 1), ns},
+		"signed over a reserved one": {s.PublicKey(), build(pk, ns, "tag", "sha512", sign(ns, "tag", "sha512", h), 1), ns},
 		"empty":                      {s.PublicKey(), nil, ns},
 	}
 	for name, c := range cases {
@@ -216,14 +218,66 @@ func TestRejects(t *testing.T) {
 		}
 	}
 
-	// A non-empty reserved field is ignored, as the specification says.
-	if err := Verify(s.PublicKey(), msg, build(pk, ns, "tag", "sha512", sign(ns, "tag", "sha512", h), 1), ns); err != nil {
+	// A non-empty reserved field is ignored, as the specification says and as
+	// OpenSSH does it: the key signed an empty one (TestReservedAsSSHKeygen).
+	if err := Verify(s.PublicKey(), msg, build(pk, ns, "tag", "sha512", good, 1), ns); err != nil {
 		t.Errorf("non-empty reserved: %v", err)
 	}
 	// sha256 is accepted.
 	h256 := sha256Sum(msg)
 	if err := Verify(s.PublicKey(), msg, build(pk, ns, "", "sha256", sign(ns, "", "sha256", h256), 1), ns); err != nil {
 		t.Errorf("sha256: %v", err)
+	}
+}
+
+// The reserved field is read as "ssh-keygen -Y verify" reads it: the blob's is
+// skipped, and the data the key signed has an empty one. So a blob whose field
+// holds bytes, over a signature of an empty one, verifies, and a signature
+// made over a field that is not empty does not, in both verifiers.
+func TestReservedAsSSHKeygen(t *testing.T) {
+	s, _ := ssh.NewSignerFromKey(ed25519.NewKeyFromSeed(rfc8032Seed))
+	msg := []byte("irongall sshsig reserved\n")
+	h := sha512Sum(msg)
+	sign := func(reserved string) []byte {
+		sig, err := s.Sign(rand.Reader, signedData(ns, reserved, "sha512", h))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ssh.Marshal(sig)
+	}
+	pk := s.PublicKey().Marshal()
+	cases := []struct {
+		name string
+		blob []byte
+		good bool
+	}{
+		{"field not empty, signed over an empty one", build(pk, ns, "tag", "sha512", sign(""), 1), true},
+		{"signed over the field", build(pk, ns, "tag", "sha512", sign("tag"), 1), false},
+	}
+	for _, c := range cases {
+		if err := Verify(s.PublicKey(), msg, c.blob, ns); (err == nil) != c.good {
+			t.Errorf("%s: Verify: %v, want good %v", c.name, err, c.good)
+		}
+	}
+	keygen, err := exec.LookPath("ssh-keygen")
+	if err != nil {
+		t.Skip("ssh-keygen not installed: the Go verdicts were checked, not ssh-keygen's")
+	}
+	dir := t.TempDir()
+	signers := filepath.Join(dir, "signers")
+	if err := os.WriteFile(signers, []byte("test "+string(ssh.MarshalAuthorizedKey(s.PublicKey()))), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for i, c := range cases {
+		f := filepath.Join(dir, fmt.Sprintf("%d.sig", i))
+		if err := os.WriteFile(f, pem.EncodeToMemory(&pem.Block{Type: "SSH SIGNATURE", Bytes: c.blob}), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command(keygen, "-Y", "verify", "-f", signers, "-I", "test", "-n", ns, "-s", f)
+		cmd.Stdin = bytes.NewReader(msg)
+		if err := cmd.Run(); (err == nil) != c.good {
+			t.Errorf("%s: ssh-keygen -Y verify: %v, want good %v", c.name, err, c.good)
+		}
 	}
 }
 

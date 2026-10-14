@@ -162,11 +162,36 @@ ig_idcheck(){ # <identity document> [address] → 0 only for a two-line document
       return 1 ;;
   esac
 }
+ig_blob(){ # <signature file> → the SSHSIG blob it armors, in hex, read as ssh-keygen -Y verify reads it (OpenSSH's sshsig_dearmor), and only if the file is at most 4096 bytes in all: the BEGIN line first, ending in LF or CRLF; then base64 in its one encoding, with space, tab, LF, VT, FF and CR skipped wherever they are; then LF and the END line, after which nothing is read. 1 for anything else, a NUL included. The bytes are read as hex, never through a shell variable, which would drop a NUL
+  local h b e t B E
+  [ "$(wc -c < "$1")" -le 4096 ] || return 1      # the bound counts every byte of the file, what follows the END line too
+  B=$(printf %s '-----BEGIN SSH SIGNATURE-----' | od -An -v -tx1 | tr -s ' \n' '  '); E=$(printf '\n%s' '-----END SSH SIGNATURE-----' | od -An -v -tx1 | tr -s ' \n' '  ')
+  h=$(od -An -v -tx1 < "$1" | tr -s ' \n' '  ')      # every byte as " xx", and one space at the end: a match of " xx … xx " falls on whole bytes
+  [[ $h == "$B"* ]] || return 1; h=" ${h#"$B"}"
+  case $h in " 0d 0a "*) h=${h#" 0d 0a"} ;; " 0a "*) h=${h#" 0a"} ;; *) return 1 ;; esac
+  b=${h%%"$E"*}; [ "$b" != "$h" ] || return 1      # up to the first LF and END line
+  for e in 20 09 0a 0b 0c 0d; do b=${b// $e/}; done
+  [[ $b =~ ^( (3[0-9]|4[1-9a-f]|5[0-9a]|6[1-9a-f]|7[0-9a]|2b|2f|3d))*$ ]] || return 1      # nothing left but the base64 alphabet and its padding
+  t=$(printf "${b// /\\x}")
+  [ -n "$t" ] && [ "$(printf %s "$t" | base64 -d 2> /dev/null | base64 | tr -d '\n')" = "$t" ] || return 1      # in its one encoding: padded, and the unused bits of the last character zero, as OpenSSH's decoder holds it
+  printf %s "$t" | base64 -d | od -An -v -tx1 | tr -d ' \n'
+}
+ig_s(){ # <an SSH signature in hex: its type as a string, then its bytes as one> → 1 only for an Ed25519 signature that is not 64 bytes, or whose S is not below the group's order L: such a signature is invalid (RFC 8032 §5.1.7), and ssh-keygen built on OpenSSH's own Ed25519 takes one with L added to S. 0 for any other, which ssh-keygen judges
+  local s="" i a b L=1000000000000000000000000000000014def9dea2f79cd65812631a5cf5d3ed
+  [ "${1:0:30}" = "0000000b$(ig_asc ssh-ed25519)" ] || return 0
+  [ ${#1} -eq 166 ] && [ "${1:30:8}" = 00000040 ] || return 1
+  for ((i = 164; i >= 102; i -= 2)); do s+=${1:i:2}; done      # S is the signature's last 32 bytes, little-endian: here it is read the other way round, to compare with L
+  for i in 0 8 16 24 32 40 48 56; do a=$((16#${s:i:8})); b=$((16#${L:i:8})); [ "$a" -lt "$b" ] && return 0; [ "$a" -gt "$b" ] && return 1; done
+  return 1
+}
+ig_sshsig(){ # <signature file> → 0 only for a signature ig_blob reads that is an SSHSIG of version 1, five fields and nothing after them, whose own signature passes ig_s. It leaves the blob in x and its signing key in k, both in hex, for its caller, whose locals they are. The reserved field is read and skipped, as OpenSSH does: ssh-keygen verifies over an empty one
+  local o=20 l v
+  x=$(ig_blob "$1") && [ "${x:0:20}" = 53534853494700000001 ] || return 1      # "SSHSIG", version 1
+  ig_str && k=$v && ig_str && ig_str && ig_str && ig_str && ig_s "$v" && [ "$o" -eq "${#x}" ]      # the signing key, the namespace, reserved, the hash, the signature: and nothing after
+}
 ig_cert(){ # <signature> <identity document> <address> → "<serial> <valid after> <valid before>", as Unix times, for the certificate the signature carries, only if it is in its one form (below) and names that identity as its signer. Its fields are read from its bytes, in order: ssh-keygen -Y verify takes a certificate with extensions or an option, and checks no key id. Whether the identity's signature on it is good, and whether it holds now, are ig_certified's
   local x o=20 l v k n a b      # x: the bytes being read, in hex; o: how far into them; v: the field just read
-  x=$(sed '1d;$d' "$1" | tr -d '\n' | base64 -d 2> /dev/null | od -An -v -tx1 | tr -d ' \n')
-  [[ $x =~ ^[0-9a-f]*$ && ${x:0:20} = 53534853494700000001 ]] || return 1      # "SSHSIG", version 1, then the signing key as a string: here, the certificate
-  ig_str || return 1; x=$v; o=0
+  ig_sshsig "$1" || return 1; x=$k; o=0      # the signing key: here, the certificate
   ig_str && [ "$v" = "$(ig_asc ssh-ed25519-cert-v01@openssh.com)" ] || return 1      # a certificate for an Ed25519 key
   ig_str || return 1      # the nonce
   ig_str && k=$v && ig_keycheck "$k" || return 1      # the working key, held to the identity's own key checks
@@ -177,6 +202,7 @@ ig_cert(){ # <signature> <identity document> <address> → "<serial> <valid afte
   ig_u64 && a=$v && ig_u64 && b=$v || return 1      # valid after, valid before
   ig_str && [ -z "$v" ] && ig_str && [ -z "$v" ] && ig_str && [ -z "$v" ] || return 1      # no critical option, no extension, nothing reserved
   ig_str && [ "$v" = "$(sed -n 2p "$2" | cut -d' ' -f2 | base64 -d | od -An -v -tx1 | tr -d ' \n')" ] && [ "$v" != "0000000b$(ig_asc ssh-ed25519)00000020$k" ] || return 1      # signed by the identity's key, byte for byte, which is never the working key
+  ig_str && ig_s "$v" && [ "$o" -eq "${#x}" ] || return 1      # the identity's signature on it, and nothing after
   echo "$n $a $b"
 }
 ig_str(){ [[ ${x:o:8} =~ ^[0-9a-f]{8}$ ]] || return 1; l=$((16#${x:o:8} * 2)); [ $((o + 8 + l)) -le ${#x} ] || return 1; v=${x:o+8:l}; o=$((o + 8 + l)); }      # ig_cert's: the next length-prefixed string of x, in hex, into v
@@ -240,7 +266,8 @@ ig_meet(){ local d="$IG/peers/$1"; mkdir -p "$d" && { [ -e "$d/identity.doc" ] |
 
 # recipe: revocation
 ig_revcheck(){ # <address> <identity document> <signature> → 0 only for a revocation of that address: the document hashes to it and is one this script verifies, and the signature is that identity's OWN over the fixed statement. The signers line names the identity's key with no cert-authority, so a working key's signature, which carries a certificate, is not taken: a working key can be stolen without the identity, and must not end the address
-  ig_idcheck "$2" "$1" || return 1
+  local x k
+  ig_idcheck "$2" "$1" && ig_sshsig "$3" || return 1
   printf '%s %s\n' "$1" "$(sed -n 2p "$2")" > "$IG/signers"
   printf 'irongall-revoke-v1\n%s\n' "$1" | ssh-keygen -Y verify -f "$IG/signers" -I "$1" -n "irongall-revoke-v1:$1" -s "$3" > /dev/null 2>&1
 }
@@ -251,8 +278,8 @@ ig_gone(){ # <address> → 0 if this box holds a revocation of it: peers/<addres
   ig_revcheck "$1" "$d" "$s" || return 3
 }
 ig_listcheck(){ # <address> <identity document> <list> <signature> → the list's version, only for a list of that address's revoked certificates: signed by its identity's OWN key, as a revocation of the address is (no cert-authority, so a certificate cannot revoke another, or itself), and in its one exact form. The tag, the address and a version, each on a line, then at least one line that is a serial or first-last with first below last, each beginning above where the line before it ended. A number is 1 to 18 digits with no leading zero, compared by bash, whose numbers are exact to 18 digits where awk's are not
-  local L i p=0 a b
-  ig_idcheck "$2" "$1" || return 1
+  local L i p=0 a b x k
+  ig_idcheck "$2" "$1" && ig_sshsig "$4" || return 1
   printf '%s %s\n' "$1" "$(sed -n 2p "$2")" > "$IG/signers"
   ssh-keygen -Y verify -f "$IG/signers" -I "$1" -n "irongall-revoked-certs-v1:$1" -s "$4" < "$3" > /dev/null 2>&1 || return 1
   mapfile -t L < "$3"

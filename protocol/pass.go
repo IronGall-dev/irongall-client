@@ -80,6 +80,12 @@ type Pass struct {
 	signature []byte // armored, as "ssh-keygen -Y sign" writes it
 }
 
+// MaxPassAuthorization is the longest an Authorization value carrying a pass
+// can be: its fixed parts, an address, a time, and the standard base64 of a
+// signature of MaxSignature bytes. ParsePass refuses a longer one before it
+// reads it (PROTOCOL.md §6.1b).
+const MaxPassAuthorization = len(PassScheme+` address="", not_after="", signature=""`) + 64 + len(TimeLayout) + (MaxSignature+2)/3*4
+
 // passGrammar is the whole Authorization value, in its one form.
 var passGrammar = regexp.MustCompile(`\A` + PassScheme + ` address="([0-9a-f]{64})", not_after="([0-9TZ:-]{20})", signature="([A-Za-z0-9+/]+={0,2})"\z`)
 
@@ -106,6 +112,9 @@ func NewPass(signer ssh.Signer, a Address, server string, now time.Time) (author
 // with the signature the standard base64 of the signature file. Nothing is
 // verified yet.
 func ParsePass(authorization string) (*Pass, error) {
+	if len(authorization) > MaxPassAuthorization {
+		return nil, fmt.Errorf("%w: it is longer than a pass can be", ErrPass)
+	}
 	m := passGrammar.FindStringSubmatch(authorization)
 	if m == nil {
 		return nil, fmt.Errorf(`%w: it is %s address="…", not_after="…", signature="…"`, ErrPass, PassScheme)

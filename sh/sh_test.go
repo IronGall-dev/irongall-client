@@ -225,6 +225,43 @@ func TestVectorsCertificate(t *testing.T) {
 	}
 }
 
+// One signature in the forms sig/ holds, as the Go client judges them
+// (protocol/vectors_test.go): each ok-* taken, each bad-* refused. Control:
+// ssh-keygen -Y verify gives the same verdict on every one but those named
+// here, which it takes and a verifier here refuses: over the bound, and an
+// Ed25519 S that is not below L. So the script reads a signature as OpenSSH
+// does, and its own checks are what refuse those.
+func TestVectorsSignatureForm(t *testing.T) {
+	need(t, scriptTools...)
+	_, setNow := vectorNow(t)
+	a, aDoc := identity(t, "a")
+	stmt := abs(t, filepath.Join(vectors, "a/prekey-1.txt"))
+	sigs, _ := filepath.Glob(filepath.Join(vectors, "sig", "*.sig"))
+	if len(sigs) < 20 {
+		t.Fatalf("%d sig/ vectors", len(sigs))
+	}
+	beyondSSHKeygen := map[string]bool{"bad-4097-bytes.sig": true, "bad-4097-bytes-before-end.sig": true, "bad-s-plus-l.sig": true, "bad-certificate-s-plus-l.sig": true}
+	for _, sig := range sigs {
+		name := filepath.Base(sig)
+		ok := strings.HasPrefix(name, "ok-")
+		_, err := bash(t, scratch(t), setNow+fmt.Sprintf(`mkdir -p "$IG"; ig_certified %s %s irongall-prekey-v1:%s %s %s`, a, aDoc, a, abs(t, sig), stmt))
+		if ok != (err == nil) {
+			t.Errorf("%s: the script says %v", name, err)
+		}
+		verify := fmt.Sprintf(`mkdir -p "$IG"; printf '%%s cert-authority %%s\n' %s "$(sed -n 2p %s)" > "$IG/s" && ssh-keygen -Y verify -f "$IG/s" -I %s -n irongall-prekey-v1:%s -s %s -O verify-time=20261010000000Z < %s`,
+			a, aDoc, a, a, abs(t, sig), stmt)
+		_, kerr := bash(t, scratch(t), verify)
+		switch {
+		case beyondSSHKeygen[name] && kerr != nil && strings.Contains(name, "s-plus-l"):
+			t.Logf("%s: this ssh-keygen refuses it by itself (one built on another Ed25519 may)", name)
+		case beyondSSHKeygen[name] && kerr != nil:
+			t.Errorf("control: ssh-keygen refuses %s by itself, so the bound is not what refuses it: %v", name, kerr)
+		case !beyondSSHKeygen[name] && ok != (kerr == nil):
+			t.Errorf("control: ssh-keygen -Y verify's verdict on %s differs: %v", name, kerr)
+		}
+	}
+}
+
 func TestVectorsPrekey(t *testing.T) {
 	need(t, scriptTools...)
 	now, setNow := vectorNow(t)
@@ -743,8 +780,8 @@ func TestVectorsRevocation(t *testing.T) {
 		{b, aDoc, "a/revoke.sig"}, {a, bDoc, "a/revoke.sig"}, {b, bDoc, "revoke/bad-of-another-box.sig"}, {a, aDoc, "a/prekey-1.txt.sig"},
 	}
 	bads, _ := filepath.Glob(filepath.Join(vectors, "revoke", "bad-*.sig"))
-	if len(bads) != 4 {
-		t.Fatalf("%d revoke/bad-* vectors, want 4", len(bads))
+	if len(bads) != 5 {
+		t.Fatalf("%d revoke/bad-* vectors, want 5", len(bads))
 	}
 	for _, f := range bads {
 		cases = append(cases, vector{a, aDoc, "revoke/" + filepath.Base(f)})
@@ -1105,8 +1142,8 @@ func TestVectorsRevokedCertificates(t *testing.T) {
 		{a, aDoc, "ok-one-range.txt", "ok-serials-and-ranges.sig"},
 	}
 	bads, _ := filepath.Glob(filepath.Join(vectors, "revoked", "bad-*.txt"))
-	if len(bads) != 20 {
-		t.Fatalf("%d revoked/bad-* vectors, want 20", len(bads))
+	if len(bads) != 21 {
+		t.Fatalf("%d revoked/bad-* vectors, want 21", len(bads))
 	}
 	for _, f := range bads {
 		name := strings.TrimSuffix(filepath.Base(f), ".txt")

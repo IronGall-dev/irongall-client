@@ -29,6 +29,17 @@ asc() { printf '%s' "$1" | od -An -tx1 | tr -d ' \n'; }
 str() { printf '%08x%s' $(( ${#1} / 2 )) "$1"; }           # an RFC 4251 string, from hex
 bin() { printf "$(printf '%s' "$1" | sed 's/../\\x&/g')"; } # hex → bytes on stdout
 b64() { base64 | tr -d '\n'; }
+# An armored signature: its blob, from hex, as ssh-keygen writes one; and the other way, a blob in hex from a signature ssh-keygen wrote.
+armor() { printf -- '-----BEGIN SSH SIGNATURE-----\n'; bin "$1" | b64 | fold -w 70; printf -- '\n-----END SSH SIGNATURE-----\n'; }
+blob() { sed '1d;$d' "$1" | tr -d '\n' | base64 -d | od -An -v -tx1 | tr -d ' \n'; }
+# A blob in hex with S + L in place of the S at a hex offset: the other encoding of an Ed25519 signature's S, which
+# RFC 8032 §5.1.7 refuses and ssh-keygen built on OpenSSH's own Ed25519 takes. S and L are 32 bytes, little-endian.
+plusl() { # <blob hex> <hex offset of S>
+  local x=$1 o=$2 s=${1:$2:64} l=edd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010 r="" c=0 i t
+  for ((i = 0; i < 64; i += 2)); do t=$((16#${s:i:2} + 16#${l:i:2} + c)); c=$((t >> 8)); r+=$(printf %02x $((t & 255))); done
+  [ "$c" -eq 0 ] || { echo "S + L does not fit in 32 bytes" >&2; exit 1; }
+  printf %s "${x:0:o}$r${x:o+64}"
+}
 
 # An unencrypted OpenSSH private key file, from the public key and the private part as the format writes each, in hex.
 keyfile() { # <public key hex> <private part hex> <file>
@@ -116,6 +127,7 @@ printf 'irongall-revoke-v1\n%s\n' "$C" > c/revoke.txt
 under a-work a/work-cert.pub "irongall-revoke-v1:$A" < a/revoke.txt > revoke/bad-by-a-working-key.sig
 sign b "irongall-revoke-v1:$A" < a/revoke.txt > revoke/bad-by-another-identity.sig
 sign a "irongall-prekey-v1:$A" < a/revoke.txt > revoke/bad-another-namespace.sig
+X=$(blob a/revoke.sig); armor "$(plusl "$X" $((${#X} - 64)))" > revoke/bad-s-plus-l.sig      # A's own, with L added to its S
 printf 'irongall-revoke-v1\n%s\n' "$B" | sign a "irongall-revoke-v1:$B" > revoke/bad-of-another-box.sig
 
 # Lists of box A's revoked certificates (PROTOCOL.md §6.3a): the tag, the address, a version, then one serial or
@@ -130,6 +142,7 @@ sign a "irongall-revoked-certs-v1:$A" -O hashalg=sha256 < revoked/ok-one-range.t
 cp revoked/ok-one-range.txt revoked/bad-by-a-working-key.txt; under a-work a/work-cert.pub "irongall-revoked-certs-v1:$A" < revoked/bad-by-a-working-key.txt > revoked/bad-by-a-working-key.sig
 cp revoked/ok-one-range.txt revoked/bad-another-namespace.txt; sign a "irongall-revoke-v1:$A" < revoked/bad-another-namespace.txt > revoked/bad-another-namespace.sig
 list bad-another-address "$B" 1 1-4; listsig bad-another-address
+cp revoked/ok-one-range.txt revoked/bad-s-plus-l.txt; X=$(blob revoked/ok-one-range.sig); armor "$(plusl "$X" $((${#X} - 64)))" > revoked/bad-s-plus-l.sig      # a good list, its signature with L added to S
 list bad-no-serials "$A" 1; listsig bad-no-serials
 list bad-version-zero "$A" 0 1-4; listsig bad-version-zero
 list bad-version-leading-zero "$A" 01 1-4; listsig bad-version-leading-zero
@@ -175,6 +188,41 @@ badcert bad-too-long a a-work $(good "$A" 1 "$V_TOO_LONG")
 # And one every implementation must take, at the edge of the rule bad-not-begun is past.
 okcert() { badcert "$@"; }
 okcert ok-begins-now a a-work $(good "$A" 1 "$V_BEGINS_NOW")
+
+# One signature, a/prekey-1.txt.sig, in forms a verifier reads as ssh-keygen -Y verify reads them (OpenSSH's
+# sshsig_dearmor), and in a file of at most 4096 bytes in all (PROTOCOL.md §3): ok-* are taken, bad-* refused. Then
+# what ssh-keygen takes and a verifier here refuses: more than 4096 bytes, and an Ed25519 S that is not below L.
+mkdir -p sig
+S=a/prekey-1.txt.sig; X=$(blob "$S")
+[ "$(armor "$X" | sha256sum)" = "$(sha256sum < "$S")" ] || { echo "armor() does not armor as ssh-keygen does" >&2; exit 1; }
+sed 's/$/\r/' "$S" > sig/ok-crlf.sig
+sed '1s/$/\r/' "$S" > sig/ok-crlf-after-begin-only.sig
+sed "2s/\$/ /; 3s/^/"$'\t'"/" "$S" > sig/ok-space-and-tab.sig
+sed "2s/\$/"$'\v'"/; 3s/^/"$'\f'"/" "$S" > sig/ok-vt-and-ff.sig
+{ sed '$d' "$S"; echo; tail -n 1 "$S"; } > sig/ok-blank-line-before-end.sig
+{ head -n 1 "$S"; sed '1d;$d' "$S" | tr -d '\n'; echo; tail -n 1 "$S"; } > sig/ok-one-line.sig
+head -c -1 "$S" > sig/ok-no-line-feed-after-end.sig
+{ cat "$S"; echo "nothing after the END line is read"; } > sig/ok-text-after-end.sig
+{ cat "$S"; head -c $((4096 - $(wc -c < "$S"))) /dev/zero | tr '\0' .; } > sig/ok-4096-bytes.sig
+skip() { echo $(($2 + 8 + 2 * 16#${1:$2:8})); } # <blob hex> <hex offset of a string> → the offset after it
+o=$(skip "$X" "$(skip "$X" 20)")      # after the signing key and the namespace: the reserved field, empty
+[ "${X:o:8}" = 00000000 ] || { echo "no empty reserved field where it should be" >&2; exit 1; }
+armor "${X:0:o}$(str "$(asc 'not read')")${X:o+8}" > sig/ok-reserved-not-empty.sig      # the key signed an empty one
+{ cat "$S"; head -c $((4097 - $(wc -c < "$S"))) /dev/zero | tr '\0' .; } > sig/bad-4097-bytes.sig
+sed "2s/\$/$(printf "%$((4097 - $(wc -c < "$S")))s" '')/" "$S" > sig/bad-4097-bytes-before-end.sig
+sed '1s/$/ /' "$S" > sig/bad-space-after-begin.sig
+{ echo "text before the BEGIN line"; cat "$S"; } > sig/bad-text-before-begin.sig
+sed '$d' "$S" > sig/bad-no-end-line.sig
+sed '$s/^/ /' "$S" > sig/bad-end-line-indented.sig
+sed '2s/^./!/' "$S" > sig/bad-not-base64.sig
+{ head -n 1 "$S"; printf '\0'; tail -n +2 "$S"; } > sig/bad-nul.sig
+t=$(sed -n 'x;$p' "$S"); t=${t%=}; c=${t: -1}; B64=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/; i=${B64%%"$c"*}      # the last base64 line, its one = gone
+[ $(( ${#i} % 4 )) -eq 0 ] || { echo "the last character already has a padding bit set" >&2; exit 1; }
+sed "$(( $(wc -l < "$S") - 1 ))s/$c=\$/${B64:${#i}+1:1}=/" "$S" > sig/bad-padding-bits.sig      # one of the unused bits of the last character set
+sed "$(( $(wc -l < "$S") - 1 ))s/=\$//" "$S" > sig/bad-no-padding.sig
+armor "$(plusl "$X" $((${#X} - 64)))" > sig/bad-s-plus-l.sig      # the working key's S
+armor "$(plusl "$X" $((28 + 2 * 16#${X:20:8} - 64)))" > sig/bad-certificate-s-plus-l.sig      # the identity's S on the certificate, its last 32 bytes
+armor "${X}00" > sig/bad-trailing-byte-in-the-blob.sig
 
 # Identity documents every implementation must reject.
 GOOD=$(sed -n 2p a/identity.doc)
@@ -322,6 +370,9 @@ refuse refuse-signed-by-the-identity message/a-to-b.line sign a "irongall-msg-v1
 refuse refuse-signed-by-a-bare-working-key message/a-to-b.line sign a-work "irongall-msg-v1:$B"
 refuse refuse-certificate-ended message/a-to-b.line under a-work cert/bad-ended.pub "irongall-msg-v1:$B"
 sed 's/"body":"hello"/"body":"hellp"/' message/a-to-b.line > "$L"; cat "$L" "$GOOD_SIG" > plain/refuse-line-changed-after-signing.txt
+# The signature block is read as ssh-keygen reads a signature (sig/), and is at most 4096 bytes from its BEGIN line through its END line.
+{ cat message/a-to-b.line; sed "2s/\$/ \r/; 3s/^/"$'\t'"/" "$GOOD_SIG"; } > plain/accept-whitespace-in-the-signature.txt
+{ cat message/a-to-b.line; sed "2s/\$/$(printf "%$((4097 - $(wc -c < "$GOOD_SIG")))s" '')/" "$GOOD_SIG"; } > plain/refuse-signature-over-4096-bytes.txt
 # A sender whose identity is of the optional type: delivered by a client that verifies ecdsa-sha2-nistp256, and refused
 # with unsupported_key_type by one that does not. Then one of a type nobody verifies: refused so if the document is
 # the sender's, and as reattributed if it is not.

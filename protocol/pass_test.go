@@ -291,6 +291,21 @@ func TestParsePass(t *testing.T) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
+	// The value is bounded by what a pass can be: one carrying a signature of
+	// MaxSignature bytes is the longest, and parses. A longer value is refused
+	// for its length, before the grammar or the base64 is read. (A signature
+	// of a byte or two more has base64 of the same length: Dearmor refuses it.)
+	withSig := func(n int) string {
+		return `irongall-pass address="` + a + `", not_after="2026-10-12T21:40:15Z", signature="` + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{'.'}, n)) + `"`
+	}
+	if v := withSig(MaxSignature); len(v) != MaxPassAuthorization {
+		t.Errorf("a pass with a signature of %d bytes is %d bytes long, and MaxPassAuthorization is %d", MaxSignature, len(v), MaxPassAuthorization)
+	} else if _, err := ParsePass(v); err != nil {
+		t.Errorf("the longest pass: %v", err)
+	}
+	if _, err := ParsePass(withSig(MaxSignature + 3)); !errors.Is(err, ErrPass) || !strings.Contains(err.Error(), "longer than a pass can be") {
+		t.Errorf("a pass one base64 group too long: %v", err)
+	}
 }
 
 func TestCheckServerName(t *testing.T) {

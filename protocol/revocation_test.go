@@ -42,8 +42,8 @@ func TestVectorBadRevocations(t *testing.T) {
 	a, b := vectorIdentity(t, "a"), vectorIdentity(t, "b")
 	docA, docB := read(t, "a/identity.doc"), read(t, "b/identity.doc")
 	names := glob(t, "revoke/bad-*.sig")
-	if len(names) != 4 {
-		t.Fatalf("%d revoke/bad-* vectors, want 4", len(names))
+	if len(names) != 5 {
+		t.Fatalf("%d revoke/bad-* vectors, want 5", len(names))
 	}
 	for _, f := range names {
 		name := "revoke/" + filepath.Base(f)
