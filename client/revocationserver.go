@@ -42,9 +42,12 @@ var serverGrammar = regexp.MustCompile(`^https?://(\[[0-9a-f:]+\]|[a-z0-9]([a-z0
 // revocation-servers file: each is a server's URL, as https://host or
 // https://host:port, with spaces, commas or line ends between. The one word
 // NoRevocationServers is the empty list, which is not nil: the box asks its
-// own server only.
+// own server only. Text that names nothing is nil, as if it were not there.
 func ParseRevocationServers(s string) ([]string, error) {
 	fields := strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' || r == '\r' })
+	if len(fields) == 0 {
+		return nil, nil
+	}
 	if len(fields) == 1 && fields[0] == NoRevocationServers {
 		return []string{}, nil
 	}
@@ -56,9 +59,6 @@ func ParseRevocationServers(s string) ([]string, error) {
 		if !slices.Contains(list, f) {
 			list = append(list, f)
 		}
-	}
-	if len(list) == 0 {
-		return nil, fmt.Errorf("no revocation server is named: %q means none", NoRevocationServers)
 	}
 	return list, nil
 }
@@ -77,7 +77,7 @@ func (b *Box) RevocationServers() ([]string, error) {
 	list := b.revocationServers
 	if list == nil && b.dir != "" {
 		raw, err := os.ReadFile(b.path("revocation-servers"))
-		if err == nil && len(raw) > 0 {
+		if err == nil {
 			if list, err = ParseRevocationServers(string(raw)); err != nil {
 				return nil, fmt.Errorf("this box's revocation-servers file: %w", err)
 			}

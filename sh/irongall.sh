@@ -296,7 +296,9 @@ ig_record(){ # <record> → the address it is a revocation of, only if it verifi
 }
 ig_revservers(){ # → the revocation servers this box asks beside its own server, and publishes to (PROTOCOL.md §6.3), one to a line: those $IG_REVOCATION_SERVERS names, with spaces or commas between; or else those the box's revocation-servers file names, one to a line; or else irongall.dev's own for a box on irongall.dev, and none for a box on any other server. The one word "none" is none. Each is https://host or https://host:port, in lowercase, with nothing after it, and each learns which addresses this box asks about: name one run by anyone but your server's operator only if you mean to tell it. Read from the file each time: state lives in files
   local l=${IG_REVOCATION_SERVERS-} s seen=" "; local -a a
+  [[ $l =~ [^[:space:],] ]] || l=      # text that names nothing is as if it were not there
   [ -n "$l" ] || [ ! -s "$IG/revocation-servers" ] || l=$(cat "$IG/revocation-servers") || return 1
+  [[ $l =~ [^[:space:],] ]] || l=
   [ -n "$l" ] || [ "$IG_BASE" != https://irongall.dev ] || l=https://revocations.irongall.dev
   l=${l//,/ }; l=${l//$'\n'/ }; l=${l//$'\r'/ }; read -ra a <<< "$l"
   [ "${#a[@]}" != 1 ] || [ "${a[0]}" != none ] || return 0

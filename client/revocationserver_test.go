@@ -560,6 +560,16 @@ func TestTheRevocationServersABoxLists(t *testing.T) {
 	if got, err := list(e.listing("https://three.example", e.srv.URL, "https://three.example")); err != nil || !slices.Equal(got, []string{"https://three.example"}) {
 		t.Fatalf("the options: %q, %v", got, err)
 	}
+	// A file that names nothing is as if it were not there.
+	if err := os.WriteFile(file, []byte(" \n\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := list(client.Options{}); err != nil || !slices.Equal(got, []string{client.DefaultRevocationServer}) {
+		t.Fatalf("a file with nothing in it, on the default server: %q, %v", got, err)
+	}
+	if got, err := list(e.opts()); err != nil || len(got) != 0 {
+		t.Fatalf("a file with nothing in it, on another server: %q, %v", got, err)
+	}
 	// None: an empty list that is not nil, or the one word in the file.
 	if got, err := list(client.Options{RevocationServers: []string{}}); err != nil || len(got) != 0 {
 		t.Fatalf("an empty list: %q, %v", got, err)
@@ -613,8 +623,14 @@ func TestParseRevocationServers(t *testing.T) {
 			t.Errorf("%q: %q, %v", in, got, err)
 		}
 	}
+	// Text that names nothing is as if it were not there.
+	for _, in := range []string{"", " ", "\n", " ,\t\r\n"} {
+		if got, err := client.ParseRevocationServers(in); got != nil || err != nil {
+			t.Errorf("%q: %q, %v, want nothing named", in, got, err)
+		}
+	}
 	for _, in := range []string{
-		"", " ", "a.example", "ftp://a.example", "https://", "https://a.example/", "https://a.example/v1", "https://a.example?x=1",
+		"a.example", "ftp://a.example", "https://", "https://a.example/", "https://a.example/v1", "https://a.example?x=1",
 		"https://user@a.example", "HTTPS://a.example", "https://A.example", "https://a.example:port", "none https://a.example", "https://a.example none",
 		"https://-a.example", "https://a.example:123456",
 	} {
