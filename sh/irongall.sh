@@ -495,7 +495,7 @@ ig_post(){ # <address> <outbox stem> → POSTs it, sealing it first; on 409 stal
   if ig_gone "$B" || ig_gone "$(cat "$IG/address")"; then ig_failed "$o"; echo "REVOKED: the revocation verifies, so it can never be delivered: moved to outbox/failed/" >&2; return 1; fi
   case $c in
     revoked | sender_revoked) echo "the server showed no revocation that verifies, so this box does not take that address as revoked: kept in the outbox, retry with ig_flush" >&2 ;;
-    bad_address | too_large | conflict) ig_failed "$o"; echo "it can never be delivered: moved to outbox/failed/" >&2 ;;
+    bad_address | too_large | conflict | sender_not_allowed) ig_failed "$o"; echo "it can never be delivered: moved to outbox/failed/" >&2 ;;
     *) echo "kept in the outbox: retry with ig_flush" >&2 ;;
   esac
   return 1

@@ -57,7 +57,15 @@ type Refusal struct {
 
 // Result is what one Receive did.
 type Result struct {
+	// Delivered is the mail that landed in inbox/: from a sender the box
+	// allowed, or from any sender under "unknown inbox".
 	Delivered []Delivery
+	// Held is mail that passed every check from a sender the box has not
+	// allowed, kept in held/ under "unknown held" ([Box.Allow] moves it to
+	// inbox/). Blocked names mail from a sender the box blocked, dropped.
+	// Both were acked.
+	Held    []Delivery
+	Blocked []string
 	// Duplicates are re-encrypted retries of messages already delivered:
 	// acked, not delivered again.
 	Duplicates []string
@@ -77,12 +85,18 @@ type Result struct {
 	// RenewErr is why a due renewal failed. The drain went ahead, and a
 	// later Receive tries again, at most hourly.
 	RenewErr error
+	// ACLErr is why the box's ACL, changed since its server last took one,
+	// was not sent ([Box.SyncACL]). The drain went ahead, and the next
+	// Receive sends it.
+	ACLErr error
 }
 
 // Receive drains the box: every page, every message. Each message is judged
-// by one gate (see [Box.judge]); only one that passes every check is
-// delivered, to inbox/ and the Result. Refused mail goes to quarantine/. Both
-// are acked. A transient error stops the drain and leaves the rest for the
+// by one gate (see [Box.judge]); only one that passes every check lands,
+// where the box's say over its sender puts it: inbox/ for a sender it
+// allowed, held/ for one it has not (unless its policy lands that mail in
+// inbox/ too), and nowhere for one it blocked. Refused mail goes to
+// quarantine/. All of it is acked. A transient error stops the drain and leaves the rest for the
 // next one. One consumer per box: a second concurrent Receive is refused.
 //
 // First it renews the prekey if the current one is more than a day old, so
@@ -96,11 +110,12 @@ func (b *Box) Receive(ctx context.Context) (*Result, error) {
 	}
 	began := b.now()
 	renewed, renewErr := b.renewIfDue(ctx)
+	aclErr := b.SyncACL(ctx)
 	res, err := b.drain(ctx)
 	if res == nil {
 		res = &Result{}
 	}
-	res.Renewed, res.RenewErr = renewed, renewErr
+	res.Renewed, res.RenewErr, res.ACLErr = renewed, renewErr, aclErr
 	// Only a drain that emptied the box may delete retired prekeys.
 	if err == nil && !res.More {
 		err = b.dropRetired(began)
@@ -127,6 +142,13 @@ var (
 func (b *Box) drain(ctx context.Context) (*Result, error) {
 	res := &Result{}
 	if err := b.pruneSeen(); err != nil {
+		return nil, err
+	}
+	// Where mail lands is read once, before anything is acked: a policy or
+	// a list that cannot be read stops the drain, and the mail stays on the
+	// server.
+	who, err := b.readSenders()
+	if err != nil {
 		return nil, err
 	}
 	// The senders this drain has asked the server about: one lookup each.
@@ -177,7 +199,7 @@ func (b *Box) drain(ctx context.Context) (*Result, error) {
 				res.More = true
 				return res, nil
 			}
-			n, err := b.receiveOne(ctx, m.ID, res, asked)
+			n, err := b.receiveOne(ctx, m.ID, res, asked, who)
 			// A server that paces how much a box takes out stops the drain
 			// as a drain's own limits do: what is left waits on the server.
 			var paced *APIError
@@ -206,7 +228,7 @@ func (b *Box) drain(ctx context.Context) (*Result, error) {
 //
 // Files are named by the SHA-256 of the ciphertext as computed here, never by
 // the server's id; a message whose id is not that hash is refused.
-func (b *Box) receiveOne(ctx context.Context, id string, res *Result, asked *lookups) (fetched int, err error) {
+func (b *Box) receiveOne(ctx context.Context, id string, res *Result, asked *lookups, who *senders) (fetched int, err error) {
 	handled, err := b.seenHash(id)
 	if err != nil {
 		return 0, err
@@ -251,15 +273,30 @@ func (b *Box) receiveOne(ctx context.Context, id string, res *Result, asked *loo
 		default:
 			// Stored before it is recorded as seen, and both, on disk,
 			// before the ack: a crash or power loss in between delivers it
-			// again, never loses it.
-			if err := writeFile(b.path("inbox", local+".json"), d.Line); err != nil {
+			// again, never loses it. Mail from a blocked sender is recorded
+			// as seen too, so that a retry of it is a duplicate.
+			d.ID = local
+			where := who.land(d.Envelope.From)
+			switch where {
+			case landInbox:
+				err = writeFile(b.path("inbox", local+".json"), d.Line)
+			case landHeld:
+				err = writeFile(b.path("held", local+".json"), d.Line)
+			}
+			if err != nil {
 				return fetched, err
 			}
 			if err := b.recordSeen(m.Ciphertext, d.Envelope); err != nil {
 				return fetched, err
 			}
-			d.ID = local
-			res.Delivered = append(res.Delivered, *d)
+			switch where {
+			case landInbox:
+				res.Delivered = append(res.Delivered, *d)
+			case landHeld:
+				res.Held = append(res.Held, *d)
+			default:
+				res.Blocked = append(res.Blocked, local)
+			}
 		}
 	}
 	_, err = b.owner(ctx, http.MethodDelete, b.boxPath("/messages/"+id), nil, nil, nil)

@@ -58,6 +58,10 @@ func (b *Box) Send(ctx context.Context, to protocol.Address, body string) (*prot
 // never by sending again, or the peer gets it twice. Once the server has it,
 // the envelope and the server's receipt are kept in sent/.
 //
+// Writing to a peer allows it: its replies land in inbox/, and under
+// "server allowed" the box's server is sent the box's ACL with it before
+// anything is posted ([Box.SyncACL]), so that the reply is not refused.
+//
 // Before anything is posted the server is asked what it holds about the
 // peer: a revocation of its address, or of its certificates.
 // What verifies is kept, and the send is checked against what the box then
@@ -84,9 +88,15 @@ func (b *Box) SendWith(ctx context.Context, to protocol.Address, body string, f 
 	if err != nil {
 		return nil, err
 	}
+	if _, err := b.addTo("allowed", to); err != nil {
+		return nil, err
+	}
 	stem := b.path("outbox", to.String()+"."+env.MsgID)
 	if err := writeFile(stem+".P", p); err != nil {
 		return nil, err
+	}
+	if err := b.SyncACL(ctx); err != nil {
+		return nil, fmt.Errorf("%w: nothing is posted, so that no reply is refused; kept in the outbox, irongall flush sends it", err)
 	}
 	return b.post(ctx, to, stem, newLookups())
 }
@@ -100,6 +110,11 @@ func (b *Box) Flush(ctx context.Context) ([]*protocol.Receipt, error) {
 	names, err := filepath.Glob(b.path("outbox", "*.P"))
 	if err != nil {
 		return nil, err
+	}
+	if len(names) > 0 {
+		if err := b.SyncACL(ctx); err != nil {
+			return nil, fmt.Errorf("%w: nothing is posted, so that no reply is refused", err)
+		}
 	}
 	var receipts []*protocol.Receipt
 	var errs []error
@@ -124,10 +139,13 @@ func (b *Box) Flush(ctx context.Context) ([]*protocol.Receipt, error) {
 }
 
 // undeliverable are the answers that never change for this message: retrying
-// it can only fail again. A server saying a box is revoked is not among them:
-// that is final only once this box holds the revocation ([Box.proved]).
+// it can only fail again. A box's ACL that does not admit this one is among
+// them: only the recipient can change it, and a message it admits later is
+// one this box sends again. A server saying a box is revoked is not among
+// them: that is final only once this box holds the revocation
+// ([Box.proved]).
 var undeliverable = []protocol.Code{
-	protocol.CodeBadAddress, protocol.CodeTooLarge, protocol.CodeConflict,
+	protocol.CodeBadAddress, protocol.CodeTooLarge, protocol.CodeConflict, protocol.CodeSenderNotAllowed,
 }
 
 // post posts the outbox entry stem, sealing it first if it is not sealed. On

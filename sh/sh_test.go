@@ -732,10 +732,12 @@ func TestAP256BoxInBothClients(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	landAll(t, gp)
 	ge, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, kt)
 	if err != nil {
 		t.Fatal(err)
 	}
+	landAll(t, ge)
 
 	// The script's P-256 box and the Go client's Ed25519 one.
 	sh(shP256, "printf 'from the script on P-256' | ig_send "+ge.Link())
@@ -758,6 +760,48 @@ func TestAP256BoxInBothClients(t *testing.T) {
 	sh(shEd, "printf 'to Go on P-256' | ig_send "+gp.Link())
 	if res, err := gp.Receive(ctx); err != nil || len(res.Delivered) != 1 || res.Delivered[0].Envelope.From != se {
 		t.Fatalf("the Go client's P-256 box received %+v, %v", res, err)
+	}
+}
+
+// A box whose ACL does not admit the script's box refuses its send for good,
+// and the script moves it to outbox/failed/, as the Go client does: only the
+// recipient can change that.
+func TestTheScriptsSendABoxDeniesFails(t *testing.T) {
+	need(t, append(scriptTools, "curl")...)
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	kt, mode := protocol.Classic, "--no-pq"
+	if pq() {
+		kt, mode = protocol.PostQuantum, ""
+	}
+	shDir := t.TempDir()
+	sh := func(commands string) (string, error) {
+		return bash(t, []string{"IRONGALL_HOME=" + shDir, "IG_BASE=" + srv.URL}, commands)
+	}
+	out, err := sh("ig_init " + mode)
+	if err != nil {
+		t.Fatalf("ig_init: %v", err)
+	}
+	shAddr, err := protocol.ParseAddress(strings.TrimPrefix(strings.TrimSpace(out), srv.URL+protocol.LinkPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, kt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.Block(ctx, shAddr); err != nil {
+		t.Fatal(err)
+	}
+	if !srv.ACL(g.Address()).Deny.Has(shAddr) {
+		t.Fatal("the Go box's block never reached the server")
+	}
+	_, err = sh("printf 'to a box that blocked this one' | ig_send " + g.Link())
+	if err == nil || !strings.Contains(err.Error(), "sender_not_allowed") || !strings.Contains(err.Error(), "moved to outbox/failed/") {
+		t.Fatalf("ig_send to a box that denies it: %v", err)
+	}
+	if failed, _ := filepath.Glob(filepath.Join(shDir, "outbox", "failed", "*.P")); len(failed) != 1 {
+		t.Fatalf("outbox/failed/ holds %v", failed)
 	}
 }
 
@@ -790,6 +834,7 @@ func TestWithGoClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	landAll(t, g)
 
 	// An API error prints its status, code and the server's detail.
 	if _, err := sh(shDir, "printf x | ig_send "+strings.Repeat("0", 64)); err == nil || !strings.Contains(err.Error(), `ERROR 404 no_such_mailbox; the server says: "no box has this address`) {
@@ -887,6 +932,7 @@ func TestWithGoClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	landAll(t, s)
 	res, err = s.Receive(ctx)
 	if err != nil || len(res.Delivered) != 1 || string(res.Delivered[0].Envelope.Body) != `"from the Go box"` {
 		t.Fatalf("the Go client in the script's box received %+v, %v", res, err)
@@ -1126,6 +1172,7 @@ func TestARevocationServerInBothClients(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		landAll(t, b)
 		if len(servers) > 0 {
 			lists(b.Dir(), servers...)
 		}
@@ -1139,6 +1186,7 @@ func TestARevocationServerInBothClients(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	landAll(t, asGo)
 	fromGo, err := asGo.RevocationServers()
 	fromSh, shErr := sh(both, "ig_revservers")
 	if err != nil || shErr != nil || len(fromGo) != 1 || fromGo[0] != rs.URL || strings.TrimSpace(fromSh) != rs.URL {
@@ -1263,6 +1311,7 @@ func TestRevocationInBothClients(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		landAll(t, b)
 		return b
 	}
 	var gone *client.RevokedError
@@ -1519,6 +1568,7 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	landAll(t, g)
 	gAddr := g.Address().String()
 	first := numberOf(t, g)
 
@@ -1561,6 +1611,7 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	landAll(t, g2)
 	if _, err := g.Send(ctx, g2.Address(), "to a Go box, which keeps the revocation"); err != nil {
 		t.Fatal(err)
 	}
@@ -1652,6 +1703,7 @@ func TestAWaitingSealInBothClients(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		landAll(t, b)
 		return b
 	}
 
@@ -1696,6 +1748,7 @@ func TestAWaitingSealInBothClients(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	landAll(t, s)
 	if got, err := s.Flush(ctx); err != nil || len(got) != 1 {
 		t.Fatalf("the Go client's flush of a seal the script made: %v %v", got, err)
 	}
@@ -1721,4 +1774,14 @@ func numberOf(t *testing.T, b *client.Box) uint64 {
 		t.Fatal(err)
 	}
 	return n
+}
+
+// landAll gives a Go box the policy that lands every sender's mail in
+// inbox/: these tests are of what the two clients send each other, and where
+// mail from a sender not allowed lands is the Go client's own (client/).
+func landAll(t *testing.T, b *client.Box) {
+	t.Helper()
+	if err := b.SetPolicy(client.Policy{Unknown: client.LandInbox, Server: client.AdmitAll}); err != nil {
+		t.Fatal(err)
+	}
 }

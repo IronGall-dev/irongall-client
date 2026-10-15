@@ -64,8 +64,28 @@ func (e *env) opts() client.Options {
 	return client.Options{Base: e.srv.URL, Now: e.clock.Now}
 }
 
-// box makes and registers a box.
+// box makes and registers a box, whose policy lands every sender's mail in
+// inbox/: the tests that use it are of what comes before a message lands.
+// Where it lands, held/ by default, is senders_test.go's, which makes its
+// boxes with heldBox.
 func (e *env) box(kt protocol.KeyType) *client.Box {
+	e.t.Helper()
+	b := e.heldBox(kt)
+	landAll(e.t, b)
+	return b
+}
+
+// landAll gives a box made outside env.box the policy env.box gives.
+func landAll(t *testing.T, b *client.Box) {
+	t.Helper()
+	if err := b.SetPolicy(client.Policy{Unknown: client.LandInbox, Server: client.AdmitAll}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// heldBox makes and registers a box with the default policy: mail from a
+// sender it has not allowed is held.
+func (e *env) heldBox(kt protocol.KeyType) *client.Box {
 	e.t.Helper()
 	b, err := client.Init(context.Background(), e.t.TempDir(), e.opts(), kt)
 	if err != nil {

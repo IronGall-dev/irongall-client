@@ -312,6 +312,24 @@ None of the three was a flaw in the layout: each was a verifier that read an obj
 
 **Not read:** how Signal, Matrix and Keybase handle a compromised identity or device.
 
+## 3c. Who may write to a box: the client holds, the server's ACL refuses
+
+**Ours** (decided 2026-10-15; issues #4 and #23): the server takes mail from every registered sender by default, and the Go client holds what comes from a sender its box has not allowed, in `held/`, acked and not printed, until the owner allows or blocks that sender. Writing to a box, naming it or allowing it lets its mail into `inbox/`. A box may also give its server an ACL, which refuses senders before they spend anything of the box's (`PROTOCOL.md` §5.6, §6.2).
+
+| Who | What they do | How it is known |
+|---|---|---|
+| **Signal, message requests** | "when someone who isn’t in your contacts starts a new chat with you or adds you to a group, you can quickly see more info before accepting the request, deleting it, or blocking the conversation." The message arrives and waits; nothing refuses it | [signal.org/blog/message-requests](https://signal.org/blog/message-requests/) (2020-08-12), read 2026-10-15 |
+| **Matrix, a room's server ACL (`m.room.server_acl`)** | Checked in this order: "If there is no `m.room.server_acl` event in the room state, allow." Then an IP-literal rule, then "If the server name matches an entry in the `deny` list, deny." and "If the server name matches an entry in the `allow` list, allow.", and "Otherwise, deny." Entries are case-insensitive globs over server names. Of a missing `allow`: "This defaults to an empty list when not provided", which the spec warns shuts every server out, the sender's own included, and it suggests `[ "*" ]` to keep `deny` useful | [`data/event-schemas/schema/m.room.server_acl.yaml`](https://github.com/matrix-org/matrix-spec/blob/main/data/event-schemas/schema/m.room.server_acl.yaml) on `main`, read 2026-10-15 |
+| **S3 and Cloud Storage, `acl`** | The name of the resource that says who may do what to a bucket or an object, read and replaced through its own path; a bucket has one from its creation | from memory |
+| **HTTP `PUT`** | Replaces the target resource's state with the one the request carries | RFC 9110 §9.3.4, from memory |
+| **Email** | Delivers mail from anyone by default; filtering, quarantine and a sender's block list are the receiving side's own | from memory |
+
+**Where ours differs, and why:**
+- **The default is Signal's, not email's:** a stranger's mail is held for the owner, not delivered. The reader of an irongall box is often an agent that acts on what it reads, and a verified sender proves who wrote, not that the box wanted it. Holding is the box's choice and not a refusal, so the sender is told nothing, as a Signal user sending a request is not.
+- **The ACL is read as Matrix reads one, with three changes.** A document with no `allow` is refused, where Matrix reads it as nobody: an ACL then always says whom it lets in, and a writer that drops an empty list fails loudly instead of shutting everyone out (or, under the reading first proposed here, letting everyone in). An entry is an address or `*` and nothing else: an address is a hash, so a pattern over part of one means nothing, and would let in an address made to match it; and an address has one form, lowercase, so nothing is case-insensitive. And it carries a `version` that only rises, which a Matrix state event needs no field for, so that two writers cannot each replace the other's without knowing.
+- **There is no `DELETE`:** a box with none answers what none means, `{"version":0,"allow":["*"],"deny":[]}`, as a bucket always has an ACL.
+- **The ACL sheds load and protects no reader.** Matrix's ACL is enforced by every server in a room and works only if each does; irongall's by the one server the protocol does not trust. A server that ignores it can do nothing it could not already do: drop mail, or deliver mail the box would hold. The client's hold is the check a reader relies on.
+
 ## 4. The rest: one row a decision
 
 **Keys and identity**
@@ -424,4 +442,5 @@ For rows marked `review 2026-10-10`. A row marked `read` carries its own link.
 
 - **To read at the source:** every row marked `from memory`; Apple's current page for § 1; the survey of 1c; and the systems of 1a whose designs move fastest (Signal, iMessage, Proton, SimpleX), last read 2026-10-10.
 - **Decisions with no row yet:** accounts, the echo box, the share link.
+- **To read at the source for 3c:** the `acl` resources of S3 and Cloud Storage, and RFC 9110 §9.3.4.
 - **The server is not in this repo,** so how irongall.dev's server is built has no row here.

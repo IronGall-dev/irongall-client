@@ -33,6 +33,10 @@ type Status struct {
 	Outbox              int    `json:"outbox"`
 	OutboxFailed        int    `json:"outbox_failed"`
 	Quarantine          int    `json:"quarantine"`
+	// Held is the mail held/ keeps from senders this box has not allowed.
+	Held int `json:"held"`
+	// Policy is what the box's policy file says, or the default.
+	Policy Policy `json:"policy"`
 	// Revoked is true when the box holds a revocation of its own address
 	// that verifies: the address is finished.
 	Revoked bool `json:"revoked,omitempty"`
@@ -60,7 +64,17 @@ func (b *Box) Status() (*Status, error) {
 		s.Attention = append(s.Attention, fmt.Sprintf("the revocation servers this box is to ask cannot be read, so it asks about nobody, and neither sends nor receives, until that is put right: %v", err))
 	}
 	s.RevocationServers = append([]string{}, servers...)
-	for dir, n := range map[string]*int{"inbox/*.json": &s.Inbox, "sent/*.json": &s.Sent, "outbox/*.P": &s.Outbox, "outbox/failed/*.P": &s.OutboxFailed, "quarantine/*.json": &s.Quarantine} {
+	if s.Policy, err = b.Policy(); err != nil {
+		s.Attention = append(s.Attention, fmt.Sprintf("the box's policy cannot be read, so it neither sends nor receives until that is put right: %v", err))
+	}
+	switch pending, perr := b.ACLPending(); {
+	case err != nil: // said above
+	case perr != nil:
+		s.Attention = append(s.Attention, fmt.Sprintf("whom this box allows or blocks cannot be read, so it neither sends nor receives until that is put right: %v", perr))
+	case pending:
+		s.Attention = append(s.Attention, "this box's ACL has changed since its server last took it: the next send, recv, allow or block sends it")
+	}
+	for dir, n := range map[string]*int{"inbox/*.json": &s.Inbox, "sent/*.json": &s.Sent, "outbox/*.P": &s.Outbox, "outbox/failed/*.P": &s.OutboxFailed, "quarantine/*.json": &s.Quarantine, "held/*.json": &s.Held} {
 		names, err := filepath.Glob(b.path(filepath.FromSlash(dir)))
 		if err != nil {
 			return nil, err
@@ -111,6 +125,9 @@ func (b *Box) Status() (*Status, error) {
 	}
 	if s.Quarantine > 0 {
 		s.Attention = append(s.Attention, fmt.Sprintf("%d refused in quarantine/ (%s): each failed a check and was never delivered; its .reason file says which, and both files are yours to delete once looked at", s.Quarantine, b.quarantineCodes()))
+	}
+	if s.Held > 0 {
+		s.Attention = append(s.Attention, fmt.Sprintf("%d held in held/ from senders this box has not allowed: irongall held lists them by sender; irongall allow <address> delivers a sender's to inbox/, and irongall block <address> deletes them", s.Held))
 	}
 	if s.Outbox > 0 {
 		s.Attention = append(s.Attention, fmt.Sprintf("%d in outbox/ not delivered yet: irongall flush sends them again", s.Outbox))

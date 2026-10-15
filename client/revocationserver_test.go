@@ -141,6 +141,7 @@ func (e *env) boxWith(o client.Options) *client.Box {
 	if err != nil {
 		e.t.Fatalf("init: %v", err)
 	}
+	landAll(e.t, b)
 	return b
 }
 

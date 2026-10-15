@@ -82,6 +82,7 @@ func TestRecvPrintsTheCheckedLine(t *testing.T) {
 	_ = w.Close()
 	h := sha256.Sum256(ct.Bytes())
 	srv.Inject(b.Address(), hex.EncodeToString(h[:]), a.Address(), ct.Bytes())
+	allows(t, b, a)
 
 	t.Setenv("IRONGALL_HOME", b.Dir())
 	t.Setenv("IRONGALL_BASE", srv.URL)
@@ -111,6 +112,7 @@ func TestRecvLineHasNoOtherLineBreaks(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := "a\u0085b\u2028c\u2029d"
+	allows(t, b, a)
 	if _, err := a.Send(ctx, b.Address(), body); err != nil {
 		t.Fatal(err)
 	}
@@ -144,6 +146,7 @@ func TestRecvWaitRidesOutARateLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	allows(t, b, a)
 	if _, err := a.Send(ctx, b.Address(), "after the wait"); err != nil {
 		t.Fatal(err)
 	}
@@ -271,6 +274,7 @@ func TestTheLink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	allows(t, b, a)
 	for _, to := range []string{b.Link(), b.Address().String()} {
 		if err := run(ctx, "send", []string{to}, strings.NewReader("to "+to), io.Discard, io.Discard); err != nil {
 			t.Fatalf("send %s: %v", to, err)
@@ -316,6 +320,7 @@ func TestRecvSaysARenewalFailed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	allows(t, b, a)
 	if _, err := a.Send(ctx, b.Address(), "while the renewal fails"); err != nil {
 		t.Fatal(err)
 	}
@@ -375,7 +380,7 @@ func TestRefusedMailDoesNotFailRecv(t *testing.T) {
 	t.Setenv("IRONGALL_HOME", b.Dir())
 	t.Setenv("IRONGALL_BASE", srv.URL)
 	var out bytes.Buffer
-	if err := run(ctx, "status", nil, nil, &out, io.Discard); err != nil || !strings.Contains(out.String(), `"quarantine":0,"revocation_servers":[],"attention":[]`) {
+	if err := run(ctx, "status", nil, nil, &out, io.Discard); err != nil || !strings.Contains(out.String(), `"quarantine":0,"held":0,"policy":{"unknown":"held","server":"all"},"revocation_servers":[],"attention":[]`) {
 		t.Fatalf("status of a new box: %v %q", err, out.String())
 	}
 	forged := []byte("not a ciphertext its claimed sender ever signed")
@@ -414,6 +419,7 @@ func TestSendFlags(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	allows(t, b, a)
 	t.Setenv("IRONGALL_BASE", srv.URL)
 	t.Setenv("IRONGALL_HOME", a.Dir())
 	const first, old = "11111111-2222-4333-8444-555555555555", "22222222-2222-4333-8444-555555555555"
@@ -483,6 +489,7 @@ func TestAliasCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	allows(t, b, a)
 	t.Setenv("IRONGALL_BASE", srv.URL)
 	t.Setenv("IRONGALL_HOME", a.Dir())
 	cmd := func(name string, args ...string) (string, error) {
@@ -875,4 +882,68 @@ func number(t *testing.T, digits string) uint64 {
 		t.Fatal(err)
 	}
 	return n
+}
+
+// allows makes b allow a, as its owner would before reading a's mail: mail
+// from a sender a box has not allowed is held, not printed.
+func allows(t *testing.T, b, a *client.Box) {
+	t.Helper()
+	if _, err := b.Allow(context.Background(), a.Address()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// recv holds a stranger's mail and says so on stderr; held lists it by
+// sender; allow prints it as recv would and lists who is allowed; block
+// lists who is blocked. None of it changes recv's exit status.
+func TestHeldAllowAndBlockCommands(t *testing.T) {
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	opt := client.Options{Base: srv.URL}
+	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Send(ctx, b.Address(), "from a stranger"); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("IRONGALL_HOME", b.Dir())
+	t.Setenv("IRONGALL_BASE", srv.URL)
+	cmd := func(name string, args ...string) (string, string, error) {
+		var out, errs bytes.Buffer
+		err := run(ctx, name, args, strings.NewReader(""), &out, &errs)
+		return out.String(), errs.String(), err
+	}
+	out, errs, err := cmd("recv")
+	if err != nil || out != "" || !strings.HasPrefix(errs, "HELD ") || !strings.Contains(errs, "from "+a.Address().String()) {
+		t.Fatalf("recv: %v, stdout %q, stderr %q", err, out, errs)
+	}
+	out, _, err = cmd("held")
+	var h client.HeldSender
+	if err != nil || strings.Count(out, "\n") != 1 || json.Unmarshal([]byte(out), &h) != nil || h.From != a.Address() || len(h.IDs) != 1 {
+		t.Fatalf("held: %v %q", err, out)
+	}
+	out, _, err = cmd("allow", a.Address().String())
+	if err != nil || !strings.Contains(out, `"body":"from a stranger"`) || strings.Count(out, "\n") != 1 {
+		t.Fatalf("allow: %v %q", err, out)
+	}
+	if out, _, err = cmd("allow"); err != nil || out != a.Address().String()+"\n" {
+		t.Fatalf("allow, listing: %v %q", err, out)
+	}
+	if out, _, err = cmd("block", a.Link()); err != nil || out != "" {
+		t.Fatalf("block: %v %q", err, out)
+	}
+	if out, _, err = cmd("block"); err != nil || out != a.Address().String()+"\n" {
+		t.Fatalf("block, listing: %v %q", err, out)
+	}
+	if out, _, err = cmd("held"); err != nil || out != "" {
+		t.Fatalf("held, with none: %v %q", err, out)
+	}
+	if _, _, err = cmd("allow", "--rebuild", a.Address().String()); err == nil {
+		t.Fatal("allow --rebuild with an address was taken")
+	}
 }

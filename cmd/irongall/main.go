@@ -41,7 +41,22 @@ const usage = `usage: irongall <command> [arguments]
                            as sent/ names it, that this replaces)
   alias [<name> <link>]    name a peer for this box only, so send takes the
                            name; with no arguments, list the names;
-                           alias --rm <name> removes one
+                           alias --rm <name> removes one. A name allows its
+                           peer, as allow does
+  allow [<link>]           let a sender's mail land in inbox/: mail from a
+                           sender this box has not allowed is held in held/.
+                           It moves what held/ keeps from that sender to
+                           inbox/, printing it as recv does. Sending to a
+                           box allows it too. With no argument, list the
+                           senders allowed; allow --rebuild adds back every
+                           address an alias names or sent/ shows
+  block [<link>]           drop a sender's mail, here and at the server, and
+                           delete what held/ keeps from it; with no argument,
+                           list the senders blocked
+  held                     list the mail held/ keeps, one line of JSON for
+                           each sender: its address, the ids, and the first
+                           and last sent_at. held/<id>.json is the line recv
+                           would have printed for it
   flush                    re-post messages still in the outbox; ones that can
                            never be delivered move to outbox/failed/
   recv [--wait duration]   receive, verify and ack every message: one line of
@@ -60,8 +75,8 @@ const usage = `usage: irongall <command> [arguments]
   status                   say what this box holds and what needs a look, as one
                            line of JSON, from its own files and with no call
                            to the server: its prekey, a renewal that has not
-                           gone through, refused mail in quarantine/, mail not
-                           yet delivered
+                           gone through, refused mail in quarantine/, held
+                           mail, mail not yet delivered
   adopt <key>              join the account an adopt key names, which can
                            lift this box's limits; adopt --leave leaves it
   revocation               print this box's revocation as one line of JSON, and
@@ -101,18 +116,25 @@ irongall.dev asks ` + client.DefaultRevocationServer + `, which irongall.dev's
 operator runs, and a box on another server asks none. A revocation server
 learns which addresses a box asks about: name one run by anyone else only if
 you mean to tell it. No answer from one changes nothing, and status lists them.
+The box's policy file says where mail from a sender it has not allowed
+lands, "unknown held" (the default) or "unknown inbox", and whom its server
+takes mail from, "server all" (the default: everyone it has not blocked) or
+"server allowed" (only those it allowed, which tells the server who they are).
 With each prekey a box declares which identity key types its client verifies,
 and so whose mail it takes: every type this client verifies, unless
 $IRONGALL_SENDER_KEY_TYPES says otherwise ("any": do not say).
 
 Exit status: 0, done. 1, the command failed. 2, help. 3, the command did its
 work and the box needs a look: from recv, mail was received as printed and
-the prekey, due for renewal, was not renewed; from status, its "attention"
-list is not empty. recv says on stderr what it refused, keeping each refused
-message in quarantine/, and refused mail does not change its exit status,
-since any sender can cause one: keep recv's stderr, or run status after it. A refusal is
-"REFUSED <id>: <code>: <words>", the words this client's own: it never quotes
-a message. What a server says in an error is printed in quotes, as its words.
+the prekey, due for renewal, was not renewed, or the box's ACL was not sent
+to its server; from status, its "attention" list is not empty. recv says on
+stderr what it refused, keeping each refused message in quarantine/, and
+what it held, keeping it in held/: refused and held mail do not change its
+exit status, since any sender can cause either. Keep recv's stderr, or run
+status after it. A refusal is "REFUSED <id>: <code>: <words>", the words this
+client's own: it never quotes a message. Held mail is "HELD <id>: from
+<address>", and mail from a blocked sender, dropped, "BLOCKED <id>: from
+<address>". What a server says in an error is printed in quotes, as its words.
 
 To try the whole loop, send anything to irongall.dev's echo box,
 ` + client.DefaultBase + protocol.LinkPath + client.EchoAddress + `
@@ -285,10 +307,86 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 			if err := b.SetAlias(fs.Arg(0), to); err != nil {
 				return err
 			}
-			_, err = fmt.Fprintf(stdout, "%s %s\n", fs.Arg(0), to)
-			return err
+			if _, err := fmt.Fprintf(stdout, "%s %s\n", fs.Arg(0), to); err != nil {
+				return err
+			}
+			return b.SyncACL(ctx)
 		}
 		return errors.New("usage: irongall alias <name> <link or address>, irongall alias (to list them), or irongall alias --rm <name>")
+
+	case "allow", "block":
+		rebuild := false
+		if cmd == "allow" {
+			fs.BoolVar(&rebuild, "rebuild", false, "add back every address an alias names or sent/ shows, for an allowed file that was lost")
+		}
+		if err := parse(); err != nil {
+			return err
+		}
+		b, err := client.Open(dir, opt)
+		if err != nil {
+			return err
+		}
+		switch {
+		case rebuild && fs.NArg() == 0:
+			n, err := b.RebuildAllowed()
+			if err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintf(stderr, "%d added to allowed\n", n)
+			return b.SyncACL(ctx)
+		case !rebuild && fs.NArg() == 0:
+			list := b.Allowed
+			if cmd == "block" {
+				list = b.Blocked
+			}
+			as, err := list()
+			for _, a := range as {
+				if _, werr := fmt.Fprintln(stdout, a); werr != nil && err == nil {
+					err = werr
+				}
+			}
+			return err
+		case !rebuild && fs.NArg() == 1:
+			a, err := b.Destination(fs.Arg(0))
+			if err != nil {
+				return err
+			}
+			if cmd == "block" {
+				n, err := b.Block(ctx, a)
+				if n > 0 {
+					_, _ = fmt.Fprintf(stderr, "%d held from it deleted\n", n)
+				}
+				return err
+			}
+			moved, err := b.Allow(ctx, a)
+			for _, d := range moved {
+				if _, werr := fmt.Fprintf(stdout, "%s\n", d.Line); werr != nil && err == nil {
+					err = werr
+				}
+			}
+			return err
+		}
+		if cmd == "block" {
+			return errors.New("usage: irongall block <link, address or alias>, or irongall block (to list them)")
+		}
+		return errors.New("usage: irongall allow <link, address or alias>, irongall allow (to list them), or irongall allow --rebuild")
+
+	case "held":
+		b, err := client.Open(dir, opt)
+		if err != nil {
+			return err
+		}
+		hs, err := b.HeldMail()
+		for _, h := range hs {
+			line, jerr := json.Marshal(h)
+			if jerr == nil {
+				_, jerr = fmt.Fprintf(stdout, "%s\n", line)
+			}
+			if jerr != nil && err == nil {
+				err = jerr
+			}
+		}
+		return err
 
 	case "flush":
 		b, err := client.Open(dir, opt)
@@ -314,8 +412,8 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 		}
 		deadline := time.Now().Add(*wait)
 		// renewErr is a renewal that was due and failed, and that no later
-		// Receive of this run made good.
-		var renewErr error
+		// Receive of this run made good; aclErr the same for the box's ACL.
+		var renewErr, aclErr error
 		for {
 			res, err := b.Receive(ctx)
 			if res != nil {
@@ -336,6 +434,12 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 				for _, r := range res.Refused {
 					_, _ = fmt.Fprintf(stderr, "REFUSED %s: %s: %s\n", r.ID, r.Code, r.Reason)
 				}
+				for _, h := range res.Held {
+					_, _ = fmt.Fprintf(stderr, "HELD %s: from %s, which this box has not allowed: kept in held/ (irongall held, irongall allow)\n", h.ID, h.Envelope.From)
+				}
+				for _, id := range res.Blocked {
+					_, _ = fmt.Fprintf(stderr, "BLOCKED %s: from a sender this box blocked: dropped\n", id)
+				}
 				switch {
 				case res.Paced > 0:
 					_, _ = fmt.Fprintf(stderr, "the server paces how much mail this box takes out: the rest is still on the server; run recv again in %s or later\n", res.Paced.Round(time.Second))
@@ -345,6 +449,10 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 				if res.RenewErr != nil {
 					renewErr = res.RenewErr
 					_, _ = fmt.Fprintf(stderr, "the prekey is due for renewal and was not renewed (recv tries again within the hour): %v\n", res.RenewErr)
+				}
+				aclErr = res.ACLErr
+				if res.ACLErr != nil {
+					_, _ = fmt.Fprintf(stderr, "this box's ACL has changed and was not sent to its server (the next recv sends it): %v\n", res.ACLErr)
 				}
 			}
 			pause := time.Minute
@@ -360,6 +468,9 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 			} else if err != nil || len(res.Delivered) > 0 || !time.Now().Before(deadline) {
 				if err == nil && renewErr != nil {
 					return &needsALook{"mail was received as printed, and the prekey was not renewed: this box needs a look (irongall status)"}
+				}
+				if err == nil && aclErr != nil {
+					return &needsALook{"mail was received as printed, and the box's ACL was not sent to its server: this box needs a look (irongall status)"}
 				}
 				return err
 			}

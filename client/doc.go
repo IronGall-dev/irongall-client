@@ -23,6 +23,10 @@
 //	seen                       the replay set: ciphertext hash, sent_at, from, msg_id, for 33 days
 //	outbox/, outbox/failed/    signed envelopes awaiting a receipt; ones that can never be delivered
 //	inbox/, quarantine/        accepted mail; refused mail, never delivered, each with its reason beside it (.reason)
+//	held/                      accepted mail from senders this box has not allowed, as inbox/ keeps it: allow moves a sender's to inbox/, block deletes it
+//	allowed, blocked           the senders whose mail lands in inbox/, and those whose mail is dropped: one address to a line. send, alias and allow add to allowed, block to blocked; both are yours to edit
+//	policy                     where mail from a sender not allowed lands ("unknown held", the default, or "unknown inbox"), and whom the server takes mail from ("server all", the default, or "server allowed"). Yours to write
+//	acl.json                   the ACL this box's server last took, as it answered: made from the three files above, and sent when they change
 //	sent/                      sent mail the server took: each envelope with the server's receipt
 //	aliases                    this box's own names for peers: "<name> <address>" lines
 //	revocation-servers         the revocation servers this box asks beside its own server, and publishes to: one URL to a line, or the word none. Yours to write; without it, the default for the box's server

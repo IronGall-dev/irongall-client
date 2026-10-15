@@ -50,6 +50,7 @@ type box struct {
 	// The identity's revocation of its certificates, as put, and parsed.
 	certList, certListSig []byte
 	listed                *protocol.RevokedCertificates
+	acl                   *protocol.ACL // its sender ACL; nil: none, which admits everyone
 	messages              map[string]*message
 	order                 []string // ids, oldest first
 }
@@ -75,6 +76,8 @@ func New(t testing.TB, now func() time.Time) *Server {
 	mux.HandleFunc("DELETE /v1/{addr}/messages/{id}", s.owner(s.ack))
 	mux.HandleFunc("PUT /v1/{addr}/account", s.owner(s.adopt))
 	mux.HandleFunc("DELETE /v1/{addr}/account", s.owner(s.leave))
+	mux.HandleFunc("PUT /v1/{addr}/acl", s.owner(s.putACL))
+	mux.HandleFunc("GET /v1/{addr}/acl", s.owner(s.getACL))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Dated by the server's own clock, which a test sets: a client
 		// compares an answer's Date with its clock when a pass is refused.
@@ -441,6 +444,10 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, http.StatusOK, receipt(key, m))
 		return
 	}
+	if !rcpt.acl.Admits(from) {
+		problem(w, protocol.CodeSenderNotAllowed, "the box's ACL does not admit the sender")
+		return
+	}
 	m := &message{from: from, ciphertext: req.Ciphertext, receivedAt: s.now()}
 	rcpt.messages[key] = m
 	rcpt.order = append(rcpt.order, key)
@@ -516,6 +523,45 @@ func (s *Server) fetch(w http.ResponseWriter, r *http.Request, b *box) {
 	}
 	WriteJSON(w, http.StatusOK, protocol.Message{ID: id, From: m.from.String(), ReceivedAt: formatTime(m.receivedAt),
 		ExpiresAt: formatTime(m.receivedAt.Add(protocol.TTL)), Ciphertext: m.ciphertext})
+}
+
+// putACL replaces the box's ACL with one of a higher version, and deletes
+// what is waiting from every sender its deny list matches.
+func (s *Server) putACL(w http.ResponseWriter, r *http.Request, b *box) {
+	var d protocol.ACLDocument
+	if !decode(w, r, &d) {
+		return
+	}
+	acl, err := protocol.CheckACL(&d, 0)
+	switch {
+	case err != nil:
+		problem(w, protocol.CodeBadRequest, "not an ACL")
+		return
+	case b.acl != nil && acl.Version <= b.acl.Version:
+		problem(w, protocol.CodeConflict, "a version that is not above the one held")
+		return
+	}
+	b.acl = acl
+	for id, m := range b.messages {
+		if acl.Deny.Has(m.from) {
+			delete(b.messages, id)
+		}
+	}
+	WriteJSON(w, http.StatusOK, acl.Document())
+}
+
+func (s *Server) getACL(w http.ResponseWriter, _ *http.Request, b *box) {
+	WriteJSON(w, http.StatusOK, b.acl.Document())
+}
+
+// ACL returns a box's sender ACL, nil if it has none.
+func (s *Server) ACL(a protocol.Address) *protocol.ACL {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if b := s.boxes[a]; b != nil {
+		return b.acl
+	}
+	return nil
 }
 
 func (s *Server) ack(w http.ResponseWriter, r *http.Request, b *box) {

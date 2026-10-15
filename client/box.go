@@ -277,7 +277,7 @@ func (b *Box) publish(ctx context.Context, method, path string, req any, n uint6
 
 // makeDirs makes the box's directories that are missing.
 func (b *Box) makeDirs() error {
-	for _, d := range []string{"work", "prekeys", "peers", "inbox", "quarantine", "outbox", "sent"} {
+	for _, d := range []string{"work", "prekeys", "peers", "inbox", "held", "quarantine", "outbox", "sent"} {
 		if err := os.MkdirAll(b.path(d), 0o700); err != nil {
 			return err
 		}

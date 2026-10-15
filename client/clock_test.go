@@ -39,6 +39,7 @@ func TestABoxWhoseClockIsOffByLessThanThePassAllows(t *testing.T) {
 			t.Errorf("a clock %v off: init: %v", off, err)
 			continue
 		}
+		landAll(t, b)
 		fresh := e.box(protocol.Classic) // made this moment, on the server's clock: no certificate is newer
 		if _, err := fresh.Send(ctx, b.Address(), "under a certificate made this moment"); err != nil {
 			t.Errorf("a clock %v off: mail to it: %v", off, err)
@@ -168,6 +169,7 @@ func TestABoxWhoseClockGoesBackFetchesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	landAll(t, b)
 	if res := receive(t, b); len(res.Delivered) != 0 { // the pass is in the box now, with ten minutes to run
 		t.Fatal(res)
 	}
@@ -298,6 +300,7 @@ func TestInitNeverDropsAKeyMailMayBeWaitingFor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	landAll(t, b)
 	if _, err := b.Rekey(ctx, protocol.Classic); err != nil {
 		t.Fatalf("rekey: %v", err)
 	}

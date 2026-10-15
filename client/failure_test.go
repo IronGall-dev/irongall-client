@@ -160,6 +160,7 @@ func TestRestoreFromIdentity(t *testing.T) {
 	if r.Address() != b.Address() {
 		t.Fatal("the restored box has another address")
 	}
+	landAll(t, r)
 	if _, err := r.Rekey(context.Background(), ""); err != nil {
 		t.Fatal(err)
 	}
