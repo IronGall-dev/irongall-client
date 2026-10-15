@@ -130,8 +130,9 @@ func TestP256DocumentForm(t *testing.T) {
 	}
 }
 
-// What OpenSSH requires of a P-256 point beyond being on the curve: each
-// coordinate more than 128 bits long, and below the group's order less one.
+// What OpenSSH required of a P-256 point beyond being on the curve up to
+// 10.2p1, and the protocol still does: each coordinate more than 128 bits
+// long, and below the group's order less one.
 func TestCheckP256(t *testing.T) {
 	n := elliptic.P256().Params().N
 	wire := func(x, y *big.Int) []byte {

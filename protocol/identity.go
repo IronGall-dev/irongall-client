@@ -96,10 +96,10 @@ type Identity struct {
 // ParseIdentity parses an identity document. It must be exactly the two-line
 // form of its key type, the key in its one encoding, and the key must pass
 // that type's checks: for Ed25519 a canonical point that is not of small
-// order, for P-256 what OpenSSH requires of a point on the curve. Go's
-// crypto/ed25519 and OpenSSH both accept small-order and non-canonical
-// Ed25519 keys, and Go accepts P-256 points OpenSSH refuses, so each check is
-// explicit.
+// order, for P-256 what OpenSSH required of a point on the curve up to
+// 10.2p1. Go's crypto/ed25519 accepts small-order and non-canonical Ed25519
+// keys, as OpenSSH's own code did before 10.6p1, and Go accepts P-256 points
+// OpenSSH refused up to 10.2p1, so each check is explicit.
 //
 // A well-formed document of a type this package does not define is
 // ErrIdentityType: nothing is wrong with it, and nothing it signed can be
@@ -200,12 +200,14 @@ func checkEd25519(k ed25519.PublicKey) error {
 }
 
 // checkP256 holds a P-256 key, given in SSH wire form, to what OpenSSH
-// requires of an EC public key beyond a point on the curve
+// required of an EC public key beyond a point on the curve up to 10.2p1
 // (sshkey_ec_validate_public): each coordinate is longer than half the bits
 // of the group's order n, and below n-1. The library has already refused a
 // point that is off the curve, compressed, or written with a coordinate of
-// the field's size or more. No key made from a private key fails this; a
-// client built on OpenSSH refuses one that does, so every client must.
+// the field's size or more. No key made from a private key fails this.
+// OpenSSH dropped the two checks in 10.3p1 as not needed; they stay here,
+// and a script on a later OpenSSH takes such a key, a known variance
+// (PROTOCOL.md §3).
 func checkP256(wire []byte) error {
 	const point = 1 + 32 + 32 // 04, x, y
 	if len(wire) < point || wire[len(wire)-point] != 4 {
@@ -217,7 +219,7 @@ func checkP256(wire []byte) error {
 	for _, c := range [][]byte{q[:32], q[32:]} {
 		v := new(big.Int).SetBytes(c)
 		if v.BitLen() <= n.BitLen()/2 || v.Cmp(limit) >= 0 {
-			return errors.New("the identity key is a point OpenSSH refuses: a coordinate is too short, or is the group's order less one or more")
+			return errors.New("the identity key is a P-256 point whose coordinate is too short, or is the group's order less one or more")
 		}
 	}
 	return nil
