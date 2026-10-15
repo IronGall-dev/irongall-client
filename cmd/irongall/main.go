@@ -336,7 +336,10 @@ func run(ctx context.Context, cmd string, args []string, stdin io.Reader, stdout
 				for _, r := range res.Refused {
 					_, _ = fmt.Fprintf(stderr, "REFUSED %s: %s: %s\n", r.ID, r.Code, r.Reason)
 				}
-				if res.More {
+				switch {
+				case res.Paced > 0:
+					_, _ = fmt.Fprintf(stderr, "the server paces how much mail this box takes out: the rest is still on the server; run recv again in %s or later\n", res.Paced.Round(time.Second))
+				case res.More:
 					_, _ = fmt.Fprintln(stderr, "this run stopped at the most one drain takes: run recv again for the rest, which is still on the server")
 				}
 				if res.RenewErr != nil {

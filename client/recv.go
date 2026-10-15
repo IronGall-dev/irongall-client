@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"filippo.io/age"
 	"github.com/IronGall-dev/irongall-client/protocol"
@@ -62,9 +63,12 @@ type Result struct {
 	Duplicates []string
 	Refused    []Refusal
 	// More reports that the drain stopped at one of its limits (see
-	// maxDrainMessages): the rest is still on the server for the next
-	// Receive.
+	// maxDrainMessages), or because the server paced it: the rest is still
+	// on the server for the next Receive.
 	More bool
+	// Paced is how long the server asked the box to wait before taking out
+	// more, when it paced the drain (a 429 with Retry-After); zero otherwise.
+	Paced time.Duration
 	// PollAfter is the server's poll interval, in seconds.
 	PollAfter int
 	// Renewed is the prekey this Receive published, the current one being
@@ -174,6 +178,13 @@ func (b *Box) drain(ctx context.Context) (*Result, error) {
 				return res, nil
 			}
 			n, err := b.receiveOne(ctx, m.ID, res, asked)
+			// A server that paces how much a box takes out stops the drain
+			// as a drain's own limits do: what is left waits on the server.
+			var paced *APIError
+			if errors.As(err, &paced) && paced.Problem.Code == protocol.CodeRateLimited && paced.RetryAfter > 0 {
+				res.More, res.Paced = true, paced.RetryAfter
+				return res, nil
+			}
 			if err != nil {
 				return res, err
 			}
