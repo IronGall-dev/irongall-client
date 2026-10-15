@@ -24,7 +24,8 @@
 #
 # It gives up conveniences the Go client has: recv drains once and never waits for mail, and each step runs several
 # programs. Needs bash >= 4, age >= 1.3 (1.2 makes and reaches --no-pq boxes only), OpenSSH
-# >= 9.1, curl >= 7.76, jq >= 1.7, iconv, and coreutils (sha256sum, base64, od, sync).
+# >= 9.1, curl >= 7.76, jq >= 1.7.1 (1.7.0 can abort on a number a sender writes, CVE-2023-50246; Ubuntu 24.04's
+# fixed jq prints jq-1.7), iconv, and coreutils (sha256sum, base64, od, sync).
 
 # recipe: setup
 set -o pipefail; umask 077
@@ -51,7 +52,9 @@ ig_code(){ ig_shape "$IG/error.json" problem && jq -r '.code // empty' "$IG/erro
 ig_json(){ # <file> → 0 only for a JSON text as PROTOCOL.md §0b reads one: UTF-8 with no byte-order mark; one object; every number in JSON's own grammar; no member named twice in any object; nested at most 32 deep; and no Unicode noncharacter in a name or a string (I-JSON, RFC 7493). jq skips a byte-order mark and takes NaN, 01, +1 and .5, which JSON does not, so the numbers are read from the text, its strings taken out
   local n
   iconv -f UTF-8 -t UTF-8 < "$1" > /dev/null 2>&1 && ! LC_ALL=C grep -Eq $'[\xf5-\xff]|\xf4[\x90-\xbf]' "$1" && [ "$(od -An -N3 -tx1 "$1" | tr -d ' \n')" != efbbbf ] || return 1      # glibc's iconv takes a code point above U+10FFFF, which UTF-8 has none of
-  ! LC_ALL=C sed -E 's/"([^"\\]|\\.)*"//g' "$1" | tr '{}\133\135,: \t\r' '\n\n\n\n\n\n\n\n\n' | LC_ALL=C grep -Eqv '^$|^(true|false|null|-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?)$' || return 1
+  cmp -s "$1" <(tr -d '\000-\010\013\014\016-\037' < "$1") || return 1      # no control byte but tab, LF and CR, and those only as whitespace (RFC 8259 §2, §7): jq ends a number at a NUL and drops it
+  ! LC_ALL=C sed -E 's/\\\\//g; s/\\u[dD][89abAB][0-9a-fA-F]{2}\\u[dD][c-fC-F][0-9a-fA-F]{2}//g' "$1" | LC_ALL=C grep -aqE '\\u[dD][89a-fA-F][0-9a-fA-F]{2}' || return 1      # no escaped surrogate but in a pair: jq reads a lone low one as U+FFFD
+  ! LC_ALL=C sed -E 's/"([^"\\]|\\.)*"//g' "$1" | tr '{}\133\135,: \t\r' '\n\n\n\n\n\n\n\n\n' | LC_ALL=C grep -aEqv '^$|^(true|false|null|-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?)$' || return 1
   n=$(jq -n --stream '[inputs | if length == 2 then .[0] else .[0][:-1] end | select(length > 0 and (.[-1] | type) == "string")] | length' "$1" 2> /dev/null) &&      # every member of every object, as written: one named twice is counted twice here, and once below
     jq -en --argjson n "$n" '[inputs] | length == 1 and (.[0] | type == "object" and ([.. | objects | length] | add) == $n and ([paths(type == "object" or type == "array") | length] | max // 0) < 32 and ([.. | strings, (objects | keys[])] | all(test("[\\x{FDD0}-\\x{FDEF}\\x{FFFE}\\x{FFFF}\\x{1FFFE}\\x{1FFFF}\\x{2FFFE}\\x{2FFFF}\\x{3FFFE}\\x{3FFFF}\\x{4FFFE}\\x{4FFFF}\\x{5FFFE}\\x{5FFFF}\\x{6FFFE}\\x{6FFFF}\\x{7FFFE}\\x{7FFFF}\\x{8FFFE}\\x{8FFFF}\\x{9FFFE}\\x{9FFFF}\\x{AFFFE}\\x{AFFFF}\\x{BFFFE}\\x{BFFFF}\\x{CFFFE}\\x{CFFFF}\\x{DFFFE}\\x{DFFFF}\\x{EFFFE}\\x{EFFFF}\\x{FFFFE}\\x{FFFFF}\\x{10FFFE}\\x{10FFFF}]") | not)))' "$1" > /dev/null 2>&1
 }
@@ -517,7 +520,7 @@ ig_drain(){ # stops at a transient error or a fault of this box, leaving the res
     ig_owner GET "/v1/$B/messages${c:+?cursor=$c}" > "$IG/list.json" || { ig_own; return 1; }
     ig_shape "$IG/list.json" list && n=$(jq -r '.messages | length' "$IG/list.json") || { echo "the server's list of messages is not one this client reads, as PROTOCOL.md §0b reads JSON: the mail stays on the server" >&2; return 1; }
     for ((i = 0; i < n; i++)); do
-      id=$(jq -r ".messages[$i].id" "$IG/list.json"); ig_hex "$id" || continue
+      id=$(jq -r --argjson i "$i" '.messages[$i].id | strings | select(test("\\A[0-9a-f]{64}\\z"))' "$IG/list.json") && ig_hex "$id" || continue      # tested in jq: $(…) drops trailing LFs and every NUL
       [ $((k += 1)) -le 1000 ] || { echo "this run stopped at the most one drain takes: run recv again for the rest, which is still on the server" >&2; return 0; }
       if ! grep -q "^$id " "$IG/seen" 2> /dev/null; then ig_one "$B" "$id" || return 1; fi   # an id already handled is only acked again
       ig_owner DELETE "/v1/$B/messages/$id" > /dev/null || [ "$(ig_code)" = no_such_message ] || return 1
@@ -531,7 +534,7 @@ ig_one(){ # <me> <id> → 0 once the message is judged and its verdict is on dis
   ig_owner GET "/v1/$B/messages/$id" > "$m.json" || { [ "$(ig_code)" = no_such_message ]; return; }      # already gone
   ig_shape "$m.json" message && ig_bytes "$m.json" ciphertext "$m.age" || { echo "the server's answer for message $id is not one this client reads, as PROTOCOL.md §0b reads JSON: it stays on the server" >&2; return 1; }      # the server's fault, not the sender's: no verdict, and no ack
   h=$(sha256sum < "$m.age" | cut -c1-64)      # files are named by the hash computed here, never the server's id
-  why=$(ig_judge "$B" "$(jq -r .from "$m.json")" "$m"); rc=$?
+  why=$(ig_judge "$B" "$m"); rc=$?
   if [ $rc -eq 0 ] || [ $rc -eq 2 ]; then [ "$h" = "$id" ] || { why="bad_id: the server's id for it is not the SHA-256 of its ciphertext"; rc=1; }; fi
   case $rc in
     0) A=$(jq -r .from "$m.P") && ig_line "$m.P" > "$IG/inbox/$h.json" && sync "$IG/inbox/$h.json" "$IG/inbox" && ig_seen "$A" "$m" "$h" || return 1      # stored, then seen, both on disk before the ack: a crash delivers again, never loses
@@ -543,14 +546,14 @@ ig_one(){ # <me> <id> → 0 once the message is judged and its verdict is on dis
        echo "REFUSED $h: $why" >&2 ;;
   esac
 }
-ig_judge(){ # <me> <the server's from> <message stem> → 0 only if EVERY check passes, in this order; 2 for a resend of an accepted msg_id; 1 refused, with "<code>: <words>" on stdout, the words this script's own and never the message's; 3 a fault of this box, no verdict; 4 no answer from the server on whether the sender is revoked, no verdict. Who the sender is, is never asked of the server: the message carries what proves it. The one thing asked is whether a revocation of that sender exists, and the answer proves itself
-  local B=$1 m=$3 ids=() k h A c
+ig_judge(){ # <me> <message stem> → 0 only if EVERY check passes, in this order; 2 for a resend of an accepted msg_id; 1 refused, with "<code>: <words>" on stdout, the words this script's own and never the message's; 3 a fault of this box, no verdict; 4 no answer from the server on whether the sender is revoked, no verdict. Who the sender is, is never asked of the server: the message carries what proves it. The one thing asked is whether a revocation of that sender exists, and the answer proves itself
+  local B=$1 m=$2 ids=() k h A c
   ig_bytes "$m.json" ciphertext "$m.age" || { echo "bad_message: its ciphertext is not base64 in its one encoding"; return 1; }
   for k in "$IG"/prekeys/*.agekey; do [ -e "$k" ] || continue; [ -r "$k" ] || { echo "cannot read $k"; return 3; }; ids+=(-i "$k"); done
   [ ${#ids[@]} -gt 0 ] || { echo "this box has no prekeys"; return 3; }
   age -d "${ids[@]}" < "$m.age" > "$m.T" 2> /dev/null || { echo "undecryptable: it does not decrypt with this box's prekeys"; return 1; }
   A=$(ig_open "$B" "$m") || { echo "$A"; return 1; }      # the sender, proved by what was decrypted
-  [ "$2" = "$A" ] || { echo "reattributed: the server lists it as from another box than the one that signed it"; return 1; }
+  jq -e --arg a "$A" '.from == $a' "$m.json" > /dev/null 2>&1 || { echo "reattributed: the server lists it as from another box than the one that signed it"; return 1; }      # the server's from, compared in jq: $(…) drops trailing LFs and every NUL
   if ! grep -qx "$A" "$IG/asked" 2> /dev/null; then      # the server is asked once for each sender in a drain. That it holds none is an answer; no answer is not, and the message then stays where it is
     ig_lookup "$A"; case $? in 0) ;; 1) echo "$A" >> "$IG/asked" ;; 3) echo "what this box keeps of its sender's revocations does not verify, or cannot be written"; return 3 ;; *) echo "whether its sender is revoked could not be asked"; return 4 ;; esac
   fi
@@ -573,12 +576,12 @@ ig_open(){ # <me> <message stem> → the sender's address, only if what was decr
   local B=$1 m=$2 A
   # Line 1 is the envelope, line 2 begins the signature, the first END line ends it, and nothing after that is read. Each part has one place; nothing is searched for
   head -n 1 "$m.T" > "$m.P"; sed -n '2,/^-----END SSH SIGNATURE-----$/p' "$m.T" > "$m.sig"
-  [ "$(tail -c 1 "$m.P" | od -An -tx1 | tr -d ' \n')" = 0a ] && [ "$(sed -n 1p "$m.sig")" = "-----BEGIN SSH SIGNATURE-----" ] && [ "$(tail -n 1 "$m.sig")" = "-----END SSH SIGNATURE-----" ] && [ "$(tail -c 1 "$m.sig" | od -An -tx1 | tr -d ' \n')" = 0a ] ||
+  [ "$(tail -c 1 "$m.P" | od -An -tx1 | tr -d ' \n')" = 0a ] && [ "$(sed -n 1p "$m.sig")" = "-----BEGIN SSH SIGNATURE-----" ] && tail -n 1 "$m.sig" | cmp -s - <(printf -- '-----END SSH SIGNATURE-----\n') ||
     { echo "bad_message: what was decrypted is not an envelope line and then a signature block"; return 1; }
   ig_envform "$m.P" || return 1
   jq -e '.from | . == null or type == "string"' "$m.P" > /dev/null 2>&1 || { echo "bad_envelope: the envelope is malformed: its from is not what that field holds"; return 1; }
   jq -e 'has("identity")' "$m.P" > /dev/null 2>&1 || { echo "bad_identity: the envelope carries no identity document"; return 1; }
-  jq -ejr '.identity | strings' "$m.P" 2> /dev/null | base64 -d > "$m.doc" 2> /dev/null && [ -s "$m.doc" ] && [ "$(ig_b64 "$m.doc")" = "$(jq -r .identity "$m.P")" ] || { echo "bad_identity: the envelope's identity is not base64 of an identity document"; return 1; }      # the one encoding of its bytes
+  ig_bytes "$m.P" identity "$m.doc" && [ -s "$m.doc" ] || { echo "bad_identity: the envelope's identity is not base64 of an identity document"; return 1; }      # the one encoding of its bytes, compared as bytes
   ig_idcheck "$m.doc"; case $? in 0) ;;      # a well-formed document of a key type this script does not verify has its own code, once it is known to be the sender's
     2) jq -e --arg a "$(sha256sum < "$m.doc" | cut -c1-64)" '.from == $a' "$m.P" > /dev/null 2>&1 || { echo "reattributed: the envelope's from is not the address of the identity it carries"; return 1; }
        echo "unsupported_key_type: the sender's identity is of a key type this client does not verify"; return 1 ;;
@@ -597,13 +600,13 @@ ig_open(){ # <me> <message stem> → the sender's address, only if what was decr
 ig_envform(){ # <envelope> → 0 only for a JSON text as every reader takes one (ig_json): UTF-8, one object, no key twice in any object in it, nested at most 32 deep. Otherwise the reason, and 1
   ig_json "$1" || { echo "bad_envelope: the envelope is not one JSON object in UTF-8 with no key twice, as PROTOCOL.md §0b reads one"; return 1; }
 }
-ig_envcheck(){ # <envelope> <signer> <this box> → 0 only for one UTF-8 JSON object, keys exact and none twice, v the number 1, from the signer, to this box, a msg_id, a body, string optional fields, and sent_at no older than 33 days and no more than an hour ahead; otherwise the reason, and 1
+ig_envcheck(){ # <envelope> <signer> <this box> → 0 only for one UTF-8 JSON object, keys exact and none twice, v the number 1 written as 1 (jq gives back 1e0 as 1, so that one is taken: a known variance), from the signer, to this box, a msg_id, a body, string optional fields, and sent_at no older than 33 days and no more than an hour ahead; otherwise the reason, and 1
   local e=$1 sa
   ig_envform "$e" || return 1
-  jq -e '.v == 1 and has("body") and (.msg_id | type == "string" and test("\\A[0-9a-f-]{36}\\z")) and all(.subject, .in_reply_to, .supersedes, .identity; . == null or type == "string")' "$e" > /dev/null 2>&1 ||
+  jq -e '(.v | type == "number" and tostring == "1") and has("body") and (.msg_id | type == "string" and test("\\A[0-9a-f-]{36}\\z")) and all(.subject, .in_reply_to, .supersedes, .identity; . == null or type == "string")' "$e" > /dev/null 2>&1 ||
     { echo "bad_envelope: the envelope is malformed: v the number 1, a body, a msg_id, and optional fields that are strings"; return 1; }
   jq -e --arg a "$2" --arg b "$3" '.from == $a and .to == $b' "$e" > /dev/null 2>&1 || { echo "reattributed: the inner from/to do not match the signer and this box (re-attribution)"; return 1; }
-  sa=$(ig_time "$(jq -r .sent_at "$e")") || { echo "bad_envelope: the envelope's sent_at is not a UTC timestamp to the second"; return 1; }
+  jq -e '.sent_at | strings | test("\\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\\z")' "$e" > /dev/null 2>&1 && sa=$(ig_time "$(jq -r .sent_at "$e")") || { echo "bad_envelope: the envelope's sent_at is not a UTC timestamp to the second"; return 1; }      # its grammar tested in jq first: $(…) drops trailing LFs and every NUL
   [ "$sa" -ge $(($(ig_now) - 33*86400)) ] || { echo "stale: sent_at is older than 33 days"; return 1; }
   [ "$sa" -le $(($(ig_now) + 3600)) ] || { echo "future: sent_at is more than 60 minutes ahead of this machine's clock"; return 1; }
 }

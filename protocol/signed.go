@@ -106,8 +106,9 @@ type Signed struct {
 //  5. The signature over the line, as decrypted, verifies in this box's
 //     message namespace, by a working key that identity certified, under a
 //     certificate valid at now.
-//  6. The envelope: version 1, to is this box, a body, a msg_id, and a
-//     sent_at no older than TTL.
+//  6. The envelope, in OpenEnvelope's order: a body and every member of its
+//     type, version 1, to is this box, a msg_id, and a sent_at no older than
+//     TTL and no more than MaxSkew ahead.
 //
 // The identity document is read from the envelope before the signature is
 // checked. That is sound: the document proves itself, since its hash is the

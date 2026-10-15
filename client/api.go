@@ -17,6 +17,12 @@ import (
 // the bound only stops a server from filling memory.
 const maxResponse = 16 << 20
 
+// maxWaitSeconds bounds a wait a server asks for, its Retry-After or a list's
+// poll_after: a day, longer than any limit a server counts. A server may ask
+// for less; a larger number is read as a day, and never overflows the pause
+// it becomes.
+const maxWaitSeconds = 24 * 60 * 60
+
 // call makes one API request of this box's server. A request body is sent as
 // JSON; a 2xx response body is decoded into out when out is not nil. Any
 // status outside 2xx and 304 is an *APIError. It returns the response, whose
@@ -60,9 +66,15 @@ func (b *Box) callAt(ctx context.Context, base, method, path string, in any, hdr
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		e := &APIError{Status: resp.StatusCode}
-		_ = protocol.Unmarshal(data, &e.Problem) // a body that is not problem+json, read as any answer is, leaves the code empty
+		// A body that is not problem+json, read as any answer is, leaves the
+		// code empty: one that breaks a rule is no answer, so nothing it got as
+		// far as is kept (PROTOCOL.md §0b).
+		var p protocol.Problem
+		if protocol.Unmarshal(data, &p) == nil {
+			e.Problem = p
+		}
 		if s, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && s > 0 {
-			e.RetryAfter = time.Duration(s) * time.Second
+			e.RetryAfter = time.Duration(min(s, maxWaitSeconds)) * time.Second
 		}
 		if d, err := http.ParseTime(resp.Header.Get("Date")); err == nil && req.Header.Get("Authorization") != "" {
 			e.Dated, e.Read = d.UTC(), b.now().UTC().Truncate(time.Second)

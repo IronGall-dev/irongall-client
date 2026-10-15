@@ -1,13 +1,16 @@
 package client_test
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
@@ -47,5 +50,39 @@ func TestAPacedDrainStopsAndResumes(t *testing.T) {
 	e.srv.SetMiddle(nil)
 	if res := receive(t, b); len(res.Delivered) != 1 || res.More || res.Paced != 0 {
 		t.Fatalf("the drain after it: delivered %d, more %v, paced %s", len(res.Delivered), res.More, res.Paced)
+	}
+}
+
+// A wait a server asks for is at most a day, however large the number it
+// writes: a poll_after or a Retry-After past what a time.Duration holds once
+// wrapped to a negative pause, or a short one, and polled without end.
+func TestAWaitTheServerAsksForIsAtMostADay(t *testing.T) {
+	e := newEnv(t)
+	b := e.box(protocol.Classic)
+	const huge = "9223372037" // seconds: one past what a time.Duration holds
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/messages") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"count":0,"messages":[],"next_cursor":null,"poll_after":` + huge + `}`))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	if res := receive(t, b); res.PollAfter != 24*60*60 {
+		t.Errorf("poll_after %s is read as %d seconds, want a day", huge, res.PollAfter)
+	}
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/messages") {
+			w.Header().Set("Content-Type", protocol.ProblemContentType)
+			w.Header().Set("Retry-After", huge)
+			w.WriteHeader(http.StatusTooManyRequests)
+			_ = json.NewEncoder(w).Encode(protocol.Problem{Type: protocol.CodeRateLimited.TypeURI(), Title: "Rate limited", Status: http.StatusTooManyRequests, Code: protocol.CodeRateLimited})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	_, err := b.Receive(context.Background())
+	if e, ok := errors.AsType[*client.APIError](err); !ok || e.RetryAfter != 24*time.Hour {
+		t.Errorf("Retry-After %s: %v, want a wait of a day", huge, err)
 	}
 }

@@ -214,6 +214,26 @@ func TestNoAnswerAboutARecipientPostsNothing(t *testing.T) {
 			t.Fatalf("a lookup answered %s moved the message, posted it, or revoked the address: %q", code, op.seen)
 		}
 	}
+	// A 404 whose body breaks §0b carries no code, though it says
+	// not_revoked before the member that breaks it.
+	for _, f := range problemBad(t) {
+		body, _ := os.ReadFile(f) //nolint:gosec // a test vector
+		op = watch(e, func(w http.ResponseWriter, r *http.Request) bool {
+			if r.Method != http.MethodGet || r.URL.Path != lookupOf(a) {
+				return false
+			}
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write(body)
+			return true
+		})
+		if _, err := b.Flush(ctx); err == nil || !strings.Contains(err.Error(), "kept in the outbox") {
+			t.Fatalf("a lookup answered 404 %s: %v", filepath.Base(f), err)
+		}
+		if n, _ := waiting(b, a.Address()); n != 1 || op.count(http.MethodPost, postTo(a)) != 0 {
+			t.Fatalf("a lookup answered 404 %s moved the message or posted it: %q", filepath.Base(f), op.seen)
+		}
+	}
 
 	e.srv.SetMiddle(nil)
 	if got, err := b.Flush(ctx); err != nil || len(got) != 1 {

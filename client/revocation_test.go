@@ -220,6 +220,17 @@ func TestMailFromARevokedSenderIsRefused(t *testing.T) {
 	}
 }
 
+// problemBad returns the answer/problem-bad-* vectors: bodies that are no
+// problem as PROTOCOL.md §0b reads one, and so no code at all.
+func problemBad(t *testing.T) []string {
+	t.Helper()
+	bad, _ := filepath.Glob("../testdata/vectors/answer/problem-bad-*.json")
+	if len(bad) == 0 {
+		t.Fatal("no answer/problem-bad-* vectors")
+	}
+	return bad
+}
+
 // A server that gives no answer about a sender has not said the sender is
 // fine. The drain stops, the message stays where it is, and the next drain
 // asks again.
@@ -262,6 +273,24 @@ func TestNoAnswerAboutASenderStopsTheDrain(t *testing.T) {
 		res, err := b.Receive(context.Background())
 		if err == nil || len(res.Delivered) != 0 || len(res.Refused) != 0 || e.srv.Count(b.Address()) != 1 {
 			t.Errorf("%s served as the answer: %v, %+v, %d left on the server", filepath.Base(f), err, res, e.srv.Count(b.Address()))
+		}
+	}
+	// Nor has a 404 whose body is no problem as PROTOCOL.md §0b reads one,
+	// though its code says not_revoked before the member that breaks it.
+	for _, f := range problemBad(t) {
+		body, _ := os.ReadFile(f) //nolint:gosec // a test vector
+		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if strings.HasSuffix(r.URL.Path, "/revocations") {
+				w.Header().Set("Content-Type", "application/problem+json")
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write(body)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+		res, err := b.Receive(context.Background())
+		if err == nil || len(res.Delivered) != 0 || len(res.Refused) != 0 || e.srv.Count(b.Address()) != 1 {
+			t.Errorf("404 %s on the lookup: %v, %+v, %d left on the server", filepath.Base(f), err, res, e.srv.Count(b.Address()))
 		}
 	}
 	e.srv.SetMiddle(nil)

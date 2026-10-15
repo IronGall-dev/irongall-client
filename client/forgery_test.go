@@ -95,6 +95,14 @@ func TestForgeries(t *testing.T) {
 		}
 	})
 
+	t.Run("a from with a line feed added", func(t *testing.T) {
+		e := newEnv(t)
+		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+		send(t, a, b, "hi")
+		relabel(e, a.Address().String(), a.Address().String()+`\n`) // a JSON escape: the sender's address and a line feed
+		refusedFor(t, receive(t, b), protocol.RefusedAttribution, "another box than the one that signed")
+	})
+
 	t.Run("mail made in another box's name", func(t *testing.T) {
 		e := newEnv(t)
 		a, b, o := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)

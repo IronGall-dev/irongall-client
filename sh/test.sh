@@ -331,6 +331,14 @@ for f in shifted gap nosig; do srv_inject "$B" "$A" $f.age; done; recv
 [ -z "$RECV_OUT" ] && [ "$(printf '%s\n' "$RECV_ERR" | grep -c "bad_message: what was decrypted is not an envelope line and then a signature block")" = 3 ] && ok "a line before the envelope, a blank line before the signature, or no signature: REFUSED, nothing is searched for" || bad "layout: $RECV_OUT / $RECV_ERR"
 [ "$(ls $IG/quarantine/*.json | wc -l)" = 10 ] && [ "$(ls $IG/inbox | wc -l)" = 4 ] && ok "every refusal quarantined, never delivered: 10 quarantined (the two refusals of A's ciphertext share its hash), 4 delivered" || bad "quarantine count $(ls $IG/quarantine/*.json | wc -l), inbox $(ls $IG/inbox | wc -l)"
 [ "$(ls $IG/quarantine/*.reason | wc -l)" = 10 ] && [ "$(grep -c -h -E '^(bad_identity|bad_message|bad_signature|reattributed|replay|bad_id|stale|bad_envelope): ' $IG/quarantine/*.reason | paste -sd+ | bc)" = 10 ] && ok "each refused message has its reason beside it: a code, then this script's own words" || bad "reasons: $(cat $IG/quarantine/*.reason)"
+# the server's from, and a listed id, with a line feed added: $(…) drops it, so each is compared in jq, never through a shell variable
+line "$A" "$B" 77777777-2222-4333-8444-555555555551 "a from with a line feed" $W/box/A/identity.doc > lf.P; seal_as A "$B" lf.P
+as B; srv_inject "$B" "$A"$'\n' lf.P.age; recv
+[ -z "$RECV_OUT" ] && printf '%s' "$RECV_ERR" | grep -q "reattributed: the server lists it as from another box" && [ "$(box_count "$B")" = 0 ] && ok "the server's from with a line feed added: REFUSED, compared in jq" || bad "a from with a line feed: $RECV_OUT / $RECV_ERR"
+line "$A" "$B" 77777777-2222-4333-8444-555555555552 "an id with a line feed" $W/box/A/identity.doc > lfid.P; seal_as A "$B" lfid.P; h=$(sha256sum < lfid.P.age | cut -c1-64)
+as B; srv_inject "$B" "$A" lfid.P.age; f=$(ls $SRV/$B/msgs | grep -- "-$h.json\$"); jq --arg i "$h"$'\n' '.id = $i' $SRV/$B/msgs/$f > $SRV/tmp/m.json && mv $SRV/tmp/m.json $SRV/$B/msgs/$f; recv
+[ -z "$RECV_OUT" ] && [ "$(box_count "$B")" = 1 ] && ok "a listed id with a line feed added is skipped, never fetched as the id it was cut to" || bad "an id with a line feed: $RECV_OUT / $RECV_ERR"
+srv_ack "$B" "$h"
 # a body with the line breaks some readers split on, raw: still one line, the same body
 as A; printf 'a\302\205b\342\200\250c\342\200\251d' > seps; ig_send "$B" seps || bad "send seps"
 as B; recv

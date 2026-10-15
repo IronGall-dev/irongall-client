@@ -457,12 +457,15 @@ var plainVerdicts = map[string]string{
 	"refuse-line-changed-after-signing":                  RefusedSignature,
 	"refuse-another-box-s-identity-document":             RefusedSignature,
 	"refuse-from-is-not-the-identity":                    RefusedAttribution,
+	"refuse-from-null":                                   RefusedAttribution,
 	"accept-p256-sender":                                 "",
 	"refuse-unsupported-key-type":                        RefusedKeyType,
 	"refuse-from-is-not-the-identity-of-an-unknown-type": RefusedAttribution,
 	"refuse-to-another-box":                              RefusedAttribution,
 	"refuse-no-identity":                                 RefusedIdentity,
 	"refuse-identity-not-base64":                         RefusedIdentity,
+	"refuse-identity-ending-in-a-line-feed":              RefusedIdentity,
+	"refuse-identity-ending-in-a-nul":                    RefusedIdentity,
 	"refuse-identity-of-small-order":                     RefusedIdentity,
 	"refuse-no-line-feed":                                RefusedMessage,
 	"refuse-no-signature":                                RefusedMessage,
@@ -470,6 +473,7 @@ var plainVerdicts = map[string]string{
 	"refuse-signature-first":                             RefusedMessage,
 	"refuse-no-end-line":                                 RefusedMessage,
 	"refuse-end-line-without-its-line-feed":              RefusedMessage,
+	"refuse-end-line-followed-by-a-nul":                  RefusedMessage,
 	"refuse-crlf":                                        RefusedMessage,
 	"refuse-envelope-on-two-lines":                       RefusedMessage,
 	"accept-whitespace-in-the-signature":                 "",
@@ -563,12 +567,19 @@ func TestVectorEnvelopes(t *testing.T) {
 				t.Errorf("%s: body %s: BODY is an unknown key, never the body", name, env.Body)
 			}
 		case strings.HasPrefix(name, "refuse-"):
-			if err == nil {
-				t.Errorf("%s: accepted", name)
+			// Every refusal has its code: bad_envelope, but for these.
+			want := map[string]string{
+				"refuse-33-days-and-1s-old":  RefusedStale,
+				"refuse-1-hour-and-1s-ahead": RefusedFuture,
+				"refuse-from-not-signer":     RefusedAttribution,
+				"refuse-from-null":           RefusedAttribution, // null is a member left out
+				"refuse-to-another-box":      RefusedAttribution,
+			}[name]
+			if want == "" {
+				want = RefusedEnvelope // an uppercase from or to is no address at all
 			}
-			// The two ends of the sent_at window have a code each.
 			var ee *EnvelopeError
-			if want := map[string]string{"refuse-33-days-and-1s-old": RefusedStale, "refuse-1-hour-and-1s-ahead": RefusedFuture}[name]; want != "" && (!errors.As(err, &ee) || ee.Code != want) {
+			if !errors.As(err, &ee) || ee.Code != want {
 				t.Errorf("%s: refused as %v, want the code %s", name, err, want)
 			}
 		default:

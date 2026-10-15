@@ -373,6 +373,15 @@ case_env refuse-sent-at-second-60 "{$H,\"sent_at\":\"2026-10-09T23:59:60Z\",\"ms
 # Parser differentials: every reader must take the same values from one envelope.
 case_env accept-case-variant-key "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"benign\",\"BODY\":\"evil\"}" "$A" "$B"
 case_env refuse-version-string "{\"v\":\"1\",\"from\":\"%s\",\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
+case_env refuse-to-uppercase "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$(printf '%s' "$B" | tr a-f A-F)"
+case_env refuse-from-null "{\"v\":1,\"from\":null,\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$B" # null is a member left out: it names no sender
+# v is an integer member, written in digits alone (PROTOCOL.md §0b). jq gives back 1e0 as 1, so the script takes that one: a known variance.
+case_env refuse-version-written-with-a-fraction "{\"v\":1.0,\"from\":\"%s\",\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
+case_env refuse-version-written-with-an-exponent "{\"v\":1e0,\"from\":\"%s\",\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
+case_env refuse-version-a-decimal-just-above-1 "{\"v\":1.00000000000000001,\"from\":\"%s\",\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
+case_env refuse-nul-after-the-version "{\"v\":1\\0,\"from\":\"%s\",\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}\n" "$A" "$B" # jq ends a number at a NUL and drops it
+case_env refuse-sent-at-ending-in-a-line-feed "{$H,\"sent_at\":\"$NOW\\\\n\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
+case_env refuse-sent-at-ending-in-a-nul "{$H,\"sent_at\":\"$NOW\\\\u0000\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
 case_env refuse-duplicate-key "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\",\"from\":\"%s\"}" "$B" "$B" "$A"
 case_env refuse-two-objects "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}{}" "$A" "$B"
 case_env refuse-not-utf8 "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"\xff\xfe\"}" "$A" "$B"
@@ -436,6 +445,9 @@ refuse refuse-another-box-s-identity-document message/a-to-b.line under b-work b
 line "$B" "$B" "$ID_A" > "$L"; refuse refuse-from-is-not-the-identity "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
 printf '{"v":1,"from":"%s","to":"%s","sent_at":"%s","msg_id":"%s","body":"hello"}\n' "$A" "$B" "$NOW" "$MSG_ID" > "$L"; refuse refuse-no-identity "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
 line "$A" "$B" "not base64" > "$L"; refuse refuse-identity-not-base64 "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
+line "$A" "$B" "$ID_A\\n" > "$L"; refuse refuse-identity-ending-in-a-line-feed "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B" # a JSON escape: the document's base64 and a line feed
+line "$A" "$B" "$ID_A\\u0000" > "$L"; refuse refuse-identity-ending-in-a-nul "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
+printf '{"v":1,"from":null,"to":"%s","sent_at":"%s","msg_id":"%s","identity":"%s","body":"hello"}\n' "$B" "$NOW" "$MSG_ID" "$ID_A" > "$L"; refuse refuse-from-null "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B" # null is a member left out: it names no sender
 line "$(sha256sum < identity/small-order-1.doc | cut -c1-64)" "$B" "$(b64 < identity/small-order-1.doc)" > "$L"; refuse refuse-identity-of-small-order "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
 line "$A" "$A" "$ID_A" > "$L"; refuse refuse-to-another-box "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
 # The layout. Each part has one place, and nothing is searched for.
@@ -445,6 +457,7 @@ cp message/a-to-b.line plain/refuse-no-signature.txt
 cat "$GOOD_SIG" message/a-to-b.line > plain/refuse-signature-first.txt
 { cat message/a-to-b.line; grep -v -e '-----END' "$GOOD_SIG"; } > plain/refuse-no-end-line.txt
 { cat message/a-to-b.line; head -c -1 "$GOOD_SIG"; } > plain/refuse-end-line-without-its-line-feed.txt
+{ cat message/a-to-b.line; head -c -1 "$GOOD_SIG"; printf '\0\n'; } > plain/refuse-end-line-followed-by-a-nul.txt
 sed 's/$/\r/' message/a-to-b.line > "$L"; { cat "$L"; under a-work a/work-cert.pub "irongall-msg-v1:$B" < "$L" | sed 's/$/\r/'; } > plain/refuse-crlf.txt
 printf '{\n"v":1,"from":"%s","to":"%s","sent_at":"%s","msg_id":"%s","identity":"%s","body":"hello"}\n' "$A" "$B" "$NOW" "$MSG_ID" "$ID_A" > "$L"; refuse refuse-envelope-on-two-lines "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
 rm -f "$L"
@@ -472,11 +485,15 @@ jt bad-surrogate-in-utf8 '{"a":"\xed\xa0\x80"}'
 jt bad-above-u10ffff '{"a":"\xf4\x90\x80\x80"}' # glibc's iconv takes it
 jt bad-five-byte-utf8 '{"a":"\xf8\x88\x80\x80\x80"}'
 jt bad-lone-surrogate-escaped '{"a":"\\ud800"}'
+jt bad-lone-low-surrogate-escaped '{"a":"\\udc00"}' # jq reads it as U+FFFD
+jt bad-lone-low-surrogate-in-a-name '{"\\udfff":1}'
 jt bad-noncharacter '{"a":"\xef\xbf\xbf"}'
 jt bad-noncharacter-escaped '{"a":"\\ufdd0"}'
 jt bad-noncharacter-plane-16 '{"a":"\\udbff\\udfff"}'
 jt bad-noncharacter-in-a-name '{"\\ufffe":1}'
 jt bad-control-character '{"a":"\x01"}'
+jt bad-unit-separator-in-a-string '{"a":"\x1f"}' # jq 1.7.0 takes it
+jt bad-nul-after-a-number '{"a":1\0}\n' # jq ends a number at a NUL and drops it
 jt bad-name-twice '{"a":1,"a":2}'
 jt bad-name-twice-nested '{"b":[{"x":1,"x":1}]}'
 jt bad-name-twice-escaped '{"a":1,"\\u0061":2}'
@@ -543,3 +560,4 @@ at receipt-bad-id-an-array '{"id":["%s"],"received_at":"%s"}' "$HASH" "$NOW"
 at problem-ok '{"type":"https://irongall.dev/errors/not_revoked","title":"Not revoked","status":404,"detail":"no revocation of this address is held here","code":"not_revoked","hint":"nothing to do"}'
 at problem-bad-code-twice '{"type":"https://irongall.dev/errors/not_revoked","status":404,"code":"not_revoked","code":"revoked"}'
 at problem-bad-status-a-string '{"status":"404","code":"not_revoked"}'
+at problem-bad-status-a-fraction-after-the-code '{"code":"not_revoked","status":1.5}' # a reader that kept what it read before the fault would act on the code

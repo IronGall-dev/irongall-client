@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 )
 
@@ -131,7 +132,12 @@ var integers = jsonv2.JoinUnmarshalers(
 	}),
 	jsonv2.UnmarshalFromFunc(func(d *jsontext.Decoder, n *int) error {
 		u, err := integer(d)
-		*n = int(u) //nolint:gosec // at most MaxInteger
+		if err == nil && u > math.MaxInt {
+			// A 32-bit int holds less than MaxInteger: a larger value is
+			// refused, never read as another number.
+			return errNotInteger
+		}
+		*n = int(u) //nolint:gosec // at most math.MaxInt, checked above
 		return err
 	}),
 )

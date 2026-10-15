@@ -146,12 +146,14 @@ func (e *Envelope) Line() ([]byte, error) {
 }
 
 // OpenEnvelope parses an envelope and checks it, in this order: it is UTF-8
-// JSON, one object with no key twice; it is version 1, as a JSON number; its
-// from is the VERIFIED signer and its to is this box (a signature holds for
-// one recipient, so a mismatch is a message passed on to a box it was not
-// written to, or one whose from names a box that did not sign it); it has a
-// body and a msg_id; and sent_at is no older than TTL at now, and no more than
-// MaxSkew ahead of it.
+// JSON, one object with no key twice; it has a body, and every member it
+// reads is of its type (from and to are addresses, 64 lowercase hex); it is
+// version 1, an integer written as one; its from is the VERIFIED signer and
+// its to is this box (a signature holds for one recipient, so a mismatch is a
+// message passed on to a box it was not written to, or one whose from names a
+// box that did not sign it); it has a msg_id; and sent_at is no older than TTL
+// at now, and no more than MaxSkew ahead of it. A null member is one left out
+// (PROTOCOL.md §0b), but for the body, whose null is a value.
 //
 // Keys match exactly, as in jq and every other strict reader: "BODY" is an
 // unknown key, ignored, never the body. No key twice, so no two readers can
@@ -196,14 +198,16 @@ func OpenEnvelopeRecord(plaintext []byte, signer, me Address) (*Envelope, error)
 		"subject": &w.Subject, "in_reply_to": &w.InReplyTo, "supersedes": &w.Supersedes, "identity": &w.Identity,
 	} {
 		if raw, ok := fields[key]; ok {
-			if err := json.Unmarshal(raw, dst); err != nil {
+			if err := jsonv2.Unmarshal(raw, dst); err != nil {
 				return nil, badEnvelope("the envelope is malformed: its " + key + " is not what that field holds")
 			}
 		}
 	}
 	w.Body = fields["body"]
-	// The raw value: a JSON string keeps its quotes, and is no number.
-	if f, err := json.Number(fields["v"]).Float64(); err != nil || f != EnvelopeVersion {
+	// v is an integer member, read as every one is (PROTOCOL.md §0b): digits
+	// alone, so 1.0 and 1e0 are no version.
+	var v uint64
+	if err := jsonv2.Unmarshal(fields["v"], &v, jsonv2.WithUnmarshalers(integers)); err != nil || v != EnvelopeVersion {
 		return nil, badEnvelope("unknown envelope version: v is the JSON number 1")
 	}
 	if w.From != signer || w.To != me {
@@ -251,12 +255,17 @@ func objectFields(data []byte) (map[string]json.RawMessage, error) {
 
 func utf8Valid(b []byte) bool { return utf8.Valid(b) }
 
-// unmarshalString reads a JSON string, and nothing else, into dst.
+// unmarshalString reads a JSON string, and nothing else, into dst. JSON null
+// is the same as leaving the member out (PROTOCOL.md §0b): dst is left as it
+// is.
 func unmarshalString(raw json.RawMessage, dst *string) error {
+	if string(raw) == "null" {
+		return nil
+	}
 	if len(raw) == 0 || raw[0] != '"' {
 		return errors.New("not a JSON string")
 	}
-	return json.Unmarshal(raw, dst)
+	return jsonv2.Unmarshal(raw, dst)
 }
 
 // NewMsgID returns a random UUID, version 4 (RFC 9562 §5.4), in lowercase.

@@ -157,7 +157,7 @@ func (b *Box) drain(ctx context.Context) (*Result, error) {
 		if resp.StatusCode == http.StatusNotModified {
 			return res, nil
 		}
-		res.PollAfter = list.PollAfter
+		res.PollAfter = min(list.PollAfter, maxWaitSeconds)
 		if first {
 			// Kept only for an empty box, so a 304 can never hide mail
 			// this client has not handled.

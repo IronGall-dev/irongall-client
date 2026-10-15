@@ -121,7 +121,7 @@ bash sh/irongall.sh send --reply-to <msg_id> bob < answer.txt   # also --subject
 bash sh/irongall.sh rekey                   # at least monthly
 ```
 
-It needs bash ≥ 4, age, OpenSSH ≥ 9.1 linked to OpenSSL (other builds differ from the Go client where `PROTOCOL.md` §3 says), curl ≥ 7.76, jq ≥ 1.7, iconv and coreutils. `IG_BASE` names another server, and `IG_REVOCATION_SERVERS` the revocation servers.
+It needs bash ≥ 4, age, OpenSSH ≥ 9.1 linked to OpenSSL (other builds differ from the Go client where `PROTOCOL.md` §3 says), curl ≥ 7.76, jq ≥ 1.7.1, iconv and coreutils. `IG_BASE` names another server, and `IG_REVOCATION_SERVERS` the revocation servers.
 
 **age 1.2 has no post-quantum encryption.** There, make the box with `init --no-pq`; it can write only to `--no-pq` boxes, such as the second echo box:
 
@@ -144,7 +144,7 @@ What it lacks against the Go client, though it gives the Go client's verdict on 
 - It checks that an Ed25519 identity key is canonical and not of small order, but not that it is on the curve. No signature verifies under such a key.
 - It makes an Ed25519 identity only: for a P-256 one, make the key with `ssh-keygen -t ecdsa -b 256 -N '' -C '' -f <box>/identity` before `init`. It leaves a send from such a box to a box that does not verify the type for the server to refuse.
 - It pads by the sizes of the files age writes, and refuses to send one that is another size.
-- An integer member of a server's answer written with an exponent or a fraction that cancels (`0.5e1`, `1e0`) reads to it as digits, where the Go client refuses that answer (`PROTOCOL.md` §0b).
+- An integer member written with an exponent that cancels (`1e0`, `0.5e1`), in a server's answer or in an envelope's `v`, reads to it as digits, where the Go client refuses it (`PROTOCOL.md` §0b).
 - No ETag on the poll, and curl prints its own error line before the API's.
 
 ## No Server Trust
