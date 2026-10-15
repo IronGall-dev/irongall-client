@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -33,6 +34,31 @@ func TestVectorRevocation(t *testing.T) {
 	}
 	if _, err := VerifyRevocation(c.Address(), read(t, "c/identity.doc"), read(t, "c/revoke.sig")); err != nil {
 		t.Errorf("c/revoke.sig: %v", err)
+	}
+}
+
+// Revocations in forms every OpenSSH build reads the same way (PROTOCOL.md
+// §3): A's with one NUL ending its key's type, and C's, by a P-256 identity,
+// with one ending its curve and with r at the 2,049 bytes OpenSSH reads, all
+// taken; and C's with r a byte longer, refused.
+func TestVectorRevocationForms(t *testing.T) {
+	a, c := vectorIdentity(t, "a"), vectorIdentity(t, "c")
+	docA, docC := read(t, "a/identity.doc"), read(t, "c/identity.doc")
+	oks, cs := glob(t, "revoke/ok-*.sig"), glob(t, "revoke/c-*.sig")
+	if len(oks) == 0 || len(cs) < 2 {
+		t.Fatalf("%d revoke/ok-* and %d revoke/c-* vectors", len(oks), len(cs))
+	}
+	for _, f := range oks {
+		if _, err := VerifyRevocation(a.Address(), docA, read(t, "revoke/"+filepath.Base(f))); err != nil {
+			t.Errorf("revoke/%s: %v", filepath.Base(f), err)
+		}
+	}
+	for _, f := range cs {
+		name := filepath.Base(f)
+		_, err := VerifyRevocation(c.Address(), docC, read(t, "revoke/"+name))
+		if ok := strings.HasPrefix(name, "c-ok-"); ok != (err == nil) {
+			t.Errorf("revoke/%s: %v", name, err)
+		}
 	}
 }
 

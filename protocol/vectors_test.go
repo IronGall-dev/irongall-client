@@ -4,9 +4,11 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/ed25519"
+	"crypto/sha512"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -582,4 +584,87 @@ func mustB64(t *testing.T, s []byte) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+// oddR signs as an Ed25519 key does, with an R that RFC 8032's signer never
+// makes: the neutral point (r = 0), or rB plus the point of order 2, (0, -1).
+// Only the key's holder can make either.
+type oddR struct {
+	priv   ed25519.PrivateKey
+	order2 bool
+}
+
+func (o oddR) PublicKey() ssh.PublicKey {
+	k, _ := ssh.NewPublicKey(o.priv.Public())
+	return k
+}
+
+func (o oddR) Sign(_ io.Reader, data []byte) (*ssh.Signature, error) {
+	d := sha512.Sum512(o.priv.Seed())
+	a, err := edwards25519.NewScalar().SetBytesWithClamping(d[:32])
+	if err != nil {
+		return nil, err
+	}
+	r, R := edwards25519.NewScalar(), edwards25519.NewIdentityPoint()
+	if o.order2 {
+		w := sha512.Sum512([]byte("irongall vector: R plus the point of order 2"))
+		if _, err := r.SetUniformBytes(w[:]); err != nil {
+			return nil, err
+		}
+		t, err := new(edwards25519.Point).SetBytes(append(append([]byte{0xec}, bytes.Repeat([]byte{0xff}, 30)...), 0x7f))
+		if err != nil {
+			return nil, err
+		}
+		R.Add(new(edwards25519.Point).ScalarBaseMult(r), t)
+	}
+	k := sha512.New()
+	k.Write(R.Bytes())
+	k.Write(o.priv.Public().(ed25519.PublicKey))
+	k.Write(data)
+	h, err := edwards25519.NewScalar().SetUniformBytes(k.Sum(nil))
+	if err != nil {
+		return nil, err
+	}
+	S := edwards25519.NewScalar().MultiplyAdd(h, a, r)
+	return &ssh.Signature{Format: ssh.KeyAlgoED25519, Blob: append(R.Bytes(), S.Bytes()...)}, nil
+}
+
+// The two sig/ vectors stock tools cannot make: A's first prekey statement
+// signed by its working key with an R that RFC 8032's signer never makes.
+// The equation without the cofactor, as Go's crypto/ed25519 and OpenSSL
+// check it, takes a neutral R and refuses R plus a point of order 2; OpenSSH's
+// own Ed25519 from 10.6p1 judges both the other way (PROTOCOL.md §3). They
+// are made here, the same bytes each time, and the kept files are held to
+// them: IRONGALL_WRITE_VECTORS=1 writes them.
+func TestVectorsEd25519R(t *testing.T) {
+	a := vectorIdentity(t, "a")
+	seed, err := hex.DecodeString(strings.Fields(string(read(t, "input/a-work.ed25519")))[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert, err := CheckCertificate(a, vectorCertificate(t, "a/work-cert.pub"), vectorNow(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range []struct {
+		name   string
+		order2 bool
+	}{{"sig/ok-r-small-order.sig", false}, {"sig/bad-r-plus-order-2.sig", true}} {
+		signer, err := cert.Signer(oddR{ed25519.NewKeyFromSeed(seed), v.order2})
+		if err != nil {
+			t.Fatal(err)
+		}
+		sig, err := Sign(signer, read(t, "a/prekey-1.txt"), PrekeyNamespace(a.Address()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if os.Getenv("IRONGALL_WRITE_VECTORS") != "" {
+			if err := os.WriteFile(filepath.Join(vectors, v.name), sig, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if !bytes.Equal(read(t, v.name), sig) {
+			t.Errorf("%s is not what this test makes", v.name)
+		}
+	}
 }

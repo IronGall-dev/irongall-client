@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/IronGall-dev/irongall-client/sshsig"
@@ -85,6 +86,11 @@ func CheckCertificate(id *Identity, key ssh.PublicKey, now time.Time) (*Certific
 	}
 	if err := checkWorkingKey(id, cert.Key); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrCertificate, err)
+	}
+	// Dearmor has held a signature's numbers to OpenSSH's bound already; a
+	// certificate that reached here another way is held to it too.
+	if cert.Signature == nil || strings.HasPrefix(cert.Signature.Format, "ecdsa-sha2-") && ecdsaNumbersAsRead(cert.Signature.Blob) != nil {
+		return nil, fmt.Errorf("%w: the identity's signature on it is not one OpenSSH reads", ErrCertificate)
 	}
 
 	// The identity's signature, before any verdict on the dates: "it has not

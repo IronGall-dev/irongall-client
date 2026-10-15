@@ -199,8 +199,8 @@ func TestAP256IdentityCertifies(t *testing.T) {
 	}
 
 	// An ECDSA signature (r, s) verifies as (r, n - s) too, and with either
-	// number written longer, and anyone who has seen a certificate can write
-	// those. So a certificate of an ECDSA identity has many sets of bytes,
+	// number written longer, up to the 2,049 bytes OpenSSH reads, and anyone
+	// who has seen a certificate can write those. So a certificate of an ECDSA identity has many sets of bytes,
 	// and nothing may rest on a certificate's bytes being the only ones its
 	// identity signed.
 	c := cert.PublicKey().(*ssh.Certificate)
@@ -221,5 +221,29 @@ func TestAP256IdentityCertifies(t *testing.T) {
 	}
 	if bytes.Equal(got.Marshal(), cert.Marshal()) || got.Serial() != cert.Serial() {
 		t.Error("the twin is not a second set of bytes for the same certificate")
+	}
+
+	// r written with zero bytes before it: taken to 2,049 bytes in all, the
+	// most OpenSSH's sshbuf_get_bignum2 reads, and refused at one more, as
+	// every OpenSSH build refuses it.
+	var raw struct{ R, S []byte }
+	if err := ssh.Unmarshal(c.Signature.Blob, &raw); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []int{maxMPInt, maxMPInt + 1} {
+		long := *c
+		r := append(make([]byte, n-len(raw.R)), raw.R...)
+		long.Signature = &ssh.Signature{Format: c.Signature.Format, Blob: ssh.Marshal(struct{ R, S []byte }{r, raw.S})}
+		parsed, err := ssh.ParsePublicKey(long.Marshal())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = CheckCertificate(b.id, parsed, now)
+		if n == maxMPInt && err != nil {
+			t.Errorf("r in %d bytes, which OpenSSH reads, is refused: %v", n, err)
+		}
+		if n > maxMPInt && !errors.Is(err, ErrCertificate) {
+			t.Errorf("r in %d bytes, which OpenSSH refuses, is taken: %v", n, err)
+		}
 	}
 }

@@ -46,6 +46,40 @@ var scriptTools = []string{"bash", "age", "age-keygen", "ssh-keygen", "jq", "ico
 // exists, /dev/null included, which would make this false on every age.
 func pq() bool { return exec.Command("age-keygen", "-pq").Run() == nil }
 
+// p256 reports whether the local ssh-keygen reads a P-256 key. One built
+// without OpenSSL cannot, so the script refuses every P-256 identity there:
+// a known variance of OpenSSH's builds (PROTOCOL.md §3).
+func p256() bool {
+	doc, err := os.ReadFile(filepath.Join(vectors, "c", "identity.doc"))
+	if err != nil {
+		return false
+	}
+	_, line, _ := strings.Cut(string(doc), "\n")
+	cmd := exec.Command("ssh-keygen", "-l", "-f", "-")
+	cmd.Stdin = strings.NewReader(line)
+	return cmd.Run() == nil
+}
+
+// mustRead reads a file the test needs.
+func mustRead(t *testing.T, name string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(name) //nolint:gosec // a test vector
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// sshBuild names the OpenSSH on PATH, as `ssh -V` does, for a test's log: a
+// verdict that rests on ssh-keygen holds for the build it was run on.
+func sshBuild() string {
+	out, _ := exec.Command("ssh", "-V").CombinedOutput()
+	if s := strings.TrimSpace(string(out)); s != "" {
+		return s
+	}
+	return "an ssh-keygen with no ssh beside it to name its build"
+}
+
 // noPQ is what a run on an age without post-quantum support logs: a plain
 // "ok" from go test does not say that only half of the script was tested.
 const noPQ = "the age on PATH has no post-quantum support (that takes age >= 1.3): only --no-pq boxes were tested here"
@@ -131,6 +165,10 @@ func scratch(t *testing.T) []string { return []string{"IRONGALL_HOME=" + t.TempD
 func TestVectorsIdentity(t *testing.T) {
 	need(t, scriptTools...)
 	for _, box := range []string{"a", "b", "c"} { // c's identity is a P-256 key
+		if box == "c" && !p256() {
+			t.Logf("%s reads no P-256 key, so the script refuses c/identity.doc: a known variance (PROTOCOL.md §3)", sshBuild())
+			continue
+		}
 		a, _ := identity(t, box)
 		if _, err := bash(t, nil, fmt.Sprintf("ig_idcheck %s %s", abs(t, filepath.Join(vectors, box, "identity.doc")), a)); err != nil {
 			t.Errorf("%s/identity.doc refused: %v", box, err)
@@ -146,7 +184,14 @@ func TestVectorsIdentity(t *testing.T) {
 	// Each is refused as the Go client refuses it: with status 2 if it is a
 	// well-formed document of a key type the client does not verify, which
 	// has a refusal of its own, and with status 1 otherwise.
+	//
+	// OpenSSH's builds disagree on two of them (PROTOCOL.md §2, §3): a P-256
+	// key with a coordinate too short, or at the group's order less one or
+	// more, is refused by the Go client and by OpenSSH up to 10.2p1, and taken
+	// from 10.3p1 (9bea0818), which the script's ssh-keygen decides. On such a
+	// build both are taken together, a known variance; anything else fails.
 	classes := map[int]int{}
+	coordinates := map[string]bool{"p256-short-coordinate.doc": false, "p256-coordinate-over-order.doc": false}
 	for _, d := range docs {
 		doc, _ := os.ReadFile(d) //nolint:gosec // a test vector
 		_, gerr := protocol.ParseIdentity(doc)
@@ -155,11 +200,22 @@ func TestVectorsIdentity(t *testing.T) {
 			want = 2
 		}
 		_, err := bash(t, nil, "ig_idcheck "+abs(t, d))
+		if _, known := coordinates[filepath.Base(d)]; known && gerr != nil && err == nil {
+			coordinates[filepath.Base(d)] = true
+			classes[want]++
+			continue
+		}
 		var exit *exec.ExitError
 		if gerr == nil || !errors.As(err, &exit) || exit.ExitCode() != want {
 			t.Errorf("%s: the Go client says %v; the script's status is %v, want %d", filepath.Base(d), gerr, err, want)
 		}
 		classes[want]++
+	}
+	switch short, over := coordinates["p256-short-coordinate.doc"], coordinates["p256-coordinate-over-order.doc"]; {
+	case short && over:
+		t.Logf("%s takes a P-256 key whose coordinate is too short or at the order, as OpenSSH does from 10.3p1, and the script with it: a known variance (PROTOCOL.md §3)", sshBuild())
+	case short || over:
+		t.Errorf("the script takes one of the two P-256 coordinate vectors and refuses the other (short %v, over the order %v): neither the Go client's verdict nor the known variance", short, over)
 	}
 	if classes[1] == 0 || classes[2] == 0 {
 		t.Errorf("the identity vectors hold no document of each class: %v", classes)
@@ -231,8 +287,16 @@ func TestVectorsCertificate(t *testing.T) {
 // here, which it takes and a verifier here refuses: over the bound, and an
 // Ed25519 S that is not below L. So the script reads a signature as OpenSSH
 // does, and its own checks are what refuse those.
+//
+// An Ed25519 R is where OpenSSH's builds disagree (PROTOCOL.md §3): Go's
+// crypto/ed25519, OpenSSL and OpenSSH's own code before 10.6p1 take a
+// neutral R and refuse R plus a point of order 2, and OpenSSH's own from
+// 10.6p1, libsodium's, judges both the other way. The script says what its
+// ssh-keygen says of those two, so on such a build it is held to that
+// shape, a known variance, and anything else fails.
 func TestVectorsSignatureForm(t *testing.T) {
 	need(t, scriptTools...)
+	t.Logf("ssh-keygen: %s", sshBuild())
 	_, setNow := vectorNow(t)
 	a, aDoc := identity(t, "a")
 	stmt := abs(t, filepath.Join(vectors, "a/prekey-1.txt"))
@@ -240,17 +304,22 @@ func TestVectorsSignatureForm(t *testing.T) {
 	if len(sigs) < 20 {
 		t.Fatalf("%d sig/ vectors", len(sigs))
 	}
-	beyondSSHKeygen := map[string]bool{"bad-4097-bytes.sig": true, "bad-4097-bytes-before-end.sig": true, "bad-s-plus-l.sig": true, "bad-certificate-s-plus-l.sig": true}
+	beyondSSHKeygen := map[string]bool{"bad-4097-bytes.sig": true, "bad-4097-bytes-before-end.sig": true, "bad-s-plus-l.sig": true, "bad-certificate-s-plus-l.sig": true, "bad-type-nul-s-plus-l.sig": true}
+	edR := map[string][2]bool{} // the script's verdict and ssh-keygen's on each R vector: taken or not
 	for _, sig := range sigs {
 		name := filepath.Base(sig)
 		ok := strings.HasPrefix(name, "ok-")
 		_, err := bash(t, scratch(t), setNow+fmt.Sprintf(`mkdir -p "$IG"; ig_certified %s %s irongall-prekey-v1:%s %s %s`, a, aDoc, a, abs(t, sig), stmt))
-		if ok != (err == nil) {
-			t.Errorf("%s: the script says %v", name, err)
-		}
 		verify := fmt.Sprintf(`mkdir -p "$IG"; printf '%%s cert-authority %%s\n' %s "$(sed -n 2p %s)" > "$IG/s" && ssh-keygen -Y verify -f "$IG/s" -I %s -n irongall-prekey-v1:%s -s %s -O verify-time=20261010000000Z < %s`,
 			a, aDoc, a, a, abs(t, sig), stmt)
 		_, kerr := bash(t, scratch(t), verify)
+		if name == "ok-r-small-order.sig" || name == "bad-r-plus-order-2.sig" {
+			edR[name] = [2]bool{err == nil, kerr == nil}
+			continue
+		}
+		if ok != (err == nil) {
+			t.Errorf("%s: the script says %v", name, err)
+		}
 		switch {
 		case beyondSSHKeygen[name] && kerr != nil && strings.Contains(name, "s-plus-l"):
 			t.Logf("%s: this ssh-keygen refuses it by itself (one built on another Ed25519 may)", name)
@@ -259,6 +328,14 @@ func TestVectorsSignatureForm(t *testing.T) {
 		case !beyondSSHKeygen[name] && ok != (kerr == nil):
 			t.Errorf("control: ssh-keygen -Y verify's verdict on %s differs: %v", name, kerr)
 		}
+	}
+	small, plus2 := edR["ok-r-small-order.sig"], edR["bad-r-plus-order-2.sig"]
+	switch {
+	case small == [2]bool{true, true} && plus2 == [2]bool{false, false}:
+	case small == [2]bool{false, false} && plus2 == [2]bool{true, true}:
+		t.Logf("%s judges an Ed25519 R as libsodium does (OpenSSH's own Ed25519 from 10.6p1), and the script with it: it refuses sig/ok-r-small-order.sig and takes sig/bad-r-plus-order-2.sig, a known variance (PROTOCOL.md §3)", sshBuild())
+	default:
+		t.Errorf("the R vectors, as [the script, ssh-keygen] taken: ok-r-small-order %v, bad-r-plus-order-2 %v; neither the Go client's verdict nor the known variance", small, plus2)
 	}
 }
 
@@ -506,6 +583,11 @@ func TestVectorsPlain(t *testing.T) {
 			codes[refused.Code]++
 			continue
 		}
+		if err != nil && signed.Sender.Type() == protocol.IdentityP256 && !p256() {
+			t.Logf("%s: %s reads no P-256 key, so the script refuses a P-256 sender: a known variance (PROTOCOL.md §3)", name, sshBuild())
+			codes["delivered"]++
+			continue
+		}
 		if err != nil {
 			t.Errorf("%s: the Go client accepts it, the script refuses: %s", name, out)
 			continue
@@ -582,6 +664,9 @@ func TestPaddingIsTheGoClients(t *testing.T) {
 // the identity key it finds, so its box's key is made with ssh-keygen first.
 func TestAP256BoxInBothClients(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
+	if !p256() {
+		t.Skipf("%s reads no P-256 key, so the script runs no P-256 box: a known variance (PROTOCOL.md §3)", sshBuild())
+	}
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	kt, mode := protocol.Classic, "--no-pq"
@@ -874,6 +959,36 @@ func TestVectorsRevocation(t *testing.T) {
 	for _, f := range bads {
 		cases = append(cases, vector{a, aDoc, "revoke/" + filepath.Base(f)})
 	}
+	// Forms every OpenSSH build reads the same way: A's with a NUL ending its
+	// key's type, and C's (c-*) with one ending its curve and with r at the
+	// most OpenSSH reads and a byte over (PROTOCOL.md §3).
+	oks, _ := filepath.Glob(filepath.Join(vectors, "revoke", "ok-*.sig"))
+	cs, _ := filepath.Glob(filepath.Join(vectors, "revoke", "c-*.sig"))
+	if len(oks) == 0 || len(cs) < 2 {
+		t.Fatalf("%d revoke/ok-* and %d revoke/c-* vectors", len(oks), len(cs))
+	}
+	want := 3 + len(oks)
+	for _, f := range oks {
+		cases = append(cases, vector{a, aDoc, "revoke/" + filepath.Base(f)})
+	}
+	for _, f := range cs {
+		cases = append(cases, vector{c, cDoc, "revoke/" + filepath.Base(f)})
+		if strings.HasPrefix(filepath.Base(f), "c-ok-") {
+			want++
+		}
+	}
+	if !p256() {
+		t.Logf("%s reads no P-256 key, so the script refuses every revocation of box C: a known variance (PROTOCOL.md §3), and those are not compared", sshBuild())
+		kept := cases[:0]
+		for _, v := range cases {
+			if v.addr != c {
+				kept = append(kept, v)
+			} else if _, err := protocol.VerifyRevocation(addr(v.addr), mustRead(t, v.doc), mustRead(t, filepath.Join(vectors, v.sig))); err == nil {
+				want--
+			}
+		}
+		cases = kept
+	}
 	taken := 0
 	for _, v := range cases {
 		doc, err := os.ReadFile(v.doc)
@@ -893,8 +1008,8 @@ func TestVectorsRevocation(t *testing.T) {
 			taken++
 		}
 	}
-	if taken != 3 {
-		t.Errorf("%d vectors taken as revocations, want the three that are", taken)
+	if taken != want {
+		t.Errorf("%d vectors taken as revocations, want the %d that are", taken, want)
 	}
 	// Control: the working key's signature is one ssh-keygen takes once the
 	// identity is named a certificate authority, so it is the signers line

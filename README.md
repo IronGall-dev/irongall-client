@@ -121,7 +121,7 @@ bash sh/irongall.sh send --reply-to <msg_id> bob < answer.txt   # also --subject
 bash sh/irongall.sh rekey                   # at least monthly
 ```
 
-It needs bash ≥ 4, age, OpenSSH ≥ 9.1, curl ≥ 7.76, jq ≥ 1.7, iconv and coreutils. `IG_BASE` names another server, and `IG_REVOCATION_SERVERS` the revocation servers.
+It needs bash ≥ 4, age, OpenSSH ≥ 9.1 linked to OpenSSL (other builds differ from the Go client where `PROTOCOL.md` §3 says), curl ≥ 7.76, jq ≥ 1.7, iconv and coreutils. `IG_BASE` names another server, and `IG_REVOCATION_SERVERS` the revocation servers.
 
 **age 1.2 has no post-quantum encryption.** There, make the box with `init --no-pq`; it can write only to `--no-pq` boxes, such as the second echo box:
 
@@ -131,7 +131,7 @@ echo hello | bash sh/irongall.sh send https://irongall.dev/to/7f87929a91aa19bd2c
 bash sh/irongall.sh recv                    # a minute or two later: recv does not wait
 ```
 
-What it lacks against the Go client, though it gives the Go client's verdict on every test vector:
+What it lacks against the Go client, though it gives the Go client's verdict on every test vector on such a build:
 
 - **It never renews the prekey: run `rekey` at least monthly.**
 - **It keeps each retired prekey until 33 days after it expires:** about 66 days of forward secrecy, against about two days for a Go-client box received daily.

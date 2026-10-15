@@ -45,7 +45,7 @@ func TestArmor(t *testing.T) {
 			"no newline after END": bytes.TrimSuffix(armored, []byte("\n")),
 			"other line lengths":   []byte(armorBegin + strings.Join(splitEvery(b64(blob), 64), "\n") + "\n" + armorEnd + "\n"),
 		} {
-			got, err := Dearmor(in)
+			got, err := dearmor(in)
 			if err != nil || !bytes.Equal(got, blob) {
 				t.Errorf("%d, %s: %v", n, name, err)
 			}
@@ -61,7 +61,7 @@ func TestArmor(t *testing.T) {
 		"non-zero pad bits": armorBegin + "AQIDBB==\n" + armorEnd + "\n",
 		"wrong type":        "-----BEGIN SSH SIGNATURX-----\nAQIDBA==\n" + armorEnd + "\n",
 	} {
-		if _, err := Dearmor([]byte(in)); err == nil {
+		if _, err := dearmor([]byte(in)); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}

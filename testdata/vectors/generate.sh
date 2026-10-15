@@ -189,6 +189,7 @@ badcert bad-too-long a a-work $(good "$A" 1 "$V_TOO_LONG")
 # And one every implementation must take, at the edge of the rule bad-not-begun is past.
 okcert() { badcert "$@"; }
 okcert ok-begins-now a a-work $(good "$A" 1 "$V_BEGINS_NOW")
+okcert ok-valid-from-0 a a-work $(good "$A" 1 "always:${V_OK#*:}")      # begins at 0, as -V always: writes it
 
 # One signature, a/prekey-1.txt.sig, in forms a verifier reads as ssh-keygen -Y verify reads them (OpenSSH's
 # sshsig_dearmor), and in a file of at most 4096 bytes in all (PROTOCOL.md §3): ok-* are taken, bad-* refused. Then
@@ -224,6 +225,43 @@ sed "$(( $(wc -l < "$S") - 1 ))s/=\$//" "$S" > sig/bad-no-padding.sig
 armor "$(plusl "$X" $((${#X} - 64)))" > sig/bad-s-plus-l.sig      # the working key's S
 armor "$(plusl "$X" $((28 + 2 * 16#${X:20:8} - 64)))" > sig/bad-certificate-s-plus-l.sig      # the identity's S on the certificate, its last 32 bytes
 armor "${X}00" > sig/bad-trailing-byte-in-the-blob.sig
+# What every OpenSSH build takes, as they all read it (PROTOCOL.md §3), and what they all refuse beside each: one NUL as the
+# last byte before the END line; version 0; and one NUL at the end of a string nothing signs, which OpenSSH reads with
+# sshbuf_get_cstring and builds the signed data without. Two NULs, or version 2, are refused.
+content() { printf %s "${1:$2+8:2*16#${1:$2:8}}"; } # <hex> <hex offset of a string> → what the string holds
+restr() { printf %s "${1:0:$2}$(str "$3")${1:$(skip "$1" "$2")}"; } # <hex> <hex offset of a string> <what it now holds, hex> → the hex with that string replaced
+nuls() { local z; printf -v z '%*s' "${3:-1}" ''; restr "$1" "$2" "$(content "$1" "$2")${z// /00}"; } # <hex> <hex offset of a string> [how many] → that string ending in one NUL more, or as many as given
+{ sed '$d' "$S" | head -c -1; printf '\0\n'; tail -n 1 "$S"; } > sig/ok-nul-before-end.sig
+{ sed '$d' "$S" | head -c -1; printf '\0\0\n'; tail -n 1 "$S"; } > sig/bad-two-nuls-before-end.sig
+armor "${X:0:12}00000000${X:20}" > sig/ok-version-0.sig
+armor "${X:0:12}00000002${X:20}" > sig/bad-version-2.sig
+o=$(skip "$X" 20)      # the namespace
+armor "$(nuls "$X" "$o")" > sig/ok-namespace-nul.sig
+armor "$(nuls "$X" "$o" 2)" > sig/bad-namespace-two-nuls.sig
+o=$(skip "$X" "$(skip "$X" "$o")")      # the hash name, after the namespace and reserved
+armor "$(nuls "$X" "$o")" > sig/ok-hash-nul.sig
+o=$(skip "$X" "$o")      # the working key's signature: its type, then its bytes
+armor "$(restr "$X" "$o" "$(nuls "$(content "$X" "$o")" 0)")" > sig/ok-type-nul.sig
+Y=$(restr "$X" "$o" "$(nuls "$(content "$X" "$o")" 0)"); armor "$(plusl "$Y" $((${#Y} - 64)))" > sig/bad-type-nul-s-plus-l.sig      # and S + L: still Ed25519's, refused
+k=$(content "$X" 20); c=$((${#k} - 174))      # the certificate, whose last field is the identity's Ed25519 signature on it, 87 bytes
+[ "${k:c:38}" = "00000053$(str "$(asc ssh-ed25519)")" ] || { echo "no Ed25519 signature at the end of the certificate" >&2; exit 1; }
+armor "$(restr "$X" 20 "$(restr "$k" "$c" "$(nuls "$(content "$k" "$c")" 0)")")" > sig/ok-certificate-type-nul.sig
+armor "$(restr "$X" 20 "$(nuls "$k" 0)")" > sig/bad-certificate-own-type-nul.sig      # the identity signed the certificate's type: OpenSSH checks its signature over the bytes as they came
+# Two more, made by protocol's TestVectorsEd25519R, since they need arithmetic on the curve: sig/ok-r-small-order.sig, whose
+# R is the neutral point, and sig/bad-r-plus-order-2.sig, whose R has a point of order 2 added. OpenSSH's own Ed25519 from
+# 10.6p1 judges both the other way (PROTOCOL.md §3).
+# A revocation's key is the identity's own, and nothing signs it: its type may end in a NUL, and a P-256 key's curve
+# too. And C's ECDSA signature with r at the most OpenSSH reads, 2,049 bytes with the zeros before it, and a byte over.
+X=$(blob a/revoke.sig)
+armor "$(restr "$X" 20 "$(nuls "$(content "$X" 20)" 0)")" > revoke/ok-key-type-nul.sig
+X=$(blob c/revoke.sig); k=$(content "$X" 20)
+armor "$(restr "$X" 20 "$(nuls "$k" "$(skip "$k" 0)")")" > revoke/c-ok-curve-nul.sig
+o=$(skip "$X" "$(skip "$X" "$(skip "$X" "$(skip "$X" 20)")")")      # the signature: its type, then r and s in one string
+g=$(content "$X" "$o"); i=$(skip "$g" 0); rs=$(content "$g" "$i"); n=$((16#${rs:0:8}))
+for want in 2049:ok 2050:bad; do
+  printf -v z '%*s' $((${want%:*} - n)) ''
+  armor "$(restr "$X" "$o" "$(restr "$g" "$i" "$(restr "$rs" 0 "${z// /00}$(content "$rs" 0)")")")" > "revoke/c-${want#*:}-r-${want%:*}-bytes.sig"
+done
 
 # Identity documents every implementation must reject.
 GOOD=$(sed -n 2p a/identity.doc)

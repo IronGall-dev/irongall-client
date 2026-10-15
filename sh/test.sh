@@ -592,7 +592,11 @@ as Q; srv_inject "$Q" "$P" ahead.P.age; recv; [ -z "$RECV_OUT" ] && printf '%s' 
 VEC=$HERE/../testdata/vectors; VA=$(cat $VEC/a/address)
 as P
 for v in a/revoke.sig a/revoke.sha256.sig; do ig_revcheck "$VA" $VEC/a/identity.doc $VEC/$v || bad "vector $v is not taken as A's revocation"; done
-ig_revcheck "$(cat $VEC/c/address)" $VEC/c/identity.doc $VEC/c/revoke.sig || bad "vector c/revoke.sig, by a P-256 identity, is not taken"
+if sed -n 2p $VEC/c/identity.doc | ssh-keygen -l -f - > /dev/null 2>&1; then
+  ig_revcheck "$(cat $VEC/c/address)" $VEC/c/identity.doc $VEC/c/revoke.sig || bad "vector c/revoke.sig, by a P-256 identity, is not taken"
+else
+  echo "NOTE  this ssh-keygen reads no P-256 key (OpenSSH built without OpenSSL), so c/revoke.sig is not tried: a known variance (PROTOCOL.md §3)"
+fi
 for v in $VEC/revoke/bad-*.sig; do ! ig_revcheck "$VA" $VEC/a/identity.doc "$v" || bad "vector ${v##*/} is taken as A's revocation"; done
 ! ig_revcheck "$(cat $VEC/b/address)" $VEC/a/identity.doc $VEC/a/revoke.sig && ! ig_revcheck "$VA" $VEC/b/identity.doc $VEC/a/revoke.sig &&
   ok "a revocation is the identity's own signature over its fixed statement, in either hash and by either key type: a working key's, another identity's, another namespace's and another box's are not" || bad "revocation vectors"
