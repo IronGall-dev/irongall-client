@@ -78,6 +78,12 @@ ig_owner(){ # ig_api as this box: adds its pass. If the server refuses the pass 
   rm -f "$IG/pass"; p=$(ig_pass) && ig_api "$1" "$2" "${3-}" -H "Authorization: $p" && return 0
   ig_clock; return 1
 }
+ig_look(){ # <address> <suffix> → ig_api GET of what this box's server serves about another box, with this box's pass, so the call is counted against this box and not against the address it comes from (PROTOCOL.md §4.1). About itself, or with no pass to sign, without one: those are asked when the pass may be what is wrong
+  [ "$1" != "$(cat "$IG/address" 2> /dev/null)" ] && ig_pass > /dev/null 2>&1 || { ig_api GET "/v1/$1$2"; return; }
+  ig_owner GET "/v1/$1$2" 2> "$IG/look.err" && return 0
+  case $(ig_code) in unauthorized | pass_expired | unknown_sender | sender_revoked) ig_api GET "/v1/$1$2" ;;      # what was refused is this box's pass, not the lookup: what is public is asked again without it
+    *) cat "$IG/look.err" >&2; return 1 ;; esac
+}
 ig_clock(){ # after a call the server refused: if it refused the pass for its time, says what this machine's clock reads. A new pass does not cure that, so it is nearly always a clock, and the server's words above give its own. Those are the server's word: a clock set by a server's lie makes an ended certificate valid again, so this sends its reader to a time source of their own
   [ "$(ig_code)" != pass_expired ] || echo "this machine's clock reads $(jq -nr --argjson t "$(ig_now)" '$t | todate'). A server refuses a pass from a clock 10 minutes or more behind its own, or more than 50 ahead. Check this machine's clock against a time source you trust, not against the server" >&2
 }
@@ -260,7 +266,7 @@ ig_resolve(){ # <address> → prints "<serial> <age recipient> <certificate seri
     0) echo "REVOKED: $B is revoked, for good, and the revocation verifies: ask its owner for their new address" >&2; return 1 ;;
     3) ig_refuse "the revocation kept for $B does not verify"; return 1 ;;
   esac
-  ig_api GET "/v1/$B/identity" > "$IG/peer.json" || return 1
+  ig_look "$B" /identity > "$IG/peer.json" || return 1
   ig_shape "$IG/peer.json" identity && ig_bytes "$IG/peer.json" identity "$IG/new.doc" && ig_bytes "$IG/peer.json" prekey "$IG/peer.txt" && ig_bytes "$IG/peer.json" prekey_signature "$IG/peer.sig" ||
     ig_refuse "the server's answer for $B is not one this client reads: a JSON object as PROTOCOL.md §0b reads one, each byte field base64 in its one encoding" || return 1
   f="$d/identity.doc"      # a pin always wins
@@ -369,7 +375,7 @@ ig_lookup(){ # <address> → asks what is held about the address, of this box's 
   local s l r
   ig_gone "$1"; case $? in 0) return 0 ;; 3) return 3 ;; esac
   l=$(ig_revservers) || return 3
-  if ig_api GET "/v1/$1/revocations" > "$IG/rev.json" 2> /dev/null; then ig_isrecord "$IG/rev.json" || return 2; ig_take "$1"; r=$?; [ $r = 1 ] || return $r      # a 2xx that is no record is no answer, as one that is no JSON is
+  if ig_look "$1" /revocations > "$IG/rev.json" 2> /dev/null; then ig_isrecord "$IG/rev.json" || return 2; ig_take "$1"; r=$?; [ $r = 1 ] || return $r      # a 2xx that is no record is no answer, as one that is no JSON is
   else case $(ig_code) in not_revoked | no_such_mailbox) ;; *) return 2 ;; esac; fi
   while IFS= read -r s <&3; do [ -n "$s" ] || continue
     if IG_BASE=$s ig_api GET "/v1/$1/revocations" "" --max-time 10 > "$IG/rev.json" 2> /dev/null && ig_isrecord "$IG/rev.json"; then ig_take "$1"; r=$?; [ $r = 1 ] || return $r
@@ -397,7 +403,8 @@ ig_revoke(){ # <address> [record] → revokes the address at the server and at e
   fi
   [ "$(ig_record "$f")" = "$A" ] || ig_refuse "the record is not a revocation of $A: nothing was published" || return 1
   l=$(ig_revservers) || return 1
-  if ig_api PUT "/v1/$A/revocations" "$f" > /dev/null; then took=$IG_BASE; else r=1; echo "NOT taken by $IG_BASE" >&2; fi
+  if ig_api PUT "/v1/$A/revocations" "$f" > /dev/null 2> "$IG/put.err" || { [ "$(ig_code)" = revoked ] && ig_api GET "/v1/$A/revocations" > "$IG/held.json" 2> /dev/null && [ "$(ig_record "$IG/held.json")" = "$A" ]; }; then took=$IG_BASE      # revoked, from a server that holds the address revoked, is taken once what it serves verifies: the address is ended there already
+  else r=1; cat "$IG/put.err" >&2; echo "NOT taken by $IG_BASE" >&2; fi
   while IFS= read -r s <&3; do [ -n "$s" ] || continue
     if IG_BASE=$s ig_api PUT "/v1/$A/revocations" "$f" --max-time 10 > /dev/null; then took="$took $s"; else r=1; echo "NOT taken by the revocation server $s" >&2; fi
   done 3<<< "$l"

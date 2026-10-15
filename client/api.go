@@ -101,3 +101,29 @@ func (b *Box) owner(ctx context.Context, method, path string, in any, hdr http.H
 		}
 	}
 }
+
+// lookup GETs what this box's server serves about box a (suffix is
+// "/identity" or "/revocations"), with this box's pass, so the call is counted
+// against this box and not against the address it comes from (PROTOCOL.md
+// §4.1). What a box looks up about itself is asked without one, as is
+// anything by a box that cannot sign a pass, as one restored from its
+// identity before its first renewal: those are asked when the box's pass may
+// be what is wrong.
+func (b *Box) lookup(ctx context.Context, a protocol.Address, suffix string, out any) (*http.Response, error) {
+	path := "/v1/" + a.String() + suffix
+	if a == b.id.Address() {
+		return b.call(ctx, http.MethodGet, path, nil, nil, out)
+	}
+	if _, err := b.pass(); err != nil {
+		return b.call(ctx, http.MethodGet, path, nil, nil, out)
+	}
+	resp, err := b.owner(ctx, http.MethodGet, path, nil, nil, out)
+	switch Code(err) {
+	case protocol.CodeUnauthorized, protocol.CodePassExpired, protocol.CodeUnknownSender, protocol.CodeSenderRevoked:
+		// What was refused is this box's pass, not the lookup: what is
+		// public is asked again without it. A call that needs the pass
+		// meets the same refusal, and that call says what it means.
+		return b.call(ctx, http.MethodGet, path, nil, nil, out)
+	}
+	return resp, err
+}

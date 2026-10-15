@@ -355,7 +355,7 @@ None of the three was a flaw in the layout: each was a verifier that read an obj
 |---|---|---|
 | Every prekey statement expires, at most 33 days on, with no "never" | TUF's mandatory expiry: it bounds how long a hostile operator can hold a sender on an old statement | review 2026-10-10; §2a |
 | A serial or a version only goes up, and a lower one is refused | TUF's protection against rollback | review 2026-10-10 |
-| A retried send gets the original receipt, never an error | Stripe's idempotency keys; the IETF Idempotency-Key draft | review 2026-10-10 |
+| A retried send gets the original receipt, never an error, whatever has changed at the recipient since: the dedupe comes before every check about new mail | Stripe's idempotency layer: "Retries with the same key return the saved response, including `500` errors" (its API v1); the IETF Idempotency-Key draft, expired at rev 07 | review 2026-10-10; Stripe's page and datatracker read 2026-10-14; §4.5 step 6 |
 | Replay is refused by the recipient: an id recomputed from the ciphertext, a set of ids seen, a window on `sent_at` | no outside system was cited for it | review 2026-10-10 |
 
 **The API**
@@ -369,11 +369,20 @@ None of the three was a flaw in the layout: each was a verifier that read an obj
 | A text nests at most 32 deep | RFC 8259 §9: "An implementation may set limits on the maximum depth of nesting". jq 1.7.1 refuses 257, Go's `encoding/json/v2` 10,001: a limit under both gives one verdict | RFC 8259 read 2026-10-14; both measured 2026-10-14 |
 | A member null is the same as one left out | The protobuf JSON mapping: "null is valid for any field and leaves the field unset" | protobuf.dev, "ProtoJSON Format", read 2026-10-14 |
 | An answer's member a client does not know is ignored; a request's a server does not know is refused | RFC 7493 §4.2, "Must-Ignore Policy": "Protocols that allow the introduction of new protocol elements in a way that does not disrupt the operation of existing software have proven advantageous in practice". The protobuf JSON mapping: "The Protobuf JSON parser should reject unknown fields by default" | RFC 7493 and protobuf.dev read 2026-10-14; §0a |
-| Error bodies are Problem Details; a 401 carries a challenge; a 429 carries `Retry-After` | RFC 9457; RFC 6750 §3; RFC 9110 and RFC 6585; the IETF RateLimit header fields are planned | review 2026-10-10; §13 |
+| Error bodies are Problem Details; a 401 carries a challenge; a 429 carries `Retry-After` | RFC 9457; RFC 6750 §3; RFC 9110 and RFC 6585. The IETF RateLimit header fields are left out of v1: rev 11 of the httpapi working group's draft, not yet sent to the IESG | review 2026-10-10; datatracker read 2026-10-14; §13 |
 | A list answer says how often to poll | GitHub's `X-Poll-Interval` | review 2026-10-10; §5.1 |
 | A machine-readable description of the API, and pages | OpenAPI | review 2026-10-10; `/openapi.json` is not served yet |
 | An address in a URL is a capability, so it is hashed in logs | W3C TAG, "Good Practices for Capability URLs" | review 2026-10-10 |
-| Proof of work at registration, bound to the address and the date | Hashcash | review 2026-10-10; §8, not built |
+| Proof of work at registration: a lever a server may add, which nothing in v1 carries | Tor's onion services add theirs under load, and publish what they ask (a rotating seed, a suggested effort, an expiry) before a client solves anything | Tor's `hspow-spec`, v1-equix, read 2026-10-14; §12 |
+
+**Limits**
+
+| Decision | Who else does it, or the standard | How it is known |
+|---|---|---|
+| A call is counted against who it proves itself to be: the box whose pass it carries, and with none the IPv4 address or IPv6 /64 it comes from; a lookup may carry a pass to be counted so | GitHub's REST API: "Unauthenticated requests are associated with the originating IP address, not with the user or application that made the request", while a token's requests count toward its user's limit, on the endpoints anyone may call too | read 2026-10-14; §8 |
+| A count is taken before the work it guards, and given back if that work does not happen | What it prevents is the race PortSwigger names a limit overrun: a limit checked first and counted after the work lets requests sent at once all pass it | PortSwigger Web Security Academy, "Race conditions", read 2026-10-14; §4.5 |
+| A limit is a budget: a burst at once, then a steady refill, for a box's polls, calls and new mail, and for an address's calls | AWS API Gateway's throttling, a rate and a burst for each client | from memory; §8 |
+| A box's renewals under its current certificate are counted apart from those under a later one | no outside system was cited for it: it keeps a holder of the working key from spending what only the identity can do | §6.4 |
 
 **The client**
 
@@ -412,5 +421,5 @@ For rows marked `review 2026-10-10`. A row marked `read` carries its own link.
 # Open in this file
 
 - **To read at the source:** every row marked `from memory`; Apple's current page for § 1; the survey of 1c; and the systems of 1a whose designs move fastest (Signal, iMessage, Proton, SimpleX), last read 2026-10-10.
-- **Decisions with no row yet:** accounts, the echo box, the share link, the limits a client meets.
+- **Decisions with no row yet:** accounts, the echo box, the share link.
 - **The server is not in this repo,** so how irongall.dev's server is built has no row here.

@@ -224,7 +224,7 @@ func (b *Box) lookupRevocation(ctx context.Context, a protocol.Address, l *looku
 		return held, err
 	}
 	var rec protocol.Revocations
-	_, err := b.call(ctx, http.MethodGet, "/v1/"+a.String()+"/revocations", nil, nil, &rec)
+	_, err := b.lookup(ctx, a, "/revocations", &rec)
 	switch Code(err) {
 	case protocol.CodeNotRevoked, protocol.CodeNoSuchMailbox:
 		err, rec = nil, protocol.Revocations{}

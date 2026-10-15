@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"errors"
 	"io/fs"
-	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -41,7 +40,7 @@ func (b *Box) Resolve(ctx context.Context, peer protocol.Address) (*protocol.Pre
 		return nil, &RevokedError{Address: peer}
 	}
 	var ir protocol.IdentityResponse
-	if _, err := b.call(ctx, http.MethodGet, "/v1/"+peer.String()+"/identity", nil, nil, &ir); err != nil {
+	if _, err := b.lookup(ctx, peer, "/identity", &ir); err != nil {
 		return nil, err
 	}
 	id, err := b.identityOf(peer, ir.Identity)

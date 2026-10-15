@@ -286,6 +286,12 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 		problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
 		return
 	}
+	// A revoked box takes nothing more, and nothing sent for it is checked
+	// (PROTOCOL.md §6.3).
+	if b.revoked != nil {
+		problem(w, protocol.CodeRevoked, "this box is revoked")
+		return
+	}
 	// A revocation of certificates: the address goes on. The highest serial
 	// it runs through stands.
 	if len(req.RevokedCertificates) > 0 {
@@ -308,10 +314,6 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := protocol.VerifyRevocation(a, req.Identity, req.Revocation); err != nil {
 		problem(w, protocol.CodeBadRevocation, "not a revocation of this address")
-		return
-	}
-	if b.revoked != nil {
-		WriteJSON(w, http.StatusOK, struct{}{})
 		return
 	}
 	b.revoked, b.messages, b.order = req.Revocation, map[string]*message{}, nil

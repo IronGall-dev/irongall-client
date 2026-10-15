@@ -269,6 +269,9 @@ func (b *Box) publishRecord(ctx context.Context, a protocol.Address, rec *protoc
 	}
 	e := &NotPublishedError{Address: a}
 	_, own := b.call(ctx, http.MethodPut, "/v1/"+a.String()+"/revocations", rec, nil, nil)
+	if Code(own) == protocol.CodeRevoked && b.servesRevocation(ctx, a) {
+		own = nil // the address is ended there already, which covers whatever the record revokes
+	}
 	if own != nil {
 		if len(servers) == 0 {
 			return own
@@ -288,4 +291,18 @@ func (b *Box) publishRecord(ctx context.Context, a protocol.Address, rec *protoc
 		return e
 	}
 	return nil
+}
+
+// servesRevocation reports whether this box's server shows a revocation of
+// address a that verifies. A server answers a record sent for an address it
+// holds revoked with revoked, without checking the record (PROTOCOL.md
+// §6.3); that answer is taken only once what it serves is checked, and
+// nothing of it is kept here.
+func (b *Box) servesRevocation(ctx context.Context, a protocol.Address) bool {
+	var rec protocol.Revocations
+	if _, err := b.call(ctx, http.MethodGet, "/v1/"+a.String()+"/revocations", nil, nil, &rec); err != nil || len(rec.Revocation) == 0 {
+		return false
+	}
+	_, err := protocol.VerifyRevocation(a, rec.Identity, rec.Revocation)
+	return err == nil
 }

@@ -50,6 +50,7 @@ const (
 	CodeRateLimited Code = "rate_limited"
 	CodePairFull    Code = "pair_full"
 	CodeMailboxFull Code = "mailbox_full"
+	CodeMailboxBusy Code = "mailbox_busy" // the box has taken as much new mail as it takes for now
 
 	// 503, with Retry-After
 	CodeUnavailable Code = "unavailable"
@@ -83,6 +84,7 @@ var statuses = map[Code]int{
 	CodeRateLimited:        http.StatusTooManyRequests,
 	CodePairFull:           http.StatusTooManyRequests,
 	CodeMailboxFull:        http.StatusTooManyRequests,
+	CodeMailboxBusy:        http.StatusTooManyRequests,
 	CodeUnavailable:        http.StatusServiceUnavailable,
 }
 

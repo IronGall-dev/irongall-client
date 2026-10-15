@@ -3,6 +3,7 @@ package protocol
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"regexp"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"golang.org/x/crypto/ssh"
 )
 
 const (
@@ -199,6 +201,45 @@ func VerifyPrekeyRecord(id *Identity, statement, signature []byte) (*Prekey, *Ce
 		return nil, nil, errors.New("the prekey is not signed by a working key its identity certified")
 	}
 	return VerifyPrekey(id, statement, signature, began)
+}
+
+// Order is where a prekey statement would stand in its box's order
+// (PROTOCOL.md §2b): its own serial, and the serial and the SHA-256 of the
+// certificate its signature carries.
+type Order struct {
+	Serial     uint64
+	CertSerial uint64
+	Cert       [32]byte
+}
+
+// PrekeyOrder reads a statement's Order and verifies nothing: not the
+// signature, not the certificate, not the key. A server reads it to refuse,
+// before any signature check, a statement it could not take even if it
+// verified, and trusts it for nothing more: a statement that passes is
+// verified in full after.
+func PrekeyOrder(statement, signature []byte) (Order, error) {
+	notOrdered := errors.New("the prekey statement or its signature does not parse")
+	lines := strings.SplitN(string(statement), "\n", 4)
+	if len(lines) < 4 || lines[0] != PrekeyTag {
+		return Order{}, notOrdered
+	}
+	serial, ok := parseSerial([]byte(lines[2]))
+	if !ok {
+		return Order{}, notOrdered
+	}
+	blob, err := Dearmor(signature)
+	if err != nil {
+		return Order{}, notOrdered
+	}
+	key, err := signingKey(blob)
+	if err != nil {
+		return Order{}, notOrdered
+	}
+	cert, ok := key.(*ssh.Certificate)
+	if !ok {
+		return Order{}, notOrdered
+	}
+	return Order{Serial: serial, CertSerial: cert.Serial, Cert: sha256.Sum256(cert.Marshal())}, nil
 }
 
 // worded is an error that reads as its own words and is still is to
