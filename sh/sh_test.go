@@ -115,7 +115,7 @@ func bash(t *testing.T, env []string, commands string) (string, error) {
 
 // The forging-server test: irongall.sh against test.sh's in-shell fake.
 func TestScript(t *testing.T) {
-	need(t, scriptTools...)
+	need(t, append(scriptTools, "bc")...) // test.sh sums with bc
 	out, err := exec.Command("bash", "test.sh", t.TempDir()).CombinedOutput()
 	if err != nil || !bytes.Contains(out, []byte(" PASS, 0 FAIL")) {
 		t.Fatalf("test.sh: %v\n%s", err, out)
