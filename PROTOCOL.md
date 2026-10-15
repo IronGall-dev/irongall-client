@@ -540,7 +540,7 @@ How a server stores things is its own business. What it promises a client is thi
 
 **The promises.**
 - A retry of a send the server holds is never refused by a quota; a budget may defer it (§4.5 step 6).
-- A drain of a full box is never refused; it may be paced (§5.1).
+- A drain of a full box always completes: its pages are never refused, and its fetches may be paced, each `429` saying when to go on (§5.1, §5.7), never stopped for good.
 - A box's count is spent only by calls that showed its pass, and by mail sent to it. A count of an address is spent only by calls from it.
 - A renewal under a later certificate is counted apart from one under the current certificate (§6.4), and the revocation of an address is refused by no count (§6.3).
 
@@ -553,7 +553,7 @@ How a server stores things is its own business. What it promises a client is thi
 4. **Unacked mail per (sender → box)** → `pair_full`, and a larger total per box → `mailbox_full`.
 5. **Registrations per address** (§3 step 5). Proof of work is a lever a server may add; nothing in v1 carries it (§12).
 6. **Recipient `allow` and `block` lists** (`block` wins): not built (§6.2). A list response carries metadata only (§5.1), so a box decides what to fetch.
-7. **Accounts** (§6.5): what lifts a box's volume, in what it sends, what it receives, and how large.
+7. **Accounts** (§6.5): what lifts a box's volume, in what it sends, what it receives, what it takes out, and how large.
 
 ## 9. The operator's view
 
