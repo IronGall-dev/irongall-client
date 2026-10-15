@@ -832,7 +832,7 @@ func TestRekeyRevokeEarlierWhenTheRenewalIsRefused(t *testing.T) {
 	refuse := func(code protocol.Code) {
 		srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/prekey") {
-				fakeserver.WriteJSON(w, code.Status(), protocol.Problem{Code: code, Status: code.Status()})
+				fakeserver.WriteJSON(w, code.Status(), protocol.Problem{Code: code, Status: int64(code.Status())})
 				return
 			}
 			next.ServeHTTP(w, r)

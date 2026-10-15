@@ -141,7 +141,7 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 func problem(w http.ResponseWriter, code protocol.Code, detail string) {
 	w.Header().Set("Content-Type", protocol.ProblemContentType)
 	w.WriteHeader(code.Status())
-	_ = json.NewEncoder(w).Encode(protocol.Problem{Type: code.TypeURI(), Status: code.Status(), Code: code, Detail: detail})
+	_ = json.NewEncoder(w).Encode(protocol.Problem{Type: code.TypeURI(), Status: int64(code.Status()), Code: code, Detail: detail})
 }
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
@@ -489,7 +489,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request, b *box) {
 	var version [8]byte
 	for _, id := range b.order {
 		if m := b.messages[id]; m != nil {
-			l.Messages = append(l.Messages, protocol.MessageInfo{ID: id, From: m.from.String(), Size: len(m.ciphertext),
+			l.Messages = append(l.Messages, protocol.MessageInfo{ID: id, From: m.from.String(), Size: int64(len(m.ciphertext)),
 				ReceivedAt: formatTime(m.receivedAt), ExpiresAt: formatTime(m.receivedAt.Add(protocol.TTL))})
 			h := sha256.Sum256([]byte(id))
 			for i := range version {
@@ -497,7 +497,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request, b *box) {
 			}
 		}
 	}
-	l.Count = len(l.Messages)
+	l.Count = int64(len(l.Messages))
 	etag := `"` + hex.EncodeToString(version[:]) + `"`
 	w.Header().Set("ETag", etag)
 	if r.Header.Get("If-None-Match") == etag {

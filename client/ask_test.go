@@ -59,7 +59,7 @@ func (o *operator) count(method, suffix string) int {
 }
 
 func answer(w http.ResponseWriter, code protocol.Code) bool {
-	fakeserver.WriteJSON(w, code.Status(), protocol.Problem{Code: code, Status: code.Status()})
+	fakeserver.WriteJSON(w, code.Status(), protocol.Problem{Code: code, Status: int64(code.Status())})
 	return true
 }
 

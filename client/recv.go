@@ -70,7 +70,7 @@ type Result struct {
 	// more, when it paced the drain (a 429 with Retry-After); zero otherwise.
 	Paced time.Duration
 	// PollAfter is the server's poll interval, in seconds.
-	PollAfter int
+	PollAfter int64
 	// Renewed is the prekey this Receive published, the current one being
 	// more than a day old; nil if none was due.
 	Renewed *protocol.Prekey

@@ -138,17 +138,17 @@ type Receipt struct {
 // MessageList is GET /v1/<address>/messages: one page of metadata, oldest
 // first. NextCursor is null on the last page.
 type MessageList struct {
-	Count      int           `json:"count"`
+	Count      int64         `json:"count"`
 	Messages   []MessageInfo `json:"messages"`
 	NextCursor *string       `json:"next_cursor"`
-	PollAfter  int           `json:"poll_after"`
+	PollAfter  int64         `json:"poll_after"`
 }
 
 // MessageInfo is one message in a list.
 type MessageInfo struct {
 	ID         string `json:"id"`
 	From       string `json:"from"`
-	Size       int    `json:"size"`
+	Size       int64  `json:"size"`
 	ReceivedAt string `json:"received_at"`
 	ExpiresAt  string `json:"expires_at"`
 }

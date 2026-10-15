@@ -443,7 +443,7 @@ var titles = map[protocol.Code]string{
 }
 
 func refuse(code protocol.Code, hint, format string, args ...any) *problem {
-	return &problem{Problem: protocol.Problem{Type: code.TypeURI(), Title: titles[code], Status: code.Status(), Detail: fmt.Sprintf(format, args...), Code: code, Hint: hint}}
+	return &problem{Problem: protocol.Problem{Type: code.TypeURI(), Title: titles[code], Status: int64(code.Status()), Detail: fmt.Sprintf(format, args...), Code: code, Hint: hint}}
 }
 
 func (p *problem) write(w http.ResponseWriter) {
@@ -451,7 +451,7 @@ func (p *problem) write(w http.ResponseWriter) {
 	if p.retryAfter > 0 {
 		w.Header().Set("Retry-After", strconv.Itoa(int((p.retryAfter+time.Second-1)/time.Second)))
 	}
-	w.WriteHeader(p.Status)
+	w.WriteHeader(p.Code.Status())
 	_ = json.NewEncoder(w).Encode(p.Problem)
 }
 

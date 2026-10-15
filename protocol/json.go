@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"strconv"
 )
 
@@ -120,7 +119,7 @@ func hasNoncharacter(s string) bool {
 
 var errNotInteger = errors.New("an integer member is not an integer from 0 to 2^53 − 1, written as one")
 
-// integers reads every uint64 and int Unmarshal fills: a JSON number
+// integers reads every uint64 and int64 Unmarshal fills: a JSON number
 // written as digits alone, with no sign, fraction or exponent, from 0 to
 // MaxInteger. encoding/json/v2 would take 2^64 − 1, which jq and JavaScript
 // read as another number.
@@ -130,14 +129,9 @@ var integers = jsonv2.JoinUnmarshalers(
 		*n = u
 		return err
 	}),
-	jsonv2.UnmarshalFromFunc(func(d *jsontext.Decoder, n *int) error {
+	jsonv2.UnmarshalFromFunc(func(d *jsontext.Decoder, n *int64) error {
 		u, err := integer(d)
-		if err == nil && u > math.MaxInt {
-			// A 32-bit int holds less than MaxInteger: a larger value is
-			// refused, never read as another number.
-			return errNotInteger
-		}
-		*n = int(u) //nolint:gosec // at most math.MaxInt, checked above
+		*n = int64(u) //nolint:gosec // at most MaxInteger
 		return err
 	}),
 )

@@ -104,13 +104,13 @@ const ProblemContentType = "application/problem+json"
 type Problem struct {
 	Type   string `json:"type"`
 	Title  string `json:"title"`
-	Status int    `json:"status"`
+	Status int64  `json:"status"`
 	Detail string `json:"detail,omitempty"`
 	Code   Code   `json:"code"`
 	Hint   string `json:"hint,omitempty"`
 
 	// pair_full only: how many messages from this sender the box holds
 	// unacked, and when the oldest of them expires.
-	Unacked         *int   `json:"unacked,omitempty"`
+	Unacked         *int64 `json:"unacked,omitempty"`
 	OldestExpiresAt string `json:"oldest_expires_at,omitempty"`
 }
