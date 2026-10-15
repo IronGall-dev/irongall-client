@@ -85,7 +85,8 @@ type Box struct {
 	base string
 	http *http.Client
 	now  func() time.Time
-	// signer is the identity key. It signs certificates, and nothing else.
+	// signer is the identity key. It signs certificates and revocations, and
+	// nothing else.
 	signer ssh.Signer
 	id     *protocol.Identity
 	// identityType is the type of key Init makes when the box has none.

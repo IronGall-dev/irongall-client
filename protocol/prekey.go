@@ -56,7 +56,7 @@ var serialGrammar = regexp.MustCompile(`\A[1-9][0-9]{0,15}\z`)
 // by a working key its identity certified.
 type Prekey struct {
 	Address  Address   // the box the key belongs to
-	Serial   uint64    // strictly increasing per box; the first is 1
+	Serial   uint64    // strictly increasing under one certificate; a client gives it its certificate's serial
 	Key      string    // the age recipient: "age1pq1…" or "age1…"
 	NotAfter time.Time // the last moment the key may be encrypted to
 }

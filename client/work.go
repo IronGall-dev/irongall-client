@@ -18,7 +18,8 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// A box's identity signs certificates and nothing else. What the box says,
+// A box's identity signs certificates and revocations, and nothing else.
+// What the box says,
 // its prekey statements, its mail and its passes, is signed by a working key
 // under a certificate the identity gave it (PROTOCOL.md §2b). This client
 // keeps both keys in the box and makes a new working key, with a new

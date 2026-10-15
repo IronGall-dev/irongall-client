@@ -340,7 +340,9 @@ func (b *Box) keepRevokedCerts(a protocol.Address, doc, statement, sig []byte) e
 // It revokes through the serial below the one in use. A box numbers a
 // certificate by its clock ([protocol.SerialAt]), so that covers every
 // certificate made before this one on any machine, whether this box knows of
-// it or not: one a lost machine made and never published is among them.
+// it or not: one a lost machine made and never published is among them,
+// unless that machine's clock read ahead of this one's (PROTOCOL.md §2b); a
+// later run covers that one.
 //
 // It returns the revocation, or nil when the certificate in use has serial
 // 1, which nothing is below.

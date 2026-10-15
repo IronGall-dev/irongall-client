@@ -14,7 +14,8 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// A box's identity signs certificates and, once, a revocation: nothing else.
+// A box's identity signs certificates and revocations, of its address and of
+// its certificates: nothing else.
 // A certificate names a working key, and the working key signs what the box
 // says (PROTOCOL.md §2b).
 
@@ -120,7 +121,8 @@ func CheckCertificate(id *Identity, key ssh.PublicKey, now time.Time) (*Certific
 }
 
 // checkWorkingKey holds a certified key to the identity's own key checks, and
-// refuses the identity key itself: the identity signs certificates only.
+// refuses the identity key itself: the identity signs certificates and
+// revocations, never what a working key signs.
 func checkWorkingKey(id *Identity, key ssh.PublicKey) error {
 	if key == nil || key.Type() != ssh.KeyAlgoED25519 {
 		return errors.New("the working key is not an ssh-ed25519 key")
