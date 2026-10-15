@@ -139,7 +139,7 @@ What it lacks against the Go client, though it gives the Go client's verdict on 
 - **Restoring a box from its identity alone takes the Go client.**
 - `recv` drains once and never waits, and a drain has no limit in bytes.
 - No `status`, no `adopt` and no `alias --rm`.
-- It applies a revocation of certificates and makes none: its `rekey` has no `--revoke-earlier`, and its `revoked` takes none from a file and has no `--ask` and no `--publish`, and of a record handed to `revoked <file>` or `revoke <address> <file>` it checks the identity and the revocation of the address, not a revocation of certificates beside them. A revocation server that gave no answer is asked again for the next address.
+- It applies a revocation of certificates and makes none: its `rekey` has no `--revoke-earlier`, and its `revoked` takes none from a file and has no `--ask` and no `--publish`. A revocation server that gave no answer is asked again for the next address.
 - `rekey` makes a post-quantum prekey unless told `--no-pq`; the Go client keeps the box's type, but for #61.
 - It checks that an Ed25519 identity key is canonical and not of small order, but not that it is on the curve. No signature verifies under such a key.
 - It makes an Ed25519 identity only: for a P-256 one, make the key with `ssh-keygen -t ecdsa -b 256 -N '' -C '' -f <box>/identity` before `init`. It leaves a send from such a box to a box that does not verify the type for the server to refuse.

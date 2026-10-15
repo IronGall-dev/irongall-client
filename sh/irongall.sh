@@ -349,6 +349,12 @@ ig_record(){ # <record> → the address it is a revocation of, only if it verifi
   ig_isrecord "$1" && ig_bytes "$1" identity "$IG/rev.doc" && ig_bytes "$1" revocation "$IG/rev.sig" || return 1
   A=$(sha256sum < "$IG/rev.doc" | cut -c1-64) && ig_revcheck "$A" "$IG/rev.doc" "$IG/rev.sig" && echo "$A"
 }
+ig_handed(){ # <record> → the address, only for a record handed over whose every part verifies: the revocation of the address (ig_record), and a revocation of its certificates beside it, if there is one (ig_certscheck). A record with a part that does not verify is refused whole, as the Go client refuses it; its parts are left as ig_record leaves them
+  local A
+  A=$(ig_record "$1") && ig_bytes "$1" revoked_certificates "$IG/rev.certs" && ig_bytes "$1" revoked_certificates_signature "$IG/rev.csig" || return 1
+  [ ! -s "$IG/rev.certs" ] || ig_certscheck "$A" "$IG/rev.doc" "$IG/rev.certs" "$IG/rev.csig" > /dev/null || return 1
+  echo "$A"
+}
 ig_isrecord(){ # <file> → 0 only for a record as the Go client reads one: an answer ig_shape takes as a record, and each of its four byte members base64 in its one encoding, or left out. What it holds is checked by whoever uses it
   local m r=0
   ig_shape "$1" record || return 1
@@ -407,7 +413,7 @@ ig_revoke(){ # <address> [record] → revokes the address at the server and at e
     [ "$A" = "$(cat "$IG/address" 2> /dev/null)" ] || ig_refuse "that is not this box's address: nothing was published. revoke takes this box's own address, or a record of another" || return 1
     f="$IG/revoke.json"; ig_revocation > "$f" || return 1
   fi
-  [ "$(ig_record "$f")" = "$A" ] || ig_refuse "the record is not a revocation of $A: nothing was published" || return 1
+  [ "$(ig_handed "$f")" = "$A" ] || ig_refuse "the record is not a revocation of $A whose every part verifies: nothing was published" || return 1
   l=$(ig_revservers) || return 1
   if ig_api PUT "/v1/$A/revocations" "$f" > /dev/null 2> "$IG/put.err" || { [ "$(ig_code)" = revoked ] && ig_api GET "/v1/$A/revocations" > "$IG/held.json" 2> /dev/null && [ "$(ig_record "$IG/held.json")" = "$A" ]; }; then took=$IG_BASE      # revoked, from a server that holds the address revoked, is taken once what it serves verifies: the address is ended there already
   else r=1; cat "$IG/put.err" >&2; echo "NOT taken by $IG_BASE" >&2; fi
@@ -420,7 +426,7 @@ ig_revoke(){ # <address> [record] → revokes the address at the server and at e
   echo "revoked $A"
 }
 ig_revoked(){ # <record> → keeps a revocation of another box that someone handed over, once it verifies: nothing is sent to that address or taken from it again, whatever a server says. It is the answer to a server that hides a revocation
-  local A; A=$(ig_record "${1-}") || ig_refuse "the file is not a revocation record: one is a line of JSON with identity and revocation, as revocation prints" || return 1
+  local A; A=$(ig_handed "${1-}") || ig_refuse "the file is not a revocation record whose every part verifies: one is a line of JSON with identity and revocation, as revocation prints, and a revocation of certificates beside them must verify too" || return 1
   ig_keep "$A" "$IG/rev.doc" "$IG/rev.sig" && echo "revoked $A"
 }
 
