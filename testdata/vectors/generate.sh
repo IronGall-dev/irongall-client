@@ -549,6 +549,7 @@ at list-bad-count-negative '{"count":-1,"messages":[],"next_cursor":null,"poll_a
 at list-bad-count-above-2-53 '{"count":9007199254740992,"messages":[],"next_cursor":null,"poll_after":60}'
 at list-bad-count-a-fraction '{"count":0.5,"messages":[],"next_cursor":null,"poll_after":60}'
 at list-bad-count-written-with-a-fraction '{"count":1.0,"messages":[],"next_cursor":null,"poll_after":60}' # an integer member is written as one
+at list-bad-count-written-with-an-exponent '{"count":1e0,"messages":[],"next_cursor":null,"poll_after":60}' # jq gives it back as 1, so the script takes it: a known variance
 at list-bad-size-a-string '{"count":1,"messages":[{"id":"%s","from":"%s","size":"2048"}],"next_cursor":null,"poll_after":60}' "$HASH" "$A"
 at list-bad-messages-an-object '{"count":0,"messages":{},"next_cursor":null,"poll_after":60}'
 at list-bad-cursor-a-number '{"count":0,"messages":[],"next_cursor":7,"poll_after":60}'

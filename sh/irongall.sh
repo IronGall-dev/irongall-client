@@ -600,12 +600,13 @@ ig_open(){ # <me> <message stem> → the sender's address, only if what was decr
 ig_envform(){ # <envelope> → 0 only for a JSON text as every reader takes one (ig_json): UTF-8, one object, no key twice in any object in it, nested at most 32 deep. Otherwise the reason, and 1
   ig_json "$1" || { echo "bad_envelope: the envelope is not one JSON object in UTF-8 with no key twice, as PROTOCOL.md §0b reads one"; return 1; }
 }
-ig_envcheck(){ # <envelope> <signer> <this box> → 0 only for one UTF-8 JSON object, keys exact and none twice, v the number 1 written as 1 (jq gives back 1e0 as 1, so that one is taken: a known variance), from the signer, to this box, a msg_id, a body, string optional fields, and sent_at no older than 33 days and no more than an hour ahead; otherwise the reason, and 1
+ig_envcheck(){ # <envelope> <signer> <this box> → 0 only for one UTF-8 JSON object, keys exact and none twice, checked in PROTOCOL.md §5 check 6's order: a body and fields that are strings, v the number 1 written as 1 (jq gives back 1e0 as 1, so that one is taken: a known variance), from the signer and to this box, a msg_id, and sent_at no older than 33 days and no more than an hour ahead; otherwise the reason, and 1
   local e=$1 sa
   ig_envform "$e" || return 1
-  jq -e '(.v | type == "number" and tostring == "1") and has("body") and (.msg_id | type == "string" and test("\\A[0-9a-f-]{36}\\z")) and all(.subject, .in_reply_to, .supersedes, .identity; . == null or type == "string")' "$e" > /dev/null 2>&1 ||
-    { echo "bad_envelope: the envelope is malformed: v the number 1, a body, a msg_id, and optional fields that are strings"; return 1; }
+  jq -e 'has("body") and all(.from, .to, .msg_id, .sent_at, .subject, .in_reply_to, .supersedes, .identity; . == null or type == "string") and (.v | type == "number" and tostring == "1")' "$e" > /dev/null 2>&1 ||
+    { echo "bad_envelope: the envelope is malformed: a body, fields that are strings, and v the number 1"; return 1; }      # in PROTOCOL.md §5 check 6's order: a body and every member of its type, v, to, msg_id, then the time
   jq -e --arg a "$2" --arg b "$3" '.from == $a and .to == $b' "$e" > /dev/null 2>&1 || { echo "reattributed: the inner from/to do not match the signer and this box (re-attribution)"; return 1; }
+  jq -e '.msg_id | type == "string" and test("\\A[0-9a-f-]{36}\\z")' "$e" > /dev/null 2>&1 || { echo "bad_envelope: the envelope has no valid msg_id"; return 1; }
   jq -e '.sent_at | strings | test("\\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\\z")' "$e" > /dev/null 2>&1 && sa=$(ig_time "$(jq -r .sent_at "$e")") || { echo "bad_envelope: the envelope's sent_at is not a UTC timestamp to the second"; return 1; }      # its grammar tested in jq first: $(…) drops trailing LFs and every NUL
   [ "$sa" -ge $(($(ig_now) - 33*86400)) ] || { echo "stale: sent_at is older than 33 days"; return 1; }
   [ "$sa" -le $(($(ig_now) + 3600)) ] || { echo "future: sent_at is more than 60 minutes ahead of this machine's clock"; return 1; }

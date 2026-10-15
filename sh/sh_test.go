@@ -426,6 +426,12 @@ var envelopeVariances = map[string]string{
 	"refuse-version-written-with-an-exponent": "the script takes v written 1e0, which jq gives back as 1",
 }
 
+// answerVariances are the answer/ vectors the script judges otherwise than the
+// Go client, each a known variance held to its shape (PROTOCOL.md §0b).
+var answerVariances = map[string]string{
+	"list-bad-count-written-with-an-exponent": "the script takes count written 1e0, which jq gives back as 1",
+}
+
 // Every envelope gets the Go client's verdict, but for envelopeVariances, and
 // every accepted one gives the same delivered line, value for value.
 func TestVectorsEnvelope(t *testing.T) {
@@ -536,8 +542,8 @@ var answerTypes = map[string]func() any{
 func TestVectorsAnswer(t *testing.T) {
 	need(t, scriptTools...)
 	files, _ := filepath.Glob(filepath.Join(vectors, "answer", "*.json"))
-	if len(files) != 38 {
-		t.Fatalf("%d answer/ vectors, want 38", len(files))
+	if len(files) != 39 {
+		t.Fatalf("%d answer/ vectors, want 39", len(files))
 	}
 	dir := t.TempDir()
 	var script strings.Builder
@@ -562,6 +568,13 @@ func TestVectorsAnswer(t *testing.T) {
 		kind, verdict, _ := strings.Cut(name, "-")
 		data, _ := os.ReadFile(f) //nolint:gosec // a test vector
 		goTakes, shTakes := protocol.Unmarshal(data, answerTypes[kind]()) == nil, verdicts[i] == "0"
+		if why, ok := answerVariances[name]; ok {
+			if goTakes || !shTakes {
+				t.Errorf("%s: the Go client takes it: %v, the script: %v, where the known variance is that %s", name, goTakes, shTakes, why)
+			}
+			t.Logf("%s: a known variance: %s", name, why)
+			continue
+		}
 		if goTakes != shTakes || goTakes != strings.HasPrefix(verdict, "ok") {
 			t.Errorf("%s: the Go client takes it: %v, the script: %v", name, goTakes, shTakes)
 		}
