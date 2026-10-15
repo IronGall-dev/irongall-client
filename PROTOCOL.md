@@ -19,7 +19,7 @@
 | ECDSA P-256 | an IDENTITY of the optional key type `ecdsa-sha2-nistp256` (§2): it signs what any identity signs, certificates and a revocation | FIPS 186-5, RFC 5656 |
 | SSHSIG | signature container: the key's signature over SHA-512(message), namespaced | OpenSSH `PROTOCOL.sshsig` |
 | SSH public key text | `<key type> <base64 wire key>`: `ssh-ed25519`, or `ecdsa-sha2-nistp256` | RFC 4253 §6.6, RFC 8709, RFC 5656 |
-| OpenSSH certificate | the identity's word for a working key (§2b) | OpenSSH `PROTOCOL.certkeys` |
+| OpenSSH certificate | the identity's word for a working key (§2b) | `draft-miller-ssh-cert`, OpenSSH's format (its `PROTOCOL.certkeys` until 2025) |
 | SHA-256 | address = hash of the identity document; message id | FIPS 180-4 |
 | HMAC-SHA-256 | adopt keys (§6.5) | RFC 2104 |
 | UUID | the envelope's `msg_id`, random (version 4) | RFC 9562 |

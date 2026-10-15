@@ -110,7 +110,7 @@
 
 | Who | What they do | How it is known |
 |---|---|---|
-| **OpenSSH certificates** | A CA key signs a certificate naming a key, its principals, a serial and a validity window. irongall uses this format unchanged, made by `ssh-keygen -s` | OpenSSH `PROTOCOL.certkeys`. The behaviour irongall relies on was measured on OpenSSH 8.1p1 and 10.2p1, 2026-10-12 |
+| **OpenSSH certificates** | A CA key signs a certificate naming a key, its principals, a serial and a validity window. irongall uses this format unchanged, made by `ssh-keygen -s` | `draft-miller-ssh-cert`, which replaced OpenSSH's `PROTOCOL.certkeys` in 2025. The behaviour irongall relies on was measured on OpenSSH 8.1p1 and 10.2p1, 2026-10-12 |
 | **OpenPGP** | A primary key certifies subkeys that do the signing and decrypting, so the primary can be kept offline | from memory |
 | **Matrix cross-signing** | A master key signs the keys that sign devices and other users | from memory |
 | **Signal, MLS** | A long-lived identity signs the shorter-lived keys others encrypt to: Signal's signed prekeys, MLS's KeyPackages. It is what irongall's prekey already does, one level down | review 2026-10-10 |
