@@ -111,6 +111,13 @@
 - **A record is published at every server, whatever the others answer** (`publishRecord`): a mailbox server that refuses a revocation does not keep it from the rest. Not everywhere is a failure that says who took it (`NotPublishedError`), and once any server has taken a record its box keeps it. 🛑 What ends an address goes out only with that address written in full: `revoked --publish` takes a list and no revocation.
 - **The reference server keeps one file for each address and nothing else.** It verifies before it keeps, answers what it holds again with no check, counts every other record against its caller before checking it, never logs a lookup, and has no route that lists. It imports `protocol/` and nothing of a mailbox server: keep it so, since that it can be built so is what it is for.
 
+**Who may write to a box: the client holds, the server's ACL refuses** (`protocol/acl.go`, `client/senders.go`; `PROTOCOL.md` §5.6, §6.2; decided on #4 and #23).
+- **`held/` is not `quarantine/`:** quarantine holds mail that failed a check, and held holds mail that passed from a sender the box has not allowed. Keep the two words and the two directories apart.
+- **A policy, `allowed` or `blocked` file that cannot be read stops a drain and a send** (`readSenders`). It is never read as the default.
+- **An ACL always says whom it lets in:** `Document` writes both lists, an empty one as `[]`, and `CheckACL` refuses one with no `allow`. Never let a writer drop an empty `allow`: under the form first proposed, that read as everyone.
+- **Under `server allowed`, the ACL goes before the post** (`SendWith`, `Flush`): a reply the server refuses for it is final. `sender_not_allowed` is in `undeliverable` and in the script's list.
+- **Tests:** `env.box` lands every sender's mail, since most tests are of what comes before landing, and a test of where mail lands makes its boxes with `heldBox`. `sh/sh_test.go` (`landAll`) and the server's tests and `test/interop.sh` (`gocli`) do the same.
+
 **Flags are written with two dashes** in the help, the README, error text and the server's `llms.txt`. Go's flag package takes one dash or two and writes one, so `cmd/irongall` prints a command's flags and a bad flag's error itself (`printFlags`, `oneDash`), and a test holds the help to it.
 
 **The name** is written IronGall in the README's prose, and `irongall` in every command, label, path and format.
