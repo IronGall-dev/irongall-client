@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"net/http"
+	"regexp"
 
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
@@ -18,9 +19,16 @@ func (b *Box) Adopt(ctx context.Context, key string) (string, error) {
 		if _, err := b.owner(ctx, http.MethodPut, b.boxPath("/account"), protocol.AdoptRequest{Key: key}, nil, &ar); err != nil {
 			return "", err
 		}
+		if !accountID.MatchString(ar.Account) {
+			return "", refuse("the server's answer does not name an account as the protocol writes one, 1 to 32 of a-z, 0-9 and -")
+		}
 		return ar.Account, nil
 	})
 }
+
+// accountID is an account id as PROTOCOL.md §6.5 writes one: what Adopt
+// returns is checked to it, so what adopt prints names no more than that.
+var accountID = regexp.MustCompile(`\A[a-z0-9-]{1,32}\z`)
 
 // Leave takes the box out of its account: it has the server's own limits
 // again.

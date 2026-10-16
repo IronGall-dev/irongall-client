@@ -562,3 +562,10 @@ at problem-ok '{"type":"https://irongall.dev/errors/not_revoked","title":"Not re
 at problem-bad-code-twice '{"type":"https://irongall.dev/errors/not_revoked","status":404,"code":"not_revoked","code":"revoked"}'
 at problem-bad-status-a-string '{"status":"404","code":"not_revoked"}'
 at problem-bad-status-a-fraction-after-the-code '{"code":"not_revoked","status":1.5}' # a reader that kept what it read before the fault would act on the code
+# The members a problem carries beside its words (PROTOCOL.md §13), each of its type: a client reads them, never the words
+at problem-ok-members '{"type":"https://irongall.dev/errors/sends_spent","title":"Sends spent","status":429,"detail":"this box has sent its 20 messages for the day","code":"sends_spent","hint":"wait","limit":20,"messages":3,"unacked":2,"oldest_expires_at":"%s","version":1,"prekey_serial":2,"certificate_serial":1792000000,"through":5,"key_types":["ssh-ed25519",null],"key_type":"ecdsa-sha2-nistp256","member":"prekey_serial"}' "$NOT_AFTER"
+at problem-bad-limit-negative '{"code":"sends_spent","status":429,"limit":-1}'
+at problem-bad-limit-written-with-an-exponent '{"code":"too_large","status":413,"limit":1e3}'
+at problem-bad-through-above-2-53 '{"code":"conflict","status":409,"through":9007199254740992}'
+at problem-bad-key-types-a-string '{"code":"unsupported_key_type","status":400,"key_types":"ssh-ed25519"}'
+at problem-bad-member-a-number '{"code":"bad_request","status":400,"member":7}'

@@ -99,8 +99,7 @@ func helpsTheThief(e *env, a *client.Box, statement, signature []byte, hide bool
 		case r.Method == http.MethodGet && r.URL.Path == postTo(a)+"/identity":
 			fakeserver.WriteJSON(w, http.StatusOK, protocol.IdentityResponse{Identity: a.Identity().Document(), Prekey: statement, PrekeySignature: signature})
 		case r.Method == http.MethodPost && r.URL.Path == postTo(a):
-			_, _ = io.Copy(io.Discard, r.Body)
-			fakeserver.WriteJSON(w, http.StatusCreated, protocol.Receipt{ID: strings.Repeat("0", 64)})
+			fakeserver.Take(w, r)
 		case hide && r.Method == http.MethodGet && r.URL.Path == lookupOf(a):
 			return answer(w, protocol.CodeNotRevoked)
 		default:
@@ -322,7 +321,7 @@ func TestASealThatWaitedIsCheckedBeforeItIsPosted(t *testing.T) {
 	// This operator would take the post, where an honest server refuses it.
 	op = watch(e, func(w http.ResponseWriter, r *http.Request) bool {
 		if r.Method == http.MethodPost && r.URL.Path == postTo(c) {
-			fakeserver.WriteJSON(w, http.StatusCreated, protocol.Receipt{ID: strings.Repeat("0", 64)})
+			fakeserver.Take(w, r)
 			return true
 		}
 		return false

@@ -531,7 +531,7 @@ func (b *Box) syncACL(ctx context.Context) error {
 		want.Version = took.Version + 1
 	}
 	got, err := b.putACL(ctx, want)
-	if Code(err) == protocol.CodeConflict {
+	if c := Code(err); c == protocol.CodeConflict || c == protocol.CodeBoxChanged {
 		var v uint64
 		if v, err = b.heldVersion(ctx); err == nil {
 			want.Version = v + 1

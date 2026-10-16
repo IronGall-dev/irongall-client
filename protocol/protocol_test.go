@@ -158,21 +158,21 @@ func TestParseTime(t *testing.T) {
 
 func TestCodes(t *testing.T) {
 	codes := []Code{
-		CodeBadRequest, CodeBadAddress, CodeBadEncoding, CodeIdentityMismatch, CodeBadKey, CodeUnsupportedKeyType, CodeNotAge, CodeWrongRecipientType, CodeBadRevocation,
-		CodeUnauthorized, CodePassExpired,
+		CodeBadRequest, CodeBadAddress, CodeBadEncoding, CodeIdentityMismatch, CodeBadKey, CodePrekeyNotNew, CodePrekeyTime, CodeUnsupportedKeyType, CodeNotAge, CodeWrongRecipientType, CodeBadRevocation,
+		CodeUnauthorized, CodePassExpired, CodeCertificateNotCurrent, CodeCertificateRevoked,
 		CodeUnknownSender, CodeSenderRevoked, CodeSenderNotAllowed, CodeSenderKeyType, CodeAdoptKeyRefused,
 		CodeNoSuchMailbox, CodeNoSuchMessage, CodeNotRevoked,
-		CodeConflict, CodeStalePrekey, CodePrekeyExpired,
+		CodeConflict, CodeBoxChanged, CodeStalePrekey, CodePrekeyExpired,
 		CodeRevoked, CodeTooLarge,
-		CodeRateLimited, CodePairFull, CodeMailboxFull, CodeMailboxBusy,
+		CodeRateLimited, CodeRenewalsSpent, CodeIdentityActsSpent, CodeSendsSpent, CodeFetchPaced, CodeRefetchSpent, CodePairFull, CodeMailboxFull, CodeMailboxBusy,
 		CodeUnavailable,
 	}
-	if len(codes) != len(statuses) {
-		t.Errorf("%d codes listed, %d in the status map", len(codes), len(statuses))
+	if len(codes) != len(Codes()) {
+		t.Errorf("%d codes listed, %d known", len(codes), len(Codes()))
 	}
 	for _, c := range codes {
-		if c.Status() == 0 {
-			t.Errorf("%s has no status", c)
+		if c.Status() == 0 || c.Title() == "" || !c.Known() || !regexp.MustCompile(`\A[a-z0-9_]{1,40}\z`).MatchString(string(c)) {
+			t.Errorf("%s has no status or title, or is not a code's form", c)
 		}
 	}
 	if Code("nope").Status() != 0 {

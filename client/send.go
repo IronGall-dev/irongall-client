@@ -3,6 +3,8 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -371,6 +373,16 @@ func (b *Box) postSealed(ctx context.Context, to protocol.Address, stem string) 
 	var r protocol.Receipt
 	if _, err := b.owner(ctx, http.MethodPost, "/v1/"+to.String(), req, nil, &r); err != nil {
 		return nil, err
+	}
+	// A receipt names the ciphertext it is for, and this box knows which
+	// that is: one that names another, or whose times are not times, is no
+	// receipt, and the entry stays (PROTOCOL.md §4.5). So what send and
+	// flush print of it is what this box computed.
+	h := sha256.Sum256(req.Ciphertext)
+	_, rerr := protocol.ParseTime(r.ReceivedAt)
+	_, eerr := protocol.ParseTime(r.ExpiresAt)
+	if r.ID != hex.EncodeToString(h[:]) || rerr != nil || eerr != nil {
+		return nil, refuse("the server's receipt does not name the ciphertext this box posted, or its times are not times")
 	}
 	return &r, nil
 }

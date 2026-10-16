@@ -330,6 +330,27 @@ None of the three was a flaw in the layout: each was a verifier that read an obj
 - **There is no `DELETE`:** a box with none answers what none means, `{"version":0,"allow":["*"],"deny":[]}`, as a bucket always has an ACL.
 - **The ACL sheds load and protects no reader.** Matrix's ACL is enforced by every server in a room and works only if each does; irongall's by the one server the protocol does not trust. A server that ignores it can do nothing it could not already do: drop mail, or deliver mail the box would hold. The client's hold is the check a reader relies on.
 
+## 3d. Errors: AEP-193's shape, and none of a server's words in front of a reader
+
+**Ours** (decided 2026-10-16; issue #43): every error body is RFC 9457 in AEP-193's form, a `code` from a closed list with each value the error carries as a typed member of its own, and the server's `detail` and `hint` beside them for a person reading the body. A code is split where one call can fail for causes a client meets differently. A client needs nothing from the words and shows none of them: it says what the code means in its own words, with the members it has checked to their types (`PROTOCOL.md` §13).
+
+| Who | What they do | How it is known |
+|---|---|---|
+| **RFC 9457, Problem Details** | "Consumers SHOULD NOT parse the "detail" member for information; extensions are more suitable and less error-prone ways to obtain such information." (§3.1.4) | rfc-editor.org, read 2026-10-16 |
+| **AEP-193 (aep.dev)** | AIP-193 adopted onto RFC 9457 on 2024-03-21. "All dynamic variables found in error detail **must** also be present as additional properties of the error response"; the detail should not "be string-matched by any clients to determine the error." A problem is named by its `type` alone | `aep-dev/aeps`, `aep/general/0193/aep.md.j2`, read 2026-10-16 |
+| **AIP-193 (Google)** | A code from `google.rpc.Code`, with `ErrorInfo.reason` beside it: with "only approximately twenty" codes, "it is difficult to disambiguate one error from another". Two errors are the same "in terms of the expected action a client might take to resolve them", and every value in a message is also in `metadata` | `googleapis/aip`, `aip/general/0193.md`, read 2026-10-16 |
+| **OAuth 2.0** | `error` from a closed list; `error_description` is "Human-readable ASCII text providing additional information, used to assist the client developer" | RFC 6749 §5.2, read 2026-10-13 |
+| **MCP, tools (2025-11-25)** | A tool's own errors "contain actionable feedback that language models can use to self-correct"; a client SHOULD "Validate tool results before passing to LLM" | `modelcontextprotocol/modelcontextprotocol`, `docs/specification/2025-11-25/server/tools.mdx`, read 2026-10-16 |
+| **OpenAI, agent-builder safety** | "By defining structured outputs between nodes (e.g., enums, fixed schemas, required field names), you eliminate freeform channels that attackers can exploit to smuggle instructions or data" | platform.openai.com/docs/guides/agent-builder-safety, read 2026-10-16 |
+| **Design patterns for securing LLM agents** (arXiv 2506.08837, June 2025) | Strict data formatting: "Rather than allowing arbitrary text to be generated (or read) by the LLM, we recommend constraining it to generate output following a well-specified format" | arxiv.org/html/2506.08837, read 2026-10-16 |
+| **Anthropic, "Writing effective tools for agents"** | A tool's error responses should "clearly communicate specific and actionable improvements, rather than opaque error codes or tracebacks" | anthropic.com/engineering/writing-tools-for-agents, read 2026-10-16 |
+| **OWASP Top 10 for LLM Applications, LLM01** | "Separate and clearly denote untrusted content to limit its influence on user prompts." | `LLM01_PromptInjection.md`, read 2026-10-13 |
+
+**Where ours differs, and why:**
+- **No `reason` beside the code.** AIP-193 needs one because its codes are a fixed list every Google API shares. Ours are this protocol's own, so a cause a client meets differently gets a code of its own, as AEP-193 names a problem by its `type` alone, and the test of what is one error is AIP-193's: the action a client takes.
+- **The words stay on the wire, and no client of ours shows them.** The API standards stop at "do not parse `detail`": they keep it for a developer, a person. A client of irongall is often read by a model, and the server is in the threat model, so a client takes what the agent guidance asks of a tool: from the untrusted side, only values of a fixed type, checked; to its reader, its own actionable sentence. A person with curl still has the server's words.
+- **A code a client does not know, or one under a status that is not its own, is no code.** Any text can be made to fit a code's grammar, so a client prints only the status.
+
 ## 4. The rest: one row a decision
 
 **Keys and identity**

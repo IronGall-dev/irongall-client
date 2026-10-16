@@ -37,7 +37,7 @@ func TestAPacedDrainStopsAndResumes(t *testing.T) {
 				w.Header().Set("Content-Type", protocol.ProblemContentType)
 				w.Header().Set("Retry-After", "6")
 				w.WriteHeader(http.StatusTooManyRequests)
-				_ = json.NewEncoder(w).Encode(protocol.Problem{Type: protocol.CodeRateLimited.TypeURI(), Title: "Rate limited", Status: http.StatusTooManyRequests, Code: protocol.CodeRateLimited, Detail: "paced"})
+				_ = json.NewEncoder(w).Encode(protocol.Problem{Type: protocol.CodeFetchPaced.TypeURI(), Title: "Fetch paced", Status: http.StatusTooManyRequests, Code: protocol.CodeFetchPaced, Detail: "paced"})
 				return
 			}
 		}
@@ -50,6 +50,51 @@ func TestAPacedDrainStopsAndResumes(t *testing.T) {
 	e.srv.SetMiddle(nil)
 	if res := receive(t, b); len(res.Delivered) != 1 || res.More || res.Paced != 0 {
 		t.Fatalf("the drain after it: delivered %d, more %v, paced %s", len(res.Delivered), res.More, res.Paced)
+	}
+}
+
+// Only a paced fetch stops a drain quietly. Any other 429 met in a drain, a
+// sender's lookup the box's call budget refused among them, is an error, and
+// the mail stays on the server: such a refusal says nothing of the mail, and
+// a drain that ended quietly on it would hide that a sender went unchecked
+// (#116).
+func TestOnlyAPacedFetchEndsADrainQuietly(t *testing.T) {
+	fetch := func(r *http.Request) bool {
+		return r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/messages/")
+	}
+	lookup := func(r *http.Request) bool { return strings.HasSuffix(r.URL.Path, "/revocations") }
+	for _, c := range []struct {
+		name   string
+		match  func(*http.Request) bool
+		status int
+		code   protocol.Code
+	}{
+		{"a call budget's 429 on the sender's lookup", lookup, http.StatusTooManyRequests, protocol.CodeRateLimited},
+		{"a pacing code on the sender's lookup", lookup, http.StatusTooManyRequests, protocol.CodeFetchPaced},
+		{"a pacing code under another status on the fetch", fetch, http.StatusServiceUnavailable, protocol.CodeFetchPaced},
+		{"a call budget's 429 on the fetch", fetch, http.StatusTooManyRequests, protocol.CodeRateLimited},
+	} {
+		e := newEnv(t)
+		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+		send(t, a, b, "1")
+		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if !c.match(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", protocol.ProblemContentType)
+			w.Header().Set("Retry-After", "6")
+			w.WriteHeader(c.status)
+			_ = json.NewEncoder(w).Encode(protocol.Problem{Type: c.code.TypeURI(), Title: c.code.Title(), Status: int64(c.status), Code: c.code})
+		})
+		res, err := b.Receive(context.Background())
+		if err == nil || (res != nil && (res.Paced != 0 || len(res.Delivered) != 0)) || e.srv.Count(b.Address()) != 1 {
+			t.Errorf("%s: %+v, %v, %d held", c.name, res, err, e.srv.Count(b.Address()))
+		}
+		e.srv.SetMiddle(nil)
+		if res := receive(t, b); len(res.Delivered) != 1 {
+			t.Errorf("%s, the drain after it: %+v", c.name, res)
+		}
 	}
 }
 

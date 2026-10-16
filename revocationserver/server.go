@@ -288,7 +288,9 @@ func (s *Server) put(w http.ResponseWriter, r *http.Request) error {
 				return fmt.Errorf("the revocation of certificates kept for %s: %w", a, err)
 			}
 			if certs.Through <= was.Through {
-				return refuse(protocol.CodeConflict, hintHigher, "a revocation of this address's certificates through serial %d is held, and nothing revokes fewer", was.Through)
+				p := refuse(protocol.CodeConflict, hintHigher, "a revocation of this address's certificates through serial %d is held, and nothing revokes fewer", was.Through)
+				p.Through = &was.Through
+				return p
 			}
 		}
 		keep.RevokedCertificates, keep.RevokedCertificatesSignature, changed = req.RevokedCertificates, req.RevokedCertificatesSignature, true
@@ -358,7 +360,10 @@ func (s *Server) body(w http.ResponseWriter, r *http.Request, v any) error {
 	if err != nil {
 		var tooBig *http.MaxBytesError
 		if errors.As(err, &tooBig) {
-			return refuse(protocol.CodeTooLarge, "send less", "the request body is over %d bytes", s.opt.MaxBody)
+			p := refuse(protocol.CodeTooLarge, "send less", "the request body is over %d bytes", s.opt.MaxBody)
+			n := uint64(s.opt.MaxBody) //nolint:gosec // a positive setting
+			p.Limit = &n
+			return p
 		}
 		return refuse(protocol.CodeBadRequest, "", "the request body could not be read")
 	}
@@ -368,7 +373,9 @@ func (s *Server) body(w http.ResponseWriter, r *http.Request, v any) error {
 	case errors.Is(err, protocol.ErrNotBase64):
 		return refuse(protocol.CodeBadEncoding, "base64 of the exact file bytes", "a byte field is not standard base64 in its one encoding")
 	case errors.Is(err, protocol.ErrUnknownMember):
-		return refuse(protocol.CodeBadRequest, hintRecord, "%v", err)
+		p := refuse(protocol.CodeBadRequest, hintRecord, "%v", err)
+		p.Member = protocol.UnknownMember(err)
+		return p
 	}
 	return refuse(protocol.CodeBadRequest, hintRecord, "the body is not the JSON object expected, read as PROTOCOL.md §0b reads one")
 }
@@ -418,7 +425,8 @@ func callerKey(host string) string {
 }
 
 // problem is a refusal: an RFC 9457 body with the protocol's code and a
-// hint, as a mailbox server sends one.
+// hint, as a mailbox server sends one. Every value its detail names is also
+// a member of its own (PROTOCOL.md §13), set by the caller.
 type problem struct {
 	protocol.Problem
 	retryAfter time.Duration
@@ -426,24 +434,8 @@ type problem struct {
 
 func (p *problem) Error() string { return string(p.Code) + ": " + p.Detail }
 
-// titles are the summaries of the codes a revocation server sends.
-var titles = map[protocol.Code]string{
-	protocol.CodeBadRequest:         "Bad request",
-	protocol.CodeBadAddress:         "Bad address",
-	protocol.CodeBadEncoding:        "Bad encoding",
-	protocol.CodeIdentityMismatch:   "Identity mismatch",
-	protocol.CodeBadRevocation:      "Bad revocation",
-	protocol.CodeUnsupportedKeyType: "Unsupported key type",
-	protocol.CodeNotRevoked:         "Not revoked",
-	protocol.CodeConflict:           "Conflict",
-	protocol.CodeRevoked:            "Revoked",
-	protocol.CodeTooLarge:           "Too large",
-	protocol.CodeRateLimited:        "Rate limited",
-	protocol.CodeUnavailable:        "Unavailable",
-}
-
 func refuse(code protocol.Code, hint, format string, args ...any) *problem {
-	return &problem{Problem: protocol.Problem{Type: code.TypeURI(), Title: titles[code], Status: int64(code.Status()), Detail: fmt.Sprintf(format, args...), Code: code, Hint: hint}}
+	return &problem{Problem: protocol.Problem{Type: code.TypeURI(), Title: code.Title(), Status: int64(code.Status()), Detail: fmt.Sprintf(format, args...), Code: code, Hint: hint}}
 }
 
 func (p *problem) write(w http.ResponseWriter) {

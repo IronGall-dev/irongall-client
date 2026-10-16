@@ -7,9 +7,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/IronGall-dev/irongall-client/client"
+	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
@@ -257,6 +259,33 @@ func TestAnACLGoesAboveTheVersionTheServerHolds(t *testing.T) {
 	data, _ := os.ReadFile(filepath.Join(b.Dir(), "acl.json"))
 	if err := protocol.Unmarshal(data, &took); err != nil || *took.Version != 2 {
 		t.Fatalf("acl.json: %s, %v", data, err)
+	}
+}
+
+// A server that answers box_changed to an ACL (the box changed while it
+// handled the request) is sent it again, as one that holds a later version
+// is: the write is not lost to a race.
+func TestAnACLIsSentAgainWhenTheBoxChanged(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a, b := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+	var once sync.Once
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		raced := false
+		if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/acl") {
+			once.Do(func() { raced = true })
+		}
+		if raced {
+			fakeserver.WriteJSON(w, protocol.CodeBoxChanged.Status(), protocol.Problem{Code: protocol.CodeBoxChanged, Status: int64(protocol.CodeBoxChanged.Status())})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	if _, err := b.Block(ctx, a.Address()); err != nil {
+		t.Fatalf("block when the box changed once: %v", err)
+	}
+	if acl := e.srv.ACL(b.Address()); !acl.Deny.Has(a.Address()) {
+		t.Fatalf("the server holds %+v", acl)
 	}
 }
 

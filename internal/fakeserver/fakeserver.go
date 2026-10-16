@@ -209,7 +209,7 @@ func (s *Server) pass(w http.ResponseWriter, r *http.Request, identity []byte, u
 		problem(w, protocol.CodeUnauthorized, "not this box's pass for this server")
 		return false
 	case !bytes.Equal(cert.Marshal(), under.Marshal()):
-		problem(w, protocol.CodeUnauthorized, "the pass is not under the box's current certificate")
+		problem(w, protocol.CodeCertificateNotCurrent, "the pass is not under the box's current certificate")
 		return false
 	}
 	return true
@@ -374,13 +374,13 @@ func (s *Server) newPrekey(w http.ResponseWriter, r *http.Request) {
 	// current one at a higher serial.
 	switch {
 	case cert.Serial() < b.cert.Serial(), cert.Serial() == b.cert.Serial() && !bytes.Equal(cert.Marshal(), b.cert.Marshal()):
-		problem(w, protocol.CodeBadKey, "the certificate is older than the box's current one")
+		problem(w, protocol.CodeCertificateNotCurrent, "the certificate is older than the box's current one")
 		return
 	case cert.Serial() == b.cert.Serial() && p.Serial <= b.prekey.Serial:
 		problem(w, protocol.CodeConflict, "the serial must be higher")
 		return
 	case b.listed != nil && b.listed.Revokes(cert.Serial()):
-		problem(w, protocol.CodeBadKey, "the certificate is one the identity revoked")
+		problem(w, protocol.CodeCertificateRevoked, "the certificate is one the identity revoked")
 		return
 	}
 	// A prekey upload carries a pass under the certificate of the statement
@@ -418,7 +418,7 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !sender.current() {
-		problem(w, protocol.CodeUnauthorized, "the pass is under a certificate the box's identity revoked")
+		problem(w, protocol.CodeCertificateRevoked, "the pass is under a certificate the box's identity revoked")
 		return
 	}
 	if !s.pass(w, r, sender.identity, sender.cert) {
@@ -454,6 +454,28 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusCreated, receipt(key, m))
 }
 
+// Take answers a post as a server that kept it would, and keeps nothing: a
+// receipt for the ciphertext posted. It is for a test that plays an
+// operator who swallows mail, which a client cannot tell from a delivery.
+func Take(w http.ResponseWriter, r *http.Request) { TakeAs(w, r, nil) }
+
+// TakeAs is Take, with the receipt changed by edit before it is written.
+func TakeAs(w http.ResponseWriter, r *http.Request, edit func(*protocol.Receipt)) {
+	var req protocol.SendRequest
+	body, _ := io.ReadAll(r.Body)
+	if protocol.Unmarshal(body, &req) != nil {
+		problem(w, protocol.CodeBadRequest, "not a send")
+		return
+	}
+	h := sha256.Sum256(req.Ciphertext)
+	now := time.Now()
+	rec := protocol.Receipt{ID: hex.EncodeToString(h[:]), ReceivedAt: formatTime(now), ExpiresAt: formatTime(now.Add(protocol.TTL))}
+	if edit != nil {
+		edit(&rec)
+	}
+	WriteJSON(w, http.StatusCreated, rec)
+}
+
 func receipt(id string, m *message) protocol.Receipt {
 	return protocol.Receipt{ID: id, ReceivedAt: formatTime(m.receivedAt), ExpiresAt: formatTime(m.receivedAt.Add(protocol.TTL))}
 }
@@ -480,7 +502,7 @@ func (s *Server) owner(h func(http.ResponseWriter, *http.Request, *box)) http.Ha
 			return
 		}
 		if !b.current() {
-			problem(w, protocol.CodeUnauthorized, "the pass is under a certificate the box's identity revoked")
+			problem(w, protocol.CodeCertificateRevoked, "the pass is under a certificate the box's identity revoked")
 			return
 		}
 		if s.pass(w, r, b.identity, b.cert) {

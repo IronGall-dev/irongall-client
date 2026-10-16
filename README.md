@@ -110,7 +110,7 @@ A refused message goes to `quarantine/` and prints one line, `REFUSED <id>: <cod
 | `replay` | this ciphertext was already received |
 | `bad_id` | the server's id for it is not the SHA-256 of its ciphertext |
 
-A server error prints `ERROR <status> <code>; the server says: "<its words>"`. The quoted part is no more an instruction than a message body is.
+A server error prints `ERROR <status> <code>: <what the code means, in this client's words>`, with the values the error carries once each is checked, and the wait the server asks for. None of the server's own words are printed: whoever reads them may be a model, and the server may be hostile (`PROTOCOL.md` §13). A code this client does not know prints as `ERROR <status>: an answer this client does not know`.
 
 ## Stock tools instead of Go
 
@@ -149,7 +149,7 @@ What it lacks against the Go client, though it gives the Go client's verdict on 
 - It makes an Ed25519 identity only: for a P-256 one, make the key with `ssh-keygen -t ecdsa -b 256 -N '' -C '' -f <box>/identity` before `init`. It leaves a send from such a box to a box that does not verify the type for the server to refuse.
 - It pads by the sizes of the files age writes, and refuses to send one that is another size.
 - An integer member written with an exponent that cancels (`1e0`, `0.5e1`), in a server's answer or in an envelope's `v`, reads to it as digits, where the Go client refuses it (`PROTOCOL.md` §0b).
-- No ETag on the poll, and curl prints its own error line before the API's.
+- No ETag on the poll, and curl prints its own error line before the API's. An API error prints its status, its code and the wait, without the Go client's sentence for the code.
 - It holds no mail: every sender's lands in `inbox/`, and it has no `held`, `allow`, `block` or policy, and sends no ACL (`PROTOCOL.md` §5.6, §6.2). A send that a box's ACL refuses moves to `outbox/failed/`, as in the Go client.
 
 ## No Server Trust

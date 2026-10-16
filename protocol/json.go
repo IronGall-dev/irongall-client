@@ -34,8 +34,27 @@ const MaxInteger = 1<<53 - 1
 var ErrJSON = errors.New("not a JSON text as the protocol reads one")
 
 // ErrUnknownMember is a request body with a member its call does not take
-// (PROTOCOL.md §0a). Its words name the member, for the caller who sent it.
+// (PROTOCOL.md §0a). Its words name the member, for the caller who sent it,
+// and so does [UnknownMember].
 var ErrUnknownMember = errors.New("the body has a member this call does not take")
+
+type unknownMemberError struct{ name string }
+
+func (e *unknownMemberError) Error() string {
+	return fmt.Sprintf("%v: %q", ErrUnknownMember, e.name)
+}
+
+func (e *unknownMemberError) Is(target error) bool { return target == ErrUnknownMember }
+
+// UnknownMember is the name of the member an [ErrUnknownMember] names, or ""
+// for any other error: a server answers it as a member of its own, beside the
+// words (PROTOCOL.md §13).
+func UnknownMember(err error) string {
+	if e, ok := errors.AsType[*unknownMemberError](err); ok {
+		return e.name
+	}
+	return ""
+}
 
 // Unmarshal reads data, a JSON text the protocol carries, into v: the rules
 // of PROTOCOL.md §0b, then encoding/json/v2's with names matched exactly. A
@@ -64,7 +83,7 @@ func unmarshal(data []byte, v any, request bool) error {
 	case errors.Is(err, ErrNotBase64):
 		return ErrNotBase64
 	case ok && serr.Err == jsonv2.ErrUnknownName:
-		return fmt.Errorf("%w: %q", ErrUnknownMember, serr.JSONPointer.LastToken())
+		return &unknownMemberError{serr.JSONPointer.LastToken()}
 	case errors.Is(err, errNotInteger):
 		return fmt.Errorf("%w: %w", ErrJSON, errNotInteger)
 	}

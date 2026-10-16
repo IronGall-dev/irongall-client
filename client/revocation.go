@@ -424,7 +424,7 @@ func (b *Box) renewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy,
 		return nil, rerr // it made no new certificate: nothing is named
 	}
 	r := &Remedy{Below: made, Prekey: p, NotRenewed: rerr}
-	if rerr != nil && Code(rerr) != protocol.CodeRateLimited {
+	if c := Code(rerr); rerr != nil && c != protocol.CodeRenewalsSpent && c != protocol.CodeIdentityActsSpent {
 		return r, rerr
 	}
 	certs, err := b.revokeBelow(ctx, made)

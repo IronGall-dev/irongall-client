@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
@@ -34,7 +35,8 @@ const (
 )
 
 // APIError is a non-2xx answer from the server. Problem is the RFC 9457 body
-// when the server sent one; its Code and Hint say what to do.
+// when the server sent one with a code this client knows, for the status the
+// code has (PROTOCOL.md §13); otherwise its code is empty.
 type APIError struct {
 	Status  int
 	Problem protocol.Problem
@@ -43,47 +45,180 @@ type APIError struct {
 	// Dated is the time in the answer's Date header, and Read this box's
 	// clock when the answer came: both zero unless the call carried a pass
 	// and the answer a Date. They are set side by side in the error for a
-	// pass refused for its time, and never adopted: a box checks everything
-	// against its own clock, and a server may lie about the time as about
-	// anything else.
+	// pass or a statement refused for its time, and never adopted: a box
+	// checks everything against its own clock, and a server may lie about
+	// the time as about anything else.
 	Dated, Read time.Time
 }
 
-// Error is the status and code, then what the server says: its detail (which
-// names the limit hit, and for a rate limit the seconds to wait) and its
-// hint. Those are the server's words, not this client's, and are printed as
-// such: in quotes, on one line, printable ASCII only, and no longer than
-// serverWords each. A code that is not a code is not printed.
+// Error is the status and the code, then what the code means, in this
+// client's own words, with the values the error carries once each is checked
+// to its type. Nothing the server wrote is in it: its detail, hint and title
+// are for a person reading the body, and whoever reads this may be a model
+// (PROTOCOL.md §13). A code this client does not know is not printed at all,
+// since any text can be made to fit a code's grammar.
 func (e *APIError) Error() string {
-	code := string(e.Problem.Code)
-	if !codeGrammar.MatchString(code) {
-		return fmt.Sprintf("ERROR %d", e.Status)
+	c := e.Problem.Code
+	s := fmt.Sprintf("ERROR %d: an answer this client does not know", e.Status)
+	if c.Known() {
+		s = fmt.Sprintf("ERROR %d %s: %s", e.Status, c, e.words())
 	}
-	var says []string
-	for _, s := range []string{e.Problem.Detail, e.Problem.Hint} {
-		if s = plain(s); s != "" {
-			says = append(says, s)
+	if n := int(e.RetryAfter / time.Second); n == 1 {
+		s += "; the server asks to wait 1 second"
+	} else if n > 1 {
+		s += fmt.Sprintf("; the server asks to wait %d seconds", n)
+	}
+	return s + e.clock()
+}
+
+// words says what e's code means, and what to do about it.
+func (e *APIError) words() string {
+	p := &e.Problem
+	switch p.Code {
+	case protocol.CodeBadRequest:
+		return "the server could not read the request: a bug in this client, or a server that reads the protocol otherwise"
+	case protocol.CodeBadAddress:
+		return "the server does not take that as an address, which is 64 lowercase hex characters"
+	case protocol.CodeBadEncoding:
+		return "the server read a byte field as not base64 in its one encoding: a bug in this client, or in the server"
+	case protocol.CodeIdentityMismatch:
+		return "the server finds that the identity document does not hash to the address, or is not in its one form"
+	case protocol.CodeBadKey:
+		return "the server refused a key, certificate or prekey statement this box sent, as malformed or not verifying: irongall prekey renew signs a new statement, and a box that cannot register needs a new identity (irongall init)"
+	case protocol.CodePrekeyNotNew:
+		return "the server has seen that prekey before, and every prekey is a new key: irongall prekey renew makes one"
+	case protocol.CodePrekeyTime:
+		return "the server finds the prekey statement, or the certificate it is under, not valid at its clock"
+	case protocol.CodeUnsupportedKeyType:
+		s := "the server does not register identities of this box's key type"
+		if t := knownTypes(p.KeyTypes); t != "" {
+			s += "; it registers " + t
+		}
+		return s + ". irongall init makes an ssh-ed25519 identity unless told otherwise"
+	case protocol.CodeNotAge:
+		return "the server does not read the ciphertext as an age file: a bug in this client, or in the server"
+	case protocol.CodeWrongRecipientType:
+		return "the server finds the ciphertext not encrypted to one recipient of the type of the box's prekey: a post-quantum box needs age 1.3 or later"
+	case protocol.CodeBadRevocation:
+		return "the server does not take that record as a revocation its address's own identity signed"
+	case protocol.CodeUnauthorized:
+		return "the server refused this box's pass, and a new one: check that the server's URL names the box's own server"
+	case protocol.CodePassExpired:
+		return "the server refused this box's pass, and a new one, as not valid at its clock"
+	case protocol.CodeCertificateNotCurrent:
+		s := "the server holds another certificate as this box's current one"
+		if p.CertificateSerial != nil {
+			s += fmt.Sprintf(", serial %d", *p.CertificateSerial)
+		}
+		return s + ", as after a restore or a renewal on another machine: irongall prekey renew certifies a new working key above it"
+	case protocol.CodeCertificateRevoked:
+		return "the server holds the certificate this box signs under as one its identity revoked: irongall prekey renew certifies a new working key above it"
+	case protocol.CodeUnknownSender:
+		return "the server does not know this box: it is not registered there, or is closed (irongall init registers a box, and irongall prekey renew reopens one)"
+	case protocol.CodeSenderRevoked:
+		return "the server answers that this box is revoked: this client takes that only from a revocation that verifies"
+	case protocol.CodeSenderNotAllowed:
+		return "the recipient's ACL does not let this box write to it: only the recipient can change that"
+	case protocol.CodeSenderKeyType:
+		return "the recipient's client does not verify identities of this box's key type: a box with an ssh-ed25519 identity can write to any box"
+	case protocol.CodeAdoptKeyRefused:
+		return "the server refused the adopt key as spent, expired, revoked or not its own: ask the account for a new one"
+	case protocol.CodeNoSuchMailbox:
+		return "the server holds no box at that address: never registered, or closed"
+	case protocol.CodeNoSuchMessage:
+		return "the server holds no message with that id: acked or expired"
+	case protocol.CodeNotRevoked:
+		return "the server holds no revocation of that address"
+	case protocol.CodeConflict:
+		s := "the server holds a newer version of what was sent, or another"
+		switch {
+		case p.Version != nil:
+			s += fmt.Sprintf(": version %d", *p.Version)
+		case p.Through != nil:
+			s += fmt.Sprintf(": a revocation of certificates through serial %d", *p.Through)
+		case p.PrekeySerial != nil:
+			s += fmt.Sprintf(": prekey serial %d", *p.PrekeySerial)
+		}
+		return s
+	case protocol.CodeBoxChanged:
+		return "the box changed on the server while the request was handled: send it again as it is"
+	case protocol.CodeStalePrekey:
+		return "the box has a newer prekey than the one the message was encrypted to"
+	case protocol.CodePrekeyExpired:
+		return "the box's prekey has expired at the server, so it takes no mail until its owner renews it"
+	case protocol.CodeRevoked:
+		return "the server answers that that box is revoked: this client takes that only from a revocation that verifies"
+	case protocol.CodeTooLarge:
+		return "too large for the server" + limit(p, ": its limit is %d")
+	case protocol.CodeRateLimited:
+		return "the server takes no more calls of this kind for now"
+	case protocol.CodeRenewalsSpent:
+		return "the box has renewed its prekey as many times today as the server takes" + limit(p, " (%d)")
+	case protocol.CodeIdentityActsSpent:
+		return "the box's identity has certified working keys or revoked certificates as many times today as the server takes" + limit(p, " (%d)")
+	case protocol.CodeSendsSpent:
+		return "the box has sent as many messages today as the server takes" + limit(p, " (%d)") + ": an account can lift a box's limits (irongall account adopt)"
+	case protocol.CodeFetchPaced:
+		return "the server paces how much new mail the box takes out: the rest waits on the server"
+	case protocol.CodeRefetchSpent:
+		return "the message was fetched before, and the server takes no more fetches of it for now: a client keeps each message when it fetches it"
+	case protocol.CodePairFull:
+		s := "the recipient holds as much unacked mail from this box as it takes"
+		if p.Unacked != nil {
+			s += fmt.Sprintf(": %d messages", *p.Unacked)
+			if t, err := protocol.ParseTime(p.OldestExpiresAt); err == nil {
+				s += ", the oldest expiring " + t.Format(protocol.TimeLayout)
+			}
+		}
+		return s
+	case protocol.CodeMailboxFull:
+		s := "the recipient's box is full"
+		if p.Messages != nil {
+			s += fmt.Sprintf(": it holds %d messages", *p.Messages)
+		}
+		return s
+	case protocol.CodeMailboxBusy:
+		return "the recipient's box has taken as much new mail as it takes for now: irongall outbox flush posts it again"
+	case protocol.CodeUnavailable:
+		return "the server is not ready to answer"
+	}
+	return "an answer this client does not know"
+}
+
+// limit is format with the limit p carries, or "" when it carries none.
+func limit(p *protocol.Problem, format string) string {
+	if p.Limit == nil {
+		return ""
+	}
+	return fmt.Sprintf(format, *p.Limit)
+}
+
+// knownTypes is the key types among names that this client knows, so that a
+// server's list prints nothing a server made up.
+func knownTypes(names []string) string {
+	var known []string
+	for _, n := range names {
+		if slices.Contains(protocol.IdentityTypes(), n) && !slices.Contains(known, n) {
+			known = append(known, n)
 		}
 	}
-	if len(says) == 0 {
-		return fmt.Sprintf("ERROR %d %s", e.Status, code) + e.clock()
-	}
-	return fmt.Sprintf("ERROR %d %s; the server says: %q", e.Status, code, strings.Join(says, "; ")) + e.clock()
+	return strings.Join(known, ", ")
 }
 
 // clock is what an error says about this machine's clock when the server
-// refused the pass for its time: what the clock reads, and the date on the
-// server's answer. A new pass does not cure that refusal, so it is nearly
-// always a clock, and a server takes a pass from a box whose clock is less
-// than PassLifetime slow and no more than MaxPassLifetime less PassLifetime
-// fast (protocol.MaxSkew).
+// refused the pass, or a prekey statement, for its time: what the clock
+// reads, and the date on the server's answer. A new pass does not cure that
+// refusal, so it is nearly always a clock, and a server takes a pass from a
+// box whose clock is less than PassLifetime slow and no more than
+// MaxPassLifetime less PassLifetime fast (protocol.MaxSkew).
 //
 // The date is the server's word and is given as that. A server may lie about
 // the time, and a clock set by a lie makes an ended certificate valid again
 // and stale mail fresh, so the sentence sends its reader to a time source of
 // their own and never to the server's.
 func (e *APIError) clock() string {
-	if e.Problem.Code != protocol.CodePassExpired || e.Dated.IsZero() || e.Read.IsZero() {
+	c := e.Problem.Code
+	if (c != protocol.CodePassExpired && c != protocol.CodePrekeyTime) || e.Dated.IsZero() || e.Read.IsZero() {
 		return ""
 	}
 	slow, fast := protocol.PassLifetime, protocol.MaxPassLifetime-protocol.PassLifetime
@@ -94,31 +229,13 @@ func (e *APIError) clock() string {
 	case d > 0:
 		how = fmt.Sprintf("%s ahead of that", d)
 	}
-	return fmt.Sprintf("; the server dates its answer %s, and this machine's clock reads %s, %s. A server refuses a pass from a clock %d minutes or more behind its own, or more than %d ahead. Check this machine's clock against a time source you trust, not against the server",
+	return fmt.Sprintf("; the server dates its answer %s, and this machine's clock reads %s, %s. A server refuses a pass from a clock %d minutes or more behind its own, or more than %d ahead, and a certificate or prekey statement this machine dated more than an hour ahead of it. Check this machine's clock against a time source you trust, not against the server",
 		e.Dated.Format(protocol.TimeLayout), e.Read.Format(protocol.TimeLayout), how, slow/time.Minute, fast/time.Minute)
 }
 
-// serverWords is the most of a server's detail or hint that is printed.
-const serverWords = 200
-
+// codeGrammar is the grammar of a code, as a quarantined message's .reason
+// file starts with one.
 var codeGrammar = regexp.MustCompile(`\A[a-z0-9_]{1,40}\z`)
-
-// plain returns text someone else chose as one bounded line of printable
-// ASCII: anything else in it becomes a space.
-func plain(s string) string {
-	var b strings.Builder
-	for i, r := range s {
-		if i >= serverWords {
-			b.WriteString("...")
-			break
-		}
-		if r < ' ' || r > '~' {
-			r = ' '
-		}
-		b.WriteRune(r)
-	}
-	return strings.Join(strings.Fields(b.String()), " ")
-}
 
 // Code returns the error's code, if err is an [APIError].
 func Code(err error) protocol.Code {

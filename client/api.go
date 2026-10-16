@@ -68,9 +68,11 @@ func (b *Box) callAt(ctx context.Context, base, method, path string, in any, hdr
 		e := &APIError{Status: resp.StatusCode}
 		// A body that is not problem+json, read as any answer is, leaves the
 		// code empty: one that breaks a rule is no answer, so nothing it got as
-		// far as is kept (PROTOCOL.md §0b).
+		// far as is kept (PROTOCOL.md §0b). So does a code this client does
+		// not know, or one under a status that is not its own (§13): no
+		// branch of this client is taken on it, and nothing of it is shown.
 		var p protocol.Problem
-		if protocol.Unmarshal(data, &p) == nil {
+		if protocol.Unmarshal(data, &p) == nil && p.Code.Known() && p.Code.Status() == resp.StatusCode {
 			e.Problem = p
 		}
 		if s, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && s > 0 {
@@ -89,6 +91,16 @@ func (b *Box) callAt(ctx context.Context, base, method, path string, in any, hdr
 	return resp, nil
 }
 
+// passRefused reports whether c is a server refusing the pass a call carried
+// (every 401, PROTOCOL.md §13), which a new pass may cure.
+func passRefused(c protocol.Code) bool {
+	switch c {
+	case protocol.CodeUnauthorized, protocol.CodePassExpired, protocol.CodeCertificateNotCurrent, protocol.CodeCertificateRevoked:
+		return true
+	}
+	return false
+}
+
 // owner makes a request as this box, with in as its JSON body when not nil:
 // a call that carries the box's pass. If the server refuses the pass, because
 // it ran out sooner by the server's clock or was signed under a certificate
@@ -105,7 +117,7 @@ func (b *Box) owner(ctx context.Context, method, path string, in any, hdr http.H
 		}
 		h.Set("Authorization", pass)
 		resp, err := b.call(ctx, method, path, in, h, out)
-		if c := Code(err); attempt > 0 || (c != protocol.CodePassExpired && c != protocol.CodeUnauthorized) {
+		if attempt > 0 || !passRefused(Code(err)) {
 			return resp, err
 		}
 		if err := removeIfExists(b.path("pass")); err != nil {
@@ -131,7 +143,7 @@ func (b *Box) lookup(ctx context.Context, a protocol.Address, suffix string, out
 	}
 	resp, err := b.owner(ctx, http.MethodGet, path, nil, nil, out)
 	switch Code(err) {
-	case protocol.CodeUnauthorized, protocol.CodePassExpired, protocol.CodeUnknownSender, protocol.CodeSenderRevoked:
+	case protocol.CodeUnauthorized, protocol.CodePassExpired, protocol.CodeCertificateNotCurrent, protocol.CodeCertificateRevoked, protocol.CodeUnknownSender, protocol.CodeSenderRevoked:
 		// What was refused is this box's pass, not the lookup: what is
 		// public is asked again without it. A call that needs the pass
 		// meets the same refusal, and that call says what it means.

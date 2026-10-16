@@ -75,7 +75,8 @@ type Result struct {
 	// on the server for the next Receive.
 	More bool
 	// Paced is how long the server asked the box to wait before taking out
-	// more, when it paced the drain (a 429 with Retry-After); zero otherwise.
+	// more, when it paced the drain (a 429 fetch_paced or refetch_spent with
+	// Retry-After, on a fetch); zero otherwise.
 	Paced time.Duration
 	// PollAfter is the server's poll interval, in seconds.
 	PollAfter int64
@@ -200,9 +201,11 @@ func (b *Box) drain(ctx context.Context) (*Result, error) {
 			n, err := b.receiveOne(ctx, m.ID, res, asked, who)
 			// A server that paces how much a box takes out stops the drain
 			// as a drain's own limits do: what is left waits on the server.
-			var paced *APIError
-			if errors.As(err, &paced) && paced.Problem.Code == protocol.CodeRateLimited && paced.RetryAfter > 0 {
-				res.More, res.Paced = true, paced.RetryAfter
+			// Only the fetch's own answer is pacing (receiveOne): any other
+			// call's refusal in the drain is an error (#116).
+			var paced *pacedError
+			if errors.As(err, &paced) {
+				res.More, res.Paced = true, paced.wait
 				return res, nil
 			}
 			if err != nil {
@@ -217,6 +220,17 @@ func (b *Box) drain(ctx context.Context) (*Result, error) {
 		cursor = *list.NextCursor
 	}
 }
+
+// pacedError is the server pacing a drain, as only the answer to a fetch
+// says it (PROTOCOL.md §5.7): a 429 fetch_paced or refetch_spent, with how
+// long to wait.
+type pacedError struct {
+	wait time.Duration
+	err  error
+}
+
+func (e *pacedError) Error() string { return e.err.Error() }
+func (e *pacedError) Unwrap() error { return e.err }
 
 // receiveOne judges one message unless its id was already handled, stores
 // the verdict, and acks it, and returns the bytes of ciphertext it fetched.
@@ -234,10 +248,13 @@ func (b *Box) receiveOne(ctx context.Context, id string, res *Result, asked *loo
 	if !handled {
 		var m protocol.Message
 		_, err := b.owner(ctx, http.MethodGet, b.boxPath("/messages/"+id), nil, nil, &m)
-		if Code(err) == protocol.CodeNoSuchMessage {
+		var api *APIError
+		switch {
+		case Code(err) == protocol.CodeNoSuchMessage:
 			return 0, nil // already gone
-		}
-		if err != nil {
+		case errors.As(err, &api) && (api.Problem.Code == protocol.CodeFetchPaced || api.Problem.Code == protocol.CodeRefetchSpent) && api.RetryAfter > 0:
+			return 0, &pacedError{wait: api.RetryAfter, err: err}
+		case err != nil:
 			return 0, err
 		}
 		fetched = len(m.Ciphertext)

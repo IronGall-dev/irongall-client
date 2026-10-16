@@ -2,7 +2,7 @@
 # irongall.sh: the irongall client in stock tools (bash, age, ssh-keygen, curl, jq, iconv and coreutils).
 #
 # The same protocol, checks and on-disk box as the Go client in this repo, so either can run a box. It fails CLOSED:
-# a failed check prints one "REFUSED: <reason>" line and stops (recv refuses that one message, "REFUSED <id>: <code>: <words>", and goes on), and every API error prints its code and what the server says.
+# a failed check prints one "REFUSED: <reason>" line and stops (recv refuses that one message, "REFUSED <id>: <code>: <words>", and goes on), and every API error prints its status and its code, and none of the server's words.
 # Get it from https://github.com/IronGall-dev/irongall-client at a commit you have read, never from the irongall.dev
 # server: a server that could hand you this script could hand you one without its checks.
 #
@@ -44,15 +44,20 @@ ig_time(){ # <timestamp> → its Unix time, only for exactly YYYY-MM-DDTHH:MM:SS
   local s; [[ $1 =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 1
   s=$(jq -nr --arg t "$1" '$t | fromdateiso8601 | select(todate == $t)' 2> /dev/null) && [ -n "$s" ] && echo "$s"
 }
-ig_api(){ # <METHOD> <PATH> [JSON file] [curl args…] → the body on stdout. Any non-2xx: prints its code, then what the server says (its detail, with the limit hit and the seconds to wait, and its hint) in quotes, as ITS words: one line, printable ASCII, cut short. Keeps the answer in $IG/error.json, returns 1
-  local m=$1 p=$2 f=${3-}; shift 2; [ $# -gt 0 ] && shift
-  rm -f "$IG/error.json"
-  curl -sS --max-time 60 --max-filesize 16777216 --fail-with-body -X "$m" ${f:+-H 'Content-Type: application/json' --data-binary "@$f"} "$@" "$IG_BASE$p" > "$IG/response.json" && { cat "$IG/response.json"; return 0; }
-  mv "$IG/response.json" "$IG/error.json"
-  ig_shape "$IG/error.json" problem && jq -er '"ERROR \(.status | numbers) \(.code | strings | select(test("\\A[a-z0-9_]{1,40}\\z"))); the server says: \([.detail, .hint] | map(strings | gsub("[^ -~]"; " ") | .[0:200] | select(. != "")) | join("; ") | tojson)"' "$IG/error.json" >&2 2> /dev/null ||
-    echo "ERROR: the server's answer is not an error this client knows (it is kept in $IG/error.json)" >&2; return 1
+ig_api(){ # <METHOD> <PATH> [JSON file] [curl args…] → the body on stdout. Any non-2xx: prints its status, its code (ig_code) and the wait its Retry-After asks for, and nothing the server wrote: its detail, hint and title are for a person reading the body (PROTOCOL.md §13). Keeps the answer in $IG/error.json and its headers in $IG/error.headers, returns 1
+  local m=$1 p=$2 f=${3-} c w; shift 2; [ $# -gt 0 ] && shift
+  rm -f "$IG/error.json" "$IG/error.headers"
+  curl -sS --max-time 60 --max-filesize 16777216 --fail-with-body -D "$IG/response.headers" -X "$m" ${f:+-H 'Content-Type: application/json' --data-binary "@$f"} "$@" "$IG_BASE$p" > "$IG/response.json" && { cat "$IG/response.json"; return 0; }
+  mv "$IG/response.json" "$IG/error.json"; mv "$IG/response.headers" "$IG/error.headers" 2> /dev/null
+  c=$(ig_code); w=$(ig_wait)
+  if [ -n "$c" ]; then c=" $c"; else c=": an answer this client does not know"; fi
+  echo "ERROR $(ig_status)$c${w:+; the server asks to wait $w seconds}" >&2; return 1
 }
-ig_code(){ ig_shape "$IG/error.json" problem && jq -r '.code // empty' "$IG/error.json" 2> /dev/null; }   # the code of the last API error, from an answer the Go client would read the same
+IG_CODES='{"bad_request":400,"bad_address":400,"bad_encoding":400,"identity_mismatch":400,"bad_key":400,"prekey_not_new":400,"prekey_time":400,"unsupported_key_type":400,"not_age":400,"wrong_recipient_type":400,"bad_revocation":400,"unauthorized":401,"pass_expired":401,"certificate_not_current":401,"certificate_revoked":401,"unknown_sender":403,"sender_revoked":403,"sender_not_allowed":403,"sender_key_type":403,"adopt_key_refused":403,"no_such_mailbox":404,"no_such_message":404,"not_revoked":404,"conflict":409,"box_changed":409,"stale_prekey":409,"prekey_expired":409,"revoked":410,"too_large":413,"rate_limited":429,"renewals_spent":429,"identity_acts_spent":429,"sends_spent":429,"fetch_paced":429,"refetch_spent":429,"pair_full":429,"mailbox_full":429,"mailbox_busy":429,"unavailable":503}'      # every code, and its status (PROTOCOL.md §13)
+ig_status(){ LC_ALL=C sed -n 's/^HTTP\/[0-9.]* \([0-9][0-9][0-9]\).*/\1/p' "$IG/error.headers" 2> /dev/null | tail -n 1; }      # the status of the last API error
+ig_code(){ local s; s=$(ig_status) && [ -n "$s" ] && ig_shape "$IG/error.json" problem && jq -r --argjson codes "$IG_CODES" --argjson s "$s" '.code | strings | select($codes[.] == $s)' "$IG/error.json" 2> /dev/null; }   # the code of the last API error: one this client knows, under its own status, from an answer the Go client would read the same. Any other is no code
+ig_wait(){ LC_ALL=C sed -n 's/^[Rr][Ee][Tt][Rr][Yy]-[Aa][Ff][Tt][Ee][Rr]: *\([0-9]\{1,9\}\)\r\{0,1\}$/\1/p' "$IG/error.headers" 2> /dev/null | tail -n 1 | sed 's/^0*\([0-9]\)/\1/' | awk '$1 > 0 { print ($1 > 86400 ? 86400 : $1) }'; }      # the seconds the last API error's Retry-After asks to wait, as a number of at most a day, or nothing
+ig_dated(){ local d; d=$(LC_ALL=C sed -n 's/^[Dd][Aa][Tt][Ee]: *\([A-Za-z0-9 ,:]*\)\r\{0,1\}$/\1/p' "$IG/error.headers" 2> /dev/null | tail -n 1) && [ -n "$d" ] && jq -nr --arg d "$d" '$d | strptime("%a, %d %b %Y %H:%M:%S GMT") | mktime | todate' 2> /dev/null; }      # the time the last API error's Date header gives, the server's word
 ig_json(){ # <file> → 0 only for a JSON text as PROTOCOL.md §0b reads one: UTF-8 with no byte-order mark; one object; every number in JSON's own grammar; no member named twice in any object; nested at most 32 deep; and no Unicode noncharacter in a name or a string (I-JSON, RFC 7493). jq skips a byte-order mark and takes NaN, 01, +1 and .5, which JSON does not, so the numbers are read from the text, its strings taken out
   local n
   iconv -f UTF-8 -t UTF-8 < "$1" > /dev/null 2>&1 && ! LC_ALL=C grep -Eq $'[\xf5-\xff]|\xf4[\x90-\xbf]' "$1" && [ "$(od -An -N3 -tx1 "$1" | tr -d ' \n')" != efbbbf ] || return 1      # glibc's iconv takes a code point above U+10FFFF, which UTF-8 has none of
@@ -69,7 +74,7 @@ ig_shape(){ # <answer> <identity|list|message|record|receipt|problem> → 0 only
      message: all(.id, .from, .received_at, .expires_at, .ciphertext; s),
      record: all(.identity, .revocation, .revoked_certificates, .revoked_certificates_signature; s),
      receipt: all(.id, .received_at, .expires_at; s),
-     problem: (all(.type, .title, .detail, .code, .hint, .oldest_expires_at; s) and all(.status, .unacked; n))}[$k]' "$1" > /dev/null 2>&1
+     problem: (all(.type, .title, .detail, .code, .hint, .oldest_expires_at, .key_type, .member; s) and all(.status, .unacked, .limit, .messages, .version, .prekey_serial, .certificate_serial, .through; n) and (.key_types | . == null or (type == "array" and all(.[]; s))))}[$k]' "$1" > /dev/null 2>&1
 }
 ig_bytes(){ # <answer> <member> <file> → the member's bytes into the file, only for base64 in its one encoding (RFC 4648 §3): padded, nothing outside the alphabet, a line break included, and the unused bits zero, which is what encoding the bytes again gives back. A member null or left out is no bytes. 1 for anything else
   jq -ejr --arg m "$2" '.[$m] | if . == null then "" else strings end' "$1" > "$3.b64" 2> /dev/null && base64 -d < "$3.b64" > "$3" 2> /dev/null && [ "$(ig_b64 "$3" | sha256sum)" = "$(sha256sum < "$3.b64")" ] || { rm -f "$3.b64"; return 1; }
@@ -81,18 +86,20 @@ ig_asc(){ printf %s "$1" | od -An -v -tx1 | tr -d ' \n'; }      # <text> → its
 ig_owner(){ # ig_api as this box: adds its pass. If the server refuses the pass (it ran out sooner by the server's clock, or is under a certificate the server no longer takes), signs another and tries once more. A pass refused twice for its time is the clock: it says what this one reads, beside the server's words
   local p; p=$(ig_pass) || return 1
   ig_api "$1" "$2" "${3-}" -H "Authorization: $p" && return 0
-  case $(ig_code) in pass_expired | unauthorized) ;; *) return 1 ;; esac
+  case $(ig_code) in unauthorized | pass_expired | certificate_not_current | certificate_revoked) ;; *) return 1 ;; esac
   rm -f "$IG/pass"; p=$(ig_pass) && ig_api "$1" "$2" "${3-}" -H "Authorization: $p" && return 0
   ig_clock; return 1
 }
 ig_look(){ # <address> <suffix> → ig_api GET of what this box's server serves about another box, with this box's pass, so the call is counted against this box and not against the address it comes from (PROTOCOL.md §4.1). About itself, or with no pass to sign, without one: those are asked when the pass may be what is wrong
   [ "$1" != "$(cat "$IG/address" 2> /dev/null)" ] && ig_pass > /dev/null 2>&1 || { ig_api GET "/v1/$1$2"; return; }
   ig_owner GET "/v1/$1$2" 2> "$IG/look.err" && return 0
-  case $(ig_code) in unauthorized | pass_expired | unknown_sender | sender_revoked) ig_api GET "/v1/$1$2" ;;      # what was refused is this box's pass, not the lookup: what is public is asked again without it
+  case $(ig_code) in unauthorized | pass_expired | certificate_not_current | certificate_revoked | unknown_sender | sender_revoked) ig_api GET "/v1/$1$2" ;;      # what was refused is this box's pass, not the lookup: what is public is asked again without it
     *) cat "$IG/look.err" >&2; return 1 ;; esac
 }
-ig_clock(){ # after a call the server refused: if it refused the pass for its time, says what this machine's clock reads. A new pass does not cure that, so it is nearly always a clock, and the server's words above give its own. Those are the server's word: a clock set by a server's lie makes an ended certificate valid again, so this sends its reader to a time source of their own
-  [ "$(ig_code)" != pass_expired ] || echo "this machine's clock reads $(jq -nr --argjson t "$(ig_now)" '$t | todate'). A server refuses a pass from a clock 10 minutes or more behind its own, or more than 50 ahead. Check this machine's clock against a time source you trust, not against the server" >&2
+ig_clock(){ # after a call the server refused: if it refused the pass, or a prekey statement, for its time, says what the server dates its answer and what this machine's clock reads. A new pass does not cure that, so it is nearly always a clock. The date is the server's word: a clock set by a server's lie makes an ended certificate valid again, so this sends its reader to a time source of their own
+  local d; case $(ig_code) in pass_expired | prekey_time) ;; *) return 0 ;; esac
+  d=$(ig_dated) && d="the server dates its answer $d, and "
+  echo "${d}this machine's clock reads $(jq -nr --argjson t "$(ig_now)" '$t | todate'). A server refuses a pass from a clock 10 minutes or more behind its own, or more than 50 ahead, and a certificate or prekey statement this machine dated more than an hour ahead of it. Check this machine's clock against a time source you trust, not against the server" >&2
 }
 ig_pass(){ # [serial] → the Authorization value of a call as this box. Without a serial: the pass kept in $IG/pass while it has more than 30 seconds left and no more than the ten minutes it was signed for, otherwise a new one, signed by the working key in use and kept. With one: a pass signed by that working key, for the call that publishes its prekey, left in $IG/pass.new until the server has taken it
   local A n=${1-} na h; A=$(cat "$IG/address") || return 1
@@ -502,8 +509,8 @@ ig_post(){ # <address> <outbox stem> → POSTs it, sealing it first; on 409 stal
   if [ -e "$o.json" ]; then      # a seal that waited: its recipient's identity may since have revoked the certificate its prekey was signed under, and that prekey may be one a thief of the working key published. Such a seal is not posted: it is made again. So is one this script cannot read
     if c=$(ig_under "$o"); then ig_certrevoked "$B" "$c"; case $? in 0) rm -f "$o.json" ;; 1) ;; *) ig_refuse "the revocation of certificates kept for $B does not verify: kept in the outbox"; return 1 ;; esac; else rm -f "$o.json"; fi
   fi
-  { [ -e "$o.json" ] || ig_seal "$B" "$o"; } && ig_owner POST "/v1/$B" "$o.json" > "$IG/receipt.json" && ig_shape "$IG/receipt.json" receipt && { ig_sent "$o"; return; }
-  if [ "$(ig_code)" = stale_prekey ]; then ig_seal "$B" "$o" && ig_owner POST "/v1/$B" "$o.json" > "$IG/receipt.json" && ig_shape "$IG/receipt.json" receipt && { ig_sent "$o"; return; }; fi
+  { [ -e "$o.json" ] || ig_seal "$B" "$o"; } && ig_owner POST "/v1/$B" "$o.json" > "$IG/receipt.json" && ig_receipt "$o" && { ig_sent "$o"; return; }
+  if [ "$(ig_code)" = stale_prekey ]; then ig_seal "$B" "$o" && ig_owner POST "/v1/$B" "$o.json" > "$IG/receipt.json" && ig_receipt "$o" && { ig_sent "$o"; return; }; fi
   c=$(ig_code)
   case $c in revoked) ig_lookup "$B" ;; sender_revoked) ig_lookup "$(cat "$IG/address")" ;; esac      # a server's "revoked" is checked: with the revocation in hand it is final, and without one it is a call that failed
   if ig_gone "$B" || ig_gone "$(cat "$IG/address")"; then ig_failed "$o"; echo "REVOKED: the revocation verifies, so it can never be delivered: moved to outbox/failed/" >&2; return 1; fi
@@ -513,6 +520,11 @@ ig_post(){ # <address> <outbox stem> → POSTs it, sealing it first; on 409 stal
     *) echo "kept in the outbox: retry with ig_flush" >&2 ;;
   esac
   return 1
+}
+ig_receipt(){ # <outbox stem> → 0 only for a receipt in $IG/receipt.json that names the ciphertext this box posted (its id the SHA-256 of it, PROTOCOL.md §4.5) and whose times are times. Anything else is no receipt: the entry stays in the outbox
+  ig_shape "$IG/receipt.json" receipt && ig_bytes "$1.json" ciphertext "$IG/posted" && [ "$(jq -r '.id | strings' "$IG/receipt.json")" = "$(sha256sum < "$IG/posted" | cut -c1-64)" ] &&
+    ig_time "$(jq -r '.received_at | strings' "$IG/receipt.json")" > /dev/null && ig_time "$(jq -r '.expires_at | strings' "$IG/receipt.json")" > /dev/null && return 0
+  ig_refuse "the server's receipt does not name the ciphertext this box posted, or its times are not times: kept in the outbox"
 }
 ig_sent(){ # <outbox stem> → sent/<address>.<msg_id>.json: the envelope as one line, as the recipient's recv delivers it, with the server's receipt. Stored, and only then does the outbox entry go. sent/ is yours to prune
   local t="$IG/sent/${1##*/}.json"

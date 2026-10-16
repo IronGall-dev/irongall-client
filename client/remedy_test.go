@@ -20,7 +20,8 @@ import (
 // does not hold its own revocation.
 
 // A holder of the working key can spend a box's renewals for the day, so the
-// server refuses the owner's renewal as rate_limited. The revocation goes out
+// server refuses the owner's renewal as identity_acts_spent: a renewal under a
+// later certificate is its identity's act. The revocation goes out
 // all the same, the certificate in use among those it revokes: what the taker
 // signs with it is
 // refused, the box takes no mail meanwhile, and its next drain sends the
@@ -32,9 +33,9 @@ func TestTheRemedyWhenTheDaysRenewalsAreSpent(t *testing.T) {
 	inUse := numberOf(t, a)
 	taken := worker(t, a)
 
-	says(e, protocol.CodeRateLimited, http.MethodPut, "/prekey")
+	says(e, protocol.CodeIdentityActsSpent, http.MethodPut, "/prekey")
 	r, err := a.RenewAndRevoke(ctx, "")
-	if err != nil || r == nil || r.Prekey != nil || client.Code(r.NotRenewed) != protocol.CodeRateLimited {
+	if err != nil || r == nil || r.Prekey != nil || client.Code(r.NotRenewed) != protocol.CodeIdentityActsSpent {
 		t.Fatalf("the remedy with the day's renewals spent: %+v, %v", r, err)
 	}
 	if r.Below <= inUse || r.Revoked == nil || r.Revoked.Through != r.Below-1 || !r.Revoked.Revokes(inUse) {
@@ -63,7 +64,7 @@ func TestTheRemedyWhenTheDaysRenewalsAreSpent(t *testing.T) {
 
 	// The box is dark: its pass is under a revoked certificate, and its drain
 	// tries the renewal first, which the server still refuses.
-	if res, err := a.Receive(ctx); err == nil || res == nil || client.Code(res.RenewErr) != protocol.CodeRateLimited {
+	if res, err := a.Receive(ctx); err == nil || res == nil || client.Code(res.RenewErr) != protocol.CodeIdentityActsSpent {
 		t.Fatalf("a drain while the renewal is refused: %+v, %v", res, err)
 	}
 
@@ -168,7 +169,7 @@ func TestTheRemedyAsksForItsOwnRevocationFirst(t *testing.T) {
 	// revocation through one below the renewal that waits: above the
 	// certificate in use.
 	e.clock.Add(time.Hour)
-	says(e, protocol.CodeRateLimited, http.MethodPut, "/prekey")
+	says(e, protocol.CodeIdentityActsSpent, http.MethodPut, "/prekey")
 	r, err := a.RenewAndRevoke(ctx, "")
 	if err != nil || r.Revoked == nil || r.Revoked.Through != r.Below-1 || servedCertificate(t, e, a) != first {
 		t.Fatalf("the first remedy: %+v, %v", r, err)

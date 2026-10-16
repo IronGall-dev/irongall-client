@@ -229,6 +229,11 @@ func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration) error {
 		if res != nil && res.PollAfter > 0 {
 			pause = time.Duration(res.PollAfter) * time.Second
 		}
+		// A paced drain goes on once the server's wait is over, and not
+		// before: what is left is on the server, whatever the poll interval.
+		if res != nil && res.Paced > 0 {
+			pause = res.Paced
+		}
 		// A rate limit or a restarting server says how long to wait:
 		// --wait waits it out when there is time to poll again after.
 		var ae *client.APIError
