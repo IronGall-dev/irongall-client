@@ -1857,3 +1857,51 @@ func TestTheCommandLine(t *testing.T) {
 		t.Fatalf("prekey renew: %d %q %s", code, out, errs)
 	}
 }
+
+// A send that starts while recv drains waits for the drain's lock, so it
+// cannot rewrite a file the drain has yet to read (#96, and #62's other
+// direction): the drain still sees the sender's revocation and refuses its
+// mail. The hook runs a whole send, in a shell of its own on the same box,
+// after the drain has read the sender's revocation and before it takes it.
+func TestASendDuringADrainHidesNoRevocation(t *testing.T) {
+	need(t, append(scriptTools, "curl")...)
+	ctx, srv := context.Background(), fakeserver.New(t, time.Now)
+	opt := client.Options{Base: srv.URL}
+	env := []string{"IRONGALL_HOME=" + t.TempDir(), "IG_BASE=" + srv.URL, "IG_LOCK_WAIT=2"}
+	out, err := bash(t, env, "ig_init --no-pq")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := protocol.ParseAddress(strings.TrimPrefix(strings.TrimSpace(out), srv.URL+protocol.LinkPath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic) // the script box sends here
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic) // writes, then revokes itself
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.Send(ctx, s, "sent before the revocation"); err != nil {
+		t.Fatal(err)
+	}
+	rec, err := g.Revocation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Revoke(ctx, opt, rec); err != nil {
+		t.Fatal(err)
+	}
+	sendErr := filepath.Join(t.TempDir(), "send.err")
+	hook := `eval "orig_take() $(declare -f ig_take | tail -n +2)"
+ig_take(){ bash -c '. ` + abs(t, "irongall.sh") + `; printf x | ig_send ` + c.Address().String() + `' > /dev/null 2>> ` + sendErr + `; orig_take "$@"; }
+ig_recv`
+	if out, _ := bash(t, env, hook); strings.Contains(out, g.Address().String()) {
+		t.Error("mail from a revoked sender delivered")
+	}
+	if e, _ := os.ReadFile(sendErr); !strings.Contains(string(e), "waiting for this box's lock") {
+		t.Errorf("the send beside the drain did not wait for the lock: %q", e)
+	}
+}

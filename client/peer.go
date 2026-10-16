@@ -32,73 +32,83 @@ import (
 //     asked: a [RevokedError], whatever the server now serves for it.
 //
 // The identity is pinned, and the serials recorded, only after every check
-// passed: nothing is kept of a peer whose statement did not verify.
+// passed: nothing is kept of a peer whose statement did not verify. It holds
+// the box's lock ([Box.hold]).
 func (b *Box) Resolve(ctx context.Context, peer protocol.Address) (*protocol.Prekey, error) {
+	return locked(ctx, b, func() (*protocol.Prekey, error) {
+		p, _, err := b.resolve(ctx, peer)
+		return p, err
+	})
+}
+
+// resolve is Resolve with the lock held. It also returns the certificate the
+// prekey statement verified under.
+func (b *Box) resolve(ctx context.Context, peer protocol.Address) (*protocol.Prekey, *protocol.Certificate, error) {
 	if held, err := b.revoked(peer); err != nil {
-		return nil, err
+		return nil, nil, err
 	} else if held {
-		return nil, &RevokedError{Address: peer}
+		return nil, nil, &RevokedError{Address: peer}
 	}
 	var ir protocol.IdentityResponse
 	if _, err := b.lookup(ctx, peer, "/identity", &ir); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	id, err := b.identityOf(peer, ir.Identity)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	p, cert, err := protocol.VerifyPrekey(id, ir.Prekey, ir.PrekeySignature, b.now())
 	if errors.Is(err, protocol.ErrCertificateNotBegun) {
-		return nil, refuse("%s's prekey: %v, by this machine's clock: a certificate starts an hour before it is made, so check the clock", peer, err)
+		return nil, nil, refuse("%s's prekey: %v, by this machine's clock: a certificate starts an hour before it is made, so check the clock", peer, err)
 	}
 	if err != nil {
-		return nil, refuse("%s's prekey: %v", peer, err)
+		return nil, nil, refuse("%s's prekey: %v", peer, err)
 	}
 	seen, err := b.peerSerial(peer, "serial")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	seenCert, err := b.peerSerial(peer, "cert-serial")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// Ordered by certificate first, then by the prekey's own serial.
 	if cert.Serial() < seenCert {
-		return nil, refuse("rollback: %s's prekey is signed under certificate %d, below %d, already seen", peer, cert.Serial(), seenCert)
+		return nil, nil, refuse("rollback: %s's prekey is signed under certificate %d, below %d, already seen", peer, cert.Serial(), seenCert)
 	}
 	if cert.Serial() == seenCert && p.Serial < seen {
-		return nil, refuse("rollback: %s's prekey serial %d is below %d, already seen", peer, p.Serial, seen)
+		return nil, nil, refuse("rollback: %s's prekey serial %d is below %d, already seen", peer, p.Serial, seen)
 	}
 	certs, err := b.revokedCerts(peer)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if certs != nil && certs.Revokes(cert.Serial()) {
-		return nil, refuse("%s's prekey is signed under a certificate its identity has revoked: its owner must publish a new one", peer)
+		return nil, nil, refuse("%s's prekey is signed under a certificate its identity has revoked: its owner must publish a new one", peer)
 	}
 	if p.Expired(b.now()) {
-		return nil, refuse("%s's prekey has expired: its owner must publish a new one", peer)
+		return nil, nil, refuse("%s's prekey has expired: its owner must publish a new one", peer)
 	}
 	// Whether the peer can verify this box is the one thing here that
 	// nothing signs: the server says what the peer declared. A server that
 	// misstates it can only stop a message, as it can without it.
 	if !protocol.AcceptsSender(ir.SenderKeyTypes, b.id.Type()) {
-		return nil, refuse("%s's client does not verify identities of this box's key type, %s, so it would refuse this box's mail: nothing is sent", peer, b.id.Type())
+		return nil, nil, refuse("%s's client does not verify identities of this box's key type, %s, so it would refuse this box's mail: nothing is sent", peer, b.id.Type())
 	}
 	if err := b.pin(id); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	d := b.path("peers", peer.String())
 	if err := writeFile(d+"/serial", []byte(strconv.FormatUint(p.Serial, 10)+"\n")); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := writeFile(d+"/cert-serial", []byte(strconv.FormatUint(cert.Serial(), 10)+"\n")); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := writeFile(d+"/prekey.txt", ir.Prekey); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return p, writeFile(d+"/prekey.sig", ir.PrekeySignature)
+	return p, cert, writeFile(d+"/prekey.sig", ir.PrekeySignature)
 }
 
 // identityOf returns the peer's identity: the pinned one, or, for a peer not

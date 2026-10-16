@@ -9,11 +9,12 @@ import (
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
-// SetRekeyLockWait shortens how long Rekey waits for the lock, for one test.
-func SetRekeyLockWait(t *testing.T, d time.Duration) {
-	old := rekeyLockWait
-	rekeyLockWait = d
-	t.Cleanup(func() { rekeyLockWait = old })
+// SetLockPatience shortens how long a command waits for the box's lock, for
+// one test.
+func SetLockPatience(t *testing.T, d time.Duration) {
+	old := lockPatience
+	lockPatience = d
+	t.Cleanup(func() { lockPatience = old })
 }
 
 // SetDrainLimits lowers what one drain takes, for one test.

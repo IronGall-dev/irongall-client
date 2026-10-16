@@ -72,7 +72,14 @@ func (b *Box) Send(ctx context.Context, to protocol.Address, body string) (*prot
 // knows the sender from the pass the post carries. Every message is padded,
 // after the signature, so that the server sees its size only to within a
 // block (protocol.PaddedSize).
+//
+// It holds the box's lock from start to end ([Box.hold]), as every command
+// that writes the box does.
 func (b *Box) SendWith(ctx context.Context, to protocol.Address, body string, f Fields) (*protocol.Receipt, error) {
+	return locked(ctx, b, func() (*protocol.Receipt, error) { return b.sendWith(ctx, to, body, f) })
+}
+
+func (b *Box) sendWith(ctx context.Context, to protocol.Address, body string, f Fields) (*protocol.Receipt, error) {
 	if err := f.check(); err != nil {
 		return nil, err
 	}
@@ -95,7 +102,7 @@ func (b *Box) SendWith(ctx context.Context, to protocol.Address, body string, f 
 	if err := writeFile(stem+".P", p); err != nil {
 		return nil, err
 	}
-	if err := b.SyncACL(ctx); err != nil {
+	if err := b.syncACL(ctx); err != nil {
 		return nil, fmt.Errorf("%w: nothing is posted, so that no reply is refused; kept in the outbox, irongall outbox flush sends it", err)
 	}
 	return b.post(ctx, to, stem, newLookups())
@@ -107,12 +114,16 @@ func (b *Box) SendWith(ctx context.Context, to protocol.Address, body string, f 
 // that failed. The server is asked about each recipient once, as a send
 // asks ([Box.SendWith]).
 func (b *Box) Flush(ctx context.Context) ([]*protocol.Receipt, error) {
+	return locked(ctx, b, func() ([]*protocol.Receipt, error) { return b.flush(ctx) })
+}
+
+func (b *Box) flush(ctx context.Context) ([]*protocol.Receipt, error) {
 	names, err := filepath.Glob(b.path("outbox", "*.P"))
 	if err != nil {
 		return nil, err
 	}
 	if len(names) > 0 {
-		if err := b.SyncACL(ctx); err != nil {
+		if err := b.syncACL(ctx); err != nil {
 			return nil, fmt.Errorf("%w: nothing is posted, so that no reply is refused", err)
 		}
 	}
@@ -391,7 +402,7 @@ func (b *Box) seal(ctx context.Context, to protocol.Address, stem string) error 
 	if !cert.SignsMail(b.now()) {
 		return refuse("this box's certificate ends within %d days, too soon to sign mail that may wait that long: irongall prekey renew makes a new one, as irongall recv does daily", protocol.TTL/(24*time.Hour))
 	}
-	pk, err := b.Resolve(ctx, to)
+	pk, under, err := b.resolve(ctx, to)
 	if err != nil {
 		return err
 	}
@@ -418,14 +429,12 @@ func (b *Box) seal(ctx context.Context, to protocol.Address, stem string) error 
 	if ct.Len() != size {
 		return refuse("the encrypted message is %d bytes, where its padding was made for %d: it is not sent at a size that tells its length", ct.Len(), size)
 	}
-	// The prekey is named by both serials: its own, and its certificate's,
-	// which Resolve has just recorded.
-	serial := pk.Serial
-	under, err := b.peerSerial(to, "cert-serial")
-	if err != nil {
-		return err
-	}
-	j, err := json.Marshal(protocol.SendRequest{PrekeySerial: &serial, CertificateSerial: &under, Ciphertext: ct.Bytes()})
+	// The prekey is named by both serials: its own, and that of the
+	// certificate resolve verified it under. Never read back from what the
+	// box recorded: that is the highest seen, which another statement may
+	// have raised.
+	serial, underSerial := pk.Serial, under.Serial()
+	j, err := json.Marshal(protocol.SendRequest{PrekeySerial: &serial, CertificateSerial: &underSerial, Ciphertext: ct.Bytes()})
 	if err != nil {
 		return err
 	}

@@ -107,7 +107,18 @@ func (b *Box) held(a protocol.Address) (*Held, error) {
 // It returns the address and what this box then holds about it. A revocation
 // of certificates through no higher a serial than the one held changes
 // nothing.
-func (b *Box) KeepRevocation(rec *protocol.Revocations) (protocol.Address, *Held, error) {
+func (b *Box) KeepRevocation(rec *protocol.Revocations) (a protocol.Address, h *Held, err error) {
+	_, err = locked(context.Background(), b, func() (struct{}, error) {
+		a, h, err = b.keepRevocationRecord(rec)
+		return struct{}{}, err
+	})
+	if err != nil && a == (protocol.Address{}) {
+		a = protocol.Address(sha256.Sum256(rec.Identity))
+	}
+	return a, h, err
+}
+
+func (b *Box) keepRevocationRecord(rec *protocol.Revocations) (protocol.Address, *Held, error) {
 	a := protocol.Address(sha256.Sum256(rec.Identity))
 	if len(rec.Revocation) == 0 && len(rec.RevokedCertificates) == 0 {
 		return a, nil, refuse("the record holds no revocation of the address and none of its certificates")
@@ -155,10 +166,12 @@ func (b *Box) KeepRevocation(rec *protocol.Revocations) (protocol.Address, *Held
 // holds already stands whatever a server answers. No answer from the box's
 // own server is an error; none from a revocation server changes nothing.
 func (b *Box) Ask(ctx context.Context, a protocol.Address) (*Held, error) {
-	if _, err := b.lookupRevocation(ctx, a, newLookups()); err != nil {
-		return nil, err
-	}
-	return b.held(a)
+	return locked(ctx, b, func() (*Held, error) {
+		if _, err := b.lookupRevocation(ctx, a, newLookups()); err != nil {
+			return nil, err
+		}
+		return b.held(a)
+	})
 }
 
 // revocationFile is where a verified revocation of a is kept: for a peer,
@@ -349,11 +362,13 @@ func (b *Box) keepRevokedCerts(a protocol.Address, doc, statement, sig []byte) e
 // Mail this box sent under those certificates, and that its reader has not
 // read yet, is refused too: nobody can tell it from a thief's.
 func (b *Box) RevokeEarlier(ctx context.Context) (*protocol.RevokedCertificates, error) {
-	current, err := b.publishedSerial()
-	if err != nil {
-		return nil, err
-	}
-	return b.revokeBelow(ctx, current)
+	return locked(ctx, b, func() (*protocol.RevokedCertificates, error) {
+		current, err := b.publishedSerial()
+		if err != nil {
+			return nil, err
+		}
+		return b.revokeBelow(ctx, current)
+	})
 }
 
 // A Remedy is what [Box.RenewAndRevoke] did.
@@ -395,15 +410,7 @@ type Remedy struct {
 // The error is why the revocation is not at every server, or why there is
 // none.
 func (b *Box) RenewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy, error) {
-	l, err := b.lockWait(ctx, rekeyLockWait)
-	if err != nil {
-		return nil, err
-	}
-	r, err := b.renewAndRevoke(ctx, kt)
-	if e := l.release(); err == nil {
-		err = e
-	}
-	return r, err
+	return locked(ctx, b, func() (*Remedy, error) { return b.renewAndRevoke(ctx, kt) })
 }
 
 func (b *Box) renewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy, error) {

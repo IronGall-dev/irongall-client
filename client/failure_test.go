@@ -278,9 +278,10 @@ func TestAPassTheServerSaysHasRunOut(t *testing.T) {
 	}
 }
 
-// One consumer per box. The recipe's lock (an empty lock/) is never taken
-// over or written into; a lock a crashed Go client left (lock/pid, held by
-// no one) is.
+// One command of a box at a time. The recipe's lock (an empty lock/) is
+// never taken over or written into: a command waits for it, and gives up
+// once it has waited as long as it waits. A lock a crashed Go client left
+// (lock/pid, held by no one) is taken over.
 func TestLock(t *testing.T) {
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
@@ -288,10 +289,10 @@ func TestLock(t *testing.T) {
 	if err := os.Mkdir(lock, 0o700); err != nil {
 		t.Fatal(err)
 	}
+	client.SetLockPatience(t, 200*time.Millisecond)
 	if _, err := b.Receive(context.Background()); err == nil || !strings.Contains(err.Error(), "lock") {
 		t.Fatalf("receive under the recipe's lock: %v", err)
 	}
-	client.SetRekeyLockWait(t, 200*time.Millisecond)
 	if _, err := b.Rekey(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "lock") {
 		t.Fatalf("rekey under the recipe's lock: %v", err)
 	}
@@ -307,8 +308,9 @@ func TestLock(t *testing.T) {
 	}
 }
 
-// A rekey waits for a drain holding the lock rather than failing at once: a
-// monthly run that gives up on one collision lets the prekey expire.
+// A rekey waits for a drain holding the lock rather than failing at once, as
+// every command does: a monthly run that gives up on one collision lets the
+// prekey expire.
 func TestRekeyWaitsForTheLock(t *testing.T) {
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
@@ -328,6 +330,7 @@ func TestRekeyWaitsForTheLock(t *testing.T) {
 func TestLiveLockExcludes(t *testing.T) {
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
+	client.SetLockPatience(t, 200*time.Millisecond)
 	lock := filepath.Join(b.Dir(), "lock")
 	if err := os.Mkdir(lock, 0o700); err != nil {
 		t.Fatal(err)

@@ -97,20 +97,21 @@ type Result struct {
 // allowed, held/ for one it has not (unless its policy lands that mail in
 // inbox/ too), and nowhere for one it blocked. Refused mail goes to
 // quarantine/. All of it is acked. A transient error stops the drain and leaves the rest for the
-// next one. One consumer per box: a second concurrent Receive is refused.
+// next one. It holds the box's lock throughout ([Box.hold]): a second
+// Receive, or any other command that writes the box, waits for it.
 //
 // First it renews the prekey if the current one is more than a day old, so
 // a box received at least monthly never lapses. A drain that empties the box
 // then deletes the retired prekeys no mail can still need (see
 // [Box.dropRetired]): all but the newest.
 func (b *Box) Receive(ctx context.Context) (*Result, error) {
-	l, err := b.lock()
-	if err != nil {
-		return nil, err
-	}
+	return locked(ctx, b, func() (*Result, error) { return b.receive(ctx) })
+}
+
+func (b *Box) receive(ctx context.Context) (*Result, error) {
 	began := b.now()
 	renewed, renewErr := b.renewIfDue(ctx)
-	aclErr := b.SyncACL(ctx)
+	aclErr := b.syncACL(ctx)
 	res, err := b.drain(ctx)
 	if res == nil {
 		res = &Result{}
@@ -120,10 +121,7 @@ func (b *Box) Receive(ctx context.Context) (*Result, error) {
 	if err == nil && !res.More {
 		err = b.dropRetired(began)
 	}
-	if e := l.release(); err == nil {
-		err = e
-	}
-	if e := b.Prune(); err == nil {
+	if e := b.prune(); err == nil {
 		err = e
 	}
 	return res, err

@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -59,6 +60,10 @@ func (b *Box) SetAlias(name string, a protocol.Address) error {
 	if err := ValidAlias(name); err != nil {
 		return err
 	}
+	return b.lockedDo(context.Background(), func() error { return b.setAlias(name, a) })
+}
+
+func (b *Box) setAlias(name string, a protocol.Address) error {
 	switch have, err := b.aliased(name); {
 	case err != nil:
 		return err
@@ -81,6 +86,10 @@ func (b *Box) SetAlias(name string, a protocol.Address) error {
 // RemoveAlias removes a name. The peer's pinned identity and mail stay, and
 // it stays allowed: un-naming a peer is not blocking it.
 func (b *Box) RemoveAlias(name string) error {
+	return b.lockedDo(context.Background(), func() error { return b.removeAlias(name) })
+}
+
+func (b *Box) removeAlias(name string) error {
 	lines, err := b.aliasLines()
 	if err != nil {
 		return err

@@ -139,7 +139,7 @@ What it lacks against the Go client, though it gives the Go client's verdict on 
 
 - **It never renews the prekey: run `rekey` at least monthly.**
 - **It keeps each retired prekey until 33 days after it expires:** about 66 days of forward secrecy, against about two days for a Go-client box received daily.
-- **The lock is a bare `lock/` directory.** A crash leaves it behind; remove it by hand.
+- **The lock is a bare `lock/` directory.** A `kill -9`, or the machine going down, leaves it behind, and every command then waits for it and gives up: remove it by hand.
 - **Restoring a box from its identity alone takes the Go client.**
 - `recv` drains once and never waits, and a drain has no limit in bytes.
 - No `status`, no `account` and no `alias rm`.

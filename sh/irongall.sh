@@ -34,6 +34,7 @@
 set -o pipefail; umask 077
 IG_BASE=${IG_BASE:-https://irongall.dev}
 IG=${IRONGALL_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/irongall/${IRONGALL_BOX:-default}}   # one box per directory; never the working directory
+IG_LOCK_WAIT=${IG_LOCK_WAIT:-120}   # how many seconds a command waits for the box's lock while another command of the box holds it: what apt waits for its own lock when no one is at a terminal
 IG_SENDERS='["ssh-ed25519","ecdsa-sha2-nistp256"]'   # the identity key types ig_idcheck verifies. A box declares them with each prekey it publishes, and the server then refuses it mail from a box whose identity is of any other type
 ig_refuse(){ printf 'REFUSED: %s\n' "$*" >&2; return 1; }
 ig_hex(){ [[ $1 =~ ^[0-9a-f]{64}$ ]]; }
@@ -106,14 +107,19 @@ ig_pass(){ # [serial] → the Authorization value of a call as this box. Without
   [ -n "${1-}" ] || mv "$IG/pass.new" "$IG/pass" || return 1
   cat "$IG/pass${1:+.new}"
 }
-ig_lock(){ # [seconds] → takes $IG/lock, one consumer per box, waiting up to that long while another holds it
-  local end=$((SECONDS + ${1:-0}))
+ig_lock(){ # <command> [args] → runs that ig_ command with $IG/lock, the box's lock, held. Every command that writes the box runs so, from start to end, so one runs at a time and none reads a file another is writing. While another holds it, says so once and waits up to $IG_LOCK_WAIT seconds. If the command dies, the shell's EXIT trap removes it; a kill -9 leaves it behind
+  local end=$((SECONDS + IG_LOCK_WAIT)) said= me=$IG outer=${IG_HELD-} trap rc
   [ -s "$IG/address" ] || { ig_refuse "no box in $IG: run init first"; return 1; }
-  until mkdir "$IG/lock" 2> /dev/null; do
-    [ "$SECONDS" -lt "$end" ] || { ig_refuse "another consumer holds $IG/lock: one consumer per box (remove it if stale)"; return 1; }
+  until mkdir "$me/lock" 2> /dev/null; do
+    [ -n "$said" ] || { echo "waiting for this box's lock: another command of this box is running, and a box's commands write its files one at a time" >&2; said=1; }
+    [ "$SECONDS" -lt "$end" ] || { ig_refuse "another command of this box held its lock, $me/lock, for as long as a command waits for it. If none is running, one that crashed left it behind: remove it"; return 1; }
     sleep 1
   done
+  trap=$(trap -p EXIT); IG_HELD=$me; trap 'rmdir "$IG_HELD/lock" 2> /dev/null' EXIT
+  "$@"; rc=$?
+  rmdir "$me/lock"; IG_HELD=$outer; eval "${trap:-trap - EXIT}"; return $rc      # and the caller's own EXIT trap back
 }
+ig_held(){ [ "${IG_HELD-}" = "$IG" ]; }      # whether this shell holds this box's lock: a command another command runs works under its caller's
 
 # recipe: keys and registration
 ig_work(){ # <serial> → work/<serial>, .pub and -cert.pub: a NEW working key, and the certificate this box's identity gives it, with that serial, good from an hour ago for 65 days. The working key signs what the box says; the identity signs certificates and nothing else
@@ -158,6 +164,7 @@ ig_dest(){ # <link, address or alias> → the address: 64 hex, or taken from a l
 ig_name(){ [[ $1 =~ ^[a-z0-9][a-z0-9._-]{0,31}$ ]]; }   # an alias: never 64 hex, never a link
 ig_alias(){ # [<name> <link or address>] → names a peer for this box only, one "<name> <address>" line in $IG/aliases; without arguments, lists them. A name is never moved: to change or drop one, delete its line
   [ $# -gt 0 ] || { cat "$IG/aliases" 2> /dev/null; return 0; }
+  ig_held || { ig_lock ig_alias "$@"; return; }
   local a have
   ig_name "$1" || { ig_refuse "not an alias: $1 (1 to 32 of a-z, 0-9, '.', '_' and '-', starting with a letter or a digit)"; return 1; }
   a=$(ig_dest "${2-}") || return 1
@@ -404,11 +411,13 @@ ig_own(){ # after a call as this box failed: if the server said this box is revo
   else echo "the server showed no revocation of this box that verifies, so this box does not take itself as revoked" >&2; fi
 }
 ig_revocation(){ # → this box's revocation as one line of JSON, {identity, revocation}: the identity document, and the identity's own signature over the fixed statement, which has no date in it. It publishes nothing. Whoever publishes the record ends this address for good, with no key: keep it somewhere other than this box, for the day the box is lost
+  ig_held || { ig_lock ig_revocation "$@"; return; }
   local A; A=$(cat "$IG/address") || return 1
   printf 'irongall-revoke-v1\n%s\n' "$A" | ssh-keygen -q -Y sign -n "irongall-revoke-v1:$A" -f "$IG/identity" > "$IG/rev.new" 2> /dev/null || ig_refuse "this box's identity key did not sign" || return 1
   jq -cn --arg i "$(ig_b64 "$IG/identity.doc")" --arg s "$(ig_b64 "$IG/rev.new")" '{identity:$i, revocation:$s}'; rm -f "$IG/rev.new"
 }
 ig_revoke(){ # <address> [record] → revokes the address at the server and at each revocation server this box lists, FOR GOOD: nothing undoes it. Without a record it is this box's own address, written out in full as the confirmation, and its identity signs now. With one, a record ig_revocation made earlier is published as it is, which needs no box here: only the file. Every server is tried whatever the others answer, and it fails, saying which did not take it, unless every one did: run it again
+  ig_held || [ ! -s "$IG/address" ] || { ig_lock ig_revoke "$@"; return; }      # with no box here, a record of another box is published and nothing is kept
   local A=${1-} f=${2-} s l took= r=0
   ig_hex "$A" || ig_refuse "revocation publish takes the 64-character address in full: it is the confirmation, and a revocation cannot be undone" || return 1
   mkdir -p "$IG" || return 1
@@ -429,6 +438,7 @@ ig_revoke(){ # <address> [record] → revokes the address at the server and at e
   echo "revoked $A"
 }
 ig_revoked(){ # <record> → keeps a revocation of another box that someone handed over, once it verifies: nothing is sent to that address or taken from it again, whatever a server says. It is the answer to a server that hides a revocation
+  ig_held || { ig_lock ig_revoked "$@"; return; }
   local A; A=$(ig_handed "${1-}") || ig_refuse "the file is not a revocation record whose every part verifies: one is a line of JSON with identity and revocation, as revocation prints, and a revocation of certificates beside them must verify too" || return 1
   ig_keep "$A" "$IG/rev.doc" "$IG/rev.sig" && echo "revoked $A"
 }
@@ -436,6 +446,7 @@ ig_revoked(){ # <record> → keeps a revocation of another box that someone hand
 # recipe: send
 ig_uuid(){ local h; h=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n'); printf '%s-%s-4%s-%x%s-%s\n' "${h:0:8}" "${h:8:4}" "${h:13:3}" $(( 0x${h:16:1} & 3 | 8 )) "${h:17:3}" "${h:20:12}"; }
 ig_send(){ # [--subject <text>] [--reply-to <msg_id>] [--supersedes <msg_id>] <link, address or alias> [body file] → one logical message, its envelope built ONCE. To retry, run ig_flush, never ig_send again
+  ig_held || { ig_lock ig_send "$@"; return; }
   local B f A id s= r= x= v
   while [[ ${1-} = --* ]]; do      # --reply-to: the msg_id recv printed for the message this answers. --supersedes: an earlier message of this box's, as sent/ names it
     [ $# -ge 2 ] || { ig_refuse "$1 needs a value"; return 1; }
@@ -512,13 +523,14 @@ ig_failed(){ # <outbox stem> → moves its files to outbox/failed/, where ig_flu
   for f in "$1.P" "$1.age" "$1.sig" "$1.json"; do [ ! -e "$f" ] || mv "$f" "$IG/outbox/failed/" || return 1; done
 }
 ig_flush(){ # re-POSTs every message still in the outbox, unchanged: a retry gets the original receipt. One that fails never stops the others
+  ig_held || { ig_lock ig_flush "$@"; return; }
   local f n rc=0; for f in "$IG"/outbox/*.P; do [ -e "$f" ] || continue; n=$(basename "$f" .P); ig_post "${n%%.*}" "${f%.P}" || rc=1; done; return $rc
 }
 
 # recipe: receive
 ig_recv(){ # drains the box, every page up to a drain's limits. ACCEPT → inbox/ and one line on stdout. REFUSED → quarantine/, never delivered. Both are acked
-  ig_lock || return 1
-  ig_drain; local rc=$?; rmdir "$IG/lock"; ig_prune; return $rc
+  ig_held || { ig_lock ig_recv "$@"; return; }
+  ig_drain; local rc=$?; ig_prune; return $rc
 }
 ig_drain(){ # stops at a transient error or a fault of this box, leaving the rest on the server for the next drain. And at a number of messages and of pages (below): a server that lists mail without end costs one run that much
   local B c="" n i id k=0 pages=0; B=$(cat "$IG/address") || return 1
@@ -629,9 +641,10 @@ ig_seen(){ # <sender> <message stem> <hash> → the message, in the replay set a
 }
 
 # recipe: new prekey (monthly)
-ig_rekey(){ # [--no-pq] → publishes a new prekey, signed by a new working key under a new certificate, under the lock: a NEW key at a new number, which this machine's clock gives, or the statement an earlier run signed and the server did not take, sent again as it is (waiting up to a minute for a drain). Needs only the identity, so it also recovers a box that lost its prekeys or its working key
-  ig_opt "${1-}" && ig_lock 60 || return 1
-  ig_renew "${1-}"; local rc=$?; rmdir "$IG/lock"; return $rc
+ig_rekey(){ # [--no-pq] → publishes a new prekey, signed by a new working key under a new certificate, under the lock: a NEW key at a new number, which this machine's clock gives, or the statement an earlier run signed and the server did not take, sent again as it is. Needs only the identity, so it also recovers a box that lost its prekeys or its working key
+  ig_opt "${1-}" || return 1
+  ig_held || { ig_lock ig_rekey "$@"; return; }
+  ig_renew "${1-}"
 }
 ig_renew(){ # [--no-pq] → what ig_rekey does, the lock held. A serial is signed ONCE
   local A r s t na h c f cs p new x; A=$(cat "$IG/address") || return 1; mkdir -p "$IG/prekeys"

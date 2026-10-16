@@ -77,6 +77,10 @@ type Options struct {
 	// answer, with why, once in a command. Nothing changes for it: a box
 	// does not wait on a revocation server as it waits on its own.
 	NoAnswer func(server string, err error)
+	// Waiting, if not nil, is told when a command finds the box's lock held
+	// by another command of the box, once, before it waits for it: a box's
+	// commands write its files one at a time.
+	Waiting func()
 }
 
 // Box is one box: its state directory and the server it talks to.
@@ -97,6 +101,8 @@ type Box struct {
 	// one that gave no answer.
 	revocationServers []string
 	noAnswer          func(server string, err error)
+	// waiting is told when a command waits for the box's lock ([Box.hold]).
+	waiting func()
 	// renewFailed is when Receive last failed to renew the prekey.
 	renewFailed time.Time
 }
@@ -116,7 +122,7 @@ func Open(dir string, opt Options) (*Box, error) {
 }
 
 func newBox(dir string, opt Options) *Box {
-	b := &Box{dir: dir, base: strings.TrimRight(opt.Base, "/"), http: opt.HTTPClient, now: opt.Now, identityType: opt.IdentityType, senderKeyTypes: opt.SenderKeyTypes, revocationServers: opt.RevocationServers, noAnswer: opt.NoAnswer}
+	b := &Box{dir: dir, base: strings.TrimRight(opt.Base, "/"), http: opt.HTTPClient, now: opt.Now, identityType: opt.IdentityType, senderKeyTypes: opt.SenderKeyTypes, revocationServers: opt.RevocationServers, noAnswer: opt.NoAnswer, waiting: opt.Waiting}
 	if b.senderKeyTypes == nil {
 		b.senderKeyTypes = protocol.IdentityTypes()
 	}

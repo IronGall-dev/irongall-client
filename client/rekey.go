@@ -34,22 +34,12 @@ import (
 // It holds the box's lock, so two runs never make the same serial's key at
 // once, and it refuses a served serial below the highest this box has
 // published (a rollback), whose next serial's key was already published.
-// While a drain holds the lock it waits, up to rekeyLockWait: a drain is
-// short, and a monthly run that gave up at once could let the prekey expire.
 func (b *Box) Rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey, error) {
-	l, err := b.lockWait(ctx, rekeyLockWait)
-	if err != nil {
-		return nil, err
-	}
-	p, _, err := b.rekey(ctx, kt, false)
-	if e := l.release(); err == nil {
-		err = e
-	}
-	return p, err
+	return locked(ctx, b, func() (*protocol.Prekey, error) {
+		p, _, err := b.rekey(ctx, kt, false)
+		return p, err
+	})
 }
-
-// rekeyLockWait is how long Rekey waits for the box's lock.
-var rekeyLockWait = time.Minute
 
 // rekey is Rekey with the lock held. It returns the prekey once the server
 // took it, and the number of the statement it sent, taken or not: 0 when it
@@ -65,7 +55,7 @@ func (b *Box) rekey(ctx context.Context, kt protocol.KeyType, unused bool) (*pro
 	if err != nil {
 		return nil, made, err
 	}
-	return p, made, b.Prune()
+	return p, made, b.prune()
 }
 
 func (b *Box) renew(ctx context.Context, kt protocol.KeyType, unused bool) (*protocol.Prekey, uint64, error) {
@@ -388,6 +378,10 @@ func (b *Box) removePrekey(n uint64) error {
 // arrived by its not_after and has expired by then; after this, that mail is
 // unrecoverable from the box's keys. The newest prekey is never deleted.
 func (b *Box) Prune() error {
+	return b.lockedDo(context.Background(), b.prune)
+}
+
+func (b *Box) prune() error {
 	keys, err := filepath.Glob(b.path("prekeys", "*.agekey"))
 	if err != nil {
 		return err

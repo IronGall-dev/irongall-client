@@ -146,6 +146,10 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	opt.NoAnswer = func(server string, err error) {
 		_, _ = fmt.Fprintf(stderr, "the revocation server %s gave no answer, which changes nothing here: %v\n", server, err)
 	}
+	// Said once, so that a wait is not read as a hang.
+	opt.Waiting = func() {
+		_, _ = fmt.Fprintln(stderr, "waiting for this box's lock: another command of this box is running, and a box's commands write its files one at a time")
+	}
 	e := &cli{dir: dir, opt: opt, stdin: stdin, stdout: stdout, stderr: stderr}
 	root := e.tree()
 	// Cobra reads the process's own arguments when it is given none.

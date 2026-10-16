@@ -9,14 +9,22 @@ import (
 	"time"
 )
 
-// The consumer lock is the directory "lock", as the stock recipe takes it with
-// mkdir, so the two clients exclude each other on a shared box. This client
-// also holds a flock on lock/pid while it runs, so a lock left by a crashed Go
-// client is recognised and taken over. A lock directory without a pid file
-// belongs to the recipe; it is never taken over.
+// The box's lock is the directory "lock", as the stock recipe takes it with
+// mkdir, so the two clients exclude each other on a shared box. Every command
+// that writes the box's files holds it from its start to its end ([Box.hold]),
+// so one runs at a time and none reads what another is half way through
+// writing. This client also holds a flock on lock/pid while it runs, so a
+// lock left by a crashed Go client is recognised and taken over. A lock
+// directory without a pid file belongs to the recipe; it is never taken over.
 
-// errLocked is returned when another consumer holds the box.
-var errLocked = refuse("another consumer holds the lock: one consumer per box (remove lock/ if it is stale)")
+// errLocked is returned when another command still holds the box's lock once
+// a command has waited for it as long as it waits.
+var errLocked = refuse("another command of this box held its lock, lock/, for as long as a command waits for it: a box's commands write its files one at a time. If none is running, one that crashed left lock/ behind: remove it")
+
+// lockPatience is how long a command waits for the box's lock while another
+// command holds it: what apt waits for its own lock when no one is at a
+// terminal.
+var lockPatience = 2 * time.Minute
 
 // errLockGone is a lock/pid deleted between this client's open and its flock.
 var errLockGone = errors.New("the lock file was deleted under us")
@@ -40,13 +48,20 @@ func (b *Box) lock() (*lock, error) {
 	return nil, errLocked
 }
 
-// lockWait takes the lock, waiting up to d while another consumer holds it.
-func (b *Box) lockWait(ctx context.Context, d time.Duration) (*lock, error) {
-	deadline := time.Now().Add(d)
+// hold takes the box's lock for a command, waiting up to lockPatience while
+// another command holds it. The first time it finds the lock held it tells
+// Options.Waiting, if set, so that a wait is not read as a hang.
+func (b *Box) hold(ctx context.Context) (*lock, error) {
+	deadline := time.Now().Add(lockPatience)
+	told := false
 	for {
 		l, err := b.lock()
 		if !errors.Is(err, errLocked) || !time.Now().Before(deadline) {
 			return l, err
+		}
+		if !told && b.waiting != nil {
+			b.waiting()
+			told = true
 		}
 		select {
 		case <-ctx.Done():
@@ -54,6 +69,27 @@ func (b *Box) lockWait(ctx context.Context, d time.Duration) (*lock, error) {
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+// locked runs f with the box's lock held ([Box.hold]), and lets go of it
+// after, on every way out of f, a panic among them.
+func locked[T any](ctx context.Context, b *Box, f func() (T, error)) (v T, err error) {
+	l, err := b.hold(ctx)
+	if err != nil {
+		return v, err
+	}
+	defer func() {
+		if e := l.release(); err == nil {
+			err = e
+		}
+	}()
+	return f()
+}
+
+// lockedDo is locked, for an f that returns only an error.
+func (b *Box) lockedDo(ctx context.Context, f func() error) error {
+	_, err := locked(ctx, b, func() (struct{}, error) { return struct{}{}, f() })
+	return err
 }
 
 func (b *Box) lockOnce() (*lock, error) {
@@ -87,7 +123,7 @@ func (b *Box) lockOnce() (*lock, error) {
 	// A holder releasing deletes lock/pid and lock/, then closes the file,
 	// which drops its flock. A file opened before that delete and flocked
 	// after that close is locked, but it is no longer the lock: a third
-	// consumer can make a new one. Only the file lock/pid still names counts.
+	// command can make a new one. Only the file lock/pid still names counts.
 	if !stillNamed(f, l.dir+"/pid") {
 		f.Close() //nolint:errcheck,gosec // not the lock any more
 		return nil, errLockGone

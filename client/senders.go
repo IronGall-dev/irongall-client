@@ -104,7 +104,9 @@ func (b *Box) SetPolicy(p Policy) error {
 	if err := p.check(); err != nil {
 		return err
 	}
-	return writeFile(b.path("policy"), []byte("unknown "+p.Unknown+"\nserver "+p.Server+"\n"))
+	return b.lockedDo(context.Background(), func() error {
+		return writeFile(b.path("policy"), []byte("unknown "+p.Unknown+"\nserver "+p.Server+"\n"))
+	})
 }
 
 // addresses reads one of the box's address lists, allowed or blocked: an
@@ -195,11 +197,6 @@ func (b *Box) Blocked() ([]protocol.Address, error) {
 	}
 	return protocol.NewACLList(false, blocked).Addrs, nil
 }
-
-// lockPatience is how long allow and block wait for a drain that holds the
-// box to finish: one Receive at a time holds it, and never while recv
-// --wait sleeps.
-const lockPatience = 30 * time.Second
 
 // Where mail from a verified sender lands.
 const (
@@ -341,18 +338,13 @@ func (b *Box) HeldMail() ([]HeldSender, error) {
 // sent the box's ACL, if the change is one it holds ([Box.SyncACL]): an
 // error from that leaves the sender allowed here.
 func (b *Box) Allow(ctx context.Context, a protocol.Address) ([]Delivery, error) {
-	l, err := b.lockWait(ctx, lockPatience)
-	if err != nil {
-		return nil, err
-	}
-	moved, err := b.allow(a)
-	if e := l.release(); err == nil {
-		err = e
-	}
-	if err != nil {
-		return moved, err
-	}
-	return moved, b.SyncACL(ctx)
+	return locked(ctx, b, func() ([]Delivery, error) {
+		moved, err := b.allow(a)
+		if err != nil {
+			return moved, err
+		}
+		return moved, b.syncACL(ctx)
+	})
 }
 
 func (b *Box) allow(a protocol.Address) ([]Delivery, error) {
@@ -388,18 +380,13 @@ func (b *Box) allow(a protocol.Address) ([]Delivery, error) {
 // wins over allowing. An error sending the server the box's ACL leaves the
 // sender blocked here, and the next send, recv, allow or block sends it.
 func (b *Box) Block(ctx context.Context, a protocol.Address) (int, error) {
-	l, err := b.lockWait(ctx, lockPatience)
-	if err != nil {
-		return 0, err
-	}
-	n, err := b.block(a)
-	if e := l.release(); err == nil {
-		err = e
-	}
-	if err != nil {
-		return n, err
-	}
-	return n, b.SyncACL(ctx)
+	return locked(ctx, b, func() (int, error) {
+		n, err := b.block(a)
+		if err != nil {
+			return n, err
+		}
+		return n, b.syncACL(ctx)
+	})
 }
 
 func (b *Box) block(a protocol.Address) (int, error) {
@@ -431,6 +418,10 @@ func (b *Box) block(a protocol.Address) (int, error) {
 // many it added. What the file lists stays. It is for a box whose allowed
 // file was lost: send, alias and allow keep it otherwise.
 func (b *Box) RebuildAllowed() (int, error) {
+	return locked(context.Background(), b, b.rebuildAllowed)
+}
+
+func (b *Box) rebuildAllowed() (int, error) {
 	as, err := b.Aliases()
 	if err != nil {
 		return 0, err
@@ -520,6 +511,10 @@ func (b *Box) ACLPending() (bool, error) {
 // sent it) is asked for its version, and sent this one above it, once. The
 // server's answer must be the ACL sent, and is kept in acl.json.
 func (b *Box) SyncACL(ctx context.Context) error {
+	return b.lockedDo(ctx, func() error { return b.syncACL(ctx) })
+}
+
+func (b *Box) syncACL(ctx context.Context) error {
 	want, err := b.wantACL()
 	if err != nil {
 		return err

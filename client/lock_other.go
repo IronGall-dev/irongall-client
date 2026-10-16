@@ -5,7 +5,7 @@ package client
 import "os"
 
 // staleDetect is false where there is no flock: the lock directory alone
-// excludes other consumers, and a stale one must be removed by hand, as with
+// excludes other commands, and a stale one must be removed by hand, as with
 // the recipe.
 const staleDetect = false
 

@@ -447,9 +447,12 @@ as A; printf 'after restore' > body6; ig_send "$B" body6 && as B && recv && prin
 as A; for i in 1 2 3; do printf 'page %s' $i > p$i; ig_send "$B" p$i || bad "send p$i"; done
 as B; printf '%s\n' "$OLD_PASS" > $IG/pass; PAGE=2; recv; PAGE=50
 [ "$(printf '%s\n' "$RECV_OUT" | awk NF | wc -l)" = 3 ] && [ "$(box_count "$B")" = 0 ] && [ "$(cat $IG/pass)" != "$OLD_PASS" ] && ok "pages of 2: ig_recv follows next_cursor and drains all 3; a pass the server refused was replaced on the way" || bad "pagination: $RECV_OUT / $RECV_ERR"
-as B; mkdir $IG/lock; ig_recv 2> err.txt && bad "second consumer ran" || grep -q "one consumer per box" err.txt && ok "a second consumer is refused while the lock is held" || bad "lock"
+as B; mkdir $IG/lock; IG_LOCK_WAIT=1 ig_recv 2> err.txt && bad "a second command ran" || { grep -q "waiting for this box's lock" err.txt && grep -q "held its lock" err.txt; } && ok "a command waits for the lock another command holds, says so, and gives up after \$IG_LOCK_WAIT seconds" || bad "lock: $(cat err.txt)"
 (sleep 2; rmdir $IG/lock) & ig_rekey $NOPQ 2> err.txt && [ "$(sed -n 3p $SRV/$B/prekey.txt)" -gt "$B3" ] && ok "ig_rekey waits for a drain's lock, then renews" || bad "rekey under the lock: $(cat err.txt)"
 wait
+as D; mkdir $IG/lock; (sleep 2; rmdir $IG/lock) & ig_alias lockwait "$B" > /dev/null 2> err.txt && grep -q "waiting for this box's lock" err.txt && grep -q "^lockwait $B\$" $IG/aliases && [ ! -e $IG/lock ] && ok "so does every command that writes the box (alias add here), and it lets go after" || bad "alias under the lock: $(cat err.txt)"
+wait
+rc=0; IRONGALL_HOME=$IG bash -c '. "$1"; hold(){ [ -d "$IG/lock" ] || exit 9; kill -TERM $$; sleep 5; }; ig_lock hold' _ "$HERE/irongall.sh" 2> /dev/null || rc=$?; [ $rc = 143 ] && [ ! -e $IG/lock ] && ok "a command killed while it holds the lock leaves none behind (the shell's EXIT trap)" || bad "lock left by a killed command"      # the path as $1: sourced as $0, the script runs its command line
 as A; printf 'kept' > body7; ig_send "$B" body7 || bad "send body7"
 ls $W/box/B/quarantine > $W/quarantine.before
 as B; mkdir $W/held; mv $IG/prekeys/*.agekey $W/held/; recv; mv $W/held/*.agekey $IG/prekeys/
