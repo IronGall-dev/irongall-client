@@ -674,14 +674,15 @@ func (e *cli) leaveCmd() *cobra.Command {
 }
 
 func (e *cli) makeCmd() *cobra.Command {
-	return command("make <file>", "write this box's revocation to a new file, and publish nothing",
-		`Write this box's revocation to a new file, and publish nothing. Whoever
-publishes that record ends this address for good, with no key: keep it
-somewhere other than this box, for the day the box is lost. The file is the
-record exactly as a server takes it: irongall revocation publish --record
-publishes it, and so does a PUT of it to <server>/v1/<address>/revocations.
-It never writes over a file that exists.`,
-		nargs(1, 1), func(_ *cobra.Command, args []string) error {
+	return command("make", "print this box's revocation, and publish nothing",
+		`Print this box's revocation record, one "revocation_record" line, and publish
+nothing. Whoever publishes that record ends this address for good, with no
+key: keep it where only you can read it, somewhere other than this box, for
+the day the box is lost (umask 077; irongall revocation make > <file>). The
+line is the record as every server takes it: irongall revocation publish
+--record publishes it, and so does a PUT of it to
+<server>/v1/<address>/revocations.`,
+		nargs(0, 0), func(*cobra.Command, []string) error {
 			b, err := e.box()
 			if err != nil {
 				return err
@@ -690,29 +691,12 @@ It never writes over a file that exists.`,
 			if err != nil {
 				return err
 			}
+			// The record names its own type, first: the line is the record.
 			r, err := json.Marshal(rec)
 			if err != nil {
 				return err
 			}
-			// The record is what publishes it, as it is: a line of output
-			// around it would be a body a server refuses.
-			f, err := os.OpenFile(args[0], os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600) //nolint:gosec // the file the user named
-			if err != nil {
-				return err
-			}
-			_, err = f.Write(append(r, '\n'))
-			if cerr := f.Close(); err == nil {
-				err = cerr
-			}
-			if err != nil {
-				return err
-			}
-			name, err := filepath.Abs(args[0])
-			if err != nil {
-				return err
-			}
-			return e.out(line("revocation_record", "file", name, "message",
-				"This record revokes this box's address, for good, when anyone publishes it (irongall revocation publish --record <file> <address>). Nothing was published. Keep it somewhere other than this box."))
+			return e.out(r)
 		})
 }
 
@@ -790,7 +774,7 @@ unless every one took it: run it again.`,
 func (e *cli) keepCmd() *cobra.Command {
 	return command("keep <file>", "keep a revocation someone handed you",
 		`Take a revocation of another box that someone handed you (a record as
-irongall revocation make writes), check it, and keep it: this box then sends
+irongall revocation make prints), check it, and keep it: this box then sends
 that address nothing and takes nothing from it. A record may carry a
 revocation of the box's certificates, which is kept the same way.`,
 		nargs(1, 1), func(_ *cobra.Command, args []string) error {
@@ -859,7 +843,7 @@ func prekey(p *protocol.Prekey) []byte {
 const maxRecord = 64 << 10
 
 // readRecord reads a revocation record: the JSON irongall revocation make
-// writes. What it holds is checked by whoever uses it.
+// prints. What it holds is checked by whoever uses it.
 func readRecord(name string) (*protocol.Revocations, error) {
 	f, err := os.Open(name) //nolint:gosec // a file the caller named
 	if err != nil {
@@ -872,7 +856,7 @@ func readRecord(name string) (*protocol.Revocations, error) {
 	}
 	var rec protocol.Revocations
 	if len(data) > maxRecord || protocol.Unmarshal(data, &rec) != nil || len(rec.Identity) == 0 || (len(rec.Revocation) == 0 && len(rec.RevokedCertificates) == 0) {
-		return nil, errors.New("the file is not a revocation record: one is a line of JSON with \"identity\" and \"revocation\", as irongall revocation make writes, or with a revocation of its certificates")
+		return nil, errors.New("the file is not a revocation record: one is a line of JSON with \"identity\" and \"revocation\", as irongall revocation make prints, or with a revocation of its certificates")
 	}
 	return &rec, nil
 }

@@ -3,6 +3,7 @@ package protocol
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -107,5 +108,38 @@ func TestVectorBadRevocations(t *testing.T) {
 	other := read(t, "identity/unsupported-type.doc")
 	if _, err := VerifyRevocation(Address(sha256.Sum256(other)), other, read(t, "a/revoke.sig")); !errors.Is(err, ErrIdentityType) {
 		t.Errorf("a document of another key type: %v", err)
+	}
+}
+
+// A revocation record names its own type, first, whoever writes it; a reader
+// takes one without it, as the route says what the body is, and refuses one
+// that names any other type, an empty one or one of another JSON type
+// included, as a request with its member named (PROTOCOL.md §6.3).
+func TestARecordNamesItsType(t *testing.T) {
+	b, err := json.Marshal(Revocations{Identity: Bytes("doc"), Revocation: Bytes("sig")})
+	if err != nil || string(b) != `{"type":"revocation_record","identity":"ZG9j","revocation":"c2ln"}` {
+		t.Fatalf("written as %s, %v", b, err)
+	}
+	other := "revocation"
+	if b, _ := json.Marshal(&Revocations{Type: &other, Identity: Bytes("doc")}); !strings.HasPrefix(string(b), `{"type":"revocation_record",`) {
+		t.Fatalf("a record written with another type in hand: %s", b)
+	}
+	for body, want := range map[string]error{
+		`{"type":"revocation_record","identity":"ZG9j","revocation":"c2ln"}`: nil,
+		`{"identity":"ZG9j","revocation":"c2ln"}`:                            nil,
+		`{"type":null,"identity":"ZG9j","revocation":"c2ln"}`:                nil,
+		`{"type":"revocation","identity":"ZG9j","revocation":"c2ln"}`:        ErrMemberValue,
+		`{"type":"","identity":"ZG9j","revocation":"c2ln"}`:                  ErrMemberValue,
+		`{"type":"Revocation_Record","identity":"ZG9j"}`:                     ErrMemberValue,
+		`{"type":1,"identity":"ZG9j","revocation":"c2ln"}`:                   ErrJSON,
+	} {
+		for _, read := range []func([]byte, any) error{Unmarshal, UnmarshalRequest} {
+			var rec Revocations
+			if err := read([]byte(body), &rec); !errors.Is(err, want) || (want == nil) != (err == nil) {
+				t.Errorf("%s: %v, want %v", body, err, want)
+			} else if want == ErrMemberValue && Member(err) != "type" {
+				t.Errorf("%s: the error names %q, not the member type", body, Member(err))
+			}
+		}
 	}
 }

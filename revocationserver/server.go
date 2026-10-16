@@ -372,9 +372,9 @@ func (s *Server) body(w http.ResponseWriter, r *http.Request, v any) error {
 		return nil
 	case errors.Is(err, protocol.ErrNotBase64):
 		return refuse(protocol.CodeBadEncoding, "base64 of the exact file bytes", "a byte field is not standard base64 in its one encoding")
-	case errors.Is(err, protocol.ErrUnknownMember):
+	case errors.Is(err, protocol.ErrUnknownMember), errors.Is(err, protocol.ErrMemberValue):
 		p := refuse(protocol.CodeBadRequest, hintRecord, "%v", err)
-		p.Member = protocol.UnknownMember(err)
+		p.Member = protocol.Member(err)
 		return p
 	}
 	return refuse(protocol.CodeBadRequest, hintRecord, "the body is not the JSON object expected, read as PROTOCOL.md §0b reads one")

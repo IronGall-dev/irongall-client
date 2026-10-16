@@ -35,26 +35,47 @@ var ErrJSON = errors.New("not a JSON text as the protocol reads one")
 
 // ErrUnknownMember is a request body with a member its call does not take
 // (PROTOCOL.md §0a). Its words name the member, for the caller who sent it,
-// and so does [UnknownMember].
+// and so does [Member].
 var ErrUnknownMember = errors.New("the body has a member this call does not take")
 
-type unknownMemberError struct{ name string }
+// ErrMemberValue is a JSON text with a member the protocol knows that holds
+// a value it does not take there: a revocation record that names a type
+// other than RecordType. Its words name the member, and so does [Member].
+var ErrMemberValue = errors.New("a member holds a value the protocol does not take there")
 
-func (e *unknownMemberError) Error() string {
+// memberError is an [ErrUnknownMember], or with known set an
+// [ErrMemberValue], naming its member.
+type memberError struct {
+	name  string
+	known bool
+}
+
+func newUnknownMember(name string) error { return &memberError{name: name} }
+
+func (e *memberError) Error() string {
+	if e.known {
+		return fmt.Sprintf("%v: %q", ErrMemberValue, e.name)
+	}
 	return fmt.Sprintf("%v: %q", ErrUnknownMember, e.name)
 }
 
-func (e *unknownMemberError) Is(target error) bool { return target == ErrUnknownMember }
+func (e *memberError) Is(target error) bool {
+	return target == ErrMemberValue && e.known || target == ErrUnknownMember && !e.known
+}
 
-// UnknownMember is the name of the member an [ErrUnknownMember] names, or ""
-// for any other error: a server answers it as a member of its own, beside the
-// words (PROTOCOL.md §13).
-func UnknownMember(err error) string {
-	if e, ok := errors.AsType[*unknownMemberError](err); ok {
+// Member is the name of the member an [ErrUnknownMember] or an
+// [ErrMemberValue] names, or "" for any other error: a server answers it as a
+// member of its own, beside the words (PROTOCOL.md §13).
+func Member(err error) string {
+	if e, ok := errors.AsType[*memberError](err); ok {
 		return e.name
 	}
 	return ""
 }
+
+// typeChecked is a value with a check of its own after it is read: a
+// revocation record's type.
+type typeChecked interface{ checkType() error }
 
 // Unmarshal reads data, a JSON text the protocol carries, into v: the rules
 // of PROTOCOL.md §0b, then encoding/json/v2's with names matched exactly. A
@@ -79,11 +100,14 @@ func unmarshal(data []byte, v any, request bool) error {
 	err := jsonv2.Unmarshal(data, v, jsonv2.RejectUnknownMembers(request), jsonv2.WithUnmarshalers(integers))
 	switch serr, ok := errors.AsType[*jsonv2.SemanticError](err); {
 	case err == nil:
+		if c, ok := v.(typeChecked); ok {
+			return c.checkType()
+		}
 		return nil
 	case errors.Is(err, ErrNotBase64):
 		return ErrNotBase64
 	case ok && serr.Err == jsonv2.ErrUnknownName:
-		return &unknownMemberError{serr.JSONPointer.LastToken()}
+		return newUnknownMember(serr.JSONPointer.LastToken())
 	case errors.Is(err, errNotInteger):
 		return fmt.Errorf("%w: %w", ErrJSON, errNotInteger)
 	}

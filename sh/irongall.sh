@@ -17,7 +17,7 @@
 #   bash irongall.sh alias list                      list the names
 #   bash irongall.sh outbox flush                    retry what is still in outbox/
 #   bash irongall.sh prekey renew [--no-pq]          a new prekey, working key and certificate: at least monthly, as a prekey is valid for 33 days
-#   bash irongall.sh revocation make <file>          write this box's revocation to a new file, and publish nothing: keep it somewhere other than this box
+#   bash irongall.sh revocation make                 print this box's revocation record, one "revocation_record" line, and publish nothing: keep it somewhere other than this box
 #   bash irongall.sh revocation publish <address> [record]
 #                                                    revoke this box's address FOR GOOD (the address in full is the confirmation), or publish a record made earlier
 #   bash irongall.sh revocation keep <record>        keep a revocation of another box that someone handed you: nothing goes to it or comes from it again
@@ -77,7 +77,7 @@ ig_shape(){ # <answer> <identity|list|message|record|receipt|problem> → 0 only
     {identity: (all(.identity, .prekey, .prekey_signature; s) and (.sender_key_types | . == null or (type == "array" and all(.[]; s)))),
      list: (all(.count, .poll_after; n) and (.next_cursor | s) and (.messages | . == null or (type == "array" and all(.[]; . == null or (type == "object" and all(.id, .from, .received_at, .expires_at; s) and (.size | n)))))),
      message: all(.id, .from, .received_at, .expires_at, .ciphertext; s),
-     record: all(.identity, .revocation, .revoked_certificates, .revoked_certificates_signature; s),
+     record: (all(.identity, .revocation, .revoked_certificates, .revoked_certificates_signature; s) and (.type | . == null or . == "revocation_record")),
      receipt: all(.id, .received_at, .expires_at; s),
      problem: (all(.type, .title, .detail, .code, .hint, .oldest_expires_at, .key_type, .member; s) and all(.status, .unacked, .limit, .messages, .version, .prekey_serial, .certificate_serial, .through; n) and (.key_types | . == null or (type == "array" and all(.[]; s))))}[$k]' "$1" > /dev/null 2>&1
 }
@@ -343,7 +343,7 @@ ig_certscheck(){ # <address> <identity document> <statement> <signature> → the
   [ ${#L[@]} -eq 3 ] && [ "${L[0]}" = irongall-revoke-certs-v1 ] && [ "${L[1]}" = "$1" ] && [[ ${L[2]} =~ ^[1-9][0-9]{0,15}$ ]] && [ "${L[2]}" -le 9007199254740991 ] || return 1
   echo "${L[2]}"
 }
-ig_certskept(){ # <address> → the serial through which this box holds that address's certificates revoked, checked again as it is read. It is kept as the record that carries it, one line of JSON {identity, revoked_certificates, revoked_certificates_signature}: peers/<address>/revoked-certs.json beside the pinned identity, or revoked-certs.json for this box's own. 1 if none is kept. 3 if one is kept and does not verify under the identity this box holds for the address: a fault of this box, never a quiet "nothing revoked"
+ig_certskept(){ # <address> → the serial through which this box holds that address's certificates revoked, checked again as it is read. It is kept as the record that carries it, one line of JSON {type, identity, revoked_certificates, revoked_certificates_signature}: peers/<address>/revoked-certs.json beside the pinned identity, or revoked-certs.json for this box's own. 1 if none is kept. 3 if one is kept and does not verify under the identity this box holds for the address: a fault of this box, never a quiet "nothing revoked"
   local d="$IG/peers/$1/identity.doc" f="$IG/peers/$1/revoked-certs.json"
   [ "$1" != "$(cat "$IG/address" 2> /dev/null)" ] || { d="$IG/identity.doc"; f="$IG/revoked-certs.json"; }
   [ -e "$f" ] || return 1
@@ -361,12 +361,12 @@ ig_keepcerts(){ # <address> <identity document> <statement> <signature> → keep
   v=$(ig_certscheck "$1" "$2" "$3" "$4") || return 0
   h=$(ig_certskept "$1"); case $? in 0) [ "$v" -gt "$h" ] || return 0 ;; 1) ;; *) return 1 ;; esac
   [ "$f" = "$IG/revoked-certs.json" ] || ig_meet "$1" "$2" || return 1
-  ig_b64 "$2" > "$f.i" && ig_b64 "$3" > "$f.l" && ig_b64 "$4" > "$f.g" && jq -cn --rawfile i "$f.i" --rawfile l "$f.l" --rawfile g "$f.g" '{identity:$i, revoked_certificates:$l, revoked_certificates_signature:$g}' > "$f.new" && mv "$f.new" "$f" && rm -f "$f.i" "$f.l" "$f.g"      # one file, moved into place whole: a statement is never kept without the signature that goes with it
+  ig_b64 "$2" > "$f.i" && ig_b64 "$3" > "$f.l" && ig_b64 "$4" > "$f.g" && jq -cn --rawfile i "$f.i" --rawfile l "$f.l" --rawfile g "$f.g" '{type:"revocation_record", identity:$i, revoked_certificates:$l, revoked_certificates_signature:$g}' > "$f.new" && mv "$f.new" "$f" && rm -f "$f.i" "$f.l" "$f.g"      # one file, moved into place whole: a statement is never kept without the signature that goes with it
 }
 ig_keep(){ # <address> <its identity document> <signature> → the revocation, kept for good: called only once ig_revcheck took it. A revoked address stays revoked
   if [ "$1" = "$(cat "$IG/address" 2> /dev/null)" ]; then cp "$3" "$IG/revoked.sig"; else ig_meet "$1" "$2" && cp "$3" "$IG/peers/$1/revoke.sig"; fi
 }
-ig_record(){ # <record> → the address it is a revocation of, only if it verifies; its parts are left in $IG/rev.doc and $IG/rev.sig. A record is one line of JSON, {identity, revocation}: the identity document and the signature, each base64
+ig_record(){ # <record> → the address it is a revocation of, only if it verifies; its parts are left in $IG/rev.doc and $IG/rev.sig. A record is one line of JSON, {type, identity, revocation}: its type, revocation_record, which a record may leave out and may name no other, then the identity document and the signature, each base64
   local A
   ig_isrecord "$1" && ig_bytes "$1" identity "$IG/rev.doc" && ig_bytes "$1" revocation "$IG/rev.sig" || return 1
   A=$(sha256sum < "$IG/rev.doc" | cut -c1-64) && ig_revcheck "$A" "$IG/rev.doc" "$IG/rev.sig" && echo "$A"
@@ -422,17 +422,11 @@ ig_own(){ # after a call as this box failed: if the server said this box is revo
   if ig_lookup "$(cat "$IG/address")"; then ig_err "REVOKED: this box's own address is revoked, for good, and the revocation verifies. It can send and receive nothing more: make a new box and give its address to those who write to this one"
   else ig_err "the server showed no revocation of this box that verifies, so this box does not take itself as revoked"; fi
 }
-ig_selfrecord(){ # → this box's revocation record as one line of JSON, {identity, revocation}: the identity document, and the identity's own signature over the fixed statement, which has no date in it. It is exactly the body of the call that publishes it, and publishes nothing
+ig_revocation(){ # → this box's revocation record as one revocation_record line, {type, identity, revocation}: the identity document, and the identity's own signature over the fixed statement, which has no date in it. The line is the record every server takes. It publishes nothing. Whoever publishes the record ends this address for good, with no key: keep it where only you can read it, somewhere other than this box, for the day the box is lost
+  ig_held || { ig_lock ig_revocation "$@"; return; }
   local A; A=$(cat "$IG/address") || return 1
   printf 'irongall-revoke-v1\n%s\n' "$A" | ssh-keygen -q -Y sign -n "irongall-revoke-v1:$A" -f "$IG/identity" > "$IG/rev.new" 2> /dev/null || ig_refuse "this box's identity key did not sign" || return 1
-  jq -cn --arg i "$(ig_b64 "$IG/identity.doc")" --arg s "$(ig_b64 "$IG/rev.new")" '{identity:$i, revocation:$s}'; rm -f "$IG/rev.new"
-}
-ig_revocation(){ # <file> → writes this box's revocation record (ig_selfrecord) to a new file, never over one, and prints a revocation_record line naming it. It publishes nothing. Whoever publishes the record ends this address for good, with no key: keep it somewhere other than this box, for the day the box is lost
-  ig_held || { ig_lock ig_revocation "$@"; return; }
-  [ -n "${1-}" ] || { ig_refuse "revocation make takes the file to write the record to"; return 1; }
-  [ ! -e "$1" ] && [ ! -L "$1" ] || { ig_refuse "$1 exists: revocation make writes a new file, and never over one"; return 1; }
-  ig_selfrecord > "$IG/rev.out" && (set -o noclobber; cat "$IG/rev.out" > "$1") || return 1      # the record as a server takes it, exactly: a line of output around it would be a body a server refuses
-  rm -f "$IG/rev.out"; ig_out revocation_record --arg file "$(realpath -- "$1")" --arg message "This record revokes this box's address, for good, when anyone publishes it (revocation publish <address> <record>). Nothing was published. Keep it somewhere other than this box."
+  ig_out revocation_record --arg identity "$(ig_b64 "$IG/identity.doc")" --arg revocation "$(ig_b64 "$IG/rev.new")"; rm -f "$IG/rev.new"
 }
 ig_revoke(){ # <address> [record] → revokes the address at the server and at each revocation server this box lists, FOR GOOD: nothing undoes it. Without a record it is this box's own address, written out in full as the confirmation, and its identity signs now. With one, a record ig_revocation made earlier is published as it is, which needs no box here: only the file. Every server is tried whatever the others answer, and it fails, saying which did not take it, unless every one did: run it again
   ig_held || [ ! -s "$IG/address" ] || { ig_lock ig_revoke "$@"; return; }      # with no box here, a record of another box is published and nothing is kept
@@ -441,10 +435,10 @@ ig_revoke(){ # <address> [record] → revokes the address at the server and at e
   mkdir -p "$IG" || return 1
   if [ -z "$f" ]; then
     [ "$A" = "$(cat "$IG/address" 2> /dev/null)" ] || ig_refuse "that is not this box's address: nothing was published. revocation publish takes this box's own address, or a record of another" || return 1
-    f="$IG/revoke.json"; ig_selfrecord > "$f" || return 1
+    f="$IG/revoke.json"; ig_revocation > "$f" || return 1
   fi
   [ "$(ig_handed "$f")" = "$A" ] || ig_refuse "the record is not a revocation of $A whose every part verifies: nothing was published" || return 1
-  jq -c '{identity, revocation, revoked_certificates, revoked_certificates_signature} | with_entries(select(.value != null))' "$f" > "$IG/revoke.put" || return 1      # what is sent is the record's own members: a line revocation make printed carries its type and a message beside them
+  jq -c '{type: "revocation_record"} + ({identity, revocation, revoked_certificates, revoked_certificates_signature} | with_entries(select(.value != null)))' "$f" > "$IG/revoke.put" || return 1      # what is sent is the record's own members, its type first, whatever else a handed file carries
   l=$(ig_revservers) || return 1
   if ig_api PUT "/v1/$A/revocations" "$IG/revoke.put" > /dev/null 2> "$IG/put.err" || { [ "$(ig_code)" = revoked ] && ig_api GET "/v1/$A/revocations" > "$IG/held.json" 2> /dev/null && [ "$(ig_record "$IG/held.json")" = "$A" ]; }; then took=$IG_BASE      # revoked, from a server that holds the address revoked, is taken once what it serves verifies: the address is ended there already
   else r=1; cat "$IG/put.err" >&2; ig_err "NOT taken by $IG_BASE"; fi
@@ -720,7 +714,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     'alias list') ig_cmd=ig_alias ig_n=2 ig_args=0 ;;
     'outbox flush') ig_cmd=ig_flush ig_n=2 ;;
     'prekey renew') ig_cmd=ig_rekey ig_n=2 ;;
-    'revocation make') ig_cmd=ig_revocation ig_n=2 ig_args=1 ;;
+    'revocation make') ig_cmd=ig_revocation ig_n=2 ig_args=0 ;;
     'revocation publish') ig_cmd=ig_revoke ig_n=2 ;;
     'revocation keep') ig_cmd=ig_revoked ig_n=2 ;;
   esac

@@ -184,7 +184,7 @@ srv_revoke(){ local a=$1 f=$2 d=$SRV/$1 v      # no pass: the identity's own sig
     fi
     jq -e 'has("revocation")' "$f" > /dev/null || { echo '{}'; return 0; }
   fi
-  jq -e 'type == "object" and (keys - ["identity","revocation","revoked_certificates","revoked_certificates_signature"] == [])' "$f" > /dev/null && jq -er .identity "$f" | base64 -d > $SRV/tmp/rv.doc && jq -er .revocation "$f" | base64 -d > $SRV/tmp/rv.sig && cmp -s $SRV/tmp/rv.doc $d/identity.doc &&
+  jq -e 'type == "object" and (keys - ["type","identity","revocation","revoked_certificates","revoked_certificates_signature"] == []) and (.type == null or .type == "revocation_record")' "$f" > /dev/null && jq -er .identity "$f" | base64 -d > $SRV/tmp/rv.doc && jq -er .revocation "$f" | base64 -d > $SRV/tmp/rv.sig && cmp -s $SRV/tmp/rv.doc $d/identity.doc &&
     printf '%s %s\n' "$a" "$(sed -n 2p $d/identity.doc)" > $SRV/tmp/rv.signers && printf 'irongall-revoke-v1\n%s\n' "$a" | ssh-keygen -Y verify -f $SRV/tmp/rv.signers -I "$a" -n "irongall-revoke-v1:$a" -s $SRV/tmp/rv.sig > /dev/null 2>&1 ||
     { srv_err 400 bad_revocation "this is not a revocation of this address"; return 1; }
   [ -e $d/revoke.sig ] || cp $SRV/tmp/rv.sig $d/revoke.sig; echo revoked > $d/state; rm -f $d/msgs/*; echo '{}'; }
@@ -198,7 +198,7 @@ srv_revocations(){ local a=$1 d=$SRV/$1      # what the server holds about an ad
   esac
   [ -e $d/revoke.sig ] || [ -e $d/revoked-certs.txt ] || { srv_err 404 not_revoked "no revocation of this address is held here"; return 1; }
   jq -n --arg i "$(base64 < $d/identity.doc | tr -d '\n')" --arg s "$([ ! -e $d/revoke.sig ] || base64 < $d/revoke.sig | tr -d '\n')" --arg l "$([ ! -e $d/revoked-certs.txt ] || base64 < $d/revoked-certs.txt | tr -d '\n')" --arg g "$([ ! -e $d/revoked-certs.sig ] || base64 < $d/revoked-certs.sig | tr -d '\n')" \
-    '{identity:$i} + ([{revocation:$s}, {revoked_certificates:$l}, {revoked_certificates_signature:$g}] | map(select(.[] != "")) | add // {})'; }
+    '{type:"revocation_record", identity:$i} + ([{revocation:$s}, {revoked_certificates:$l}, {revoked_certificates_signature:$g}] | map(select(.[] != "")) | add // {})'; }      # the record names its type, as every server writes it
 srv_inject(){ # <box> <from> <c.age> [id]: what a malicious operator can do, put anything in a box
   local d=$SRV/$1 s id=${4:-$(sha256sum < "$3" | cut -c1-64)}; s=$(($(cat $d/seq) + 1)); echo $s > $d/seq
   ig_b64 "$3" > $SRV/tmp/c.b64; jq -n --arg id "$id" --arg from "$2" --rawfile c $SRV/tmp/c.b64 --argjson t "$(date -u +%s)" '{id:$id, from:$from, received_at:($t|todate), expires_at:($t + 33*86400 | todate), ciphertext:$c}' > $d/msgs/$(printf %06d $s)-$id.json; }
@@ -617,9 +617,11 @@ for v in $VEC/revoke/bad-*.sig; do ! ig_revcheck "$VA" $VEC/a/identity.doc "$v" 
   ok "a revocation is the identity's own signature over its fixed statement, in either hash and by either key type: a working key's, another identity's, another namespace's and another box's are not" || bad "revocation vectors"
 for X in RA RB RC RD; do as $X; ig_init $NOPQ > /dev/null || bad "init $X"; eval "$X=\$(cat \$IG/address)"; done
 # the record: one line, made without publishing, and revocation publish (ig_revoke) takes only this box's own address written out in full
-as RB; ig_revocation $W/rb.json > out.txt 2> err.txt && [ "$(jq -r '.type + " " + .file' out.txt)" = "revocation_record $W/rb.json" ] && [ "$(wc -l < $W/rb.json)" = 1 ] && [ "$(jq -c keys $W/rb.json)" = '["identity","revocation"]' ] && [ "$(stat -c %a $W/rb.json)" = 600 ] &&
-  [ "$(ig_record $W/rb.json)" = "$RB" ] && [ "$(cat $SRV/$RB/state)" = active ] && ! grep -q "^PUT .*/revocations\$" $SRV/log && ! ig_revocation $W/rb.json > out.txt 2> err.txt && [ ! -s out.txt ] && grep -q "exists" err.txt &&
-  ok "revocation make writes the box's record to a new file, one line of JSON that verifies and is the body a server takes, never over a file, and publishes nothing" || bad "revocation: $(cat out.txt err.txt)"
+as RB; ig_revocation > $W/rb.json 2> err.txt && [ "$(wc -l < $W/rb.json)" = 1 ] && grep -q '^{"type":"revocation_record","identity":"' $W/rb.json && [ "$(jq -c keys $W/rb.json)" = '["identity","revocation","type"]' ] &&
+  [ "$(ig_record $W/rb.json)" = "$RB" ] && [ "$(cat $SRV/$RB/state)" = active ] && ! grep -q "^PUT .*/revocations\$" $SRV/log &&
+  ok "revocation prints the box's record, one revocation_record line that verifies, and publishes nothing" || bad "revocation: $(cat err.txt)"
+jq -c '.type = "revocation"' $W/rb.json > $W/rb-other.json; ig_record $W/rb-other.json > /dev/null && bad "a record of another type was read as one"; jq -c 'del(.type)' $W/rb.json > $W/rb-untyped.json
+[ "$(ig_record $W/rb-untyped.json)" = "$RB" ] && ok "a record that names another type is no record, and one that names none is read as one" || bad "a record without its type"
 for arg in "" "${RB:0:63}" "$RA" "$IG_BASE/to/$RB"; do ig_revoke $arg > out.txt 2> err.txt && bad "revoke '$arg' ran"; [ ! -s out.txt ] || bad "revoke '$arg' printed $(cat out.txt)"; done
 ! grep -q "^PUT .*/revocations\$" $SRV/log && [ "$(cat $SRV/$RB/state)" = active ] && ok "revoke without this box's own address in full is REFUSED, and nothing is published" || bad "revoke was published without its confirmation"
 # a working key's signature over the same statement: good under its certificate, and not a revocation, to this script or to the server
@@ -630,7 +632,7 @@ ig_revoke "$RB" $W/wk.json 2> err.txt && bad "a working key's signature was publ
 ig_api PUT "/v1/$RB/revocations" $W/wk.json > /dev/null 2>&1 && bad "the server took a working key's signature as a revocation"
 [ "$(ig_code)" = bad_revocation ] && [ "$(cat $SRV/$RB/state)" = active ] && ok "a working key cannot revoke: its signature over the statement is REFUSED as a record, and by the server" || bad "working key: $(ig_code)"
 # the operator says a box is revoked, and shows nothing, or something that is not its revocation
-as RC; ig_revocation $W/rc.json > /dev/null 2>&1; jq -c --slurpfile b $W/rb.json '.identity = $b[0].identity' $W/rc.json > $W/mixed.json
+as RC; ig_revocation > $W/rc.json 2> /dev/null; jq -c --slurpfile b $W/rb.json '.identity = $b[0].identity' $W/rc.json > $W/mixed.json
 as RA; MODE="says-revoked $RB"; printf 'to a box the server calls revoked' | ig_send "$RB" 2> err.txt && bad "sent to a box the server calls revoked"
 grep -q "showed no revocation that verifies" err.txt && [ ! -e $IG/peers/$RB/revoke.sig ] && [ "$(ls $IG/outbox/*.P | wc -l)" = 1 ] || bad "a server's word: $(cat err.txt)"
 for shown in $W/wk.json $W/rc.json $W/mixed.json; do
@@ -831,7 +833,7 @@ n0=$(wc -l < $SRV/log); IG_REVOCATION_SERVERS=revocations.example; printf 'never
 [ "$(wc -l < $SRV/log)" = "$n0" ] && [ "$(ls $IG/outbox/*.P | wc -l)" = 1 ] && ig_flush 2> err.txt && ok "a list that names something that is no server is REFUSED: nobody is asked and nothing is posted until it is put right" || bad "a bad list: $(cat err.txt)"
 # a revocation the box's own server hides from the first: it never took it, and goes on serving the box. The revocation server holds it
 as TC; printf 'from a box about to be revoked' | ig_send "$TD" && printf 'and again' | ig_send "$TE" && printf 'and to TE again' | ig_send "$TE" || bad "TC's sends"
-ig_revocation $W/tc.json > /dev/null 2>&1 && IG_BASE=$REV ig_api PUT "/v1/$TC/revocations" $W/tc.json > /dev/null && [ "$(cat $SRV/$TC/state)" = active ] || bad "TC's revocation, to the revocation server alone"
+ig_revocation > $W/tc.json 2> /dev/null && IG_BASE=$REV ig_api PUT "/v1/$TC/revocations" $W/tc.json > /dev/null && [ "$(cat $SRV/$TC/state)" = active ] || bad "TC's revocation, to the revocation server alone"
 # the control: asking its own server alone, a sender posts to the revoked address and a reader takes its mail
 as TD; n0=$(posts "$TC"); IG_REVOCATION_SERVERS=none; printf 'to an address its owner ended' | ig_send "$TC" 2> err.txt || bad "the control's send: $(cat err.txt)"; recv; unset IG_REVOCATION_SERVERS
 [ $(($(posts "$TC") - n0)) = 1 ] && [ ! -e $IG/peers/$TC/revoke.sig ] && [ "$(printf '%s\n' "$RECV_OUT" | jq -r .body)" = "from a box about to be revoked" ] || bad "the control: a box that asks its own server alone was shown the revocation, or did not post: $RECV_ERR"

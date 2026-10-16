@@ -553,8 +553,8 @@ var answerTypes = map[string]func() any{
 func TestVectorsAnswer(t *testing.T) {
 	need(t, scriptTools...)
 	files, _ := filepath.Glob(filepath.Join(vectors, "answer", "*.json"))
-	if len(files) != 45 {
-		t.Fatalf("%d answer/ vectors, want 45", len(files))
+	if len(files) != 50 {
+		t.Fatalf("%d answer/ vectors, want 50", len(files))
 	}
 	dir := t.TempDir()
 	var script strings.Builder
@@ -1375,14 +1375,13 @@ func TestRevocationInBothClients(t *testing.T) {
 	// is one the script takes.
 	s1, s1Addr := scriptBox()
 	g1 := goBox()
-	written := filepath.Join(t.TempDir(), "s1.json")
-	out, err := sh(s1, "ig_revocation "+written)
-	if err != nil || !strings.HasPrefix(out, `{"type":"revocation_record","file":"`+written+`",`) {
+	out, err := sh(s1, "ig_revocation")
+	if err != nil || !strings.HasPrefix(out, `{"type":"revocation_record","identity":"`) {
 		t.Fatalf("ig_revocation: %q %v", out, err)
 	}
 	var fromScript protocol.Revocations
-	if err := protocol.UnmarshalRequest(mustRead(t, written), &fromScript); err != nil {
-		t.Fatalf("the script's record is not the body a server takes: %v: %q", err, mustRead(t, written))
+	if err := protocol.UnmarshalRequest([]byte(out), &fromScript); err != nil {
+		t.Fatalf("the script's record is not the body a server takes: %v: %q", err, out)
 	}
 	if a, _, err := g1.KeepRevocation(&fromScript); err != nil || a != s1Addr {
 		t.Fatalf("the Go client refuses the script's record: %v", err)

@@ -538,6 +538,11 @@ at record-bad-identity-twice '{"identity":"%s","identity":"%s","revocation":"%s"
 at record-bad-null-after-a-value '{"identity":"%s","revocation":"%s","revocation":null}' "$ID_A" "$REV"
 at record-bad-nan-beside-it '{"identity":"%s","revocation":"%s","later":NaN}' "$ID_A" "$REV"
 at record-bad-a-second-value '{"identity":"%s","revocation":"%s"}{}' "$ID_A" "$REV"
+at record-ok-type '{"type":"revocation_record","identity":"%s","revocation":"%s"}' "$ID_A" "$REV" # a record names its own type
+at record-ok-type-null '{"type":null,"identity":"%s","revocation":"%s"}' "$ID_A" "$REV"
+at record-bad-type-another '{"type":"revocation","identity":"%s","revocation":"%s"}' "$ID_A" "$REV" # and never another
+at record-bad-type-empty '{"type":"","identity":"%s","revocation":"%s"}' "$ID_A" "$REV"
+at record-bad-type-a-number '{"type":1,"identity":"%s","revocation":"%s"}' "$ID_A" "$REV"
 at identity-ok '{"identity":"%s","prekey":"%s","prekey_signature":"%s"}' "$ID_A" "$P1" "$P1S"
 at identity-ok-sender-key-types '{"identity":"%s","prekey":"%s","prekey_signature":"%s","sender_key_types":["ecdsa-sha2-nistp256"]}' "$ID_A" "$P1" "$P1S"
 at identity-bad-sender-key-types-a-string '{"identity":"%s","prekey":"%s","prekey_signature":"%s","sender_key_types":"any"}' "$ID_A" "$P1" "$P1S"

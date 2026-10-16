@@ -133,8 +133,12 @@ func TestTheCommandsWithARevocationServer(t *testing.T) {
 
 	// What ends an address is never published without that address written
 	// out: cert publish-revoked takes a revocation of certificates and nothing more.
+	rec, _, err := cmd(b, "revocation", "make")
+	if err != nil {
+		t.Fatal(err)
+	}
 	file := filepath.Join(t.TempDir(), "b.json")
-	if _, _, err := cmd(b, "revocation", "make", file); err != nil {
+	if err := os.WriteFile(file, []byte(rec), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if out, _, err := cmd(box(), "cert", "publish-revoked", file); err == nil || out != "" || !strings.Contains(err.Error(), "nothing was published") {

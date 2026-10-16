@@ -930,7 +930,7 @@ func TestHelpRunsNothing(t *testing.T) {
 	}
 }
 
-// revocation make writes a record and publishes nothing; revocation publish
+// revocation make prints a record and publishes nothing; revocation publish
 // publishes one, for this box only when its address is written out in full,
 // or from a record with no box at all; revocation keep keeps a record someone
 // handed over.
@@ -959,33 +959,34 @@ func TestRevocationCommands(t *testing.T) {
 		return out.String(), errs.String(), err
 	}
 
-	// The record: a new file, exactly the body a server takes, and a line that
-	// names it with the warning; the box still works. It never writes over a
-	// file.
-	record := filepath.Join(t.TempDir(), "a.json")
-	out, warn, err := cmd(a, "revocation make", record)
-	if ls := printed(t, out); err != nil || typesOf(ls) != "revocation_record" || ls[0]["file"] != record || !strings.Contains(ls[0]["message"].(string), "Nothing was published") || warn != "" {
+	// The record: one line, the revocation_record that names its own type
+	// first, which is the body every server takes; the box still works.
+	out, warn, err := cmd(a, "revocation make")
+	var rec map[string]json.RawMessage
+	if err != nil || typesOf(printed(t, out)) != "revocation_record" || json.Unmarshal([]byte(out), &rec) != nil || len(rec) != 3 || rec["identity"] == nil || rec["revocation"] == nil || warn != "" {
 		t.Fatalf("revocation: %v %q %q", err, out, warn)
 	}
-	var rec map[string]json.RawMessage
-	if err := json.Unmarshal(must(t, record), &rec); err != nil || len(rec) != 2 || rec["identity"] == nil || rec["revocation"] == nil {
-		t.Fatalf("the record is not the body a server takes: %v %q", err, must(t, record))
-	}
 	var r protocol.Revocations
-	if err := protocol.UnmarshalRequest(must(t, record), &r); err != nil {
+	if err := protocol.UnmarshalRequest([]byte(out), &r); err != nil {
 		t.Fatalf("a server would refuse the record: %v", err)
 	}
-	if fi, err := os.Stat(record); err != nil || fi.Mode().Perm() != 0o600 {
-		t.Fatalf("the record's mode: %v %v", fi, err)
-	}
 	if _, err := protocol.VerifyRevocation(a.Address(), r.Identity, r.Revocation); err != nil {
-		t.Fatalf("the record does not verify: %v", err)
-	}
-	if out, _, err := cmd(a, "revocation make", record); err == nil || out != "" {
-		t.Fatalf("revocation make wrote over a file: %v %q", err, out)
+		t.Fatalf("the printed record does not verify: %v", err)
 	}
 	if _, err := b.Send(ctx, a.Address(), "the box is not revoked by printing its record"); err != nil {
 		t.Fatal(err)
+	}
+	record := filepath.Join(t.TempDir(), "a.json")
+	if err := os.WriteFile(record, []byte(out), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A record that names another type is no record, to any reader.
+	other := filepath.Join(t.TempDir(), "other.json")
+	if err := os.WriteFile(other, []byte(strings.Replace(out, `"type":"revocation_record"`, `"type":"revocation"`, 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, _, err := cmd(b, "revocation keep", other); err == nil || out != "" || !strings.Contains(err.Error(), "not a revocation record") {
+		t.Fatalf("revocation keep took a record of another type: %v %q", err, out)
 	}
 
 	// revoke wants this box's own address, in full, and nothing else.

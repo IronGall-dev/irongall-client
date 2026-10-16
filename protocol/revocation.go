@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 
 	"golang.org/x/crypto/ssh"
@@ -17,7 +18,16 @@ import (
 // It is also the record a box's owner makes in advance and keeps apart from
 // the box. It holds the identity document because a box that is lost no
 // longer has one.
+//
+// It names its own type, RecordType, as its first member, so that one JSON
+// text is the record a person keeps, the body a server takes, the answer it
+// gives, and the line irongall revocation make prints. Every writer writes
+// it (MarshalJSON). A reader takes a record without it, as the route says
+// what the body is, and refuses one that names any other type
+// (ErrMemberValue).
 type Revocations struct {
+	// Type is RecordType, or nil when the record read had none.
+	Type *string `json:"type,omitempty"`
 	// Identity is the identity document of the address.
 	Identity Bytes `json:"identity"`
 	// Revocation is the identity's signature over RevocationStatement, in
@@ -29,6 +39,26 @@ type Revocations struct {
 	// nothing signed under a revoked certificate is taken.
 	RevokedCertificates          Bytes `json:"revoked_certificates,omitempty"`
 	RevokedCertificatesSignature Bytes `json:"revoked_certificates_signature,omitempty"`
+}
+
+// RecordType is the type a revocation record names itself by.
+const RecordType = "revocation_record"
+
+// MarshalJSON writes the record with its type first, whatever Type holds.
+func (r Revocations) MarshalJSON() ([]byte, error) {
+	type record Revocations
+	t := RecordType
+	r.Type = &t
+	return json.Marshal(record(r))
+}
+
+// checkType refuses a record that names a type other than RecordType: an
+// empty one too, which is not the member left out.
+func (r *Revocations) checkType() error {
+	if r.Type != nil && *r.Type != RecordType {
+		return &memberError{name: "type", known: true}
+	}
+	return nil
 }
 
 // ErrRevocation is a revocation that does not verify: its document does not
