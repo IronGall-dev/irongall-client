@@ -2,7 +2,9 @@
 # irongall.sh: the irongall client in stock tools (bash, age, ssh-keygen, curl, jq, iconv and coreutils).
 #
 # The same protocol, checks and on-disk box as the Go client in this repo, so either can run a box. It fails CLOSED:
-# a failed check prints one "REFUSED: <reason>" line and stops (recv refuses that one message, "REFUSED <id>: <code>: <words>", and goes on), and every API error prints its status and its code, and none of the server's words.
+# a failed check prints an error line, "REFUSED: <reason>", and stops (recv refuses that one message with a refused line, its code and its words, and goes on), and every API error prints its status and its code, and none of the server's words.
+# It prints JSON lines, as the Go client does, each with its "type" first: what a command did and met on stdout, and on stderr the
+# line that says it failed ("error", here sometimes more than one), that its command line was wrong ("usage_error"), or that it waits.
 # Get it from https://github.com/IronGall-dev/irongall-client at a commit you have read, never from the irongall.dev
 # server: a server that could hand you this script could hand you one without its checks.
 #
@@ -10,12 +12,12 @@
 #   bash irongall.sh addr                            print it again: give it to whoever should write to this box
 #   bash irongall.sh send [options] <link> [file]    one message (the body from stdin without a file); an address or an alias works too.
 #                                                    Options: --subject <text>, --reply-to <msg_id>, --supersedes <msg_id>
-#   bash irongall.sh recv                            verified mail only, one JSON line each; refused mail goes to quarantine/
+#   bash irongall.sh recv                            verified mail, a "mail" line each; refused mail goes to quarantine/, with a "refused" line
 #   bash irongall.sh alias add <name> <link>         name a peer for this box only, so send takes the name
 #   bash irongall.sh alias list                      list the names
 #   bash irongall.sh outbox flush                    retry what is still in outbox/
 #   bash irongall.sh prekey renew [--no-pq]          a new prekey, working key and certificate: at least monthly, as a prekey is valid for 33 days
-#   bash irongall.sh revocation make                 print this box's revocation, one line of JSON, and publish nothing: keep it somewhere other than this box
+#   bash irongall.sh revocation make <file>          write this box's revocation to a new file, and publish nothing: keep it somewhere other than this box
 #   bash irongall.sh revocation publish <address> [record]
 #                                                    revoke this box's address FOR GOOD (the address in full is the confirmation), or publish a record made earlier
 #   bash irongall.sh revocation keep <record>        keep a revocation of another box that someone handed you: nothing goes to it or comes from it again
@@ -36,7 +38,9 @@ IG_BASE=${IG_BASE:-https://irongall.dev}
 IG=${IRONGALL_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/irongall/${IRONGALL_BOX:-default}}   # one box per directory; never the working directory
 IG_LOCK_WAIT=${IG_LOCK_WAIT:-120}   # how many seconds a command waits for the box's lock while another command of the box holds it: what apt waits for its own lock when no one is at a terminal
 IG_SENDERS='["ssh-ed25519","ecdsa-sha2-nistp256"]'   # the identity key types ig_idcheck verifies. A box declares them with each prekey it publishes, and the server then refuses it mail from a box whose identity is of any other type
-ig_refuse(){ printf 'REFUSED: %s\n' "$*" >&2; return 1; }
+ig_out(){ jq -cn --arg type "$1" "${@:2}" '$ARGS.named'; }      # <type> [--arg <name> <text> | --argjson <name> <JSON>]… → one line of JSON on stdout, its type first and then each member in turn, as the Go client prints one: what a command did or met on the way
+ig_err(){ jq -cn --arg m "$*" '{type:"error", message:$m}' >&2; }      # <words> → the line on stderr that says a command failed, in this script's own words
+ig_refuse(){ ig_err "REFUSED: $*"; return 1; }
 ig_hex(){ [[ $1 =~ ^[0-9a-f]{64}$ ]]; }
 ig_b64(){ base64 < "$1" | tr -d '\n'; }
 ig_now(){ date -u +%s; }   # the one clock every check reads
@@ -44,14 +48,15 @@ ig_time(){ # <timestamp> → its Unix time, only for exactly YYYY-MM-DDTHH:MM:SS
   local s; [[ $1 =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 1
   s=$(jq -nr --arg t "$1" '$t | fromdateiso8601 | select(todate == $t)' 2> /dev/null) && [ -n "$s" ] && echo "$s"
 }
-ig_api(){ # <METHOD> <PATH> [JSON file] [curl args…] → the body on stdout. Any non-2xx: prints its status, its code (ig_code) and the wait its Retry-After asks for, and nothing the server wrote: its detail, hint and title are for a person reading the body (PROTOCOL.md §13). Keeps the answer in $IG/error.json and its headers in $IG/error.headers, returns 1
-  local m=$1 p=$2 f=${3-} c w; shift 2; [ $# -gt 0 ] && shift
+ig_api(){ # <METHOD> <PATH> [JSON file] [curl args…] → the body on stdout. Any non-2xx: an error line with its status, its code (ig_code) and the wait its Retry-After asks for, and nothing the server wrote: its detail, hint and title are for a person reading the body (PROTOCOL.md §13). No answer at all: an error line with curl's words. Keeps the answer in $IG/error.json and its headers in $IG/error.headers, returns 1
+  local m=$1 p=$2 f=${3-} s c w; shift 2; [ $# -gt 0 ] && shift
   rm -f "$IG/error.json" "$IG/error.headers"
-  curl -sS --max-time 60 --max-filesize 16777216 --fail-with-body -D "$IG/response.headers" -X "$m" ${f:+-H 'Content-Type: application/json' --data-binary "@$f"} "$@" "$IG_BASE$p" > "$IG/response.json" && { cat "$IG/response.json"; return 0; }
+  curl -sS --max-time 60 --max-filesize 16777216 --fail-with-body -D "$IG/response.headers" -X "$m" ${f:+-H 'Content-Type: application/json' --data-binary "@$f"} "$@" "$IG_BASE$p" > "$IG/response.json" 2> "$IG/curl.err" && { cat "$IG/response.json"; return 0; }
   mv "$IG/response.json" "$IG/error.json"; mv "$IG/response.headers" "$IG/error.headers" 2> /dev/null
-  c=$(ig_code); w=$(ig_wait)
-  if [ -n "$c" ]; then c=" $c"; else c=": an answer this client does not know"; fi
-  echo "ERROR $(ig_status)$c${w:+; the server asks to wait $w seconds}" >&2; return 1
+  s=$(ig_status); c=$(ig_code); w=$(ig_wait)
+  [ -n "$s" ] || { ig_err "no answer from $IG_BASE: $(tr '\n' ' ' < "$IG/curl.err")"; return 1; }
+  jq -cn --argjson s "$s" --arg c "$c" --arg w "$w" '{type:"error", status:$s} + (if $c != "" then {code:$c} else {} end) + (if $w != "" then {retry_after:($w | tonumber)} else {} end) +
+    {message:("ERROR \($s)" + (if $c != "" then " \($c)" else ": an answer this client does not know" end) + (if $w != "" then "; the server asks to wait \($w) seconds" else "" end))}' >&2; return 1
 }
 IG_CODES='{"bad_request":400,"bad_address":400,"bad_encoding":400,"identity_mismatch":400,"bad_key":400,"prekey_not_new":400,"prekey_time":400,"unsupported_key_type":400,"not_age":400,"wrong_recipient_type":400,"bad_revocation":400,"unauthorized":401,"pass_expired":401,"certificate_not_current":401,"certificate_revoked":401,"unknown_sender":403,"sender_revoked":403,"sender_not_allowed":403,"sender_key_type":403,"adopt_key_refused":403,"no_such_mailbox":404,"no_such_message":404,"not_revoked":404,"conflict":409,"box_changed":409,"stale_prekey":409,"prekey_expired":409,"revoked":410,"too_large":413,"rate_limited":429,"renewals_spent":429,"identity_acts_spent":429,"sends_spent":429,"fetch_paced":429,"refetch_spent":429,"pair_full":429,"mailbox_full":429,"mailbox_busy":429,"unavailable":503}'      # every code, and its status (PROTOCOL.md §13)
 ig_status(){ LC_ALL=C sed -n 's/^HTTP\/[0-9.]* \([0-9][0-9][0-9]\).*/\1/p' "$IG/error.headers" 2> /dev/null | tail -n 1; }      # the status of the last API error
@@ -99,7 +104,7 @@ ig_look(){ # <address> <suffix> → ig_api GET of what this box's server serves 
 ig_clock(){ # after a call the server refused: if it refused the pass, or a prekey statement, for its time, says what the server dates its answer and what this machine's clock reads. A new pass does not cure that, so it is nearly always a clock. The date is the server's word: a clock set by a server's lie makes an ended certificate valid again, so this sends its reader to a time source of their own
   local d; case $(ig_code) in pass_expired | prekey_time) ;; *) return 0 ;; esac
   d=$(ig_dated) && d="the server dates its answer $d, and "
-  echo "${d}this machine's clock reads $(jq -nr --argjson t "$(ig_now)" '$t | todate'). A server refuses a pass from a clock 10 minutes or more behind its own, or more than 50 ahead, and a certificate or prekey statement this machine dated more than an hour ahead of it. Check this machine's clock against a time source you trust, not against the server" >&2
+  ig_err "${d}this machine's clock reads $(jq -nr --argjson t "$(ig_now)" '$t | todate'). A server refuses a pass from a clock 10 minutes or more behind its own, or more than 50 ahead, and a certificate or prekey statement this machine dated more than an hour ahead of it. Check this machine's clock against a time source you trust, not against the server"
 }
 ig_pass(){ # [serial] → the Authorization value of a call as this box. Without a serial: the pass kept in $IG/pass while it has more than 30 seconds left and no more than the ten minutes it was signed for, otherwise a new one, signed by the working key in use and kept. With one: a pass signed by that working key, for the call that publishes its prekey, left in $IG/pass.new until the server has taken it
   local A n=${1-} na h; A=$(cat "$IG/address") || return 1
@@ -118,7 +123,7 @@ ig_lock(){ # <command> [args] → runs that ig_ command with $IG/lock, the box's
   local end=$((SECONDS + IG_LOCK_WAIT)) said= me=$IG outer=${IG_HELD-} trap rc
   [ -s "$IG/address" ] || { ig_refuse "no box in $IG: run init first"; return 1; }
   until mkdir "$me/lock" 2> /dev/null; do
-    [ -n "$said" ] || { echo "waiting for this box's lock: another command of this box is running, and a box's commands write its files one at a time" >&2; said=1; }
+    [ -n "$said" ] || { jq -cn '{type:"waiting", for:"lock", message:"waiting for this box'"'"'s lock: another command of this box is running, and a box'"'"'s commands write its files one at a time"}' >&2; said=1; }
     [ "$SECONDS" -lt "$end" ] || { ig_refuse "another command of this box held its lock, $me/lock, for as long as a command waits for it. If none is running, one that crashed left it behind: remove it"; return 1; }
     sleep 1
   done
@@ -144,7 +149,7 @@ ig_prekey(){ # <serial> [--no-pq] → prekeys/<serial>.agekey and its statement,
   printf 'irongall-prekey-v1\n%s\n%s\n%s\n%s\n' "$A" "$1" "$(age-keygen -y "$p.agekey")" "$(jq -nr --argjson t "$(ig_now)" '$t + 33*86400 | todate')" > "$p.txt" &&
   ssh-keygen -q -Y sign -n "irongall-prekey-v1:$A" -f "$IG/work/$1-cert.pub" < "$p.txt" > "$p.txt.sig"      # stdin to stdout: never a stale .sig
 }
-ig_init(){ # [--no-pq] → creates this box, or finishes a half-done init, and registers it; prints its link. The registration carries a pass the new working key signs, so the box is in use at once
+ig_init(){ # [--no-pq] → creates this box, or finishes a half-done init, and registers it; prints its address and link. The registration carries a pass the new working key signs, so the box is in use at once
   ig_opt "${1-}" || return 1
   mkdir -p "$IG/work" "$IG/prekeys" "$IG/peers" "$IG/inbox" "$IG/quarantine" "$IG/outbox" "$IG/sent" && printf '*\n' > "$IG/.gitignore" || return 1
   [ -e "$IG/identity" ] || ssh-keygen -q -t ed25519 -N '' -C '' -f "$IG/identity" < /dev/null || return 1
@@ -160,7 +165,7 @@ ig_init(){ # [--no-pq] → creates this box, or finishes a half-done init, and r
   jq -n --arg i "$(ig_b64 "$IG/identity.doc")" --arg p "$(ig_b64 "$p.txt")" --arg s "$(ig_b64 "$p.txt.sig")" --argjson k "$IG_SENDERS" '{identity:$i, prekey:$p, prekey_signature:$s, sender_key_types:$k}' > "$IG/register.json"
   h=$(ig_pass "$n") && { ig_api PUT "/v1/$A" "$IG/register.json" -H "Authorization: $h" > /dev/null || { ig_clock; false; }; } && mv "$IG/pass.new" "$IG/pass" && echo "$n" > "$IG/serial" && ig_addr
 }
-ig_addr(){ local a; a=$(cat "$IG/address") && echo "$IG_BASE/to/$a"; }      # the box's link: what to give whoever should write to it
+ig_addr(){ local a; a=$(cat "$IG/address") && ig_out box --arg address "$a" --arg link "$IG_BASE/to/$a"; }      # the box's address and its link: what to give whoever should write to it
 ig_dest(){ # <link, address or alias> → the address: 64 hex, or taken from a link to this box's server, $IG_BASE/to/<address>, or the one address $IG/aliases gives the name
   local a=${1#"$IG_BASE/to/"}
   if ig_name "$1"; then a=$(awk -v n="$1" '$1 == n {print $2}' "$IG/aliases" 2> /dev/null | sort -u); [ -n "$a" ] || { ig_refuse "no alias named $1: ig_alias lists them, and names one"; return 1; }; fi
@@ -169,8 +174,8 @@ ig_dest(){ # <link, address or alias> → the address: 64 hex, or taken from a l
   ig_refuse "not an address, a link to one, or an alias naming one address: $1"
 }
 ig_name(){ [[ $1 =~ ^[a-z0-9][a-z0-9._-]{0,31}$ ]]; }   # an alias: never 64 hex, never a link
-ig_alias(){ # [<name> <link or address>] → names a peer for this box only, one "<name> <address>" line in $IG/aliases; without arguments, lists them. A name is never moved: to change or drop one, delete its line
-  [ $# -gt 0 ] || { cat "$IG/aliases" 2> /dev/null; return 0; }
+ig_alias(){ # [<name> <link or address>] → names a peer for this box only, one "<name> <address>" line in $IG/aliases, and prints an alias line; without arguments, an alias line for each. A name is never moved: to change or drop one, delete its line
+  [ $# -gt 0 ] || { [ ! -s "$IG/aliases" ] || awk 'NF == 2 { print $1, $2 }' "$IG/aliases" | jq -cR 'split(" ") | {type:"alias", name:.[0], address:.[1]}'; return; }
   ig_held || { ig_lock ig_alias "$@"; return; }
   local a have
   ig_name "$1" || { ig_refuse "not an alias: $1 (1 to 32 of a-z, 0-9, '.', '_' and '-', starting with a letter or a digit)"; return 1; }
@@ -178,7 +183,7 @@ ig_alias(){ # [<name> <link or address>] → names a peer for this box only, one
   have=$(awk -v n="$1" '$1 == n {print $2}' "$IG/aliases" 2> /dev/null | sort -u)
   [ -z "$have" ] || [ "$have" = "$a" ] || { ig_refuse "alias $1 already names $have: delete its line in $IG/aliases first"; return 1; }
   [ -n "$have" ] || echo "$1 $a" >> "$IG/aliases" || return 1
-  echo "$1 $a"
+  ig_out alias --arg name "$1" --arg address "$a"
 }
 
 # recipe: verify a peer
@@ -286,7 +291,7 @@ ig_resolve(){ # <address> → prints "<serial> <age recipient> <certificate seri
   local B=$1 d="$IG/peers/$1" f r s k na c sc
   ig_hex "$B" || ig_refuse "not an address" || return 1
   ig_gone "$B"; case $? in      # a peer this box holds a revocation of is refused before anything is asked, whatever the server now serves for it
-    0) echo "REVOKED: $B is revoked, for good, and the revocation verifies: ask its owner for their new address" >&2; return 1 ;;
+    0) ig_err "REVOKED: $B is revoked, for good, and the revocation verifies: ask its owner for their new address"; return 1 ;;
     3) ig_refuse "the revocation kept for $B does not verify"; return 1 ;;
   esac
   ig_look "$B" /identity > "$IG/peer.json" || return 1
@@ -400,7 +405,7 @@ ig_take(){ # <address> → keeps what verifies of $IG/rev.json, a server's answe
   [ "$(ig_record "$IG/rev.json")" = "$1" ] || return 1
   ig_keep "$1" "$IG/rev.doc" "$IG/rev.sig" || return 3
 }
-ig_lookup(){ # <address> → asks what is held about the address, of this box's server and then of each revocation server it lists (ig_revservers), and keeps a revocation that verifies, and a list of its revoked certificates that does. 0: this box holds a revocation of the address, and that is final. 1: the server answered that it holds none, or showed something that does not verify, which comes to the same: only the identity's own signature revokes. 2: no answer from the box's own server, which is not "none". 3: a fault of this box: what it keeps for the address does not verify, or cannot be written, or its list of revocation servers cannot be read. A revocation server can only add: what it shows is checked and kept as anything is, and neither its "none held" nor its silence changes the answer. It is asked with no pass, for ten seconds at most
+ig_lookup(){ # <address> → asks what is held about the address, and prints a no_answer line for each revocation server that gave none, of this box's server and then of each revocation server it lists (ig_revservers), and keeps a revocation that verifies, and a list of its revoked certificates that does. 0: this box holds a revocation of the address, and that is final. 1: the server answered that it holds none, or showed something that does not verify, which comes to the same: only the identity's own signature revokes. 2: no answer from the box's own server, which is not "none". 3: a fault of this box: what it keeps for the address does not verify, or cannot be written, or its list of revocation servers cannot be read. A revocation server can only add: what it shows is checked and kept as anything is, and neither its "none held" nor its silence changes the answer. It is asked with no pass, for ten seconds at most
   local s l r
   ig_gone "$1"; case $? in 0) return 0 ;; 3) return 3 ;; esac
   l=$(ig_revservers) || return 3
@@ -408,20 +413,26 @@ ig_lookup(){ # <address> → asks what is held about the address, of this box's 
   else case $(ig_code) in not_revoked | no_such_mailbox) ;; *) return 2 ;; esac; fi
   while IFS= read -r s <&3; do [ -n "$s" ] || continue
     if IG_BASE=$s ig_api GET "/v1/$1/revocations" "" --max-time 10 > "$IG/rev.json" 2> /dev/null && ig_isrecord "$IG/rev.json"; then ig_take "$1"; r=$?; [ $r = 1 ] || return $r
-    else case $(ig_code) in not_revoked | no_such_mailbox) ;; *) echo "the revocation server $s gave no answer, which changes nothing here" >&2 ;; esac; fi
+    else case $(ig_code) in not_revoked | no_such_mailbox) ;; *) ig_out no_answer --arg server "$s" --arg message "the revocation server $s gave no answer, which changes nothing here" ;; esac; fi
   done 3<<< "$l"
   return 1
 }
 ig_own(){ # after a call as this box failed: if the server said this box is revoked, asks it for the revocation, and says which it is. A server's word revokes nothing
   [ "$(ig_code)" = revoked ] || return 0
-  if ig_lookup "$(cat "$IG/address")"; then echo "REVOKED: this box's own address is revoked, for good, and the revocation verifies. It can send and receive nothing more: make a new box and give its address to those who write to this one" >&2
-  else echo "the server showed no revocation of this box that verifies, so this box does not take itself as revoked" >&2; fi
+  if ig_lookup "$(cat "$IG/address")"; then ig_err "REVOKED: this box's own address is revoked, for good, and the revocation verifies. It can send and receive nothing more: make a new box and give its address to those who write to this one"
+  else ig_err "the server showed no revocation of this box that verifies, so this box does not take itself as revoked"; fi
 }
-ig_revocation(){ # → this box's revocation as one line of JSON, {identity, revocation}: the identity document, and the identity's own signature over the fixed statement, which has no date in it. It publishes nothing. Whoever publishes the record ends this address for good, with no key: keep it somewhere other than this box, for the day the box is lost
-  ig_held || { ig_lock ig_revocation "$@"; return; }
+ig_selfrecord(){ # → this box's revocation record as one line of JSON, {identity, revocation}: the identity document, and the identity's own signature over the fixed statement, which has no date in it. It is exactly the body of the call that publishes it, and publishes nothing
   local A; A=$(cat "$IG/address") || return 1
   printf 'irongall-revoke-v1\n%s\n' "$A" | ssh-keygen -q -Y sign -n "irongall-revoke-v1:$A" -f "$IG/identity" > "$IG/rev.new" 2> /dev/null || ig_refuse "this box's identity key did not sign" || return 1
   jq -cn --arg i "$(ig_b64 "$IG/identity.doc")" --arg s "$(ig_b64 "$IG/rev.new")" '{identity:$i, revocation:$s}'; rm -f "$IG/rev.new"
+}
+ig_revocation(){ # <file> → writes this box's revocation record (ig_selfrecord) to a new file, never over one, and prints a revocation_record line naming it. It publishes nothing. Whoever publishes the record ends this address for good, with no key: keep it somewhere other than this box, for the day the box is lost
+  ig_held || { ig_lock ig_revocation "$@"; return; }
+  [ -n "${1-}" ] || { ig_refuse "revocation make takes the file to write the record to"; return 1; }
+  [ ! -e "$1" ] && [ ! -L "$1" ] || { ig_refuse "$1 exists: revocation make writes a new file, and never over one"; return 1; }
+  ig_selfrecord > "$IG/rev.out" && (set -o noclobber; cat "$IG/rev.out" > "$1") || return 1      # the record as a server takes it, exactly: a line of output around it would be a body a server refuses
+  rm -f "$IG/rev.out"; ig_out revocation_record --arg file "$(realpath -- "$1")" --arg message "This record revokes this box's address, for good, when anyone publishes it (revocation publish <address> <record>). Nothing was published. Keep it somewhere other than this box."
 }
 ig_revoke(){ # <address> [record] → revokes the address at the server and at each revocation server this box lists, FOR GOOD: nothing undoes it. Without a record it is this box's own address, written out in full as the confirmation, and its identity signs now. With one, a record ig_revocation made earlier is published as it is, which needs no box here: only the file. Every server is tried whatever the others answer, and it fails, saying which did not take it, unless every one did: run it again
   ig_held || [ ! -s "$IG/address" ] || { ig_lock ig_revoke "$@"; return; }      # with no box here, a record of another box is published and nothing is kept
@@ -430,24 +441,25 @@ ig_revoke(){ # <address> [record] → revokes the address at the server and at e
   mkdir -p "$IG" || return 1
   if [ -z "$f" ]; then
     [ "$A" = "$(cat "$IG/address" 2> /dev/null)" ] || ig_refuse "that is not this box's address: nothing was published. revocation publish takes this box's own address, or a record of another" || return 1
-    f="$IG/revoke.json"; ig_revocation > "$f" || return 1
+    f="$IG/revoke.json"; ig_selfrecord > "$f" || return 1
   fi
   [ "$(ig_handed "$f")" = "$A" ] || ig_refuse "the record is not a revocation of $A whose every part verifies: nothing was published" || return 1
+  jq -c '{identity, revocation, revoked_certificates, revoked_certificates_signature} | with_entries(select(.value != null))' "$f" > "$IG/revoke.put" || return 1      # what is sent is the record's own members: a line revocation make printed carries its type and a message beside them
   l=$(ig_revservers) || return 1
-  if ig_api PUT "/v1/$A/revocations" "$f" > /dev/null 2> "$IG/put.err" || { [ "$(ig_code)" = revoked ] && ig_api GET "/v1/$A/revocations" > "$IG/held.json" 2> /dev/null && [ "$(ig_record "$IG/held.json")" = "$A" ]; }; then took=$IG_BASE      # revoked, from a server that holds the address revoked, is taken once what it serves verifies: the address is ended there already
-  else r=1; cat "$IG/put.err" >&2; echo "NOT taken by $IG_BASE" >&2; fi
+  if ig_api PUT "/v1/$A/revocations" "$IG/revoke.put" > /dev/null 2> "$IG/put.err" || { [ "$(ig_code)" = revoked ] && ig_api GET "/v1/$A/revocations" > "$IG/held.json" 2> /dev/null && [ "$(ig_record "$IG/held.json")" = "$A" ]; }; then took=$IG_BASE      # revoked, from a server that holds the address revoked, is taken once what it serves verifies: the address is ended there already
+  else r=1; cat "$IG/put.err" >&2; ig_err "NOT taken by $IG_BASE"; fi
   while IFS= read -r s <&3; do [ -n "$s" ] || continue
-    if IG_BASE=$s ig_api PUT "/v1/$A/revocations" "$f" --max-time 10 > /dev/null; then took="$took $s"; else r=1; echo "NOT taken by the revocation server $s" >&2; fi
+    if IG_BASE=$s ig_api PUT "/v1/$A/revocations" "$IG/revoke.put" --max-time 10 > /dev/null; then took="$took $s"; else r=1; ig_err "NOT taken by the revocation server $s"; fi
   done 3<<< "$l"
   [ -n "$took" ] || return 1      # once any server has taken it, it is out: if the box it is about is the one here, it keeps it too
   [ "$A" != "$(cat "$IG/address" 2> /dev/null)" ] || { [ "$(ig_record "$f")" = "$A" ] && ig_keep "$A" "$IG/rev.doc" "$IG/rev.sig"; } || return 1
-  [ $r = 0 ] || { echo "the revocation of $A is not at every server: whoever asks one that did not take it is not shown it. Run this again: a server that holds it answers as before" >&2; return 1; }
-  echo "revoked $A"
+  [ $r = 0 ] || { ig_err "the revocation of $A is not at every server: whoever asks one that did not take it is not shown it. Run this again: a server that holds it answers as before"; return 1; }
+  ig_out revoked --arg address "$A" --arg message "published to the server and to each revocation server"
 }
 ig_revoked(){ # <record> → keeps a revocation of another box that someone handed over, once it verifies: nothing is sent to that address or taken from it again, whatever a server says. It is the answer to a server that hides a revocation
   ig_held || { ig_lock ig_revoked "$@"; return; }
   local A; A=$(ig_handed "${1-}") || ig_refuse "the file is not a revocation record whose every part verifies: one is a line of JSON with identity and revocation, as revocation prints, and a revocation of certificates beside them must verify too" || return 1
-  ig_keep "$A" "$IG/rev.doc" "$IG/rev.sig" && echo "revoked $A"
+  ig_keep "$A" "$IG/rev.doc" "$IG/rev.sig" && ig_out revoked --arg address "$A"
 }
 
 # recipe: send
@@ -501,9 +513,9 @@ ig_post(){ # <address> <outbox stem> → POSTs it, sealing it first; on 409 stal
   fi
   rm -f "$IG/error.json"
   ig_lookup "$B"; case $? in      # asked before every post: what verifies is kept, and "none held" is the server's word, kept nowhere
-    0) ig_failed "$o"; echo "REVOKED: $B is revoked, for good, and the revocation verifies, so it can never be delivered: moved to outbox/failed/" >&2; return 1 ;;
+    0) ig_failed "$o"; ig_err "REVOKED: $B is revoked, for good, and the revocation verifies, so it can never be delivered: moved to outbox/failed/"; return 1 ;;
     1) rm -f "$IG/error.json" ;;      # its 404 is an answer, and not one about the message
-    2) rm -f "$IG/error.json"; echo "what the server holds about $B could not be asked, so nothing is posted: kept in the outbox, retry with ig_flush" >&2; return 1 ;;      # no answer is not "none held". Whatever code the failed lookup carried is no answer about the message
+    2) rm -f "$IG/error.json"; ig_err "what the server holds about $B could not be asked, so nothing is posted: kept in the outbox, retry with ig_flush"; return 1 ;;      # no answer is not "none held". Whatever code the failed lookup carried is no answer about the message
     *) ig_refuse "what this box keeps about $B does not verify, or could not be written: kept in the outbox"; return 1 ;;
   esac
   if [ -e "$o.json" ]; then      # a seal that waited: its recipient's identity may since have revoked the certificate its prekey was signed under, and that prekey may be one a thief of the working key published. Such a seal is not posted: it is made again. So is one this script cannot read
@@ -513,11 +525,11 @@ ig_post(){ # <address> <outbox stem> → POSTs it, sealing it first; on 409 stal
   if [ "$(ig_code)" = stale_prekey ]; then ig_seal "$B" "$o" && ig_owner POST "/v1/$B" "$o.json" > "$IG/receipt.json" && ig_receipt "$o" && { ig_sent "$o"; return; }; fi
   c=$(ig_code)
   case $c in revoked) ig_lookup "$B" ;; sender_revoked) ig_lookup "$(cat "$IG/address")" ;; esac      # a server's "revoked" is checked: with the revocation in hand it is final, and without one it is a call that failed
-  if ig_gone "$B" || ig_gone "$(cat "$IG/address")"; then ig_failed "$o"; echo "REVOKED: the revocation verifies, so it can never be delivered: moved to outbox/failed/" >&2; return 1; fi
+  if ig_gone "$B" || ig_gone "$(cat "$IG/address")"; then ig_failed "$o"; ig_err "REVOKED: the revocation verifies, so it can never be delivered: moved to outbox/failed/"; return 1; fi
   case $c in
-    revoked | sender_revoked) echo "the server showed no revocation that verifies, so this box does not take that address as revoked: kept in the outbox, retry with ig_flush" >&2 ;;
-    bad_address | too_large | conflict | sender_not_allowed) ig_failed "$o"; echo "it can never be delivered: moved to outbox/failed/" >&2 ;;
-    *) echo "kept in the outbox: retry with ig_flush" >&2 ;;
+    revoked | sender_revoked) ig_err "the server showed no revocation that verifies, so this box does not take that address as revoked: kept in the outbox, retry with ig_flush" ;;
+    bad_address | too_large | conflict | sender_not_allowed) ig_failed "$o"; ig_err "it can never be delivered: moved to outbox/failed/" ;;
+    *) ig_err "kept in the outbox: retry with ig_flush" ;;
   esac
   return 1
 }
@@ -526,9 +538,10 @@ ig_receipt(){ # <outbox stem> → 0 only for a receipt in $IG/receipt.json that 
     ig_time "$(jq -r '.received_at | strings' "$IG/receipt.json")" > /dev/null && ig_time "$(jq -r '.expires_at | strings' "$IG/receipt.json")" > /dev/null && return 0
   ig_refuse "the server's receipt does not name the ciphertext this box posted, or its times are not times: kept in the outbox"
 }
-ig_sent(){ # <outbox stem> → sent/<address>.<msg_id>.json: the envelope as one line, as the recipient's recv delivers it, with the server's receipt. Stored, and only then does the outbox entry go. sent/ is yours to prune
-  local t="$IG/sent/${1##*/}.json"
-  mkdir -p "$IG/sent" && ig_line "$1.P" "$IG/receipt.json" > "$t" && sync "$t" "$IG/sent" && rm -f "$1.P" "$1.age" "$1.sig" "$1.json" || { echo "sent, but not recorded in sent/ (still in the outbox: ig_flush records it)" >&2; return 1; }
+ig_sent(){ # <outbox stem> → sent/<address>.<msg_id>.json: the envelope as one line, as the recipient's inbox/ keeps it, with the server's receipt. Stored, and only then does the outbox entry go, and a sent line is printed: the server's id, the msg_id and the address. sent/ is yours to prune
+  local t="$IG/sent/${1##*/}.json" n=${1##*/}
+  mkdir -p "$IG/sent" && ig_line "$1.P" "$IG/receipt.json" > "$t" && sync "$t" "$IG/sent" && rm -f "$1.P" "$1.age" "$1.sig" "$1.json" || { ig_err "sent, but not recorded in sent/ (still in the outbox: ig_flush records it)"; return 1; }
+  ig_out sent --arg id "$(jq -r .receipt.id "$t")" --arg msg_id "${n#*.}" --arg to "${n%%.*}"
 }
 ig_failed(){ # <outbox stem> → moves its files to outbox/failed/, where ig_flush no longer sees them. Delete them there to drop the message
   local f; mkdir -p "$IG/outbox/failed" || return 1
@@ -540,7 +553,7 @@ ig_flush(){ # re-POSTs every message still in the outbox, unchanged: a retry get
 }
 
 # recipe: receive
-ig_recv(){ # drains the box, every page up to a drain's limits. ACCEPT → inbox/ and one line on stdout. REFUSED → quarantine/, never delivered. Both are acked
+ig_recv(){ # drains the box, every page up to a drain's limits. ACCEPT → inbox/ and a mail line on stdout. REFUSED → quarantine/, never delivered, and a refused line on stdout. Both are acked
   ig_held || { ig_lock ig_recv "$@"; return; }
   ig_drain; local rc=$?; ig_prune; return $rc
 }
@@ -549,12 +562,12 @@ ig_drain(){ # stops at a transient error or a fault of this box, leaving the res
   rm -f "$IG/asked"      # the senders this drain has asked the server about: one lookup each
   if [ -e "$IG/seen" ]; then awk -v c=$(($(ig_now) - 33*86400)) '$2 >= c' "$IG/seen" > "$IG/seen.new" && mv "$IG/seen.new" "$IG/seen" && sync "$IG/seen" "$IG" || return 1; fi
   while :; do
-    [ $((pages += 1)) -le 100 ] || { echo "this run stopped at the most one drain takes: run recv again for the rest, which is still on the server" >&2; return 0; }
+    [ $((pages += 1)) -le 100 ] || { ig_out more --arg message "this run stopped at the most one drain takes: run recv again for the rest, which is still on the server"; return 0; }
     ig_owner GET "/v1/$B/messages${c:+?cursor=$c}" > "$IG/list.json" || { ig_own; return 1; }
-    ig_shape "$IG/list.json" list && n=$(jq -r '.messages | length' "$IG/list.json") || { echo "the server's list of messages is not one this client reads, as PROTOCOL.md §0b reads JSON: the mail stays on the server" >&2; return 1; }
+    ig_shape "$IG/list.json" list && n=$(jq -r '.messages | length' "$IG/list.json") || { ig_err "the server's list of messages is not one this client reads, as PROTOCOL.md §0b reads JSON: the mail stays on the server"; return 1; }
     for ((i = 0; i < n; i++)); do
       id=$(jq -r --argjson i "$i" '.messages[$i].id | strings | select(test("\\A[0-9a-f]{64}\\z"))' "$IG/list.json") && ig_hex "$id" || continue      # tested in jq: $(…) drops trailing LFs and every NUL
-      [ $((k += 1)) -le 1000 ] || { echo "this run stopped at the most one drain takes: run recv again for the rest, which is still on the server" >&2; return 0; }
+      [ $((k += 1)) -le 1000 ] || { ig_out more --arg message "this run stopped at the most one drain takes: run recv again for the rest, which is still on the server"; return 0; }
       if ! grep -q "^$id " "$IG/seen" 2> /dev/null; then ig_one "$B" "$id" || return 1; fi   # an id already handled is only acked again
       ig_owner DELETE "/v1/$B/messages/$id" > /dev/null || [ "$(ig_code)" = no_such_message ] || return 1
     done
@@ -565,18 +578,18 @@ ig_one(){ # <me> <id> → 0 once the message is judged and its verdict is on dis
   local B=$1 id=$2 m="$IG/msg" A why rc h
   rm -f "$m.json" "$m.age" "$m.sig" "$m.P" "$m.T" "$m.doc"
   ig_owner GET "/v1/$B/messages/$id" > "$m.json" || { [ "$(ig_code)" = no_such_message ]; return; }      # already gone
-  ig_shape "$m.json" message && ig_bytes "$m.json" ciphertext "$m.age" || { echo "the server's answer for message $id is not one this client reads, as PROTOCOL.md §0b reads JSON: it stays on the server" >&2; return 1; }      # the server's fault, not the sender's: no verdict, and no ack
+  ig_shape "$m.json" message && ig_bytes "$m.json" ciphertext "$m.age" || { ig_err "the server's answer for message $id is not one this client reads, as PROTOCOL.md §0b reads JSON: it stays on the server"; return 1; }      # the server's fault, not the sender's: no verdict, and no ack
   h=$(sha256sum < "$m.age" | cut -c1-64)      # files are named by the hash computed here, never the server's id
-  why=$(ig_judge "$B" "$m"); rc=$?
+  rm -f "$IG/said"; why=$(ig_judge "$B" "$m"); rc=$?; cat "$IG/said" 2> /dev/null; rm -f "$IG/said"      # what the judge met on the way, a revocation server with no answer, is printed here: its stdout is its verdict
   if [ $rc -eq 0 ] || [ $rc -eq 2 ]; then [ "$h" = "$id" ] || { why="bad_id: the server's id for it is not the SHA-256 of its ciphertext"; rc=1; }; fi
   case $rc in
     0) A=$(jq -r .from "$m.P") && ig_line "$m.P" > "$IG/inbox/$h.json" && sync "$IG/inbox/$h.json" "$IG/inbox" && ig_seen "$A" "$m" "$h" || return 1      # stored, then seen, both on disk before the ack: a crash delivers again, never loses
-       cat "$IG/inbox/$h.json" && echo ;;
-    2) echo "duplicate of a message already delivered, not delivered again: $h" >&2 ;;
-    3) echo "$why: nothing is judged or acked until this box is fixed" >&2; return 1 ;;
-    4) echo "$why: the message stays on the server, and the next recv asks again" >&2; return 1 ;;
+       printf '{"type":"mail","id":"%s",' "$h" && tail -c +2 "$IG/inbox/$h.json" && echo ;;      # the line inbox/ keeps, as its bytes are: jq would write the line breaks ig_line escaped
+    2) ig_out duplicate --arg id "$h" --arg message "a retry of a message already delivered: not delivered again" ;;
+    3) ig_err "$why: nothing is judged or acked until this box is fixed"; return 1 ;;
+    4) ig_err "$why: the message stays on the server, and the next recv asks again"; return 1 ;;
     *) cp "$m.json" "$IG/quarantine/$h.json" && printf '%s\n' "$why" > "$IG/quarantine/$h.reason" && sync "$IG/quarantine/$h.json" "$IG/quarantine/$h.reason" "$IG/quarantine" || return 1      # the message as served, and beside it why: "<code>: <words>", this script's own words, never the message's
-       echo "REFUSED $h: $why" >&2 ;;
+       ig_out refused --arg id "$h" --arg code "${why%%: *}" --arg message "${why#*: }" ;;
   esac
 }
 ig_judge(){ # <me> <message stem> → 0 only if EVERY check passes, in this order; 2 for a resend of an accepted msg_id; 1 refused, with "<code>: <words>" on stdout, the words this script's own and never the message's; 3 a fault of this box, no verdict; 4 no answer from the server on whether the sender is revoked, no verdict. Who the sender is, is never asked of the server: the message carries what proves it. The one thing asked is whether a revocation of that sender exists, and the answer proves itself
@@ -588,7 +601,7 @@ ig_judge(){ # <me> <message stem> → 0 only if EVERY check passes, in this orde
   A=$(ig_open "$B" "$m") || { echo "$A"; return 1; }      # the sender, proved by what was decrypted
   jq -e --arg a "$A" '.from == $a' "$m.json" > /dev/null 2>&1 || { echo "reattributed: the server lists it as from another box than the one that signed it"; return 1; }      # the server's from, compared in jq: $(…) drops trailing LFs and every NUL
   if ! grep -qx "$A" "$IG/asked" 2> /dev/null; then      # the server is asked once for each sender in a drain. That it holds none is an answer; no answer is not, and the message then stays where it is
-    ig_lookup "$A"; case $? in 0) ;; 1) echo "$A" >> "$IG/asked" ;; 3) echo "what this box keeps of its sender's revocations does not verify, or cannot be written"; return 3 ;; *) echo "whether its sender is revoked could not be asked"; return 4 ;; esac
+    ig_lookup "$A" >> "$IG/said"; case $? in 0) ;; 1) echo "$A" >> "$IG/asked" ;; 3) echo "what this box keeps of its sender's revocations does not verify, or cannot be written"; return 3 ;; *) echo "whether its sender is revoked could not be asked"; return 4 ;; esac
   fi
   ig_gone "$A"; case $? in      # nobody can vouch for when a signature was made, so a revocation reaches back over everything that address signed
     0) echo "revoked: its sender's address is revoked, and the revocation verifies: nothing signed for that address is taken, whenever it was signed"; return 1 ;;
@@ -683,7 +696,7 @@ ig_renew(){ # [--no-pq] → what ig_rekey does, the lock held. A serial is signe
   [ "$s" -le "$(cat "$IG/serial" 2> /dev/null || echo 0)" ] || echo "$s" > "$IG/serial" || return 1
   mv "$IG/pass.new" "$IG/pass" || return 1
   for f in "$IG"/work/*-cert.pub; do t=$(basename "$f" -cert.pub); [[ $t =~ ^[0-9]+$ ]] && [ "$t" -lt "$s" ] && rm -f "$IG/work/$t" "$IG/work/$t.pub" "$f"; done      # older working keys: what they signed is signed, and the server takes no pass under them
-  ig_prune
+  ig_prune && ig_out prekey --argjson serial "$s" --arg not_after "$(sed -n 5p "$IG/prekeys/$s.txt")"
 }
 ig_prune(){ # deletes every retired prekey past its deletion time: its not_after + the 33 days mail is kept. After that, mail encrypted to it is unrecoverable. (The Go client also deletes them sooner.)
   local f n top na; top=$(ls "$IG/prekeys" | sed -n 's/\.agekey$//p' | sort -n | tail -n 1); [ -n "$top" ] || return 0
@@ -699,6 +712,7 @@ ig_prune(){ # deletes every retired prekey past its deletion time: its not_after
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   ig_usage(){ sed -n '/^#   bash irongall\.sh /,/^#   The README/p' "$0" | sed 's/^#   //'; }      # the usage at the top
   ig_lines(){ ig_usage | awk -v w="bash irongall.sh $* " '/^bash irongall\.sh /{ on = index($0 " ", w) == 1 } /^The README/{ on = 0 } on'; }      # <words> → the usage lines of the commands they start
+  ig_wrong(){ jq -cn --arg m "$1" --arg u "${2-}" --arg h "${3:-bash irongall.sh help}" '{type:"usage_error"} + (if $u != "" then {usage:$u} else {} end) + {help:$h, message:$m}' >&2; exit 2; }      # <words> [usage] [help] → the usage_error line on stderr, as the Go client prints one: what was wrong, the command's usage, and the help to read. Nothing ran
   ig_cmd= ig_n=0 ig_args=-1      # the function the command line runs, how many words name it, and how many arguments it takes (-1: its own to check)
   case ${1-} in init | addr | send | recv) ig_cmd=ig_$1 ig_n=1 ;; esac
   case "${1-} ${2-}" in
@@ -706,7 +720,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     'alias list') ig_cmd=ig_alias ig_n=2 ig_args=0 ;;
     'outbox flush') ig_cmd=ig_flush ig_n=2 ;;
     'prekey renew') ig_cmd=ig_rekey ig_n=2 ;;
-    'revocation make') ig_cmd=ig_revocation ig_n=2 ;;
+    'revocation make') ig_cmd=ig_revocation ig_n=2 ig_args=1 ;;
     'revocation publish') ig_cmd=ig_revoke ig_n=2 ;;
     'revocation keep') ig_cmd=ig_revoked ig_n=2 ;;
   esac
@@ -720,15 +734,15 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     [ "$ig_n" -gt 0 ] || [ $# -eq 0 ] || [[ $1 = -* ]] || ig_n=1
     [ "$ig_n" -gt 0 ] || { ig_usage; exit 0; }
     out=$(ig_lines "${@:1:ig_n}"); [ -n "$out" ] && { echo "$out"; exit 0; }
-    echo "irongall.sh has no command ${*:1:ig_n}" >&2; ig_usage >&2; exit 2
+    ig_wrong "irongall.sh has no command ${*:1:ig_n}"
   fi
   if [ -z "$ig_cmd" ]; then      # bare, a group alone, or a command it does not have
-    out=$(ig_lines "${1-}")
-    if [ $# -gt 0 ] && [ -n "$out" ]; then [ -z "${2-}" ] || echo "irongall.sh $1 has no command $2" >&2; echo "$out" >&2
-    else [ $# -eq 0 ] || echo "irongall.sh has no command $1" >&2; ig_usage >&2; fi
-    exit 2
+    if [ $# -eq 0 ]; then ig_wrong "irongall.sh takes a command: bash irongall.sh help lists them"
+    elif [ -z "$(ig_lines "$1")" ]; then ig_wrong "irongall.sh has no command $1"
+    elif [ -n "${2-}" ]; then ig_wrong "irongall.sh $1 has no command $2" "" "bash irongall.sh help $1"
+    else ig_wrong "irongall.sh $1 takes a command: bash irongall.sh help $1 lists them" "" "bash irongall.sh help $1"; fi
   fi
   words=${*:1:ig_n}; shift $ig_n
-  if [ $ig_args -ge 0 ] && [ $# -ne $ig_args ]; then echo "irongall.sh $words takes $ig_args arguments, and was given $#" >&2; ig_lines "$words" >&2; exit 2; fi
+  if [ $ig_args -ge 0 ] && [ $# -ne $ig_args ]; then ig_wrong "irongall.sh $words takes $ig_args arguments, and was given $#" "$(ig_lines "$words" | head -n 1 | sed 's/   .*//')" "bash irongall.sh help $words"; fi
   "$ig_cmd" "$@"; exit
 fi

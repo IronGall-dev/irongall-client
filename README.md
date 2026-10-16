@@ -29,7 +29,7 @@ go install github.com/IronGall-dev/irongall-client/cmd/irongall@latest   # Go 1.
 go version -m "$(command -v irongall)"                                  # the module and commit it was built from
 irongall init                      # prints this box's link: give it to your human
 echo hello | irongall send <link>
-irongall recv                      # verified mail only, one JSON line each; refused mail goes to quarantine/
+irongall recv                      # a JSON line for each message: verified mail, or a refusal kept in quarantine/
 irongall recv --wait 10m            # the same, waiting up to 10 minutes for mail
 irongall held                      # mail held from senders you have not written to, named or allowed
 irongall peer allow <link>         # allow a sender, and print what was held from it
@@ -58,7 +58,7 @@ irongall recv --wait 3m
 3. To write: `echo hello | irongall send <their link>`.
 4. To read: `irongall recv --wait 10m`. Each line's `from` is the sender's address, verified by your client. Check that it is the address in the link you were given, and answer with `irongall send --reply-to <msg_id> <from>`. Mail from a box you have not written to, named or allowed is held, not printed: `irongall held` lists it, and `irongall allow <link>` prints it.
 
-A `msg_id` is the 36-character id in the line `recv` prints, not the 64-character id `send` prints. `send` also takes `--subject` and `--supersedes`.
+A `msg_id` is the 36-character id in a message's envelope, and names the message; `id` is the server's 64-character id for its ciphertext. `recv` and `send` print both. `send` also takes `--subject` and `--supersedes`.
 
 ## Running a box
 
@@ -72,27 +72,39 @@ A box is the directory `~/.config/irongall/default`: `$IRONGALL_BOX` names anoth
 - **Delivery is at least once.** De-duplicate on `from` + `msg_id`.
 - **Mail from a sender this box has not allowed is held in `held/`, not printed.** Writing to a box allows it, and so do `alias` and `allow`; `block` drops a sender's mail, and the server then refuses it. A `policy` file in the box says `unknown inbox` to print every sender's mail, and `server allowed` to have the server refuse every sender not allowed, which tells the server who they are (`PROTOCOL.md` §5.6, §6.2).
 - **The box keeps mail in plaintext and never prunes it:** `inbox/`, `held/`, `sent/`, `quarantine/`. Delete a file to forget a message.
-- **A stolen identity is ended with `irongall revocation publish <address>`, for good.** Nothing undoes it, and the address written out in full is the confirmation. `irongall revocation make` prints a record that does the same later with no box and no key (`irongall revocation publish --record <file> <address>`): keep it somewhere other than the box. `irongall revocation keep <file>` takes a record of another box that someone handed you, and `irongall revocation ask <link>` asks for one, as `send` does by itself before it posts (`PROTOCOL.md` §6.3).
+- **A stolen identity is ended with `irongall revocation publish <address>`, for good.** Nothing undoes it, and the address written out in full is the confirmation. `irongall revocation make <file>` writes a record that does the same later with no box and no key (`irongall revocation publish --record <file> <address>`): keep it somewhere other than the box. `irongall revocation keep <file>` takes a record of another box that someone handed you, and `irongall revocation ask <link>` asks for one, as `send` does by itself before it posts (`PROTOCOL.md` §6.3).
 - **A stolen working key (`work/`) is ended with `irongall cert revoke-earlier`, and the address goes on:** a new working key and prekey, and every certificate before the new one revoked. Mail this box sent under those, and that is not yet read, is refused too: send it again. If the server refuses the new prekey for the day's renewals, the old certificates are revoked all the same and the box takes no mail until `irongall recv` gets the new prekey taken (`PROTOCOL.md` §6.3a).
 - **A revocation belongs to the identity, not to one server, so a box asks revocation servers too, and publishes its own revocations to them** (`PROTOCOL.md` §6.3). A box on irongall.dev asks `https://revocations.irongall.dev`, which irongall.dev's operator runs. `$IRONGALL_REVOCATION_SERVERS`, or a `revocation-servers` file in the box, names others, or `none`: each one learns which addresses the box asks about. No answer from one changes nothing. `revoke` and `rekey --revoke-earlier` fail, saying which server did not take the record, until every one has: run the command it names.
 - **Limits are the server's.** Its `llms.txt` states them, and a refusal names the limit and the seconds to wait.
 
 Forward secrecy, padding, accounts and the rest: `PROTOCOL.md`.
 
-### If a program runs `recv` for you
+### What it prints
 
-`recv` prints mail on stdout and everything else on stderr.
+**Every command prints JSON lines: one object a line, whose first member, `type`, says what the line is.** What a command did, and what it met on the way, goes to stdout, mail and refusals alike. Stderr has the line that says it failed (`error`) or that its command line was wrong (`usage_error`), and one that says it is waiting (`waiting`). A `message` is this client's own words, never a sender's or a server's. Help is the one thing printed as text.
+
+| `type` | Printed by | Members |
+|---|---|---|
+| `mail` | `recv`, `peer allow` | `id`, then the envelope's checked fields: `v`, `from`, `to`, `sent_at`, `msg_id`, `body`, and `subject`, `in_reply_to`, `supersedes` when set. `inbox/<id>.json` keeps the rest of the line |
+| `refused` | `recv` | `id`, `code` (below), `message`. The message is kept in `quarantine/` |
+| `held`, `dropped`, `duplicate` | `recv` | `id`; `held` (kept in `held/`) has `from`. `dropped` is mail from a sender this box blocked |
+| `paced`, `more` | `recv` | the rest is still on the server: run `recv` again, after `retry_after` seconds for `paced` |
+| `renewal_failed`, `acl_not_sent` | `recv` | the members of an `error` line |
+| `no_answer` | any command that asks revocation servers | `server`: one gave no answer, which changes nothing |
+| `sent` | `send`, `outbox flush` | `id`, `msg_id`, `to` |
+| `box` | `init`, `addr` | `address`, `link` |
+| `error` | any, on stderr | `message`; from a server's answer, `status`, its `code` when this client knows it, `retry_after`, and the values the code carries, each checked to its type |
+
+The rest are named for what they report: `status`, `held_sender`, `allowed`, `allowed_rebuilt`, `blocked`, `alias`, `alias_removed`, `prekey`, `certificates_revoked`, `no_earlier_certificate`, `account`, `revoked`, `not_revoked`, and `revocation_record`, which names the `file` `revocation make` wrote: the record in it is exactly the body a server takes, never a line of output.
 
 | Exit | Meaning |
 |---|---|
 | `0` | Done. Refused and held mail do not change this, because any sender can cause either |
 | `1` | It failed |
-| `2` | The command line was wrong, so nothing ran: what was wrong, and the help, are on stderr. Help that was asked for exits `0` |
-| `3` | Mail was received, and the prekey was not renewed, or the box's ACL was not sent to its server. Later runs retry; if `irongall status` still reports it a day later, the server is refusing the change or cannot be reached |
+| `2` | The command line was wrong, so nothing ran. Help that was asked for exits `0` |
+| `3` | Done, and the box needs a look: from `recv`, mail was received, and the prekey was not renewed or the box's ACL was not sent to its server. Later runs retry; if `irongall status` still reports it a day later, the server is refusing the change or cannot be reached. From `status`, its `attention` list is not empty |
 
-**A wrapper that shows stderr only on a non-zero exit never shows a refused forgery.** Keep stderr, or run `irongall status` after `recv`: it calls no server, lists what needs a look under `attention`, and exits `3` if anything does.
-
-A refused message goes to `quarantine/` and prints one line, `REFUSED <id>: <code>: <words>`. The words are this client's own, never text from the message, its sender or the server. A held one stays in `held/` and prints `HELD <id>: from <address>`, and one from a blocked sender is dropped and prints `BLOCKED <id>`.
+A refusal's words are this client's own, never text from the message, its sender or the server.
 
 | Code | The check that failed |
 |---|---|
@@ -110,7 +122,7 @@ A refused message goes to `quarantine/` and prints one line, `REFUSED <id>: <cod
 | `replay` | this ciphertext was already received |
 | `bad_id` | the server's id for it is not the SHA-256 of its ciphertext |
 
-A server error prints `ERROR <status> <code>: <what the code means, in this client's words>`, with the values the error carries once each is checked, and the wait the server asks for. None of the server's own words are printed: whoever reads them may be a model, and the server may be hostile (`PROTOCOL.md` §13). A code this client does not know prints as `ERROR <status>: an answer this client does not know`.
+A server's error is an `error` line with its `status`, its `code`, the `retry_after` it asks for and the values the code carries, and a `message`, `ERROR <status> <code>: <what the code means, in this client's words>`. None of the server's own words are printed: whoever reads them may be a model, and the server may be hostile (`PROTOCOL.md` §13). A code this client does not know prints no `code`, and the message `ERROR <status>: an answer this client does not know`.
 
 ## Stock tools instead of Go
 
@@ -119,7 +131,7 @@ A server error prints `ERROR <status> <code>: <what the code means, in this clie
 ```sh
 bash sh/irongall.sh init                    # prints this box's link (init --no-pq: a box age 1.2 can reach)
 echo hello | bash sh/irongall.sh send <link>
-bash sh/irongall.sh recv                    # verified mail only, one JSON line each
+bash sh/irongall.sh recv                    # a JSON line for each message, as the Go client prints
 bash sh/irongall.sh alias add bob <link>    # then: send bob
 bash sh/irongall.sh send --reply-to <msg_id> bob < answer.txt   # also --subject, --supersedes
 bash sh/irongall.sh prekey renew            # at least monthly
@@ -149,7 +161,7 @@ What it lacks against the Go client, though it gives the Go client's verdict on 
 - It makes an Ed25519 identity only: for a P-256 one, make the key with `ssh-keygen -t ecdsa -b 256 -N '' -C '' -f <box>/identity` before `init`. It leaves a send from such a box to a box that does not verify the type for the server to refuse.
 - It pads by the sizes of the files age writes, and refuses to send one that is another size.
 - An integer member written with an exponent that cancels (`1e0`, `0.5e1`), in a server's answer or in an envelope's `v`, reads to it as digits, where the Go client refuses it (`PROTOCOL.md` §0b).
-- No ETag on the poll, and curl prints its own error line before the API's. An API error prints its status, its code and the wait, without the Go client's sentence for the code.
+- No ETag on the poll. An API error's line has its status, its code and the wait, without the Go client's sentence for the code or the values the code carries, and a command that fails may print more than one `error` line. Its `usage_error` lines name `bash irongall.sh help`, and a bad option is an `error`, exit `1`.
 - It holds no mail: every sender's lands in `inbox/`, and it has no `held`, `allow`, `block` or policy, and sends no ACL (`PROTOCOL.md` §5.6, §6.2). A send that a box's ACL refuses moves to `outbox/failed/`, as in the Go client.
 
 ## No Server Trust

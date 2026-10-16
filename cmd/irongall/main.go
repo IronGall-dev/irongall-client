@@ -7,7 +7,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -44,19 +43,23 @@ irongall help <command> and irongall <command> --help print a command's help,
 and irongall <group> help a group's. --help anywhere after a command prints
 its help and runs nothing.
 
+Every command prints JSON lines, one object a line, whose "type" says what
+the line is. What it did and what it met on the way go to stdout, mail and
+refusals alike. Stderr has the line that says it failed ("error") or that its
+command line was wrong ("usage_error"), and one that says it is waiting
+("waiting"). A "message" is this client's own words, never a sender's or a
+server's. Help is the one thing printed as text.
+
 Exit status: 0, done. 1, the command failed. 2, the command line was wrong
-and nothing ran: what was wrong, and the help, are on stderr. 3, the command
-did its work and the box needs a look: from recv, mail was received as
-printed and the prekey, due for renewal, was not renewed, or the box's ACL
-was not sent to its server; from status, its "attention" list is not empty.
-recv says on stderr what it refused, keeping each refused message in
-quarantine/, and what it held, keeping it in held/: refused and held mail do
-not change its exit status, since any sender can cause either. Keep recv's
-stderr, or run status after it. A refusal is "REFUSED <id>: <code>: <words>",
-the words this client's own: it never quotes a message. Held mail is "HELD
-<id>: from <address>", and mail from a blocked sender, dropped, "BLOCKED <id>:
-from <address>". What a server says in an error is printed in quotes, as its
-words.
+and nothing ran. 3, the command did its work and the box needs a look: from
+recv, mail was received as printed and the prekey, due for renewal, was not
+renewed ("renewal_failed"), or the box's ACL was not sent to its server
+("acl_not_sent"); from status, its "attention" list is not empty. recv prints
+a "refused" line for each message it refused, keeping it in quarantine/, a
+"held" line for each it held in held/, and a "dropped" line for each from a
+sender this box blocked: none of them changes its exit status, since any
+sender can cause them. A refusal's code is from a closed list, and its words
+are this client's own: it never quotes a message.
 
 To try the whole loop, send anything to irongall.dev's echo box,
 ` + client.DefaultBase + protocol.LinkPath + client.EchoAddress + `
@@ -75,46 +78,25 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	err := run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
 	stop()
-	var look *needsALook
-	var wrong *usageError
-	switch {
-	case errors.As(err, &wrong):
-		if wrong.msg != "" {
-			fmt.Fprintln(os.Stderr, wrong.msg)
-		}
-		fmt.Fprint(os.Stderr, wrong.help)
-		os.Exit(2)
-	case errors.As(err, &look):
-		if look.why != "" {
-			fmt.Fprintln(os.Stderr, look.why)
-		}
-		os.Exit(3)
-	case err != nil:
-		fmt.Fprintln(os.Stderr, err)
-		os.Exit(1)
-	}
+	os.Exit(report(err, os.Stderr))
 }
 
 // needsALook is how a command says it did its work and the box needs a look:
-// exit status 3, where a failure is 1.
-type needsALook struct{ why string }
+// exit status 3, where a failure is 1. The lines it printed say why.
+type needsALook struct{}
 
-func (e *needsALook) Error() string { return e.why }
+func (e *needsALook) Error() string { return "the box needs a look" }
 
 // usageError is a command line that is wrong, so nothing ran: exit status 2,
-// with what was wrong and then the help it carries on stderr. A bare group,
-// or a bare irongall, is one with nothing wrong to say: only its help.
+// with a "usage_error" line on stderr: what was wrong, the command's usage
+// when it has one, and the help to read.
 type usageError struct {
-	msg  string
-	help string
+	msg   string
+	usage string
+	help  string
 }
 
-func (e *usageError) Error() string {
-	if e.msg == "" {
-		return strings.TrimSpace(e.help)
-	}
-	return e.msg
-}
+func (e *usageError) Error() string { return e.msg }
 
 // cli is what every command shares: where its box is, how to reach its
 // server, and where it reads and writes.
@@ -144,11 +126,13 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	}
 	// Said, and nothing more: a box does not wait on a revocation server.
 	opt.NoAnswer = func(server string, err error) {
-		_, _ = fmt.Fprintf(stderr, "the revocation server %s gave no answer, which changes nothing here: %v\n", server, err)
+		_, _ = fmt.Fprintf(stdout, "%s\n", line("no_answer", "server", server, "message",
+			fmt.Sprintf("the revocation server %s gave no answer, which changes nothing here: %v", server, err)))
 	}
 	// Said once, so that a wait is not read as a hang.
 	opt.Waiting = func() {
-		_, _ = fmt.Fprintln(stderr, "waiting for this box's lock: another command of this box is running, and a box's commands write its files one at a time")
+		_, _ = fmt.Fprintf(stderr, "%s\n", line("waiting", "for", "lock", "message",
+			"waiting for this box's lock: another command of this box is running, and a box's commands write its files one at a time"))
 	}
 	e := &cli{dir: dir, opt: opt, stdin: stdin, stdout: stdout, stderr: stderr}
 	root := e.tree()
@@ -201,7 +185,7 @@ func (e *cli) group(name, short, long string, cmds ...*cobra.Command) *cobra.Com
 func (e *cli) groupRun(c *cobra.Command, args []string) error {
 	switch {
 	case len(args) == 0:
-		return &usageError{help: helpText(c)}
+		return &usageError{msg: fmt.Sprintf("%s takes a command: %s --help lists them", c.CommandPath(), c.CommandPath()), help: c.CommandPath() + " --help"}
 	case args[0] == "help":
 		t, rest, err := c.Find(args[1:])
 		switch {
@@ -225,7 +209,7 @@ func unknown(c *cobra.Command, args []string) error {
 	if s := c.SuggestionsFor(args[0]); len(s) > 0 {
 		msg += fmt.Sprintf(": did you mean %s?", strings.Join(s, " or "))
 	}
-	return &usageError{msg: msg, help: helpText(c)}
+	return &usageError{msg: msg, help: c.CommandPath() + " --help"}
 }
 
 // nargs takes from lo to hi arguments.
@@ -250,12 +234,9 @@ func nargs(lo, hi int) cobra.PositionalArgs {
 }
 
 // wrong is a command line that is wrong in a command's own flags or
-// arguments: what was wrong, then its usage line.
+// arguments: what was wrong, and its usage line.
 func wrong(c *cobra.Command, format string, a ...any) error {
-	return &usageError{
-		msg:  fmt.Sprintf(format, a...),
-		help: fmt.Sprintf("usage: %s\n%s --help describes it\n", c.UseLine(), c.CommandPath()),
-	}
+	return &usageError{msg: fmt.Sprintf(format, a...), usage: c.UseLine(), help: c.CommandPath() + " --help"}
 }
 
 // helpText is a command's help. The top level's lists its commands, then its

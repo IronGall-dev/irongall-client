@@ -94,7 +94,7 @@ SRV=$W/srv; mkdir -p $SRV/tmp $SRV/op; MODE=honest; OWN=$IG_BASE      # OWN: the
 as(){ IG=$W/box/$1; }                          # switch to box $1's state directory
 # --- the fake server: the API on files, replacing ig_api (curl) only
 HOST=${IG_BASE#*://}; HOST=${HOST%%/*}      # the server's name, as a pass names it
-srv_err(){ jq -n --argjson st "$1" --arg c "$2" --arg h "$3" '{type:("https://irongall.dev/errors/"+$c), title:$c, status:$st, detail:$h, code:$c, hint:$h}' > "$IG/error.json"; printf 'HTTP/1.1 %s x\r\nDate: %s\r\n' "$1" "$(LC_ALL=C date -u '+%a, %d %b %Y %H:%M:%S GMT')" > "$IG/error.headers"; echo "ERROR $1 $2" >&2; return 1; }      # as ig_api prints one: the status and the code, none of the words. The answer is dated by the server's clock
+srv_err(){ jq -n --argjson st "$1" --arg c "$2" --arg h "$3" '{type:("https://irongall.dev/errors/"+$c), title:$c, status:$st, detail:$h, code:$c, hint:$h}' > "$IG/error.json"; printf 'HTTP/1.1 %s x\r\nDate: %s\r\n' "$1" "$(LC_ALL=C date -u '+%a, %d %b %Y %H:%M:%S GMT')" > "$IG/error.headers"; jq -cn --argjson s "$1" --arg c "$2" '{type:"error", status:$s, code:$c, message:"ERROR \($s) \($c)"}' >&2; return 1; }      # as ig_api prints one: the status and the code, none of the words. The answer is dated by the server's clock
 srv_state(){ local a=$1 st s; shift; [ -e $SRV/$a/state ] || { srv_err 404 no_such_mailbox "never registered"; return 1; }
   st=$(cat $SRV/$a/state); for s in "$@"; do [ "$st" = "$s" ] && return 0; done
   [ "$st" = revoked ] && { srv_err 410 revoked "revoked"; return 1; }; srv_err 404 no_such_mailbox "the box is $st"; }
@@ -250,13 +250,16 @@ forge(){ # <to> <claimed from> <body> <the claimed sender's identity document> �
   ssh-keygen -q -Y sign -n "irongall-msg-v1:$1" -f $SRV/op/work-cert.pub < $SRV/op.P > $SRV/op.sig; seal_to "$1" $SRV/op.P $SRV/op.sig; mv $SRV/op.P.age $SRV/op.age; }
 seal_as(){ # <from box> <to> <line file> → <line file>.age: a genuine message from that box, outside its outbox, signed by its working key in use
   ssh-keygen -q -Y sign -n "irongall-msg-v1:$2" -f $W/box/$1/work/$(cat $W/box/$1/serial)-cert.pub < "$3" > "$3.sig" && seal_to "$2" "$3" "$3.sig"; }
-recv(){ if RECV_OUT=$(ig_recv 2> $SRV/recv.err); then RECV_RC=0; else RECV_RC=$?; fi; RECV_ERR=$(cat $SRV/recv.err); }   # → RECV_OUT (accepted envelopes), RECV_ERR, RECV_RC
+recv(){ if ig_recv > $SRV/recv.out 2> $SRV/recv.err; then RECV_RC=0; else RECV_RC=$?; fi; RECV_OUT=$(grep '^{"type":"mail",' $SRV/recv.out || true); RECV_ERR=$({ grep -v '^{"type":"mail",' $SRV/recv.out || true; } | jq -rR '. as $l | (fromjson? // null) as $j | if $j == null then "NOT A LINE OF JSON: " + $l elif $j.type == "refused" then "REFUSED \($j.id): \($j.code): \($j.message)" else $l end'; cat $SRV/recv.err); }   # → RECV_OUT (the mail lines), RECV_ERR (every other line, from stdout and stderr, a refused line as "REFUSED <id>: <code>: <words>" for grep), RECV_RC
 box_count(){ ls $SRV/$1/msgs | awk NF | wc -l; }
 newest(){ ls "$IG/prekeys" | sed -n 's/\.txt\.sig$//p' | sort -n | tail -n 1; }      # the highest number the box in use signed a statement at, published or not
+jbox(){ printf '{"type":"box","address":"%s","link":"%s/to/%s"}' "$1" "$IG_BASE" "$1"; }      # <address> → the line init and addr print
+jalias(){ printf '{"type":"alias","name":"%s","address":"%s"}' "$1" "$2"; }      # <name> <address> → the line alias prints for it
+jrevoked(){ printf '{"type":"revoked","address":"%s"%s}' "$1" "${2:+,\"message\":\"published to the server and to each revocation server\"}"; }      # <address> [published] → the line keep prints for a revocation, and publish, with its message
 num(){ cat "$W/box/$1/serial"; }      # <box> → the number of the prekey it published last, which is its working key's and its certificate's too. A box takes each number from its clock, so a test reads the number and never assumes one
 # --- 1. init: keys, a working key under a certificate, registration
 as Z; ig_recv 2> err.txt && bad "recv in no box" || grep -q "no box in" err.txt && ok "recv where there is no box says so" || bad "no box: $(cat err.txt)"
-for X in A B C D; do as $X; L=$(ig_init $NOPQ) && [ "$L" = "$IG_BASE/to/$(cat $IG/address)" ] || bad "ig_init $X printed $L, not its link"; eval "$X=\$(cat \$IG/address)"; done
+for X in A B C D; do as $X; L=$(ig_init $NOPQ) && [ "$L" = "$(jbox "$(cat $IG/address)")" ] || bad "ig_init $X printed $L, not its address and link"; eval "$X=\$(cat \$IG/address)"; done
 A1=$(num A); B1=$(num B); C1=$(num C); D1=$(num D); T0=$(date -u +%s)      # each box's first number
 as A; [ "$(sha256sum < $IG/identity.doc | cut -c1-64)" = "$A" ] && [ "$(cat $SRV/$A/state)" = active ] && [ "$(cat $SRV/$A/cert-serial)" = "$A1" ] && ok "ig_init: the address is the identity's hash, and the box is in use at once, with no second call" || bad "init"
 [ "$A1" -le "$T0" ] && [ $((T0 - A1)) -lt 300 ] && ok "the box's first number is this machine's clock, in seconds: a box needs no record of the numbers its identity used before" || bad "init: number $A1 at $T0"
@@ -269,7 +272,7 @@ ig_init classic 2> err.txt && bad "an unknown option was taken" || grep -q "unkn
 # --- 2. send, twice in a row, and receive both
 as A; printf 'hello B' > body1; printf 'second, "quoted" <tags> & ünïcode\n' > body2
 ig_send "$B" body1 && ig_send "$IG_BASE/to/$B" body2 && ok "two sends in a row, the second to B's link" || bad "two sends"
-[ "$(ig_addr)" = "$IG_BASE/to/$A" ] && ok "ig_addr prints the box's link" || bad "ig_addr: $(ig_addr)"
+[ "$(ig_addr)" = "$(jbox "$A")" ] && ok "ig_addr prints the box's address and link" || bad "ig_addr: $(ig_addr)"
 for L in "https://elsewhere.example/to/$B" "$IG_BASE.example/to/$B"; do
   ig_send "$L" body1 2> err.txt && bad "sent to $L" || grep -q "a link to another server: this box's server is $IG_BASE" err.txt && ok "a link to another server is REFUSED: $L" || bad "$L: $(cat err.txt)"; done
 for L in "$IG_BASE/to/$B/" "$IG_BASE/v1/$B" "$(tr a-f A-F <<< "$B")"; do
@@ -294,6 +297,7 @@ as B; recv
 # --- 4. forged mail: the operator names A, carries A's identity document, and signs with its OWN working key and certificate
 as B; forge "$B" "$A" "PAPAYA" $SRV/$A/identity.doc; srv_inject "$B" "$A" $SRV/op.age; recv
 [ -z "$RECV_OUT" ] && printf '%s' "$RECV_ERR" | grep -q "bad_signature: it is not signed for this box by a working key the sender's identity certified" && [ "$(box_count "$B")" = 0 ] && cmp -s $IG/peers/$A/identity.doc $SRV/$A/identity.doc && ok "mail in A's name under the operator's certificate: REFUSED, quarantined, acked; the pin is unchanged" || bad "forged pinned: $RECV_OUT / $RECV_ERR"
+grep -qx '{"type":"refused","id":"[0-9a-f]\{64\}","code":"bad_signature","message":"it is not signed for this box by a working key the sender'"'"'s identity certified"}' $SRV/recv.out && [ ! -s $SRV/recv.err ] && ok "a refusal is one line of JSON on stdout, nothing on stderr: its type, the ciphertext's id, the code and this script's own words" || bad "the refused line: $(cat $SRV/recv.out $SRV/recv.err)"
 # the same for D, whom B has never met: the operator has D's identity document, which is public, and not D's keys
 as B; forge "$B" "$D" "PAPAYA" $SRV/$D/identity.doc; srv_inject "$B" "$D" $SRV/op.age; recv
 [ -z "$RECV_OUT" ] && printf '%s' "$RECV_ERR" | grep -q "bad_signature" && [ ! -e $IG/peers/$D ] && ok "first contact, mail in D's name under the operator's certificate: REFUSED, and nothing pinned" || bad "first contact: $RECV_OUT / $RECV_ERR"
@@ -476,11 +480,11 @@ done
 ok "sent/ keeps every message the server took: one line each, named <address>.<msg_id>, with the server's receipt and no identity document"
 f=$(grep -l '"subject":"re: yours"' $IG/sent/*.json); [ "$(jq -c 'del(.receipt)' "$f")" = "$(jq -c . $W/box/B/inbox/$(jq -r .receipt.id "$f").json)" ] && ok "a sent line is the line its recipient delivered, plus the receipt" || bad "sent line: $(cat "$f")"
 for p in $IG/outbox/failed/*.P; do [ ! -e "$IG/sent/$(basename "$p" .P).json" ] || bad "a message refused for good is in sent/: $p"; done; ok "a message that never went is not in sent/"
-as A; [ "$(ig_alias bob "$IG_BASE/to/$B")" = "bob $B" ] && [ "$(ig_alias)" = "bob $B" ] && [ "$(stat -c %a $IG/aliases)" = 600 ] && ok "ig_alias names a peer for this box, in a 0600 file, and lists it" || bad "alias"
+as A; [ "$(ig_alias bob "$IG_BASE/to/$B")" = "$(jalias bob "$B")" ] && [ "$(ig_alias)" = "$(jalias bob "$B")" ] && [ "$(stat -c %a $IG/aliases)" = 600 ] && ok "ig_alias names a peer for this box, in a 0600 file, and lists it" || bad "alias"
 printf 'to bob' > body9; ig_send bob body9 || bad "send to an alias"
 as B; recv; printf '%s' "$RECV_OUT" | jq -e --arg a "$A" '.body == "to bob" and .from == $a' > /dev/null && ok "ig_send takes the alias" || bad "alias send: $RECV_OUT / $RECV_ERR"
 as A; n0=$(grep -c "^POST " $SRV/log)
-ig_alias bob "$C" 2> err.txt && bad "an alias was moved"; grep -q "already names $B" err.txt && [ "$(ig_alias bob "$B")" = "bob $B" ] && [ "$(wc -l < $IG/aliases)" = 1 ] && ok "a name is never moved to another address, and naming the same one again adds nothing" || bad "alias moved: $(cat err.txt)"
+ig_alias bob "$C" 2> err.txt && bad "an alias was moved"; grep -q "already names $B" err.txt && [ "$(ig_alias bob "$B")" = "$(jalias bob "$B")" ] && [ "$(wc -l < $IG/aliases)" = 1 ] && ok "a name is never moved to another address, and naming the same one again adds nothing" || bad "alias moved: $(cat err.txt)"
 for N in Bob "" -x "$B" "$IG_BASE/to/$B" aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; do ig_alias "$N" "$B" 2> err.txt && bad "named '$N'"; grep -q "not an alias" err.txt || bad "name '$N': $(cat err.txt)"; done
 [ "$(wc -l < $IG/aliases)" = 1 ] && ok "a name that is not 1 to 32 of a-z, 0-9, '.', '_' and '-' is REFUSED: never an address, never a link" || bad "a bad name was written"
 ig_send carol body9 2> err.txt && bad "sent to an alias nobody made"; grep -q "no alias named carol" err.txt && ok "an alias nobody made is REFUSED" || bad "carol: $(cat err.txt)"
@@ -613,8 +617,9 @@ for v in $VEC/revoke/bad-*.sig; do ! ig_revcheck "$VA" $VEC/a/identity.doc "$v" 
   ok "a revocation is the identity's own signature over its fixed statement, in either hash and by either key type: a working key's, another identity's, another namespace's and another box's are not" || bad "revocation vectors"
 for X in RA RB RC RD; do as $X; ig_init $NOPQ > /dev/null || bad "init $X"; eval "$X=\$(cat \$IG/address)"; done
 # the record: one line, made without publishing, and revocation publish (ig_revoke) takes only this box's own address written out in full
-as RB; ig_revocation > $W/rb.json 2> err.txt && [ "$(wc -l < $W/rb.json)" = 1 ] && [ "$(ig_record $W/rb.json)" = "$RB" ] && [ "$(cat $SRV/$RB/state)" = active ] && ! grep -q "^PUT .*/revocations\$" $SRV/log &&
-  ok "revocation prints the box's record, one line of JSON that verifies, and publishes nothing" || bad "revocation: $(cat err.txt)"
+as RB; ig_revocation $W/rb.json > out.txt 2> err.txt && [ "$(jq -r '.type + " " + .file' out.txt)" = "revocation_record $W/rb.json" ] && [ "$(wc -l < $W/rb.json)" = 1 ] && [ "$(jq -c keys $W/rb.json)" = '["identity","revocation"]' ] && [ "$(stat -c %a $W/rb.json)" = 600 ] &&
+  [ "$(ig_record $W/rb.json)" = "$RB" ] && [ "$(cat $SRV/$RB/state)" = active ] && ! grep -q "^PUT .*/revocations\$" $SRV/log && ! ig_revocation $W/rb.json > out.txt 2> err.txt && [ ! -s out.txt ] && grep -q "exists" err.txt &&
+  ok "revocation make writes the box's record to a new file, one line of JSON that verifies and is the body a server takes, never over a file, and publishes nothing" || bad "revocation: $(cat out.txt err.txt)"
 for arg in "" "${RB:0:63}" "$RA" "$IG_BASE/to/$RB"; do ig_revoke $arg > out.txt 2> err.txt && bad "revoke '$arg' ran"; [ ! -s out.txt ] || bad "revoke '$arg' printed $(cat out.txt)"; done
 ! grep -q "^PUT .*/revocations\$" $SRV/log && [ "$(cat $SRV/$RB/state)" = active ] && ok "revoke without this box's own address in full is REFUSED, and nothing is published" || bad "revoke was published without its confirmation"
 # a working key's signature over the same statement: good under its certificate, and not a revocation, to this script or to the server
@@ -625,7 +630,7 @@ ig_revoke "$RB" $W/wk.json 2> err.txt && bad "a working key's signature was publ
 ig_api PUT "/v1/$RB/revocations" $W/wk.json > /dev/null 2>&1 && bad "the server took a working key's signature as a revocation"
 [ "$(ig_code)" = bad_revocation ] && [ "$(cat $SRV/$RB/state)" = active ] && ok "a working key cannot revoke: its signature over the statement is REFUSED as a record, and by the server" || bad "working key: $(ig_code)"
 # the operator says a box is revoked, and shows nothing, or something that is not its revocation
-as RC; ig_revocation > $W/rc.json 2> /dev/null; jq -c --slurpfile b $W/rb.json '.identity = $b[0].identity' $W/rc.json > $W/mixed.json
+as RC; ig_revocation $W/rc.json > /dev/null 2>&1; jq -c --slurpfile b $W/rb.json '.identity = $b[0].identity' $W/rc.json > $W/mixed.json
 as RA; MODE="says-revoked $RB"; printf 'to a box the server calls revoked' | ig_send "$RB" 2> err.txt && bad "sent to a box the server calls revoked"
 grep -q "showed no revocation that verifies" err.txt && [ ! -e $IG/peers/$RB/revoke.sig ] && [ "$(ls $IG/outbox/*.P | wc -l)" = 1 ] || bad "a server's word: $(cat err.txt)"
 for shown in $W/wk.json $W/rc.json $W/mixed.json; do
@@ -637,7 +642,7 @@ MODE=honest; ig_flush 2> err.txt && as RB && recv && [ "$(printf '%s\n' "$RECV_O
 # a real revocation: mail waiting for the box goes, the box learns it from the proof, and a second one changes nothing
 as RD; printf 'one' | ig_send "$RA" && printf 'two' | ig_send "$RA" || bad "RD's sends"
 as RA; printf 'waiting in the box that is revoked' | ig_send "$RD" || bad "RA's send"
-as RD; out=$(ig_revoke "$RD" 2> err.txt) && [ "$out" = "revoked $RD" ] && [ "$(cat $SRV/$RD/state)" = revoked ] && [ "$(box_count "$RD")" = 0 ] && [ -s $IG/revoked.sig ] && [ "$(ig_revoke "$RD")" = "revoked $RD" ] &&
+as RD; out=$(ig_revoke "$RD" 2> err.txt) && [ "$out" = "$(jrevoked "$RD" published)" ] && [ "$(cat $SRV/$RD/state)" = revoked ] && [ "$(box_count "$RD")" = 0 ] && [ -s $IG/revoked.sig ] && [ "$(ig_revoke "$RD")" = "$(jrevoked "$RD" published)" ] &&
   ok "revoke, with the address in full: the box is revoked for good, its mail deleted, and a second one changes nothing" || bad "revoke: $out $(cat err.txt)"
 recv; [ $RECV_RC != 0 ] && printf '%s' "$RECV_ERR" | grep -q "REVOKED: this box's own address is revoked" && ok "a revoked box is told so by its own revocation, which it checks" || bad "a revoked box's recv: $RECV_ERR"
 printf 'from a revoked box' | ig_send "$RA" 2> err.txt && bad "a revoked box sent"; grep -q "REVOKED" err.txt && [ "$(ls $IG/outbox/failed/*.P | wc -l)" = 1 ] && ok "a revoked box's own mail can never be delivered: moved to outbox/failed/" || bad "a revoked box's send: $(cat err.txt)"
@@ -662,12 +667,12 @@ recv; [ $RECV_RC = 0 ] && [ "$(printf '%s\n' "$RECV_OUT" | awk NF | wc -l)" = 1 
 # a record handed over proves itself: the answer to a server that holds none. And the record alone revokes, with no box
 jq -c --arg l "$(ig_b64 $VEC/revoked/bad-by-a-working-key.txt)" --arg g "$(ig_b64 $VEC/revoked/bad-by-a-working-key.sig)" '. + {revoked_certificates:$l, revoked_certificates_signature:$g}' $W/rb.json > $W/rbbad.json      # RB's genuine revocation, beside a revocation of certificates that does not verify under RB
 ig_revoked $W/wk.json 2> err.txt && bad "a working key's record was kept"; ig_revoked $W/mixed.json 2> err.txt && bad "a mixed record was kept"; ig_revoked $W/rbbad.json 2> err.txt && bad "a record with a part that does not verify was kept"; [ ! -e $IG/peers/$RB/revoke.sig ] || bad "something that is not a revocation was kept"
-n0=$(wc -l < $SRV/log); [ "$(ig_revoked $W/rb.json)" = "revoked $RB" ] && [ -s $IG/peers/$RB/revoke.sig ] || bad "revoked: the record was not kept"
+n0=$(wc -l < $SRV/log); [ "$(ig_revoked $W/rb.json)" = "$(jrevoked "$RB")" ] && [ -s $IG/peers/$RB/revoke.sig ] || bad "revoked: the record was not kept"
 printf 'to a box revoked out of band' | ig_send "$RB" 2> err.txt && bad "sent to a box revoked out of band"; grep -q "REVOKED: $RB is revoked" err.txt && [ "$(wc -l < $SRV/log)" = "$n0" ] || bad "out of band: $(cat err.txt)"
 as RB; printf 'from a box revoked out of band' | ig_send "$RC" || bad "RB's send"; as RC; recv
 [ -z "$RECV_OUT" ] && printf '%s' "$RECV_ERR" | grep -q "^REFUSED .*: revoked: " && ok "a revocation handed over is kept once it verifies, with no word from the server: nothing is sent to that address, and its mail is REFUSED" || bad "handed over: $RECV_OUT / $RECV_ERR"
 as NOBOX; n0=$(wc -l < $SRV/log); ig_revoke "$RB" $W/rbbad.json 2> err.txt && bad "a record with a part that does not verify was published"; grep -q "whose every part verifies: nothing was published" err.txt && [ "$(wc -l < $SRV/log)" = "$n0" ] && ok "a record handed over with a part that does not verify is refused whole, by revoked and by revoke, before any server is asked" || bad "a part that does not verify: $(cat err.txt)"
-[ "$(ig_revoke "$RB" $W/rb.json 2> err.txt)" = "revoked $RB" ] && [ "$(cat $SRV/$RB/state)" = revoked ] && [ ! -e $IG/identity ] &&
+[ "$(ig_revoke "$RB" $W/rb.json 2> err.txt)" = "$(jrevoked "$RB" published)" ] && [ "$(cat $SRV/$RB/state)" = revoked ] && [ ! -e $IG/identity ] &&
   ok "a record made earlier revokes with no box and no key: only the file" || bad "revoke with a record: $(cat err.txt)"
 # --- 18. certificates revoked: the address goes on. A box's statements are ordered by certificate first, a send names its prekey by both
 #     serials, and what a revoked certificate signed is refused by whoever holds the identity's revocation of it
@@ -805,7 +810,7 @@ o=$(ls $IG/outbox/$SF.*.P); o=${o%.P}; printf 'not json' > "$o.json"; ! ig_under
 ig_flush 2> err.txt && as SF && recv && [ "$(printf '%s\n' "$RECV_OUT" | jq -r .body)" = "sealed again" ] && ok "a seal that cannot be read is made again, never posted as it is" || bad "an unreadable seal: $(cat err.txt) / $RECV_ERR"
 # an address revoked while a sealed message waits for it: nothing is posted
 as SA; SEND_FAILS="503 unavailable"; printf 'sealed before the address was revoked' | ig_send "$SG" 2> err.txt && bad "the post was meant to fail"; SEND_FAILS=
-as SG; [ "$(ig_revoke "$SG" 2> err.txt)" = "revoked $SG" ] || bad "SG's revoke: $(cat err.txt)"
+as SG; [ "$(ig_revoke "$SG" 2> err.txt)" = "$(jrevoked "$SG" published)" ] || bad "SG's revoke: $(cat err.txt)"
 as SA; n0=$(posts "$SG"); ig_flush 2> err.txt && bad "flushed to an address since revoked"
 grep -q "REVOKED: $SG is revoked" err.txt && [ "$(posts "$SG")" = "$n0" ] && [ "$(ls $IG/outbox/failed/$SG.*.P | wc -l)" = 1 ] && [ -s $IG/peers/$SG/revoke.sig ] && ! ls $IG/outbox/*.P > /dev/null 2>&1 &&
   ok "a sealed message that waited while its recipient's address was revoked is never posted: the revocation is asked for, kept, and the message moves to outbox/failed/" || bad "a waiting seal to a revoked address: $(cat err.txt)"
@@ -821,12 +826,12 @@ as TA; n0=$(revs GET "$TB"); printf 'the default' | ig_send "$TB" || bad "TA's s
   printf '%s\n%s\n' $R2 $REV > $IG/revocation-servers && [ "$(ig_revservers | tr '\n' ' ')" = "$R2 $REV " ] && [ "$(IG_REVOCATION_SERVERS=$REV ig_revservers)" = "$REV" ] && echo none > $IG/revocation-servers && [ -z "$(ig_revservers)" ] &&
   printf ' \n\n' > $IG/revocation-servers && [ "$(ig_revservers)" = "$REV" ] && [ "$(IG_REVOCATION_SERVERS=' , ' ig_revservers)" = "$REV" ] && [ -z "$(IG_BASE=https://other.example ig_revservers)" ] && rm $IG/revocation-servers &&
   ok "which revocation servers a box lists: the variable, or else its revocation-servers file, or else the default for its server; none for a box on another server; never its own server; and the word none" || bad "the list of revocation servers"
-for L in revocations.example "$R2/path" "$R2/" HTTPS://second.example "none $R2" "ftp://second.example" "https://user@second.example"; do IG_REVOCATION_SERVERS=$L ig_revservers > out.txt 2> err.txt && bad "'$L' was taken as a list of revocation servers: $(cat out.txt)"; grep -q "^REFUSED: this box's list of revocation servers" err.txt || bad "'$L': $(cat err.txt)"; done
+for L in revocations.example "$R2/path" "$R2/" HTTPS://second.example "none $R2" "ftp://second.example" "https://user@second.example"; do IG_REVOCATION_SERVERS=$L ig_revservers > out.txt 2> err.txt && bad "'$L' was taken as a list of revocation servers: $(cat out.txt)"; grep -q "^{\"type\":\"error\",\"message\":\"REFUSED: this box's list of revocation servers" err.txt || bad "'$L': $(cat err.txt)"; done
 n0=$(wc -l < $SRV/log); IG_REVOCATION_SERVERS=revocations.example; printf 'never posted' | ig_send "$TB" 2> err.txt && bad "sent with a list that names no server"; unset IG_REVOCATION_SERVERS
 [ "$(wc -l < $SRV/log)" = "$n0" ] && [ "$(ls $IG/outbox/*.P | wc -l)" = 1 ] && ig_flush 2> err.txt && ok "a list that names something that is no server is REFUSED: nobody is asked and nothing is posted until it is put right" || bad "a bad list: $(cat err.txt)"
 # a revocation the box's own server hides from the first: it never took it, and goes on serving the box. The revocation server holds it
 as TC; printf 'from a box about to be revoked' | ig_send "$TD" && printf 'and again' | ig_send "$TE" && printf 'and to TE again' | ig_send "$TE" || bad "TC's sends"
-ig_revocation > $W/tc.json 2> /dev/null && IG_BASE=$REV ig_api PUT "/v1/$TC/revocations" $W/tc.json > /dev/null && [ "$(cat $SRV/$TC/state)" = active ] || bad "TC's revocation, to the revocation server alone"
+ig_revocation $W/tc.json > /dev/null 2>&1 && IG_BASE=$REV ig_api PUT "/v1/$TC/revocations" $W/tc.json > /dev/null && [ "$(cat $SRV/$TC/state)" = active ] || bad "TC's revocation, to the revocation server alone"
 # the control: asking its own server alone, a sender posts to the revoked address and a reader takes its mail
 as TD; n0=$(posts "$TC"); IG_REVOCATION_SERVERS=none; printf 'to an address its owner ended' | ig_send "$TC" 2> err.txt || bad "the control's send: $(cat err.txt)"; recv; unset IG_REVOCATION_SERVERS
 [ $(($(posts "$TC") - n0)) = 1 ] && [ ! -e $IG/peers/$TC/revoke.sig ] && [ "$(printf '%s\n' "$RECV_OUT" | jq -r .body)" = "from a box about to be revoked" ] || bad "the control: a box that asks its own server alone was shown the revocation, or did not post: $RECV_ERR"
@@ -840,11 +845,11 @@ as TE; n0=$(revs GET "$TC"); recv
 cp $W/tc.json $RVD/$TB.json; as TE; printf 'checked' | ig_send "$TB" 2> err.txt && [ ! -e $IG/peers/$TB/revoke.sig ] || bad "another box's revocation, shown for TB, stopped a send or was kept: $(cat err.txt)"
 jq -c --arg i "$(base64 < $W/box/TB/identity.doc | tr -d '\n')" '.identity = $i' $W/tc.json > $RVD/$TB.json; printf 'checked again' | ig_send "$TB" 2> err.txt && [ ! -e $IG/peers/$TB/revoke.sig ] &&
   ok "what a revocation server shows that does not verify counts as nothing shown: another box's revocation, and another box's signature with this box's document" || bad "junk from a revocation server: $(cat err.txt)"
-rm $RVD/$TB.json; touch $RVD/down; n0=$(posts "$TB"); printf 'goes anyway' | ig_send "$TB" 2> err.txt || bad "a send while the revocation server gave no answer: $(cat err.txt)"
-grep -q "^the revocation server $REV gave no answer, which changes nothing here\$" err.txt && [ $(($(posts "$TB") - n0)) = 1 ] && ok "a revocation server that gives no answer changes nothing: the owner is told, and the message goes" || bad "no answer from a revocation server: $(cat err.txt)"
+rm $RVD/$TB.json; touch $RVD/down; n0=$(posts "$TB"); printf 'goes anyway' | ig_send "$TB" > out.txt 2> err.txt || bad "a send while the revocation server gave no answer: $(cat err.txt)"
+grep -qxF "{\"type\":\"no_answer\",\"server\":\"$REV\",\"message\":\"the revocation server $REV gave no answer, which changes nothing here\"}" out.txt && grep -q '^{"type":"sent","id":"' out.txt && [ ! -s err.txt ] && [ $(($(posts "$TB") - n0)) = 1 ] && ok "a revocation server that gives no answer changes nothing: the owner is told, on stdout, and the message goes" || bad "no answer from a revocation server: $(cat out.txt err.txt)"
 # a revocation is published at every server, whatever the others answer
 as TE; ig_revoke "$TE" > out.txt 2> err.txt && bad "revoke succeeded with a server that did not take it"
-[ ! -s out.txt ] && grep -q "^NOT taken by the revocation server $REV\$" err.txt && grep -q "is not at every server" err.txt && [ "$(cat $SRV/$TE/state)" = revoked ] && [ -s $IG/revoked.sig ] && [ ! -e $RVD/$TE.json ] || bad "revoke with the revocation server down: $(cat out.txt) / $(cat err.txt)"
-rm $RVD/down; [ "$(ig_revoke "$TE" 2> err.txt)" = "revoked $TE" ] && [ "$(ig_record $RVD/$TE.json)" = "$TE" ] &&
+[ ! -s out.txt ] && grep -qxF "{\"type\":\"error\",\"message\":\"NOT taken by the revocation server $REV\"}" err.txt && grep -q "is not at every server" err.txt && [ "$(cat $SRV/$TE/state)" = revoked ] && [ -s $IG/revoked.sig ] && [ ! -e $RVD/$TE.json ] || bad "revoke with the revocation server down: $(cat out.txt) / $(cat err.txt)"
+rm $RVD/down; [ "$(ig_revoke "$TE" 2> err.txt)" = "$(jrevoked "$TE" published)" ] && [ "$(ig_record $RVD/$TE.json)" = "$TE" ] &&
   ok "revoke publishes at the box's own server and at each revocation server, every one whatever the others answer: it fails, saying which did not take it, until every one has, and the same command again is the cure" || bad "revoke again: $(cat err.txt)"
 echo "--- $PASS PASS, 0 FAIL (KEYTYPE=$KEYTYPE)"

@@ -127,8 +127,8 @@ func TestSentKeepsTheEnvelopeAndTheReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	var receipt protocol.Receipt
-	if err := json.Unmarshal(got["receipt"], &receipt); err != nil || receipt != *r || receipt.ID != d.ID || receipt.ReceivedAt == "" || receipt.ExpiresAt == "" {
-		t.Fatalf("the receipt kept is %+v, the server's %+v, the message %s: %v", receipt, *r, d.ID, err)
+	if err := json.Unmarshal(got["receipt"], &receipt); err != nil || receipt != r.Receipt || receipt.ID != d.ID || receipt.ReceivedAt == "" || receipt.ExpiresAt == "" {
+		t.Fatalf("the receipt kept is %+v, the server's %+v, the message %s: %v", receipt, r.Receipt, d.ID, err)
 	}
 	delete(got, "receipt")
 	var delivered map[string]json.RawMessage

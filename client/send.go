@@ -46,9 +46,19 @@ func (f Fields) check() error {
 	return nil
 }
 
+// Sent is a message the server took: the box it went to, the msg_id its
+// envelope carries, and the server's receipt for it, checked against the
+// ciphertext posted. Its ID is the server's id for the message, the SHA-256 of
+// the ciphertext; MsgID names the message itself, on every re-encryption.
+type Sent struct {
+	To    protocol.Address
+	MsgID string
+	protocol.Receipt
+}
+
 // Send sends one logical message with none of the optional fields: see
 // [Box.SendWith].
-func (b *Box) Send(ctx context.Context, to protocol.Address, body string) (*protocol.Receipt, error) {
+func (b *Box) Send(ctx context.Context, to protocol.Address, body string) (*Sent, error) {
 	return b.SendWith(ctx, to, body, Fields{})
 }
 
@@ -77,11 +87,11 @@ func (b *Box) Send(ctx context.Context, to protocol.Address, body string) (*prot
 //
 // It holds the box's lock from start to end ([Box.hold]), as every command
 // that writes the box does.
-func (b *Box) SendWith(ctx context.Context, to protocol.Address, body string, f Fields) (*protocol.Receipt, error) {
-	return locked(ctx, b, func() (*protocol.Receipt, error) { return b.sendWith(ctx, to, body, f) })
+func (b *Box) SendWith(ctx context.Context, to protocol.Address, body string, f Fields) (*Sent, error) {
+	return locked(ctx, b, func() (*Sent, error) { return b.sendWith(ctx, to, body, f) })
 }
 
-func (b *Box) sendWith(ctx context.Context, to protocol.Address, body string, f Fields) (*protocol.Receipt, error) {
+func (b *Box) sendWith(ctx context.Context, to protocol.Address, body string, f Fields) (*Sent, error) {
 	if err := f.check(); err != nil {
 		return nil, err
 	}
@@ -107,7 +117,11 @@ func (b *Box) sendWith(ctx context.Context, to protocol.Address, body string, f 
 	if err := b.syncACL(ctx); err != nil {
 		return nil, fmt.Errorf("%w: nothing is posted, so that no reply is refused; kept in the outbox, irongall outbox flush sends it", err)
 	}
-	return b.post(ctx, to, stem, newLookups())
+	r, err := b.post(ctx, to, stem, newLookups())
+	if err != nil {
+		return nil, err
+	}
+	return &Sent{To: to, MsgID: env.MsgID, Receipt: *r}, nil
 }
 
 // Flush re-posts every message still in the outbox, unchanged: a retry of a
@@ -115,11 +129,11 @@ func (b *Box) sendWith(ctx context.Context, to protocol.Address, body string, f 
 // entry; one that fails never stops the others, and the error names each
 // that failed. The server is asked about each recipient once, as a send
 // asks ([Box.SendWith]).
-func (b *Box) Flush(ctx context.Context) ([]*protocol.Receipt, error) {
-	return locked(ctx, b, func() ([]*protocol.Receipt, error) { return b.flush(ctx) })
+func (b *Box) Flush(ctx context.Context) ([]*Sent, error) {
+	return locked(ctx, b, func() ([]*Sent, error) { return b.flush(ctx) })
 }
 
-func (b *Box) flush(ctx context.Context) ([]*protocol.Receipt, error) {
+func (b *Box) flush(ctx context.Context) ([]*Sent, error) {
 	names, err := filepath.Glob(b.path("outbox", "*.P"))
 	if err != nil {
 		return nil, err
@@ -129,14 +143,17 @@ func (b *Box) flush(ctx context.Context) ([]*protocol.Receipt, error) {
 			return nil, fmt.Errorf("%w: nothing is posted, so that no reply is refused", err)
 		}
 	}
-	var receipts []*protocol.Receipt
+	var sent []*Sent
 	var errs []error
 	// The recipients this flush has asked the server about: one lookup each.
 	asked := newLookups()
 	for _, n := range names {
 		stem := strings.TrimSuffix(n, ".P")
-		to, _, _ := strings.Cut(filepath.Base(stem), ".")
+		to, msgID, _ := strings.Cut(filepath.Base(stem), ".")
 		peer, err := protocol.ParseAddress(to)
+		if err == nil && !protocol.IsMsgID(msgID) {
+			err = errors.New("not a msg_id")
+		}
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: not an outbox entry", filepath.Base(n)))
 			continue
@@ -146,9 +163,9 @@ func (b *Box) flush(ctx context.Context) ([]*protocol.Receipt, error) {
 			errs = append(errs, fmt.Errorf("%s: %w", filepath.Base(stem), err))
 			continue
 		}
-		receipts = append(receipts, r)
+		sent = append(sent, &Sent{To: peer, MsgID: msgID, Receipt: *r})
 	}
-	return receipts, errors.Join(errs...)
+	return sent, errors.Join(errs...)
 }
 
 // undeliverable are the answers that never change for this message: retrying

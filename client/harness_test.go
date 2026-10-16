@@ -94,7 +94,7 @@ func (e *env) heldBox(kt protocol.KeyType) *client.Box {
 	return b
 }
 
-func send(t *testing.T, from, to *client.Box, body string) *protocol.Receipt {
+func send(t *testing.T, from, to *client.Box, body string) *client.Sent {
 	t.Helper()
 	r, err := from.Send(context.Background(), to.Address(), body)
 	if err != nil {

@@ -99,6 +99,17 @@ func exists(name string) bool {
 	return err == nil && fi.Size() > 0
 }
 
+// linkIn is the link in the box line init and addr print: one line of JSON,
+// its type first, whose link ends in its address.
+func linkIn(t *testing.T, out string) string {
+	t.Helper()
+	var l struct{ Type, Address, Link string }
+	if !strings.HasPrefix(out, `{"type":"box",`) || strings.Count(out, "\n") != 1 || json.Unmarshal([]byte(out), &l) != nil || l.Address == "" || !strings.HasSuffix(l.Link, "/"+l.Address) {
+		t.Fatalf("not a box line: %q", out)
+	}
+	return l.Link
+}
+
 // bash runs commands after sourcing irongall.sh, with env added.
 func bash(t *testing.T, env []string, commands string) (string, error) {
 	t.Helper()
@@ -715,7 +726,7 @@ func TestAP256BoxInBothClients(t *testing.T) {
 	}
 	addr := func(link string) protocol.Address {
 		t.Helper()
-		a, err := protocol.ParseAddress(strings.TrimPrefix(strings.TrimSpace(link), srv.URL+protocol.LinkPath))
+		a, err := protocol.ParseAddress(strings.TrimPrefix(linkIn(t, link), srv.URL+protocol.LinkPath))
 		if err != nil {
 			t.Fatalf("not a link: %q", link)
 		}
@@ -782,7 +793,7 @@ func TestTheScriptsSendABoxDeniesFails(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ig_init: %v", err)
 	}
-	shAddr, err := protocol.ParseAddress(strings.TrimPrefix(strings.TrimSpace(out), srv.URL+protocol.LinkPath))
+	shAddr, err := protocol.ParseAddress(strings.TrimPrefix(linkIn(t, out), srv.URL+protocol.LinkPath))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -825,7 +836,7 @@ func TestWithGoClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ig_init: %v", err)
 	}
-	shLink := strings.TrimSpace(out)
+	shLink := linkIn(t, out)
 	shAddr, err := protocol.ParseAddress(strings.TrimPrefix(shLink, srv.URL+protocol.LinkPath))
 	if err != nil || shLink != srv.URL+protocol.LinkPath+shAddr.String() {
 		t.Fatalf("ig_init printed %q, not the box's link", out)
@@ -838,7 +849,7 @@ func TestWithGoClient(t *testing.T) {
 
 	// An API error prints its status and code, and nothing the server wrote
 	// (PROTOCOL.md §13).
-	if _, err := sh(shDir, "printf x | ig_send "+strings.Repeat("0", 64)); err == nil || !strings.Contains(err.Error(), "ERROR 404 no_such_mailbox\n") || strings.Contains(err.Error(), "no box has this address") {
+	if _, err := sh(shDir, "printf x | ig_send "+strings.Repeat("0", 64)); err == nil || !strings.Contains(err.Error(), `"code":"no_such_mailbox","message":"ERROR 404 no_such_mailbox"}`) || strings.Contains(err.Error(), "no box has this address") {
 		t.Fatalf("ig_send to no box: %v", err)
 	}
 	// A hostile server's words are not printed at all, and an answer that is
@@ -860,11 +871,11 @@ func TestWithGoClient(t *testing.T) {
 		next.ServeHTTP(w, r)
 	})
 	_, err = sh(shDir, "printf x | ig_send "+strings.Repeat("0", 64))
-	if err == nil || strings.Contains(err.Error(), "SYSTEM") || strings.ContainsRune(err.Error(), '\x1b') || strings.Contains(err.Error(), "AAAA") || !strings.Contains(err.Error(), "ERROR 429 rate_limited; the server asks to wait 40 seconds\n") {
+	if err == nil || strings.Contains(err.Error(), "SYSTEM") || strings.ContainsRune(err.Error(), '\x1b') || strings.Contains(err.Error(), "AAAA") || !strings.Contains(err.Error(), `{"type":"error","status":429,"code":"rate_limited","retry_after":40,"message":"ERROR 429 rate_limited; the server asks to wait 40 seconds"}`) {
 		t.Fatalf("a hostile error, as the script prints it: %v", err)
 	}
 	for _, d := range []string{"1", "2"} {
-		if _, err := sh(shDir, "printf x | ig_send "+strings.Repeat(d, 64)); err == nil || strings.Contains(err.Error(), "SYSTEM") || !strings.Contains(err.Error(), "ERROR 429: an answer this client does not know; the server asks to wait 40 seconds") {
+		if _, err := sh(shDir, "printf x | ig_send "+strings.Repeat(d, 64)); err == nil || strings.Contains(err.Error(), "SYSTEM") || !strings.Contains(err.Error(), `{"type":"error","status":429,"retry_after":40,"message":"ERROR 429: an answer this client does not know; the server asks to wait 40 seconds"}`) {
 			t.Fatalf("a code that is not one this client knows under its status, as the script prints it: %v", err)
 		}
 	}
@@ -994,7 +1005,7 @@ func TestWithGoClient(t *testing.T) {
 	if err := g.SetAlias("sh", shAddr); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := sh(goDir, "ig_alias && ig_dest sh"); err != nil || out != "sh "+shAddr.String()+"\n"+shAddr.String()+"\n" {
+	if out, err := sh(goDir, "ig_alias && ig_dest sh"); err != nil || out != `{"type":"alias","name":"sh","address":"`+shAddr.String()+`"}`+"\n"+shAddr.String()+"\n" {
 		t.Fatalf("the script reads the Go client's alias as %q, %v", out, err)
 	}
 	f := client.Fields{Subject: "from Go", InReplyTo: d.Envelope.MsgID, Supersedes: replaced}
@@ -1015,8 +1026,8 @@ func TestWithGoClient(t *testing.T) {
 	sameButReceipt(t, filepath.Join(goDir, "sent", shAddr.String()+"."+line.MsgID+".json"), []byte(out), r.ID)
 }
 
-// sameButReceipt checks a sent/ record: the line its recipient delivered,
-// with one more member, a receipt naming the message by id.
+// sameButReceipt checks a sent/ record: the line its recipient delivered, as
+// inbox/ keeps it, with one more member, a receipt naming the message by id.
 func sameButReceipt(t *testing.T, record string, delivered []byte, id string) {
 	t.Helper()
 	data, err := os.ReadFile(record) //nolint:gosec // a test's own directory
@@ -1029,6 +1040,15 @@ func sameButReceipt(t *testing.T, record string, delivered []byte, id string) {
 	}
 	if err := json.Unmarshal(delivered, &want); err != nil {
 		t.Fatal(err)
+	}
+	// A mail line as recv prints it is the record's line behind its type
+	// and its id, which is the receipt's; inbox/ keeps the line without them.
+	if _, printed := want["type"]; printed {
+		if want["type"] != "mail" || want["id"] != id {
+			t.Errorf("the line delivered is %v, the message %s", want, id)
+		}
+		delete(want, "type")
+		delete(want, "id")
 	}
 	receipt, _ := got["receipt"].(map[string]any)
 	if receipt["id"] != id || receipt["received_at"] == nil || receipt["expires_at"] == nil || len(receipt) != 3 {
@@ -1192,7 +1212,7 @@ func TestARevocationServerInBothClients(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ig_init: %v", err)
 		}
-		a, err := protocol.ParseAddress(strings.TrimPrefix(strings.TrimSpace(out), srv.URL+protocol.LinkPath))
+		a, err := protocol.ParseAddress(strings.TrimPrefix(linkIn(t, out), srv.URL+protocol.LinkPath))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1230,7 +1250,7 @@ func TestARevocationServerInBothClients(t *testing.T) {
 
 	// The script revokes its box: the revocation reaches the revocation
 	// server, and the mailbox server hides it.
-	if out, err := sh(both, "ig_revoke "+bothAddr.String()); err != nil || strings.TrimSpace(out) != "revoked "+bothAddr.String() {
+	if out, err := sh(both, "ig_revoke "+bothAddr.String()); err != nil || out != `{"type":"revoked","address":"`+bothAddr.String()+`","message":"published to the server and to each revocation server"}`+"\n" {
 		t.Fatalf("the script's revoke: %v %q", err, out)
 	}
 	if rec := held(bothAddr); rec == nil {
@@ -1334,7 +1354,7 @@ func TestRevocationInBothClients(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ig_init: %v", err)
 		}
-		a, err := protocol.ParseAddress(strings.TrimPrefix(strings.TrimSpace(out), srv.URL+protocol.LinkPath))
+		a, err := protocol.ParseAddress(strings.TrimPrefix(linkIn(t, out), srv.URL+protocol.LinkPath))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1355,13 +1375,14 @@ func TestRevocationInBothClients(t *testing.T) {
 	// is one the script takes.
 	s1, s1Addr := scriptBox()
 	g1 := goBox()
-	out, err := sh(s1, "ig_revocation")
-	if err != nil {
-		t.Fatalf("ig_revocation: %v", err)
+	written := filepath.Join(t.TempDir(), "s1.json")
+	out, err := sh(s1, "ig_revocation "+written)
+	if err != nil || !strings.HasPrefix(out, `{"type":"revocation_record","file":"`+written+`",`) {
+		t.Fatalf("ig_revocation: %q %v", out, err)
 	}
 	var fromScript protocol.Revocations
-	if err := json.Unmarshal([]byte(out), &fromScript); err != nil {
-		t.Fatalf("the script's record is not the JSON the Go client reads: %v: %q", err, out)
+	if err := protocol.UnmarshalRequest(mustRead(t, written), &fromScript); err != nil {
+		t.Fatalf("the script's record is not the body a server takes: %v: %q", err, mustRead(t, written))
 	}
 	if a, _, err := g1.KeepRevocation(&fromScript); err != nil || a != s1Addr {
 		t.Fatalf("the Go client refuses the script's record: %v", err)
@@ -1378,7 +1399,7 @@ func TestRevocationInBothClients(t *testing.T) {
 	if err := os.WriteFile(record, append(line, '\n'), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := sh(s1, "ig_revoked "+record); err != nil || strings.TrimSpace(out) != "revoked "+g1.Address().String() {
+	if out, err := sh(s1, "ig_revoked "+record); err != nil || out != `{"type":"revoked","address":"`+g1.Address().String()+`"}`+"\n" {
 		t.Fatalf("the script refuses the Go client's record: %q %v", out, err)
 	}
 	if _, err := sh(s1, "printf x | ig_send "+g1.Address().String()); err == nil || !strings.Contains(err.Error(), "REVOKED: "+g1.Address().String()) {
@@ -1392,7 +1413,7 @@ func TestRevocationInBothClients(t *testing.T) {
 	if _, err := sh(s2, "printf 'sent before the revocation' | ig_send "+g2.Address().String()); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := sh(s2, "ig_revoke "+s2Addr.String()); err != nil || strings.TrimSpace(out) != "revoked "+s2Addr.String() {
+	if out, err := sh(s2, "ig_revoke "+s2Addr.String()); err != nil || out != `{"type":"revoked","address":"`+s2Addr.String()+`","message":"published to the server and to each revocation server"}`+"\n" {
 		t.Fatalf("ig_revoke: %q %v", out, err)
 	}
 	res, err := g2.Receive(ctx)
@@ -1425,7 +1446,7 @@ func TestRevocationInBothClients(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err = sh(s3, "ig_recv 2>&1")
-	if err != nil || !strings.Contains(out, ": revoked: ") || strings.Contains(out, `"body"`) {
+	if err != nil || !strings.Contains(out, `"code":"revoked"`) || strings.Contains(out, `"body"`) {
 		t.Fatalf("the script's drain of mail from a box the Go client revoked: %q %v", out, err)
 	}
 	if _, err := sh(s3, "printf x | ig_send "+g3.Address().String()); err == nil || !strings.Contains(err.Error(), "REVOKED") {
@@ -1595,7 +1616,7 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ig_init: %v", err)
 	}
-	script, err := protocol.ParseAddress(strings.TrimPrefix(strings.TrimSpace(out), srv.URL+protocol.LinkPath))
+	script, err := protocol.ParseAddress(strings.TrimPrefix(linkIn(t, out), srv.URL+protocol.LinkPath))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1624,7 +1645,7 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err = sh("ig_recv 2>&1")
-	if err != nil || strings.Count(out, ": certificate_revoked: ") != 1 || !strings.Contains(out, `"body":"under the second certificate"`) || strings.Contains(out, "under the first certificate") {
+	if err != nil || strings.Count(out, `"code":"certificate_revoked"`) != 1 || !strings.Contains(out, `"body":"under the second certificate"`) || strings.Contains(out, "under the first certificate") {
 		t.Fatalf("the script's drain of mail from a box that revoked its first certificate: %q %v", out, err)
 	}
 	// The script keeps it as the Go client does: one file, the record that
@@ -1848,7 +1869,7 @@ func TestTheCommandLine(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("init: %d %s", code, errs)
 	}
-	me := strings.TrimPrefix(strings.TrimSpace(link), srv.URL+protocol.LinkPath)
+	me := strings.TrimPrefix(linkIn(t, link), srv.URL+protocol.LinkPath)
 	for want, lines := range map[string][][]string{
 		"bash irongall.sh init ":                  {{"help"}, {"-h"}, {"--help"}},
 		"bash irongall.sh alias add ":             {{"help", "alias"}, {"alias", "help"}, {"alias", "-h"}, {"help", "alias", "add"}, {"alias", "add", "-h"}},
@@ -1872,23 +1893,26 @@ func TestTheCommandLine(t *testing.T) {
 		t.Fatalf("revocation publish --help published: %v %v", resp, err)
 	}
 	for _, line := range [][]string{nil, {"alias"}, {"alias", "nosuch"}, {"nosuch"}, {"help", "nosuch"}, {"alias", "add", "bob"}, {"alias", "list", "bob"}, {"rekey"}} {
-		if out, errs, code := run(line...); code != 2 || out != "" || !strings.Contains(errs, "bash irongall.sh ") {
+		if out, errs, code := run(line...); code != 2 || out != "" || !strings.HasPrefix(errs, `{"type":"usage_error",`) || strings.Count(errs, "\n") != 1 || !strings.Contains(errs, `"help":"bash irongall.sh help`) {
 			t.Errorf("irongall.sh %v: %d %q, stderr %q", line, code, out, errs)
 		}
+	}
+	if _, errs, _ := run("alias", "add", "bob"); errs != `{"type":"usage_error","usage":"bash irongall.sh alias add <name> <link>","help":"bash irongall.sh help alias add","message":"irongall.sh alias add takes 2 arguments, and was given 1"}`+"\n" {
+		t.Errorf("a wrong number of arguments: %q", errs)
 	}
 	// And the commands run.
 	g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
 	if err != nil {
 		t.Fatal(err)
 	}
-	bob := "bob " + g.Address().String() + "\n"
+	bob := `{"type":"alias","name":"bob","address":"` + g.Address().String() + `"}` + "\n"
 	if out, errs, code := run("alias", "add", "bob", g.Link()); code != 0 || out != bob {
 		t.Fatalf("alias add: %d %q %s", code, out, errs)
 	}
 	if out, errs, code := run("alias", "list"); code != 0 || out != bob {
 		t.Fatalf("alias list: %d %q %s", code, out, errs)
 	}
-	if out, errs, code := run("prekey", "renew", "--no-pq"); code != 0 {
+	if out, errs, code := run("prekey", "renew", "--no-pq"); code != 0 || !strings.HasPrefix(out, `{"type":"prekey","serial":`) || strings.Count(out, "\n") != 1 {
 		t.Fatalf("prekey renew: %d %q %s", code, out, errs)
 	}
 }
@@ -1907,7 +1931,7 @@ func TestASendDuringADrainHidesNoRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := protocol.ParseAddress(strings.TrimPrefix(strings.TrimSpace(out), srv.URL+protocol.LinkPath))
+	s, err := protocol.ParseAddress(strings.TrimPrefix(linkIn(t, out), srv.URL+protocol.LinkPath))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -31,6 +32,76 @@ import (
 // do runs one command line: the command's words, then its arguments.
 func do(ctx context.Context, command string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	return run(ctx, append(strings.Fields(command), args...), stdin, stdout, stderr)
+}
+
+// printed is what a command printed, read back: every line must be one JSON
+// object whose first member is its type.
+func printed(t *testing.T, s string) []map[string]any {
+	t.Helper()
+	var ls []map[string]any
+	for _, l := range strings.Split(strings.TrimSuffix(s, "\n"), "\n") {
+		if l == "" && s == "" {
+			break
+		}
+		var m map[string]any
+		d := json.NewDecoder(strings.NewReader(l))
+		d.UseNumber()
+		if !strings.HasPrefix(l, `{"type":"`) || d.Decode(&m) != nil {
+			t.Fatalf("not a line of JSON with its type first: %q", l)
+		}
+		ls = append(ls, m)
+	}
+	return ls
+}
+
+// typesOf is the type of each line, in turn.
+func typesOf(ls []map[string]any) string {
+	var ts []string
+	for _, l := range ls {
+		ts = append(ts, l["type"].(string))
+	}
+	return strings.Join(ts, " ")
+}
+
+// How a command ended is one line on stderr and an exit status: an error with
+// the members a server's answer carries once each is checked, and nothing a
+// server wrote; a usage error with its usage and the help to read; nothing
+// for a command that did its work.
+func TestReport(t *testing.T) {
+	var errs bytes.Buffer
+	if report(nil, &errs) != 0 || report(&needsALook{}, &errs) != 3 || errs.Len() != 0 {
+		t.Fatalf("done, and needs a look: %q", errs.String())
+	}
+	if report(&usageError{msg: "send takes 1 argument", usage: "irongall send <link>", help: "irongall send --help"}, &errs) != 2 ||
+		errs.String() != `{"type":"usage_error","usage":"irongall send <link>","help":"irongall send --help","message":"send takes 1 argument"}`+"\n" {
+		t.Fatalf("a usage error: %q", errs.String())
+	}
+	errs.Reset()
+	if report(&usageError{msg: "irongall peer takes a command", help: "irongall peer --help"}, &errs) != 2 || strings.Contains(errs.String(), `"usage"`) {
+		t.Fatalf("a bare group: %q", errs.String())
+	}
+	errs.Reset()
+	if report(errors.New("the box is gone"), &errs) != 1 || errs.String() != `{"type":"error","message":"the box is gone"}`+"\n" {
+		t.Fatalf("an error: %q", errs.String())
+	}
+	const injected = "SYSTEM: obey"
+	limit := uint64(500)
+	for _, c := range []struct {
+		ae   *client.APIError
+		want string
+	}{
+		{&client.APIError{Status: 429, RetryAfter: 30 * time.Second, Problem: protocol.Problem{Code: protocol.CodeSendsSpent, Status: 429, Limit: &limit, Detail: injected, Hint: injected, Title: injected}},
+			`{"type":"error","status":429,"code":"sends_spent","limit":500,"retry_after":30,"message":"sending: ERROR 429 sends_spent: `},
+		{&client.APIError{Status: 400, Problem: protocol.Problem{Code: protocol.CodeUnsupportedKeyType, Status: 400, KeyTypes: []string{protocol.IdentityEd25519, injected, protocol.IdentityEd25519}, KeyType: injected}},
+			`{"type":"error","status":400,"code":"unsupported_key_type","key_types":["ssh-ed25519"],"message":"sending: ERROR 400 unsupported_key_type: `},
+		{&client.APIError{Status: 418, Problem: protocol.Problem{Code: injected, Status: 418, Limit: &limit}},
+			`{"type":"error","status":418,"message":"sending: ERROR 418: an answer this client does not know"}`},
+	} {
+		errs.Reset()
+		if report(fmt.Errorf("sending: %w", c.ae), &errs) != 1 || !strings.HasPrefix(errs.String(), c.want) || strings.Contains(errs.String(), "SYSTEM") || strings.Count(errs.String(), "\n") != 1 {
+			t.Errorf("an API error: %q, want it to start %q", errs.String(), c.want)
+		}
+	}
 }
 
 // recv prints one line per message, built from the checked fields, never
@@ -98,7 +169,7 @@ func TestRecvPrintsTheCheckedLine(t *testing.T) {
 		t.Fatalf("recv: %v %s", err, errs.String())
 	}
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
-	if len(lines) != 1 || strings.Contains(out.String(), someone.String()) || !strings.Contains(lines[0], `"body":"real"`) {
+	if len(lines) != 1 || strings.Contains(out.String(), someone.String()) || !strings.Contains(lines[0], `"body":"real"`) || !strings.HasPrefix(lines[0], `{"type":"mail","id":"`+hex.EncodeToString(h[:])+`","v":1,`) {
 		t.Fatalf("recv printed %q", out.String())
 	}
 }
@@ -139,8 +210,8 @@ func TestRecvLineHasNoOtherLineBreaks(t *testing.T) {
 	}
 }
 
-// recv --wait waits out a rate limit within its deadline, and the error line
-// shows the server's detail, which names the limit and the wait.
+// recv --wait waits out a rate limit within its deadline, and says on stderr
+// that it waits, in this client's words and none of the server's.
 func TestRecvWaitRidesOutARateLimit(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -173,7 +244,8 @@ func TestRecvWaitRidesOutARateLimit(t *testing.T) {
 	if err := do(ctx, "recv", []string{"--wait", "10s"}, strings.NewReader(""), &out, &errs); err != nil {
 		t.Fatalf("recv --wait: %v %s", err, errs.String())
 	}
-	if limited.Load() < 2 || !strings.Contains(out.String(), `"body":"after the wait"`) || !strings.Contains(errs.String(), "ERROR 429 rate_limited: the server takes no more calls of this kind for now; the server asks to wait 1 second") || strings.Contains(errs.String(), "poll at most") {
+	if limited.Load() < 2 || !strings.Contains(out.String(), `"body":"after the wait"`) || strings.Contains(errs.String(), "poll at most") ||
+		!strings.HasPrefix(errs.String(), `{"type":"waiting","for":"server","status":429,"code":"rate_limited","retry_after":1,"message":"ERROR 429 rate_limited: the server takes no more calls of this kind for now; the server asks to wait 1 second"}`+"\n") {
 		t.Fatalf("polls %d, out %q, err %q", limited.Load(), out.String(), errs.String())
 	}
 }
@@ -255,7 +327,7 @@ func TestAdopt(t *testing.T) {
 	t.Setenv("IRONGALL_BASE", srv.URL)
 	key := srv.AdoptKey("acme")
 	var out, errs bytes.Buffer
-	if err := do(ctx, "account adopt", []string{key}, strings.NewReader(""), &out, &errs); err != nil || out.String() != "in account acme\n" || srv.Account(b.Address()) != "acme" {
+	if err := do(ctx, "account adopt", []string{key}, strings.NewReader(""), &out, &errs); err != nil || out.String() != `{"type":"account","account":"acme"}`+"\n" || srv.Account(b.Address()) != "acme" {
 		t.Fatalf("adopt: %v %q %q", err, out.String(), errs.String())
 	}
 	if err := do(ctx, "account adopt", []string{key}, strings.NewReader(""), &out, &errs); client.Code(err) != protocol.CodeAdoptKeyRefused {
@@ -268,7 +340,7 @@ func TestAdopt(t *testing.T) {
 		}
 	}
 	out.Reset()
-	if err := do(ctx, "account leave", nil, strings.NewReader(""), &out, &errs); err != nil || out.String() != "in no account\n" || srv.Account(b.Address()) != "" {
+	if err := do(ctx, "account leave", nil, strings.NewReader(""), &out, &errs); err != nil || out.String() != `{"type":"account","account":null,"message":"in no account"}`+"\n" || srv.Account(b.Address()) != "" {
 		t.Fatalf("account leave: %v %q", err, out.String())
 	}
 }
@@ -369,8 +441,11 @@ func TestNothingTheServerWritesIsPrinted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var rec struct{ Receipt protocol.Receipt }
-	if err := json.Unmarshal(data, &rec); err != nil || out.String() != rec.Receipt.ID+"\n" {
+	var rec struct {
+		MsgID   string `json:"msg_id"`
+		Receipt protocol.Receipt
+	}
+	if err := json.Unmarshal(data, &rec); err != nil || out.String() != `{"type":"sent","id":"`+rec.Receipt.ID+`","msg_id":"`+rec.MsgID+`","to":"`+b.Address().String()+`"}`+"\n" {
 		t.Fatalf("flush printed %q, and sent/ holds the receipt %q: %v", out.String(), rec.Receipt.ID, err)
 	}
 }
@@ -409,7 +484,7 @@ func TestHelpAndREADMENameTheEchoBox(t *testing.T) {
 	}
 }
 
-// init and addr print the box's link; send takes a link to its own server or
+// init and addr print the box's address and link; send takes a link to its own server or
 // a bare address, and refuses a link to another server, or anything else,
 // before it makes any mail.
 func TestTheLink(t *testing.T) {
@@ -428,11 +503,12 @@ func TestTheLink(t *testing.T) {
 		t.Fatal(err)
 	}
 	link := srv.URL + "/to/" + a.Address().String()
-	if out.String() != link+"\n" {
-		t.Fatalf("init printed %q, not %q", out.String(), link)
+	box := `{"type":"box","address":"` + a.Address().String() + `","link":"` + link + `"}` + "\n"
+	if out.String() != box {
+		t.Fatalf("init printed %q, not %q", out.String(), box)
 	}
 	out.Reset()
-	if err := do(ctx, "addr", nil, nil, &out, io.Discard); err != nil || out.String() != link+"\n" {
+	if err := do(ctx, "addr", nil, nil, &out, io.Discard); err != nil || out.String() != box {
 		t.Fatalf("addr: %v %q", err, out.String())
 	}
 	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
@@ -466,8 +542,8 @@ func TestTheLink(t *testing.T) {
 	}
 }
 
-// recv says when the prekey was due for renewal and the renewal failed, on
-// stderr and by its exit status, and still prints the mail it received.
+// recv says when the prekey was due for renewal and the renewal failed, in a
+// line and by its exit status, and still prints the mail it received.
 func TestRecvSaysARenewalFailed(t *testing.T) {
 	ctx := context.Background()
 	// The box is made 25 hours ago, by a clock the server shares: a pass is
@@ -500,14 +576,14 @@ func TestRecvSaysARenewalFailed(t *testing.T) {
 	t.Setenv("IRONGALL_BASE", srv.URL)
 	var out, errs bytes.Buffer
 	var look *needsALook
-	if err := do(ctx, "recv", nil, nil, &out, &errs); !errors.As(err, &look) || !strings.Contains(look.why, "the prekey was not renewed") {
+	if err := do(ctx, "recv", nil, nil, &out, &errs); !errors.As(err, &look) {
 		t.Fatalf("a failed renewal must give exit status 3, not %v", err)
 	}
-	if !strings.Contains(errs.String(), "due for renewal and was not renewed") || strings.Count(out.String(), "\n") != 1 {
+	if ls := printed(t, out.String()); typesOf(ls) != "mail renewal_failed" || !strings.Contains(ls[1]["message"].(string), "due for renewal and was not renewed") || ls[1]["status"] != json.Number("503") || errs.Len() != 0 {
 		t.Fatalf("stdout %q, stderr %q", out.String(), errs.String())
 	}
 	// status says so too, from the box's files, to a wrapper that kept
-	// neither recv's stderr nor its exit status.
+	// neither recv's lines nor its exit status.
 	out.Reset()
 	if err := do(ctx, "status", nil, nil, &out, io.Discard); !errors.As(err, &look) {
 		t.Fatalf("status after a failed renewal: %v", err)
@@ -527,7 +603,7 @@ func TestRecvSaysARenewalFailed(t *testing.T) {
 	}
 }
 
-// A refused message is told on stderr and kept in quarantine/, and does not
+// A refused message is told in a line and kept in quarantine/, and does not
 // change recv's exit status: any sender can cause one, so a stranger must not
 // be able to make a box's recv fail. status is what reports it.
 func TestRefusedMailDoesNotFailRecv(t *testing.T) {
@@ -556,10 +632,11 @@ func TestRefusedMailDoesNotFailRecv(t *testing.T) {
 	if err := do(ctx, "recv", nil, nil, &out, &errs); err != nil {
 		t.Fatalf("recv after refusing mail: %v", err)
 	}
-	if out.Len() != 0 || !strings.HasPrefix(errs.String(), "REFUSED "+hex.EncodeToString(h[:])+": undecryptable: it does not decrypt with this box's prekeys\n") {
+	if errs.Len() != 0 || out.String() != `{"type":"refused","id":"`+hex.EncodeToString(h[:])+`","code":"undecryptable","message":"it does not decrypt with this box's prekeys"}`+"\n" {
 		t.Fatalf("stdout %q, stderr %q", out.String(), errs.String())
 	}
 	var look *needsALook
+	out.Reset()
 	if err := do(ctx, "status", nil, nil, &out, io.Discard); !errors.As(err, &look) {
 		t.Fatalf("status with mail in quarantine/: %v", err)
 	}
@@ -594,8 +671,12 @@ func TestSendFlags(t *testing.T) {
 	if err := do(ctx, "send", args, strings.NewReader("the answer"), &id, io.Discard); err != nil {
 		t.Fatal(err)
 	}
+	ls := printed(t, id.String())
+	if typesOf(ls) != "sent" || ls[0]["to"] != b.Address().String() {
+		t.Fatalf("send printed %q", id.String())
+	}
 	for _, args := range [][]string{
-		{"--reply-to", strings.TrimSpace(id.String()), b.Link()},
+		{"--reply-to", ls[0]["id"].(string), b.Link()},
 		{"--urgent", b.Link()},
 	} {
 		if err := do(ctx, "send", args, strings.NewReader("refused"), io.Discard, io.Discard); err == nil {
@@ -606,7 +687,7 @@ func TestSendFlags(t *testing.T) {
 		t.Fatalf("a refused send left mail in the outbox: %v", made)
 	}
 
-	// sent/ keeps it, with the receipt whose id send printed.
+	// sent/ keeps it, with the receipt whose id send printed, and the msg_id.
 	recs, _ := filepath.Glob(filepath.Join(a.Dir(), "sent", b.Address().String()+".*.json"))
 	if len(recs) != 1 {
 		t.Fatalf("sent/ holds %v", recs)
@@ -614,9 +695,10 @@ func TestSendFlags(t *testing.T) {
 	var rec struct {
 		Body    string
 		Subject string
+		MsgID   string `json:"msg_id"`
 		Receipt protocol.Receipt
 	}
-	if err := json.Unmarshal(must(t, recs[0]), &rec); err != nil || rec.Body != "the answer" || rec.Subject != "re: yours" || rec.Receipt.ID+"\n" != id.String() {
+	if err := json.Unmarshal(must(t, recs[0]), &rec); err != nil || rec.Body != "the answer" || rec.Subject != "re: yours" || rec.Receipt.ID != ls[0]["id"] || rec.MsgID != ls[0]["msg_id"] {
 		t.Fatalf("the record: %+v, %v; send printed %q", rec, err, id.String())
 	}
 
@@ -662,7 +744,10 @@ func TestAliasCommand(t *testing.T) {
 		err := do(ctx, name, args, strings.NewReader("to a name"), &out, io.Discard)
 		return out.String(), err
 	}
-	bob, zed := "bob "+b.Address().String()+"\n", "zed "+c.Address().String()+"\n"
+	alias := func(name string, to *client.Box) string {
+		return `{"type":"alias","name":"` + name + `","address":"` + to.Address().String() + `"}` + "\n"
+	}
+	bob, zed := alias("bob", b), alias("zed", c)
 	if out, err := cmd("alias add", "zed", c.Address().String()); err != nil || out != zed {
 		t.Fatalf("alias add zed: %q %v", out, err)
 	}
@@ -695,8 +780,8 @@ func TestAliasCommand(t *testing.T) {
 	if _, err := cmd("send", "carol"); err == nil || !strings.Contains(err.Error(), "no alias named carol") {
 		t.Errorf("send carol: %v", err)
 	}
-	if _, err := cmd("alias rm", "bob"); err != nil {
-		t.Fatalf("alias rm: %v", err)
+	if out, err := cmd("alias rm", "bob"); err != nil || out != `{"type":"alias_removed","name":"bob"}`+"\n" {
+		t.Fatalf("alias rm: %q %v", out, err)
 	}
 	if out, err := cmd("alias list"); err != nil || out != zed {
 		t.Fatalf("after alias rm, alias list printed %q, %v", out, err)
@@ -754,7 +839,7 @@ func TestFlagsAreWrittenWithTwoDashes(t *testing.T) {
 		var errs bytes.Buffer
 		err := do(ctx, args, nil, strings.NewReader(""), io.Discard, &errs)
 		var wrong *usageError
-		if !errors.As(err, &wrong) || !strings.Contains(err.Error(), want) || !strings.Contains(wrong.help, "--help describes it") || errs.Len() != 0 {
+		if !errors.As(err, &wrong) || !strings.Contains(err.Error(), want) || !strings.HasPrefix(wrong.usage, "irongall ") || !strings.HasSuffix(wrong.help, " --help") || errs.Len() != 0 {
 			t.Errorf("%s: %v (and on stderr %q), want %q once", args, err, errs.String(), want)
 		}
 	}
@@ -764,7 +849,7 @@ func TestFlagsAreWrittenWithTwoDashes(t *testing.T) {
 // <command>, <command> --help, and <group> help. Asked for, it is on stdout
 // and the command succeeds. -h works too, as in docker, and says on stderr
 // that --help is the flag. A bare group, and a command that is not one, are
-// usage errors that carry the group's help, for stderr.
+// usage errors that name the group's help.
 func TestHelp(t *testing.T) {
 	ctx := context.Background()
 	t.Setenv("IRONGALL_HOME", t.TempDir())
@@ -792,20 +877,20 @@ func TestHelp(t *testing.T) {
 			}
 		}
 	}
-	for line, want := range map[string]string{
-		"":                    "",
-		"peer":                "",
-		"pear":                `irongall has no command "pear": did you mean peer?`,
-		"peer alow":           `irongall peer has no command "alow": did you mean allow?`,
-		"peer alow --rebuild": `irongall peer has no command "alow": did you mean allow?`,
-		"help nosuch":         `irongall has no command "nosuch"`,
-		"help peer nosuch":    `irongall peer has no command "nosuch"`,
-		"completion":          `irongall has no command "completion"`,
+	for line, want := range map[string][2]string{
+		"":                    {"irongall takes a command: irongall --help lists them", "irongall --help"},
+		"peer":                {"irongall peer takes a command: irongall peer --help lists them", "irongall peer --help"},
+		"pear":                {`irongall has no command "pear": did you mean peer?`, "irongall --help"},
+		"peer alow":           {`irongall peer has no command "alow": did you mean allow?`, "irongall peer --help"},
+		"peer alow --rebuild": {`irongall peer has no command "alow": did you mean allow?`, "irongall peer --help"},
+		"help nosuch":         {`irongall has no command "nosuch"`, "irongall --help"},
+		"help peer nosuch":    {`irongall peer has no command "nosuch"`, "irongall peer --help"},
+		"completion":          {`irongall has no command "completion"`, "irongall --help"},
 	} {
 		out, err := ask(line)
 		var wrong *usageError
-		if !errors.As(err, &wrong) || wrong.msg != want || !strings.HasPrefix(wrong.help, "usage: irongall ") || !strings.Contains(wrong.help, "Commands:") || out != "" {
-			t.Errorf("irongall %s: %v, want %q, and a group's help", line, err, want)
+		if !errors.As(err, &wrong) || wrong.msg != want[0] || wrong.help != want[1] || wrong.usage != "" || out != "" {
+			t.Errorf("irongall %s: %v, want %q, and the group's help named", line, err, want)
 		}
 	}
 	// After a command that takes arguments, "help" is one of them: an alias
@@ -845,7 +930,7 @@ func TestHelpRunsNothing(t *testing.T) {
 	}
 }
 
-// revocation make prints a record and publishes nothing; revocation publish
+// revocation make writes a record and publishes nothing; revocation publish
 // publishes one, for this box only when its address is written out in full,
 // or from a record with no box at all; revocation keep keeps a record someone
 // handed over.
@@ -874,21 +959,32 @@ func TestRevocationCommands(t *testing.T) {
 		return out.String(), errs.String(), err
 	}
 
-	// The record: one line of JSON on stdout, the warning on stderr, and the
-	// box still works.
-	out, warn, err := cmd(a, "revocation make")
-	var rec protocol.Revocations
-	if err != nil || strings.Count(out, "\n") != 1 || json.Unmarshal([]byte(out), &rec) != nil || !strings.Contains(warn, "Nothing was published") {
+	// The record: a new file, exactly the body a server takes, and a line that
+	// names it with the warning; the box still works. It never writes over a
+	// file.
+	record := filepath.Join(t.TempDir(), "a.json")
+	out, warn, err := cmd(a, "revocation make", record)
+	if ls := printed(t, out); err != nil || typesOf(ls) != "revocation_record" || ls[0]["file"] != record || !strings.Contains(ls[0]["message"].(string), "Nothing was published") || warn != "" {
 		t.Fatalf("revocation: %v %q %q", err, out, warn)
 	}
-	if _, err := protocol.VerifyRevocation(a.Address(), rec.Identity, rec.Revocation); err != nil {
-		t.Fatalf("the printed record does not verify: %v", err)
+	var rec map[string]json.RawMessage
+	if err := json.Unmarshal(must(t, record), &rec); err != nil || len(rec) != 2 || rec["identity"] == nil || rec["revocation"] == nil {
+		t.Fatalf("the record is not the body a server takes: %v %q", err, must(t, record))
+	}
+	var r protocol.Revocations
+	if err := protocol.UnmarshalRequest(must(t, record), &r); err != nil {
+		t.Fatalf("a server would refuse the record: %v", err)
+	}
+	if fi, err := os.Stat(record); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("the record's mode: %v %v", fi, err)
+	}
+	if _, err := protocol.VerifyRevocation(a.Address(), r.Identity, r.Revocation); err != nil {
+		t.Fatalf("the record does not verify: %v", err)
+	}
+	if out, _, err := cmd(a, "revocation make", record); err == nil || out != "" {
+		t.Fatalf("revocation make wrote over a file: %v %q", err, out)
 	}
 	if _, err := b.Send(ctx, a.Address(), "the box is not revoked by printing its record"); err != nil {
-		t.Fatal(err)
-	}
-	record := filepath.Join(t.TempDir(), "a.json")
-	if err := os.WriteFile(record, []byte(out), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -903,7 +999,7 @@ func TestRevocationCommands(t *testing.T) {
 	}
 
 	// B keeps A's record, handed over: no word from the server is needed.
-	if out, _, err := cmd(b, "revocation keep", record); err != nil || out != "revoked "+a.Address().String()+"\n" {
+	if out, _, err := cmd(b, "revocation keep", record); err != nil || out != `{"type":"revoked","address":"`+a.Address().String()+`"}`+"\n" {
 		t.Fatalf("revocation keep: %v %q", err, out)
 	}
 	var gone *client.RevokedError
@@ -919,7 +1015,8 @@ func TestRevocationCommands(t *testing.T) {
 	}
 
 	// The record alone revokes, from a directory that holds no box.
-	if out, _, err := cmd(nil, "revocation publish", "--record", record, a.Address().String()); err != nil || out != "revoked "+a.Address().String()+"\n" {
+	published := `","message":"published to the server and to each revocation server"}` + "\n"
+	if out, _, err := cmd(nil, "revocation publish", "--record", record, a.Address().String()); err != nil || out != `{"type":"revoked","address":"`+a.Address().String()+published {
 		t.Fatalf("revocation publish --record: %v %q", err, out)
 	}
 	c, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
@@ -931,7 +1028,7 @@ func TestRevocationCommands(t *testing.T) {
 	}
 
 	// A box revokes itself, and then knows it.
-	if out, _, err := cmd(c, "revocation publish", c.Address().String()); err != nil || out != "revoked "+c.Address().String()+"\n" {
+	if out, _, err := cmd(c, "revocation publish", c.Address().String()); err != nil || out != `{"type":"revoked","address":"`+c.Address().String()+published {
 		t.Fatalf("revocation publish: %v %q", err, out)
 	}
 	out, _, err = cmd(c, "status")
@@ -968,7 +1065,7 @@ func TestRevokedAsk(t *testing.T) {
 	addr := a.Address().String()
 
 	out, warn, err := cmd(b, "revocation ask", addr)
-	if err != nil || out != "no revocation of "+addr+" shown\n" || !strings.Contains(warn, "the word of whoever was asked") {
+	if ls := printed(t, out); err != nil || typesOf(ls) != "not_revoked" || ls[0]["address"] != addr || !strings.Contains(ls[0]["message"].(string), "the word of whoever was asked") || warn != "" {
 		t.Fatalf("ask about a box with nothing revoked: %v %q %q", err, out, warn)
 	}
 	if _, err := a.Rekey(ctx, ""); err != nil {
@@ -978,7 +1075,7 @@ func TestRevokedAsk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	held := "certificates of " + addr + " revoked through " + strconv.FormatUint(certs.Through, 10) + "\n"
+	held := `{"type":"certificates_revoked","address":"` + addr + `","through":` + strconv.FormatUint(certs.Through, 10) + "}\n"
 	// By its link, as send takes one.
 	if out, warn, err := cmd(b, "revocation ask", srv.URL+"/to/"+addr); err != nil || out != held || warn != "" {
 		t.Fatalf("ask about a box with its certificates revoked: %v %q %q", err, out, warn)
@@ -1025,7 +1122,7 @@ func TestRevokedAsk(t *testing.T) {
 	if _, err := client.Revoke(ctx, opt, r); err != nil {
 		t.Fatal(err)
 	}
-	if out, _, err := cmd(b, "revocation ask", addr); err != nil || out != "revoked "+addr+"\n" {
+	if out, _, err := cmd(b, "revocation ask", addr); err != nil || out != `{"type":"revoked","address":"`+addr+`"}`+"\n" {
 		t.Fatalf("ask about a revoked box: %v %q", err, out)
 	}
 
@@ -1054,13 +1151,14 @@ func TestCertRevokeEarlier(t *testing.T) {
 		t.Fatalf("cert revoke-earlier: %v %q", err, errs.String())
 	}
 	second := inUse(t, b)
-	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
-	below := func(n string) string { return strconv.FormatUint(number(t, n)-1, 10) }
-	if len(lines) != 2 || !strings.HasPrefix(lines[0], "prekey "+second+", valid until ") || lines[1] != "certificates through "+below(second)+" revoked" || !strings.Contains(errs.String(), "send it again") {
+	lines := printed(t, out.String())
+	below := func(n string) json.Number { return json.Number(strconv.FormatUint(number(t, n)-1, 10)) }
+	if typesOf(lines) != "prekey certificates_revoked" || lines[0]["serial"] != json.Number(second) || !strings.HasSuffix(lines[0]["not_after"].(string), "Z") ||
+		lines[1]["address"] != b.Address().String() || lines[1]["through"] != below(second) || !strings.Contains(lines[1]["message"].(string), "send it again") || errs.Len() != 0 {
 		t.Fatalf("its output: %q %q", out.String(), errs.String())
 	}
 	out.Reset()
-	if err := do(ctx, "cert revoke-earlier", nil, strings.NewReader(""), &out, &errs); err != nil || !strings.HasSuffix(out.String(), "certificates through "+below(inUse(t, b))+" revoked\n") {
+	if err := do(ctx, "cert revoke-earlier", nil, strings.NewReader(""), &out, &errs); err != nil || printed(t, out.String())[1]["through"] != below(inUse(t, b)) {
 		t.Fatalf("a second time: %v %q", err, out.String())
 	}
 	var rec protocol.Revocations
@@ -1125,11 +1223,11 @@ func TestCertRevokeEarlierWhenTheRenewalIsRefused(t *testing.T) {
 	refuse(protocol.CodeIdentityActsSpent)
 	out.Reset()
 	err = do(ctx, "cert revoke-earlier", nil, strings.NewReader(""), &out, &errs)
-	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
-	if err == nil || !strings.Contains(err.Error(), "NOT published") || !strings.Contains(err.Error(), "takes no mail") || len(lines) != 1 || !strings.HasPrefix(lines[0], "certificates through ") || !strings.HasSuffix(lines[0], " revoked") {
+	lines := printed(t, out.String())
+	if err == nil || !strings.Contains(err.Error(), "NOT published") || !strings.Contains(err.Error(), "takes no mail") || typesOf(lines) != "certificates_revoked" {
 		t.Fatalf("refused for the day's renewals: %v, stdout %q", err, out.String())
 	}
-	through := number(t, strings.TrimSuffix(strings.TrimPrefix(lines[0], "certificates through "), " revoked"))
+	through := number(t, lines[0]["through"].(json.Number).String())
 	if through < number(t, first) || inUse(t, b) != first {
 		t.Fatalf("the revocation runs through %d, with %s in use and %s recorded", through, first, inUse(t, b))
 	}
@@ -1162,9 +1260,9 @@ func allows(t *testing.T, b, a *client.Box) {
 	}
 }
 
-// recv holds a stranger's mail and says so on stderr; held lists it by
-// sender; peer allow prints it as recv would; peer block drops the sender;
-// peer list lists both. None of it changes recv's exit status.
+// recv holds a stranger's mail and says so; held lists it by sender; peer
+// allow prints it as recv would; peer block drops the sender; peer list lists
+// both. None of it changes recv's exit status.
 func TestHeldAndPeerCommands(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -1188,29 +1286,31 @@ func TestHeldAndPeerCommands(t *testing.T) {
 		return out.String(), errs.String(), err
 	}
 	out, errs, err := cmd("recv")
-	if err != nil || out != "" || !strings.HasPrefix(errs, "HELD ") || !strings.Contains(errs, "from "+a.Address().String()) {
+	if ls := printed(t, out); err != nil || typesOf(ls) != "held" || ls[0]["from"] != a.Address().String() || errs != "" {
 		t.Fatalf("recv: %v, stdout %q, stderr %q", err, out, errs)
 	}
 	out, _, err = cmd("held")
 	var h client.HeldSender
-	if err != nil || strings.Count(out, "\n") != 1 || json.Unmarshal([]byte(out), &h) != nil || h.From != a.Address() || len(h.IDs) != 1 {
+	if err != nil || typesOf(printed(t, out)) != "held_sender" || json.Unmarshal([]byte(out), &h) != nil || h.From != a.Address() || len(h.IDs) != 1 {
 		t.Fatalf("held: %v %q", err, out)
 	}
+	allowed := `{"type":"allowed","address":"` + a.Address().String() + `"}` + "\n"
 	out, _, err = cmd("peer allow", a.Address().String())
-	if err != nil || !strings.Contains(out, `"body":"from a stranger"`) || strings.Count(out, "\n") != 1 {
+	if ls := printed(t, out); err != nil || typesOf(ls) != "mail allowed" || ls[0]["body"] != "from a stranger" || ls[0]["id"] != h.IDs[0] || !strings.HasSuffix(out, allowed) {
 		t.Fatalf("peer allow: %v %q", err, out)
 	}
-	if out, _, err = cmd("peer list"); err != nil || out != "allowed "+a.Address().String()+"\n" {
+	if out, _, err = cmd("peer list"); err != nil || out != allowed {
 		t.Fatalf("peer list: %v %q", err, out)
 	}
-	if out, _, err = cmd("peer block", a.Link()); err != nil || out != "" {
+	if out, _, err = cmd("peer block", a.Link()); err != nil || out != `{"type":"blocked","address":"`+a.Address().String()+`","deleted":0}`+"\n" {
 		t.Fatalf("peer block: %v %q", err, out)
 	}
 	// Blocking wins over allowing, and both are listed.
+	blocked := `{"type":"blocked","address":"` + a.Address().String() + `"}` + "\n"
 	for args, want := range map[string]string{
-		"peer list":           "allowed " + a.Address().String() + "\nblocked " + a.Address().String() + "\n",
-		"peer list --blocked": "blocked " + a.Address().String() + "\n",
-		"peer list --allowed": "allowed " + a.Address().String() + "\n",
+		"peer list":           allowed + blocked,
+		"peer list --blocked": blocked,
+		"peer list --allowed": allowed,
 	} {
 		if out, _, err = cmd(args); err != nil || out != want {
 			t.Fatalf("%s: %v %q", args, err, out)
