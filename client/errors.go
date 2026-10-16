@@ -154,8 +154,10 @@ func (e *APIError) words() string {
 		return "the server takes no more calls of this kind for now"
 	case protocol.CodeRenewalsSpent:
 		return "the box has renewed its prekey as many times today as the server takes" + limit(p, " (%d)")
-	case protocol.CodeIdentityActsSpent:
-		return "the box's identity has certified working keys or revoked certificates as many times today as the server takes" + limit(p, " (%d)")
+	case protocol.CodeCertificatesSpent:
+		return "the box's identity has certified as many new working keys today as the server takes" + limit(p, " (%d)")
+	case protocol.CodeCertificateRevocationsSpent:
+		return "the box's identity has raised its revocation of certificates as many times today as the server takes" + limit(p, " (%d)")
 	case protocol.CodeSendsSpent:
 		return "the box has sent as many messages today as the server takes" + limit(p, " (%d)") + ": an account can lift a box's limits (irongall account adopt)"
 	case protocol.CodeFetchPaced:

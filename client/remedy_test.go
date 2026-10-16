@@ -10,33 +10,32 @@ import (
 	"time"
 
 	"github.com/IronGall-dev/irongall-client/client"
+	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
 // RenewAndRevoke is the remedy for a box whose working key may have been
-// taken: a new certificate, and a revocation of every one before it. These
-// tests play a taker who holds the old working key and a server that refuses
-// the renewal, a renewal that waited when the box was copied, and a box that
-// does not hold its own revocation.
+// taken: a new certificate, and a revocation of every one before it, which
+// goes out first. These tests play a taker who holds the old working key and
+// a server that refuses the renewal, a renewal that waited when the box was
+// copied, and a box that does not hold its own revocation.
 
-// A holder of the working key can spend a box's renewals for the day, so the
-// server refuses the owner's renewal as identity_acts_spent: a renewal under a
-// later certificate is its identity's act. The revocation goes out
-// all the same, the certificate in use among those it revokes: what the taker
-// signs with it is
-// refused, the box takes no mail meanwhile, and its next drain sends the
-// renewal that waited, after which the box receives again.
-func TestTheRemedyWhenTheDaysRenewalsAreSpent(t *testing.T) {
+// The server refuses the owner's renewal, here for the identity's
+// certificates of the day. The revocation went out first, the certificate in
+// use among those it revokes: what the taker signs with it is refused, the
+// box takes no mail meanwhile, and its next drain sends the renewal that
+// waited, after which the box receives again.
+func TestTheRemedyWhenTheRenewalIsRefused(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	a, reader := e.box(protocol.Classic), e.box(protocol.Classic)
 	inUse := numberOf(t, a)
 	taken := worker(t, a)
 
-	says(e, protocol.CodeIdentityActsSpent, http.MethodPut, "/prekey")
+	says(e, protocol.CodeCertificatesSpent, http.MethodPut, "/prekey")
 	r, err := a.RenewAndRevoke(ctx, "")
-	if err != nil || r == nil || r.Prekey != nil || client.Code(r.NotRenewed) != protocol.CodeIdentityActsSpent {
-		t.Fatalf("the remedy with the day's renewals spent: %+v, %v", r, err)
+	if err != nil || r == nil || r.Prekey != nil || r.NotRevoked != nil || client.Code(r.NotRenewed) != protocol.CodeCertificatesSpent {
+		t.Fatalf("the remedy with the renewal refused: %+v, %v", r, err)
 	}
 	if r.Below <= inUse || r.Revoked == nil || r.Revoked.Through != r.Below-1 || !r.Revoked.Revokes(inUse) {
 		t.Fatalf("its revocation: below %d, %+v, with %d in use", r.Below, r.Revoked, inUse)
@@ -64,7 +63,7 @@ func TestTheRemedyWhenTheDaysRenewalsAreSpent(t *testing.T) {
 
 	// The box is dark: its pass is under a revoked certificate, and its drain
 	// tries the renewal first, which the server still refuses.
-	if res, err := a.Receive(ctx); err == nil || res == nil || client.Code(res.RenewErr) != protocol.CodeIdentityActsSpent {
+	if res, err := a.Receive(ctx); err == nil || res == nil || client.Code(res.RenewErr) != protocol.CodeCertificatesSpent {
 		t.Fatalf("a drain while the renewal is refused: %+v, %v", res, err)
 	}
 
@@ -90,30 +89,69 @@ func TestTheRemedyWhenTheDaysRenewalsAreSpent(t *testing.T) {
 	}
 }
 
-// For any other failure of the renewal nothing is revoked: the server counts
-// renewals only after it has taken the box's new certificate and its pass as
-// timely, and no other refusal shows the box's clock right. A revocation
-// numbered by a clock that reads ahead would cover certificates not yet made.
-func TestTheRemedyRevokesNothingWhenTheRenewalFailsOtherwise(t *testing.T) {
+// The revocation goes out whatever the renewal after it meets: it is
+// numbered from the new certificate, and waits on nothing the server says of
+// the renewal, which a taker spending the box's calls could hold back.
+func TestTheRemedyRevokesWhateverTheRenewalMeets(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	a := e.box(protocol.Classic)
 	inUse := numberOf(t, a)
-	for _, code := range []protocol.Code{protocol.CodeUnavailable, protocol.CodePassExpired, protocol.CodeBadKey} {
+	for _, code := range []protocol.Code{protocol.CodeUnavailable, protocol.CodePassExpired, protocol.CodeBadKey, protocol.CodeRateLimited} {
 		says(e, code, http.MethodPut, "/prekey")
 		r, err := a.RenewAndRevoke(ctx, "")
-		if r == nil || r.Revoked != nil || r.Prekey != nil || client.Code(r.NotRenewed) != code || client.Code(err) != code {
+		if err != nil || r == nil || r.Prekey != nil || r.NotRevoked != nil || client.Code(r.NotRenewed) != code || r.Revoked == nil || r.Revoked.Through != r.Below-1 {
 			t.Fatalf("the remedy when the renewal is refused %s: %+v, %v", code, r, err)
 		}
-		if resp, err := http.Get(e.srv.URL + lookupOf(a)); err != nil || resp.StatusCode != http.StatusNotFound {
-			t.Fatalf("after a renewal refused %s, the server holds a record of the box: %v %v", code, resp, err)
-		} else {
-			_ = resp.Body.Close()
+		if !heldCertsOf(t, e, a).Revokes(inUse) {
+			t.Fatalf("after a renewal refused %s, the server holds no revocation of the certificate in use", code)
 		}
 	}
 	e.srv.SetMiddle(nil)
 	if numberOf(t, a) != inUse {
 		t.Fatal("the box moved to another certificate")
+	}
+}
+
+// A taker who holds the working key can spend the box's calls, so the server
+// may refuse the renewal for them. Once the server holds the revocation it
+// takes nothing under the taken certificate, and the calls come back: a
+// refusal with a short Retry-After is waited out and the renewal sent once
+// more. A longer one is not waited for.
+func TestTheRemedyWaitsOutAShortRetryAfter(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a := e.box(protocol.Classic)
+	var order []string
+	refused := 0
+	retryAfter := "1"
+	e.srv.SetMiddle(func(w http.ResponseWriter, req *http.Request, next http.Handler) {
+		if req.Method == http.MethodPut {
+			order = append(order, req.URL.Path[strings.LastIndex(req.URL.Path, "/")+1:])
+		}
+		if req.Method == http.MethodPut && strings.HasSuffix(req.URL.Path, "/prekey") && refused < 1 {
+			refused++
+			w.Header().Set("Retry-After", retryAfter)
+			fakeserver.WriteJSON(w, http.StatusTooManyRequests, protocol.Problem{Code: protocol.CodeRateLimited, Status: http.StatusTooManyRequests})
+			return
+		}
+		next.ServeHTTP(w, req)
+	})
+	r, err := a.RenewAndRevoke(ctx, "")
+	if err != nil || r.Prekey == nil || r.NotRenewed != nil || r.Revoked == nil || numberOf(t, a) != r.Below {
+		t.Fatalf("the remedy after a short Retry-After: %+v, %v", r, err)
+	}
+	if strings.Join(order, " ") != "revocations prekey prekey" {
+		t.Fatalf("the remedy's uploads, in order: %v", order)
+	}
+
+	refused, retryAfter, order = 0, "120", nil
+	r, err = a.RenewAndRevoke(ctx, "")
+	if err != nil || r.Prekey != nil || client.Code(r.NotRenewed) != protocol.CodeRateLimited || r.Revoked == nil {
+		t.Fatalf("the remedy after a long Retry-After: %+v, %v", r, err)
+	}
+	if strings.Join(order, " ") != "revocations prekey" {
+		t.Fatalf("the remedy's uploads after a long Retry-After, in order: %v", order)
 	}
 }
 
@@ -165,11 +203,10 @@ func TestTheRemedyAsksForItsOwnRevocationFirst(t *testing.T) {
 	a := e.box(protocol.Classic)
 	first := numberOf(t, a)
 
-	// An hour on, the day's renewals are spent, so the server holds a
-	// revocation through one below the renewal that waits: above the
-	// certificate in use.
+	// An hour on, the renewal is refused, so the server holds a revocation
+	// through one below the renewal that waits: above the certificate in use.
 	e.clock.Add(time.Hour)
-	says(e, protocol.CodeIdentityActsSpent, http.MethodPut, "/prekey")
+	says(e, protocol.CodeCertificatesSpent, http.MethodPut, "/prekey")
 	r, err := a.RenewAndRevoke(ctx, "")
 	if err != nil || r.Revoked == nil || r.Revoked.Through != r.Below-1 || servedCertificate(t, e, a) != first {
 		t.Fatalf("the first remedy: %+v, %v", r, err)
@@ -203,7 +240,7 @@ func TestTheRemedyAsksForItsOwnRevocationFirst(t *testing.T) {
 	})
 	e.clock.Add(time.Hour)
 	r, err = restored.RenewAndRevoke(ctx, "")
-	if err == nil || r == nil || r.Revoked != nil || !lost {
+	if err != nil || r == nil || r.Revoked != nil || r.NotRevoked == nil || !lost {
 		t.Fatalf("a remedy whose revocation's answer was lost: %+v, %v", r, err)
 	}
 	if held := heldCertsOf(t, e, a); held.Through != r.Below-1 {

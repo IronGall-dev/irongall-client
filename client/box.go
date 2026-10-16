@@ -247,7 +247,7 @@ func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*B
 	// A registration carries a pass under the certificate of the statement
 	// it brings. A second run of a registration the server took is the same
 	// request, and is answered as the first was.
-	if err := b.publish(ctx, http.MethodPut, b.boxPath(""), req, first); err != nil {
+	if err := b.publish(ctx, b.boxPath(""), req, first); err != nil {
 		return nil, err
 	}
 	return b, nil
@@ -259,7 +259,7 @@ func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*B
 // certificate on record. Once the server has taken it, n is the prekey this
 // box published last, its working key is the one in use, and older working
 // keys go.
-func (b *Box) publish(ctx context.Context, method, path string, req any, n uint64) error {
+func (b *Box) publish(ctx context.Context, path string, req any, n uint64) error {
 	signer, _, err := b.worker(n)
 	if err != nil {
 		return err
@@ -268,7 +268,7 @@ func (b *Box) publish(ctx context.Context, method, path string, req any, n uint6
 	if err != nil {
 		return err
 	}
-	if _, err := b.call(ctx, method, path, req, http.Header{"Authorization": {pass}}, nil); err != nil {
+	if _, err := b.call(ctx, http.MethodPut, path, req, http.Header{"Authorization": {pass}}, nil); err != nil {
 		return err
 	}
 	if err := b.recordPublished(n); err != nil {

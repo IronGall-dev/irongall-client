@@ -236,7 +236,7 @@ func TestCodes(t *testing.T) {
 		CodeNoSuchMailbox, CodeNoSuchMessage, CodeNotRevoked,
 		CodeConflict, CodeBoxChanged, CodeStalePrekey, CodePrekeyExpired,
 		CodeRevoked, CodeTooLarge,
-		CodeRateLimited, CodeRenewalsSpent, CodeIdentityActsSpent, CodeSendsSpent, CodeFetchPaced, CodeRefetchSpent, CodePairFull, CodeMailboxFull, CodeMailboxBusy,
+		CodeRateLimited, CodeRenewalsSpent, CodeCertificatesSpent, CodeCertificateRevocationsSpent, CodeSendsSpent, CodeFetchPaced, CodeRefetchSpent, CodePairFull, CodeMailboxFull, CodeMailboxBusy,
 		CodeUnavailable,
 	}
 	if len(codes) != len(Codes()) {

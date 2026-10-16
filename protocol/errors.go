@@ -59,15 +59,16 @@ const (
 	CodeTooLarge Code = "too_large"
 
 	// 429, all with Retry-After
-	CodeRateLimited       Code = "rate_limited"        // more calls than a limit takes for now
-	CodeRenewalsSpent     Code = "renewals_spent"      // the box's prekey renewals for the day
-	CodeIdentityActsSpent Code = "identity_acts_spent" // the identity's certificates and revocations of certificates for the day
-	CodeSendsSpent        Code = "sends_spent"         // the box's sends for the day
-	CodeFetchPaced        Code = "fetch_paced"         // the box has taken out as much new mail as it may for now: the rest waits
-	CodeRefetchSpent      Code = "refetch_spent"       // the message was fetched before, and fetching again is spent for now
-	CodePairFull          Code = "pair_full"
-	CodeMailboxFull       Code = "mailbox_full"
-	CodeMailboxBusy       Code = "mailbox_busy" // the box has taken as much new mail as it takes for now
+	CodeRateLimited                 Code = "rate_limited"                  // more calls than a limit takes for now
+	CodeRenewalsSpent               Code = "renewals_spent"                // the box's prekey renewals for the day
+	CodeCertificatesSpent           Code = "certificates_spent"            // the identity's new certificates for the day
+	CodeCertificateRevocationsSpent Code = "certificate_revocations_spent" // the identity's raises of its revocation of certificates for the day
+	CodeSendsSpent                  Code = "sends_spent"                   // the box's sends for the day
+	CodeFetchPaced                  Code = "fetch_paced"                   // the box has taken out as much new mail as it may for now: the rest waits
+	CodeRefetchSpent                Code = "refetch_spent"                 // the message was fetched before, and fetching again is spent for now
+	CodePairFull                    Code = "pair_full"
+	CodeMailboxFull                 Code = "mailbox_full"
+	CodeMailboxBusy                 Code = "mailbox_busy" // the box has taken as much new mail as it takes for now
 
 	// 503, with Retry-After
 	CodeUnavailable Code = "unavailable"
@@ -77,45 +78,46 @@ var codes = map[Code]struct {
 	status int
 	title  string
 }{
-	CodeBadRequest:            {http.StatusBadRequest, "Bad request"},
-	CodeBadAddress:            {http.StatusBadRequest, "Bad address"},
-	CodeBadEncoding:           {http.StatusBadRequest, "Bad encoding"},
-	CodeIdentityMismatch:      {http.StatusBadRequest, "Identity mismatch"},
-	CodeBadKey:                {http.StatusBadRequest, "Bad key"},
-	CodePrekeyNotNew:          {http.StatusBadRequest, "Prekey not new"},
-	CodePrekeyTime:            {http.StatusBadRequest, "Prekey not valid now"},
-	CodeUnsupportedKeyType:    {http.StatusBadRequest, "Unsupported key type"},
-	CodeNotAge:                {http.StatusBadRequest, "Not an age file"},
-	CodeWrongRecipientType:    {http.StatusBadRequest, "Wrong recipient type"},
-	CodeBadRevocation:         {http.StatusBadRequest, "Bad revocation"},
-	CodeUnauthorized:          {http.StatusUnauthorized, "Unauthorized"},
-	CodePassExpired:           {http.StatusUnauthorized, "Pass expired"},
-	CodeCertificateNotCurrent: {http.StatusUnauthorized, "Certificate not current"},
-	CodeCertificateRevoked:    {http.StatusUnauthorized, "Certificate revoked"},
-	CodeUnknownSender:         {http.StatusForbidden, "Unknown sender"},
-	CodeSenderRevoked:         {http.StatusForbidden, "Sender revoked"},
-	CodeSenderNotAllowed:      {http.StatusForbidden, "Sender not allowed"},
-	CodeSenderKeyType:         {http.StatusForbidden, "Sender key type"},
-	CodeAdoptKeyRefused:       {http.StatusForbidden, "Adopt key refused"},
-	CodeNoSuchMailbox:         {http.StatusNotFound, "No such mailbox"},
-	CodeNoSuchMessage:         {http.StatusNotFound, "No such message"},
-	CodeNotRevoked:            {http.StatusNotFound, "Not revoked"},
-	CodeConflict:              {http.StatusConflict, "Conflict"},
-	CodeBoxChanged:            {http.StatusConflict, "Box changed"},
-	CodeStalePrekey:           {http.StatusConflict, "Stale prekey"},
-	CodePrekeyExpired:         {http.StatusConflict, "Prekey expired"},
-	CodeRevoked:               {http.StatusGone, "Revoked"},
-	CodeTooLarge:              {http.StatusRequestEntityTooLarge, "Too large"},
-	CodeRateLimited:           {http.StatusTooManyRequests, "Rate limited"},
-	CodeRenewalsSpent:         {http.StatusTooManyRequests, "Renewals spent"},
-	CodeIdentityActsSpent:     {http.StatusTooManyRequests, "Identity acts spent"},
-	CodeSendsSpent:            {http.StatusTooManyRequests, "Sends spent"},
-	CodeFetchPaced:            {http.StatusTooManyRequests, "Fetch paced"},
-	CodeRefetchSpent:          {http.StatusTooManyRequests, "Refetch spent"},
-	CodePairFull:              {http.StatusTooManyRequests, "Pair full"},
-	CodeMailboxFull:           {http.StatusTooManyRequests, "Mailbox full"},
-	CodeMailboxBusy:           {http.StatusTooManyRequests, "Mailbox busy"},
-	CodeUnavailable:           {http.StatusServiceUnavailable, "Unavailable"},
+	CodeBadRequest:                  {http.StatusBadRequest, "Bad request"},
+	CodeBadAddress:                  {http.StatusBadRequest, "Bad address"},
+	CodeBadEncoding:                 {http.StatusBadRequest, "Bad encoding"},
+	CodeIdentityMismatch:            {http.StatusBadRequest, "Identity mismatch"},
+	CodeBadKey:                      {http.StatusBadRequest, "Bad key"},
+	CodePrekeyNotNew:                {http.StatusBadRequest, "Prekey not new"},
+	CodePrekeyTime:                  {http.StatusBadRequest, "Prekey not valid now"},
+	CodeUnsupportedKeyType:          {http.StatusBadRequest, "Unsupported key type"},
+	CodeNotAge:                      {http.StatusBadRequest, "Not an age file"},
+	CodeWrongRecipientType:          {http.StatusBadRequest, "Wrong recipient type"},
+	CodeBadRevocation:               {http.StatusBadRequest, "Bad revocation"},
+	CodeUnauthorized:                {http.StatusUnauthorized, "Unauthorized"},
+	CodePassExpired:                 {http.StatusUnauthorized, "Pass expired"},
+	CodeCertificateNotCurrent:       {http.StatusUnauthorized, "Certificate not current"},
+	CodeCertificateRevoked:          {http.StatusUnauthorized, "Certificate revoked"},
+	CodeUnknownSender:               {http.StatusForbidden, "Unknown sender"},
+	CodeSenderRevoked:               {http.StatusForbidden, "Sender revoked"},
+	CodeSenderNotAllowed:            {http.StatusForbidden, "Sender not allowed"},
+	CodeSenderKeyType:               {http.StatusForbidden, "Sender key type"},
+	CodeAdoptKeyRefused:             {http.StatusForbidden, "Adopt key refused"},
+	CodeNoSuchMailbox:               {http.StatusNotFound, "No such mailbox"},
+	CodeNoSuchMessage:               {http.StatusNotFound, "No such message"},
+	CodeNotRevoked:                  {http.StatusNotFound, "Not revoked"},
+	CodeConflict:                    {http.StatusConflict, "Conflict"},
+	CodeBoxChanged:                  {http.StatusConflict, "Box changed"},
+	CodeStalePrekey:                 {http.StatusConflict, "Stale prekey"},
+	CodePrekeyExpired:               {http.StatusConflict, "Prekey expired"},
+	CodeRevoked:                     {http.StatusGone, "Revoked"},
+	CodeTooLarge:                    {http.StatusRequestEntityTooLarge, "Too large"},
+	CodeRateLimited:                 {http.StatusTooManyRequests, "Rate limited"},
+	CodeRenewalsSpent:               {http.StatusTooManyRequests, "Renewals spent"},
+	CodeCertificatesSpent:           {http.StatusTooManyRequests, "Certificates spent"},
+	CodeCertificateRevocationsSpent: {http.StatusTooManyRequests, "Certificate revocations spent"},
+	CodeSendsSpent:                  {http.StatusTooManyRequests, "Sends spent"},
+	CodeFetchPaced:                  {http.StatusTooManyRequests, "Fetch paced"},
+	CodeRefetchSpent:                {http.StatusTooManyRequests, "Refetch spent"},
+	CodePairFull:                    {http.StatusTooManyRequests, "Pair full"},
+	CodeMailboxFull:                 {http.StatusTooManyRequests, "Mailbox full"},
+	CodeMailboxBusy:                 {http.StatusTooManyRequests, "Mailbox busy"},
+	CodeUnavailable:                 {http.StatusServiceUnavailable, "Unavailable"},
 }
 
 // Status returns the code's HTTP status, or 0 for a code this version does
@@ -156,8 +158,9 @@ type Problem struct {
 	Hint   string `json:"hint,omitempty"`
 
 	// Limit is the limit hit: the most bytes a body or a ciphertext may
-	// hold, or entries an ACL (too_large); the sends, renewals or identity
-	// acts a day takes (sends_spent, renewals_spent, identity_acts_spent).
+	// hold, or entries an ACL (too_large); the sends, renewals, certificates
+	// or raises of a revocation of certificates a day takes (sends_spent,
+	// renewals_spent, certificates_spent, certificate_revocations_spent).
 	Limit *uint64 `json:"limit,omitempty"`
 	// Messages is how many messages a full box holds (mailbox_full).
 	Messages *uint64 `json:"messages,omitempty"`

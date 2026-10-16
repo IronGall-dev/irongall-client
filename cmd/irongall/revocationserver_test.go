@@ -83,11 +83,11 @@ func TestTheCommandsWithARevocationServer(t *testing.T) {
 	}
 
 	// cert revoke-earlier with it down: the revocation is at the box's own
-	// server, the command fails and says where it is not, and how to send
-	// it there.
+	// server, which the command prints, and it fails and says where the
+	// revocation is not, and how to send it there.
 	out, _, err = cmd(a, "cert", "revoke-earlier")
 	var part *client.NotPublishedError
-	if !errors.As(err, &part) || !strings.Contains(err.Error(), "irongall cert publish-revoked") || strings.Contains(out, `"certificates_revoked"`) {
+	if !errors.As(err, &part) || !strings.Contains(err.Error(), "irongall cert publish-revoked") || !strings.Contains(out, `"certificates_revoked"`) {
 		t.Fatalf("cert revoke-earlier with the revocation server down: %v %q", err, out)
 	}
 	if holds(a.Address()) != http.StatusServiceUnavailable {

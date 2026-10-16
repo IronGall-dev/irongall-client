@@ -1405,10 +1405,9 @@ func TestCertRevokeEarlier(t *testing.T) {
 	}
 }
 
-// cert revoke-earlier when the server refuses the new prekey for the day's
-// renewals: the revocation goes out all the same, the command says the box
-// takes no mail until the new prekey is taken, and fails. Refused for
-// anything else, it revokes nothing and says so.
+// cert revoke-earlier when the server refuses the new prekey: the revocation
+// went out first, whatever the refusal, and the command says the new prekey
+// is NOT published and the box takes no mail until it is, and fails.
 func TestCertRevokeEarlierWhenTheRenewalIsRefused(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -1419,41 +1418,93 @@ func TestCertRevokeEarlierWhenTheRenewalIsRefused(t *testing.T) {
 	first := inUse(t, b)
 	t.Setenv("IRONGALL_HOME", b.Dir())
 	t.Setenv("IRONGALL_BASE", srv.URL)
-	refuse := func(code protocol.Code) {
-		srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-			if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/prekey") {
-				fakeserver.WriteJSON(w, code.Status(), protocol.Problem{Code: code, Status: int64(code.Status())})
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
+	for _, code := range []protocol.Code{protocol.CodeUnavailable, protocol.CodeRateLimited, protocol.CodeCertificatesSpent} {
+		srv.SetMiddle(refusing(code, http.MethodPut, "/prekey"))
+		var out, errs bytes.Buffer
+		err = do(ctx, "cert revoke-earlier", nil, strings.NewReader(""), &out, &errs)
+		lines := printed(t, out.String())
+		if err == nil || !strings.Contains(err.Error(), "NOT published") || !strings.Contains(err.Error(), "takes no mail") || typesOf(lines) != "certificates_revoked" {
+			t.Fatalf("refused %s: %v, stdout %q", code, err, out.String())
+		}
+		through := number(t, lines[0]["through"].(json.Number).String())
+		if through < number(t, first) || inUse(t, b) != first {
+			t.Fatalf("refused %s, the revocation runs through %d, with %s in use and %s recorded", code, through, first, inUse(t, b))
+		}
 	}
+}
 
-	refuse(protocol.CodeUnavailable)
+// refusing is a middleware that answers every call of method whose path ends
+// in suffix with code.
+func refusing(code protocol.Code, method, suffix string) func(http.ResponseWriter, *http.Request, http.Handler) {
+	return func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.Method == method && strings.HasSuffix(r.URL.Path, suffix) {
+			fakeserver.WriteJSON(w, code.Status(), protocol.Problem{Code: code, Status: int64(code.Status())})
+			return
+		}
+		next.ServeHTTP(w, r)
+	}
+}
+
+// What cert revoke-earlier says when the revocation is not everywhere, or
+// nowhere, beside a renewal the server refused, and when the box's own
+// address is revoked (#109): what became of the new prekey first, then of the
+// revocation, and the command to run.
+func TestCertRevokeEarlierSaysWhatHappenedToEach(t *testing.T) {
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "down", http.StatusServiceUnavailable) }))
+	t.Cleanup(down.Close)
+	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("IRONGALL_HOME", b.Dir())
+	t.Setenv("IRONGALL_BASE", srv.URL)
+
+	// The revocation taken by the box's server and not by a revocation server.
+	t.Setenv("IRONGALL_REVOCATION_SERVERS", down.URL)
+	srv.SetMiddle(refusing(protocol.CodeRateLimited, http.MethodPut, "/prekey"))
 	var out, errs bytes.Buffer
 	err = do(ctx, "cert revoke-earlier", nil, strings.NewReader(""), &out, &errs)
-	if err == nil || !strings.Contains(err.Error(), "nothing is revoked") || out.Len() != 0 {
-		t.Fatalf("refused as unavailable: %v, stdout %q", err, out.String())
+	if err == nil || !strings.Contains(err.Error(), "NOT published") || !strings.Contains(err.Error(), "takes no mail") || !strings.Contains(err.Error(), "not everywhere") || !strings.Contains(err.Error(), "irongall cert publish-revoked") || !strings.HasSuffix(typesOf(printed(t, out.String())), "certificates_revoked") {
+		t.Fatalf("taken by the box's server alone: %v, stdout %q", err, out.String())
 	}
 
-	// Any other rate limit says nothing of the day's count: the server may
-	// not have read the certificate's dates or the pass yet (#108).
-	refuse(protocol.CodeRateLimited)
-	err = do(ctx, "cert revoke-earlier", nil, strings.NewReader(""), &out, &errs)
-	if err == nil || !strings.Contains(err.Error(), "nothing is revoked") || out.Len() != 0 {
-		t.Fatalf("refused as rate_limited: %v, stdout %q", err, out.String())
-	}
-
-	refuse(protocol.CodeIdentityActsSpent)
+	// Taken nowhere: why, and the command that tries both again.
+	t.Setenv("IRONGALL_REVOCATION_SERVERS", "none")
+	prekey := refusing(protocol.CodeRateLimited, http.MethodPut, "/prekey")
+	srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		prekey(w, r, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			refusing(protocol.CodeUnavailable, http.MethodPut, "/revocations")(w, r, next)
+		}))
+	})
 	out.Reset()
 	err = do(ctx, "cert revoke-earlier", nil, strings.NewReader(""), &out, &errs)
-	lines := printed(t, out.String())
-	if err == nil || !strings.Contains(err.Error(), "NOT published") || !strings.Contains(err.Error(), "takes no mail") || typesOf(lines) != "certificates_revoked" {
-		t.Fatalf("refused for the day's renewals: %v, stdout %q", err, out.String())
+	if err == nil || !strings.Contains(err.Error(), "NOT published") || !strings.Contains(err.Error(), "nothing is revoked") || !strings.Contains(err.Error(), "irongall cert revoke-earlier tries both again") || out.Len() != 0 {
+		t.Fatalf("taken nowhere: %v, stdout %q", err, out.String())
 	}
-	through := number(t, lines[0]["through"].(json.Number).String())
-	if through < number(t, first) || inUse(t, b) != first {
-		t.Fatalf("the revocation runs through %d, with %s in use and %s recorded", through, first, inUse(t, b))
+	if client.Code(err) != protocol.CodeRateLimited {
+		t.Fatalf("the error's code is not the renewal's: %v", err)
+	}
+
+	// The box's own address revoked: the command says so, and makes nothing.
+	srv.SetMiddle(nil)
+	rec, err := b.Revocation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Revoke(ctx, client.Options{Base: srv.URL}, rec); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	err = do(ctx, "cert revoke-earlier", nil, strings.NewReader(""), &out, &errs)
+	var gone *client.RevokedError
+	if !errors.As(err, &gone) || !gone.Own || out.Len() != 0 {
+		t.Fatalf("a revoked box: %v, stdout %q", err, out.String())
+	}
+	out.Reset()
+	if err := do(ctx, "prekey renew", nil, strings.NewReader(""), &out, &errs); !errors.As(err, &gone) || !gone.Own {
+		t.Fatalf("prekey renew on a revoked box: %v", err)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
+	"time"
 
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
@@ -382,7 +383,17 @@ type Remedy struct {
 	NotRenewed error
 	// Revoked is the revocation of those certificates, if a server took it.
 	Revoked *protocol.RevokedCertificates
+	// NotRevoked is why the revocation is not at every server, or why none
+	// took it, or nil.
+	NotRevoked error
 }
+
+// remedyWait is the longest Retry-After the remedy waits out before it sends
+// its renewal once more. Once the revocation is taken, nothing under the
+// certificates it revokes is: whoever spent the box's calls with a taken
+// working key can spend no more, and a server's own pacing of the renewal
+// ends within a refill.
+const remedyWait = time.Minute
 
 // RenewAndRevoke is the remedy for a box whose working key may have been
 // taken, with the address kept: a new prekey under a new working key and a
@@ -394,42 +405,59 @@ type Remedy struct {
 // an earlier renewal left: whoever copied the box while one waited holds its
 // working key too.
 //
-// The revocation is published when the server took the new prekey, and also
-// when it refused it for the box's renewals of the day (rate_limited). A
-// holder of the working key can spend those, so a remedy that waited on the
-// renewal would wait on the taker. The certificate the box is using is then
-// among those revoked: the server takes nothing more under it, mail to the
-// box is refused until its new prekey is taken, and [Box.Receive] and
-// [Box.Rekey] send that one again. For any other failure of the renewal
-// nothing is revoked, and the Remedy says why: a server reaches its count of
-// renewals only after it has taken this box's new certificate and its pass
-// as timely, so that refusal is the one that shows the box's clock within
-// what the server allows, and a revocation numbered by a clock that reads
-// ahead would cover certificates not yet made.
+// The revocation is published first, through the serial below the new
+// certificate, and the renewal after it. Once a server has taken the
+// revocation it takes nothing under the certificates it revokes, the one the
+// box was using among them: whoever holds that working key can no longer
+// spend the box's calls, and the renewal that follows is not counted against
+// the identity's certificates for the day (PROTOCOL.md §6.3a). If the server
+// refuses the renewal with a Retry-After of at most a minute, it is sent
+// again once after it. While the server holds the revocation and not the
+// renewal, the box takes no mail, and [Box.Receive] and [Box.Rekey] send the
+// renewal again.
 //
-// The error is why the revocation is not at every server, or why there is
-// none.
+// It returns no Remedy when it made no new certificate, and an error with
+// one only for a fault after the renewal was taken.
 func (b *Box) RenewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy, error) {
 	return locked(ctx, b, func() (*Remedy, error) { return b.renewAndRevoke(ctx, kt) })
 }
 
 func (b *Box) renewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy, error) {
 	// What is held of this box's own revocation, first: the new certificate
-	// is numbered above it (rekey), or it would be revoked as it was made.
+	// is numbered above it (prepareRenewal), or it would be revoked as it
+	// was made. A box whose address is revoked has nothing to remedy.
+	own := b.id.Address()
 	if err := b.askOwn(ctx); err != nil {
 		return nil, err
 	}
-	p, made, rerr := b.rekey(ctx, kt, true)
-	if made == 0 {
-		return nil, rerr // it made no new certificate: nothing is named
+	if gone, err := b.revoked(own); err != nil || gone {
+		if gone {
+			err = &RevokedError{Address: own, Own: true}
+		}
+		return nil, err
 	}
-	r := &Remedy{Below: made, Prekey: p, NotRenewed: rerr}
-	if c := Code(rerr); rerr != nil && c != protocol.CodeRenewalsSpent && c != protocol.CodeIdentityActsSpent {
-		return r, rerr
+	p, made, req, err := b.prepareRenewal(ctx, kt, true)
+	if err != nil {
+		return nil, b.proved(ctx, own, err, newLookups())
 	}
-	certs, err := b.revokeBelow(ctx, made)
-	r.Revoked = certs
-	return r, err
+	r := &Remedy{Below: made}
+	r.Revoked, r.NotRevoked = b.revokeBelow(ctx, made)
+	r.NotRenewed = b.publish(ctx, b.boxPath("/prekey"), req, made)
+	var api *APIError
+	if errors.As(r.NotRenewed, &api) && api.Status == http.StatusTooManyRequests && api.RetryAfter > 0 && api.RetryAfter <= remedyWait {
+		select {
+		case <-ctx.Done():
+			return r, nil
+		case <-time.After(api.RetryAfter):
+		}
+		r.NotRenewed = b.publish(ctx, b.boxPath("/prekey"), req, made)
+	}
+	if r.NotRenewed != nil {
+		r.NotRenewed = b.proved(ctx, own, r.NotRenewed, newLookups())
+		return r, nil
+	}
+	r.Prekey = p
+	return r, b.prune()
 }
 
 // ownRevokes reports whether this box holds a revocation of its own
