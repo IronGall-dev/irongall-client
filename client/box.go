@@ -478,7 +478,7 @@ func (b *Box) prekeyIdentities() ([]age.Identity, error) {
 		all = append(all, ids...)
 	}
 	if len(all) == 0 {
-		return nil, errors.New("this box holds no prekeys: publish a new one with irongall rekey")
+		return nil, errors.New("this box holds no prekeys: publish a new one with irongall prekey renew")
 	}
 	return all, nil
 }

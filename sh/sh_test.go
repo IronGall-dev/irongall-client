@@ -1785,3 +1785,70 @@ func landAll(t *testing.T, b *client.Box) {
 		t.Fatal(err)
 	}
 }
+
+// irongall.sh run as a command takes the Go client's command line for the
+// commands it has, and gives help as the Go client does: asked for, on stdout
+// with exit 0, and -h or --help after a command runs nothing; a bare group,
+// or a command it does not have, on stderr with exit 2.
+func TestTheCommandLine(t *testing.T) {
+	need(t, append(scriptTools, "curl")...)
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	home := t.TempDir()
+	run := func(args ...string) (string, string, int) {
+		t.Helper()
+		cmd := exec.Command("bash", append([]string{abs(t, "irongall.sh")}, args...)...)
+		cmd.Env = append(os.Environ(), "IRONGALL_HOME="+home, "IG_BASE="+srv.URL)
+		var out, errs bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &out, &errs
+		err := cmd.Run()
+		var exit *exec.ExitError
+		if err != nil && !errors.As(err, &exit) {
+			t.Fatal(err)
+		}
+		return out.String(), errs.String(), cmd.ProcessState.ExitCode()
+	}
+	link, errs, code := run("init", "--no-pq")
+	if code != 0 {
+		t.Fatalf("init: %d %s", code, errs)
+	}
+	me := strings.TrimPrefix(strings.TrimSpace(link), srv.URL+protocol.LinkPath)
+	for want, lines := range map[string][][]string{
+		"bash irongall.sh init ":                  {{"help"}, {"-h"}, {"--help"}},
+		"bash irongall.sh alias add ":             {{"help", "alias"}, {"alias", "help"}, {"alias", "-h"}, {"help", "alias", "add"}, {"alias", "add", "-h"}},
+		"bash irongall.sh send ":                  {{"help", "send"}, {"send", "bob", "-h"}},
+		"bash irongall.sh revocation publish <ad": {{"revocation", "publish", me, "--help"}, {"revocation", "publish", "-h", me}},
+	} {
+		for _, line := range lines {
+			if out, errs, code := run(line...); code != 0 || errs != "" || !strings.HasPrefix(out, want) {
+				t.Errorf("irongall.sh %v: %d %q\n%s", line, code, errs, out)
+			}
+		}
+	}
+	if _, err := os.Stat(filepath.Join(home, "revoked.sig")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("revocation publish --help revoked the box: %v", err)
+	}
+	if resp, err := http.Get(srv.URL + "/v1/" + me + "/revocations"); err != nil || resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("revocation publish --help published: %v %v", resp, err)
+	}
+	for _, line := range [][]string{nil, {"alias"}, {"alias", "nosuch"}, {"nosuch"}, {"help", "nosuch"}, {"alias", "add", "bob"}, {"alias", "list", "bob"}, {"rekey"}} {
+		if out, errs, code := run(line...); code != 2 || out != "" || !strings.Contains(errs, "bash irongall.sh ") {
+			t.Errorf("irongall.sh %v: %d %q, stderr %q", line, code, out, errs)
+		}
+	}
+	// And the commands run.
+	g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bob := "bob " + g.Address().String() + "\n"
+	if out, errs, code := run("alias", "add", "bob", g.Link()); code != 0 || out != bob {
+		t.Fatalf("alias add: %d %q %s", code, out, errs)
+	}
+	if out, errs, code := run("alias", "list"); code != 0 || out != bob {
+		t.Fatalf("alias list: %d %q %s", code, out, errs)
+	}
+	if out, errs, code := run("prekey", "renew", "--no-pq"); code != 0 {
+		t.Fatalf("prekey renew: %d %q %s", code, out, errs)
+	}
+}

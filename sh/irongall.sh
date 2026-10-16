@@ -10,13 +10,16 @@
 #   bash irongall.sh addr                            print it again: give it to whoever should write to this box
 #   bash irongall.sh send [options] <link> [file]    one message (the body from stdin without a file); an address or an alias works too.
 #                                                    Options: --subject <text>, --reply-to <msg_id>, --supersedes <msg_id>
-#   bash irongall.sh alias [<name> <link>]           name a peer for this box only, so send takes the name; without arguments, list them
-#   bash irongall.sh flush                           retry what is still in outbox/
 #   bash irongall.sh recv                            verified mail only, one JSON line each; refused mail goes to quarantine/
-#   bash irongall.sh rekey [--no-pq]                 a new prekey, working key and certificate: at least monthly, as a prekey is valid for 33 days
-#   bash irongall.sh revocation                      print this box's revocation, one line of JSON, and publish nothing: keep it somewhere other than this box
-#   bash irongall.sh revoke <address> [record]       revoke this box's address FOR GOOD (the address in full is the confirmation), or publish a record made earlier
-#   bash irongall.sh revoked <record>                keep a revocation of another box that someone handed you: nothing goes to it or comes from it again
+#   bash irongall.sh alias add <name> <link>         name a peer for this box only, so send takes the name
+#   bash irongall.sh alias list                      list the names
+#   bash irongall.sh outbox flush                    retry what is still in outbox/
+#   bash irongall.sh prekey renew [--no-pq]          a new prekey, working key and certificate: at least monthly, as a prekey is valid for 33 days
+#   bash irongall.sh revocation make                 print this box's revocation, one line of JSON, and publish nothing: keep it somewhere other than this box
+#   bash irongall.sh revocation publish <address> [record]
+#                                                    revoke this box's address FOR GOOD (the address in full is the confirmation), or publish a record made earlier
+#   bash irongall.sh revocation keep <record>        keep a revocation of another box that someone handed you: nothing goes to it or comes from it again
+#   bash irongall.sh help [<command>]                this, or a command's lines; -h or --help after a command does the same, and runs nothing
 #   The README has the rest: https://github.com/IronGall-dev/irongall-client#readme
 #
 # Or source it at the top of every shell call and call the ig_* functions. Agent tools run each command in a fresh
@@ -407,10 +410,10 @@ ig_revocation(){ # → this box's revocation as one line of JSON, {identity, rev
 }
 ig_revoke(){ # <address> [record] → revokes the address at the server and at each revocation server this box lists, FOR GOOD: nothing undoes it. Without a record it is this box's own address, written out in full as the confirmation, and its identity signs now. With one, a record ig_revocation made earlier is published as it is, which needs no box here: only the file. Every server is tried whatever the others answer, and it fails, saying which did not take it, unless every one did: run it again
   local A=${1-} f=${2-} s l took= r=0
-  ig_hex "$A" || ig_refuse "revoke takes the 64-character address in full: it is the confirmation, and a revocation cannot be undone" || return 1
+  ig_hex "$A" || ig_refuse "revocation publish takes the 64-character address in full: it is the confirmation, and a revocation cannot be undone" || return 1
   mkdir -p "$IG" || return 1
   if [ -z "$f" ]; then
-    [ "$A" = "$(cat "$IG/address" 2> /dev/null)" ] || ig_refuse "that is not this box's address: nothing was published. revoke takes this box's own address, or a record of another" || return 1
+    [ "$A" = "$(cat "$IG/address" 2> /dev/null)" ] || ig_refuse "that is not this box's address: nothing was published. revocation publish takes this box's own address, or a record of another" || return 1
     f="$IG/revoke.json"; ig_revocation > "$f" || return 1
   fi
   [ "$(ig_handed "$f")" = "$A" ] || ig_refuse "the record is not a revocation of $A whose every part verifies: nothing was published" || return 1
@@ -667,10 +670,40 @@ ig_prune(){ # deletes every retired prekey past its deletion time: its not_after
   done
 }
 
-# Run as a command, not sourced.
+# Run as a command, not sourced: the Go client's command line, for the commands this script has.
 if [ "${BASH_SOURCE[0]}" = "$0" ]; then
-  case ${1-} in
-    init | addr | send | alias | flush | recv | rekey | revocation | revoke | revoked) cmd=ig_$1; shift; "$cmd" "$@"; exit ;;
-    *) sed -n '9,20p' "$0" | sed 's/^# *//' >&2; exit 2 ;;
+  ig_usage(){ sed -n '/^#   bash irongall\.sh /,/^#   The README/p' "$0" | sed 's/^#   //'; }      # the usage at the top
+  ig_lines(){ ig_usage | awk -v w="bash irongall.sh $* " '/^bash irongall\.sh /{ on = index($0 " ", w) == 1 } /^The README/{ on = 0 } on'; }      # <words> → the usage lines of the commands they start
+  ig_cmd= ig_n=0 ig_args=-1      # the function the command line runs, how many words name it, and how many arguments it takes (-1: its own to check)
+  case ${1-} in init | addr | send | recv) ig_cmd=ig_$1 ig_n=1 ;; esac
+  case "${1-} ${2-}" in
+    'alias add') ig_cmd=ig_alias ig_n=2 ig_args=2 ;;
+    'alias list') ig_cmd=ig_alias ig_n=2 ig_args=0 ;;
+    'outbox flush') ig_cmd=ig_flush ig_n=2 ;;
+    'prekey renew') ig_cmd=ig_rekey ig_n=2 ;;
+    'revocation make') ig_cmd=ig_revocation ig_n=2 ;;
+    'revocation publish') ig_cmd=ig_revoke ig_n=2 ;;
+    'revocation keep') ig_cmd=ig_revoked ig_n=2 ;;
   esac
+  ig_help=0
+  for a; do case $a in -h | --help) ig_help=1 ;; esac; done      # anywhere after a command: its help, and nothing runs
+  if [ "${1-}" = help ] || { [ -z "$ig_cmd" ] && [ "${2-}" = help ]; }; then
+    ig_help=1; [ "$1" = help ] && shift || set -- "$1"
+    [ $# -eq 0 ] || case "${1-} ${2-}" in 'alias '?* | 'outbox '?* | 'prekey '?* | 'revocation '?*) ig_n=2 ;; ?*) ig_n=1 ;; esac
+  fi
+  if [ $ig_help = 1 ]; then      # help: the usage, or the lines of the command or group it names
+    [ "$ig_n" -gt 0 ] || [ $# -eq 0 ] || [[ $1 = -* ]] || ig_n=1
+    [ "$ig_n" -gt 0 ] || { ig_usage; exit 0; }
+    out=$(ig_lines "${@:1:ig_n}"); [ -n "$out" ] && { echo "$out"; exit 0; }
+    echo "irongall.sh has no command ${*:1:ig_n}" >&2; ig_usage >&2; exit 2
+  fi
+  if [ -z "$ig_cmd" ]; then      # bare, a group alone, or a command it does not have
+    out=$(ig_lines "${1-}")
+    if [ $# -gt 0 ] && [ -n "$out" ]; then [ -z "${2-}" ] || echo "irongall.sh $1 has no command $2" >&2; echo "$out" >&2
+    else [ $# -eq 0 ] || echo "irongall.sh has no command $1" >&2; ig_usage >&2; fi
+    exit 2
+  fi
+  words=${*:1:ig_n}; shift $ig_n
+  if [ $ig_args -ge 0 ] && [ $# -ne $ig_args ]; then echo "irongall.sh $words takes $ig_args arguments, and was given $#" >&2; ig_lines "$words" >&2; exit 2; fi
+  "$ig_cmd" "$@"; exit
 fi

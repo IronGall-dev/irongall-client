@@ -199,7 +199,7 @@ func (s *Server) get(w http.ResponseWriter, r *http.Request) error {
 }
 
 const (
-	hintRecord = "a record is the identity document with what the identity key itself signed: a revocation of the address (irongall revocation makes it), a revocation of its certificates (irongall rekey --revoke-earlier), or both"
+	hintRecord = "a record is the identity document with what the identity key itself signed: a revocation of the address (irongall revocation make prints it), a revocation of its certificates (irongall cert revoke-earlier), or both"
 	hintFull   = "publish it at another revocation server, and tell this one's operator"
 	hintHigher = "GET the same path for the one held: it covers every certificate yours does"
 )

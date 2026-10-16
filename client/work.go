@@ -84,7 +84,7 @@ func (b *Box) worker(n uint64) (ssh.Signer, *protocol.Certificate, error) {
 	stem := b.workStem(n)
 	pemBytes, err := os.ReadFile(stem) //nolint:gosec // a path inside the box's own directory
 	if err != nil {
-		return nil, nil, fmt.Errorf("this box holds no working key %d: irongall rekey makes one: %w", n, err)
+		return nil, nil, fmt.Errorf("this box holds no working key %d: irongall prekey renew makes one: %w", n, err)
 	}
 	raw, err := ssh.ParseRawPrivateKey(pemBytes)
 	if err != nil {
@@ -104,10 +104,10 @@ func (b *Box) worker(n uint64) (ssh.Signer, *protocol.Certificate, error) {
 	}
 	cert, err := protocol.CheckCertificate(b.id, key, b.now())
 	if errors.Is(err, protocol.ErrCertificateNotBegun) {
-		return nil, nil, refuse("this box's certificate has not begun, by this machine's clock: the clock reads earlier than when the certificate was made. Check this machine's clock against a time source you trust. If the clock is right now and was ahead then, irongall rekey makes a new working key, certificate and prekey")
+		return nil, nil, refuse("this box's certificate has not begun, by this machine's clock: the clock reads earlier than when the certificate was made. Check this machine's clock against a time source you trust. If the clock is right now and was ahead then, irongall prekey renew makes a new working key, certificate and prekey")
 	}
 	if errors.Is(err, protocol.ErrCertificateTime) {
-		return nil, nil, refuse("this box's certificate has ended: irongall rekey makes a new working key, certificate and prekey")
+		return nil, nil, refuse("this box's certificate has ended: irongall prekey renew makes a new working key, certificate and prekey")
 	}
 	if err != nil {
 		return nil, nil, fmt.Errorf("working key %d's certificate: %w", n, err)
@@ -127,7 +127,7 @@ func (b *Box) currentWorker() (ssh.Signer, *protocol.Certificate, error) {
 		return nil, nil, err
 	}
 	if n == 0 {
-		return nil, nil, errors.New("this box has published no prekey: irongall init registers it, and irongall rekey recovers one restored from its identity")
+		return nil, nil, errors.New("this box has published no prekey: irongall init registers it, and irongall prekey renew recovers one restored from its identity")
 	}
 	return b.worker(n)
 }

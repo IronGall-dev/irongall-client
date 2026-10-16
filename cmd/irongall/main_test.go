@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"flag"
 	"io"
 	"net/http"
 	"os"
@@ -23,8 +22,14 @@ import (
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
 	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/spf13/cobra"
 	"golang.org/x/crypto/ssh"
 )
+
+// do runs one command line: the command's words, then its arguments.
+func do(ctx context.Context, command string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	return run(ctx, append(strings.Fields(command), args...), stdin, stdout, stderr)
+}
 
 // recv prints one line per message, built from the checked fields, never
 // the bytes that arrived: a second envelope hidden after the first one's
@@ -87,7 +92,7 @@ func TestRecvPrintsTheCheckedLine(t *testing.T) {
 	t.Setenv("IRONGALL_HOME", b.Dir())
 	t.Setenv("IRONGALL_BASE", srv.URL)
 	var out, errs bytes.Buffer
-	if err := run(ctx, "recv", nil, strings.NewReader(""), &out, &errs); err != nil {
+	if err := do(ctx, "recv", nil, strings.NewReader(""), &out, &errs); err != nil {
 		t.Fatalf("recv: %v %s", err, errs.String())
 	}
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
@@ -119,7 +124,7 @@ func TestRecvLineHasNoOtherLineBreaks(t *testing.T) {
 	t.Setenv("IRONGALL_HOME", b.Dir())
 	t.Setenv("IRONGALL_BASE", srv.URL)
 	var out, errs bytes.Buffer
-	if err := run(ctx, "recv", nil, strings.NewReader(""), &out, &errs); err != nil {
+	if err := do(ctx, "recv", nil, strings.NewReader(""), &out, &errs); err != nil {
 		t.Fatalf("recv: %v %s", err, errs.String())
 	}
 	line := strings.TrimSuffix(out.String(), "\n")
@@ -163,7 +168,7 @@ func TestRecvWaitRidesOutARateLimit(t *testing.T) {
 	t.Setenv("IRONGALL_HOME", b.Dir())
 	t.Setenv("IRONGALL_BASE", srv.URL)
 	var out, errs bytes.Buffer
-	if err := run(ctx, "recv", []string{"--wait", "10s"}, strings.NewReader(""), &out, &errs); err != nil {
+	if err := do(ctx, "recv", []string{"--wait", "10s"}, strings.NewReader(""), &out, &errs); err != nil {
 		t.Fatalf("recv --wait: %v %s", err, errs.String())
 	}
 	if limited.Load() < 2 || !strings.Contains(out.String(), `"body":"after the wait"`) || !strings.Contains(errs.String(), "poll at most once a minute (poll_after); retry in 1s") {
@@ -180,8 +185,8 @@ func must(t *testing.T, name string) []byte {
 	return b
 }
 
-// adopt puts the box in the key's account and says which; a spent key is
-// refused; --leave takes the box out.
+// account adopt puts the box in the key's account and says which; a spent
+// key is refused; account leave takes the box out.
 func TestAdopt(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -193,20 +198,21 @@ func TestAdopt(t *testing.T) {
 	t.Setenv("IRONGALL_BASE", srv.URL)
 	key := srv.AdoptKey("acme")
 	var out, errs bytes.Buffer
-	if err := run(ctx, "adopt", []string{key}, strings.NewReader(""), &out, &errs); err != nil || out.String() != "in account acme\n" || srv.Account(b.Address()) != "acme" {
+	if err := do(ctx, "account adopt", []string{key}, strings.NewReader(""), &out, &errs); err != nil || out.String() != "in account acme\n" || srv.Account(b.Address()) != "acme" {
 		t.Fatalf("adopt: %v %q %q", err, out.String(), errs.String())
 	}
-	if err := run(ctx, "adopt", []string{key}, strings.NewReader(""), &out, &errs); client.Code(err) != protocol.CodeAdoptKeyRefused {
+	if err := do(ctx, "account adopt", []string{key}, strings.NewReader(""), &out, &errs); client.Code(err) != protocol.CodeAdoptKeyRefused {
 		t.Fatalf("a spent key: %v", err)
 	}
 	for _, args := range [][]string{nil, {"--leave", key}, {key, key}} {
-		if err := run(ctx, "adopt", args, strings.NewReader(""), &out, &errs); err == nil {
-			t.Fatalf("adopt %q ran", args)
+		var wrong *usageError
+		if err := do(ctx, "account adopt", args, strings.NewReader(""), &out, &errs); !errors.As(err, &wrong) {
+			t.Fatalf("account adopt %q: %v", args, err)
 		}
 	}
 	out.Reset()
-	if err := run(ctx, "adopt", []string{"--leave"}, strings.NewReader(""), &out, &errs); err != nil || out.String() != "in no account\n" || srv.Account(b.Address()) != "" {
-		t.Fatalf("adopt --leave: %v %q", err, out.String())
+	if err := do(ctx, "account leave", nil, strings.NewReader(""), &out, &errs); err != nil || out.String() != "in no account\n" || srv.Account(b.Address()) != "" {
+		t.Fatalf("account leave: %v %q", err, out.String())
 	}
 }
 
@@ -218,7 +224,7 @@ func TestHelpAndREADMENameTheEchoBox(t *testing.T) {
 	}
 	link := client.DefaultBase + "/to/" + client.EchoAddress
 	var out bytes.Buffer
-	if err := run(context.Background(), "help", nil, nil, &out, io.Discard); err != nil {
+	if err := do(context.Background(), "help", nil, nil, &out, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), link+"\n") {
@@ -255,7 +261,7 @@ func TestTheLink(t *testing.T) {
 	t.Setenv("IRONGALL_HOME", home)
 	t.Setenv("IRONGALL_BASE", srv.URL)
 	var out bytes.Buffer
-	if err := run(ctx, "init", []string{"--no-pq"}, nil, &out, io.Discard); err != nil {
+	if err := do(ctx, "init", []string{"--no-pq"}, nil, &out, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	a, err := client.Open(home, opt)
@@ -267,7 +273,7 @@ func TestTheLink(t *testing.T) {
 		t.Fatalf("init printed %q, not %q", out.String(), link)
 	}
 	out.Reset()
-	if err := run(ctx, "addr", nil, nil, &out, io.Discard); err != nil || out.String() != link+"\n" {
+	if err := do(ctx, "addr", nil, nil, &out, io.Discard); err != nil || out.String() != link+"\n" {
 		t.Fatalf("addr: %v %q", err, out.String())
 	}
 	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
@@ -276,7 +282,7 @@ func TestTheLink(t *testing.T) {
 	}
 	allows(t, b, a)
 	for _, to := range []string{b.Link(), b.Address().String()} {
-		if err := run(ctx, "send", []string{to}, strings.NewReader("to "+to), io.Discard, io.Discard); err != nil {
+		if err := do(ctx, "send", []string{to}, strings.NewReader("to "+to), io.Discard, io.Discard); err != nil {
 			t.Fatalf("send %s: %v", to, err)
 		}
 	}
@@ -290,7 +296,7 @@ func TestTheLink(t *testing.T) {
 		srv.URL + "/v1/" + b.Address().String(): "not an address, a link to one, or an alias",
 		strings.ToUpper(b.Address().String()):   "not an address, a link to one, or an alias",
 	} {
-		err := run(ctx, "send", []string{to}, strings.NewReader("x"), io.Discard, io.Discard)
+		err := do(ctx, "send", []string{to}, strings.NewReader("x"), io.Discard, io.Discard)
 		var r *client.RefusedError
 		if !errors.As(err, &r) || !strings.Contains(r.Reason, want) {
 			t.Errorf("send %s: %v, want %q", to, err, want)
@@ -335,7 +341,7 @@ func TestRecvSaysARenewalFailed(t *testing.T) {
 	t.Setenv("IRONGALL_BASE", srv.URL)
 	var out, errs bytes.Buffer
 	var look *needsALook
-	if err := run(ctx, "recv", nil, nil, &out, &errs); !errors.As(err, &look) || !strings.Contains(look.why, "the prekey was not renewed") {
+	if err := do(ctx, "recv", nil, nil, &out, &errs); !errors.As(err, &look) || !strings.Contains(look.why, "the prekey was not renewed") {
 		t.Fatalf("a failed renewal must give exit status 3, not %v", err)
 	}
 	if !strings.Contains(errs.String(), "due for renewal and was not renewed") || strings.Count(out.String(), "\n") != 1 {
@@ -344,7 +350,7 @@ func TestRecvSaysARenewalFailed(t *testing.T) {
 	// status says so too, from the box's files, to a wrapper that kept
 	// neither recv's stderr nor its exit status.
 	out.Reset()
-	if err := run(ctx, "status", nil, nil, &out, io.Discard); !errors.As(err, &look) {
+	if err := do(ctx, "status", nil, nil, &out, io.Discard); !errors.As(err, &look) {
 		t.Fatalf("status after a failed renewal: %v", err)
 	}
 	var st client.Status
@@ -354,10 +360,10 @@ func TestRecvSaysARenewalFailed(t *testing.T) {
 	// Once the server takes the renewal, recv and status are quiet again.
 	srv.SetMiddle(nil)
 	out.Reset()
-	if err := run(ctx, "recv", nil, nil, io.Discard, io.Discard); err != nil {
+	if err := do(ctx, "recv", nil, nil, io.Discard, io.Discard); err != nil {
 		t.Fatalf("recv after the server came back: %v", err)
 	}
-	if err := run(ctx, "status", nil, nil, &out, io.Discard); err != nil || !strings.Contains(out.String(), `"attention":[]`) || strings.Contains(out.String(), "renewal_pending_since") {
+	if err := do(ctx, "status", nil, nil, &out, io.Discard); err != nil || !strings.Contains(out.String(), `"attention":[]`) || strings.Contains(out.String(), "renewal_pending_since") {
 		t.Fatalf("status after the renewal went through: %v %q", err, out.String())
 	}
 }
@@ -380,7 +386,7 @@ func TestRefusedMailDoesNotFailRecv(t *testing.T) {
 	t.Setenv("IRONGALL_HOME", b.Dir())
 	t.Setenv("IRONGALL_BASE", srv.URL)
 	var out bytes.Buffer
-	if err := run(ctx, "status", nil, nil, &out, io.Discard); err != nil || !strings.Contains(out.String(), `"quarantine":0,"held":0,"policy":{"unknown":"held","server":"all"},"revocation_servers":[],"attention":[]`) {
+	if err := do(ctx, "status", nil, nil, &out, io.Discard); err != nil || !strings.Contains(out.String(), `"quarantine":0,"held":0,"policy":{"unknown":"held","server":"all"},"revocation_servers":[],"attention":[]`) {
 		t.Fatalf("status of a new box: %v %q", err, out.String())
 	}
 	forged := []byte("not a ciphertext its claimed sender ever signed")
@@ -388,14 +394,14 @@ func TestRefusedMailDoesNotFailRecv(t *testing.T) {
 	srv.Inject(b.Address(), hex.EncodeToString(h[:]), a.Address(), forged)
 	var errs bytes.Buffer
 	out.Reset()
-	if err := run(ctx, "recv", nil, nil, &out, &errs); err != nil {
+	if err := do(ctx, "recv", nil, nil, &out, &errs); err != nil {
 		t.Fatalf("recv after refusing mail: %v", err)
 	}
 	if out.Len() != 0 || !strings.HasPrefix(errs.String(), "REFUSED "+hex.EncodeToString(h[:])+": undecryptable: it does not decrypt with this box's prekeys\n") {
 		t.Fatalf("stdout %q, stderr %q", out.String(), errs.String())
 	}
 	var look *needsALook
-	if err := run(ctx, "status", nil, nil, &out, io.Discard); !errors.As(err, &look) {
+	if err := do(ctx, "status", nil, nil, &out, io.Discard); !errors.As(err, &look) {
 		t.Fatalf("status with mail in quarantine/: %v", err)
 	}
 	var st client.Status
@@ -405,8 +411,9 @@ func TestRefusedMailDoesNotFailRecv(t *testing.T) {
 }
 
 // send's flags set the envelope's optional fields, and the recipient's recv
-// prints them. A --reply-to that is not a msg_id, or a flag after the link,
-// is refused before any mail is made.
+// prints them. A flag may come before the link or after it. A --reply-to that
+// is not a msg_id, or a flag send does not have, is refused before any mail
+// is made.
 func TestSendFlags(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -424,16 +431,15 @@ func TestSendFlags(t *testing.T) {
 	t.Setenv("IRONGALL_HOME", a.Dir())
 	const first, old = "11111111-2222-4333-8444-555555555555", "22222222-2222-4333-8444-555555555555"
 	var id bytes.Buffer
-	args := []string{"--subject", "re: yours", "--reply-to", first, "--supersedes", old, b.Link()}
-	if err := run(ctx, "send", args, strings.NewReader("the answer"), &id, io.Discard); err != nil {
+	args := []string{"--subject", "re: yours", b.Link(), "--reply-to", first, "--supersedes", old}
+	if err := do(ctx, "send", args, strings.NewReader("the answer"), &id, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{
 		{"--reply-to", strings.TrimSpace(id.String()), b.Link()},
-		{b.Link(), "--subject", "after the link"},
 		{"--urgent", b.Link()},
 	} {
-		if err := run(ctx, "send", args, strings.NewReader("refused"), io.Discard, io.Discard); err == nil {
+		if err := do(ctx, "send", args, strings.NewReader("refused"), io.Discard, io.Discard); err == nil {
 			t.Errorf("send %v was taken", args)
 		}
 	}
@@ -457,7 +463,7 @@ func TestSendFlags(t *testing.T) {
 
 	t.Setenv("IRONGALL_HOME", b.Dir())
 	var out, errs bytes.Buffer
-	if err := run(ctx, "recv", nil, strings.NewReader(""), &out, &errs); err != nil {
+	if err := do(ctx, "recv", nil, strings.NewReader(""), &out, &errs); err != nil {
 		t.Fatalf("recv: %v %s", err, errs.String())
 	}
 	var line struct {
@@ -471,8 +477,8 @@ func TestSendFlags(t *testing.T) {
 	}
 }
 
-// alias names a peer for this box, lists the names and removes one, and send
-// takes a name where it takes a link.
+// alias add names a peer for this box, alias list lists the names and alias
+// rm removes one, and send takes a name where it takes a link.
 func TestAliasCommand(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -494,18 +500,18 @@ func TestAliasCommand(t *testing.T) {
 	t.Setenv("IRONGALL_HOME", a.Dir())
 	cmd := func(name string, args ...string) (string, error) {
 		var out bytes.Buffer
-		err := run(ctx, name, args, strings.NewReader("to a name"), &out, io.Discard)
+		err := do(ctx, name, args, strings.NewReader("to a name"), &out, io.Discard)
 		return out.String(), err
 	}
 	bob, zed := "bob "+b.Address().String()+"\n", "zed "+c.Address().String()+"\n"
-	if out, err := cmd("alias", "zed", c.Address().String()); err != nil || out != zed {
-		t.Fatalf("alias zed: %q %v", out, err)
+	if out, err := cmd("alias add", "zed", c.Address().String()); err != nil || out != zed {
+		t.Fatalf("alias add zed: %q %v", out, err)
 	}
-	if out, err := cmd("alias", "bob", b.Link()); err != nil || out != bob {
-		t.Fatalf("alias bob: %q %v", out, err)
+	if out, err := cmd("alias add", "bob", b.Link()); err != nil || out != bob {
+		t.Fatalf("alias add bob: %q %v", out, err)
 	}
-	if out, err := cmd("alias"); err != nil || out != bob+zed {
-		t.Fatalf("alias printed %q, %v", out, err)
+	if out, err := cmd("alias list"); err != nil || out != bob+zed {
+		t.Fatalf("alias list printed %q, %v", out, err)
 	}
 	if _, err := cmd("send", "bob"); err != nil {
 		t.Fatalf("send bob: %v", err)
@@ -519,22 +525,22 @@ func TestAliasCommand(t *testing.T) {
 	// Swapped arguments are told what an alias is; a name is never moved; a
 	// name nobody made is no destination.
 	for want, args := range map[string][]string{
-		"not an alias":  {b.Link(), "bob"},
-		"already names": {"bob", c.Link()},
-		"usage":         {"bob"},
+		"not an alias":      {b.Link(), "bob"},
+		"already names":     {"bob", c.Link()},
+		"takes 2 arguments": {"bob"},
 	} {
-		if _, err := cmd("alias", args...); err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("alias %v: %v, want %q", args, err, want)
+		if _, err := cmd("alias add", args...); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("alias add %v: %v, want %q", args, err, want)
 		}
 	}
 	if _, err := cmd("send", "carol"); err == nil || !strings.Contains(err.Error(), "no alias named carol") {
 		t.Errorf("send carol: %v", err)
 	}
-	if _, err := cmd("alias", "--rm", "bob"); err != nil {
-		t.Fatalf("alias --rm: %v", err)
+	if _, err := cmd("alias rm", "bob"); err != nil {
+		t.Fatalf("alias rm: %v", err)
 	}
-	if out, err := cmd("alias"); err != nil || out != zed {
-		t.Fatalf("after --rm, alias printed %q, %v", out, err)
+	if out, err := cmd("alias list"); err != nil || out != zed {
+		t.Fatalf("after alias rm, alias list printed %q, %v", out, err)
 	}
 	if _, err := cmd("send", "bob"); err == nil {
 		t.Fatal("sent to a removed alias")
@@ -544,50 +550,135 @@ func TestAliasCommand(t *testing.T) {
 	}
 }
 
-// Flags are written with two dashes: in the help, in a command's own flag
-// list and in a bad flag's error. One dash is taken too, as the same flag.
+// Flags are written with two dashes, in every help and in a bad flag's
+// error; one dash is a shorthand, and -h, for --help, is the only one. A bad
+// flag is a usage error: nothing runs, and the error is main's to print.
 func TestFlagsAreWrittenWithTwoDashes(t *testing.T) {
 	ctx := context.Background()
 	t.Setenv("IRONGALL_HOME", t.TempDir())
-	oneDash := regexp.MustCompile(`(^|[\s\[(])-[a-z]`)
-	var help bytes.Buffer
-	if err := run(ctx, "help", nil, nil, &help, io.Discard); err != nil {
-		t.Fatal(err)
-	}
-	if m := oneDash.FindString(help.String()); m != "" || !strings.Contains(help.String(), "--wait") || !strings.Contains(help.String(), "--reply-to") {
-		t.Errorf("the help writes a flag with one dash (%q), or lacks one:\n%s", m, help.String())
-	}
-	for _, h := range []string{"-h", "--help"} {
-		var errs bytes.Buffer
-		err := run(ctx, "send", []string{h}, nil, io.Discard, &errs)
-		if !errors.Is(err, flag.ErrHelp) || oneDash.MatchString(errs.String()) {
-			t.Errorf("send %s: %v\n%s", h, err, errs.String())
+	oneDash := regexp.MustCompile(`(^|[\s\[(])-[a-z][a-z-]`)
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		if m := oneDash.FindString(helpText(c)); m != "" {
+			t.Errorf("the help of %s writes a flag with one dash (%q):\n%s", c.CommandPath(), m, helpText(c))
 		}
-		for _, want := range []string{"--subject <text>", "--reply-to <msg_id>", "--supersedes <msg_id>"} {
-			if !strings.Contains(errs.String(), want) {
-				t.Errorf("send %s does not list %s:\n%s", h, want, errs.String())
+		for _, s := range c.Commands() {
+			walk(s)
+		}
+	}
+	walk((&cli{}).tree())
+	for _, h := range []string{"-h", "--help"} {
+		var out bytes.Buffer
+		if err := do(ctx, "send", []string{"bob", h}, nil, &out, io.Discard); err != nil {
+			t.Errorf("send bob %s: %v", h, err)
+		}
+		for _, want := range []string{"--subject text", "--reply-to msg_id", "--supersedes msg_id"} {
+			if !strings.Contains(out.String(), want) {
+				t.Errorf("send %s does not list %s:\n%s", h, want, out.String())
 			}
 		}
 	}
 	for args, want := range map[string]string{
-		"send -urgent x":  "flag provided but not defined: --urgent",
-		"send --urgent x": "flag provided but not defined: --urgent",
-		"send -subject":   "flag needs an argument: --subject",
-		"recv -wait soon": `for flag --wait`,
-		"adopt -leave=x":  "for --leave",
+		"send --urgent x":      "unknown flag: --urgent",
+		"send x --urgent":      "unknown flag: --urgent",
+		"send --subject":       "flag needs an argument: --subject",
+		"send -subject x":      "unknown shorthand flag: 's' in -subject",
+		"recv --wait soon":     `for "--wait" flag`,
+		"account leave --soon": "unknown flag: --soon",
 	} {
-		f := strings.Fields(args)
 		var errs bytes.Buffer
-		err := run(ctx, f[0], f[1:], strings.NewReader(""), io.Discard, &errs)
-		if err == nil || !strings.Contains(err.Error(), want) || errs.Len() != 0 {
+		err := do(ctx, args, nil, strings.NewReader(""), io.Discard, &errs)
+		var wrong *usageError
+		if !errors.As(err, &wrong) || !strings.Contains(err.Error(), want) || !strings.Contains(wrong.help, "--help describes it") || errs.Len() != 0 {
 			t.Errorf("%s: %v (and on stderr %q), want %q once", args, err, errs.String(), want)
 		}
 	}
 }
 
-// revocation prints a record and publishes nothing; revoke publishes one,
-// for this box only when its address is written out in full, or from a
-// record with no box at all; revoked keeps a record someone handed over.
+// Help, in every form a git-like tool gives it: irongall help, help
+// <command>, <command> --help and -h, and <group> help. Asked for, it is on
+// stdout and the command succeeds. A bare group, and a command that is not
+// one, are usage errors that carry the group's help, for stderr.
+func TestHelp(t *testing.T) {
+	ctx := context.Background()
+	t.Setenv("IRONGALL_HOME", t.TempDir())
+	ask := func(line string) (string, error) {
+		var out, errs bytes.Buffer
+		err := do(ctx, line, nil, strings.NewReader(""), &out, &errs)
+		if errs.Len() != 0 {
+			t.Errorf("irongall %s wrote to stderr: %q", line, errs.String())
+		}
+		return out.String(), err
+	}
+	for want, lines := range map[string][]string{
+		"usage: irongall <command> [arguments]\n":               {"help", "--help", "-h"},
+		"usage: irongall peer <command> [arguments]\n":          {"help peer", "peer --help", "peer -h", "peer help"},
+		"usage: irongall peer allow [flags] <link, address or":  {"help peer allow", "peer allow --help", "peer allow -h", "peer help allow", "peer allow bob --rebuild -h"},
+		"usage: irongall send [flags] <link, address or alias>": {"help send", "send --help", "send -h", "send bob --help"},
+	} {
+		for _, line := range lines {
+			if out, err := ask(line); err != nil || !strings.HasPrefix(out, want) {
+				t.Errorf("irongall %s: %v\n%s", line, err, out)
+			}
+		}
+	}
+	for line, want := range map[string]string{
+		"":                    "",
+		"peer":                "",
+		"pear":                `irongall has no command "pear": did you mean peer?`,
+		"peer alow":           `irongall peer has no command "alow": did you mean allow?`,
+		"peer alow --rebuild": `irongall peer has no command "alow": did you mean allow?`,
+		"help nosuch":         `irongall has no command "nosuch"`,
+		"help peer nosuch":    `irongall peer has no command "nosuch"`,
+		"completion":          `irongall has no command "completion"`,
+	} {
+		out, err := ask(line)
+		var wrong *usageError
+		if !errors.As(err, &wrong) || wrong.msg != want || !strings.HasPrefix(wrong.help, "usage: irongall ") || !strings.Contains(wrong.help, "Commands:") || out != "" {
+			t.Errorf("irongall %s: %v, want %q, and a group's help", line, err, want)
+		}
+	}
+	// After a command that takes arguments, "help" is one of them: an alias
+	// may be named help.
+	if _, err := ask("send help"); err == nil || strings.Contains(err.Error(), "usage") {
+		t.Errorf("send help: %v", err)
+	}
+}
+
+// --help after the irreversible command runs nothing: the box is not revoked,
+// and neither the server nor the box holds a revocation.
+func TestHelpRunsNothing(t *testing.T) {
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("IRONGALL_HOME", b.Dir())
+	t.Setenv("IRONGALL_BASE", srv.URL)
+	for _, h := range []string{"--help", "-h"} {
+		var out bytes.Buffer
+		if err := do(ctx, "revocation publish", []string{b.Address().String(), h}, nil, &out, io.Discard); err != nil || !strings.HasPrefix(out.String(), "usage: irongall revocation publish ") {
+			t.Fatalf("revocation publish <address> %s: %v %q", h, err, out.String())
+		}
+	}
+	resp, err := http.Get(srv.URL + "/v1/" + b.Address().String() + "/revocations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("the server holds a revocation: %d", resp.StatusCode)
+	}
+	if _, err := os.Stat(filepath.Join(b.Dir(), "revoked.sig")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the box keeps a revocation of itself: %v", err)
+	}
+}
+
+// revocation make prints a record and publishes nothing; revocation publish
+// publishes one, for this box only when its address is written out in full,
+// or from a record with no box at all; revocation keep keeps a record someone
+// handed over.
 func TestRevocationCommands(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -609,13 +700,13 @@ func TestRevocationCommands(t *testing.T) {
 		}
 		t.Setenv("IRONGALL_HOME", dir)
 		var out, errs bytes.Buffer
-		err := run(ctx, name, args, strings.NewReader(""), &out, &errs)
+		err := do(ctx, name, args, strings.NewReader(""), &out, &errs)
 		return out.String(), errs.String(), err
 	}
 
 	// The record: one line of JSON on stdout, the warning on stderr, and the
 	// box still works.
-	out, warn, err := cmd(a, "revocation")
+	out, warn, err := cmd(a, "revocation make")
 	var rec protocol.Revocations
 	if err != nil || strings.Count(out, "\n") != 1 || json.Unmarshal([]byte(out), &rec) != nil || !strings.Contains(warn, "Nothing was published") {
 		t.Fatalf("revocation: %v %q %q", err, out, warn)
@@ -633,8 +724,8 @@ func TestRevocationCommands(t *testing.T) {
 
 	// revoke wants this box's own address, in full, and nothing else.
 	for _, args := range [][]string{nil, {b.Address().String()}, {a.Address().String()[:63]}, {srv.URL + "/to/" + a.Address().String()}, {"--record", record, b.Address().String()}, {"--record", filepath.Join(t.TempDir(), "none"), a.Address().String()}} {
-		if out, _, err := cmd(a, "revoke", args...); err == nil || out != "" {
-			t.Fatalf("revoke %q ran: %q", args, out)
+		if out, _, err := cmd(a, "revocation publish", args...); err == nil || out != "" {
+			t.Fatalf("revocation publish %q ran: %q", args, out)
 		}
 	}
 	if _, err := b.Send(ctx, a.Address(), "still not revoked"); err != nil {
@@ -642,8 +733,8 @@ func TestRevocationCommands(t *testing.T) {
 	}
 
 	// B keeps A's record, handed over: no word from the server is needed.
-	if out, _, err := cmd(b, "revoked", record); err != nil || out != "revoked "+a.Address().String()+"\n" {
-		t.Fatalf("revoked: %v %q", err, out)
+	if out, _, err := cmd(b, "revocation keep", record); err != nil || out != "revoked "+a.Address().String()+"\n" {
+		t.Fatalf("revocation keep: %v %q", err, out)
 	}
 	var gone *client.RevokedError
 	if _, err := b.Send(ctx, a.Address(), "after the record was handed over"); !errors.As(err, &gone) {
@@ -653,13 +744,13 @@ func TestRevocationCommands(t *testing.T) {
 	if err := os.WriteFile(junk, []byte(`{"identity":"aXJvbmdhbGw=","revocation":"eA=="}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if out, _, err := cmd(b, "revoked", junk); err == nil || out != "" {
-		t.Fatalf("revoked took junk: %q", out)
+	if out, _, err := cmd(b, "revocation keep", junk); err == nil || out != "" {
+		t.Fatalf("revocation keep took junk: %q", out)
 	}
 
 	// The record alone revokes, from a directory that holds no box.
-	if out, _, err := cmd(nil, "revoke", "--record", record, a.Address().String()); err != nil || out != "revoked "+a.Address().String()+"\n" {
-		t.Fatalf("revoke --record: %v %q", err, out)
+	if out, _, err := cmd(nil, "revocation publish", "--record", record, a.Address().String()); err != nil || out != "revoked "+a.Address().String()+"\n" {
+		t.Fatalf("revocation publish --record: %v %q", err, out)
 	}
 	c, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
 	if err != nil {
@@ -670,8 +761,8 @@ func TestRevocationCommands(t *testing.T) {
 	}
 
 	// A box revokes itself, and then knows it.
-	if out, _, err := cmd(c, "revoke", c.Address().String()); err != nil || out != "revoked "+c.Address().String()+"\n" {
-		t.Fatalf("revoke: %v %q", err, out)
+	if out, _, err := cmd(c, "revocation publish", c.Address().String()); err != nil || out != "revoked "+c.Address().String()+"\n" {
+		t.Fatalf("revocation publish: %v %q", err, out)
 	}
 	out, _, err = cmd(c, "status")
 	var look *needsALook
@@ -680,10 +771,10 @@ func TestRevocationCommands(t *testing.T) {
 	}
 }
 
-// revoked --ask asks the server what it holds about a box and says what this
-// box then holds: nothing shown, which is the server's word and is said as
-// that; a revocation of certificates; a revocation of the address. revoked
-// <file> takes a record that carries one.
+// revocation ask asks the server what it holds about a box and says what
+// this box then holds: nothing shown, which is the server's word and is said
+// as that; a revocation of certificates; a revocation of the address.
+// revocation keep takes a record that carries one.
 func TestRevokedAsk(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -697,16 +788,16 @@ func TestRevokedAsk(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("IRONGALL_BASE", srv.URL)
-	cmd := func(box *client.Box, args ...string) (string, string, error) {
+	cmd := func(box *client.Box, command string, args ...string) (string, string, error) {
 		t.Helper()
 		t.Setenv("IRONGALL_HOME", box.Dir())
 		var out, errs bytes.Buffer
-		err := run(ctx, "revoked", args, strings.NewReader(""), &out, &errs)
+		err := do(ctx, command, args, strings.NewReader(""), &out, &errs)
 		return out.String(), errs.String(), err
 	}
 	addr := a.Address().String()
 
-	out, warn, err := cmd(b, "--ask", addr)
+	out, warn, err := cmd(b, "revocation ask", addr)
 	if err != nil || out != "no revocation of "+addr+" shown\n" || !strings.Contains(warn, "the word of whoever was asked") {
 		t.Fatalf("ask about a box with nothing revoked: %v %q %q", err, out, warn)
 	}
@@ -719,7 +810,7 @@ func TestRevokedAsk(t *testing.T) {
 	}
 	held := "certificates of " + addr + " revoked through " + strconv.FormatUint(certs.Through, 10) + "\n"
 	// By its link, as send takes one.
-	if out, warn, err := cmd(b, "--ask", srv.URL+"/to/"+addr); err != nil || out != held || warn != "" {
+	if out, warn, err := cmd(b, "revocation ask", srv.URL+"/to/"+addr); err != nil || out != held || warn != "" {
 		t.Fatalf("ask about a box with its certificates revoked: %v %q %q", err, out, warn)
 	}
 
@@ -741,22 +832,22 @@ func TestRevokedAsk(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, _, err := cmd(c, file); err != nil || out != held {
+	if out, _, err := cmd(c, "revocation keep", file); err != nil || out != held {
 		t.Fatalf("a revocation of certificates from a file: %v %q", err, out)
 	}
 
 	// A record that carries certificates revoked and no revocation of the
-	// address revokes nothing: revoke --record publishes only what ends the
-	// address.
+	// address revokes nothing: revocation publish --record publishes only what
+	// ends the address.
 	t.Setenv("IRONGALL_HOME", t.TempDir())
-	if err := run(ctx, "revoke", []string{"--record", file, addr}, strings.NewReader(""), io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "not a revocation") {
-		t.Fatalf("revoke --record with certificates revoked and no revocation: %v", err)
+	if err := do(ctx, "revocation publish", []string{"--record", file, addr}, strings.NewReader(""), io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "not a revocation") {
+		t.Fatalf("revocation publish --record with certificates revoked and no revocation: %v", err)
 	}
-	if out, _, err := cmd(b, "--ask", addr); err != nil || out != held {
+	if out, _, err := cmd(b, "revocation ask", addr); err != nil || out != held {
 		t.Fatalf("after it: %v %q", err, out)
 	}
 
-	// The address revoked: both say so, in the words revoked <file> has.
+	// The address revoked: both say so, in the words revocation keep has.
 	r, err := a.Revocation()
 	if err != nil {
 		t.Fatal(err)
@@ -764,20 +855,20 @@ func TestRevokedAsk(t *testing.T) {
 	if _, err := client.Revoke(ctx, opt, r); err != nil {
 		t.Fatal(err)
 	}
-	if out, _, err := cmd(b, "--ask", addr); err != nil || out != "revoked "+addr+"\n" {
+	if out, _, err := cmd(b, "revocation ask", addr); err != nil || out != "revoked "+addr+"\n" {
 		t.Fatalf("ask about a revoked box: %v %q", err, out)
 	}
 
-	for _, args := range [][]string{nil, {"--ask"}, {"--ask", addr, addr}, {"--ask", "not an address"}, {addr}} {
-		if out, _, err := cmd(b, args...); err == nil || out != "" {
-			t.Fatalf("revoked %q ran: %q", args, out)
+	for _, args := range [][]string{{"revocation ask"}, {"revocation ask", addr, addr}, {"revocation ask", "not an address"}, {"revocation keep"}, {"revocation keep", addr}} {
+		if out, _, err := cmd(b, args[0], args[1:]...); err == nil || out != "" {
+			t.Fatalf("irongall %q ran: %q", args, out)
 		}
 	}
 }
 
-// rekey --revoke-earlier publishes the new prekey first, then revokes every
+// cert revoke-earlier publishes the new prekey first, then revokes every
 // certificate before it, and says what that costs the box's own unread mail.
-func TestRekeyRevokeEarlier(t *testing.T) {
+func TestCertRevokeEarlier(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
@@ -789,8 +880,8 @@ func TestRekeyRevokeEarlier(t *testing.T) {
 	// A box takes each number from its clock, so the test reads them.
 	first := inUse(t, b)
 	var out, errs bytes.Buffer
-	if err := run(ctx, "rekey", []string{"--revoke-earlier"}, strings.NewReader(""), &out, &errs); err != nil {
-		t.Fatalf("rekey --revoke-earlier: %v %q", err, errs.String())
+	if err := do(ctx, "cert revoke-earlier", nil, strings.NewReader(""), &out, &errs); err != nil {
+		t.Fatalf("cert revoke-earlier: %v %q", err, errs.String())
 	}
 	second := inUse(t, b)
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
@@ -799,7 +890,7 @@ func TestRekeyRevokeEarlier(t *testing.T) {
 		t.Fatalf("its output: %q %q", out.String(), errs.String())
 	}
 	out.Reset()
-	if err := run(ctx, "rekey", []string{"--revoke-earlier"}, strings.NewReader(""), &out, &errs); err != nil || !strings.HasSuffix(out.String(), "certificates through "+below(inUse(t, b))+" revoked\n") {
+	if err := do(ctx, "cert revoke-earlier", nil, strings.NewReader(""), &out, &errs); err != nil || !strings.HasSuffix(out.String(), "certificates through "+below(inUse(t, b))+" revoked\n") {
 		t.Fatalf("a second time: %v %q", err, out.String())
 	}
 	var rec protocol.Revocations
@@ -817,16 +908,16 @@ func TestRekeyRevokeEarlier(t *testing.T) {
 	}
 	// The box goes on working under the certificate it kept.
 	out.Reset()
-	if err := run(ctx, "status", nil, strings.NewReader(""), &out, &errs); err != nil || !strings.Contains(out.String(), `"attention":[]`) {
+	if err := do(ctx, "status", nil, strings.NewReader(""), &out, &errs); err != nil || !strings.Contains(out.String(), `"attention":[]`) {
 		t.Fatalf("status after revoking earlier certificates: %v %q", err, out.String())
 	}
 }
 
-// rekey --revoke-earlier when the server refuses the new prekey for the day's
-// renewals: the revocation goes out all the same, the command says the box takes no
-// mail until the new prekey is taken, and fails. Refused for anything else,
-// it revokes nothing and says so.
-func TestRekeyRevokeEarlierWhenTheRenewalIsRefused(t *testing.T) {
+// cert revoke-earlier when the server refuses the new prekey for the day's
+// renewals: the revocation goes out all the same, the command says the box
+// takes no mail until the new prekey is taken, and fails. Refused for
+// anything else, it revokes nothing and says so.
+func TestCertRevokeEarlierWhenTheRenewalIsRefused(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
@@ -848,14 +939,14 @@ func TestRekeyRevokeEarlierWhenTheRenewalIsRefused(t *testing.T) {
 
 	refuse(protocol.CodeUnavailable)
 	var out, errs bytes.Buffer
-	err = run(ctx, "rekey", []string{"--revoke-earlier"}, strings.NewReader(""), &out, &errs)
+	err = do(ctx, "cert revoke-earlier", nil, strings.NewReader(""), &out, &errs)
 	if err == nil || !strings.Contains(err.Error(), "nothing is revoked") || out.Len() != 0 {
 		t.Fatalf("refused as unavailable: %v, stdout %q", err, out.String())
 	}
 
 	refuse(protocol.CodeRateLimited)
 	out.Reset()
-	err = run(ctx, "rekey", []string{"--revoke-earlier"}, strings.NewReader(""), &out, &errs)
+	err = do(ctx, "cert revoke-earlier", nil, strings.NewReader(""), &out, &errs)
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
 	if err == nil || !strings.Contains(err.Error(), "NOT published") || !strings.Contains(err.Error(), "takes no mail") || len(lines) != 1 || !strings.HasPrefix(lines[0], "certificates through ") || !strings.HasSuffix(lines[0], " revoked") {
 		t.Fatalf("refused for the day's renewals: %v, stdout %q", err, out.String())
@@ -894,9 +985,9 @@ func allows(t *testing.T, b, a *client.Box) {
 }
 
 // recv holds a stranger's mail and says so on stderr; held lists it by
-// sender; allow prints it as recv would and lists who is allowed; block
-// lists who is blocked. None of it changes recv's exit status.
-func TestHeldAllowAndBlockCommands(t *testing.T) {
+// sender; peer allow prints it as recv would; peer block drops the sender;
+// peer list lists both. None of it changes recv's exit status.
+func TestHeldAndPeerCommands(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
@@ -915,7 +1006,7 @@ func TestHeldAllowAndBlockCommands(t *testing.T) {
 	t.Setenv("IRONGALL_BASE", srv.URL)
 	cmd := func(name string, args ...string) (string, string, error) {
 		var out, errs bytes.Buffer
-		err := run(ctx, name, args, strings.NewReader(""), &out, &errs)
+		err := do(ctx, name, args, strings.NewReader(""), &out, &errs)
 		return out.String(), errs.String(), err
 	}
 	out, errs, err := cmd("recv")
@@ -927,23 +1018,30 @@ func TestHeldAllowAndBlockCommands(t *testing.T) {
 	if err != nil || strings.Count(out, "\n") != 1 || json.Unmarshal([]byte(out), &h) != nil || h.From != a.Address() || len(h.IDs) != 1 {
 		t.Fatalf("held: %v %q", err, out)
 	}
-	out, _, err = cmd("allow", a.Address().String())
+	out, _, err = cmd("peer allow", a.Address().String())
 	if err != nil || !strings.Contains(out, `"body":"from a stranger"`) || strings.Count(out, "\n") != 1 {
-		t.Fatalf("allow: %v %q", err, out)
+		t.Fatalf("peer allow: %v %q", err, out)
 	}
-	if out, _, err = cmd("allow"); err != nil || out != a.Address().String()+"\n" {
-		t.Fatalf("allow, listing: %v %q", err, out)
+	if out, _, err = cmd("peer list"); err != nil || out != "allowed "+a.Address().String()+"\n" {
+		t.Fatalf("peer list: %v %q", err, out)
 	}
-	if out, _, err = cmd("block", a.Link()); err != nil || out != "" {
-		t.Fatalf("block: %v %q", err, out)
+	if out, _, err = cmd("peer block", a.Link()); err != nil || out != "" {
+		t.Fatalf("peer block: %v %q", err, out)
 	}
-	if out, _, err = cmd("block"); err != nil || out != a.Address().String()+"\n" {
-		t.Fatalf("block, listing: %v %q", err, out)
+	// Blocking wins over allowing, and both are listed.
+	for args, want := range map[string]string{
+		"peer list":           "allowed " + a.Address().String() + "\nblocked " + a.Address().String() + "\n",
+		"peer list --blocked": "blocked " + a.Address().String() + "\n",
+		"peer list --allowed": "allowed " + a.Address().String() + "\n",
+	} {
+		if out, _, err = cmd(args); err != nil || out != want {
+			t.Fatalf("%s: %v %q", args, err, out)
+		}
 	}
 	if out, _, err = cmd("held"); err != nil || out != "" {
 		t.Fatalf("held, with none: %v %q", err, out)
 	}
-	if _, _, err = cmd("allow", "--rebuild", a.Address().String()); err == nil {
-		t.Fatal("allow --rebuild with an address was taken")
+	if _, _, err = cmd("peer allow", "--rebuild", a.Address().String()); err == nil {
+		t.Fatal("peer allow --rebuild with an address was taken")
 	}
 }

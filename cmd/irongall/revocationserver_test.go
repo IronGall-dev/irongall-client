@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -63,7 +64,7 @@ func TestTheCommandsWithARevocationServer(t *testing.T) {
 		t.Helper()
 		t.Setenv("IRONGALL_HOME", b.Dir())
 		var out, errs bytes.Buffer
-		err := run(ctx, args[0], args[1:], strings.NewReader("a body"), &out, &errs)
+		err := run(ctx, args, strings.NewReader("a body"), &out, &errs)
 		return out.String(), errs.String(), err
 	}
 	a, b := box(), box()
@@ -81,14 +82,13 @@ func TestTheCommandsWithARevocationServer(t *testing.T) {
 		t.Fatalf("send with the revocation server down: %v %q %q", err, out, warn)
 	}
 
-	// rekey --revoke-earlier with it down: the revocation is at the box's own
+	// cert revoke-earlier with it down: the revocation is at the box's own
 	// server, the command fails and says where it is not, and how to send
 	// it there.
-	out, _, err = cmd(a, "rekey", "--revoke-earlier")
+	out, _, err = cmd(a, "cert", "revoke-earlier")
 	var part *client.NotPublishedError
-	kept := filepath.Join(a.Dir(), "revoked-certs.json")
-	if !errors.As(err, &part) || !strings.Contains(err.Error(), "irongall revoked --publish "+kept) || strings.Contains(out, "revoked") {
-		t.Fatalf("rekey --revoke-earlier with the revocation server down: %v %q", err, out)
+	if !errors.As(err, &part) || !strings.Contains(err.Error(), "irongall cert publish-revoked") || strings.Contains(out, "revoked") {
+		t.Fatalf("cert revoke-earlier with the revocation server down: %v %q", err, out)
 	}
 	if holds(a.Address()) != http.StatusServiceUnavailable {
 		t.Fatal("the revocation server is not down")
@@ -97,39 +97,43 @@ func TestTheCommandsWithARevocationServer(t *testing.T) {
 	if holds(a.Address()) != http.StatusNotFound {
 		t.Fatal("the revocation server holds a revocation of certificates it never took")
 	}
-	if out, _, err := cmd(a, "revoked", "--publish", kept); err != nil || !strings.HasPrefix(out, "published the revocation of the certificates of "+a.Address().String()+" through ") {
-		t.Fatalf("revoked --publish: %v %q", err, out)
+	// With no file named, it sends the record the box keeps.
+	if _, err := os.Stat(filepath.Join(a.Dir(), "revoked-certs.json")); err != nil {
+		t.Fatalf("the box does not keep its revocation of certificates: %v", err)
+	}
+	if out, _, err := cmd(a, "cert", "publish-revoked"); err != nil || !strings.HasPrefix(out, "published the revocation of the certificates of "+a.Address().String()+" through ") {
+		t.Fatalf("cert publish-revoked: %v %q", err, out)
 	}
 	if holds(a.Address()) != http.StatusOK {
 		t.Fatal("the revocation of certificates did not reach the revocation server")
 	}
 	// With every server up, one command does it.
-	if out, _, err := cmd(a, "rekey", "--revoke-earlier"); err != nil || !strings.Contains(out, " revoked\n") || !strings.Contains(out, "certificates through ") {
-		t.Fatalf("rekey --revoke-earlier: %v %q", err, out)
+	if out, _, err := cmd(a, "cert", "revoke-earlier"); err != nil || !strings.Contains(out, " revoked\n") || !strings.Contains(out, "certificates through ") {
+		t.Fatalf("cert revoke-earlier: %v %q", err, out)
 	}
 
-	// revoke with it down: the address is revoked at the box's own server,
-	// the box keeps its revocation, and the command fails saying where it is
-	// not. The same command again, once the server is back, is the cure.
+	// revocation publish with it down: the address is revoked at the box's own
+	// server, the box keeps its revocation, and the command fails saying where
+	// it is not. The same command again, once the server is back, is the cure.
 	down.Store(true)
-	out, _, err = cmd(a, "revoke", a.Address().String())
+	out, _, err = cmd(a, "revocation", "publish", a.Address().String())
 	if !errors.As(err, &part) || out != "" || !strings.Contains(err.Error(), "was NOT taken by "+rs.URL) || !strings.Contains(err.Error(), "it was taken by "+srv.URL) {
-		t.Fatalf("revoke with the revocation server down: %v %q", err, out)
+		t.Fatalf("revocation publish with the revocation server down: %v %q", err, out)
 	}
 	if st, _, _ := cmd(a, "status"); !strings.Contains(st, `"revoked":true`) {
 		t.Fatalf("a box whose revocation a server took does not hold it: %q", st)
 	}
 	down.Store(false)
-	if out, _, err := cmd(a, "revoke", a.Address().String()); err != nil || out != "revoked "+a.Address().String()+"\n" {
-		t.Fatalf("revoke again: %v %q", err, out)
+	if out, _, err := cmd(a, "revocation", "publish", a.Address().String()); err != nil || out != "revoked "+a.Address().String()+"\n" {
+		t.Fatalf("revocation publish again: %v %q", err, out)
 	}
 	if holds(a.Address()) != http.StatusOK {
 		t.Fatal("the revocation did not reach the revocation server")
 	}
 
 	// What ends an address is never published without that address written
-	// out: revoked --publish takes a revocation of certificates and nothing more.
-	rec, _, err := cmd(b, "revocation")
+	// out: cert publish-revoked takes a revocation of certificates and nothing more.
+	rec, _, err := cmd(b, "revocation", "make")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,11 +141,11 @@ func TestTheCommandsWithARevocationServer(t *testing.T) {
 	if err := os.WriteFile(file, []byte(rec), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if out, _, err := cmd(box(), "revoked", "--publish", file); err == nil || out != "" || !strings.Contains(err.Error(), "nothing was published") {
-		t.Fatalf("revoked --publish of a revocation: %v %q", err, out)
+	if out, _, err := cmd(box(), "cert", "publish-revoked", file); err == nil || out != "" || !strings.Contains(err.Error(), "nothing was published") {
+		t.Fatalf("cert publish-revoked of a revocation: %v %q", err, out)
 	}
 	if holds(b.Address()) != http.StatusNotFound {
-		t.Fatal("revoked --publish published a revocation")
+		t.Fatal("cert publish-revoked published a revocation")
 	}
 
 	// A list that names no server is an error, said before anything is done.
@@ -157,11 +161,22 @@ func TestTheCommandsWithARevocationServer(t *testing.T) {
 	}
 }
 
-// The help says where the list comes from, and names the default.
+// The help says where the list comes from, and names the default; the cert
+// group's says how a revocation a server did not take is sent again.
 func TestHelpNamesTheRevocationServers(t *testing.T) {
-	for _, want := range []string{"$IRONGALL_REVOCATION_SERVERS", "revocation-servers file", client.DefaultRevocationServer, "revoked --publish"} {
-		if !strings.Contains(usage, want) {
-			t.Errorf("the help does not name %s", want)
+	t.Setenv("IRONGALL_HOME", t.TempDir())
+	for words, wants := range map[string][]string{
+		"help":      {"$IRONGALL_REVOCATION_SERVERS", "revocation-servers file", client.DefaultRevocationServer},
+		"help cert": {"publish-revoked"},
+	} {
+		var out bytes.Buffer
+		if err := run(context.Background(), strings.Fields(words), nil, &out, io.Discard); err != nil {
+			t.Fatal(err)
+		}
+		for _, want := range wants {
+			if !strings.Contains(out.String(), want) {
+				t.Errorf("irongall %s does not name %s", words, want)
+			}
 		}
 	}
 }

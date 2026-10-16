@@ -334,7 +334,7 @@ func (b *Box) keepRevokedCerts(a protocol.Address, doc, statement, sig []byte) e
 // RevokeEarlier revokes every certificate this box's identity made before
 // the one in use: it signs a revocation of them, publishes it, and keeps it.
 // [Box.RenewAndRevoke] is the whole remedy for a box whose working key may
-// have been taken, and is what "irongall rekey --revoke-earlier" runs; this
+// have been taken, and is what "irongall cert revoke-earlier" runs; this
 // is its second half alone, for a box that has renewed already.
 //
 // It revokes through the serial below the one in use. A box numbers a

@@ -96,7 +96,7 @@ func (b *Box) SendWith(ctx context.Context, to protocol.Address, body string, f 
 		return nil, err
 	}
 	if err := b.SyncACL(ctx); err != nil {
-		return nil, fmt.Errorf("%w: nothing is posted, so that no reply is refused; kept in the outbox, irongall flush sends it", err)
+		return nil, fmt.Errorf("%w: nothing is posted, so that no reply is refused; kept in the outbox, irongall outbox flush sends it", err)
 	}
 	return b.post(ctx, to, stem, newLookups())
 }
@@ -171,13 +171,13 @@ func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked 
 	// MaxSkew ahead of its own clock, which is the room for two clocks a
 	// server takes, and has none to spare for one that was wrong.
 	if t, ok := b.sentAt(stem); ok && t.After(b.now()) {
-		return nil, refuse("its envelope is dated %s, ahead of this machine's clock: it was written while the clock read ahead of where it reads now, and a recipient would refuse it. It is kept in the outbox, and irongall flush sends it once the clock passes that time", t.Format(protocol.TimeLayout))
+		return nil, refuse("its envelope is dated %s, ahead of this machine's clock: it was written while the clock read ahead of where it reads now, and a recipient would refuse it. It is kept in the outbox, and irongall outbox flush sends it once the clock passes that time", t.Format(protocol.TimeLayout))
 	}
 	// The answer to this question is never read as an answer about the
 	// message: whatever code a failed lookup carries, the entry stays.
 	gone, err := b.ask(ctx, to, asked)
 	if err != nil {
-		return nil, fmt.Errorf("what the server holds about %s could not be asked, so nothing is posted: %w (kept in the outbox: retry with irongall flush)", to, err)
+		return nil, fmt.Errorf("what the server holds about %s could not be asked, so nothing is posted: %w (kept in the outbox: retry with irongall outbox flush)", to, err)
 	}
 	if gone {
 		return nil, b.undelivered(stem, &RevokedError{Address: to, Own: to == b.id.Address()})
@@ -189,14 +189,14 @@ func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked 
 		err = b.proved(ctx, to, err, asked)
 		var gone *RevokedError
 		if !errors.As(err, &gone) && !slices.Contains(undeliverable, Code(err)) {
-			return nil, fmt.Errorf("%w (kept in the outbox: retry with irongall flush)", err)
+			return nil, fmt.Errorf("%w (kept in the outbox: retry with irongall outbox flush)", err)
 		}
 		return nil, b.undelivered(stem, err)
 	}
 	// Recorded before the outbox entry goes: a crash in between posts it
 	// again, gets the original receipt, and records it again.
 	if err := b.recordSent(stem, r); err != nil {
-		return r, fmt.Errorf("sent, but not recorded in sent/ (still in the outbox: irongall flush records it): %w", err)
+		return r, fmt.Errorf("sent, but not recorded in sent/ (still in the outbox: irongall outbox flush records it): %w", err)
 	}
 	for _, ext := range []string{".P", ".age", ".sig", ".json"} {
 		if err := removeIfExists(stem + ext); err != nil {
@@ -389,7 +389,7 @@ func (b *Box) seal(ctx context.Context, to protocol.Address, stem string) error 
 	// Mail may wait 33 days to be read, and its certificate must still be
 	// valid then.
 	if !cert.SignsMail(b.now()) {
-		return refuse("this box's certificate ends within %d days, too soon to sign mail that may wait that long: irongall rekey makes a new one, as irongall recv does daily", protocol.TTL/(24*time.Hour))
+		return refuse("this box's certificate ends within %d days, too soon to sign mail that may wait that long: irongall prekey renew makes a new one, as irongall recv does daily", protocol.TTL/(24*time.Hour))
 	}
 	pk, err := b.Resolve(ctx, to)
 	if err != nil {

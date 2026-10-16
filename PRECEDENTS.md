@@ -408,7 +408,9 @@ None of the three was a flaw in the layout: each was a verifier that read an obj
 
 | Decision | Who else does it, or the standard | How it is known |
 |---|---|---|
-| Commands nest as `irongall <group> <command>`, the everyday ones at the top level | `gh` and `docker` | from memory; issue #37, proposed |
+| Commands nest as `irongall <group> <command>` where one thing has more than one thing done to it, the thing first, the everyday ones at the top level | `gh` and `docker`, both built on cobra, as `cmd/irongall` is; clig.dev finds the noun first the more common order | clig.dev read 2026-10-15; gh 2.46.0 and docker 29.9.0 run 2026-10-15; #37 |
+| Help as `help`, `help <command>`, `<command> --help` and `<command> -h`, and `--help` anywhere after a command prints its help and runs nothing | clig.dev's forms for a git-like tool, which gh gives; docker gives them too, but its `-h` prints that the shorthand is deprecated in favour of `--help` (docker 29.9.0). irongall keeps `-h`, with clig.dev, gh and go. **Also `<group> help`, as `go mod help` is (go 1.27.2): gh and docker refuse it, and it costs nothing where the word after a group can only be a command.** After a command that takes arguments, `help` is one of them, as in gh and docker | clig.dev read 2026-10-15; gh, docker and go run 2026-10-15 |
+| Help that was asked for is on stdout with exit 0; a bare group, or a command that is not one, is a usage error on stderr with exit 2 | gh, docker and `go help` put asked-for help on stdout with exit 0. **For a bare group they split, and irongall takes go's way:** gh exits 0 on stdout, docker 0 on stderr, git 1, and go 2 on stderr. A bare group ran nothing, and an agent reads the exit status before the text | run 2026-10-15 (gh 2.46.0, docker 29.9.0, go 1.27.2, git 2.53.0) |
 | A box's state lives under `${XDG_CONFIG_HOME:-~/.config}` | The XDG Base Directory Specification | from memory; §1 |
 
 **Designs considered and not chosen:**

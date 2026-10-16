@@ -609,7 +609,7 @@ for v in $VEC/revoke/bad-*.sig; do ! ig_revcheck "$VA" $VEC/a/identity.doc "$v" 
 ! ig_revcheck "$(cat $VEC/b/address)" $VEC/a/identity.doc $VEC/a/revoke.sig && ! ig_revcheck "$VA" $VEC/b/identity.doc $VEC/a/revoke.sig &&
   ok "a revocation is the identity's own signature over its fixed statement, in either hash and by either key type: a working key's, another identity's, another namespace's and another box's are not" || bad "revocation vectors"
 for X in RA RB RC RD; do as $X; ig_init $NOPQ > /dev/null || bad "init $X"; eval "$X=\$(cat \$IG/address)"; done
-# the record: one line, made without publishing, and revoke takes only this box's own address written out in full
+# the record: one line, made without publishing, and revocation publish (ig_revoke) takes only this box's own address written out in full
 as RB; ig_revocation > $W/rb.json 2> err.txt && [ "$(wc -l < $W/rb.json)" = 1 ] && [ "$(ig_record $W/rb.json)" = "$RB" ] && [ "$(cat $SRV/$RB/state)" = active ] && ! grep -q "^PUT .*/revocations\$" $SRV/log &&
   ok "revocation prints the box's record, one line of JSON that verifies, and publishes nothing" || bad "revocation: $(cat err.txt)"
 for arg in "" "${RB:0:63}" "$RA" "$IG_BASE/to/$RB"; do ig_revoke $arg > out.txt 2> err.txt && bad "revoke '$arg' ran"; [ ! -s out.txt ] || bad "revoke '$arg' printed $(cat out.txt)"; done

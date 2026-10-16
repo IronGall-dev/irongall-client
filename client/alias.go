@@ -65,7 +65,7 @@ func (b *Box) SetAlias(name string, a protocol.Address) error {
 	case len(have) == 1 && have[0] == a:
 		return nil
 	case len(have) > 0:
-		return refuse("alias %s already names %s: remove it first (irongall alias --rm %s)", name, have[0], name)
+		return refuse("alias %s already names %s: remove it first (irongall alias rm %s)", name, have[0], name)
 	}
 	lines, err := b.aliasLines()
 	if err != nil {
@@ -105,7 +105,7 @@ func (b *Box) alias(name string) (protocol.Address, error) {
 	case len(found) == 1:
 		return found[0], nil
 	case len(found) == 0:
-		return protocol.Address{}, refuse("no alias named %s: irongall alias lists them, and names one", name)
+		return protocol.Address{}, refuse("no alias named %s: irongall alias list lists them, and irongall alias add names one", name)
 	}
 	return protocol.Address{}, refuse("alias %s names %d addresses in %s: keep one line", name, len(found), b.path("aliases"))
 }

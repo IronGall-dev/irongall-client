@@ -222,7 +222,7 @@ func TestARevocationServerShowsRevokedCertificatesTheMailboxServerHides(t *testi
 	taken := numberOf(t, a)
 	statement, signature := theft(t, e, a)
 	if got := rs.holds(t, a.Address()); got == nil || got.RevokedCertificates == nil || got.Revocation != nil {
-		t.Fatal("rekey --revoke-earlier did not publish the revocation of certificates to the revocation server")
+		t.Fatal("RevokeEarlier did not publish the revocation of certificates to the revocation server")
 	}
 
 	// The control: asking the mailbox server alone, a sender posts to the
