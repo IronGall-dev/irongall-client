@@ -78,6 +78,24 @@ func mail(d client.Delivery) []byte {
 	return typed("mail", append(append([]byte(`{"id":`), value(d.ID)...), append([]byte{','}, d.Line[1:]...)...))
 }
 
+// mailHeaders is a message's line without the text its sender chose: its id,
+// the envelope's checked fields but for its body and subject, and the size of
+// its body in bytes, as the envelope carries it. in_reply_to and supersedes
+// are the sender's words, which a reader holds only to being strings, so each
+// is here only when it has a msg_id's form; irongall show prints them as sent.
+func mailHeaders(d client.Delivery) []byte {
+	env := d.Envelope
+	msgID := func(s string) any {
+		if !protocol.IsMsgID(s) {
+			return nil
+		}
+		return s
+	}
+	return line("mail_headers", "id", d.ID, "v", protocol.EnvelopeVersion, "from", env.From, "to", env.To,
+		"sent_at", env.SentAt.UTC().Format(protocol.TimeLayout), "msg_id", env.MsgID,
+		"in_reply_to", msgID(env.InReplyTo), "supersedes", msgID(env.Supersedes), "body_size", len(env.Body))
+}
+
 // out prints a line on stdout.
 func (e *cli) out(b []byte) error {
 	_, err := e.stdout.Write(append(b, '\n'))

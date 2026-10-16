@@ -306,7 +306,7 @@ func (b *Box) recordSent(stem string, r *protocol.Receipt) error {
 	if err := os.MkdirAll(b.path("sent"), 0o700); err != nil {
 		return err
 	}
-	return writeFile(b.path("sent", filepath.Base(stem)+".json"), []byte(lineBreaks.Replace(string(line))))
+	return writeFile(b.path("sent", filepath.Base(stem)+".json"), escapeUnseen(line))
 }
 
 // undelivered moves an entry that can never be delivered to outbox/failed/,

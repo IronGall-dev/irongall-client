@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	"filippo.io/age"
 	"github.com/IronGall-dev/irongall-client/protocol"
@@ -269,12 +269,13 @@ func (b *Box) receiveOne(ctx context.Context, id string, res *Result, asked *loo
 		}
 		switch {
 		case why != nil:
-			raw, err := json.Marshal(m)
+			raw, err := keepRefused(&m)
 			if err != nil {
 				return fetched, err
 			}
-			// The message as served, and beside it why it was refused: the
-			// reason is this client's words, so it is safe to show.
+			// The message as served, with none of the server's strings in
+			// the clear but those of their form (keptRefusal), and beside it
+			// why it was refused, in this client's words.
 			if err := writeFile(b.path("quarantine", local+".json"), raw); err != nil {
 				return fetched, err
 			}
@@ -425,14 +426,61 @@ func (b *Box) judge(ctx context.Context, m *protocol.Message, asked *lookups) (d
 	if err != nil {
 		return nil, false, nil, err
 	}
-	return &Delivery{Envelope: env, Line: []byte(lineBreaks.Replace(string(line))), Plaintext: signed.Line, Signature: signed.Signature}, false, nil, nil
+	return &Delivery{Envelope: env, Line: escapeUnseen(line), Plaintext: signed.Line, Signature: signed.Signature}, false, nil, nil
 }
 
-// lineBreaks escapes the characters other than LF that some readers end a
-// line at (Python's str.splitlines, Node's readline): a body can carry them
-// raw inside a JSON string, the only place JSON allows them, so escaping
-// them keeps one message one line with the same value.
-var lineBreaks = strings.NewReplacer("\u0085", `\u0085`, " ", ` `, " ", ` `)
+// escapeUnseen escapes, in a line a reader is shown or a box keeps, the
+// characters a reader cannot see or that some readers end a line at, with
+// the same value. A body can carry them raw inside a JSON string, the only
+// place JSON allows them. The line breaks other than LF are U+0085, U+2028
+// and U+2029 (Python's str.splitlines, Node's readline). The ones nobody sees
+// are Unicode's Default_Ignorable_Code_Point (DerivedCoreProperties, Unicode
+// 18.0): tag characters, BiDi controls and marks, zero-width characters,
+// variation selectors. A model reads each of these as text, and a person sees
+// none, so a body could carry an instruction past whoever looks. Escaped, it
+// is in plain sight, and a JSON reader still gets every character
+// (PRECEDENTS.md, Part 2). irongall.sh's ig_line escapes the same, in the
+// same form.
+func escapeUnseen(line []byte) []byte {
+	var b strings.Builder
+	for _, r := range string(line) {
+		if !escaped(r) {
+			b.WriteRune(r)
+			continue
+		}
+		if r > 0xFFFF {
+			hi, lo := utf16.EncodeRune(r)
+			fmt.Fprintf(&b, `\u%04x\u%04x`, hi, lo)
+		} else {
+			fmt.Fprintf(&b, `\u%04x`, r)
+		}
+	}
+	return []byte(b.String())
+}
+
+// escaped reports whether escapeUnseen escapes r.
+func escaped(r rune) bool {
+	if r == 0x85 || r == 0x2028 || r == 0x2029 {
+		return true
+	}
+	for _, x := range defaultIgnorable {
+		if r >= x[0] && r <= x[1] {
+			return true
+		}
+	}
+	return false
+}
+
+// defaultIgnorable is Unicode 18.0's Default_Ignorable_Code_Point, range for
+// range (DerivedCoreProperties-18.0.0.txt). irongall.sh's ig_line holds the
+// same list: TestWhatABoxKeepsIsOneInBothClients, in sh/, holds the two to
+// a third copy.
+var defaultIgnorable = [][2]rune{
+	{0x00AD, 0x00AD}, {0x034F, 0x034F}, {0x061C, 0x061C}, {0x115F, 0x1160}, {0x17B4, 0x17B5},
+	{0x180B, 0x180F}, {0x200B, 0x200F}, {0x202A, 0x202E}, {0x2060, 0x206F}, {0x3164, 0x3164},
+	{0xFE00, 0xFE0F}, {0xFEFF, 0xFEFF}, {0xFFA0, 0xFFA0}, {0xFFF0, 0xFFF8}, {0x1BCA0, 0x1BCA3},
+	{0x1D173, 0x1D17A}, {0xE0000, 0xE0FFF},
+}
 
 // The seen-set: one line per accepted message, "<ciphertext hash> <sent_at,
 // unix seconds> <from> <msg_id>", kept until sent_at + protocol.TTL, so the

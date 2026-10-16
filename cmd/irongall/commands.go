@@ -8,6 +8,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/IronGall-dev/irongall-client/client"
@@ -19,7 +21,7 @@ import (
 // each thing that has more than one thing done to it.
 func (e *cli) tree() *cobra.Command {
 	root := e.group("irongall", "", "",
-		e.initCmd(), e.addrCmd(), e.sendCmd(), e.recvCmd(), e.statusCmd(), e.heldCmd(),
+		e.initCmd(), e.addrCmd(), e.sendCmd(), e.recvCmd(), e.showCmd(), e.statusCmd(), e.heldCmd(),
 		e.group("peer", "who may write to this box: allow, block, list",
 			`Mail from a sender this box has not allowed is held in held/ (irongall held
 lists it), and mail from a sender it blocked is dropped. Sending to a box, or
@@ -37,6 +39,12 @@ one, remove it and add it again.`,
 			`A message is kept in outbox/ until a server takes it. One that can never be
 delivered moves to outbox/failed/: delete it there to drop it.`,
 			e.flushCmd()),
+		e.group("quarantine", "mail refused for a failed check: list, rm",
+			`A message that failed a check is never delivered: recv acks it and keeps it
+in quarantine/, as evidence of who sent what. Read it through these commands,
+which print this client's words only: the files keep what the server served,
+with each of its strings in base64 that is not of its form.`,
+			e.quarantineListCmd(), e.quarantineRmCmd()),
 		e.group("prekey", "the key senders encrypt to: renew",
 			`A prekey is valid for 33 days, under a working key and a certificate made
 with it. irongall recv renews it once a day, so run recv at least monthly and
@@ -172,24 +180,111 @@ twice in an object among them, is refused, and nothing is sent.`,
 
 func (e *cli) recvCmd() *cobra.Command {
 	var wait time.Duration
+	var headers bool
 	c := command("recv [flags]", "receive, verify and ack every message: one line of JSON each",
 		`Receive, verify and ack every message: a "mail" line for each, built from the
 verified fields. It also renews the prekey once a day, so run it at least
 monthly and the box never lapses. It prints a "refused" line for each message
 it refused, keeping it in quarantine/, and a "held" line for each it held,
-keeping it in held/.`,
+keeping it in held/.
+
+With --headers, a "mail_headers" line takes each "mail" line's place: the
+fields this client checked, and the body's size, with none of the text the
+sender chose, its body and subject. Each message is kept in inbox/ as ever,
+and irongall show <id> prints its "mail" line, so a reader can decide by
+sender before it reads what the sender wrote.`,
 		nargs(0, 0), func(c *cobra.Command, _ []string) error {
 			b, err := e.box()
 			if err != nil {
 				return err
 			}
-			return e.recv(c, b, wait)
+			return e.recv(c, b, wait, headers)
 		})
 	c.Flags().DurationVar(&wait, "wait", 0, "poll until a message arrives, for at most this long")
+	c.Flags().BoolVar(&headers, "headers", false, "print each message's checked fields and its body's size, without its body or subject")
 	return c
 }
 
-func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration) error {
+func (e *cli) showCmd() *cobra.Command {
+	return command("show <id>", "print a message inbox/ keeps, as recv printed it",
+		`Print the "mail" line of a message inbox/ keeps, by the id recv printed: what
+recv prints without --headers. An id that is not 64 lowercase hex is refused
+before any file is read.`,
+		nargs(1, 1), func(c *cobra.Command, args []string) error {
+			if !client.IsID(args[0]) {
+				return wrong(c, "%s takes a message's id, 64 lowercase hex, as recv prints it", c.CommandPath())
+			}
+			b, err := e.box()
+			if err != nil {
+				return err
+			}
+			l, err := b.InboxLine(args[0])
+			if err != nil {
+				return err
+			}
+			return e.out(mail(client.Delivery{ID: args[0], Line: l}))
+		})
+}
+
+func (e *cli) quarantineListCmd() *cobra.Command {
+	return command("list", "list the mail quarantine/ keeps, one line of JSON each",
+		`List the mail quarantine/ keeps: a "quarantined" line for each message, with
+its id, the code it was refused for (the README's table has each), and the
+sender and the time the server gave, each only when it has its form.`,
+		nargs(0, 0), func(*cobra.Command, []string) error {
+			b, err := e.box()
+			if err != nil {
+				return err
+			}
+			qs, err := b.Quarantined()
+			for _, q := range qs {
+				l, jerr := json.Marshal(q)
+				if jerr == nil {
+					jerr = e.out(typed("quarantined", l))
+				}
+				if jerr != nil && err == nil {
+					err = jerr
+				}
+			}
+			return err
+		})
+}
+
+func (e *cli) quarantineRmCmd() *cobra.Command {
+	var all bool
+	c := command("rm [flags] [<id>...]", "delete refused mail from quarantine/",
+		`Delete each message named, by the id irongall quarantine list prints, or with
+--all every one, and print a "removed" line for each. Nothing is deleted when
+an id is not one, or names no message quarantine/ keeps.`,
+		cobra.ArbitraryArgs, func(c *cobra.Command, args []string) error {
+			switch {
+			case all && len(args) > 0:
+				return wrong(c, "%s takes ids or --all, not both", c.CommandPath())
+			case !all && len(args) == 0:
+				return wrong(c, "%s takes the ids to delete, or --all", c.CommandPath())
+			}
+			for _, id := range args {
+				if !client.IsID(id) {
+					return wrong(c, "%s takes messages' ids, 64 lowercase hex, as irongall quarantine list prints them", c.CommandPath())
+				}
+			}
+			b, err := e.box()
+			if err != nil {
+				return err
+			}
+			gone, err := b.RemoveQuarantined(c.Context(), args)
+			for _, id := range gone {
+				if werr := e.out(line("removed", "id", id)); werr != nil && err == nil {
+					err = werr
+				}
+			}
+			return err
+		})
+	c.Flags().BoolVar(&all, "all", false, "delete every message quarantine/ keeps")
+	return c
+}
+
+func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration, headers bool) error {
 	ctx := c.Context()
 	deadline := time.Now().Add(wait)
 	// renewErr is a renewal that was due and failed, and that no later
@@ -205,7 +300,11 @@ func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration) error {
 			// never the sender's bytes.
 			var lines [][]byte
 			for _, d := range res.Delivered {
-				lines = append(lines, mail(d))
+				if headers {
+					lines = append(lines, mailHeaders(d))
+				} else {
+					lines = append(lines, mail(d))
+				}
 			}
 			for _, id := range res.Duplicates {
 				lines = append(lines, line("duplicate", "id", id, "message", "a retry of a message already delivered: not delivered again"))
@@ -655,20 +754,51 @@ takes that one, with the address in full.`,
 }
 
 func (e *cli) adoptCmd() *cobra.Command {
-	return command("adopt <key>", "join the account an adopt key names",
-		`Join the account an adopt key names, which can lift this box's limits.`,
-		nargs(1, 1), func(c *cobra.Command, args []string) error {
+	return command("adopt", "join the account an adopt key names: the key on stdin",
+		`Join the account an adopt key names, which can lift this box's limits. The key
+is read from stdin, never from the command line, where ps, a shell's history
+and an agent's transcript would keep it: irongall account adopt < key.txt.
+What is read is held to an adopt key's form before anything is sent, so a
+wrong file goes nowhere, and no error prints the key.`,
+		nargs(0, 0), func(c *cobra.Command, _ []string) error {
+			key, err := adoptKey(e.stdin)
+			if err != nil {
+				return err
+			}
 			b, err := e.box()
 			if err != nil {
 				return err
 			}
-			acc, err := b.Adopt(c.Context(), args[0])
+			acc, err := b.Adopt(c.Context(), key)
 			if err != nil {
 				return err
 			}
 			return e.out(line("account", "account", acc))
 		})
 }
+
+// adoptKey reads an adopt key from r: one line, its line feed optional, of
+// an adopt key's form (PROTOCOL.md §6.5), "iga1_" and base64url. Anything
+// else is refused in words that never quote it, since it may be the key, or
+// a secret piped in by mistake.
+func adoptKey(r io.Reader) (string, error) {
+	b, err := io.ReadAll(io.LimitReader(r, maxAdoptKey+1))
+	if err != nil {
+		return "", err
+	}
+	key := strings.TrimSuffix(strings.TrimSuffix(string(b), "\n"), "\r")
+	if len(b) > maxAdoptKey || !adoptKeyForm.MatchString(key) {
+		return "", errors.New("stdin does not hold an adopt key, one line of \"iga1_\" and base64url: nothing is sent, and what was read is not shown")
+	}
+	return key, nil
+}
+
+// adoptKeyForm is an adopt key's form, and maxAdoptKey a bound well over the
+// longest the form allows: a key id, 16 random bytes, an account id of at
+// most 32 bytes and its length, and a 32-byte MAC, in base64url.
+var adoptKeyForm = regexp.MustCompile(`\Aiga1_[A-Za-z0-9_-]+\z`)
+
+const maxAdoptKey = 1024
 
 func (e *cli) leaveCmd() *cobra.Command {
 	return command("leave", "leave the box's account", `Leave the box's account.`,
