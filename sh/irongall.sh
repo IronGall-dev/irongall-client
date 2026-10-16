@@ -11,7 +11,7 @@
 #   bash irongall.sh init [--no-pq]                  make and register this box; prints its link, $IG_BASE/to/<address>
 #   bash irongall.sh addr                            print it again: give it to whoever should write to this box
 #   bash irongall.sh send [options] <link> [file]    one message (the body from stdin without a file); an address or an alias works too.
-#                                                    Options: --subject <text>, --reply-to <msg_id>, --supersedes <msg_id>
+#                                                    Options: --subject <text>, --reply-to <msg_id>, --supersedes <msg_id>, --json (the body is one JSON value)
 #   bash irongall.sh recv                            verified mail, a "mail" line each; refused mail goes to quarantine/, with a "refused" line
 #   bash irongall.sh alias add <name> <link>         name a peer for this box only, so send takes the name
 #   bash irongall.sh alias list                      list the names
@@ -458,21 +458,27 @@ ig_revoked(){ # <record> → keeps a revocation of another box that someone hand
 
 # recipe: send
 ig_uuid(){ local h; h=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n'); printf '%s-%s-4%s-%x%s-%s\n' "${h:0:8}" "${h:8:4}" "${h:13:3}" $(( 0x${h:16:1} & 3 | 8 )) "${h:17:3}" "${h:20:12}"; }
-ig_send(){ # [--subject <text>] [--reply-to <msg_id>] [--supersedes <msg_id>] <link, address or alias> [body file] → one logical message, its envelope built ONCE. To retry, run ig_flush, never ig_send again
+ig_send(){ # [--json] [--subject <text>] [--reply-to <msg_id>] [--supersedes <msg_id>] <link, address or alias> [body file] → one logical message, its envelope built ONCE. To retry, run ig_flush, never ig_send again. With --json the body is one JSON value, sent as that value and not as text
   ig_held || { ig_lock ig_send "$@"; return; }
-  local B f A id s= r= x= v
+  local B f A id s= r= x= j= v how=--rawfile why
   while [[ ${1-} = --* ]]; do      # --reply-to: the msg_id recv printed for the message this answers. --supersedes: an earlier message of this box's, as sent/ names it
+    [ "$1" = --json ] && { j=1; how=--slurpfile; shift; continue; }
     [ $# -ge 2 ] || { ig_refuse "$1 needs a value"; return 1; }
-    case $1 in --subject) s=$2 ;; --reply-to) r=$2 ;; --supersedes) x=$2 ;; *) ig_refuse "unknown option $1: --subject, --reply-to or --supersedes, before the link"; return 1 ;; esac; shift 2
+    case $1 in --subject) s=$2 ;; --reply-to) r=$2 ;; --supersedes) x=$2 ;; *) ig_refuse "unknown option $1: --json, --subject, --reply-to or --supersedes, before the link"; return 1 ;; esac; shift 2
   done
   for v in "$r" "$x"; do [[ -z $v || $v =~ ^[0-9a-f-]{36}$ ]] || { ig_refuse "not a msg_id: $v (the 36-character msg_id in a message's envelope, never the 64-character id the server gives it)"; return 1; }; done
   f=${2-}; A=$(cat "$IG/address") && B=$(ig_dest "${1-}") || return 1
   mkdir -p "$IG/outbox" || return 1
   [ -n "$f" ] || { f="$IG/body.txt"; cat > "$f" || return 1; }
   iconv -f UTF-8 -t UTF-8 < "$f" > /dev/null 2>&1 && printf %s "$s" | iconv -f UTF-8 -t UTF-8 > /dev/null 2>&1 || ig_refuse "the body or the subject is not UTF-8 text" || return 1
+  if [ -n "$j" ]; then      # held to what its reader holds a body to (PROTOCOL.md §0b): ig_json on it in the body's place. jq keeps the last of a name given twice, so it reads the body (--slurpfile, below) only once ig_json has; and a text such as 1,"x":2, which would make a second member in the body's place, is none jq reads
+    { printf '{"body":'; cat "$f"; printf '}'; } > "$IG/body.json" && ig_json "$IG/body.json" || ig_refuse "the body is not one JSON value its reader takes (PROTOCOL.md §0b): nothing is sent" || return 1
+  fi
   id=$(ig_uuid) || return 1
-  jq -cn --arg from "$A" --arg to "$B" --arg id "$id" --argjson t "$(ig_now)" --arg i "$(ig_b64 "$IG/identity.doc")" --rawfile body "$f" --arg s "$s" --arg r "$r" --arg x "$x" \
-    '{v:1, from:$from, to:$to, sent_at:($t|todate), msg_id:$id, identity:$i, body:$body} + ([{subject:$s}, {in_reply_to:$r}, {supersedes:$x}] | map(select(.[] != "")) | add // {})' > "$IG/outbox/$B.$id.P" || return 1      # ONE line, ending in a line feed: exactly the bytes that are signed. It carries this box's identity document, so its reader need not ask the server who wrote it
+  jq -cn --arg from "$A" --arg to "$B" --arg id "$id" --argjson t "$(ig_now)" --arg i "$(ig_b64 "$IG/identity.doc")" "$how" body "$f" --arg j "$j" --arg s "$s" --arg r "$r" --arg x "$x" \
+    '{v:1, from:$from, to:$to, sent_at:($t|todate), msg_id:$id, identity:$i, body:(if $j == "" then $body else $body[0] end)} + ([{subject:$s}, {in_reply_to:$r}, {supersedes:$x}] | map(select(.[] != "")) | add // {})' > "$IG/send.P" || return 1      # ONE line, ending in a line feed: exactly the bytes that are signed. It carries this box's identity document, so its reader need not ask the server who wrote it
+  why=$(ig_envcheck "$IG/send.P" "$A" "$B") || { rm -f "$IG/send.P"; ig_refuse "nothing is written or sent, since its reader would refuse this message: ${why#*: }"; return 1; }      # read back as its reader will, and as ig_seal does, before the outbox keeps it: a noncharacter in the body or the subject, which ig_seal would refuse at every ig_flush
+  mv "$IG/send.P" "$IG/outbox/$B.$id.P" || return 1
   ig_post "$B" "$IG/outbox/$B.$id"
 }
 ig_agehead(){ if [[ $1 = age1pq1* ]]; then echo 1627; else echo 168; fi; }      # <age recipient> → the size of an age file's header for one key of its type: its fields are fixed-size, so it never varies

@@ -123,12 +123,17 @@ to whoever should write to this box.`,
 
 func (e *cli) sendCmd() *cobra.Command {
 	var f client.Fields
+	var asJSON bool
 	c := command("send [flags] <link, address or alias> [file]", "send a message: the body from a file, or stdin",
 		`Send one message to a link, a bare 64-hex address or an alias, with the body
 from the file, or from stdin, and print the server's id for it and its msg_id.
 It waits in outbox/ until a server takes it (irongall outbox flush posts it
 again), and is then kept in sent/ with the server's receipt. Sending to a box
-allows it.`,
+allows it.
+
+The body is text, unless --json says it is one JSON value: then an object
+arrives as that object, not as a string. One its reader would refuse, a name
+twice in an object among them, is refused, and nothing is sent.`,
 		nargs(1, 2), func(c *cobra.Command, args []string) error {
 			b, err := e.box()
 			if err != nil {
@@ -147,12 +152,18 @@ allows it.`,
 			if err != nil {
 				return err
 			}
-			s, err := b.SendWith(c.Context(), to, string(body), f)
+			var s *client.Sent
+			if asJSON {
+				s, err = b.SendJSON(c.Context(), to, body, f)
+			} else {
+				s, err = b.SendWith(c.Context(), to, string(body), f)
+			}
 			if err != nil {
 				return err
 			}
 			return e.out(sent(s))
 		})
+	c.Flags().BoolVar(&asJSON, "json", false, "the body is one JSON value, sent as that value and not as text")
 	c.Flags().StringVar(&f.Subject, "subject", "", "the message's subject: any `text`")
 	c.Flags().StringVar(&f.InReplyTo, "reply-to", "", "the `msg_id` of the message this answers, as recv printed it")
 	c.Flags().StringVar(&f.Supersedes, "supersedes", "", "the `msg_id` of an earlier message of yours that this replaces, as sent/ names it")

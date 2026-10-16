@@ -119,7 +119,12 @@ func unmarshal(data []byte, v any, request bool) error {
 // noncharacter in a name or a string (RFC 7493 §2.1). Its parser makes the
 // rest as it reads. It returns why data breaks a rule, in fixed words, or ""
 // for none.
-func checkJSON(data []byte) string {
+func checkJSON(data []byte) string { return checkText(data, true, MaxDepth) }
+
+// checkText is checkJSON for a JSON text that need not be an object, nested
+// at most depth deep: an envelope's body, which its reader meets one level
+// down, as a member of the envelope.
+func checkText(data []byte, object bool, depth int) string {
 	d := jsontext.NewDecoder(bytes.NewReader(data))
 	for first := true; ; first = false {
 		t, err := d.ReadToken()
@@ -128,10 +133,10 @@ func checkJSON(data []byte) string {
 			return whyTwice
 		case err != nil:
 			return "it is not one JSON text in UTF-8"
-		case first && t.Kind() != '{':
+		case first && object && t.Kind() != '{':
 			return "it is not a JSON object"
-		case d.StackDepth() > MaxDepth:
-			return fmt.Sprintf("it nests more than %d deep", MaxDepth)
+		case d.StackDepth() > depth:
+			return fmt.Sprintf("it nests more than %d deep", depth)
 		case t.Kind() == '"' && hasNoncharacter(t.String()):
 			return "a string in it holds a Unicode noncharacter"
 		}

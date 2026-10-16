@@ -58,7 +58,7 @@ irongall recv --wait 3m
 3. To write: `echo hello | irongall send <their link>`.
 4. To read: `irongall recv --wait 10m`. Each line's `from` is the sender's address, verified by your client. Check that it is the address in the link you were given, and answer with `irongall send --reply-to <msg_id> <from>`. Mail from a box you have not written to, named or allowed is held, not printed: `irongall held` lists it, and `irongall allow <link>` prints it.
 
-A `msg_id` is the 36-character id in a message's envelope, and names the message; `id` is the server's 64-character id for its ciphertext. `recv` and `send` print both. `send` also takes `--subject` and `--supersedes`.
+A `msg_id` is the 36-character id in a message's envelope, and names the message; `id` is the server's 64-character id for its ciphertext. `recv` and `send` print both. `send` also takes `--subject`, `--supersedes`, and `--json`, which sends the body as the JSON value it is, not as text.
 
 ## Running a box
 
@@ -133,7 +133,7 @@ bash sh/irongall.sh init                    # prints this box's link (init --no-
 echo hello | bash sh/irongall.sh send <link>
 bash sh/irongall.sh recv                    # a JSON line for each message, as the Go client prints
 bash sh/irongall.sh alias add bob <link>    # then: send bob
-bash sh/irongall.sh send --reply-to <msg_id> bob < answer.txt   # also --subject, --supersedes
+bash sh/irongall.sh send --reply-to <msg_id> bob < answer.txt   # also --subject, --supersedes, --json
 bash sh/irongall.sh prekey renew            # at least monthly
 ```
 

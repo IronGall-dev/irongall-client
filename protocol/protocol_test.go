@@ -104,6 +104,78 @@ func TestEnvelopeRoundTrip(t *testing.T) {
 	}
 }
 
+// A JSON body is sent as written, compact, and refused when its reader would
+// refuse the envelope it is in: the sender and the reader hold it to one set
+// of rules (PROTOCOL.md §0b, §5 check 3).
+func TestAJSONBodyIsSentAsWrittenOrRefused(t *testing.T) {
+	from, to := Address{1}, Address{2}
+	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)
+	written := func(body string) []byte { // an envelope with this text in the body's place
+		return []byte(`{"v":1,"from":"` + from.String() + `","to":"` + to.String() + `","sent_at":"2026-10-10T12:00:00Z","msg_id":"0b1a7d2e-5c0f-4a6e-9f1d-2b3c4d5e6f70","body":` + body + `}`)
+	}
+	deep := func(n int) string { return strings.Repeat("[", n) + strings.Repeat("]", n) }
+	for in, want := range map[string]string{
+		"{\n  \"b\": [1, 2.50, 1e3],\n  \"a\": \"\\u00e9\\/ x\",\n  \"n\": null\n}\n": `{"b":[1,2.50,1e3],"a":"\u00e9\/ x","n":null}`,
+		`"text"`:       `"text"`,
+		" 42 ":         `42`,
+		"null":         `null`,
+		"true":         `true`,
+		deep(31):       deep(31),
+		`{"é☃":"<&>"}`: `{"é☃":"<&>"}`,
+	} {
+		e, err := NewJSONEnvelope(from, to, []byte(in), now)
+		if err != nil {
+			t.Errorf("%q: %v", in, err)
+			continue
+		}
+		if string(e.Body) != want {
+			t.Errorf("%q: the body is %s, want %s", in, e.Body, want)
+		}
+		line, err := e.Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := OpenEnvelope(line, from, to, now)
+		if err != nil || string(got.Body) != want {
+			t.Errorf("%q: its reader takes %v, %v", in, got, err)
+		}
+	}
+	// The line escapes U+2028 and U+2029 in a JSON body, as in a text body.
+	sep := string(rune(0x2028)) + string(rune(0x2029))
+	for _, mk := range []func() (*Envelope, error){
+		func() (*Envelope, error) { return NewJSONEnvelope(from, to, []byte(`{"a":"`+sep+`"}`), now) },
+		func() (*Envelope, error) { return NewEnvelope(from, to, sep, now) },
+	} {
+		e, err := mk()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if line, _ := e.Marshal(); !bytes.Contains(line, []byte(`"\u2028\u2029"`)) || bytes.Contains(line, []byte(sep)) {
+			t.Errorf("the line: %q", line)
+		}
+	}
+	if j, err := NewJSONEnvelope(from, to, []byte(`"text"`), now); err != nil {
+		t.Fatal(err)
+	} else if s, _ := NewEnvelope(from, to, "text", now); string(j.Body) != string(s.Body) {
+		t.Errorf("a JSON string body %s is not the text body %s", j.Body, s.Body)
+	}
+	for _, in := range []string{
+		"", " ", "1 2", `{"a":1}x`, `{"a":1,"a":2}`, `{"x":[{"a":1,"a":2}]}`, "\"\xff\"", "\ufeff{}",
+		`"\uFFFE"`, "\"\uFDD0\"", `{"\uFFFF":1}`, `"\uD800"`, "NaN", "01", "+1", ".5", "[1,]", "{'a':1}", deep(32),
+	} {
+		if _, err := NewJSONEnvelope(from, to, []byte(in), now); err == nil {
+			t.Errorf("%q: sent", in)
+		}
+		if _, err := OpenEnvelope(written(in), from, to, now); err == nil {
+			t.Errorf("%q: the sender refuses it and its reader takes it", in)
+		}
+	}
+	// Not one value: written in the body's place, it would make a second member.
+	if _, err := NewJSONEnvelope(from, to, []byte(`1,"x":2`), now); err == nil {
+		t.Error("two members in the body's place: sent")
+	}
+}
+
 func TestNewMsgID(t *testing.T) {
 	v4 := regexp.MustCompile(`\A[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z`)
 	seen := map[string]bool{}

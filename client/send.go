@@ -85,18 +85,39 @@ func (b *Box) Send(ctx context.Context, to protocol.Address, body string) (*Sent
 // after the signature, so that the server sees its size only to within a
 // block (protocol.PaddedSize).
 //
+// Nothing is written or sent when its reader would refuse the envelope for
+// its form (PROTOCOL.md §0b, §5 check 3): a noncharacter in the body or the
+// subject is refused here, before the outbox.
+//
 // It holds the box's lock from start to end ([Box.hold]), as every command
 // that writes the box does.
 func (b *Box) SendWith(ctx context.Context, to protocol.Address, body string, f Fields) (*Sent, error) {
-	return locked(ctx, b, func() (*Sent, error) { return b.sendWith(ctx, to, body, f) })
+	return locked(ctx, b, func() (*Sent, error) {
+		env, err := protocol.NewEnvelope(b.id.Address(), to, body, b.now())
+		if err != nil {
+			return nil, err
+		}
+		return b.sendWith(ctx, to, env, f)
+	})
 }
 
-func (b *Box) sendWith(ctx context.Context, to protocol.Address, body string, f Fields) (*Sent, error) {
+// SendJSON is [Box.SendWith] with a body that is a JSON value, given as one
+// JSON text, where SendWith's is text: an object, say, arrives as that object
+// and not as a string holding it. It is refused whole, with nothing written,
+// when its reader would refuse it (protocol.NewJSONEnvelope has the rules),
+// and sent compact, as written.
+func (b *Box) SendJSON(ctx context.Context, to protocol.Address, body []byte, f Fields) (*Sent, error) {
+	return locked(ctx, b, func() (*Sent, error) {
+		env, err := protocol.NewJSONEnvelope(b.id.Address(), to, body, b.now())
+		if err != nil {
+			return nil, err
+		}
+		return b.sendWith(ctx, to, env, f)
+	})
+}
+
+func (b *Box) sendWith(ctx context.Context, to protocol.Address, env *protocol.Envelope, f Fields) (*Sent, error) {
 	if err := f.check(); err != nil {
-		return nil, err
-	}
-	env, err := protocol.NewEnvelope(b.id.Address(), to, body, b.now())
-	if err != nil {
 		return nil, err
 	}
 	env.Subject, env.InReplyTo, env.Supersedes = f.Subject, f.InReplyTo, f.Supersedes
@@ -105,6 +126,14 @@ func (b *Box) sendWith(ctx context.Context, to protocol.Address, body string, f 
 	env.Identity = b.id.Document()
 	p, err := env.Line()
 	if err != nil {
+		return nil, err
+	}
+	// Read back as its reader will read it, and as seal does, before anything
+	// is kept: an envelope seal refuses would wait in the outbox for good.
+	var bad *protocol.EnvelopeError
+	if _, err := protocol.OpenEnvelopeRecord(p, b.id.Address(), to); errors.As(err, &bad) {
+		return nil, refuse("nothing is written or sent, since its reader would refuse this message: %s", bad.Why)
+	} else if err != nil {
 		return nil, err
 	}
 	if _, err := b.addTo("allowed", to); err != nil {

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/json/jsontext"
 	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
@@ -104,11 +105,35 @@ func NewEnvelope(from, to Address, body string, now time.Time) (*Envelope, error
 	if err != nil {
 		return nil, err
 	}
+	return newEnvelope(from, to, b, now)
+}
+
+// NewJSONEnvelope returns an envelope whose body is a JSON value, given as a
+// JSON text: an object, an array, a number, true, false, null, or a string,
+// which is the body NewEnvelope makes of that string's text. The body is held
+// to the rules its reader holds it to inside the envelope (PROTOCOL.md §0b,
+// §5 check 3), and refused whole when it breaks one, never repaired: one JSON
+// value and nothing after it, in UTF-8, with no name twice in any object,
+// nested at most MaxDepth − 1 deep, and no noncharacter. It is sent compact,
+// its members in the order given and its strings and numbers as written, but
+// that the line escapes U+2028 and U+2029, as in every string it carries.
+func NewJSONEnvelope(from, to Address, body []byte, now time.Time) (*Envelope, error) {
+	if why := checkText(body, false, MaxDepth-1); why != "" {
+		return nil, fmt.Errorf("the body is not a JSON value its reader takes (PROTOCOL.md §0b): %s", why)
+	}
+	v := jsontext.Value(bytes.Clone(body))
+	if err := v.Compact(); err != nil {
+		return nil, err
+	}
+	return newEnvelope(from, to, v, now)
+}
+
+func newEnvelope(from, to Address, body json.RawMessage, now time.Time) (*Envelope, error) {
 	id, err := NewMsgID()
 	if err != nil {
 		return nil, err
 	}
-	return &Envelope{From: from, To: to, SentAt: now.UTC().Truncate(time.Second), MsgID: id, Body: b}, nil
+	return &Envelope{From: from, To: to, SentAt: now.UTC().Truncate(time.Second), MsgID: id, Body: body}, nil
 }
 
 // Marshal returns the envelope as compact UTF-8 JSON with no HTML escaping

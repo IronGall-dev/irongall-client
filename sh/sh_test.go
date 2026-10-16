@@ -1834,6 +1834,139 @@ func numberOf(t *testing.T, b *client.Box) uint64 {
 // landAll gives a Go box the policy that lands every sender's mail in
 // inbox/: these tests are of what the two clients send each other, and where
 // mail from a sender not allowed lands is the Go client's own (client/).
+// A JSON body goes both ways between the two clients as the value it is, and
+// both refuse a body its reader would refuse, with nothing in either outbox:
+// one verdict for each body (PROTOCOL.md §0b). A noncharacter in a text body
+// is refused before the outbox by both, where seal and ig_seal once refused it
+// only at the post, and again at every flush.
+func TestAJSONBodyInBothClients(t *testing.T) {
+	need(t, append(scriptTools, "curl")...)
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	kt, mode := protocol.Classic, "--no-pq"
+	if pq() {
+		kt, mode = protocol.PostQuantum, ""
+	} else {
+		t.Log(noPQ)
+	}
+	dir := t.TempDir()
+	sh := func(commands string) (string, error) {
+		return bash(t, []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}, commands)
+	}
+	if _, err := sh("ig_init " + mode); err != nil {
+		t.Fatal(err)
+	}
+	s, err := protocol.ParseAddress(strings.TrimSpace(string(mustRead(t, filepath.Join(dir, "address")))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, kt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	landAll(t, g)
+	file := func(body string) string {
+		t.Helper()
+		f := filepath.Join(t.TempDir(), "body")
+		if err := os.WriteFile(f, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return f
+	}
+	value := func(b []byte) any {
+		t.Helper()
+		var v any
+		if err := json.Unmarshal(b, &v); err != nil {
+			t.Fatalf("not JSON: %s", b)
+		}
+		return v
+	}
+	scriptGot := func() []any { // the bodies of the mail lines ig_recv prints
+		t.Helper()
+		out, err := sh("ig_recv")
+		if err != nil {
+			t.Fatalf("ig_recv: %v", err)
+		}
+		var bodies []any
+		for l := range strings.Lines(out) {
+			var line struct {
+				Type string
+				Body json.RawMessage
+			}
+			if err := json.Unmarshal([]byte(l), &line); err != nil || line.Type != "mail" {
+				t.Fatalf("ig_recv printed %q", out)
+			}
+			bodies = append(bodies, value(line.Body))
+		}
+		return bodies
+	}
+
+	// Both ways. The script writes the value through jq, so it arrives as
+	// that value, and the Go client as written.
+	in := "{\"action\": \"approve\",\n \"ids\": [3, 1.50, 2e3], \"note\": \"<&>\", \"none\": null}\n"
+	if _, err := sh("ig_send --json " + g.Link() + " " + file(in)); err != nil {
+		t.Fatal(err)
+	}
+	res, err := g.Receive(ctx)
+	if err != nil || len(res.Delivered) != 1 || !reflect.DeepEqual(value(res.Delivered[0].Envelope.Body), value([]byte(in))) {
+		t.Fatalf("the Go client received %+v, %v", res, err)
+	}
+	if _, err := g.SendJSON(ctx, s, []byte(in), client.Fields{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := scriptGot(); len(got) != 1 || !reflect.DeepEqual(got[0], value([]byte(in))) {
+		t.Fatalf("the script received %v", got)
+	}
+
+	// One verdict for each body, and only the deepest that both take is sent.
+	nonchar := string(rune(0xFFFE))
+	for name, body := range map[string]string{
+		"a name twice":              `{"action":"approve","action":"reject"}`,
+		"a name twice, deeper":      `[{"a":{"x":1,"x":2}}]`,
+		"two values":                "{} {}",
+		"a second member":           `1,"x":2`,
+		"bytes after it":            "{}x",
+		"not UTF-8":                 "\"\xff\"",
+		"a byte-order mark":         "\xef\xbb\xbf{}",
+		"a noncharacter":            `"` + nonchar + `"`,
+		"NaN":                       "NaN",
+		"a leading zero":            "01",
+		"a plus sign":               "+1",
+		"33 deep with its envelope": strings.Repeat("[", 32) + strings.Repeat("]", 32),
+		"text":                      "approve",
+		"nothing":                   "",
+	} {
+		_, gerr := g.SendJSON(ctx, s, []byte(body), client.Fields{})
+		_, serr := sh("ig_send --json " + g.Link() + " " + file(body))
+		if gerr == nil || serr == nil {
+			t.Errorf("%s: the Go client %v; the script %v", name, gerr, serr)
+		}
+	}
+	deep := strings.Repeat("[", 31) + strings.Repeat("]", 31)
+	if _, err := g.SendJSON(ctx, s, []byte(deep), client.Fields{}); err != nil {
+		t.Fatalf("31 deep: %v", err)
+	}
+	if _, err := sh("ig_send --json " + g.Link() + " " + file(deep)); err != nil {
+		t.Fatalf("31 deep: %v", err)
+	}
+	_, gerr := g.Send(ctx, s, "a"+nonchar)
+	_, serr := sh("ig_send " + g.Link() + " " + file("a"+nonchar))
+	if gerr == nil || serr == nil || !strings.Contains(serr.Error(), "nothing is written or sent") {
+		t.Errorf("a noncharacter in a text body: the Go client %v; the script %v", gerr, serr)
+	}
+	waiting, _ := filepath.Glob(filepath.Join(dir, "outbox", "*"))
+	gWaiting, _ := filepath.Glob(filepath.Join(g.Dir(), "outbox", "*"))
+	if len(waiting)+len(gWaiting) != 0 {
+		t.Fatalf("a refused body left mail: %v %v", waiting, gWaiting)
+	}
+	if res, err := g.Receive(ctx); err != nil || len(res.Delivered) != 1 || len(res.Refused) != 0 {
+		t.Fatalf("the Go client received %+v, %v", res, err)
+	}
+	if got := scriptGot(); len(got) != 1 {
+		t.Fatalf("the script received %v", got)
+	}
+}
+
 func landAll(t *testing.T, b *client.Box) {
 	t.Helper()
 	if err := b.SetPolicy(client.Policy{Unknown: client.LandInbox, Server: client.AdmitAll}); err != nil {

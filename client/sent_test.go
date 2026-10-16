@@ -98,6 +98,68 @@ func TestSendRefusesFieldsThatAreNotMsgIDs(t *testing.T) {
 	}
 }
 
+// A JSON body arrives as the value sent, compact and as written, in what the
+// recipient delivers and in the line it prints, and so does the sender's sent/
+// record.
+func TestSendJSON(t *testing.T) {
+	e := newEnv(t)
+	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	in := "{\"action\": \"approve\",\n \"ids\": [3, 1.50, 2e3], \"note\": \"<&>\", \"none\": null}\n"
+	want := `{"action":"approve","ids":[3,1.50,2e3],"note":"<&>","none":null}`
+	s, err := a.SendJSON(context.Background(), b.Address(), []byte(in), client.Fields{Subject: "the order"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := receive(t, b)
+	if len(res.Delivered) != 1 || string(res.Delivered[0].Envelope.Body) != want || res.Delivered[0].Envelope.Subject != "the order" {
+		t.Fatalf("delivered %+v", res.Delivered)
+	}
+	if !strings.Contains(string(res.Delivered[0].Line), `"body":`+want+`,`) {
+		t.Errorf("the line: %s", res.Delivered[0].Line)
+	}
+	if rec := sentRecords(t, a)[b.Address().String()+"."+s.MsgID+".json"]; !strings.Contains(string(rec), `"body":`+want+`,`) {
+		t.Errorf("sent/: %s", rec)
+	}
+}
+
+// What its reader would refuse for its form is refused before anything is
+// written or posted, and the recipient is not allowed for it: a JSON body
+// that breaks a rule of PROTOCOL.md §0b, and a noncharacter in a text body or
+// a subject, which seal once refused only after the outbox kept it.
+func TestNothingIsWrittenForAMessageItsReaderRefuses(t *testing.T) {
+	e := newEnv(t)
+	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	op := watch(e, nil)
+	ctx := context.Background()
+	nonchar := string(rune(0xFFFE))
+	for name, in := range map[string]string{
+		"a name twice":              `{"action":"approve","action":"reject"}`,
+		"two values":                `{} {}`,
+		"bytes after it":            `{}x`,
+		"not UTF-8":                 "\"\xff\"",
+		"a noncharacter":            `"` + nonchar + `"`,
+		"33 deep with its envelope": strings.Repeat("[", 32) + strings.Repeat("]", 32),
+		"no JSON at all":            "approve",
+	} {
+		if _, err := a.SendJSON(ctx, b.Address(), []byte(in), client.Fields{}); err == nil {
+			t.Errorf("%s: sent", name)
+		}
+	}
+	for name, err := range map[string]error{
+		"a text body": func() error { _, err := a.Send(ctx, b.Address(), "a"+nonchar); return err }(),
+		"a subject":   func() error { _, err := a.SendWith(ctx, b.Address(), "a", client.Fields{Subject: nonchar}); return err }(),
+	} {
+		if err == nil || !strings.Contains(err.Error(), "nothing is written or sent") {
+			t.Errorf("a noncharacter in %s: %v", name, err)
+		}
+	}
+	made, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "*"))
+	allowed, _ := os.ReadFile(filepath.Join(a.Dir(), "allowed")) //nolint:gosec // a test's own directory
+	if len(made) != 0 || op.count(http.MethodPost, postTo(b)) != 0 || strings.Contains(string(allowed), b.Address().String()) {
+		t.Fatalf("a refused message made mail: outbox %v, %d posts, allowed %q", made, op.count(http.MethodPost, postTo(b)), allowed)
+	}
+}
+
 // sent/ keeps each message the server took: one line, the line the recipient
 // delivers, with the server's receipt as its last member. Nothing is left in
 // the outbox.

@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -715,6 +716,68 @@ func TestSendFlags(t *testing.T) {
 	}
 	if err := json.Unmarshal(out.Bytes(), &line); err != nil || line.Body != "the answer" || line.Subject != "re: yours" || line.InReplyTo != first || line.Supersedes != old {
 		t.Fatalf("recv printed %q: %v", out.String(), err)
+	}
+}
+
+// send --json sends the body as the JSON value it is, from stdin or a file,
+// and recv prints it as that value; without --json the same text is a string.
+// A body its reader would refuse is refused, and nothing is made.
+func TestSendJSONFlag(t *testing.T) {
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	opt := client.Options{Base: srv.URL}
+	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allows(t, b, a)
+	t.Setenv("IRONGALL_BASE", srv.URL)
+	t.Setenv("IRONGALL_HOME", a.Dir())
+	file := filepath.Join(t.TempDir(), "order.json")
+	if err := os.WriteFile(file, []byte("[1, {\"b\": true}]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []struct {
+		args  []string
+		stdin string
+	}{
+		{[]string{"--json", b.Link()}, `{"action": "approve", "id": 7}`},
+		{[]string{b.Link(), file, "--json"}, ""},
+		{[]string{b.Link()}, `{"action": "approve", "id": 7}`},
+	} {
+		if err := do(ctx, "send", s.args, strings.NewReader(s.stdin), io.Discard, io.Discard); err != nil {
+			t.Fatalf("send %v: %v", s.args, err)
+		}
+	}
+	for _, in := range []string{`{"action":"approve","action":"reject"}`, "approve", ""} {
+		if err := do(ctx, "send", []string{"--json", b.Link()}, strings.NewReader(in), io.Discard, io.Discard); err == nil {
+			t.Errorf("send --json %q was taken", in)
+		}
+	}
+	if made, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "*")); len(made) != 0 {
+		t.Fatalf("a refused send left mail in the outbox: %v", made)
+	}
+
+	t.Setenv("IRONGALL_HOME", b.Dir())
+	var out bytes.Buffer
+	if err := do(ctx, "recv", nil, strings.NewReader(""), &out, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	var bodies []string
+	for _, l := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+		var line struct{ Body json.RawMessage }
+		if err := json.Unmarshal([]byte(l), &line); err != nil {
+			t.Fatal(err)
+		}
+		bodies = append(bodies, string(line.Body))
+	}
+	slices.Sort(bodies)
+	if want := []string{`"{\"action\": \"approve\", \"id\": 7}"`, `[1,{"b":true}]`, `{"action":"approve","id":7}`}; !slices.Equal(bodies, want) {
+		t.Fatalf("recv printed the bodies %q, want %q", bodies, want)
 	}
 }
 
