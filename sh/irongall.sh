@@ -19,7 +19,7 @@
 #   bash irongall.sh revocation publish <address> [record]
 #                                                    revoke this box's address FOR GOOD (the address in full is the confirmation), or publish a record made earlier
 #   bash irongall.sh revocation keep <record>        keep a revocation of another box that someone handed you: nothing goes to it or comes from it again
-#   bash irongall.sh help [<command>]                this, or a command's lines; -h or --help after a command does the same, and runs nothing
+#   bash irongall.sh help [<command>]                this, or a command's lines; --help after a command does the same, and runs nothing
 #   The README has the rest: https://github.com/IronGall-dev/irongall-client#readme
 #
 # Or source it at the top of every shell call and call the ig_* functions. Agent tools run each command in a fresh
@@ -686,7 +686,7 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     'revocation keep') ig_cmd=ig_revoked ig_n=2 ;;
   esac
   ig_help=0
-  for a; do case $a in -h | --help) ig_help=1 ;; esac; done      # anywhere after a command: its help, and nothing runs
+  for a; do case $a in --help) ig_help=1 ;; -h) ig_help=1; echo "Flag shorthand -h has been deprecated, use --help" >&2 ;; esac; done      # anywhere after a command: its help, and nothing runs. -h works too, as in the Go client, and means nothing else
   if [ "${1-}" = help ] || { [ -z "$ig_cmd" ] && [ "${2-}" = help ]; }; then
     ig_help=1; [ "$1" = help ] && shift || set -- "$1"
     [ $# -eq 0 ] || case "${1-} ${2-}" in 'alias '?* | 'outbox '?* | 'prekey '?* | 'revocation '?*) ig_n=2 ;; ?*) ig_n=1 ;; esac

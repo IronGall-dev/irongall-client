@@ -23,6 +23,7 @@ import (
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
 	"github.com/IronGall-dev/irongall-client/protocol"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -551,17 +552,23 @@ func TestAliasCommand(t *testing.T) {
 }
 
 // Flags are written with two dashes, in every help and in a bad flag's
-// error; one dash is a shorthand, and -h, for --help, is the only one. A bad
-// flag is a usage error: nothing runs, and the error is main's to print.
+// error; one dash is a shorthand. No flag has one but --help, whose -h is in
+// no help: -h means nothing else, in any command. A bad flag is a usage
+// error: nothing runs, and the error is main's to print.
 func TestFlagsAreWrittenWithTwoDashes(t *testing.T) {
 	ctx := context.Background()
 	t.Setenv("IRONGALL_HOME", t.TempDir())
 	oneDash := regexp.MustCompile(`(^|[\s\[(])-[a-z][a-z-]`)
 	var walk func(c *cobra.Command)
 	walk = func(c *cobra.Command) {
-		if m := oneDash.FindString(helpText(c)); m != "" {
+		if m := oneDash.FindString(helpText(c)); m != "" || strings.Contains(helpText(c), "-h,") || strings.Contains(helpText(c), " -h ") {
 			t.Errorf("the help of %s writes a flag with one dash (%q):\n%s", c.CommandPath(), m, helpText(c))
 		}
+		c.Flags().VisitAll(func(f *pflag.Flag) {
+			if f.Shorthand != "" && (f.Name != "help" || f.ShorthandDeprecated == "") {
+				t.Errorf("%s --%s has the shorthand -%s, which is in its help", c.CommandPath(), f.Name, f.Shorthand)
+			}
+		})
 		for _, s := range c.Commands() {
 			walk(s)
 		}
@@ -596,17 +603,22 @@ func TestFlagsAreWrittenWithTwoDashes(t *testing.T) {
 }
 
 // Help, in every form a git-like tool gives it: irongall help, help
-// <command>, <command> --help and -h, and <group> help. Asked for, it is on
-// stdout and the command succeeds. A bare group, and a command that is not
-// one, are usage errors that carry the group's help, for stderr.
+// <command>, <command> --help, and <group> help. Asked for, it is on stdout
+// and the command succeeds. -h works too, as in docker, and says on stderr
+// that --help is the flag. A bare group, and a command that is not one, are
+// usage errors that carry the group's help, for stderr.
 func TestHelp(t *testing.T) {
 	ctx := context.Background()
 	t.Setenv("IRONGALL_HOME", t.TempDir())
 	ask := func(line string) (string, error) {
 		var out, errs bytes.Buffer
 		err := do(ctx, line, nil, strings.NewReader(""), &out, &errs)
-		if errs.Len() != 0 {
-			t.Errorf("irongall %s wrote to stderr: %q", line, errs.String())
+		want := ""
+		if strings.Contains(" "+line+" ", " -h ") {
+			want = "Flag shorthand -h has been deprecated, use --help\n"
+		}
+		if errs.String() != want {
+			t.Errorf("irongall %s wrote to stderr %q, want %q", line, errs.String(), want)
 		}
 		return out.String(), err
 	}

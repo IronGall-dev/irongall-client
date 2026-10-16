@@ -18,40 +18,40 @@ import (
 // tree is every command: the everyday ones at the top level, and a group for
 // each thing that has more than one thing done to it.
 func (e *cli) tree() *cobra.Command {
-	root := group("irongall", "", "",
+	root := e.group("irongall", "", "",
 		e.initCmd(), e.addrCmd(), e.sendCmd(), e.recvCmd(), e.statusCmd(), e.heldCmd(),
-		group("peer", "who may write to this box: allow, block, list",
+		e.group("peer", "who may write to this box: allow, block, list",
 			`Mail from a sender this box has not allowed is held in held/ (irongall held
 lists it), and mail from a sender it blocked is dropped. Sending to a box, or
 naming it with irongall alias add, allows it too. The box's policy file says
 where mail from a sender not allowed lands, and whom its server takes mail
 from: irongall help has it.`,
 			e.allowCmd(), e.blockCmd(), e.peerListCmd()),
-		group("alias", "names for peers, which send takes in place of a link: add, rm, list",
+		e.group("alias", "names for peers, which send takes in place of a link: add, rm, list",
 			`An alias is this box's own name for a peer, kept in its aliases file as
 "<name> <address>" lines, which either client and a person may write. A name
 allows its peer, as irongall peer allow does, and is never moved: to change
 one, remove it and add it again.`,
 			e.aliasAddCmd(), e.aliasRmCmd(), e.aliasListCmd()),
-		group("outbox", "mail not yet delivered: flush",
+		e.group("outbox", "mail not yet delivered: flush",
 			`A message is kept in outbox/ until a server takes it. One that can never be
 delivered moves to outbox/failed/: delete it there to drop it.`,
 			e.flushCmd()),
-		group("prekey", "the key senders encrypt to: renew",
+		e.group("prekey", "the key senders encrypt to: renew",
 			`A prekey is valid for 33 days, under a working key and a certificate made
 with it. irongall recv renews it once a day, so run recv at least monthly and
 the box never lapses.`,
 			e.renewCmd()),
-		group("cert", "this box's certificates: revoke-earlier, publish-revoked",
+		e.group("cert", "this box's certificates: revoke-earlier, publish-revoked",
 			`This box's identity certifies a working key with each prekey, and the working
 key signs what the box says. A box whose working key may have been taken
 revokes every certificate before a new one: the address goes on.`,
 			e.revokeEarlierCmd(), e.publishRevokedCmd()),
-		group("account", "the account that can lift this box's limits: adopt, leave",
+		e.group("account", "the account that can lift this box's limits: adopt, leave",
 			`An account can lift the limits of the boxes in it. An adopt key, from the
 account's holder, puts a box in it.`,
 			e.adoptCmd(), e.leaveCmd()),
-		group("revocation", "ending an address for good: make, publish, keep, ask",
+		e.group("revocation", "ending an address for good: make, publish, keep, ask",
 			`A revocation ends an address for good, and only its identity's own signature
 makes one. A box keeps every revocation that verifies, of an address and of an
 address's certificates, and checks what it sends and receives against them.`,
@@ -61,11 +61,11 @@ address's certificates, and checks what it sends and receives against them.`,
 	root.SilenceUsage = true
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.SetHelpFunc(func(c *cobra.Command, _ []string) {
-		_, _ = io.WriteString(c.OutOrStdout(), helpText(c))
+		_, _ = io.WriteString(e.stdout, helpText(c))
 	})
 	root.SetHelpCommand(command("help [<command>]", "print this help, or a command's",
-		`irongall help <command>, irongall <command> --help and irongall <command> -h
-print a command's help, and irongall <group> help a group's.`,
+		`irongall help <command> and irongall <command> --help print a command's
+help, and irongall <group> help a group's.`,
 		cobra.ArbitraryArgs, func(_ *cobra.Command, args []string) error {
 			t, rest, err := root.Find(args)
 			switch {

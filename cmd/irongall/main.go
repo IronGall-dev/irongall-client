@@ -40,9 +40,9 @@ With each prekey a box declares which identity key types its client verifies,
 and so whose mail it takes: every type this client verifies, unless
 $IRONGALL_SENDER_KEY_TYPES says otherwise ("any": do not say).
 
-irongall help <command>, irongall <command> --help and irongall <command> -h
-print a command's help, and irongall <group> help a group's. --help anywhere
-after a command prints its help and runs nothing.
+irongall help <command> and irongall <command> --help print a command's help,
+and irongall <group> help a group's. --help anywhere after a command prints
+its help and runs nothing.
 
 Exit status: 0, done. 1, the command failed. 2, the command line was wrong
 and nothing ran: what was wrong, and the help, are on stderr. 3, the command
@@ -151,7 +151,9 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	// Cobra reads the process's own arguments when it is given none.
 	root.SetArgs(append([]string{}, args...))
 	root.SetIn(stdin)
-	root.SetOut(stdout)
+	// What cobra prints itself is a warning, such as the pointer from -h to
+	// --help: stderr. Help and every command write to stdout themselves.
+	root.SetOut(stderr)
 	root.SetErr(stderr)
 	return root.ExecuteContext(ctx)
 }
@@ -160,7 +162,10 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 func init() { cobra.EnableCommandSorting = false }
 
 // command makes a command that prints its own help and takes its flags as
-// they are written, two dashes for a name, anywhere after the command.
+// they are written, two dashes for a name, anywhere after the command. The
+// help flag is --help. -h works too, as in docker, for whoever looks for it:
+// it is in no help, and it says that --help is the flag. -h means nothing
+// else, in any command.
 func command(use, short, long string, args cobra.PositionalArgs, run func(*cobra.Command, []string) error) *cobra.Command {
 	c := &cobra.Command{
 		Use:                   use,
@@ -171,6 +176,7 @@ func command(use, short, long string, args cobra.PositionalArgs, run func(*cobra
 		DisableFlagsInUseLine: true,
 	}
 	c.Flags().BoolP("help", "h", false, "print this help, and run nothing")
+	_ = c.Flags().MarkShorthandDeprecated("help", "use --help")
 	return c
 }
 
@@ -178,8 +184,8 @@ func command(use, short, long string, args cobra.PositionalArgs, run func(*cobra
 // that names none of them, it is a usage error; "<group> help" is its help.
 // Its flags are its commands', so an unknown one is left for the unknown
 // command to be named.
-func group(name, short, long string, cmds ...*cobra.Command) *cobra.Command {
-	g := command(name, short, long, cobra.ArbitraryArgs, groupRun)
+func (e *cli) group(name, short, long string, cmds ...*cobra.Command) *cobra.Command {
+	g := command(name, short, long, cobra.ArbitraryArgs, e.groupRun)
 	g.FParseErrWhitelist.UnknownFlags = true
 	g.SuggestionsMinimumDistance = 2
 	g.AddCommand(cmds...)
@@ -188,7 +194,7 @@ func group(name, short, long string, cmds ...*cobra.Command) *cobra.Command {
 
 // groupRun is a group's, or the top level's, run: it ran with no command of
 // its own, or with one it does not have.
-func groupRun(c *cobra.Command, args []string) error {
+func (e *cli) groupRun(c *cobra.Command, args []string) error {
 	switch {
 	case len(args) == 0:
 		return &usageError{help: helpText(c)}
@@ -200,7 +206,7 @@ func groupRun(c *cobra.Command, args []string) error {
 		case len(rest) > 0:
 			return unknown(t, rest)
 		}
-		_, err = io.WriteString(c.OutOrStdout(), helpText(t))
+		_, err = io.WriteString(e.stdout, helpText(t))
 		return err
 	}
 	return unknown(c, args)
