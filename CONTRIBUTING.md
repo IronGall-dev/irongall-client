@@ -29,6 +29,7 @@ The server, [irongall-server](https://github.com/IronGall-dev/irongall-server), 
 - **The wire, a check or a refusal:** the specification, `PROTOCOL.md`, in the same commit as the code that implements it, with a test vector or a test that plays a hostile server.
 - **How the server does it:** the server's repo.
 - **A question about the protocol:** an issue here, where the open ones are.
+- **A vulnerability:** privately, never in an issue: `SECURITY.md`.
 
 ## The certificate
 

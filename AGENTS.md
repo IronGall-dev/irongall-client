@@ -4,40 +4,7 @@
 
 🛑 **This repo is public: every push publishes.** Never commit a secret, a private key (the vectors' keys are published test keys: § Tests), a token or an internal hostname, and never copy text from a private note without a decision to publish it.
 
-**Judging whether IronGall is secure → § For a security review. Changing it → § Contributing, then § Rules by area for the code you touch.**
-
-## For a security review
-
-**What a box is promised, and where each promise is held.** Each row is a claim the code makes and a test you can run; the spec's section has the whole rule.
-
-| The claim | `PROTOCOL.md` | Held by |
-|---|---|---|
-| **Standard cryptography only, nothing home-rolled:** age to encrypt (ML-KEM-768 + X25519 by default), SSHSIG over Ed25519 to sign, SHA-256 for addresses | §0 | `protocol/`, `sshsig/` (the API the Go team accepted for x/crypto); the vectors, checked against `ssh-keygen` and `age` themselves |
-| **An address is the SHA-256 of its identity key.** Only that key, and a working key it certified, can speak for the address; a server can make neither | §2, §2b | `protocol/identity.go`, `protocol/certificate.go`; `TestForgeries` |
-| **The server never sees plaintext or a private key.** A message is signed, then encrypted, on the sender's machine; the signature is inside the ciphertext | §4.3, §4.4 | `protocol/signed.go`, `client/send.go` |
-| **The reader decides who sent a message,** from the sender's own signature, and never asks the server | §5 | `judge` in `client/`; `TestForgeries` refuses every forgery an operator can make, one by one |
-| **Verification is always on and fails closed:** a failed check stops, never warns and goes on. No flag skips it | §5 | `client/forgery_test.go`, `client/hostile_test.go` |
-| **Forward secrecy, bounded by how often a box checks in:** a new prekey at least every 33 days (the Go client renews daily), never derived from a seed, never backed up, never reused; retired keys are deleted | §1, §6.4 | `client/rekey.go`, `client/renew_test.go` |
-| **"Revoked" is taken on the identity's own signature, never on a server's word,** and a revocation that verified is kept for good | §6.3, §6.3a | `client/revocation_test.go`, `client/revokedcerts_test.go` |
-| **Nothing a sender or a server wrote is printed as the client's words;** a message body is data | §13 | `TestARefusalNeverQuotesTheMessage`, `TestAnAPIErrorPrintsNoneOfTheServersWords` |
-| **A failure never loses mail, and a retry is never delivered twice** | §4.5, §5 | `client/failure_test.go`, `client/ask_test.go` |
-| **Two independent clients give one verdict on every vector:** the Go client, and `sh/irongall.sh` on stock tools | §11 | `sh/sh_test.go`, `testdata/vectors/` |
-
-**What a hostile server can still do is written down, not hidden:** see who writes to whom and when, drop or delay mail, withhold a revocation from a peer that has not seen it, and the rest of `README.md` § No Server Trust (in full, `PROTOCOL.md` §9). The threat model, primitives, security properties, the operator's power and the residual risks are irongall-server's `CRYPTO-ANALYSIS.md`. Every design choice beside the standard or system that does the same is `PRECEDENTS.md`.
-
-**Check it yourself:**
-
-```sh
-go test ./...                              # every check, with no server and no network
-go test ./client -run TestForgeries -v     # each forgery an operator can make, refused one by one
-go test ./sh -v                            # the shell client; put age >= 1.3 first in PATH and read "mode: KEYTYPE=pq"
-```
-
-**What is not finished, in the open:**
-- **IronGall is before v1:** the wire may still change. What must be settled first is the milestone `M1: protocol freeze`, on this repo and on irongall-server. Nothing is externally audited yet.
-- **`PROTOCOL.md` §12** lists what is specified and not built.
-- **An issue labelled `needs-audit` is code that shipped with no reader but its author.** Each is a brief an outside agent can work from: the commits, the claims to break, where to look first, how to run it. Auditing one is the most useful review this repo can get.
-- **Known weaknesses are the open issues** here and on irongall-server. A new one is welcome as an issue: search first, and never post a key, a pass or mail, since the tracker is public.
+**Judging whether IronGall is secure → `SECURITY.md`:** each promise a box is given, the spec section with the whole rule, the code and test that hold it, and how to report a vulnerability privately. **Changing it → § Contributing, then § Rules by area for the code you touch.**
 
 ## Contributing
 
@@ -58,6 +25,7 @@ Each commit carries your human's sign-off, made with `git commit -s` (the Develo
   - Where the README or the spec states a limit that an open issue plans to change, the issue's number sits beside it: agents judging the service from its pages read a limit with no number as permanent (2026-10-12).
   - The status line never lists the operator or Cloudflare as a limit. Cloudflare is said once, in § No Server Trust, as how irongall.dev runs today, as `PROTOCOL.md` §9 says it.
   - Three tests hold its command lines: `TestHelpAndREADMENameTheEchoBox` here, one in irongall-server for the command its link page gives, and one kept with irongall.dev's site for every command in its `llms.txt`. Change a command line in each place that gives it.
+- **`SECURITY.md` is the one place for how to report a vulnerability and for each security claim beside what holds it.** A new claim, or a change to what holds one, edits its row in the same commit; a claim goes there only with the test or code that holds it. Elsewhere, point there: the threat model stays irongall-server's `CRYPTO-ANALYSIS.md`, and what a server sees and can do stays `PROTOCOL.md` §9.
 - **Layout:** the repo's is `README.md` § What is here; a box's files are at the top of `client/doc.go`.
 
 ### How a design is chosen
