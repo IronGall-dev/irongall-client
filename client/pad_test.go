@@ -3,7 +3,6 @@ package client_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 	"os"
@@ -23,10 +22,7 @@ func posted(e *env, b protocol.Address) *[][]byte {
 		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/v1/"+b.String()+"/messages") {
 			body, _ := io.ReadAll(r.Body)
 			r.Body = io.NopCloser(bytes.NewReader(body))
-			var req protocol.SendRequest
-			if json.Unmarshal(body, &req) == nil {
-				got = append(got, req.Ciphertext)
-			}
+			got = append(got, body) // the body is the ciphertext
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -126,10 +122,7 @@ func TestAReencryptionToTheOtherKeyTypeIsPaddedAgain(t *testing.T) {
 			case r.Method == http.MethodPost && r.URL.Path == "/v1/"+b.Address().String()+"/messages":
 				body, _ := io.ReadAll(r.Body)
 				r.Body = io.NopCloser(bytes.NewReader(body))
-				var req protocol.SendRequest
-				if json.Unmarshal(body, &req) == nil {
-					sizes = append(sizes, len(req.Ciphertext))
-				}
+				sizes = append(sizes, len(body)) // the body is the ciphertext
 				if sealed == nil {
 					outbox, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "*.P"))
 					if len(outbox) == 1 {

@@ -291,7 +291,7 @@ func TestEchoDropsAnUndeliverableReply(t *testing.T) {
 	}
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		if r.Method == http.MethodPost && r.URL.Path == "/v1/"+a.Address().String()+"/messages" {
-			fakeserver.WriteJSON(w, http.StatusGone, protocol.Problem{Code: protocol.CodeRevoked})
+			fakeserver.WriteJSON(w, http.StatusGone, protocol.Problem{Type: protocol.CodeRevoked.TypeURI(), Code: protocol.CodeRevoked})
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -392,7 +392,7 @@ func TestEchoPacesItself(t *testing.T) {
 	}
 	polls(func(w http.ResponseWriter) {
 		w.Header().Set("Retry-After", "17")
-		fakeserver.WriteJSON(w, http.StatusTooManyRequests, protocol.Problem{Code: protocol.CodeRateLimited})
+		fakeserver.WriteJSON(w, http.StatusTooManyRequests, protocol.Problem{Type: protocol.CodeRateLimited.TypeURI(), Code: protocol.CodeRateLimited})
 	})
 	if d := x.once(context.Background()); d != 17*time.Second {
 		t.Fatalf("waits %s, want the Retry-After", d)

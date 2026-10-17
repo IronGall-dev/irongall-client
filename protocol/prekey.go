@@ -29,8 +29,9 @@ const (
 	MaxPrekeyLifetime = PrekeyLifetime + MaxSkew
 	// MaxSerial is the largest serial, of a prekey or a certificate, and the
 	// largest a revocation of certificates runs through: MaxInteger, 2^53 − 1,
-	// since a send names a prekey by its two serials as JSON numbers, and
-	// RFC 7493 promises no reader holds a larger integer exactly.
+	// since an answer names a serial as a JSON number (stale_prekey's, a
+	// conflict's), and RFC 7493 promises no reader holds a larger integer
+	// exactly.
 	MaxSerial = MaxInteger
 	// TimeLayout is the one timestamp format in signed statements and the
 	// envelope: RFC 3339, UTC, to the second.
@@ -102,12 +103,34 @@ func (p *Prekey) CheckLifetime(now time.Time) error {
 	return nil
 }
 
+// ErrPrekeyType is a prekey statement whose key is a well-formed age
+// recipient of a type this client cannot encrypt to: a Bech32 string whose
+// human-readable part begins "age", and is neither X25519's "age" nor the
+// hybrid's "age1pq". Nothing is wrong with such a statement: a type defined
+// later takes no new tag, so a sender refuses it as unsupported_prekey_type,
+// never as a statement that does not verify (PROTOCOL.md §0a, §2a).
+var ErrPrekeyType = errors.New("the prekey is an age recipient of a type this client cannot encrypt to")
+
 // ParsePrekey parses a prekey statement. It must be exactly five LF-terminated
 // lines with nothing after them, its serial a decimal integer with no leading
 // zero and at most MaxSerial, its key an age recipient in canonical form that
 // can be encrypted to (so no small-order X25519 point, in either key type), and
-// its not_after a UTC timestamp to the second.
+// its not_after a UTC timestamp to the second. A key that is a well-formed
+// age recipient of another type is ErrPrekeyType.
 func ParsePrekey(statement []byte) (*Prekey, error) {
+	p, err := parsePrekey(statement)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkRecipient(p); err != nil {
+		return nil, err
+	}
+	return p, nil
+}
+
+// parsePrekey is ParsePrekey with the key left unchecked: its type is the
+// last thing a verifier asks, once the statement is otherwise good.
+func parsePrekey(statement []byte) (*Prekey, error) {
 	if !bytes.HasSuffix(statement, []byte("\n")) {
 		return nil, errors.New("a prekey statement is five lines, each ending in LF")
 	}
@@ -130,19 +153,24 @@ func ParsePrekey(statement []byte) (*Prekey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("not_after: %v", err)
 	}
-	p := &Prekey{Address: addr, Serial: serial, Key: lines[3], NotAfter: notAfter}
-	if err := checkRecipient(p); err != nil {
-		return nil, err
-	}
-	return p, nil
+	return &Prekey{Address: addr, Serial: serial, Key: lines[3], NotAfter: notAfter}, nil
 }
 
 // checkRecipient checks the key is an age recipient that age can encrypt to.
-// age's parser is already exact (lowercase only, zero padding bits; the
-// bad-recipient-uppercase-* vectors hold it to that). It accepts a small-order
-// X25519 point, including the X25519 half of a hybrid key, but refuses to
-// encrypt to one, so a trial wrap is the check.
+// Its type is its Bech32 human-readable part: "age" or "age1pq", and any
+// other that begins "age" is ErrPrekeyType. age's parser is already exact
+// (lowercase only, zero padding bits; the bad-recipient-uppercase-* vectors
+// hold it to that). It accepts a small-order X25519 point, including the
+// X25519 half of a hybrid key, but refuses to encrypt to one, so a trial wrap
+// is the check.
 func checkRecipient(p *Prekey) error {
+	switch hrp, ok := bech32HRP(p.Key); {
+	case ok && (hrp == "age" || hrp == "age1pq"):
+	case ok && strings.HasPrefix(hrp, "age"):
+		return ErrPrekeyType
+	default:
+		return errors.New("the prekey is not an age recipient")
+	}
 	r, err := p.Recipient()
 	if err != nil {
 		return errors.New("the prekey is not an age recipient")
@@ -157,12 +185,71 @@ func checkRecipient(p *Prekey) error {
 	return nil
 }
 
+// bech32Charset is Bech32's alphabet, each character's value its index.
+const bech32Charset = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+
+// bech32Polymod is BIP 173's checksum over values: the human-readable part
+// expanded, then the data and its checksum. A Bech32 string's is 1.
+func bech32Polymod(values []byte) uint32 {
+	chk := uint32(1)
+	for _, v := range values {
+		top := chk >> 25
+		chk = (chk&0x1ffffff)<<5 ^ uint32(v)
+		for i, g := range [5]uint32{0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3} {
+			if top>>i&1 == 1 {
+				chk ^= g
+			}
+		}
+	}
+	return chk
+}
+
+// bech32HRP returns the human-readable part of s, if s is a Bech32 string
+// (BIP 173) as age writes a recipient: in lowercase, its checksum good, and
+// its data whole bytes, with fewer than five bits left over and those zero.
+// age takes a string of any length, where BIP 173 stops at 90, and so does
+// this.
+func bech32HRP(s string) (string, bool) {
+	pos := strings.LastIndexByte(s, '1')
+	if pos < 1 || pos+7 > len(s) {
+		return "", false
+	}
+	hrp, data := s[:pos], s[pos+1:]
+	values := make([]byte, 0, 2*len(hrp)+1+len(data))
+	for i := 0; i < len(hrp); i++ {
+		if c := hrp[i]; c < 33 || c > 126 || c >= 'A' && c <= 'Z' {
+			return "", false
+		}
+		values = append(values, hrp[i]>>5)
+	}
+	values = append(values, 0)
+	for i := 0; i < len(hrp); i++ {
+		values = append(values, hrp[i]&31)
+	}
+	for i := 0; i < len(data); i++ {
+		v := strings.IndexByte(bech32Charset, data[i])
+		if v < 0 {
+			return "", false
+		}
+		values = append(values, byte(v)) //nolint:gosec // an index into the 32-character alphabet
+	}
+	if bech32Polymod(values) != 1 {
+		return "", false
+	}
+	n := len(data) - 6
+	if left := n * 5 % 8; left >= 5 || n > 0 && values[len(values)-7]&(1<<left-1) != 0 {
+		return "", false
+	}
+	return hrp, true
+}
+
 // VerifyPrekey verifies a prekey statement of the box whose identity is id,
 // at now, and parses it. The signature must be by a working key that identity
 // certified, under a certificate valid at now, in id's prekey namespace; the
 // statement must name id's own address; and it must not outlive the
 // certificate it is signed under. It returns the certificate too: whoever
-// keeps the highest serial it has seen for the box compares.
+// keeps the highest serial it has seen for the box compares. The key's type
+// is checked last, so ErrPrekeyType is a statement good in every other way.
 func VerifyPrekey(id *Identity, statement, signature []byte, now time.Time) (*Prekey, *Certificate, error) {
 	cert, err := VerifyCertified(id, statement, signature, PrekeyNamespace(id.Address()), now)
 	switch {
@@ -176,7 +263,7 @@ func VerifyPrekey(id *Identity, statement, signature []byte, now time.Time) (*Pr
 	case err != nil:
 		return nil, nil, errors.New("the prekey is not signed by a working key its identity certified")
 	}
-	p, err := ParsePrekey(statement)
+	p, err := parsePrekey(statement)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -185,6 +272,9 @@ func VerifyPrekey(id *Identity, statement, signature []byte, now time.Time) (*Pr
 	}
 	if p.NotAfter.After(cert.NotAfter()) {
 		return nil, nil, errors.New("the prekey statement outlives the certificate it is signed under")
+	}
+	if err := checkRecipient(p); err != nil {
+		return nil, nil, err
 	}
 	return p, cert, nil
 }

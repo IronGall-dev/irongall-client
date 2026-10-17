@@ -11,7 +11,7 @@ info:
     **This file describes transport only, and nothing in it protects a
     message.** The identity documents, certificates, prekey statements,
     passes, signatures and age files it carries are byte formats, here opaque
-    base64, and every check a client makes on them is in `PROTOCOL.md` (§2 to
+    (base64 inside JSON, and a message's ciphertext the body itself), and every check a client makes on them is in `PROTOCOL.md` (§2 to
     §6), with its test vectors in `testdata/vectors/`. A client built from this
     file alone checks nothing, so it trusts the server, which the protocol is
     built never to need. Use the Go client in this repository, or build to
@@ -28,16 +28,20 @@ info:
     **What every answer under `/v1/` shares** (`PROTOCOL.md` §13):
     - `Date`, by the clock the server's checks read, and `Cache-Control: no-store`.
     - An error body is RFC 9457 Problem Details in AEP-193's form. A client
-      reads `code` and the members, never `detail`, `hint` or `title`, and takes
-      a code it does not know, or one under another status, as no code.
+      reads `code` and the members, never `detail`, `hint` or `title`. A code
+      counts only when the client knows it, under its own status, and `type`
+      is that code's own; otherwise the answer is read by its status.
     - Every JSON text is read by `PROTOCOL.md` §0b's rules: I-JSON, one object,
       names matched exactly, nested at most 32 deep, integers from 0 to
       2^53 − 1 written in digits alone, byte members standard base64 in its one
       encoding (padded, the unused bits of the last character zero), and null
       the same as leaving a member out.
-    - A server refuses a request member it does not know (`400 bad_request`,
-      naming it in `member`); a client ignores an answer member it does not
-      know. A new v1 member is optional (§0a).
+    - A server refuses a member or a query parameter it does not know in what
+      it is sent, and one given twice (`400 bad_request`, naming it in
+      `member`); a client ignores an answer member it does not know. A new v1
+      member is optional (§0a).
+    - A message's ciphertext is the body itself, `application/octet-stream`,
+      on a send and on a fetch (§4.5).
     - An unknown route gets the router's plain `404` or `405`, with no code.
       A server may add routes inside v1, and a client reads that answer as a
       route this server does not offer (§0a).
@@ -405,12 +409,24 @@ paths:
         has changed at the recipient since. A refusal for a quota waits in the
         sender's outbox and is posted again after `Retry-After`;
         `403 sender_not_allowed` is final.
+      parameters:
+        - name: prekey_serial
+          in: query
+          required: true
+          description: The serial of the prekey encrypted to. Not the recipient's current one is `409 stale_prekey`.
+          schema:
+            $ref: '#/components/schemas/SerialText'
+        - name: certificate_serial
+          in: query
+          required: true
+          description: The serial of the certificate that prekey's statement is signed under. A prekey is named by the two (`PROTOCOL.md` §2b).
+          schema:
+            $ref: '#/components/schemas/SerialText'
       requestBody:
         required: true
+        description: The age file, binary, not armored (`PROTOCOL.md` §4.3), exactly as its sender wrote it. A server reads it as bytes whatever its `Content-Type` says.
         content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SendRequest'
+          application/octet-stream: {}
       responses:
         '200':
           description: This ciphertext was stored before; the receipt is the original one.
@@ -469,13 +485,7 @@ paths:
           required: false
           description: The `next_cursor` of the page before. Any other is answered as a poll (§5.1).
           schema:
-            type: string
-        - name: If-None-Match
-          in: header
-          required: false
-          description: The `ETag` of an earlier answer. Unchanged, the answer is `304`.
-          schema:
-            type: string
+            $ref: '#/components/schemas/Cursor'
       responses:
         '200':
           description: One page of the box's mail.
@@ -484,21 +494,10 @@ paths:
               $ref: '#/components/headers/Date'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
-            ETag:
-              $ref: '#/components/headers/ETag'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/MessageList'
-        '304':
-          description: The box is as it was at the `ETag` sent.
-          headers:
-            Date:
-              $ref: '#/components/headers/Date'
-            Cache-Control:
-              $ref: '#/components/headers/Cache-Control'
-            ETag:
-              $ref: '#/components/headers/ETag'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -521,22 +520,20 @@ paths:
       operationId: fetch
       summary: Fetch a message
       description: |
-        `PROTOCOL.md` §5.2–§5.5. `from` is the box whose pass the send
-        carried, on the server's word: a client holds it to the sender it
-        verifies inside the ciphertext. A message is meant to be fetched once:
-        past the box's budget, `429 fetch_paced` or `429 refetch_spent` (§5.7).
+        `PROTOCOL.md` §5.2–§5.5. The answer is the ciphertext and nothing
+        else: who sent it, on the server's word, and when, are in the list. A
+        message is meant to be fetched once: past the box's budget,
+        `429 fetch_paced` or `429 refetch_spent` (§5.7).
       responses:
         '200':
-          description: The message.
+          description: The age file exactly as its sender posted it, of the `size` the list gave.
           headers:
             Date:
               $ref: '#/components/headers/Date'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
           content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Message'
+            application/octet-stream: {}
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -656,10 +653,9 @@ components:
       name: addr
       in: path
       required: true
-      description: A box's address, 64 hex characters (`PROTOCOL.md` §2). The server folds case on the path; any other form is `400 bad_address`.
+      description: A box's address, 64 lowercase hex characters (`PROTOCOL.md` §2). Any other form, uppercase among them, is `400 bad_address`.
       schema:
-        type: string
-        pattern: '^[0-9A-Fa-f]{64}$'
+        $ref: '#/components/schemas/Address'
     id:
       name: id
       in: path
@@ -680,20 +676,17 @@ components:
       schema:
         const: no-store
     Retry-After:
-      description: When to try again (RFC 9110 §10.2.3).
+      description: How many seconds to wait before trying again, in digits alone (RFC 9110 §10.2.3's delay-seconds; never an HTTP-date, `PROTOCOL.md` §13).
       required: true
       schema:
         type: string
+        pattern: '^[0-9]+$'
     WWW-Authenticate:
-      description: The scheme a call must use (RFC 9110 §11.6.1).
-      required: true
-      schema:
-        const: irongall-pass
-    ETag:
-      description: The box's version (`PROTOCOL.md` §5.1). Sent back in `If-None-Match`, an unchanged box answers `304`.
+      description: The scheme a call must use, `irongall-pass`, with any auth-params a server adds (RFC 9110 §11.6.1).
       required: true
       schema:
         type: string
+        pattern: '^irongall-pass( .*)?$'
     Location:
       description: The message the send made, `/v1/<recipient>/messages/<id>` (RFC 9110 §15.3.2).
       required: true
@@ -721,7 +714,7 @@ components:
         Cache-Control:
           $ref: '#/components/headers/Cache-Control'
     ACL:
-      description: The ACL as held, `*` first, then each address once, in order.
+      description: The ACL as held, `*` first, then each address once, in ascending order of its hex.
       headers:
         Date:
           $ref: '#/components/headers/Date'
@@ -734,8 +727,8 @@ components:
     BadRequest:
       description: |
         Not a request this call takes. `bad_request`: not a JSON text as §0b
-        reads one, a missing or unknown member (named in `member`), or a bad
-        cursor · `bad_address` · `bad_encoding` · `identity_mismatch` ·
+        reads one; a missing or unknown member or query parameter, one given
+        twice, or one whose value its call does not take (named in `member`) · `bad_address` · `bad_encoding` · `identity_mismatch` ·
         `unsupported_key_type` (with the server's `key_types`) · `bad_key` ·
         `prekey_not_new` · `prekey_time` · `not_age` · `wrong_recipient_type` ·
         `bad_revocation`. `PROTOCOL.md` §13 has what each means.
@@ -885,7 +878,7 @@ components:
         `certificates_spent`, `certificate_revocations_spent` · `fetch_paced`
         and `refetch_spent` (a drain stops there, and it is no error) ·
         `pair_full` (with `unacked` and `oldest_expires_at`) · `mailbox_full`
-        (with `messages`) · `mailbox_busy`. What a server limits, and by how
+        (with `count`) · `mailbox_busy`. What a server limits, and by how
         much, is its own (§8).
       headers:
         Date:
@@ -1029,20 +1022,14 @@ components:
           anyOf:
             - $ref: '#/components/schemas/Bytes'
             - type: 'null'
-    SendRequest:
-      type: object
-      additionalProperties: false
-      required: [prekey_serial, certificate_serial, ciphertext]
-      properties:
-        prekey_serial:
-          description: The serial of the prekey encrypted to. Not the recipient's current one is `409 stale_prekey`.
-          $ref: '#/components/schemas/Serial'
-        certificate_serial:
-          description: The serial of the certificate that prekey's statement is signed under. A prekey is named by the two (`PROTOCOL.md` §2b).
-          $ref: '#/components/schemas/Serial'
-        ciphertext:
-          description: The age file, binary, not armored (`PROTOCOL.md` §4.3).
-          $ref: '#/components/schemas/Bytes'
+    SerialText:
+      description: 'A serial in a query, as a statement writes one (`PROTOCOL.md` §2a): digits, no leading zero, from 1 to 2^53 − 1.'
+      type: string
+      pattern: '^[1-9][0-9]{0,15}$'
+    Cursor:
+      description: A list's cursor, opaque and URL-safe (`PROTOCOL.md` §5.1).
+      type: string
+      pattern: '^[A-Za-z0-9_-]+$'
     Receipt:
       type: object
       required: [id, received_at, expires_at]
@@ -1069,8 +1056,10 @@ components:
           items:
             $ref: '#/components/schemas/MessageInfo'
         next_cursor:
-          description: The next page's cursor; null on the last page.
-          type: [string, 'null']
+          description: The next page's cursor; null on the last page. A client refuses a list whose cursor is not of its form.
+          anyOf:
+            - $ref: '#/components/schemas/Cursor'
+            - type: 'null'
         poll_after:
           description: The server's poll interval, in seconds.
           $ref: '#/components/schemas/Integer'
@@ -1081,31 +1070,15 @@ components:
         id:
           $ref: '#/components/schemas/MessageID'
         from:
-          description: The box whose pass the send carried, on the server's word.
+          description: The box whose pass the send carried, on the server's word. A client holds it to the sender it verifies.
           $ref: '#/components/schemas/Address'
         size:
-          description: The ciphertext's size in bytes.
+          description: The ciphertext's size in bytes, which its fetch answers exactly.
           $ref: '#/components/schemas/Integer'
         received_at:
           $ref: '#/components/schemas/Time'
         expires_at:
           $ref: '#/components/schemas/Time'
-    Message:
-      type: object
-      required: [id, from, received_at, expires_at, ciphertext]
-      properties:
-        id:
-          $ref: '#/components/schemas/MessageID'
-        from:
-          description: The box whose pass the send carried, on the server's word. A client holds it to the sender it verifies.
-          $ref: '#/components/schemas/Address'
-        received_at:
-          $ref: '#/components/schemas/Time'
-        expires_at:
-          $ref: '#/components/schemas/Time'
-        ciphertext:
-          description: The age file exactly as the sender posted it.
-          $ref: '#/components/schemas/Bytes'
     RevocationRecord:
       description: |
         A revocation record (`PROTOCOL.md` §6.3, §6.3a): a revocation of the
@@ -1120,7 +1093,7 @@ components:
       additionalProperties: false
       required: [identity]
       anyOf:
-        - required: [revocation]
+        - required: [revocation_signature]
         - required: [revoked_certificates]
       dependentRequired:
         revoked_certificates: [revoked_certificates_signature]
@@ -1131,7 +1104,7 @@ components:
         identity:
           description: The identity document.
           $ref: '#/components/schemas/Bytes'
-        revocation:
+        revocation_signature:
           description: The identity's SSHSIG over `irongall-revoke-v1\n<address>\n`, armored.
           anyOf:
             - $ref: '#/components/schemas/Bytes'
@@ -1161,7 +1134,7 @@ components:
         revocation of its certificates when the server holds one. It proves
         itself, as any record does.
       type: object
-      required: [type, identity, revocation]
+      required: [type, identity, revocation_signature]
       dependentRequired:
         revoked_certificates: [revoked_certificates_signature]
         revoked_certificates_signature: [revoked_certificates]
@@ -1171,7 +1144,7 @@ components:
         identity:
           description: The identity document.
           $ref: '#/components/schemas/Bytes'
-        revocation:
+        revocation_signature:
           description: The identity's SSHSIG over `irongall-revoke-v1\n<address>\n`, armored.
           $ref: '#/components/schemas/Bytes'
         revoked_certificates:
@@ -1249,9 +1222,9 @@ components:
       required: [type, title, status, code]
       properties:
         type:
-          description: '`https://irongall.dev/errors/<code>`, a name, at any server.'
+          description: '`tag:irongall.dev,2026-10-17:errors/<code>`, the code''s own: a name, the same at every server, which resolves to nothing (RFC 4151; `PROTOCOL.md` §13).'
           type: string
-          pattern: '^https://irongall\.dev/errors/[a-z_]+$'
+          pattern: '^tag:irongall\.dev,2026-10-17:errors/[a-z_]+$'
         title:
           type: string
         status:
@@ -1259,7 +1232,7 @@ components:
         detail:
           type: [string, 'null']
         code:
-          description: One of the closed list under this status. A code a client does not know, or one under another status, is no code.
+          description: One of the closed list under this status. A code a client does not know, one under another status, or one beside a `type` that is not its own, is no code.
           type: string
         hint:
           description: The fix as a client command, never a raw shell line.
@@ -1269,8 +1242,8 @@ components:
           anyOf:
             - $ref: '#/components/schemas/Integer'
             - type: 'null'
-        messages:
-          description: '`mailbox_full`: how many messages the box holds.'
+        count:
+          description: '`mailbox_full`: how many messages the box holds, as its list counts them.'
           anyOf:
             - $ref: '#/components/schemas/Integer'
             - type: 'null'
@@ -1313,7 +1286,7 @@ components:
           description: '`sender_key_type`: the sender''s key type, which the box''s client does not verify.'
           type: [string, 'null']
         member:
-          description: '`bad_request`: the request member that is missing or unknown, or holds a value its call does not take.'
+          description: '`bad_request`: the request member or query parameter that is missing, unknown or given twice, or holds a value its call does not take.'
           type: [string, 'null']
         record:
           description: '`revoked`, on the read of a box: the revocation record the server holds (§6.3). A client checks it, and believes nothing less.'
@@ -1334,7 +1307,7 @@ components:
               code:
                 const: mailbox_full
           then:
-            required: [messages]
+            required: [count]
         - if:
             required: [code]
             properties:

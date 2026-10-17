@@ -14,6 +14,9 @@ import (
 // RefusedError is a check that failed. The operation stopped there: nothing
 // was encrypted, sent, delivered or recorded past the failed check.
 type RefusedError struct {
+	// Code is the refusal's code, for a check that has one of its own:
+	// RefusedPrekeyType. Otherwise it is empty.
+	Code   string
 	Reason string
 }
 
@@ -34,18 +37,21 @@ func (e *lookupError) Unwrap() error { return e.err }
 
 // Why a message was refused, as codes: with protocol's (bad_message,
 // bad_envelope, bad_identity, bad_signature, reattributed, stale), a closed
-// set. A refusal's words are this client's own and never quote the message,
-// its claimed sender's text or the server's: whoever reads a refusal may be a
-// model.
+// set; and why a send refused its recipient's prekey statement when nothing is
+// wrong with it (RefusedPrekeyType). A refusal's words are this client's own
+// and never quote the message, its claimed sender's text or the server's:
+// whoever reads a refusal may be a model.
 const (
-	RefusedDecrypt = "undecryptable" // not encrypted to a prekey this box holds
-	RefusedReplay  = "replay"        // this ciphertext was already received
-	RefusedID      = "bad_id"        // the server's id for it is not the SHA-256 of its ciphertext
+	RefusedDecrypt    = "undecryptable"           // not encrypted to a prekey this box holds
+	RefusedReplay     = "replay"                  // this ciphertext was already received
+	RefusedID         = "bad_id"                  // the server's id for it is not the SHA-256 of its ciphertext
+	RefusedPrekeyType = "unsupported_prekey_type" // the recipient's prekey is an age recipient of a type this client cannot encrypt to
 )
 
 // APIError is a non-2xx answer from the server. Problem is the RFC 9457 body
 // when the server sent one with a code this client knows, for the status the
-// code has (PROTOCOL.md §13); otherwise its code is empty.
+// code has, beside the type that is the code's own (PROTOCOL.md §13);
+// otherwise its code is empty.
 type APIError struct {
 	Status  int
 	Problem protocol.Problem
@@ -184,8 +190,8 @@ func (e *APIError) words() string {
 		return s
 	case protocol.CodeMailboxFull:
 		s := "the recipient's box is full"
-		if p.Messages != nil {
-			s += fmt.Sprintf(": it holds %d messages", *p.Messages)
+		if p.Count != nil {
+			s += fmt.Sprintf(": it holds %d messages", *p.Count)
 		}
 		return s
 	case protocol.CodeMailboxBusy:

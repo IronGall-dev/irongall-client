@@ -57,10 +57,11 @@ func PassNamespace(a Address) string { return PassTag + ":" + a.String() }
 var serverNameGrammar = regexp.MustCompile(`\A(?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?|\[[0-9a-f:.]+\])(?::[0-9]{1,5})?\z`)
 
 // CheckServerName checks that s can stand in a pass as the server's name: the
-// host of the server's URL, lowercase, with its port if it has one.
+// host of the server's URL, lowercase, with its port only when that is not the
+// scheme's default (PROTOCOL.md §6.1b).
 func CheckServerName(s string) error {
 	if len(s) > 255 || !serverNameGrammar.MatchString(s) {
-		return fmt.Errorf("%w: the server's name is its host, lowercase, with its port if it has one", ErrPass)
+		return fmt.Errorf("%w: the server's name is its host, lowercase, with its port only when that is not the scheme's default", ErrPass)
 	}
 	return nil
 }
@@ -82,8 +83,11 @@ type Pass struct {
 
 // MaxPassAuthorization is the longest an Authorization value carrying a pass
 // can be: its fixed parts, an address, a time, and the standard base64 of a
-// signature of MaxSignature bytes. ParsePass refuses a longer one before it
-// reads it (PROTOCOL.md §6.1b).
+// signature of MaxSignature bytes. A pass is signed by an Ed25519 working key,
+// under the certificate its identity signed, so its size is its identity's
+// key type's; and ParsePass refuses a longer one before it reads it, so
+// before it knows the box (PROTOCOL.md §6.1b). So the bound is the most any
+// identity key type allows.
 const MaxPassAuthorization = len(PassScheme+` address="", not_after="", signature=""`) + 64 + len(TimeLayout) + (MaxSignature+2)/3*4
 
 // passGrammar is the whole Authorization value, in its one form.
@@ -195,6 +199,11 @@ func (p *Pass) VerifyUnder(sum [sha256.Size]byte, server string, now time.Time) 
 	cert, ok := key.(*ssh.Certificate)
 	if !ok || sha256.Sum256(cert.Marshal()) != sum {
 		return nil, fmt.Errorf("%w: the pass is not signed under the certificate on record", ErrCertificate)
+	}
+	// The certificate on record names the identity that signed it, and so
+	// the bound its box's signatures are held to.
+	if cert.SignatureKey == nil || withinBound(p.signature, cert.SignatureKey.Type()) != nil {
+		return nil, fmt.Errorf("%w: its signature is longer than its identity's key type allows", ErrPass)
 	}
 	// The pass names a box, and the certificate names the one it is for.
 	if len(cert.ValidPrincipals) != 1 || cert.ValidPrincipals[0] != p.Address.String() {

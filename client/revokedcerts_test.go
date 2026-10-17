@@ -3,8 +3,11 @@ package client_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -236,20 +239,31 @@ func TestALaterCertificateOutranksAnyPrekeySerial(t *testing.T) {
 	}
 }
 
-// A send names its prekey by both serials, its own and its certificate's.
+// A send names its prekey by both serials, its own and its certificate's, in
+// its query, and its body is the age file itself, as an octet stream.
 func TestASendNamesBothSerials(t *testing.T) {
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	if _, err := b.Rekey(context.Background(), ""); err != nil {
 		t.Fatal(err)
 	}
-	sent := capture(e, http.MethodPost, "/v1/"+b.Address().String()+"/messages")
-	send(t, a, b, "names the prekey it was sealed to")
-	var req map[string]json.RawMessage
-	if err := json.Unmarshal(*sent, &req); err != nil {
-		t.Fatal(err)
+	var query, contentType string
+	var body []byte
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/"+b.Address().String()+"/messages" {
+			query, contentType = r.URL.RawQuery, r.Header.Get("Content-Type")
+			body, _ = io.ReadAll(r.Body)
+			r.Body = io.NopCloser(bytes.NewReader(body))
+		}
+		next.ServeHTTP(w, r)
+	})
+	id := send(t, a, b, "names the prekey it was sealed to").ID
+	n := strconv.FormatUint(numberOf(t, b), 10)
+	if query != "prekey_serial="+n+"&certificate_serial="+n {
+		t.Errorf("a send's query: %q", query)
 	}
-	if n := strconv.FormatUint(numberOf(t, b), 10); string(req["prekey_serial"]) != n || string(req["certificate_serial"]) != n || len(req) != 3 {
-		t.Fatalf("a send's members: %s", *sent)
+	h := sha256.Sum256(body)
+	if contentType != protocol.CiphertextContentType || !bytes.HasPrefix(body, []byte("age-encryption.org/v1\n")) || hex.EncodeToString(h[:]) != id {
+		t.Errorf("a send's body, %s: %q…, not the ciphertext the receipt names", contentType, body[:min(len(body), 40)])
 	}
 }

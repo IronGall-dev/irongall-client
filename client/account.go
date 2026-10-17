@@ -16,7 +16,7 @@ import (
 func (b *Box) Adopt(ctx context.Context, key string) (string, error) {
 	return locked(ctx, b, func() (string, error) {
 		var ar protocol.AccountResponse
-		if _, err := b.owner(ctx, http.MethodPut, b.boxPath("/account"), protocol.AdoptRequest{Key: key}, nil, &ar); err != nil {
+		if _, err := b.owner(ctx, http.MethodPut, b.boxPath("/account"), protocol.AdoptRequest{Key: key}, &ar); err != nil {
 			return "", err
 		}
 		if !accountID.MatchString(ar.Account) {
@@ -34,7 +34,7 @@ var accountID = regexp.MustCompile(`\A[a-z0-9-]{1,32}\z`)
 // again.
 func (b *Box) Leave(ctx context.Context) error {
 	return b.lockedDo(ctx, func() error {
-		_, err := b.owner(ctx, http.MethodDelete, b.boxPath("/account"), nil, nil, nil)
+		_, err := b.owner(ctx, http.MethodDelete, b.boxPath("/account"), nil, nil)
 		return err
 	})
 }

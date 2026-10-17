@@ -276,7 +276,7 @@ func TestAnACLIsSentAgainWhenTheBoxChanged(t *testing.T) {
 			once.Do(func() { raced = true })
 		}
 		if raced {
-			fakeserver.WriteJSON(w, protocol.CodeBoxChanged.Status(), protocol.Problem{Code: protocol.CodeBoxChanged, Status: int64(protocol.CodeBoxChanged.Status())})
+			fakeserver.WriteJSON(w, protocol.CodeBoxChanged.Status(), protocol.Problem{Type: protocol.CodeBoxChanged.TypeURI(), Code: protocol.CodeBoxChanged, Status: int64(protocol.CodeBoxChanged.Status())})
 			return
 		}
 		next.ServeHTTP(w, r)

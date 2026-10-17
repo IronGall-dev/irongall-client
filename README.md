@@ -98,7 +98,7 @@ Forward secrecy, padding, accounts and the rest: `PROTOCOL.md`.
 | `sent` | `send`, `outbox flush` | `id`, `msg_id`, `to` |
 | `box` | `init`, `addr` | `address`, `link` |
 | `quarantined` | `quarantine list` | `id`, `code` (below), and `from` and `received_at`, the server's, each when it has its form |
-| `error` | any, on stderr | `message`; from a server's answer, `status`, its `code` when this client knows it, `retry_after`, and the values the code carries, each checked to its type |
+| `error` | any, on stderr | `message`; from a server's answer, `status`, its `code` when this client knows it, `retry_after`, and the values the code carries, each checked to its type; from a refusal with a code of its own, that `code` (below) |
 
 The rest are named for what they report: `status`, `held_sender`, `allowed`, `allowed_rebuilt`, `blocked`, `alias`, `alias_removed`, `removed` (from `quarantine/`), `prekey`, `certificates_revoked`, `no_earlier_certificate`, `account`, `revoked`, `not_revoked`, and `revocation_record`, which is the record itself, exactly the body every server takes: save it where only you can read it (`umask 077; irongall revocation make > <file>`).
 
@@ -126,8 +126,9 @@ A refusal's words are this client's own, never text from the message, its sender
 | `future` | its `sent_at` is more than an hour ahead of this machine's clock |
 | `replay` | this ciphertext was already received |
 | `bad_id` | the server's id for it is not the SHA-256 of its ciphertext |
+| `unsupported_prekey_type` | a send's, in its `error` line: the recipient's prekey is an age recipient of a type this client cannot encrypt to, so nothing is sent |
 
-A server's error is an `error` line with its `status`, its `code`, the `retry_after` it asks for and the values the code carries, and a `message`, `ERROR <status> <code>: <what the code means, in this client's words>`. None of the server's own words are printed: whoever reads them may be a model, and the server may be hostile (`PROTOCOL.md` §13). A code this client does not know prints no `code`, and the message `ERROR <status>: an answer this client does not know`.
+A server's error is an `error` line with its `status`, its `code`, the `retry_after` it asks for and the values the code carries, and a `message`, `ERROR <status> <code>: <what the code means, in this client's words>`. None of the server's own words are printed: whoever reads them may be a model, and the server may be hostile (`PROTOCOL.md` §13). A code this client does not know, or one beside a `type` that is not its own, prints no `code`, and the message `ERROR <status>: an answer this client does not know`.
 
 ## Stock tools instead of Go
 
@@ -166,7 +167,7 @@ What it lacks against the Go client, though it gives the Go client's verdict on 
 - It makes an Ed25519 identity only: for a P-256 one, make the key with `ssh-keygen -t ecdsa -b 256 -N '' -C '' -f <box>/identity` before `init`. It leaves a send from such a box to a box that does not verify the type for the server to refuse.
 - It pads by the sizes of the files age writes, and refuses to send one that is another size.
 - An integer member written with an exponent that cancels (`1e0`, `0.5e1`), in a server's answer or in an envelope's `v`, reads to it as digits, where the Go client refuses it (`PROTOCOL.md` §0b).
-- No ETag on the poll. An API error's line has its status, its code and the wait, without the Go client's sentence for the code or the values the code carries, and a command that fails may print more than one `error` line. Its `usage_error` lines name `bash irongall.sh help`, and a bad option is an `error`, exit `1`.
+- An API error's line has its status, its code and the wait, without the Go client's sentence for the code or the values the code carries, and a command that fails may print more than one `error` line. Its `usage_error` lines name `bash irongall.sh help`, and a bad option is an `error`, exit `1`.
 - It holds no mail: every sender's lands in `inbox/`, and it has no `held`, `allow`, `block` or policy, and sends no ACL (`PROTOCOL.md` §5.6, §6.2). A send that a box's ACL refuses moves to `outbox/failed/`, as in the Go client.
 
 ## No Server Trust

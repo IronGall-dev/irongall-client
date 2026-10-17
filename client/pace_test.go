@@ -131,3 +131,37 @@ func TestAWaitTheServerAsksForIsAtMostADay(t *testing.T) {
 		t.Errorf("Retry-After %s: %v, want a wait of a day", huge, err)
 	}
 }
+
+// A Retry-After is delay-seconds, digits alone, as a server writes it
+// (PROTOCOL.md §13): an HTTP-date, a sign or a fraction asks for no wait, and
+// any number of digits is read, up to a day.
+func TestARetryAfterIsDigitsAlone(t *testing.T) {
+	e := newEnv(t)
+	b := e.box(protocol.Classic)
+	for value, want := range map[string]time.Duration{
+		"17":                             17 * time.Second,
+		"0017":                           17 * time.Second,
+		"0":                              0,
+		"+17":                            0,
+		"-17":                            0,
+		"17.0":                           0,
+		"1e2":                            0,
+		"Fri, 31 Dec 2027 23:59:59 GMT":  0,
+		"123456789012345678901234567890": 24 * time.Hour,
+	} {
+		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/messages") {
+				w.Header().Set("Content-Type", protocol.ProblemContentType)
+				w.Header().Set("Retry-After", value)
+				w.WriteHeader(http.StatusTooManyRequests)
+				_ = json.NewEncoder(w).Encode(protocol.Problem{Type: protocol.CodeRateLimited.TypeURI(), Title: "Rate limited", Status: http.StatusTooManyRequests, Code: protocol.CodeRateLimited})
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+		_, err := b.Receive(context.Background())
+		if e, ok := errors.AsType[*client.APIError](err); !ok || e.RetryAfter != want {
+			t.Errorf("Retry-After %q: %v, want a wait of %s", value, err, want)
+		}
+	}
+}

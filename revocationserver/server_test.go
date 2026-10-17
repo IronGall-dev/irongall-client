@@ -238,10 +238,9 @@ func TestARevocationIsKeptAndServed(t *testing.T) {
 	}
 	// The same record again changes nothing.
 	want(t, s.put(p.addr, rec), http.StatusOK, "")
-	// An address in capitals is the same address.
-	if got := s.do(http.MethodGet, "/v1/"+strings.ToUpper(p.addr.String())+"/revocations", nil); got.status != http.StatusOK {
-		t.Fatalf("the address in capitals: %d", got.status)
-	}
+	// An address in capitals is no address: one address has one URL.
+	want(t, s.do(http.MethodGet, "/v1/"+strings.ToUpper(p.addr.String())+"/revocations", nil), http.StatusBadRequest, protocol.CodeBadAddress)
+	want(t, s.put(protocol.Address{}, rec), http.StatusBadRequest, protocol.CodeIdentityMismatch) // control: the path read, the record then checked
 
 	// It is on disk: a server opened again on the directory serves it.
 	s.close()
@@ -252,6 +251,34 @@ func TestARevocationIsKeptAndServed(t *testing.T) {
 	if served := s.held(p.addr); served == nil || !bytes.Equal(served.Revocation, rec.Revocation) {
 		t.Fatal("a restart lost the record")
 	}
+}
+
+// Neither route takes a query, and a server refuses a parameter it does not
+// know, or one given twice, as it refuses a member: 400 bad_request, naming
+// it in member, beside the code's own type.
+func TestAQueryIsRefused(t *testing.T) {
+	s := start(t, nil)
+	p := newWho(t)
+	body, err := json.Marshal(p.revocation(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ method, query, member string }{
+		{http.MethodGet, "?cursor=abc", "cursor"},
+		{http.MethodGet, "?a=1&a=2", "a"},
+		{http.MethodPut, "?type=revocation_record", "type"},
+		{http.MethodGet, "?%zz", ""},
+	} {
+		got := s.do(c.method, path(p.addr)+c.query, body)
+		var pr protocol.Problem
+		if err := json.Unmarshal(got.body, &pr); err != nil || pr.CodeAt(got.status) != protocol.CodeBadRequest || pr.Member != c.member {
+			t.Errorf("%s %s: %d %s", c.method, c.query, got.status, got.body)
+		}
+	}
+	if s.x.Held() != 0 {
+		t.Fatal("a record with a query was kept")
+	}
+	want(t, s.do(http.MethodGet, path(p.addr)+"?", nil), http.StatusNotFound, protocol.CodeNotRevoked) // an empty query is none
 }
 
 func TestWhatDoesNotVerifyIsNotKept(t *testing.T) {
@@ -294,19 +321,19 @@ func TestWhatIsNotARecordIsRefused(t *testing.T) {
 		body string
 		code protocol.Code
 	}{
-		"no identity":            {`{"revocation":"AAAA"}`, protocol.CodeBadRequest},
+		"no identity":            {`{"revocation_signature":"AAAA"}`, protocol.CodeBadRequest},
 		"nothing signed":         {`{"identity":"AAAA"}`, protocol.CodeBadRequest},
 		"certs, no signature":    {`{"identity":"AAAA","revoked_certificates":"AAAA"}`, protocol.CodeBadRequest},
 		"a signature, no certs":  {`{"identity":"AAAA","revoked_certificates_signature":"AAAA"}`, protocol.CodeBadRequest},
-		"an unknown member":      {`{"identity":"AAAA","revocation":"AAAA","reason":"x"}`, protocol.CodeBadRequest},
+		"an unknown member":      {`{"identity":"AAAA","revocation_signature":"AAAA","reason":"x"}`, protocol.CodeBadRequest},
 		"two values":             {string(good) + string(good), protocol.CodeBadRequest},
 		"not JSON":               {`revoke it`, protocol.CodeBadRequest},
-		"not base64":             {`{"identity":"!","revocation":"AAAA"}`, protocol.CodeBadEncoding},
-		"base64 with no padding": {`{"identity":"AAAA","revocation":"AA"}`, protocol.CodeBadEncoding},
-		"its unused bits set":    {`{"identity":"AAAA","revocation":"AB=="}`, protocol.CodeBadEncoding},
-		"base64 wrapped":         {`{"identity":"AAAA\nAAAA","revocation":"AAAA"}`, protocol.CodeBadEncoding},
-		"a name in another case": {strings.Replace(string(good), `"revocation"`, `"Revocation"`, 1), protocol.CodeBadRequest},
-		"a name twice":           {strings.Replace(string(good), `{`, `{"revocation":"AAAA",`, 1), protocol.CodeBadRequest},
+		"not base64":             {`{"identity":"!","revocation_signature":"AAAA"}`, protocol.CodeBadEncoding},
+		"base64 with no padding": {`{"identity":"AAAA","revocation_signature":"AA"}`, protocol.CodeBadEncoding},
+		"its unused bits set":    {`{"identity":"AAAA","revocation_signature":"AB=="}`, protocol.CodeBadEncoding},
+		"base64 wrapped":         {`{"identity":"AAAA\nAAAA","revocation_signature":"AAAA"}`, protocol.CodeBadEncoding},
+		"a name in another case": {strings.Replace(string(good), `"revocation_signature"`, `"Revocation_Signature"`, 1), protocol.CodeBadRequest},
+		"a name twice":           {strings.Replace(string(good), `{`, `{"revocation_signature":"AAAA",`, 1), protocol.CodeBadRequest},
 		"a bracket after it":     {string(good) + `]`, protocol.CodeBadRequest},
 		"NaN beside it":          {strings.Replace(string(good), `{`, `{"x":NaN,`, 1), protocol.CodeBadRequest},
 		"over the largest body":  {`{"identity":"` + strings.Repeat("A", 8192) + `"}`, protocol.CodeTooLarge},
@@ -366,10 +393,10 @@ func TestAnEmptyPartIsNotAPartHeld(t *testing.T) {
 		addr protocol.Address
 		body string
 	}{
-		"an empty revocation, of an address with certs revoked":        {p.addr, `{"identity":"` + b64(p.doc) + `","revocation":""}`},
-		"empty certs, with the revocation held":                        {q.addr, `{"identity":"` + b64(q.doc) + `","revocation":"` + rev + `","revoked_certificates":"","revoked_certificates_signature":""}`},
+		"an empty revocation, of an address with certs revoked":        {p.addr, `{"identity":"` + b64(p.doc) + `","revocation_signature":""}`},
+		"empty certs, with the revocation held":                        {q.addr, `{"identity":"` + b64(q.doc) + `","revocation_signature":"` + rev + `","revoked_certificates":"","revoked_certificates_signature":""}`},
 		"an empty signature on the certs held":                         {p.addr, `{"identity":"` + b64(p.doc) + `","revoked_certificates":"` + b64(p.certs(t, 3).RevokedCertificates) + `","revoked_certificates_signature":""}`},
-		"an empty revocation beside the certs held, signature and all": {p.addr, `{"identity":"` + b64(p.doc) + `","revocation":"","revoked_certificates":"` + b64(p.certs(t, 3).RevokedCertificates) + `","revoked_certificates_signature":"` + b64(p.certs(t, 3).RevokedCertificatesSignature) + `"}`},
+		"an empty revocation beside the certs held, signature and all": {p.addr, `{"identity":"` + b64(p.doc) + `","revocation_signature":"","revoked_certificates":"` + b64(p.certs(t, 3).RevokedCertificates) + `","revoked_certificates_signature":"` + b64(p.certs(t, 3).RevokedCertificatesSignature) + `"}`},
 	} {
 		got := s.do(http.MethodPut, path(c.addr), []byte(c.body))
 		if got.status != http.StatusBadRequest || got.code != protocol.CodeBadRevocation {

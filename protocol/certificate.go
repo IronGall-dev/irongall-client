@@ -58,10 +58,13 @@ type Certificate struct {
 //
 // The rules: a user certificate with the key id CertificateKeyID, a serial of
 // at least 1, exactly one principal, the box's address, and no critical
-// option or extension; for an Ed25519 working key that passes the identity's
-// own key checks and is not the identity key; signed by the identity key,
-// byte for byte; begun, not ended, and ending at most MaxCertificateLifetime
-// from now.
+// option; for an Ed25519 working key that passes the identity's own key
+// checks and is not the identity key; signed by the identity key, byte for
+// byte; begun, not ended, and ending at most MaxCertificateLifetime from now.
+// As the format says (draft-ietf-sshm-cert-01 §2.1.1): a critical option a
+// verifier does not know is refused, and none is known here; an extension it
+// does not know is ignored, and none is known here either; and what the
+// reserved field holds is ignored.
 func CheckCertificate(id *Identity, key ssh.PublicKey, now time.Time) (*Certificate, error) {
 	cert, ok := key.(*ssh.Certificate)
 	if !ok {
@@ -79,8 +82,8 @@ func CheckCertificate(id *Identity, key ssh.PublicKey, now time.Time) (*Certific
 	if len(cert.ValidPrincipals) != 1 || cert.ValidPrincipals[0] != id.Address().String() {
 		return nil, fmt.Errorf("%w: its one principal must be the box's address", ErrCertificate)
 	}
-	if len(cert.CriticalOptions) != 0 || len(cert.Extensions) != 0 || len(cert.Reserved) != 0 {
-		return nil, fmt.Errorf("%w: it carries an option or an extension", ErrCertificate)
+	if len(cert.CriticalOptions) != 0 {
+		return nil, fmt.Errorf("%w: it carries a critical option", ErrCertificate)
 	}
 	if cert.SignatureKey == nil || !bytes.Equal(cert.SignatureKey.Marshal(), id.PublicKey().Marshal()) {
 		return nil, fmt.Errorf("%w: it is not signed by the box's identity", ErrCertificate)
@@ -227,6 +230,9 @@ func (c *Certificate) Signer(work ssh.Signer) (ssh.Signer, error) {
 // the signature is verified under it. It returns the certificate, so a caller
 // that keeps the highest serial it has seen can compare.
 func VerifyCertified(id *Identity, message, signature []byte, namespace string, now time.Time) (*Certificate, error) {
+	if err := withinBound(signature, id.Type()); err != nil {
+		return nil, err
+	}
 	blob, err := Dearmor(signature)
 	if err != nil {
 		return nil, err

@@ -132,7 +132,7 @@ func TestTheRemedyWaitsOutAShortRetryAfter(t *testing.T) {
 		if req.Method == http.MethodPut && strings.HasSuffix(req.URL.Path, "/prekey") && refused < 1 {
 			refused++
 			w.Header().Set("Retry-After", retryAfter)
-			fakeserver.WriteJSON(w, http.StatusTooManyRequests, protocol.Problem{Code: protocol.CodeRateLimited, Status: http.StatusTooManyRequests})
+			fakeserver.WriteJSON(w, http.StatusTooManyRequests, protocol.Problem{Type: protocol.CodeRateLimited.TypeURI(), Code: protocol.CodeRateLimited, Status: http.StatusTooManyRequests})
 			return
 		}
 		next.ServeHTTP(w, req)

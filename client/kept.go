@@ -35,12 +35,14 @@ func (b *Box) InboxLine(id string) ([]byte, error) {
 }
 
 // keptRefusal is a refused message as quarantine/<id>.json keeps it: the
-// message as served, whole, for whoever looks into who sent what. Each of
-// the server's strings is in the clear only when it has its form (an id or
-// an address is 64 lowercase hex, a time is one protocol.ParseTime reads),
-// and is otherwise kept as <name>_b64, the string as served in base64. So
-// nothing the server chose is readable at a glance, and nothing is lost. The
-// ciphertext is base64 already. irongall.sh's ig_one keeps the same.
+// message as served, whole, for whoever looks into who sent what: the
+// members of its list entry, and the ciphertext its fetch answered, in
+// base64. Each of the server's strings is in the clear only when it has its
+// form (an id or an address is 64 lowercase hex, a time is one
+// protocol.ParseTime reads), and is otherwise kept as <name>_b64, the string
+// as served in base64. So nothing the server chose is readable at a glance,
+// and nothing is lost. Its size is the ciphertext's, which the fetch was
+// held to. irongall.sh's ig_kept keeps the same.
 type keptRefusal struct {
 	ID            string         `json:"id,omitempty"`
 	IDB64         string         `json:"id_b64,omitempty"`
@@ -53,8 +55,8 @@ type keptRefusal struct {
 	Ciphertext    protocol.Bytes `json:"ciphertext"`
 }
 
-func keepRefused(m *protocol.Message) ([]byte, error) {
-	k := keptRefusal{Ciphertext: m.Ciphertext}
+func keepRefused(m *protocol.MessageInfo, ct []byte) ([]byte, error) {
+	k := keptRefusal{Ciphertext: ct}
 	for _, f := range []struct {
 		served       string
 		plain, coded *string

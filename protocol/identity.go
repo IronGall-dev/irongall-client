@@ -56,27 +56,33 @@ var (
 var identityForm = regexp.MustCompile(`\A` + IdentityTag + `\n([!-+\--~]{1,64}) ([A-Za-z0-9+/]+={0,2})\n\z`)
 
 // A defined type: its document's one exact form, in words and as a pattern,
-// and the checks its key must pass beyond parsing as a key of that type in
-// its one encoding.
+// the checks its key must pass beyond parsing as a key of that type in its one
+// encoding, and the most bytes a signature by a box of that type may be
+// (SignatureBound).
 var identityTypes = map[string]struct {
 	form  *regexp.Regexp
 	shape string
 	check func(ssh.PublicKey) error
+	bound int
 }{
 	// 93 bytes: the key's base64 is 68 characters, of which 25 are fixed.
+	// Its largest signature is 850 bytes, a prekey statement's.
 	IdentityEd25519: {
 		form:  identityGrammar,
 		shape: "it is exactly 93 bytes: \"irongall-v1\", LF, an ssh-ed25519 key with no comment, LF (look for a comment, CRLF, or a missing final newline)",
 		check: func(k ssh.PublicKey) error {
 			return checkEd25519(k.(ssh.CryptoPublicKey).CryptoPublicKey().(ed25519.PublicKey))
 		},
+		bound: 4096,
 	},
 	// 173 bytes: the key's base64 is 140 characters, of which 53 are fixed,
-	// the point's leading 04 (uncompressed) among them.
+	// the point's leading 04 (uncompressed) among them. Its largest
+	// signature is 947 bytes, a prekey statement's.
 	IdentityP256: {
 		form:  regexp.MustCompile(`\A` + IdentityTag + `\necdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBB[A-P][A-Za-z0-9+/]{84}[AEIMQUYcgkosw048]=\n\z`),
 		shape: "it is exactly 173 bytes: \"irongall-v1\", LF, an ecdsa-sha2-nistp256 key with no comment, LF (look for a comment, CRLF, or a missing final newline)",
 		check: func(k ssh.PublicKey) error { return checkP256(k.Marshal()) },
+		bound: 4096,
 	},
 }
 

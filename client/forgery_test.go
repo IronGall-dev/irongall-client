@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -285,10 +284,8 @@ func TestForgeries(t *testing.T) {
 		send(t, a, b, "once")
 		e.srv.SetMiddle(nil)
 		receive(t, b)
-		var req protocol.SendRequest
-		_ = json.Unmarshal(*sent, &req)
 		other := sha256.Sum256([]byte("another id"))
-		e.srv.Inject(b.Address(), hex.EncodeToString(other[:]), a.Address(), req.Ciphertext)
+		e.srv.Inject(b.Address(), hex.EncodeToString(other[:]), a.Address(), *sent) // a send's body is its ciphertext
 		refusedFor(t, receive(t, b), client.RefusedReplay, "replay")
 	})
 
@@ -315,10 +312,8 @@ func TestForgeries(t *testing.T) {
 		sent := capture(e, http.MethodPost, "/v1/"+c.Address().String()+"/messages")
 		send(t, a, c, "for C's key")
 		e.srv.SetMiddle(nil)
-		var req protocol.SendRequest
-		_ = json.Unmarshal(*sent, &req)
-		id := sha256.Sum256(req.Ciphertext)
-		e.srv.Inject(b.Address(), hex.EncodeToString(id[:]), a.Address(), req.Ciphertext)
+		id := sha256.Sum256(*sent)
+		e.srv.Inject(b.Address(), hex.EncodeToString(id[:]), a.Address(), *sent)
 		refusedFor(t, receive(t, b), client.RefusedDecrypt, "does not decrypt")
 	})
 

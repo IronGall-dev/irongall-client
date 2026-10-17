@@ -328,8 +328,8 @@ func hides(e *env) {
 	})
 }
 
-// capture records the JSON body of the next request matching method and
-// path suffix.
+// capture records the body of the next request matching method and path
+// suffix: JSON, or a send's ciphertext.
 func capture(e *env, method, suffix string) *[]byte {
 	var got []byte
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {

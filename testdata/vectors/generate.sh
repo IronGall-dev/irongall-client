@@ -29,6 +29,19 @@ asc() { printf '%s' "$1" | od -An -tx1 | tr -d ' \n'; }
 str() { printf '%08x%s' $(( ${#1} / 2 )) "$1"; }           # an RFC 4251 string, from hex
 bin() { printf "$(printf '%s' "$1" | sed 's/../\\x&/g')"; } # hex → bytes on stdout
 b64() { base64 | tr -d '\n'; }
+# An age recipient as age writes one: Bech32 (BIP 173) of bytes under a human-readable part, in lowercase, with no
+# limit on its length (age has none).
+bech32() { # <human-readable part> <bytes, hex>
+  local h=$1 x=$2 cs=qpzry9x8gf2tvdw0s3jn54khce6mua7l v=() d=() acc=0 bits=0 chk=1 top i k out="" g=(0x3b6a57b2 0x26508e6d 0x1ea119fa 0x3d4233dd 0x2a1462b3)
+  for ((i = 0; i < ${#h}; i++)); do v+=($(($(printf %d "'${h:i:1}") >> 5))); done; v+=(0)
+  for ((i = 0; i < ${#h}; i++)); do v+=($(($(printf %d "'${h:i:1}") & 31))); done
+  for ((i = 0; i < ${#x}; i += 2)); do acc=$(((acc << 8) | 16#${x:i:2})); bits=$((bits + 8))
+    while ((bits >= 5)); do bits=$((bits - 5)); d+=($(((acc >> bits) & 31))); done; acc=$((acc & ((1 << bits) - 1))); done
+  ((bits == 0)) || d+=($(((acc << (5 - bits)) & 31)))
+  for k in "${v[@]}" "${d[@]}" 0 0 0 0 0 0; do top=$((chk >> 25)); chk=$((((chk & 0x1ffffff) << 5) ^ k)); for i in 0 1 2 3 4; do ((top >> i & 1)) && chk=$((chk ^ g[i])); done; done
+  chk=$((chk ^ 1)); for k in "${d[@]}"; do out+=${cs:k:1}; done; for i in 0 1 2 3 4 5; do out+=${cs:$(((chk >> (25 - 5 * i)) & 31)):1}; done
+  printf '%s1%s' "$h" "$out"
+}
 # An armored signature: its blob, from hex, as ssh-keygen writes one; and the other way, a blob in hex from a signature ssh-keygen wrote.
 armor() { printf -- '-----BEGIN SSH SIGNATURE-----\n'; bin "$1" | b64 | fold -w 70; printf -- '\n-----END SSH SIGNATURE-----\n'; }
 blob() { sed '1d;$d' "$1" | tr -d '\n' | base64 -d | od -An -v -tx1 | tr -d ' \n'; }
@@ -173,8 +186,11 @@ badcert() { # <name> <signing key> <certified key> <ssh-keygen options…>
   cert "cert/$name.pub" "${@:2}"
   under "$key" "cert/$name.pub" "irongall-prekey-v1:$A" < a/prekey-1.txt > "cert/$name.sig"
 }
-badcert bad-extensions a a-work -I irongall-cert-v1 -n "$A" -z 1 -V "$V_OK" # no -O clear: ssh-keygen adds five extensions
 badcert bad-critical-option a a-work $(good "$A") -O force-command=true
+# Extensions are ignored, each in its one encoding: a name once, in lexical order, and a value nothing or one string that
+# is not empty, as Go's x/crypto/ssh reads them. ssh-keygen writes a name twice when told to, and a value of one empty string.
+badcert bad-extension-twice a a-work $(good "$A") -O extension:nobody-defines@irongall.invalid -O extension:nobody-defines@irongall.invalid
+badcert bad-extension-value-an-empty-string a a-work $(good "$A") -O extension:nobody-defines@irongall.invalid=
 badcert bad-key-id a a-work -I irongall-cert-v2 -n "$A" -z 1 -V "$V_OK" -O clear
 badcert bad-two-principals a a-work -I irongall-cert-v1 -n "$A,$B" -z 1 -V "$V_OK" -O clear
 badcert bad-principal-another-box a a-work $(good "$B")
@@ -190,6 +206,12 @@ badcert bad-too-long a a-work $(good "$A" 1 "$V_TOO_LONG")
 okcert() { badcert "$@"; }
 okcert ok-begins-now a a-work $(good "$A" 1 "$V_BEGINS_NOW")
 okcert ok-valid-from-0 a a-work $(good "$A" 1 "always:${V_OK#*:}")      # begins at 0, as -V always: writes it
+# Extensions a verifier does not know, and it knows none, are ignored (draft-ietf-sshm-cert-01 §2.1.1): ssh-keygen's five,
+# without -O clear, and one nobody defines, with a value, so the slot stays in use (RFC 9170). And one more, made by
+# protocol's TestVectorsReservedField, since ssh-keygen writes the reserved field empty: cert/ok-reserved-field, whose
+# reserved field holds bytes, which a verifier ignores as well.
+okcert ok-extensions a a-work -I irongall-cert-v1 -n "$A" -z 1 -V "$V_OK"
+okcert ok-unknown-extension a a-work $(good "$A") -O extension:nobody-defines@irongall.invalid=not-read
 
 # One signature, a/prekey-1.txt.sig, in forms a verifier reads as ssh-keygen -Y verify reads them (OpenSSH's
 # sshsig_dearmor), and in a file of at most 4096 bytes in all (PROTOCOL.md §3): ok-* are taken, bad-* refused. Then
@@ -324,7 +346,7 @@ bad bad-names-another-box 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$B" "$PQ" "$NOT
 bad bad-serial-zero 'irongall-prekey-v1\n%s\n0\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
 bad bad-serial-leading-zero 'irongall-prekey-v1\n%s\n01\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
 bad bad-serial-19-digits 'irongall-prekey-v1\n%s\n1000000000000000000\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
-bad bad-serial-above-2-53 'irongall-prekey-v1\n%s\n9007199254740992\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER" # a send names it as a JSON number, and 2^53 - 1 is the most one holds exactly
+bad bad-serial-above-2-53 'irongall-prekey-v1\n%s\n9007199254740992\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER" # an answer names a serial as a JSON number, and 2^53 - 1 is the most one holds exactly
 bad bad-serial-negative 'irongall-prekey-v1\n%s\n-1\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
 bad bad-never 'irongall-prekey-v1\n%s\n1\n%s\nnever\n' "$A" "$PQ"
 bad bad-time-lowercase-z 'irongall-prekey-v1\n%s\n1\n%s\n2026-11-11T00:00:00z\n' "$A" "$PQ"
@@ -344,6 +366,11 @@ bad bad-recipient-small-order-classic 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$A"
 bad expired 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$PQ" "$NOW"
 bad longest 'irongall-prekey-v1\n%s\n1\n%s\n2026-11-12T01:00:00Z\n' "$A" "$PQ"
 bad too-long 'irongall-prekey-v1\n%s\n1\n%s\n2026-11-12T01:00:01Z\n' "$A" "$PQ"
+# A well-formed age recipient of a type nobody defines, so no client has it: RFC 7748 §6.1's published X25519 test key
+# (Alice's public key) under the human-readable part age1nosuchtype. Good in every other way, so a sender refuses it as
+# unsupported_prekey_type, never as a statement that does not verify.
+[ "$(bech32 age b77249f1180299c3eb1399abb0cced137e6923bf34ce8b2d8d50c374feafa915)" = "$(cat input/a-2.classic)" ] || { echo "bech32 does not write input/a-2.classic's key as age wrote it" >&2; exit 1; }
+bad unsupported-type 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$(bech32 age1nosuchtype 8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a)" "$NOT_AFTER"
 
 # Envelopes, judged as a message whose signature by A verified, received by box B, at ./now.
 case_env() { local name=$1; shift; printf "$@" > "envelope/$name.json"; }
@@ -365,6 +392,7 @@ case_env refuse-no-version "{\"from\":\"%s\",\"to\":\"%s\",\"sent_at\":\"$NOW\",
 case_env refuse-no-body "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\"}" "$A" "$B"
 case_env refuse-no-msg-id "{$H,\"sent_at\":\"$NOW\",\"body\":\"hello\"}" "$A" "$B"
 case_env refuse-msg-id-uppercase "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$(printf '%s' "$MSG_ID" | tr a-f A-F)\",\"body\":\"hello\"}" "$A" "$B"
+case_env refuse-msg-id-grouped-wrongly "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"${MSG_ID:0:8}${MSG_ID:9:1}-${MSG_ID:10}\",\"body\":\"hello\"}" "$A" "$B" # 36 characters and four hyphens, the first a place late
 case_env refuse-sent-at-malformed "{$H,\"sent_at\":\"2026-10-10 00:00:00\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
 case_env refuse-not-json "not json"
 case_env refuse-msg-id-newline "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\\\\n\",\"body\":\"hello\"}" "$A" "$B"
@@ -458,6 +486,7 @@ cat "$GOOD_SIG" message/a-to-b.line > plain/refuse-signature-first.txt
 { cat message/a-to-b.line; grep -v -e '-----END' "$GOOD_SIG"; } > plain/refuse-no-end-line.txt
 { cat message/a-to-b.line; head -c -1 "$GOOD_SIG"; } > plain/refuse-end-line-without-its-line-feed.txt
 { cat message/a-to-b.line; head -c -1 "$GOOD_SIG"; printf '\0\n'; } > plain/refuse-end-line-followed-by-a-nul.txt
+{ cat message/a-to-b.line; head -c -1 "$GOOD_SIG"; printf '.\n'; tail -n 1 "$GOOD_SIG"; } > plain/refuse-end-line-followed-by-a-byte-and-a-later-one.txt      # the block ends at the first END line, whatever follows later
 sed 's/$/\r/' message/a-to-b.line > "$L"; { cat "$L"; under a-work a/work-cert.pub "irongall-msg-v1:$B" < "$L" | sed 's/$/\r/'; } > plain/refuse-crlf.txt
 printf '{\n"v":1,"from":"%s","to":"%s","sent_at":"%s","msg_id":"%s","identity":"%s","body":"hello"}\n' "$A" "$B" "$NOW" "$MSG_ID" "$ID_A" > "$L"; refuse refuse-envelope-on-two-lines "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
 rm -f "$L"
@@ -519,30 +548,30 @@ jt bad-vertical-tab '{"a":\v1}'
 # type or null, which is as if it were left out; a byte member is base64 in its one encoding.
 mkdir -p answer
 at() { local name=$1; shift; printf "$@" > "answer/$name.json"; }
-REV=$(b64 < a/revoke.sig); RC=$(b64 < revoked/ok-through-4.txt); RCS=$(b64 < revoked/ok-through-4.sig); P1=$(b64 < a/prekey-1.txt); P1S=$(b64 < a/prekey-1.txt.sig); CT=$(b64 < message/a-to-b.age); HASH=$(sha256sum < message/a-to-b.age | cut -c1-64)
+REV=$(b64 < a/revoke.sig); RC=$(b64 < revoked/ok-through-4.txt); RCS=$(b64 < revoked/ok-through-4.sig); P1=$(b64 < a/prekey-1.txt); P1S=$(b64 < a/prekey-1.txt.sig); HASH=$(sha256sum < message/a-to-b.age | cut -c1-64)
 wrap() { printf '%s' "$1" | fold -w 64 | sed 's/$/\\n/' | tr -d '\n' | sed 's/\\n$//'; } # base64 with a JSON \n escape after each 64 characters
 NOPAD=${REV%%=*}; LASTBITS=$(printf '%s' "$REV" | sed 's/A==$/B==/; s/Q==$/R==/; s/g==$/h==/; s/w==$/x==/') # the revocation is 403 bytes: two = of padding, and 4 unused bits
 [ "$NOPAD" != "$REV" ] && [ "$LASTBITS" != "$REV" ] || { echo "a/revoke.sig is not base64 with padding and unused bits, which the bad answers need" >&2; exit 1; }
-at record-ok-revocation '{"identity":"%s","revocation":"%s"}' "$ID_A" "$REV"
-at record-ok-null-members '{"identity":null,"revocation":null,"revoked_certificates":null,"revoked_certificates_signature":null}'
-at record-ok-unknown-member '{"identity":"%s","revocation":"%s","later":[1,{"x":true}]}' "$ID_A" "$REV"
-at record-ok-names-in-another-case '{"Identity":"%s","REVOCATION":"%s"}' "$ID_A" "$REV" # members it does not know: a record that shows nothing
+at record-ok-revocation-signature '{"identity":"%s","revocation_signature":"%s"}' "$ID_A" "$REV"
+at record-ok-null-members '{"identity":null,"revocation_signature":null,"revoked_certificates":null,"revoked_certificates_signature":null}'
+at record-ok-unknown-member '{"identity":"%s","revocation_signature":"%s","later":[1,{"x":true}]}' "$ID_A" "$REV"
+at record-ok-names-in-another-case '{"Identity":"%s","REVOCATION_SIGNATURE":"%s"}' "$ID_A" "$REV" # members it does not know: a record that shows nothing
 at record-ok-empty-object '{}'
 at record-bad-empty ''
 at record-bad-an-array '[]'
-at record-bad-identity-a-number '{"identity":5,"revocation":"%s"}' "$REV"
-at record-bad-revocation-unpadded '{"identity":"%s","revocation":"%s"}' "$ID_A" "$NOPAD"
-at record-bad-revocation-unused-bits-set '{"identity":"%s","revocation":"%s"}' "$ID_A" "$LASTBITS"
-at record-bad-identity-wrapped '{"identity":"%s","revocation":"%s"}' "$(wrap "$ID_A")" "$REV"
-at record-bad-identity-twice '{"identity":"%s","identity":"%s","revocation":"%s"}' "$ID_A" "$ID_B" "$REV"
-at record-bad-null-after-a-value '{"identity":"%s","revocation":"%s","revocation":null}' "$ID_A" "$REV"
-at record-bad-nan-beside-it '{"identity":"%s","revocation":"%s","later":NaN}' "$ID_A" "$REV"
-at record-bad-a-second-value '{"identity":"%s","revocation":"%s"}{}' "$ID_A" "$REV"
-at record-ok-type '{"type":"revocation_record","identity":"%s","revocation":"%s"}' "$ID_A" "$REV" # a record names its own type
-at record-ok-type-null '{"type":null,"identity":"%s","revocation":"%s"}' "$ID_A" "$REV"
-at record-bad-type-another '{"type":"revocation","identity":"%s","revocation":"%s"}' "$ID_A" "$REV" # and never another
-at record-bad-type-empty '{"type":"","identity":"%s","revocation":"%s"}' "$ID_A" "$REV"
-at record-bad-type-a-number '{"type":1,"identity":"%s","revocation":"%s"}' "$ID_A" "$REV"
+at record-bad-identity-a-number '{"identity":5,"revocation_signature":"%s"}' "$REV"
+at record-bad-revocation-signature-unpadded '{"identity":"%s","revocation_signature":"%s"}' "$ID_A" "$NOPAD"
+at record-bad-revocation-signature-unused-bits-set '{"identity":"%s","revocation_signature":"%s"}' "$ID_A" "$LASTBITS"
+at record-bad-identity-wrapped '{"identity":"%s","revocation_signature":"%s"}' "$(wrap "$ID_A")" "$REV"
+at record-bad-identity-twice '{"identity":"%s","identity":"%s","revocation_signature":"%s"}' "$ID_A" "$ID_B" "$REV"
+at record-bad-null-after-a-value '{"identity":"%s","revocation_signature":"%s","revocation_signature":null}' "$ID_A" "$REV"
+at record-bad-nan-beside-it '{"identity":"%s","revocation_signature":"%s","later":NaN}' "$ID_A" "$REV"
+at record-bad-a-second-value '{"identity":"%s","revocation_signature":"%s"}{}' "$ID_A" "$REV"
+at record-ok-type '{"type":"revocation_record","identity":"%s","revocation_signature":"%s"}' "$ID_A" "$REV" # a record names its own type
+at record-ok-type-null '{"type":null,"identity":"%s","revocation_signature":"%s"}' "$ID_A" "$REV"
+at record-bad-type-another '{"type":"revocation","identity":"%s","revocation_signature":"%s"}' "$ID_A" "$REV" # and never another
+at record-bad-type-empty '{"type":"","identity":"%s","revocation_signature":"%s"}' "$ID_A" "$REV"
+at record-bad-type-a-number '{"type":1,"identity":"%s","revocation_signature":"%s"}' "$ID_A" "$REV"
 at box-ok '{"identity":"%s","prekey":"%s","prekey_signature":"%s"}' "$ID_A" "$P1" "$P1S"
 at box-ok-sender-key-types '{"identity":"%s","prekey":"%s","prekey_signature":"%s","sender_key_types":["ecdsa-sha2-nistp256"]}' "$ID_A" "$P1" "$P1S"
 at box-ok-revoked-certificates '{"identity":"%s","prekey":"%s","prekey_signature":"%s","revoked_certificates":"%s","revoked_certificates_signature":"%s"}' "$ID_A" "$P1" "$P1S" "$RC" "$RCS" # the revocation of its certificates the server holds, beside the box
@@ -560,21 +589,24 @@ at list-bad-count-written-with-an-exponent '{"count":1e0,"messages":[],"next_cur
 at list-bad-size-a-string '{"count":1,"messages":[{"id":"%s","from":"%s","size":"2048"}],"next_cursor":null,"poll_after":60}' "$HASH" "$A"
 at list-bad-messages-an-object '{"count":0,"messages":{},"next_cursor":null,"poll_after":60}'
 at list-bad-cursor-a-number '{"count":0,"messages":[],"next_cursor":7,"poll_after":60}'
-at message-ok '{"id":"%s","from":"%s","received_at":"%s","expires_at":"2026-11-12T00:00:00Z","ciphertext":"%s"}' "$HASH" "$A" "$NOW" "$CT"
-at message-bad-ciphertext-wrapped '{"id":"%s","from":"%s","ciphertext":"%s"}' "$HASH" "$A" "$(wrap "$CT")"
-at message-bad-from-a-number '{"id":"%s","from":5,"ciphertext":"%s"}' "$HASH" "$CT"
+# A cursor is opaque and URL-safe (AEP-158): one or more of A-Z, a-z, 0-9, - and _, pasted into the next query as it is
+at list-ok-cursor '{"count":2,"messages":[],"next_cursor":"AZaz09-_","poll_after":60}'
+at list-bad-cursor-a-slash '{"count":2,"messages":[],"next_cursor":"a/b","poll_after":60}'
+at list-bad-cursor-a-percent '{"count":2,"messages":[],"next_cursor":"a%%2Fb","poll_after":60}'
+at list-bad-cursor-empty '{"count":2,"messages":[],"next_cursor":"","poll_after":60}'
+at list-bad-from-a-number '{"count":1,"messages":[{"id":"%s","from":5,"size":%s}],"next_cursor":null,"poll_after":60}' "$HASH" "$(wc -c < message/a-to-b.age)" # the fetch answers the ciphertext alone: who sent it is the list's
 at receipt-ok '{"id":"%s","received_at":"%s","expires_at":"2026-11-12T00:00:00Z"}' "$HASH" "$NOW"
 at receipt-bad-id-an-array '{"id":["%s"],"received_at":"%s"}' "$HASH" "$NOW"
-at problem-ok '{"type":"https://irongall.dev/errors/not_revoked","title":"Not revoked","status":404,"detail":"no revocation of this address is held here","code":"not_revoked","hint":"nothing to do"}'
-at problem-bad-code-twice '{"type":"https://irongall.dev/errors/not_revoked","status":404,"code":"not_revoked","code":"revoked"}'
+at problem-ok '{"type":"tag:irongall.dev,2026-10-17:errors/not_revoked","title":"Not revoked","status":404,"detail":"no revocation of this address is held here","code":"not_revoked","hint":"nothing to do"}'
+at problem-bad-code-twice '{"type":"tag:irongall.dev,2026-10-17:errors/not_revoked","status":404,"code":"not_revoked","code":"revoked"}'
 at problem-bad-status-a-string '{"status":"404","code":"not_revoked"}'
 at problem-bad-status-a-fraction-after-the-code '{"code":"not_revoked","status":1.5}' # a reader that kept what it read before the fault would act on the code
 # The members a problem carries beside its words (PROTOCOL.md §13), each of its type: a client reads them, never the words
-at problem-ok-members '{"type":"https://irongall.dev/errors/sends_spent","title":"Sends spent","status":429,"detail":"this box has sent its 20 messages for the day","code":"sends_spent","hint":"wait","limit":20,"messages":3,"unacked":2,"oldest_expires_at":"%s","version":1,"prekey_serial":2,"certificate_serial":1792000000,"through":5,"key_types":["ssh-ed25519",null],"key_type":"ecdsa-sha2-nistp256","member":"prekey_serial"}' "$NOT_AFTER"
+at problem-ok-members '{"type":"tag:irongall.dev,2026-10-17:errors/sends_spent","title":"Sends spent","status":429,"detail":"this box has sent its 20 messages for the day","code":"sends_spent","hint":"wait","limit":20,"count":3,"unacked":2,"oldest_expires_at":"%s","version":1,"prekey_serial":2,"certificate_serial":1792000000,"through":5,"key_types":["ssh-ed25519",null],"key_type":"ecdsa-sha2-nistp256","member":"prekey_serial"}' "$NOT_AFTER"
 at problem-bad-limit-negative '{"code":"sends_spent","status":429,"limit":-1}'
 at problem-bad-limit-written-with-an-exponent '{"code":"too_large","status":413,"limit":1e3}'
 at problem-bad-through-above-2-53 '{"code":"conflict","status":409,"through":9007199254740992}'
 at problem-bad-key-types-a-string '{"code":"unsupported_key_type","status":400,"key_types":"ssh-ed25519"}'
 at problem-bad-member-a-number '{"code":"bad_request","status":400,"member":7}'
-at problem-ok-record '{"type":"https://irongall.dev/errors/revoked","title":"Revoked","status":410,"detail":"this box is revoked","code":"revoked","record":{"type":"revocation_record","identity":"%s","revocation":"%s"}}' "$ID_A" "$REV" # a read of a revoked box carries its record
-at problem-bad-record-another-type '{"code":"revoked","status":410,"record":{"type":"revocation","identity":"%s","revocation":"%s"}}' "$ID_A" "$REV" # held to its type as a record alone is
+at problem-ok-record '{"type":"tag:irongall.dev,2026-10-17:errors/revoked","title":"Revoked","status":410,"detail":"this box is revoked","code":"revoked","record":{"type":"revocation_record","identity":"%s","revocation_signature":"%s"}}' "$ID_A" "$REV" # a read of a revoked box carries its record
+at problem-bad-record-another-type '{"code":"revoked","status":410,"record":{"type":"revocation","identity":"%s","revocation_signature":"%s"}}' "$ID_A" "$REV" # held to its type as a record alone is

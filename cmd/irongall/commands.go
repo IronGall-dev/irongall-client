@@ -792,20 +792,19 @@ wrong file goes nowhere, and no error prints the key.`,
 // else is refused in words that never quote it, since it may be the key, or
 // a secret piped in by mistake.
 func adoptKey(r io.Reader) (string, error) {
-	b, err := io.ReadAll(io.LimitReader(r, maxAdoptKey+1))
+	b, err := io.ReadAll(io.LimitReader(r, int64(maxAdoptKey+len("\r\n")+1)))
 	if err != nil {
 		return "", err
 	}
 	key := strings.TrimSuffix(strings.TrimSuffix(string(b), "\n"), "\r")
-	if len(b) > maxAdoptKey || !adoptKeyForm.MatchString(key) {
+	if len(key) > maxAdoptKey || !adoptKeyForm.MatchString(key) {
 		return "", errors.New("stdin does not hold an adopt key, one line of \"iga1_\" and base64url: nothing is sent, and what was read is not shown")
 	}
 	return key, nil
 }
 
-// adoptKeyForm is an adopt key's form, and maxAdoptKey a bound well over the
-// longest the form allows: a key id, 16 random bytes, an account id of at
-// most 32 bytes and its length, and a 32-byte MAC, in base64url.
+// adoptKeyForm is an adopt key's form, and maxAdoptKey the most bytes one
+// may be (PROTOCOL.md §6.5).
 var adoptKeyForm = regexp.MustCompile(`\Aiga1_[A-Za-z0-9_-]+\z`)
 
 const maxAdoptKey = 1024

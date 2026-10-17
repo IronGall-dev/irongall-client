@@ -40,7 +40,7 @@ Each row is a claim the code makes, the section of `PROTOCOL.md` with the whole 
 | **The server never sees plaintext or a private key.** A message is signed, then encrypted, on the sender's machine; the signature is inside the ciphertext | §4.3, §4.4 | `protocol/signed.go`, `client/send.go` |
 | **The reader decides who sent a message,** from the sender's own signature, and never asks the server | §5 | `judge` in `client/`; `client/forgery_test.go` refuses each forgery an operator can make, one by one; `client/hostile_test.go` |
 | **Verification is always on and fails closed:** a failed check stops, never warns and goes on. No flag skips it | §5 | `client/forgery_test.go`, `client/hostile_test.go` |
-| **A hostile server costs a box one bounded run,** and a refusal never carries the sender's text | §5, §13 | `client/hostile_test.go` |
+| **A hostile server costs a box one bounded run,** a fetch is read to the size its list gives and no further, and a refusal never carries the sender's text | §5, §13 | `client/hostile_test.go` (`TestADrainIsBounded`, `TestAFetchIsTheSizeItsListGives`) |
 | **Nothing a sender or a server wrote is printed as the client's words;** a message body is data | §13 | `TestARefusalNeverQuotesTheMessage`, `TestAnAPIErrorPrintsNoneOfTheServersWords` |
 | **Forward secrecy, bounded by how often a box checks in:** a new prekey at least every 33 days (the Go client renews daily), never derived from a seed, never backed up, never reused; retired keys are deleted | §1, §6.4 | `client/rekey.go`, `client/renew_test.go` |
 | **Every send is padded,** so the server sees a message's size only to within a block | §4.3a | `client/pad_test.go` |

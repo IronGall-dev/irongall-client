@@ -552,7 +552,7 @@ func (b *Box) syncACL(ctx context.Context) error {
 // none.
 func (b *Box) heldVersion(ctx context.Context) (uint64, error) {
 	var d protocol.ACLDocument
-	if _, err := b.owner(ctx, http.MethodGet, b.boxPath("/acl"), nil, nil, &d); err != nil {
+	if _, err := b.owner(ctx, http.MethodGet, b.boxPath("/acl"), nil, &d); err != nil {
 		return 0, err
 	}
 	if d.Version == nil || *d.Version > protocol.MaxSerial {
@@ -565,7 +565,7 @@ func (b *Box) heldVersion(ctx context.Context) (uint64, error) {
 // ACL.
 func (b *Box) putACL(ctx context.Context, acl *protocol.ACL) (*protocol.ACL, error) {
 	var d protocol.ACLDocument
-	if _, err := b.owner(ctx, http.MethodPut, b.boxPath("/acl"), acl.Document(), nil, &d); err != nil {
+	if _, err := b.owner(ctx, http.MethodPut, b.boxPath("/acl"), acl.Document(), &d); err != nil {
 		return nil, err
 	}
 	got, err := protocol.CheckACL(&d, 0)

@@ -5,7 +5,9 @@
 //     description does not name fails, as does one it requires and the answer
 //     lacks;
 //   - every request: one the description refuses must not be answered 2xx;
-//   - a route the description lacks gets the router's plain 404 or 405.
+//   - a route the description lacks gets the router's plain 404 or 405;
+//   - every error's code counts (protocol.Problem.CodeAt): one the
+//     description knows, under its own status, beside its own type.
 //
 // The server and the Go client share protocol's structs, so a member that
 // drifts from PROTOCOL.md passes every test the two run together. This is
@@ -108,9 +110,13 @@ func check(t testing.TB, v validator.Validator, r *http.Request, body *tee, rec 
 	req := r.Clone(r.Context())
 	req.Body = io.NopCloser(bytes.NewReader(body.buf.Bytes()))
 	if body.buf.Len() > 0 {
-		// The protocol asks no Content-Type of a request: a server reads
-		// every body as JSON.
-		req.Header.Set("Content-Type", "application/json")
+		// The protocol asks no Content-Type of a request: a server reads a
+		// send's body as the ciphertext's bytes, and every other body as JSON.
+		ct := "application/json"
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/messages") {
+			ct = protocol.CiphertextContentType
+		}
+		req.Header.Set("Content-Type", ct)
 	}
 	mu.Lock()
 	ok, errs := v.ValidateHttpRequest(req)
@@ -139,6 +145,12 @@ func check(t testing.TB, v validator.Validator, r *http.Request, body *tee, rec 
 	mu.Unlock()
 	if !ok {
 		t.Errorf("apitest: %s: the answer is not the description's: %s\n%s", where, list(errs), rec.body.Bytes())
+	}
+	if isProblem(rec.header) {
+		var p protocol.Problem
+		if protocol.Unmarshal(rec.body.Bytes(), &p) == nil && p.CodeAt(rec.status) == "" {
+			t.Errorf("apitest: %s: the error's code does not count: one of this status, beside its own type\n%s", where, rec.body.Bytes())
+		}
 	}
 }
 

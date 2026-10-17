@@ -142,6 +142,58 @@ func TestSendToAnIdentityOfAnUnknownType(t *testing.T) {
 	}
 }
 
+// A send to a box whose prekey statement is good in every way, its key a
+// well-formed age recipient of a type this client cannot encrypt to, is
+// refused with its own code, unsupported_prekey_type, never as a statement
+// that does not verify, and nothing is posted or kept of the peer. The key is
+// the prekey/unsupported-type vector's: a published test key under a
+// human-readable part nobody uses.
+func TestSendToAPrekeyOfATypeThisClientLacks(t *testing.T) {
+	e := newEnv(t)
+	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	vector, err := os.ReadFile("../testdata/vectors/prekey/unsupported-type.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, _ := e.srv.Prekey(b.Address())
+	lines := strings.Split(string(st), "\n")
+	lines[3] = strings.Split(string(vector), "\n")[3]
+	statement := []byte(strings.Join(lines, "\n"))
+	sig, err := protocol.Sign(worker(t, b), statement, protocol.PrekeyNamespace(b.Address()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	posted := false
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == boxPath(b):
+			fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: b.Identity().Document(), Prekey: statement, PrekeySignature: sig})
+			return
+		case r.Method == http.MethodPost:
+			posted = true
+		}
+		next.ServeHTTP(w, r)
+	})
+	_, err = a.Send(context.Background(), b.Address(), "hello")
+	var refused *client.RefusedError
+	if !errors.As(err, &refused) || refused.Code != client.RefusedPrekeyType || !strings.Contains(refused.Reason, "a type this client cannot encrypt to") {
+		t.Fatalf("send: %v", err)
+	}
+	if strings.Contains(refused.Reason, "nosuchtype") || posted || exists(filepath.Join(a.Dir(), "peers", b.Address().String())) {
+		t.Errorf("the refusal quotes the key, something was posted, or the peer was pinned: %s", refused.Reason)
+	}
+	// The same statement, signed by another box, does not verify: that is
+	// what it is refused as.
+	sig, err = protocol.Sign(worker(t, a), statement, protocol.PrekeyNamespace(b.Address()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = a.Send(context.Background(), b.Address(), "hello")
+	if !errors.As(err, &refused) || refused.Code != "" {
+		t.Fatalf("a statement that does not verify: %v", err)
+	}
+}
+
 // With each prekey a box declares which sender key types its client verifies:
 // every type this client verifies, unless it is told otherwise. "any" is
 // never what it says by itself.

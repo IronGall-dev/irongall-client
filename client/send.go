@@ -374,18 +374,25 @@ func (b *Box) moveToFailed(stem string) error {
 	return syncDir(failed)
 }
 
-func (b *Box) postSealed(ctx context.Context, to protocol.Address, req *protocol.SendRequest) (*protocol.Receipt, error) {
+// sealed is a seal made for one post: the ciphertext, the whole body of the
+// send, and the query that names the prekey it is encrypted to.
+type sealed struct {
+	query      protocol.SendQuery
+	ciphertext []byte
+}
+
+func (b *Box) postSealed(ctx context.Context, to protocol.Address, s *sealed) (*protocol.Receipt, error) {
 	// The post carries this box's pass: that is how the server knows the
 	// sender.
 	var r protocol.Receipt
-	if _, err := b.owner(ctx, http.MethodPost, "/v1/"+to.String()+"/messages", req, nil, &r); err != nil {
+	if _, err := b.owner(ctx, http.MethodPost, "/v1/"+to.String()+"/messages?"+s.query.Encode(), &ciphertext{bytes: s.ciphertext}, &r); err != nil {
 		return nil, err
 	}
 	// A receipt names the ciphertext it is for, and this box knows which
 	// that is: one that names another, or whose times are not times, is no
 	// receipt, and the entry stays (PROTOCOL.md §4.5). So what send and
 	// flush print of it is what this box computed.
-	h := sha256.Sum256(req.Ciphertext)
+	h := sha256.Sum256(s.ciphertext)
 	_, rerr := protocol.ParseTime(r.ReceivedAt)
 	_, eerr := protocol.ParseTime(r.ExpiresAt)
 	if r.ID != hex.EncodeToString(h[:]) || rerr != nil || eerr != nil {
@@ -396,16 +403,16 @@ func (b *Box) postSealed(ctx context.Context, to protocol.Address, req *protocol
 
 // seal signs the entry's envelope for the peer only, with the working key
 // in use, and encrypts the envelope, the signature and the padding to the
-// peer's VERIFIED current prekey, and returns the request to post. Nothing
-// of it is written: the outbox keeps the envelope, and a seal is made again
-// for every post.
+// peer's VERIFIED current prekey, and returns what to post. Nothing of it is
+// written: the outbox keeps the envelope, and a seal is made again for every
+// post.
 //
 // The envelope is read as its recipient will read it, so one the recipient
 // would refuse is never sealed. The padding is made here, for the prekey's
 // type: an encryption after stale_prekey may be to a prekey of the other
 // type. It is outside what is signed, so the signature is over the envelope
 // as the outbox keeps it.
-func (b *Box) seal(ctx context.Context, to protocol.Address, stem string, l *lookups) (*protocol.SendRequest, error) {
+func (b *Box) seal(ctx context.Context, to protocol.Address, stem string, l *lookups) (*sealed, error) {
 	line, err := os.ReadFile(stem + ".P") //nolint:gosec // a path inside the box's own directory
 	if err != nil {
 		return nil, err
@@ -454,6 +461,5 @@ func (b *Box) seal(ctx context.Context, to protocol.Address, stem string, l *loo
 	// certificate resolve verified it under. Never read back from what the
 	// box recorded: that is the highest seen, which another statement may
 	// have raised.
-	serial, underSerial := pk.Serial, under.Serial()
-	return &protocol.SendRequest{PrekeySerial: &serial, CertificateSerial: &underSerial, Ciphertext: ct.Bytes()}, nil
+	return &sealed{query: protocol.SendQuery{PrekeySerial: pk.Serial, CertificateSerial: under.Serial()}, ciphertext: ct.Bytes()}, nil
 }

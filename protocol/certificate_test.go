@@ -167,9 +167,14 @@ func TestCertificateRules(t *testing.T) {
 		{name: "another box's address", change: func(c *ssh.Certificate) { c.ValidPrincipals = []string{other.id.Address().String()} }, want: ErrCertificate},
 		{name: "two principals", change: func(c *ssh.Certificate) { c.ValidPrincipals = append(c.ValidPrincipals, other.id.Address().String()) }, want: ErrCertificate},
 		{name: "the address in capitals", change: func(c *ssh.Certificate) { c.ValidPrincipals = []string{strings.ToUpper(b.id.Address().String())} }, want: ErrCertificate},
-		{name: "an extension", change: func(c *ssh.Certificate) { c.Extensions = map[string]string{"permit-pty": ""} }, want: ErrCertificate},
+		{name: "an extension OpenSSH defines", change: func(c *ssh.Certificate) { c.Extensions = map[string]string{"permit-pty": ""} }},
+		{name: "an extension nobody defines, with a value", change: func(c *ssh.Certificate) {
+			c.Extensions = map[string]string{"nobody-defines@irongall.invalid": "a value", "permit-pty": ""}
+		}},
+		{name: "reserved bytes", change: func(c *ssh.Certificate) { c.Reserved = []byte("not read") }},
 		{name: "a critical option", change: func(c *ssh.Certificate) { c.CriticalOptions = map[string]string{"force-command": "/bin/true"} }, want: ErrCertificate},
-		{name: "reserved bytes", change: func(c *ssh.Certificate) { c.Reserved = []byte{1} }, want: ErrCertificate},
+		{name: "source-address, which the library leaves to its caller", change: func(c *ssh.Certificate) { c.CriticalOptions = map[string]string{"source-address": "127.0.0.1/32"} }, want: ErrCertificate},
+		{name: "a critical option nobody defines", change: func(c *ssh.Certificate) { c.CriticalOptions = map[string]string{"nobody-defines@irongall.invalid": ""} }, want: ErrCertificate},
 		{name: "signed by another key", signer: other.identity, want: ErrCertificate},
 		{name: "the identity key as the working key", change: func(c *ssh.Certificate) { c.Key = b.identity.PublicKey() }, want: ErrCertificate},
 		{name: "a P-256 working key", change: func(c *ssh.Certificate) { c.Key = p256Key }, want: ErrCertificate},
@@ -286,15 +291,21 @@ func TestCertificateAgainstSSHKeygen(t *testing.T) {
 	if cert.Serial() != 7 {
 		t.Errorf("serial %d", cert.Serial())
 	}
-	// Without "-O clear" ssh-keygen adds five extensions, and stock
-	// verification accepts them. This check does not.
+	// Without "-O clear" ssh-keygen adds five extensions. None means
+	// anything here, and an extension a verifier does not know is ignored
+	// (draft-ietf-sshm-cert-01 §2.1.1); a critical option is refused.
 	if err := os.Rename(filepath.Join(dir, "work-cert.pub"), filepath.Join(dir, "clear-cert.pub")); err != nil {
 		t.Fatal(err)
 	}
 	must(nil, "-q", "-s", "identity", "-I", CertificateKeyID, "-n", a, "-z", "8", "-V", "+65d", "work.pub")
 	sig = must(msg, "-Y", "sign", "-n", ns, "-f", "work-cert.pub")
-	if _, err := VerifyCertified(id, msg, sig, ns, now); !errors.Is(err, ErrCertificate) {
+	if _, err := VerifyCertified(id, msg, sig, ns, now); err != nil {
 		t.Errorf("a certificate with ssh-keygen's default extensions: %v", err)
+	}
+	must(nil, "-q", "-s", "identity", "-I", CertificateKeyID, "-n", a, "-z", "9", "-V", "+65d", "-O", "clear", "-O", "force-command=true", "work.pub")
+	sig = must(msg, "-Y", "sign", "-n", ns, "-f", "work-cert.pub")
+	if _, err := VerifyCertified(id, msg, sig, ns, now); !errors.Is(err, ErrCertificate) {
+		t.Errorf("a certificate with a critical option: %v", err)
 	}
 
 	// A certificate and a signature made here, checked by ssh-keygen.

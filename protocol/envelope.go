@@ -26,9 +26,10 @@ const (
 	TTL = 33 * 24 * time.Hour
 )
 
-// msgIDGrammar is the receiver's check on msg_id: 36 characters of lowercase
-// hex and hyphens, as the stock recipe checks it.
-var msgIDGrammar = regexp.MustCompile(`\A[0-9a-f-]{36}\z`)
+// msgIDGrammar is a msg_id's one form: a UUID as RFC 9562 §4 writes one, its
+// 4, 2, 2, 2 and 6 octets in hex with hyphens between, of any version, and in
+// lowercase only, so one value has one text, as an address does.
+var msgIDGrammar = regexp.MustCompile(`\A[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\z`)
 
 // IsMsgID reports whether s has the form of a msg_id, as a receiver checks
 // one: what a sender may put in in_reply_to and supersedes.
@@ -81,7 +82,8 @@ type Envelope struct {
 	Identity []byte
 }
 
-// wireEnvelope is the JSON form, in the field order the stock recipe writes.
+// wireEnvelope is the JSON form. No reader depends on the order of its
+// members; this is the order the stock script writes them in.
 type wireEnvelope struct {
 	V          json.Number     `json:"v"` // written as a number; read only as one
 	From       Address         `json:"from"`

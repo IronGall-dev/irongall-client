@@ -136,8 +136,14 @@ func Codes() []Code {
 // Known reports whether c is a code this version knows.
 func (c Code) Known() bool { _, ok := codes[c]; return ok }
 
+// TypePrefix begins every code's Problem Details "type": a tag URI (RFC
+// 4151) that names the problem and resolves to nothing (PROTOCOL.md §13).
+// The date is the day the names were made: RFC 4151 reads a month alone as
+// its first day, before irongall.dev was registered.
+const TypePrefix = "tag:irongall.dev,2026-10-17:errors/"
+
 // TypeURI returns the Problem Details "type" for the code.
-func (c Code) TypeURI() string { return "https://irongall.dev/errors/" + string(c) }
+func (c Code) TypeURI() string { return TypePrefix + string(c) }
 
 // ProblemContentType is the media type of every error body (RFC 9457).
 const ProblemContentType = "application/problem+json"
@@ -162,8 +168,9 @@ type Problem struct {
 	// or raises of a revocation of certificates a day takes (sends_spent,
 	// renewals_spent, certificates_spent, certificate_revocations_spent).
 	Limit *uint64 `json:"limit,omitempty"`
-	// Messages is how many messages a full box holds (mailbox_full).
-	Messages *uint64 `json:"messages,omitempty"`
+	// Count is how many messages a full box holds, as its list counts them
+	// (mailbox_full).
+	Count *uint64 `json:"count,omitempty"`
 	// Unacked and OldestExpiresAt are how many messages from this sender the
 	// box holds unacked, and when the oldest of them expires (pair_full).
 	Unacked         *int64 `json:"unacked,omitempty"`
@@ -184,7 +191,8 @@ type Problem struct {
 	// verify (sender_key_type).
 	KeyTypes []string `json:"key_types,omitempty"`
 	KeyType  string   `json:"key_type,omitempty"`
-	// Member is the request member that is missing or unknown (bad_request).
+	// Member is the request member or query parameter that is missing,
+	// unknown, given twice or not of its form (bad_request).
 	Member string `json:"member,omitempty"`
 	// Record is the revocation record of the address a read of a box named
 	// (revoked, on GET /v1/<address>). A client checks it, and takes
@@ -199,4 +207,16 @@ func (p *Problem) checkType() error {
 		return p.Record.checkType()
 	}
 	return nil
+}
+
+// CodeAt returns the problem's code if it counts in an answer of the given
+// status: a code this version knows, under its own status, in a body whose
+// type is that code's own (PROTOCOL.md §13). Otherwise it returns "", and
+// the answer is read by its status alone: a body that names its problem
+// twice and disagrees names none.
+func (p *Problem) CodeAt(status int) Code {
+	if p.Code.Known() && p.Code.Status() == status && p.Type == p.Code.TypeURI() {
+		return p.Code
+	}
+	return ""
 }

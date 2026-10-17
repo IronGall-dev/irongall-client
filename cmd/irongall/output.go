@@ -117,18 +117,23 @@ func omit(s string) any {
 func seconds(d time.Duration) int64 { return int64((d + time.Second - 1) / time.Second) }
 
 // failure is the members of a line about err: from a server's answer, its
-// status, its code when it is one this client knows under that status, the
-// wait it asked for, and the values its code carries, each checked to its
-// type; then the message, which is err in this client's own words.
+// status, its code when it counts (one this client knows, under that status,
+// beside its own type), the wait it asked for, and the values its code
+// carries, each checked to its type; from a refusal with a code of its own,
+// that code; then the message, which is err in this client's own words.
 func failure(err error) []any {
 	var kv []any
 	var ae *client.APIError
+	var re *client.RefusedError
+	if errors.As(err, &re) && re.Code != "" {
+		kv = append(kv, "code", re.Code)
+	}
 	if errors.As(err, &ae) {
 		kv = append(kv, "status", ae.Status)
 		p := &ae.Problem
 		if p.Code.Known() {
 			kv = append(kv, "code", p.Code,
-				"limit", p.Limit, "messages", p.Messages, "unacked", p.Unacked)
+				"limit", p.Limit, "count", p.Count, "unacked", p.Unacked)
 			if t, err := protocol.ParseTime(p.OldestExpiresAt); err == nil {
 				kv = append(kv, "oldest_expires_at", t.Format(protocol.TimeLayout))
 			}

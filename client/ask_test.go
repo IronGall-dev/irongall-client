@@ -1,10 +1,8 @@
 package client_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -71,7 +69,7 @@ func (o *operator) count(method, suffix string) int {
 }
 
 func answer(w http.ResponseWriter, code protocol.Code) bool {
-	fakeserver.WriteJSON(w, code.Status(), protocol.Problem{Code: code, Status: int64(code.Status())})
+	fakeserver.WriteJSON(w, code.Status(), protocol.Problem{Type: code.TypeURI(), Code: code, Status: int64(code.Status())})
 	return true
 }
 
@@ -307,23 +305,19 @@ func TestAMessageThatWaitedIsSealedAtThePost(t *testing.T) {
 
 	// With an honest server it is sealed to the statement in use: one post,
 	// naming the certificate in use.
-	var posted [][]byte
+	var posted []protocol.SendQuery
 	watch(e, func(_ http.ResponseWriter, r *http.Request) bool {
 		if r.Method == http.MethodPost && r.URL.Path == postTo(a) {
-			body, _ := io.ReadAll(r.Body)
-			posted = append(posted, body)
-			r.Body = io.NopCloser(strings.NewReader(string(body)))
+			q, _ := protocol.ParseSendQuery(r.URL.RawQuery)
+			posted = append(posted, q)
 		}
 		return false
 	})
 	if got, err := b.Flush(ctx); err != nil || len(got) != 1 {
 		t.Fatalf("flush: %v, %v", got, err)
 	}
-	var req struct {
-		CertificateSerial uint64 `json:"certificate_serial"`
-	}
-	if len(posted) != 1 || json.Unmarshal(posted[0], &req) != nil || req.CertificateSerial != numberOf(t, a) {
-		t.Fatalf("%d posts, the first under certificate %d", len(posted), req.CertificateSerial)
+	if len(posted) != 1 || posted[0].CertificateSerial != numberOf(t, a) {
+		t.Fatalf("%d posts: %+v", len(posted), posted)
 	}
 	if res := receive(t, a); len(res.Delivered) != 1 || bodyOf(t, res.Delivered[0]) != "written under the first certificate" {
 		t.Fatalf("delivered: %+v", res)
@@ -377,12 +371,9 @@ func TestAMessageThatWaitedGoesUnderTheRenewalTheBoxRecorded(t *testing.T) {
 		if r.Method != http.MethodPost || r.URL.Path != postTo(a) {
 			return false
 		}
-		body, _ := io.ReadAll(r.Body)
-		var req protocol.SendRequest
-		if protocol.Unmarshal(body, &req) == nil && req.CertificateSerial != nil {
-			posted = append(posted, *req.CertificateSerial)
+		if q, err := protocol.ParseSendQuery(r.URL.RawQuery); err == nil {
+			posted = append(posted, q.CertificateSerial)
 		}
-		r.Body = io.NopCloser(bytes.NewReader(body))
 		fakeserver.Take(w, r)
 		return true
 	})

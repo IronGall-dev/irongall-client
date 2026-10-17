@@ -251,8 +251,31 @@ func TestCodes(t *testing.T) {
 		t.Error("an unknown code has a status")
 	}
 	b, _ := json.Marshal(Problem{Type: CodePairFull.TypeURI(), Title: "t", Status: 429, Code: CodePairFull})
-	if string(b) != `{"type":"https://irongall.dev/errors/pair_full","title":"t","status":429,"code":"pair_full"}` {
+	if string(b) != `{"type":"tag:irongall.dev,2026-10-17:errors/pair_full","title":"t","status":429,"code":"pair_full"}` {
 		t.Errorf("Problem JSON %s", b)
+	}
+}
+
+// A problem's code counts only where it is known, under its own status, and
+// beside its own type: a body that names its problem twice and disagrees
+// names none, and is read by its status alone.
+func TestACodeCountsOnlyBesideItsOwnType(t *testing.T) {
+	for _, c := range []struct {
+		p      Problem
+		status int
+		want   Code
+	}{
+		{Problem{Type: CodeNotRevoked.TypeURI(), Code: CodeNotRevoked}, 404, CodeNotRevoked},
+		{Problem{Type: CodeNotRevoked.TypeURI(), Code: CodeNotRevoked}, 400, ""},
+		{Problem{Type: CodeRevoked.TypeURI(), Code: CodeNotRevoked}, 404, ""},
+		{Problem{Type: "https://irongall.dev/errors/not_revoked", Code: CodeNotRevoked}, 404, ""},
+		{Problem{Type: "tag:irongall.dev,2026-10:errors/not_revoked", Code: CodeNotRevoked}, 404, ""},
+		{Problem{Code: CodeNotRevoked}, 404, ""},
+		{Problem{Type: TypePrefix + "nope", Code: "nope"}, 404, ""},
+	} {
+		if got := c.p.CodeAt(c.status); got != c.want {
+			t.Errorf("%+v at %d: %q, want %q", c.p, c.status, got, c.want)
+		}
 	}
 }
 

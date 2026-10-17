@@ -20,6 +20,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -394,10 +395,39 @@ func (s *Server) newPrekey(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, struct{}{})
 }
 
+// maxCiphertext is the most of a send's body the fake reads: the body is the
+// ciphertext itself, and no message a test sends comes near it.
+const maxCiphertext = 16 << 20
+
+// sendQuery reads a send's query: both serials, once each, and nothing else.
+// It writes the refusal, naming the parameter, and reports false if not.
+func sendQuery(w http.ResponseWriter, r *http.Request) (protocol.SendQuery, bool) {
+	q, err := protocol.ParseSendQuery(r.URL.RawQuery)
+	if err != nil {
+		var qe *protocol.QueryError
+		param := ""
+		if errors.As(err, &qe) {
+			param = qe.Param
+		}
+		problem(w, protocol.CodeBadRequest, "not a send's query", func(p *protocol.Problem) { p.Member = param })
+		return q, false
+	}
+	return q, true
+}
+
 func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 	to, ok := pathAddr(w, r)
-	var req protocol.SendRequest
-	if !ok || !decode(w, r, &req) {
+	if !ok {
+		return
+	}
+	q, ok := sendQuery(w, r)
+	if !ok {
+		return
+	}
+	// The body is the ciphertext, whatever its Content-Type says.
+	ct, err := io.ReadAll(io.LimitReader(r.Body, maxCiphertext))
+	if err != nil {
+		problem(w, protocol.CodeBadRequest, "the body could not be read")
 		return
 	}
 	// The sender is the box the pass names. The message's signature is inside
@@ -436,14 +466,14 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 	case !rcpt.current():
 		problem(w, protocol.CodePrekeyExpired, "the box must publish a new prekey: its current one is under a revoked certificate")
 		return
-	case req.PrekeySerial != nil && *req.PrekeySerial != rcpt.prekey.Serial, req.CertificateSerial != nil && *req.CertificateSerial != rcpt.cert.Serial():
+	case q.PrekeySerial != rcpt.prekey.Serial, q.CertificateSerial != rcpt.cert.Serial():
 		prekey, cert := rcpt.prekey.Serial, rcpt.cert.Serial()
 		problem(w, protocol.CodeStalePrekey, "a newer prekey exists", func(p *protocol.Problem) {
 			p.PrekeySerial, p.CertificateSerial = &prekey, &cert
 		})
 		return
 	}
-	h := sha256.Sum256(req.Ciphertext)
+	h := sha256.Sum256(ct)
 	key := hex.EncodeToString(h[:])
 	if m := rcpt.messages[key]; m != nil {
 		WriteJSON(w, http.StatusOK, receipt(key, m))
@@ -453,7 +483,7 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		problem(w, protocol.CodeSenderNotAllowed, "the box's ACL does not admit the sender")
 		return
 	}
-	m := &message{from: from, ciphertext: req.Ciphertext, receivedAt: s.now()}
+	m := &message{from: from, ciphertext: ct, receivedAt: s.now()}
 	rcpt.messages[key] = m
 	rcpt.order = append(rcpt.order, key)
 	w.Header().Set("Location", r.URL.Path+"/"+key)
@@ -467,13 +497,11 @@ func Take(w http.ResponseWriter, r *http.Request) { TakeAs(w, r, nil) }
 
 // TakeAs is Take, with the receipt changed by edit before it is written.
 func TakeAs(w http.ResponseWriter, r *http.Request, edit func(*protocol.Receipt)) {
-	var req protocol.SendRequest
-	body, _ := io.ReadAll(r.Body)
-	if protocol.Unmarshal(body, &req) != nil {
-		problem(w, protocol.CodeBadRequest, "not a send")
+	if _, ok := sendQuery(w, r); !ok {
 		return
 	}
-	h := sha256.Sum256(req.Ciphertext)
+	body, _ := io.ReadAll(io.LimitReader(r.Body, maxCiphertext))
+	h := sha256.Sum256(body)
 	now := time.Now()
 	rec := protocol.Receipt{ID: hex.EncodeToString(h[:]), ReceivedAt: formatTime(now), ExpiresAt: formatTime(now.Add(protocol.TTL))}
 	if edit != nil {
@@ -517,40 +545,37 @@ func (s *Server) owner(h func(http.ResponseWriter, *http.Request, *box)) http.Ha
 	}
 }
 
-// list answers with every message, and an ETag that changes whenever the
-// set of messages does; a matching If-None-Match gets 304.
-func (s *Server) list(w http.ResponseWriter, r *http.Request, b *box) {
+// list answers with every message, on one page.
+func (s *Server) list(w http.ResponseWriter, _ *http.Request, b *box) {
 	l := protocol.MessageList{Messages: []protocol.MessageInfo{}, PollAfter: 60}
-	var version [8]byte
 	for _, id := range b.order {
 		if m := b.messages[id]; m != nil {
 			l.Messages = append(l.Messages, protocol.MessageInfo{ID: id, From: m.from.String(), Size: int64(len(m.ciphertext)),
 				ReceivedAt: formatTime(m.receivedAt), ExpiresAt: formatTime(m.receivedAt.Add(protocol.TTL))})
-			h := sha256.Sum256([]byte(id))
-			for i := range version {
-				version[i] ^= h[i]
-			}
 		}
 	}
 	l.Count = int64(len(l.Messages))
-	etag := `"` + hex.EncodeToString(version[:]) + `"`
-	w.Header().Set("ETag", etag)
-	if r.Header.Get("If-None-Match") == etag {
-		w.WriteHeader(http.StatusNotModified)
-		return
-	}
 	WriteJSON(w, http.StatusOK, l)
 }
 
+// fetch answers a message's ciphertext, and nothing else: the list says who
+// sent it and when.
 func (s *Server) fetch(w http.ResponseWriter, r *http.Request, b *box) {
-	id := r.PathValue("id")
-	m := b.messages[id]
+	m := b.messages[r.PathValue("id")]
 	if m == nil {
 		problem(w, protocol.CodeNoSuchMessage, "acked or expired")
 		return
 	}
-	WriteJSON(w, http.StatusOK, protocol.Message{ID: id, From: m.from.String(), ReceivedAt: formatTime(m.receivedAt),
-		ExpiresAt: formatTime(m.receivedAt.Add(protocol.TTL)), Ciphertext: m.ciphertext})
+	WriteCiphertext(w, m.ciphertext)
+}
+
+// WriteCiphertext writes a fetch's answer, as the server does: the
+// ciphertext's bytes, with their length. A middleware forging one uses it.
+func WriteCiphertext(w http.ResponseWriter, ct []byte) {
+	w.Header().Set("Content-Type", protocol.CiphertextContentType)
+	w.Header().Set("Content-Length", strconv.Itoa(len(ct)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(ct)
 }
 
 // putACL replaces the box's ACL with one of a higher version, and deletes

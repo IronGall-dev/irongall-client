@@ -263,7 +263,7 @@ func TestAPassTheServerSaysHasRunOut(t *testing.T) {
 			if calls <= refusals {
 				w.Header().Set("Content-Type", protocol.ProblemContentType)
 				w.WriteHeader(http.StatusUnauthorized)
-				_ = json.NewEncoder(w).Encode(protocol.Problem{Status: http.StatusUnauthorized, Code: protocol.CodePassExpired})
+				_ = json.NewEncoder(w).Encode(protocol.Problem{Type: protocol.CodePassExpired.TypeURI(), Status: http.StatusUnauthorized, Code: protocol.CodePassExpired})
 				return
 			}
 		}

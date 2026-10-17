@@ -156,11 +156,14 @@ func (s *Server) Handler() http.Handler {
 
 // handle adapts a handler that returns its refusal. No answer about an
 // address may be kept by a cache: a 404 that outlived an upload would be
-// this server's word outliving the fact.
+// this server's word outliving the fact. Neither route takes a query.
 func (s *Server) handle(h func(http.ResponseWriter, *http.Request) error) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		err := h(w, r)
+		err := noQuery(r)
+		if err == nil {
+			err = h(w, r)
+		}
 		if err == nil {
 			return
 		}
@@ -380,14 +383,31 @@ func (s *Server) body(w http.ResponseWriter, r *http.Request, v any) error {
 	return refuse(protocol.CodeBadRequest, hintRecord, "the body is not the JSON object expected, read as PROTOCOL.md §0b reads one")
 }
 
-// pathAddress reads the address in the path: 64 hex characters, folded to
-// lowercase, as a mailbox server reads one.
+// pathAddress reads the address in the path: 64 lowercase hex characters, as
+// a mailbox server reads one. Uppercase is no address, so that one address
+// has one URL.
 func pathAddress(r *http.Request) (protocol.Address, error) {
-	a, err := protocol.ParseAddress(strings.ToLower(r.PathValue("addr")))
+	a, err := protocol.ParseAddress(r.PathValue("addr"))
 	if err != nil {
-		return a, refuse(protocol.CodeBadAddress, "an address is 64 hex characters", "the path does not name an address")
+		return a, refuse(protocol.CodeBadAddress, "an address is 64 lowercase hex characters", "the path does not name an address")
 	}
 	return a, nil
+}
+
+// noQuery refuses a request with a query: a server refuses a parameter it
+// does not know, as it refuses a member (PROTOCOL.md §0a, §13), and neither
+// route takes one. The parameter is named in member.
+func noQuery(r *http.Request) error {
+	_, err := protocol.ParseQuery(r.URL.RawQuery)
+	if err == nil {
+		return nil
+	}
+	p := refuse(protocol.CodeBadRequest, "send the call with no query", "the query has a parameter this call does not take")
+	var qe *protocol.QueryError
+	if errors.As(err, &qe) {
+		p.Member = qe.Param
+	}
+	return p
 }
 
 // caller is who a request counts against: the address a trusted proxy names

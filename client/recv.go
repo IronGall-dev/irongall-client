@@ -11,7 +11,6 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
-	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -152,7 +151,6 @@ func (b *Box) drain(ctx context.Context) (*Result, error) {
 	}
 	// The senders this drain has asked the server about: one lookup each.
 	asked := newLookups()
-	etag, _ := os.ReadFile(b.path("etag"))
 	cursor := ""
 	messages, fetched := 0, 0
 	for page := 0; ; page++ {
@@ -160,36 +158,18 @@ func (b *Box) drain(ctx context.Context) (*Result, error) {
 			res.More = true
 			return res, nil
 		}
-		first := page == 0
-		hdr := http.Header{}
 		path := b.boxPath("/messages")
-		if first && len(etag) > 0 {
-			hdr.Set("If-None-Match", string(etag))
-		}
 		if cursor != "" {
-			path += "?cursor=" + url.QueryEscape(cursor)
+			// A cursor is URL-safe as a list hands it out: one that is not
+			// makes the list no answer (protocol.CheckCursor).
+			path += "?cursor=" + cursor
 		}
 		var list protocol.MessageList
-		resp, err := b.owner(ctx, http.MethodGet, path, nil, hdr, &list)
-		if err != nil {
+		if _, err := b.owner(ctx, http.MethodGet, path, nil, &list); err != nil {
 			// A server that says this box is revoked is asked to show it.
 			return res, b.proved(ctx, b.id.Address(), err, asked)
 		}
-		if resp.StatusCode == http.StatusNotModified {
-			return res, nil
-		}
 		res.PollAfter = min(list.PollAfter, maxWaitSeconds)
-		if first {
-			// Kept only for an empty box, so a 304 can never hide mail
-			// this client has not handled.
-			if t := resp.Header.Get("ETag"); list.Count == 0 && t != "" {
-				if err := writeFile(b.path("etag"), []byte(t)); err != nil {
-					return res, err
-				}
-			} else if err := removeIfExists(b.path("etag")); err != nil {
-				return res, err
-			}
-		}
 		for _, m := range list.Messages {
 			if !hexID.MatchString(m.ID) {
 				continue
@@ -198,7 +178,7 @@ func (b *Box) drain(ctx context.Context) (*Result, error) {
 				res.More = true
 				return res, nil
 			}
-			n, err := b.receiveOne(ctx, m.ID, res, asked, who)
+			n, err := b.receiveOne(ctx, m, res, asked, who)
 			// A server that paces how much a box takes out stops the drain
 			// as a drain's own limits do: what is left waits on the server.
 			// Only the fetch's own answer is pacing (receiveOne): any other
@@ -214,7 +194,7 @@ func (b *Box) drain(ctx context.Context) (*Result, error) {
 			messages++
 			fetched += n
 		}
-		if list.NextCursor == nil || *list.NextCursor == "" {
+		if list.NextCursor == nil {
 			return res, nil
 		}
 		cursor = *list.NextCursor
@@ -232,22 +212,25 @@ type pacedError struct {
 func (e *pacedError) Error() string { return e.err.Error() }
 func (e *pacedError) Unwrap() error { return e.err }
 
-// receiveOne judges one message unless its id was already handled, stores
-// the verdict, and acks it, and returns the bytes of ciphertext it fetched.
-// An error is transient, or a fault of this box (an unreadable key, a full
-// disk): the message stays on the server for the next drain, never judged by
-// a box that cannot judge it.
+// receiveOne judges one message of a list unless its id was already handled,
+// stores the verdict, and acks it, and returns the bytes of ciphertext it
+// fetched. The fetch answers the ciphertext alone, of the size the list
+// gives; who sent it, on the server's word, and when, are the list's. An
+// error is transient, a fetch that is not of that size, or a fault of this
+// box (an unreadable key, a full disk): the message stays on the server for
+// the next drain, never judged by a box that cannot judge it.
 //
 // Files are named by the SHA-256 of the ciphertext as computed here, never by
 // the server's id; a message whose id is not that hash is refused.
-func (b *Box) receiveOne(ctx context.Context, id string, res *Result, asked *lookups, who *senders) (fetched int, err error) {
+func (b *Box) receiveOne(ctx context.Context, m protocol.MessageInfo, res *Result, asked *lookups, who *senders) (fetched int, err error) {
+	id := m.ID
 	handled, err := b.seenHash(id)
 	if err != nil {
 		return 0, err
 	}
 	if !handled {
-		var m protocol.Message
-		_, err := b.owner(ctx, http.MethodGet, b.boxPath("/messages/"+id), nil, nil, &m)
+		ct := &ciphertext{size: m.Size}
+		_, err := b.owner(ctx, http.MethodGet, b.boxPath("/messages/"+id), nil, ct)
 		var api *APIError
 		switch {
 		case Code(err) == protocol.CodeNoSuchMessage:
@@ -257,10 +240,10 @@ func (b *Box) receiveOne(ctx context.Context, id string, res *Result, asked *loo
 		case err != nil:
 			return 0, err
 		}
-		fetched = len(m.Ciphertext)
-		h := sha256.Sum256(m.Ciphertext)
+		fetched = len(ct.bytes)
+		h := sha256.Sum256(ct.bytes)
 		local := hex.EncodeToString(h[:])
-		d, dup, why, err := b.judge(ctx, &m, asked)
+		d, dup, why, err := b.judge(ctx, ct.bytes, m.From, asked)
 		if err != nil {
 			return fetched, err
 		}
@@ -269,7 +252,7 @@ func (b *Box) receiveOne(ctx context.Context, id string, res *Result, asked *loo
 		}
 		switch {
 		case why != nil:
-			raw, err := keepRefused(&m)
+			raw, err := keepRefused(&m, ct.bytes)
 			if err != nil {
 				return fetched, err
 			}
@@ -302,7 +285,7 @@ func (b *Box) receiveOne(ctx context.Context, id string, res *Result, asked *loo
 			if err != nil {
 				return fetched, err
 			}
-			if err := b.recordSeen(m.Ciphertext, d.Envelope); err != nil {
+			if err := b.recordSeen(ct.bytes, d.Envelope); err != nil {
 				return fetched, err
 			}
 			switch where {
@@ -315,17 +298,17 @@ func (b *Box) receiveOne(ctx context.Context, id string, res *Result, asked *loo
 			}
 		}
 	}
-	_, err = b.owner(ctx, http.MethodDelete, b.boxPath("/messages/"+id), nil, nil, nil)
+	_, err = b.owner(ctx, http.MethodDelete, b.boxPath("/messages/"+id), nil, nil)
 	if Code(err) == protocol.CodeNoSuchMessage {
 		return fetched, nil
 	}
 	return fetched, err
 }
 
-// judge runs every check on one message, in this order, and returns the
-// delivery only if all of them pass; otherwise why says which failed, in a
-// code and in this client's own words. An error is this box's own fault, not
-// the message's: no verdict.
+// judge runs every check on one message, its ciphertext and the sender its
+// list names (from), in this order, and returns the delivery only if all of
+// them pass; otherwise why says which failed, in a code and in this client's
+// own words. An error is this box's own fault, not the message's: no verdict.
 //
 //  1. Decryption with every retained prekey.
 //  2. What came out is an envelope line and then a signature block.
@@ -353,7 +336,7 @@ func (b *Box) receiveOne(ctx context.Context, id string, res *Result, asked *loo
 // of the server: the message carries what proves it. The one thing asked is
 // whether a revocation of that sender exists, and the answer proves itself.
 // The sender's identity is pinned only once all of that has passed.
-func (b *Box) judge(ctx context.Context, m *protocol.Message, asked *lookups) (d *Delivery, dup bool, why *Refusal, err error) {
+func (b *Box) judge(ctx context.Context, ct []byte, listedFrom string, asked *lookups) (d *Delivery, dup bool, why *Refusal, err error) {
 	refused := func(code, reason string) (*Delivery, bool, *Refusal, error) {
 		return nil, false, &Refusal{Code: code, Reason: reason}, nil
 	}
@@ -361,7 +344,7 @@ func (b *Box) judge(ctx context.Context, m *protocol.Message, asked *lookups) (d
 	if err != nil {
 		return nil, false, nil, err
 	}
-	r, err := age.Decrypt(bytes.NewReader(m.Ciphertext), ids...)
+	r, err := age.Decrypt(bytes.NewReader(ct), ids...)
 	if err != nil {
 		return refused(RefusedDecrypt, "it does not decrypt with this box's prekeys")
 	}
@@ -380,7 +363,7 @@ func (b *Box) judge(ctx context.Context, m *protocol.Message, asked *lookups) (d
 	from, env := signed.Sender.Address(), signed.Envelope
 	// The server says who posted it, from the pass the post carried. It is
 	// held to the sender the signature proved.
-	if m.From != from.String() {
+	if listedFrom != from.String() {
 		return refused(protocol.RefusedAttribution, "the server lists it as from another box than the one that signed it")
 	}
 	gone, err := b.revoked(from)
@@ -402,7 +385,7 @@ func (b *Box) judge(ctx context.Context, m *protocol.Message, asked *lookups) (d
 	if certs != nil && certs.Revokes(signed.Certificate.Serial()) {
 		return refused(RefusedCertificate, "it is signed under a certificate its sender's identity has revoked: nothing signed under it is taken, whenever it was signed")
 	}
-	h := sha256.Sum256(m.Ciphertext)
+	h := sha256.Sum256(ct)
 	seen, err := b.seenHash(hex.EncodeToString(h[:]))
 	if err != nil {
 		return nil, false, nil, err

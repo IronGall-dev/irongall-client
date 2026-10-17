@@ -39,7 +39,7 @@ func revoke(t *testing.T, e *env, b *client.Box) *protocol.Revocations {
 func says(e *env, code protocol.Code, method, suffix string) {
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		if r.Method == method && strings.HasSuffix(r.URL.Path, suffix) {
-			fakeserver.WriteJSON(w, code.Status(), protocol.Problem{Code: code, Status: int64(code.Status())})
+			fakeserver.WriteJSON(w, code.Status(), protocol.Problem{Type: code.TypeURI(), Code: code, Status: int64(code.Status())})
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -121,7 +121,7 @@ func TestWhatIsNotARevocationRevokesNothing(t *testing.T) {
 	} {
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if r.Method == http.MethodGet && r.URL.Path == "/v1/"+b.Address().String() {
-				fakeserver.WriteJSON(w, http.StatusGone, protocol.Problem{Code: protocol.CodeRevoked, Status: http.StatusGone, Record: &shown})
+				fakeserver.WriteJSON(w, http.StatusGone, protocol.Problem{Type: protocol.CodeRevoked.TypeURI(), Code: protocol.CodeRevoked, Status: http.StatusGone, Record: &shown})
 				return
 			}
 			next.ServeHTTP(w, r)

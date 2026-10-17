@@ -5,11 +5,17 @@ import (
 	"encoding/json"
 	jsonv2 "encoding/json/v2"
 	"errors"
+	"fmt"
+	"maps"
+	"net/url"
+	"regexp"
 	"slices"
+	"strconv"
 )
 
 // The API's JSON bodies. Every byte field is standard base64 of the exact
-// file bytes, as in Google Pub/Sub's data and AWS KMS's CiphertextBlob.
+// file bytes, as in Google Pub/Sub's data and AWS KMS's CiphertextBlob, but a
+// message's ciphertext, which is the body itself on a send and on a fetch.
 // Addresses and message ids travel as strings, so a client can refuse one bad
 // entry without losing the rest of a response.
 
@@ -115,20 +121,88 @@ func (b *BoxResponse) Record() *Revocations {
 	return &Revocations{Identity: b.Identity, RevokedCertificates: b.RevokedCertificates, RevokedCertificatesSignature: b.RevokedCertificatesSignature}
 }
 
-// SendRequest is the body of POST /v1/<recipient>/messages: an age file encrypted to
-// the recipient's prekey. The sender is the box whose pass the call carries.
-// The message's signature is inside the file, so the server is handed none.
-type SendRequest struct {
+// CiphertextContentType is the media type of a message's ciphertext, the
+// body of a send and of a fetch: the age file's exact bytes.
+const CiphertextContentType = "application/octet-stream"
+
+// SendQuery is the query of POST /v1/<recipient>/messages, whose body is an
+// age file encrypted to the recipient's prekey. The sender is the box whose
+// pass the call carries. The message's signature is inside the file, so the
+// server is handed none.
+type SendQuery struct {
 	// PrekeySerial is the serial of the prekey encrypted to. When the box
 	// has a newer one the server answers stale_prekey, and the sender
 	// encrypts the same signed envelope again.
-	PrekeySerial *uint64 `json:"prekey_serial,omitempty"`
+	PrekeySerial uint64
 	// CertificateSerial is the serial of the certificate that prekey's
 	// statement is signed under. A prekey is named by the two together: a
 	// box's statements are ordered by certificate first, so a prekey serial
 	// can come again under a later certificate.
-	CertificateSerial *uint64 `json:"certificate_serial,omitempty"`
-	Ciphertext        Bytes   `json:"ciphertext"`
+	CertificateSerial uint64
+}
+
+// The names of a send's query parameters.
+const (
+	PrekeySerialParam      = "prekey_serial"
+	CertificateSerialParam = "certificate_serial"
+)
+
+// Encode writes q as a query, without its "?".
+func (q SendQuery) Encode() string {
+	return PrekeySerialParam + "=" + strconv.FormatUint(q.PrekeySerial, 10) + "&" + CertificateSerialParam + "=" + strconv.FormatUint(q.CertificateSerial, 10)
+}
+
+// ErrQuery is returned for a query a server refuses: a parameter it does not
+// know, one given twice, or a value not of its form.
+var ErrQuery = errors.New("the query does not read as this call's")
+
+// QueryError is an ErrQuery that names the parameter at fault, which a 400
+// carries in member (PROTOCOL.md §13).
+type QueryError struct{ Param string }
+
+func (e *QueryError) Error() string { return fmt.Sprintf("%v: %s", ErrQuery, e.Param) }
+
+// Unwrap returns ErrQuery.
+func (e *QueryError) Unwrap() error { return ErrQuery }
+
+// ParseSendQuery reads a send's query as a server reads it: each serial
+// once, written as a statement writes one (a decimal integer from 1 to
+// MaxSerial, with no leading zero), and no other parameter.
+func ParseSendQuery(raw string) (SendQuery, error) {
+	v, err := ParseQuery(raw, PrekeySerialParam, CertificateSerialParam)
+	if err != nil {
+		return SendQuery{}, err
+	}
+	var q SendQuery
+	for _, p := range []struct {
+		name string
+		into *uint64
+	}{{PrekeySerialParam, &q.PrekeySerial}, {CertificateSerialParam, &q.CertificateSerial}} {
+		s, ok := v[p.name]
+		n, isSerial := parseSerial([]byte(s))
+		if !ok || !isSerial {
+			return SendQuery{}, &QueryError{p.name}
+		}
+		*p.into = n
+	}
+	return q, nil
+}
+
+// ParseQuery reads a query of the given parameters: each at most once, and
+// none other (PROTOCOL.md §13). A parameter left out is not in the map.
+func ParseQuery(raw string, params ...string) (map[string]string, error) {
+	v, err := url.ParseQuery(raw)
+	if err != nil {
+		return nil, &QueryError{""}
+	}
+	out := make(map[string]string, len(v))
+	for _, name := range slices.Sorted(maps.Keys(v)) {
+		if !slices.Contains(params, name) || len(v[name]) != 1 {
+			return nil, &QueryError{name}
+		}
+		out[name] = v[name][0]
+	}
+	return out, nil
 }
 
 // AdoptRequest is the body of PUT /v1/<address>/account (with a pass): an adopt
@@ -152,7 +226,8 @@ type Receipt struct {
 }
 
 // MessageList is GET /v1/<address>/messages: one page of metadata, oldest
-// first. NextCursor is null on the last page.
+// first. NextCursor is null on the last page, and otherwise a cursor
+// (CheckCursor).
 type MessageList struct {
 	Count      int64         `json:"count"`
 	Messages   []MessageInfo `json:"messages"`
@@ -160,7 +235,11 @@ type MessageList struct {
 	PollAfter  int64         `json:"poll_after"`
 }
 
-// MessageInfo is one message in a list.
+// MessageInfo is one message in a list. From is the box whose pass the send
+// carried, on the server's word: a recipient holds it to the sender it
+// verifies inside the ciphertext. Size is the ciphertext's length in bytes:
+// GET /v1/<address>/messages/<id> answers the ciphertext itself
+// (CiphertextContentType), and nothing else.
 type MessageInfo struct {
 	ID         string `json:"id"`
 	From       string `json:"from"`
@@ -169,13 +248,25 @@ type MessageInfo struct {
 	ExpiresAt  string `json:"expires_at"`
 }
 
-// Message is GET /v1/<address>/messages/<id>. From is the box whose pass the
-// send carried, on the server's word: a recipient holds it to the sender it
-// verifies inside the ciphertext.
-type Message struct {
-	ID         string `json:"id"`
-	From       string `json:"from"`
-	ReceivedAt string `json:"received_at"`
-	ExpiresAt  string `json:"expires_at"`
-	Ciphertext Bytes  `json:"ciphertext"`
+// cursorGrammar is a list's cursor: opaque and URL-safe, one or more of
+// base64url's alphabet (AEP-158; PROTOCOL.md §5.1).
+var cursorGrammar = regexp.MustCompile(`\A[A-Za-z0-9_-]+\z`)
+
+// CheckCursor checks that s is a cursor as a list may hand one out. A client
+// refuses a list whose next_cursor is not one.
+func CheckCursor(s string) error {
+	if !cursorGrammar.MatchString(s) {
+		return errors.New("the cursor is not one or more of A-Z, a-z, 0-9, - and _")
+	}
+	return nil
+}
+
+// checkType refuses a list whose next_cursor is not a cursor (CheckCursor):
+// it breaks the list's form, as a member of another type does, so it is no
+// answer.
+func (l *MessageList) checkType() error {
+	if l.NextCursor != nil && CheckCursor(*l.NextCursor) != nil {
+		return &memberError{name: "next_cursor", known: true}
+	}
+	return nil
 }

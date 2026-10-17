@@ -61,7 +61,8 @@ func Plaintext(line, signature []byte, t KeyType) (plaintext []byte, sealed int)
 // splitPlaintext returns the envelope's line, its line feed included, and the
 // signature block. The line is everything up to the first line feed. The
 // block starts at once after it, with the BEGIN line, and ends with the first
-// END line. Whatever follows is padding and is not looked at.
+// END line, which a line feed must follow: anything else there, and the
+// message is no message. Whatever follows is padding and is not looked at.
 func splitPlaintext(p []byte) (line, signature []byte, ok bool) {
 	i := bytes.IndexByte(p, '\n')
 	if i < 0 {
@@ -71,12 +72,12 @@ func splitPlaintext(p []byte) (line, signature []byte, ok bool) {
 	if !bytes.HasPrefix(rest, []byte(armorBegin)) {
 		return nil, nil, false
 	}
-	end := []byte("\n" + armorEnd + "\n")
-	j := bytes.Index(rest, end)
-	if j < 0 {
+	end := []byte("\n" + armorEnd)
+	j := bytes.Index(rest, end) + len(end)
+	if j < len(end) || j >= len(rest) || rest[j] != '\n' {
 		return nil, nil, false
 	}
-	return line, rest[:j+len(end)], true
+	return line, rest[:j+1], true
 }
 
 // Signed is a message that passed OpenSigned.

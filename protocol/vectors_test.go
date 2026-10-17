@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/ed25519"
+	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/hex"
@@ -238,8 +239,21 @@ func TestVectorCertificates(t *testing.T) {
 			t.Errorf("%s: VerifyCertified: %v", name, err)
 		}
 	}
+	// Two certificates whose extensions are not in their one encoding: a
+	// name given twice, which the library does not parse, and a value of one
+	// empty string, which it writes back as no value, so the certificate is
+	// not the bytes the identity signed. The signature that carries either
+	// is refused before any rule of the table is read.
+	unread := map[string]bool{"bad-extension-twice": true, "bad-extension-value-an-empty-string": true}
 	for _, f := range glob(t, "cert/bad-*.pub") {
 		name := strings.TrimSuffix(filepath.Base(f), ".pub")
+		if unread[name] {
+			if _, err := VerifyCertified(a, st, read(t, "cert/"+name+".sig"), PrekeyNamespace(a.Address()), now); err == nil {
+				t.Errorf("%s: VerifyCertified took it", name)
+			}
+			delete(unread, name)
+			continue
+		}
 		key := vectorCertificate(t, "cert/"+name+".pub")
 		sig := read(t, "cert/"+name+".sig")
 		want := ErrCertificate
@@ -263,6 +277,63 @@ func TestVectorCertificates(t *testing.T) {
 		}
 		if err := sshsig.Verify(key, st, blob, PrekeyNamespace(a.Address())); err != nil {
 			t.Errorf("%s: control: the signature itself fails: %v", name, err)
+		}
+	}
+	for name := range unread {
+		t.Errorf("cert/%s is missing", name)
+	}
+}
+
+// cert/ok-reserved-field: A's working key's certificate with bytes in its
+// reserved field, which a verifier ignores (draft-ietf-sshm-cert-01 §2.1.1),
+// and a signature made under it over a/prekey-1.txt in A's prekey namespace.
+// ssh-keygen writes the field empty, so they are made here, the same bytes
+// each time: the nonce is a hash of the vector's name, and Ed25519 signs
+// deterministically. The kept files are held to them, and
+// IRONGALL_WRITE_VECTORS=1 writes them.
+func TestVectorsReservedField(t *testing.T) {
+	a := vectorIdentity(t, "a")
+	identity, _ := vectorKey(t, "a")
+	seed, err := hex.DecodeString(strings.Fields(string(read(t, "input/a-work.ed25519")))[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := ssh.NewSignerFromKey(ed25519.NewKeyFromSeed(seed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, _ := time.Parse(time.RFC3339, "2026-10-09T23:59:00Z") // as generate.sh's V_OK
+	before, _ := time.Parse(time.RFC3339, "2026-12-14T00:00:00Z")
+	cert := &ssh.Certificate{
+		Key:             work.PublicKey(),
+		Serial:          1,
+		CertType:        ssh.UserCert,
+		KeyId:           CertificateKeyID,
+		ValidPrincipals: []string{a.Address().String()},
+		ValidAfter:      uint64(after.Unix()),  //nolint:gosec // a time in 2026
+		ValidBefore:     uint64(before.Unix()), //nolint:gosec // a time in 2026
+		Reserved:        []byte("not read"),
+	}
+	nonce := sha512.Sum512([]byte("irongall vector: cert/ok-reserved-field"))
+	if err := cert.SignCert(bytes.NewReader(nonce[:32]), identity); err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.NewCertSigner(cert, work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig, err := Sign(signer, read(t, "a/prekey-1.txt"), PrekeyNamespace(a.Address()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, b := range map[string][]byte{"cert/ok-reserved-field.pub": ssh.MarshalAuthorizedKey(cert), "cert/ok-reserved-field.sig": sig} {
+		if os.Getenv("IRONGALL_WRITE_VECTORS") != "" {
+			if err := os.WriteFile(filepath.Join(vectors, name), b, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if !bytes.Equal(read(t, name), b) {
+			t.Errorf("%s is not what this test makes", name)
 		}
 	}
 }
@@ -343,10 +414,105 @@ func TestVectorBadPrekeys(t *testing.T) {
 			if err != nil || p.Expired(now) || p.CheckLifetime(now) == nil || !p.NotAfter.Equal(now.Add(MaxPrekeyLifetime+time.Second)) {
 				t.Errorf("%s: want valid, not expired, and refused for publishing: %v", name, err)
 			}
+		case name == "unsupported-type": // good in every other way: refused with its own error, never as one that does not verify
+			if _, perr := ParsePrekey(st); !errors.Is(err, ErrPrekeyType) || !errors.Is(perr, ErrPrekeyType) {
+				t.Errorf("%s: %v, and parsed %v, want ErrPrekeyType", name, err, perr)
+			}
 		default:
 			t.Errorf("%s: unknown vector", name)
 		}
 	}
+}
+
+// A prekey's type is its key's Bech32 human-readable part, the string read as
+// age writes one: in lowercase, its checksum good, its data whole bytes. A
+// well-formed key of a type this client lacks is ErrPrekeyType, and that is
+// the last thing a statement is held to: one that fails anything else fails
+// as a statement that does not verify.
+func TestAPrekeyOfATypeThisClientLacks(t *testing.T) {
+	unknown := strings.Split(string(read(t, "prekey/unsupported-type.txt")), "\n")[3]
+	for key, hrp := range map[string]string{
+		strings.TrimSpace(string(read(t, "input/a-1.pq"))):      "age1pq",
+		strings.TrimSpace(string(read(t, "input/a-2.classic"))): "age",
+		unknown: "age1nosuchtype",
+		"abcdef1qpzry9x8gf2tvdw0s3jn54khce6mua7lmqqqxw": "abcdef", // BIP 173's own
+		bech32Of("age1nosuchtype", "qq"):                "age1nosuchtype",
+		bech32Of("age1nosuchtype", ""):                  "age1nosuchtype",
+	} {
+		if got, ok := bech32HRP(key); !ok || got != hrp {
+			t.Errorf("%s: %q, %v, want %q", key, got, ok, hrp)
+		}
+	}
+	for _, key := range []string{
+		strings.ToUpper(unknown), // Bech32, but not as age writes it
+		"age1NOSUCHTYPE" + unknown[len("age1nosuchtype"):],
+		unknown[:len(unknown)-1] + "q", // the checksum
+		unknown + "q",
+		bech32Of("age1nosuchtype", "q"),  // five bits left over
+		bech32Of("age1nosuchtype", "qp"), // two left over, not zero
+		bech32Of("age1nosuchtype", "qb"), // b is not in the alphabet
+		"age1nosuchtype1qqqqq", "1qqqqqqqq", "", "age1pq",
+	} {
+		if hrp, ok := bech32HRP(key); ok {
+			t.Errorf("%s: taken, as %q", key, hrp)
+		}
+	}
+	for key, want := range map[string]error{
+		unknown:                        ErrPrekeyType,
+		bech32Of("agefoo", "qq"):       ErrPrekeyType,
+		bech32Of("age1nosuchtype", ""): ErrPrekeyType,
+		bech32Of("age1pq", "qq"):       nil, // one of the two types, and not a key of it
+		bech32Of("age", "qq"):          nil,
+		bech32Of("nosuchtype", "qq"):   nil, // Bech32, and no age recipient
+		strings.ToUpper(unknown):       nil,
+	} {
+		err := checkRecipient(&Prekey{Key: key})
+		if err == nil || errors.Is(err, ErrPrekeyType) != (want != nil) {
+			t.Errorf("%s: %v, want ErrPrekeyType: %v", key, err, want != nil)
+		}
+	}
+
+	// The type is asked last: the same key in a statement that names another
+	// box, or that outlives its certificate, is a statement that does not
+	// verify.
+	now := vectorNow(t)
+	a, b := vectorIdentity(t, "a"), vectorIdentity(t, "b")
+	w := vectorWorker(t, "a")
+	for _, st := range []string{
+		PrekeyTag + "\n" + b.Address().String() + "\n1\n" + unknown + "\n2026-11-12T00:00:00Z\n",
+		PrekeyTag + "\n" + a.Address().String() + "\n1\n" + unknown + "\n2026-12-15T00:00:00Z\n",
+		PrekeyTag + "\n" + a.Address().String() + "\n01\n" + unknown + "\n2026-11-12T00:00:00Z\n",
+	} {
+		sig, err := Sign(w, []byte(st), PrekeyNamespace(a.Address()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := VerifyPrekey(a, []byte(st), sig, now); err == nil || errors.Is(err, ErrPrekeyType) {
+			t.Errorf("%q: %v, want a statement that does not verify", st, err)
+		}
+	}
+}
+
+// bech32Of is hrp and data, in Bech32's alphabet, with the checksum that makes
+// them a Bech32 string: a test's way to write one whose data breaks a rule.
+func bech32Of(hrp, data string) string {
+	var values []byte
+	for i := range len(hrp) {
+		values = append(values, hrp[i]>>5)
+	}
+	values = append(values, 0)
+	for i := range len(hrp) {
+		values = append(values, hrp[i]&31)
+	}
+	for i := range len(data) {
+		values = append(values, byte(strings.IndexByte(bech32Charset, data[i])))
+	}
+	chk := bech32Polymod(append(values, 0, 0, 0, 0, 0, 0)) ^ 1
+	out := hrp + "1" + data
+	for i := range 6 {
+		out += string(bech32Charset[chk>>(25-5*i)&31])
+	}
+	return out
 }
 
 // TestVectorSignatures checks Go's signatures are byte-identical to the
@@ -407,6 +573,65 @@ func TestVectorSignatureForms(t *testing.T) {
 	}
 	if n := len(read(t, "sig/bad-4097-bytes.sig")); n != MaxSignature+1 {
 		t.Errorf("sig/bad-4097-bytes.sig is %d bytes, not one over the bound", n)
+	}
+}
+
+// Each identity key type states its own bound on a signature, and
+// MaxSignature, what a verifier holds one to before it knows the type, is the
+// largest of them. What a box signs is held to its identity's: with that
+// bound lowered, every verifier refuses the box's signatures, a pass's
+// included, and another type's box is untouched (PROTOCOL.md §3).
+func TestASignatureIsHeldToItsIdentitysBound(t *testing.T) {
+	most := 0
+	for _, ty := range IdentityTypes() {
+		if SignatureBound(ty) <= 0 {
+			t.Errorf("%s states no bound", ty)
+		}
+		most = max(most, SignatureBound(ty))
+	}
+	if most != MaxSignature || SignatureBound(IdentityEd25519) != 4096 || SignatureBound(IdentityP256) != 4096 {
+		t.Errorf("the bounds are %d and %d, the most %d, and MaxSignature %d", SignatureBound(IdentityEd25519), SignatureBound(IdentityP256), most, MaxSignature)
+	}
+	if SignatureBound("no-such-key-type@irongall.invalid") != 0 {
+		t.Error("a key type not defined here has a bound")
+	}
+
+	now := vectorNow(t)
+	a, c := vectorIdentity(t, "a"), vectorIdentity(t, "c")
+	pass, err := ParsePass(strings.TrimSuffix(string(read(t, "a/pass.authorization")), "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	onRecord := sha256.Sum256(vectorCertificate(t, "a/work-cert.pub").Marshal())
+	verdicts := func() []error {
+		_, e1 := VerifyCertified(a, read(t, "a/prekey-1.txt"), read(t, "a/prekey-1.txt.sig"), PrekeyNamespace(a.Address()), now)
+		e2 := Verify(a, read(t, "a/revoke.txt"), read(t, "a/revoke.sig"), RevokeNamespace(a.Address()))
+		_, e3 := pass.Verify(a, "irongall.example", now)
+		_, e4 := pass.VerifyUnder(onRecord, "irongall.example", now)
+		_, e5 := VerifyCertified(c, read(t, "c/prekey-1.txt"), read(t, "c/prekey-1.txt.sig"), PrekeyNamespace(c.Address()), now)
+		return []error{e1, e2, e3, e4, e5}
+	}
+	for i, err := range verdicts() {
+		if err != nil {
+			t.Fatalf("control %d: %v", i, err)
+		}
+	}
+	ed := identityTypes[IdentityEd25519]
+	defer func() { identityTypes[IdentityEd25519] = ed }()
+	lowered := ed
+	lowered.bound = 400 // below every signature here: A's revocation, the smallest, is 403 bytes
+	identityTypes[IdentityEd25519] = lowered
+	got := verdicts()
+	for i, err := range got[:4] {
+		if err == nil {
+			t.Errorf("A's signature %d was taken over its identity's bound", i)
+		}
+	}
+	if !errors.Is(got[3], ErrPass) {
+		t.Errorf("a pass over its identity's bound, checked under the certificate on record: %v", got[3])
+	}
+	if got[4] != nil {
+		t.Errorf("C's signature, a P-256 identity's, was held to Ed25519's bound: %v", got[4])
 	}
 }
 
@@ -474,6 +699,7 @@ var plainVerdicts = map[string]string{
 	"refuse-no-end-line":                                 RefusedMessage,
 	"refuse-end-line-without-its-line-feed":              RefusedMessage,
 	"refuse-end-line-followed-by-a-nul":                  RefusedMessage,
+	"refuse-end-line-followed-by-a-byte-and-a-later-one": RefusedMessage,
 	"refuse-crlf":                                        RefusedMessage,
 	"refuse-envelope-on-two-lines":                       RefusedMessage,
 	"accept-whitespace-in-the-signature":                 "",

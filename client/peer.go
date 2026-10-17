@@ -22,7 +22,9 @@ import (
 //     sends later.
 //   - The prekey statement must be signed by a working key that identity
 //     certified, under a certificate valid now, in the peer's prekey
-//     namespace, and name the peer.
+//     namespace, and name the peer. One whose key is an age recipient of a
+//     type this client cannot encrypt to is refused with its own code,
+//     RefusedPrekeyType.
 //   - It may not be ordered before one already seen (rollback): under an
 //     earlier certificate, or under the same one with a lower serial. A later
 //     certificate outranks any serial under an earlier one, so a box that
@@ -78,6 +80,11 @@ func (b *Box) resolve(ctx context.Context, peer protocol.Address, l *lookups) (*
 	p, cert, err := protocol.VerifyPrekey(id, ir.Prekey, ir.PrekeySignature, b.now())
 	if errors.Is(err, protocol.ErrCertificateNotBegun) {
 		return nil, nil, refuse("%s's prekey: %v, by this machine's clock: a certificate starts an hour before it is made, so check the clock", peer, err)
+	}
+	// A well-formed recipient of a type this client lacks is a statement good
+	// in every other way: its own code, never one that does not verify.
+	if errors.Is(err, protocol.ErrPrekeyType) {
+		return nil, nil, &RefusedError{Code: RefusedPrekeyType, Reason: fmt.Sprintf("%s's prekey is an age recipient of a type this client cannot encrypt to, so nothing is sent", peer)}
 	}
 	if err != nil {
 		return nil, nil, refuse("%s's prekey: %v", peer, err)
