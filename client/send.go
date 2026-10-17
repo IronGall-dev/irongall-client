@@ -63,12 +63,13 @@ func (b *Box) Send(ctx context.Context, to protocol.Address, body string) (*Sent
 }
 
 // SendWith sends one logical message: its envelope is built once and kept in
-// the outbox, signed for that peer only by this box's working key, encrypted
-// with that signature to the peer's verified prekey, then posted. On 409
-// stale_prekey it encrypts the SAME envelope to the newer prekey, once. If
-// the post fails, the message stays in the outbox: retry with [Box.Flush],
-// never by sending again, or the peer gets it twice. Once the server has it,
-// the envelope and the server's receipt are kept in sent/.
+// the outbox, then sealed for the post: signed for that peer only by this
+// box's working key, and encrypted with that signature to the peer's
+// verified prekey. On 409 stale_prekey it seals the SAME envelope to the
+// newer prekey, once. If the post fails, the envelope stays in the outbox:
+// retry with [Box.Flush], never by sending again, or the peer gets it twice.
+// Once the server has it, the envelope and the server's receipt are kept in
+// sent/.
 //
 // Writing to a peer allows it: its replies land in inbox/, and under
 // "server allowed" the box's server is sent the box's ACL with it before
@@ -153,11 +154,14 @@ func (b *Box) sendWith(ctx context.Context, to protocol.Address, env *protocol.E
 	return &Sent{To: to, MsgID: env.MsgID, Receipt: *r}, nil
 }
 
-// Flush re-posts every message still in the outbox, unchanged: a retry of a
-// message the server already holds gets its original receipt. It tries every
-// entry; one that fails never stops the others, and the error names each
-// that failed. The server is asked about each recipient once, as a send
-// asks ([Box.SendWith]).
+// Flush posts again every message still in the outbox, each sealed afresh
+// to what the box holds now, as a send seals it: a seal is made for one post
+// and never kept. A message the server took whose answer was lost is posted
+// again as a new ciphertext, which the server stores and counts again and
+// its reader drops by its msg_id (PROTOCOL.md §4.5). It tries every entry;
+// one that fails never stops the others, and the error names each that
+// failed. The server is asked about each recipient once, as a send asks
+// ([Box.SendWith]).
 func (b *Box) Flush(ctx context.Context) ([]*Sent, error) {
 	return locked(ctx, b, func() ([]*Sent, error) { return b.flush(ctx) })
 }
@@ -207,26 +211,26 @@ var undeliverable = []protocol.Code{
 	protocol.CodeBadAddress, protocol.CodeTooLarge, protocol.CodeConflict, protocol.CodeSenderNotAllowed,
 }
 
-// post posts the outbox entry stem, sealing it first if it is not sealed. On
-// failure the entry stays in the outbox for the next flush, unless it can
-// never be delivered: the server refused it for good, its recipient is
-// revoked, or its envelope is older than any recipient accepts. Then it
-// moves to outbox/failed/. An entry already that old is never posted: the
-// server would take it and give a receipt, and the recipient would refuse it.
+// post seals the outbox entry stem and posts it. On failure the entry stays
+// in the outbox for the next flush, unless it can never be delivered: the
+// server refused it for good, its recipient is revoked, or its envelope is
+// older than any recipient accepts. Then it moves to outbox/failed/. An entry
+// already that old is never posted: the server would take it and give a
+// receipt, and the recipient would refuse it.
 //
-// Before an entry is posted, sealed or not, the server is asked what it
-// holds about the recipient (ask), and the entry is checked against what
-// this box then holds: nothing goes to an address it holds a revocation of,
-// and a seal made to a prekey under a certificate since revoked is made
-// again (sealStands). No answer is not "none held": nothing is posted, and
-// the entry stays.
+// Before an entry is sealed, the server is asked what it holds about the
+// recipient (ask), and the seal is made to what this box then holds: nothing
+// goes to an address it holds a revocation of, and a prekey statement under
+// a certificate since revoked, or ordered before one the box has recorded,
+// is refused ([Box.Resolve]). No answer is not "none held": nothing is
+// sealed or posted, and the entry stays.
 func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked *lookups) (*protocol.Receipt, error) {
 	if b.expired(stem) {
 		return nil, b.undelivered(stem, refuse("its envelope is older than %d days, and every recipient refuses that", protocol.TTL/(24*time.Hour)))
 	}
 	// An envelope dated ahead of this machine's clock was written while the
-	// clock read ahead of where it reads now. It is not posted, sealed or
-	// not, until the clock passes that time: a reader takes a sent_at up to
+	// clock read ahead of where it reads now. It is not posted until the
+	// clock passes that time: a reader takes a sent_at up to
 	// MaxSkew ahead of its own clock, which is the room for two clocks a
 	// server takes, and has none to spare for one that was wrong.
 	if t, ok := b.sentAt(stem); ok && t.After(b.now()) {
@@ -252,15 +256,13 @@ func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked 
 		}
 		return nil, b.undelivered(stem, err)
 	}
-	// Recorded before the outbox entry goes: a crash in between posts it
-	// again, gets the original receipt, and records it again.
+	// Recorded before the outbox entry goes: a crash in between seals and
+	// posts it again, and its reader drops the copy by its msg_id.
 	if err := b.recordSent(stem, r); err != nil {
-		return r, fmt.Errorf("sent, but not recorded in sent/ (still in the outbox: irongall outbox flush records it): %w", err)
+		return r, fmt.Errorf("sent, but not recorded in sent/ (still in the outbox: irongall outbox flush posts it again, and its reader drops the copy): %w", err)
 	}
-	for _, ext := range []string{".P", ".age", ".sig", ".json"} {
-		if err := removeIfExists(stem + ext); err != nil {
-			return r, err
-		}
+	if err := removeIfExists(stem + ".P"); err != nil {
+		return r, err
 	}
 	return r, nil
 }
@@ -318,52 +320,23 @@ func (b *Box) undelivered(stem string, why error) error {
 	return fmt.Errorf("%w (it can never be delivered: moved to outbox/failed/)", why)
 }
 
+// trySend seals the entry and posts it, and on 409 stale_prekey seals the
+// same envelope to the newer prekey and posts that, once. A seal is made for
+// one post and never kept: what a message waited for in the outbox is its
+// envelope, and what it is sealed to is what the box holds at the post.
 func (b *Box) trySend(ctx context.Context, to protocol.Address, stem string) (*protocol.Receipt, error) {
-	stands, err := b.sealStands(to, stem)
+	req, err := b.seal(ctx, to, stem)
 	if err != nil {
 		return nil, err
 	}
-	if !stands {
-		if err := b.seal(ctx, to, stem); err != nil {
-			return nil, err
-		}
-	}
-	r, err := b.postSealed(ctx, to, stem)
+	r, err := b.postSealed(ctx, to, req)
 	if Code(err) == protocol.CodeStalePrekey {
-		if err := b.seal(ctx, to, stem); err != nil {
+		if req, err = b.seal(ctx, to, stem); err != nil {
 			return nil, err
 		}
-		r, err = b.postSealed(ctx, to, stem)
+		r, err = b.postSealed(ctx, to, req)
 	}
 	return r, err
-}
-
-// sealStands reports whether the entry is sealed, to a prekey this box would
-// still seal to by what it holds. An entry may wait in the outbox for days,
-// and its recipient's identity may revoke, meanwhile, the certificate its
-// prekey was signed under: that prekey may be one a thief of the working key
-// published. Such a seal is not posted. It is made again, to a prekey whose
-// statement passes every check now ([Box.Resolve]). So is one this client
-// cannot read, or one that names no certificate.
-func (b *Box) sealStands(to protocol.Address, stem string) (bool, error) {
-	j, err := os.ReadFile(stem + ".json") //nolint:gosec // a path inside the box's own directory
-	if errors.Is(err, fs.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	var req struct {
-		CertificateSerial *uint64 `json:"certificate_serial"`
-	}
-	if protocol.Unmarshal(j, &req) != nil || req.CertificateSerial == nil {
-		return false, nil
-	}
-	certs, err := b.revokedCerts(to)
-	if err != nil {
-		return false, err
-	}
-	return certs == nil || !certs.Revokes(*req.CertificateSerial), nil
 }
 
 // expired reports whether an entry's envelope is older than protocol.TTL, the
@@ -396,24 +369,14 @@ func (b *Box) moveToFailed(stem string) error {
 	if err := os.MkdirAll(failed, 0o700); err != nil {
 		return err
 	}
-	for _, ext := range []string{".P", ".age", ".sig", ".json"} {
-		err := os.Rename(stem+ext, filepath.Join(failed, filepath.Base(stem)+ext))
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
+	err := os.Rename(stem+".P", filepath.Join(failed, filepath.Base(stem)+".P"))
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
 	}
 	return syncDir(failed)
 }
 
-func (b *Box) postSealed(ctx context.Context, to protocol.Address, stem string) (*protocol.Receipt, error) {
-	j, err := os.ReadFile(stem + ".json") //nolint:gosec // a path inside the box's own directory
-	if err != nil {
-		return nil, err
-	}
-	var req protocol.SendRequest
-	if err := protocol.Unmarshal(j, &req); err != nil {
-		return nil, err
-	}
+func (b *Box) postSealed(ctx context.Context, to protocol.Address, req *protocol.SendRequest) (*protocol.Receipt, error) {
 	// The post carries this box's pass: that is how the server knows the
 	// sender.
 	var r protocol.Receipt
@@ -435,72 +398,64 @@ func (b *Box) postSealed(ctx context.Context, to protocol.Address, stem string) 
 
 // seal signs the entry's envelope for the peer only, with the working key
 // in use, and encrypts the envelope, the signature and the padding to the
-// peer's VERIFIED current prekey, then writes the request to post.
+// peer's VERIFIED current prekey, and returns the request to post. Nothing
+// of it is written: the outbox keeps the envelope, and a seal is made again
+// for every post.
 //
 // The envelope is read as its recipient will read it, so one the recipient
 // would refuse is never sealed. The padding is made here, for the prekey's
 // type: an encryption after stale_prekey may be to a prekey of the other
 // type. It is outside what is signed, so the signature is over the envelope
 // as the outbox keeps it.
-func (b *Box) seal(ctx context.Context, to protocol.Address, stem string) error {
+func (b *Box) seal(ctx context.Context, to protocol.Address, stem string) (*protocol.SendRequest, error) {
 	line, err := os.ReadFile(stem + ".P") //nolint:gosec // a path inside the box's own directory
 	if err != nil {
-		return err
+		return nil, err
 	}
 	env, err := protocol.OpenEnvelopeRecord(line, b.id.Address(), to)
 	if err != nil || !bytes.Equal(env.Identity, b.id.Document()) || !bytes.HasSuffix(line, []byte("\n")) {
-		return refuse("the outbox entry is not an envelope this box made for that address")
+		return nil, refuse("the outbox entry is not an envelope this box made for that address")
 	}
 	worker, cert, err := b.currentWorker()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// Mail may wait 33 days to be read, and its certificate must still be
 	// valid then.
 	if !cert.SignsMail(b.now()) {
-		return refuse("this box's certificate ends within %d days, too soon to sign mail that may wait that long: irongall prekey renew makes a new one, as irongall recv does daily", protocol.TTL/(24*time.Hour))
+		return nil, refuse("this box's certificate ends within %d days, too soon to sign mail that may wait that long: irongall prekey renew makes a new one, as irongall recv does daily", protocol.TTL/(24*time.Hour))
 	}
 	pk, under, err := b.resolve(ctx, to)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	r, err := pk.Recipient()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	sig, err := protocol.Sign(worker, line, protocol.MessageNamespace(to))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	plaintext, size := protocol.Plaintext(line, sig, pk.Type())
 	var ct bytes.Buffer
 	w, err := age.Encrypt(&ct, r)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if _, err := w.Write(plaintext); err != nil {
-		return err
+		return nil, err
 	}
 	if err := w.Close(); err != nil {
-		return err
+		return nil, err
 	}
 	if ct.Len() != size {
-		return refuse("the encrypted message is %d bytes, where its padding was made for %d: it is not sent at a size that tells its length", ct.Len(), size)
+		return nil, refuse("the encrypted message is %d bytes, where its padding was made for %d: it is not sent at a size that tells its length", ct.Len(), size)
 	}
 	// The prekey is named by both serials: its own, and that of the
 	// certificate resolve verified it under. Never read back from what the
 	// box recorded: that is the highest seen, which another statement may
 	// have raised.
 	serial, underSerial := pk.Serial, under.Serial()
-	j, err := json.Marshal(protocol.SendRequest{PrekeySerial: &serial, CertificateSerial: &underSerial, Ciphertext: ct.Bytes()})
-	if err != nil {
-		return err
-	}
-	if err := writeFile(stem+".age", ct.Bytes()); err != nil {
-		return err
-	}
-	if err := writeFile(stem+".sig", sig); err != nil {
-		return err
-	}
-	return writeFile(stem+".json", j)
+	return &protocol.SendRequest{PrekeySerial: &serial, CertificateSerial: &underSerial, Ciphertext: ct.Bytes()}, nil
 }

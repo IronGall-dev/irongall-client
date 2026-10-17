@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
@@ -95,7 +96,9 @@ func TestSendPadsEveryMessage(t *testing.T) {
 // The padding is made for the key a message is encrypted to. After
 // stale_prekey the newer prekey may be of the other type, whose age file is
 // 1,459 bytes smaller or larger: the same signed envelope is padded again,
-// for that one, and lands on a block again.
+// for that one, and lands on a block again. Here the box renews between the
+// sender's lookup and its post, as the server stands in for by serving the
+// statement it held before, once.
 func TestAReencryptionToTheOtherKeyTypeIsPaddedAgain(t *testing.T) {
 	for _, c := range []struct {
 		from, to      protocol.KeyType
@@ -107,34 +110,47 @@ func TestAReencryptionToTheOtherKeyTypeIsPaddedAgain(t *testing.T) {
 		e := newEnv(t)
 		a, b := e.box(protocol.Classic), e.box(c.from)
 		ctx := context.Background()
-		failOnce(e, http.MethodPost, "/v1/"+b.Address().String())
-		if _, err := a.Send(ctx, b.Address(), "kept"); err == nil {
-			t.Fatal("the send should have failed")
-		}
-		outbox, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "*.P"))
-		if len(outbox) != 1 {
-			t.Fatalf("outbox holds %d", len(outbox))
-		}
-		p, _ := os.ReadFile(outbox[0])
-		if sealed, _ := os.ReadFile(strings.TrimSuffix(outbox[0], ".P") + ".age"); len(sealed) != c.before {
-			t.Fatalf("%s: sealed at %d bytes, want %d", c.from, len(sealed), c.before)
-		}
+		statement, signature := e.srv.Prekey(b.Address())
 		if _, err := b.Rekey(ctx, c.to); err != nil {
 			t.Fatal(err)
 		}
-		sizes := posted(e, b.Address())
-		if rs, err := a.Flush(ctx); err != nil || len(rs) != 1 {
-			t.Fatalf("flush: %v", err)
+		var sizes []int
+		var sealed []byte // the outbox's envelope at the first post
+		old := true
+		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			switch {
+			case old && r.Method == http.MethodGet && r.URL.Path == "/v1/"+b.Address().String()+"/identity":
+				old = false
+				fakeserver.WriteJSON(w, http.StatusOK, protocol.IdentityResponse{Identity: b.Identity().Document(), Prekey: statement, PrekeySignature: signature})
+				return
+			case r.Method == http.MethodPost && r.URL.Path == "/v1/"+b.Address().String():
+				body, _ := io.ReadAll(r.Body)
+				r.Body = io.NopCloser(bytes.NewReader(body))
+				var req protocol.SendRequest
+				if json.Unmarshal(body, &req) == nil {
+					sizes = append(sizes, len(req.Ciphertext))
+				}
+				if sealed == nil {
+					outbox, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "*.P"))
+					if len(outbox) == 1 {
+						sealed, _ = os.ReadFile(outbox[0])
+					}
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+		if _, err := a.Send(ctx, b.Address(), "kept"); err != nil {
+			t.Fatalf("%s → %s: %v", c.from, c.to, err)
 		}
-		// The first post is the old file, refused as stale; the second is to the new prekey.
-		if len(*sizes) != 2 || len((*sizes)[0]) != c.before || len((*sizes)[1]) != c.after {
-			t.Fatalf("%s → %s: the server got %d sends, %v bytes", c.from, c.to, len(*sizes), lens(*sizes))
+		// The first post is to the old prekey, refused as stale; the second is to the new one.
+		if len(sizes) != 2 || sizes[0] != c.before || sizes[1] != c.after {
+			t.Fatalf("%s → %s: the server got %d sends, %v bytes", c.from, c.to, len(sizes), sizes)
 		}
 		res := receive(t, b)
 		if len(res.Delivered) != 1 || bodyOf(t, res.Delivered[0]) != "kept" {
 			t.Fatalf("%s → %s: delivered %d", c.from, c.to, len(res.Delivered))
 		}
-		if !bytes.Equal(res.Delivered[0].Plaintext, p) {
+		if sealed == nil || !bytes.Equal(res.Delivered[0].Plaintext, sealed) {
 			t.Fatalf("%s → %s: the re-encrypted message is not the same signed envelope", c.from, c.to)
 		}
 	}
@@ -167,12 +183,4 @@ func TestSealRefusesAnEntryItsRecipientWould(t *testing.T) {
 	if len(*sizes) != 0 {
 		t.Fatalf("the server got %d sends", len(*sizes))
 	}
-}
-
-func lens(cts [][]byte) []int {
-	var n []int
-	for _, ct := range cts {
-		n = append(n, len(ct))
-	}
-	return n
 }

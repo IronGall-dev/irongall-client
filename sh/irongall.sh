@@ -490,25 +490,24 @@ ig_padding(){ # <message bytes: the envelope's line and its signature> <age reci
   local n=$1 s c; s=$(ig_blocks "$(ig_sealed "$n" "$2")"); c=$((s - $(ig_agehead "$2") - 16))      # what a file of that size has for its chunks, each with its tag
   echo "$((c - 16 * (c > 65552 ? (c + 65551) / 65552 : 1) - n)) $s"
 }
-ig_seal(){ # <address> <outbox stem> → <stem>.json: the envelope <stem>.P signed for that recipient only, by the working key in use, then the line, the signature and the padding encrypted to the recipient's VERIFIED prekey. It is git's layout for a signed tag: the signed bytes as they are, then the signature block. The envelope is read as its recipient will read it first
-  local B=$1 o=$2 A r k n f t c why ps pc; A=$(cat "$IG/address") && n=$(cat "$IG/serial") || return 1
+ig_seal(){ # <address> <outbox stem> → $IG/seal.json, the request to post: the envelope <stem>.P signed for that recipient only, by the working key in use, then the line, the signature and the padding encrypted to the recipient's VERIFIED prekey. It is git's layout for a signed tag: the signed bytes as they are, then the signature block. The envelope is read as its recipient will read it first. A seal is made for one post and never kept: the outbox keeps the envelope, and ig_post seals it again at every post
+  local B=$1 o=$2 s="$IG/seal" A r k n f t c why ps pc; rm -f "$s.sig" "$s.age" "$s.b64" "$s.json"; A=$(cat "$IG/address") && n=$(cat "$IG/serial") || return 1
   why=$(ig_envcheck "$o.P" "$A" "$B") && [ "$(wc -l < "$o.P")" -eq 1 ] && [ "$(jq -r .identity "$o.P")" = "$(ig_b64 "$IG/identity.doc")" ] || ig_refuse "the outbox entry is not an envelope this box made for that address${why:+: $why}" || return 1
   c=$(ig_cert "$IG/prekeys/$n.txt.sig" "$IG/identity.doc" "$A") && [ $((${c##* } - $(ig_now))) -gt $((33*86400)) ] ||      # the certificate in use: the one this box's published prekey is signed under
     ig_refuse "this box's certificate ends within 33 days, too soon to sign mail that may wait that long (or it has no working key): rekey makes a new one" || return 1
   r=$(ig_resolve "$B") && read -r ps k pc <<< "$r" && [ -n "$pc" ] || return 1
-  ssh-keygen -q -Y sign -n "irongall-msg-v1:$B" -f "$IG/work/$n-cert.pub" < "$o.P" > "$o.sig" || return 1
-  read -r f t <<< "$(ig_padding $(($(wc -c < "$o.P") + $(wc -c < "$o.sig"))) "$k")" && [ -n "$t" ] || return 1
-  { cat "$o.P" "$o.sig" && head -c "$f" /dev/zero | tr '\0' .; } | age -r "$k" > "$o.age" || return 1
-  [ "$(wc -c < "$o.age")" -eq "$t" ] || ig_refuse "the encrypted message is not the $t bytes its padding was made for: it is not sent at a size that tells its length" || return 1
-  ig_b64 "$o.age" > "$o.b64" && { printf '{"prekey_serial":%s,"certificate_serial":%s,"ciphertext":"' "$ps" "$pc" && cat "$o.b64" && printf '"}\n'; } > "$o.json" && rm -f "$o.b64"      # the prekey is named by both serials, its own and its certificate's, written as the digits ig_resolve checked and never through jq's numbers: a jq before 1.7 rounds one above 2^53. No signature beside it: the server knows the sender from the pass the post carries
+  ssh-keygen -q -Y sign -n "irongall-msg-v1:$B" -f "$IG/work/$n-cert.pub" < "$o.P" > "$s.sig" || return 1
+  read -r f t <<< "$(ig_padding $(($(wc -c < "$o.P") + $(wc -c < "$s.sig"))) "$k")" && [ -n "$t" ] || return 1
+  { cat "$o.P" "$s.sig" && head -c "$f" /dev/zero | tr '\0' .; } | age -r "$k" > "$s.age" || return 1
+  [ "$(wc -c < "$s.age")" -eq "$t" ] || ig_refuse "the encrypted message is not the $t bytes its padding was made for: it is not sent at a size that tells its length" || return 1
+  ig_b64 "$s.age" > "$s.b64" && { printf '{"prekey_serial":%s,"certificate_serial":%s,"ciphertext":"' "$ps" "$pc" && cat "$s.b64" && printf '"}\n'; } > "$s.json" && rm -f "$s.b64" || { rm -f "$s.json"; return 1; }      # the prekey is named by both serials, its own and its certificate's, written as the digits ig_resolve checked and never through jq's numbers: a jq before 1.7 rounds one above 2^53. No signature beside it: the server knows the sender from the pass the post carries
 }
-ig_under(){ local h; IFS= read -r -n 200 h < "$1.json" 2> /dev/null; [[ $h =~ ^\{\"prekey_serial\":([1-9][0-9]{0,15}),\"certificate_serial\":([1-9][0-9]{0,15}),\"ciphertext\":\" ]] && [ "${BASH_REMATCH[1]}" -le 9007199254740991 ] && [ "${BASH_REMATCH[2]}" -le 9007199254740991 ] && echo "${BASH_REMATCH[2]}"; }      # <outbox stem> → the serial of the certificate its seal names, read as the digits either client wrote and never through jq's numbers. 1 for a seal this script cannot read
-ig_post(){ # <address> <outbox stem> → POSTs it, sealing it first; on 409 stale_prekey, re-encrypts the SAME envelope, once. One that can never be delivered moves to outbox/failed/. Before anything is posted, sealed or not, the server is asked what it holds about the recipient (ig_lookup), and the entry is checked against what this box then holds
+ig_post(){ # <address> <outbox stem> → seals it and POSTs it; on 409 stale_prekey, seals the SAME envelope again, once. One that can never be delivered moves to outbox/failed/. Before anything is sealed, the server is asked what it holds about the recipient (ig_lookup), and the seal is made to what this box then holds. A post whose answer was lost is posted again as a new ciphertext, which its reader drops by its msg_id
   local B=$1 o=$2 sa c
   if sa=$(ig_time "$(jq -r .sent_at "$o.P" 2> /dev/null)") && [ "$sa" -lt $(($(ig_now) - 33*86400)) ]; then      # the server would take it, and every recipient refuses it
     ig_failed "$o"; ig_refuse "its envelope is older than 33 days, and every recipient refuses that: moved to outbox/failed/"; return 1
   fi
-  if [ -n "$sa" ] && [ "$sa" -gt "$(ig_now)" ]; then      # dated ahead of this clock: written while the clock read ahead of where it reads now. Not posted, sealed or not, until the clock passes that time: a reader has an hour of room for two clocks a server takes, and none to spare for one that was wrong
+  if [ -n "$sa" ] && [ "$sa" -gt "$(ig_now)" ]; then      # dated ahead of this clock: written while the clock read ahead of where it reads now. Not posted until the clock passes that time: a reader has an hour of room for two clocks a server takes, and none to spare for one that was wrong
     ig_refuse "its envelope is dated $(jq -r .sent_at "$o.P"), ahead of this machine's clock: it was written while the clock read ahead of where it reads now, and a recipient would refuse it. It is kept in the outbox, and ig_flush sends it once the clock passes that time"; return 1
   fi
   rm -f "$IG/error.json"
@@ -518,11 +517,8 @@ ig_post(){ # <address> <outbox stem> → POSTs it, sealing it first; on 409 stal
     2) rm -f "$IG/error.json"; ig_err "what the server holds about $B could not be asked, so nothing is posted: kept in the outbox, retry with ig_flush"; return 1 ;;      # no answer is not "none held". Whatever code the failed lookup carried is no answer about the message
     *) ig_refuse "what this box keeps about $B does not verify, or could not be written: kept in the outbox"; return 1 ;;
   esac
-  if [ -e "$o.json" ]; then      # a seal that waited: its recipient's identity may since have revoked the certificate its prekey was signed under, and that prekey may be one a thief of the working key published. Such a seal is not posted: it is made again. So is one this script cannot read
-    if c=$(ig_under "$o"); then ig_certrevoked "$B" "$c"; case $? in 0) rm -f "$o.json" ;; 1) ;; *) ig_refuse "the revocation of certificates kept for $B does not verify: kept in the outbox"; return 1 ;; esac; else rm -f "$o.json"; fi
-  fi
-  { [ -e "$o.json" ] || ig_seal "$B" "$o"; } && ig_owner POST "/v1/$B" "$o.json" > "$IG/receipt.json" && ig_receipt "$o" && { ig_sent "$o"; return; }
-  if [ "$(ig_code)" = stale_prekey ]; then ig_seal "$B" "$o" && ig_owner POST "/v1/$B" "$o.json" > "$IG/receipt.json" && ig_receipt "$o" && { ig_sent "$o"; return; }; fi
+  ig_seal "$B" "$o" && ig_owner POST "/v1/$B" "$IG/seal.json" > "$IG/receipt.json" && ig_receipt && { ig_sent "$o"; return; }
+  if [ "$(ig_code)" = stale_prekey ]; then ig_seal "$B" "$o" && ig_owner POST "/v1/$B" "$IG/seal.json" > "$IG/receipt.json" && ig_receipt && { ig_sent "$o"; return; }; fi
   c=$(ig_code)
   case $c in revoked) ig_lookup "$B" ;; sender_revoked) ig_lookup "$(cat "$IG/address")" ;; esac      # a server's "revoked" is checked: with the revocation in hand it is final, and without one it is a call that failed
   if ig_gone "$B" || ig_gone "$(cat "$IG/address")"; then ig_failed "$o"; ig_err "REVOKED: the revocation verifies, so it can never be delivered: moved to outbox/failed/"; return 1; fi
@@ -533,21 +529,20 @@ ig_post(){ # <address> <outbox stem> → POSTs it, sealing it first; on 409 stal
   esac
   return 1
 }
-ig_receipt(){ # <outbox stem> → 0 only for a receipt in $IG/receipt.json that names the ciphertext this box posted (its id the SHA-256 of it, PROTOCOL.md §4.5) and whose times are times. Anything else is no receipt: the entry stays in the outbox
-  ig_shape "$IG/receipt.json" receipt && ig_bytes "$1.json" ciphertext "$IG/posted" && [ "$(jq -r '.id | strings' "$IG/receipt.json")" = "$(sha256sum < "$IG/posted" | cut -c1-64)" ] &&
+ig_receipt(){ # → 0 only for a receipt in $IG/receipt.json that names the ciphertext this box posted, $IG/seal.json's (its id the SHA-256 of it, PROTOCOL.md §4.5), and whose times are times. Anything else is no receipt: the entry stays in the outbox
+  ig_shape "$IG/receipt.json" receipt && ig_bytes "$IG/seal.json" ciphertext "$IG/posted" && [ "$(jq -r '.id | strings' "$IG/receipt.json")" = "$(sha256sum < "$IG/posted" | cut -c1-64)" ] &&
     ig_time "$(jq -r '.received_at | strings' "$IG/receipt.json")" > /dev/null && ig_time "$(jq -r '.expires_at | strings' "$IG/receipt.json")" > /dev/null && return 0
   ig_refuse "the server's receipt does not name the ciphertext this box posted, or its times are not times: kept in the outbox"
 }
 ig_sent(){ # <outbox stem> → sent/<address>.<msg_id>.json: the envelope as one line, as the recipient's inbox/ keeps it, with the server's receipt. Stored, and only then does the outbox entry go, and a sent line is printed: the server's id, the msg_id and the address. sent/ is yours to prune
   local t="$IG/sent/${1##*/}.json" n=${1##*/}
-  mkdir -p "$IG/sent" && ig_line "$1.P" "$IG/receipt.json" > "$t" && sync "$t" "$IG/sent" && rm -f "$1.P" "$1.age" "$1.sig" "$1.json" || { ig_err "sent, but not recorded in sent/ (still in the outbox: ig_flush records it)"; return 1; }
+  mkdir -p "$IG/sent" && ig_line "$1.P" "$IG/receipt.json" > "$t" && sync "$t" "$IG/sent" && rm -f "$1.P" || { ig_err "sent, but not recorded in sent/ (still in the outbox: ig_flush posts it again, and its reader drops the copy)"; return 1; }
   ig_out sent --arg id "$(jq -r .receipt.id "$t")" --arg msg_id "${n#*.}" --arg to "${n%%.*}"
 }
-ig_failed(){ # <outbox stem> → moves its files to outbox/failed/, where ig_flush no longer sees them. Delete them there to drop the message
-  local f; mkdir -p "$IG/outbox/failed" || return 1
-  for f in "$1.P" "$1.age" "$1.sig" "$1.json"; do [ ! -e "$f" ] || mv "$f" "$IG/outbox/failed/" || return 1; done
+ig_failed(){ # <outbox stem> → moves its envelope to outbox/failed/, where ig_flush no longer sees it. Delete it there to drop the message
+  mkdir -p "$IG/outbox/failed" && { [ ! -e "$1.P" ] || mv "$1.P" "$IG/outbox/failed/"; }
 }
-ig_flush(){ # re-POSTs every message still in the outbox, unchanged: a retry gets the original receipt. One that fails never stops the others
+ig_flush(){ # posts again every message still in the outbox, each sealed afresh to what this box holds now. One that fails never stops the others
   ig_held || { ig_lock ig_flush "$@"; return; }
   local f n rc=0; for f in "$IG"/outbox/*.P; do [ -e "$f" ] || continue; n=$(basename "$f" .P); ig_post "${n%%.*}" "${f%.P}" || rc=1; done; return $rc
 }

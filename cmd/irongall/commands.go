@@ -601,9 +601,9 @@ name and its address.`,
 
 func (e *cli) flushCmd() *cobra.Command {
 	return command("flush", "post again what is still in the outbox",
-		`Post again every message still in the outbox, unchanged, and print a "sent"
-line for each the server takes, as send does: a retry gets the original
-receipt. One that can never be delivered moves to outbox/failed/.`,
+		`Post again every message still in the outbox, each sealed afresh to what the
+box holds now, and print a "sent" line for each the server takes, as send
+does. One that can never be delivered moves to outbox/failed/.`,
 		nargs(0, 0), func(c *cobra.Command, _ []string) error {
 			b, err := e.box()
 			if err != nil {

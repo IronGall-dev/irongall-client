@@ -197,20 +197,20 @@ func TestABoxWhoseClockGoesBackFetchesNothing(t *testing.T) {
 	}
 }
 
-// An envelope dated ahead of this machine's clock is not posted, whether or
-// not it is already sealed. It was written while the clock read ahead of
-// where it reads now, a server would take it, and its reader would refuse
-// it as future and ack it. It waits in the outbox until the clock passes
-// that time, and then goes.
+// An envelope dated ahead of this machine's clock is not posted, whether its
+// first post was refused or never made. It was written while the clock read
+// ahead of where it reads now, a server would take it, and its reader would
+// refuse it as future and ack it. It waits in the outbox, as its envelope
+// alone, until the clock passes that time, and then goes.
 func TestAnEnvelopeDatedAheadWaitsInTheOutbox(t *testing.T) {
 	ctx := context.Background()
 	for _, c := range []struct {
-		name   string
-		off    time.Duration
-		unseal bool
+		name     string
+		off      time.Duration
+		unsealed bool
 	}{
-		{"sealed while the clock was two hours fast", 2 * time.Hour, false},
-		{"written while the clock was 55 minutes fast, and not yet sealed", 55 * time.Minute, true},
+		{"posted while the clock was two hours fast, and refused", 2 * time.Hour, false},
+		{"written while the clock was 55 minutes fast, and never sealed", 55 * time.Minute, true},
 	} {
 		e := newEnv(t)
 		var off time.Duration
@@ -220,15 +220,15 @@ func TestAnEnvelopeDatedAheadWaitsInTheOutbox(t *testing.T) {
 		}
 		b := e.box(protocol.Classic)
 		off = c.off
-		if c.unseal {
+		if c.unsealed {
 			failOnce(e, http.MethodGet, "/identity") // the entry is written and cannot be sealed
 		}
 		if _, err := a.Send(ctx, b.Address(), "dated ahead"); err == nil {
 			t.Fatalf("%s: sent", c.name)
 		}
 		e.srv.SetMiddle(nil)
-		if sealed, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "*.json")); (len(sealed) == 0) != c.unseal {
-			t.Fatalf("%s: sealed entries: %v", c.name, sealed)
+		if kept, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "*.*")); len(kept) != 1 || !strings.HasSuffix(kept[0], ".P") {
+			t.Fatalf("%s: the outbox keeps %v, where it keeps the envelope alone", c.name, kept)
 		}
 		off = 0 // the clock is set right
 		if rs, err := a.Flush(ctx); len(rs) != 0 || err == nil || !strings.Contains(err.Error(), "ahead of this machine's clock") {

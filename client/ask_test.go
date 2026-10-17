@@ -1,15 +1,18 @@
 package client_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
@@ -67,11 +70,12 @@ func lookupOf(a *client.Box) string { return "/v1/" + a.Address().String() + "/r
 func postTo(a *client.Box) string   { return "/v1/" + a.Address().String() }
 
 // waiting returns how many entries a box's outbox holds for an address, and
-// how many of them are sealed.
-func waiting(b *client.Box, to protocol.Address) (entries, sealed int) {
+// how many files it keeps for them beside their envelopes: none, since a
+// seal is made for one post and never kept.
+func waiting(b *client.Box, to protocol.Address) (entries, beside int) {
 	p, _ := filepath.Glob(filepath.Join(b.Dir(), "outbox", to.String()+".*.P"))
-	j, _ := filepath.Glob(filepath.Join(b.Dir(), "outbox", to.String()+".*.json"))
-	return len(p), len(j)
+	all, _ := filepath.Glob(filepath.Join(b.Dir(), "outbox", to.String()+".*"))
+	return len(p), len(all) - len(p)
 }
 
 // theft plays a taken working key: it returns the statement A published
@@ -143,8 +147,8 @@ func TestASenderAsksBeforeItSends(t *testing.T) {
 	if op.count(http.MethodPost, postTo(a)) != 0 || !keptList(b, a.Address()) || keptRevocation(b, a.Address()) {
 		t.Fatalf("it was posted, or the list was not kept: %q", op.seen)
 	}
-	if n, sealed := waiting(b, a.Address()); n != 1 || sealed != 0 || failed(b, a.Address()) != 0 {
-		t.Fatalf("the message is not waiting unsealed in the outbox: %d, %d", n, sealed)
+	if n, beside := waiting(b, a.Address()); n != 1 || beside != 0 || failed(b, a.Address()) != 0 {
+		t.Fatalf("the message is not waiting as its envelope alone in the outbox: %d, %d", n, beside)
 	}
 
 	// What a box learned while the server showed it holds after the server
@@ -197,8 +201,8 @@ func TestNoAnswerAboutARecipientPostsNothing(t *testing.T) {
 	if op.count(http.MethodPost, postTo(a)) != 0 || op.count(http.MethodGet, "/identity") != 0 {
 		t.Fatalf("something was asked or posted after no answer: %q", op.seen)
 	}
-	if n, sealed := waiting(b, a.Address()); n != 1 || sealed != 0 {
-		t.Fatalf("the outbox: %d entries, %d sealed", n, sealed)
+	if n, beside := waiting(b, a.Address()); n != 1 || beside != 0 {
+		t.Fatalf("the outbox: %d entries, %d files beside them", n, beside)
 	}
 
 	// A code that would end a message, had the post been answered with it.
@@ -255,40 +259,42 @@ func postFails(e *env, a *client.Box) {
 	})
 }
 
-// A message can wait in the outbox, sealed, for days. Before it is posted
-// the box asks again, and the seal is checked against what the box then
-// holds: a seal to a prekey under a certificate since revoked is not posted
-// but made again, and nothing is posted to an address since revoked.
-func TestASealThatWaitedIsCheckedBeforeItIsPosted(t *testing.T) {
+// A message can wait in the outbox for days. What waits is its envelope: a
+// seal is made for one post, to what the box holds then, and never kept. So
+// a message that waited goes under the recipient's statement in use at the
+// flush: never to a prekey under a certificate since revoked, never to one
+// ordered before a renewal the box has recorded since, and never to an
+// address since revoked.
+func TestAMessageThatWaitedIsSealedAtThePost(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 
 	postFails(e, a)
-	if _, err := b.Send(ctx, a.Address(), "sealed under the first certificate"); err == nil {
+	if _, err := b.Send(ctx, a.Address(), "written under the first certificate"); err == nil {
 		t.Fatal("the post was meant to fail")
 	}
-	if n, sealed := waiting(b, a.Address()); n != 1 || sealed != 1 {
-		t.Fatalf("the outbox: %d entries, %d sealed", n, sealed)
+	if n, beside := waiting(b, a.Address()); n != 1 || beside != 0 {
+		t.Fatalf("the outbox: %d entries, %d files beside them", n, beside)
 	}
 	statement, signature := theft(t, e, a)
 
-	// The operator still serves the old statement, and would take the seal
-	// as it is. The box asks, learns of the list, and posts nothing: the
-	// seal is not sent, and the statement on offer is refused.
+	// The operator still serves the old statement, and would take a post to
+	// its prekey. The box asks, learns of the revocation, and posts nothing:
+	// the statement on offer is refused.
 	op := helpsTheThief(e, a, statement, signature, false)
 	if _, err := b.Flush(ctx); err == nil || !strings.Contains(err.Error(), "under a certificate its identity has revoked") {
-		t.Fatalf("a flush of a seal under a revoked certificate: %v", err)
+		t.Fatalf("a flush with a statement under a revoked certificate on offer: %v", err)
 	}
 	if op.count(http.MethodPost, postTo(a)) != 0 {
-		t.Fatalf("the old seal was posted: %q", op.seen)
+		t.Fatalf("something was posted: %q", op.seen)
 	}
 	if n, _ := waiting(b, a.Address()); n != 1 || failed(b, a.Address()) != 0 {
 		t.Fatal("the message did not stay in the outbox")
 	}
 
-	// With an honest server it is sealed again before it is posted: one
-	// post, naming the certificate in use, never the old seal first.
+	// With an honest server it is sealed to the statement in use: one post,
+	// naming the certificate in use.
 	var posted [][]byte
 	watch(e, func(_ http.ResponseWriter, r *http.Request) bool {
 		if r.Method == http.MethodPost && r.URL.Path == postTo(a) {
@@ -307,14 +313,14 @@ func TestASealThatWaitedIsCheckedBeforeItIsPosted(t *testing.T) {
 	if len(posted) != 1 || json.Unmarshal(posted[0], &req) != nil || req.CertificateSerial != numberOf(t, a) {
 		t.Fatalf("%d posts, the first under certificate %d", len(posted), req.CertificateSerial)
 	}
-	if res := receive(t, a); len(res.Delivered) != 1 || bodyOf(t, res.Delivered[0]) != "sealed under the first certificate" {
+	if res := receive(t, a); len(res.Delivered) != 1 || bodyOf(t, res.Delivered[0]) != "written under the first certificate" {
 		t.Fatalf("delivered: %+v", res)
 	}
 
-	// An address revoked while a sealed message waits: nothing is posted.
+	// An address revoked while a message waits: nothing is posted.
 	c := e.box(protocol.Classic)
 	postFails(e, c)
-	if _, err := b.Send(ctx, c.Address(), "sealed before the address was revoked"); err == nil {
+	if _, err := b.Send(ctx, c.Address(), "written before the address was revoked"); err == nil {
 		t.Fatal("the post was meant to fail")
 	}
 	revoke(t, e, c)
@@ -334,31 +340,116 @@ func TestASealThatWaitedIsCheckedBeforeItIsPosted(t *testing.T) {
 	}
 }
 
-// A seal this client cannot read, or one that names no certificate, cannot
-// be checked against a list: it is made again, never posted as it is.
-func TestASealThatCannotBeCheckedIsMadeAgain(t *testing.T) {
+// A message that waited while its recipient renewed, revoking nothing, goes
+// under the renewal once the box has recorded it, whatever the server takes:
+// here one that takes any post, as a server need not answer stale_prekey
+// (#91: a seal kept from before the renewal was posted as it was).
+func TestAMessageThatWaitedGoesUnderTheRenewalTheBoxRecorded(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
-	for _, seal := range []string{`{"prekey_serial":1,"ciphertext":"AAAA"}`, `not JSON`} {
-		postFails(e, a)
-		if _, err := b.Send(ctx, a.Address(), "sealed again"); err == nil {
-			t.Fatal("the post was meant to fail")
+	postFails(e, a)
+	if _, err := b.Send(ctx, a.Address(), "written under the first certificate"); err == nil {
+		t.Fatal("the post was meant to fail")
+	}
+	e.srv.SetMiddle(nil)
+	e.clock.Add(2 * time.Second)
+	if _, err := a.Rekey(ctx, ""); err != nil { // a later certificate, nothing revoked
+		t.Fatal(err)
+	}
+	if _, err := b.Send(ctx, a.Address(), "the box records the renewal"); err != nil {
+		t.Fatal(err)
+	}
+	var posted []uint64
+	watch(e, func(w http.ResponseWriter, r *http.Request) bool { // takes every post to a
+		if r.Method != http.MethodPost || r.URL.Path != postTo(a) {
+			return false
 		}
-		sealed, _ := filepath.Glob(filepath.Join(b.Dir(), "outbox", a.Address().String()+".*.json"))
-		if len(sealed) != 1 {
-			t.Fatalf("%d sealed entries", len(sealed))
+		body, _ := io.ReadAll(r.Body)
+		var req protocol.SendRequest
+		if protocol.Unmarshal(body, &req) == nil && req.CertificateSerial != nil {
+			posted = append(posted, *req.CertificateSerial)
 		}
-		if err := os.WriteFile(sealed[0], []byte(seal), 0o600); err != nil {
-			t.Fatal(err)
+		r.Body = io.NopCloser(bytes.NewReader(body))
+		fakeserver.Take(w, r)
+		return true
+	})
+	if got, err := b.Flush(ctx); err != nil || len(got) != 1 {
+		t.Fatalf("flush: %v, %v", got, err)
+	}
+	if len(posted) != 1 || posted[0] != numberOf(t, a) {
+		t.Fatalf("posted under certificates %v after recording %d", posted, numberOf(t, a))
+	}
+}
+
+// A message that waited while its own box ran the remedy for a taken working
+// key is signed at the flush by the working key in use, under the new
+// certificate, and delivered: a seal kept from before was posted under the
+// certificate the remedy revoked, recorded as sent, and refused by its
+// reader (#112).
+func TestAMessageThatWaitedThroughTheRemedyIsSignedUnderTheNewCertificate(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	first := numberOf(t, b)
+	postFails(e, a)
+	if _, err := b.Send(ctx, a.Address(), "written before the owner's remedy"); err == nil {
+		t.Fatal("the post was meant to fail")
+	}
+	e.srv.SetMiddle(nil)
+	e.clock.Add(2 * time.Second)
+	r, err := b.RenewAndRevoke(ctx, "") // irongall cert revoke-earlier
+	if err != nil || r.Revoked == nil || !r.Revoked.Revokes(first) || r.Revoked.Revokes(numberOf(t, b)) {
+		t.Fatalf("remedy: %+v, %v", r, err)
+	}
+	if got, err := b.Flush(ctx); err != nil || len(got) != 1 {
+		t.Fatalf("flush: %v, %v", got, err)
+	}
+	res := receive(t, a)
+	if len(res.Delivered) != 1 || len(res.Refused) != 0 || bodyOf(t, res.Delivered[0]) != "written before the owner's remedy" {
+		t.Fatalf("its reader: %+v", res)
+	}
+}
+
+// A message whose post was taken but whose answer was lost is posted again
+// at the flush, sealed afresh: a new ciphertext, which the server stores and
+// counts as new mail, and which its reader drops by its msg_id. Delivered
+// once; the cost of the lost answer is one more send.
+func TestALostAnswerCostsASendAndDeliversOnce(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	lost := true
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.Method == http.MethodPost && r.URL.Path == postTo(a) && lost {
+			lost = false
+			next.ServeHTTP(httptest.NewRecorder(), r) // stored, and the answer never comes
+			http.Error(w, "the answer was lost", http.StatusBadGateway)
+			return
 		}
-		e.srv.SetMiddle(nil)
-		if got, err := b.Flush(ctx); err != nil || len(got) != 1 {
-			t.Fatalf("flush of a seal that reads %q: %v, %v", seal, got, err)
-		}
-		if res := receive(t, a); len(res.Delivered) != 1 || bodyOf(t, res.Delivered[0]) != "sealed again" {
-			t.Fatalf("a seal that reads %q: %+v", seal, res)
-		}
+		next.ServeHTTP(w, r)
+	})
+	if _, err := b.Send(ctx, a.Address(), "posted once, answered never"); err == nil || !strings.Contains(err.Error(), "kept in the outbox") {
+		t.Fatalf("the answer was meant to be lost: %v", err)
+	}
+	if e.srv.Count(a.Address()) != 1 {
+		t.Fatal("the first post was not stored")
+	}
+	if got, err := b.Flush(ctx); err != nil || len(got) != 1 {
+		t.Fatalf("flush: %v, %v", got, err)
+	}
+	if n, _ := waiting(b, a.Address()); n != 0 {
+		t.Fatal("the message is still in the outbox")
+	}
+	if e.srv.Count(a.Address()) != 2 {
+		t.Fatalf("the server holds %d: the flush was not a new ciphertext stored apart", e.srv.Count(a.Address()))
+	}
+	res := receive(t, a)
+	if len(res.Delivered) != 1 || bodyOf(t, res.Delivered[0]) != "posted once, answered never" {
+		t.Fatalf("delivered: %+v", res)
+	}
+	if left := e.srv.Count(a.Address()); left != 0 {
+		t.Fatalf("%d messages left on the server: the copy was not acked", left)
 	}
 }
 

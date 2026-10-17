@@ -21,7 +21,7 @@
 //	revoked.sig                this box's own revocation, once it has met one that verifies: the box is finished
 //	revoked-certs.json         this box's own revocation of its certificates, once it has published one: the record that carries it, one line of JSON
 //	seen                       the replay set: ciphertext hash, sent_at, from, msg_id, for 33 days
-//	outbox/, outbox/failed/    signed envelopes awaiting a receipt; ones that can never be delivered
+//	outbox/, outbox/failed/    envelopes awaiting a receipt, sealed afresh at every post and never kept sealed; ones that can never be delivered
 //	inbox/, quarantine/        accepted mail; refused mail, never delivered, each with its reason beside it (.reason) and each of the server's strings in base64 that is not of its form (keepRefused)
 //	held/                      accepted mail from senders this box has not allowed, as inbox/ keeps it: allow moves a sender's to inbox/, block deletes it
 //	allowed, blocked           the senders whose mail lands in inbox/, and those whose mail is dropped: one address to a line. send, alias and allow add to allowed, block to blocked; both are yours to edit

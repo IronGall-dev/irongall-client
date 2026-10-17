@@ -19,7 +19,7 @@
 #     not answer; and certificates revoked: a working key taken, a prekey published with it at the highest
 #     serial there is, the box's next certificate passing it, and the identity's revocation ending what the taken key
 #     can still sign; and a sender that asks before it posts: what the server holds about a recipient is asked
-#     for before every post, a seal that waited is checked against it, and no answer posts nothing; and
+#     for before every post, a message that waited is sealed to what the box then holds, and no answer posts nothing; and
 #     revocation servers: which ones a box lists, one that shows what the box's own server hides, one that shows
 #     what does not verify, one that gives no answer, and a revocation published at every one of them.
 # Needs what irongall.sh needs, but curl. KEYTYPE=auto (default: pq if `age-keygen -pq` works, else no-pq, saying
@@ -256,6 +256,7 @@ newest(){ ls "$IG/prekeys" | sed -n 's/\.txt\.sig$//p' | sort -n | tail -n 1; } 
 jbox(){ printf '{"type":"box","address":"%s","link":"%s/to/%s"}' "$1" "$IG_BASE" "$1"; }      # <address> → the line init and addr print
 jalias(){ printf '{"type":"alias","name":"%s","address":"%s"}' "$1" "$2"; }      # <name> <address> → the line alias prints for it
 jrevoked(){ printf '{"type":"revoked","address":"%s"%s}' "$1" "${2:+,\"message\":\"published to the server and to each revocation server\"}"; }      # <address> [published] → the line keep prints for a revocation, and publish, with its message
+bare(){ [ -z "$(find "$IG/outbox" -maxdepth 1 -type f ! -name '*.P')" ]; }      # the outbox keeps envelopes alone: a seal is made for one post and never kept
 num(){ cat "$W/box/$1/serial"; }      # <box> → the number of the prekey it published last, which is its working key's and its certificate's too. A box takes each number from its clock, so a test reads the number and never assumes one
 # --- 1. init: keys, a working key under a certificate, registration
 as Z; ig_recv 2> err.txt && bad "recv in no box" || grep -q "no box in" err.txt && ok "recv where there is no box says so" || bad "no box: $(cat err.txt)"
@@ -289,8 +290,8 @@ as B; recv
 [ "$(cat $IG/inbox/*.json | wc -l)" = 0 ] && [ "$(ls $IG/inbox | sed 's/\.json$//' | sort)" = "$(cut -d' ' -f1 $IG/seen | sort)" ] && ok "each inbox/ file is one line, named by the ciphertext hash computed here" || bad "inbox names"
 # --- 3. a retried envelope: re-encrypted, so a new ciphertext id, but the same msg_id
 as A; line "$A" "$B" 11111111-2222-4333-8444-555555555555 once $IG/identity.doc > $IG/outbox/$B.retry.P
-ig_seal "$B" $IG/outbox/$B.retry && ig_owner POST "/v1/$B" $IG/outbox/$B.retry.json > /dev/null && ig_seal "$B" $IG/outbox/$B.retry && ig_owner POST "/v1/$B" $IG/outbox/$B.retry.json > /dev/null || bad "retry setup"
-ig_owner POST "/v1/$B" $IG/outbox/$B.retry.json > r.json && [ "$(box_count "$B")" = 2 ] && ok "a byte-identical re-POST gets the original receipt, stored once" || bad "dedupe"
+ig_seal "$B" $IG/outbox/$B.retry && ig_owner POST "/v1/$B" $IG/seal.json > /dev/null && ig_seal "$B" $IG/outbox/$B.retry && ig_owner POST "/v1/$B" $IG/seal.json > /dev/null || bad "retry setup"
+ig_owner POST "/v1/$B" $IG/seal.json > r.json && [ "$(box_count "$B")" = 2 ] && ok "a byte-identical re-POST gets the original receipt, stored once" || bad "dedupe"
 rm -f $IG/outbox/$B.retry.*
 as B; recv
 [ "$(printf '%s\n' "$RECV_OUT" | awk NF | wc -l)" = 1 ] && printf '%s' "$RECV_ERR" | grep -q duplicate && ok "a re-encrypted retry with the same msg_id is delivered ONCE (recipient dedupe on from + msg_id)" || bad "msg_id dedupe: $RECV_OUT / $RECV_ERR"
@@ -351,7 +352,7 @@ as B; recv
 as A; printf 'secret' > body3; n0=$(grep -c "^POST /v1/$B\$" $SRV/log)
 MODE="evil-keys $B"; ig_send "$B" body3 2> err.txt || true; MODE=honest
 grep -q "not signed by a working key its identity certified" err.txt && [ "$(grep -c "^POST /v1/$B\$" $SRV/log)" = "$n0" ] && ok "the operator swaps B's prekey: REFUSED, nothing encrypted or sent" || bad "evil-keys: $(cat err.txt)"
-ls $IG/outbox/*.json > /dev/null 2>&1 && bad "a ciphertext was left in the outbox" || ok "no ciphertext to the swapped key exists"
+bare && [ ! -e $IG/seal.age ] && [ ! -e $IG/seal.json ] && ok "no ciphertext to the swapped key exists" || bad "a ciphertext was left"
 rm -f $IG/outbox/*.P                                                    # the refused message is abandoned
 printf 'bad \377 byte' > badbody; ig_send "$B" badbody 2> err.txt
 grep -q "not UTF-8" err.txt && [ "$(grep -c "^POST /v1/$B\$" $SRV/log)" = "$n0" ] && ! ls $IG/outbox/*.P > /dev/null 2>&1 && ok "a body that is not UTF-8 is REFUSED before anything is built or sent" || bad "non-UTF-8 body: $(cat err.txt)"
@@ -386,7 +387,7 @@ grep -q "outbox/failed" err.txt && [ "$(ls $IG/outbox/failed/*.P | wc -l)" = 1 ]
 as A; SEND_FAILS="410 revoked"; ig_send "$B" body3 2> err.txt; SEND_FAILS=
 grep -q "showed no revocation that verifies" err.txt && [ "$(ls $IG/outbox/*.P | wc -l)" = 1 ] && [ "$(ls $IG/outbox/failed/*.P | wc -l)" = 1 ] && [ ! -e $IG/peers/$B/revoke.sig ] &&
   ok "a server's word that a box is revoked, with no revocation to show: kept in the outbox, and nothing kept as a revocation" || bad "a server's word: $(cat err.txt)"
-rm -f $IG/outbox/*.P $IG/outbox/*.json $IG/outbox/*.age $IG/outbox/*.sig      # section 17 delivers one such entry once the server lets it
+rm -f $IG/outbox/*.P      # section 17 delivers one such entry once the server lets it
 SEND_FAILS="503 unavailable"; ig_send "$B" body3 2> err.txt; ig_send "$C" body3 2>> err.txt; SEND_FAILS=
 [ "$(ls $IG/outbox/*.P | wc -l)" = 2 ] && grep -q "kept in the outbox" err.txt && ok "a transient failure keeps the entry in the outbox" || bad "transient: $(cat err.txt)"
 first=$(basename "$(ls $IG/outbox/*.P | head -n1)"); first=${first%%.*}; last=$(basename "$(ls $IG/outbox/*.P | tail -n1)"); last=${last%%.*}
@@ -589,12 +590,12 @@ ig_rekey $NOPQ 2> err.txt && n2=$(cat $IG/serial) && [ "$n2" -le "$(ig_now)" ] &
 off=-90; ig_rekey $NOPQ 2> err.txt && [ "$(cat $IG/serial)" = $((n2 + 1)) ] && [ "$(sed -n 3p $SRV/$(cat $IG/address)/prekey.txt)" = $((n2 + 1)) ] && [ "$(cat $SRV/$(cat $IG/address)/cert-serial)" = $((n2 + 1)) ] &&
   ok "a renewal is numbered by this machine's clock once the clock has passed the last number, and one above the last when the clock reads behind it: a serial never goes back" || bad "clock: a renewal with the clock behind its last number: $(cat $IG/serial) after $n2: $(cat err.txt)"
 eval "$real_now"
-# an envelope dated ahead of this machine's clock is not posted, sealed or not, until the clock passes that time
+# an envelope dated ahead of this machine's clock is not posted until the clock passes that time
 as P; n0=$(grep -c "^POST /v1/$Q\$" $SRV/log); off=7200; ig_now(){ echo $(($(date -u +%s) + off)); }
-printf 'dated two hours ahead' | ig_send "$Q" 2> err.txt && bad "sent with a clock two hours fast" || { grep -q "pass_expired" err.txt && ls $IG/outbox/*.json > /dev/null 2>&1; } || bad "clock: send two hours fast: $(cat err.txt)"
+printf 'dated two hours ahead' | ig_send "$Q" 2> err.txt && bad "sent with a clock two hours fast" || { grep -q "pass_expired" err.txt && bare; } || bad "clock: send two hours fast: $(cat err.txt)"
 eval "$real_now"; ig_flush 2> err.txt && bad "an envelope dated two hours ahead was posted" || grep -q "ahead of this machine's clock" err.txt && [ "$(ls $IG/outbox/*.P | wc -l)" = 1 ] && as Q && recv && [ -z "$RECV_OUT" ] && ! printf '%s' "$RECV_ERR" | grep -q future &&
-  ok "an envelope sealed while the clock read two hours ahead is not posted once the clock is right: it waits in the outbox, and its reader is sent nothing to refuse" || bad "clock: flush of an envelope dated ahead: $(cat err.txt) / $RECV_ERR"
-as P; rm -f $IG/outbox/*.P $IG/outbox/*.json $IG/outbox/*.age $IG/outbox/*.sig
+  ok "an envelope written while the clock read two hours ahead is not posted once the clock is right: it waits in the outbox, and its reader is sent nothing to refuse" || bad "clock: flush of an envelope dated ahead: $(cat err.txt) / $RECV_ERR"
+as P; rm -f $IG/outbox/*.P
 # a kept pass with more left than it was signed for means the clock has gone back: it is not used
 as P; ig_pass > /dev/null; kept=$(cat $IG/pass); off=-1800; ig_now(){ echo $(($(date -u +%s) + off)); }
 [ "$(ig_pass)" != "$kept" ] && ok "a kept pass is not used once this machine's clock has gone back: a new one is signed, dated by the clock as it is" || bad "clock: the kept pass was used after the clock went back"
@@ -766,14 +767,14 @@ mkcerts CE 2 9007199254740991 $IG/identity; ig_api PUT "/v1/$CE/revocations" $W/
 ig_rekey $NOPQ 2> err.txt && bad "CE renewed under a certificate its identity revoked"; grep -q "revoked its certificates through the highest serial there is" err.txt &&
   ok "a box never makes a certificate its own identity has revoked: its renewal goes above a revocation through a serial far ahead of its clock, and it says so when no serial is left" || bad "CE at the top: $(cat err.txt)"
 # --- 19. a sender asks before it posts. What a box holds about a peer is only as new as the last time it asked, so it asks before every post,
-#     sealed or not, keeps what verifies, and checks the entry against what it then holds. No answer is not "none held"
+#     of a new message or one that waited, keeps what verifies, and seals to what it then holds. No answer is not "none held"
 for X in SA SB SC SD SE SF SG; do as $X; ig_init $NOPQ > /dev/null || bad "init $X"; eval "$X=\$(cat \$IG/address)"; done
 posts(){ grep -c "^POST /v1/$1\$" $SRV/log || true; }      # <box> → how many posts to it the server has seen
 as SA; printf 'asked first' | ig_send "$SB" || bad "SA's send"
 [ "$(tail -n 3 $SRV/log | tr '\n' '|')" = "GET /v1/$SB/revocations|GET /v1/$SB/identity|POST /v1/$SB|" ] && ok "a send asks what the server holds about its recipient, once, before it asks for the prekey and before it posts" || bad "the calls of a send: $(tail -n 3 $SRV/log | tr '\n' '|')"
 # no answer: nothing is sealed and nothing is posted. And whatever code a failed lookup carries is no answer about the message
 n0=$(wc -l < $SRV/log); REVMODE="silent $SB"; printf 'waits for an answer' | ig_send "$SB" 2> err.txt && bad "sent with no answer about the recipient"
-grep -q "could not be asked" err.txt && [ "$(ls $IG/outbox/*.P | wc -l)" = 1 ] && ! ls $IG/outbox/*.json > /dev/null 2>&1 && [ "$(tail -n +$((n0 + 1)) $SRV/log)" = "GET /v1/$SB/revocations" ] || bad "no answer about a recipient: $(cat err.txt) / $(tail -n +$((n0 + 1)) $SRV/log)"
+grep -q "could not be asked" err.txt && [ "$(ls $IG/outbox/*.P | wc -l)" = 1 ] && bare && [ "$(tail -n +$((n0 + 1)) $SRV/log)" = "GET /v1/$SB/revocations" ] || bad "no answer about a recipient: $(cat err.txt) / $(tail -n +$((n0 + 1)) $SRV/log)"
 n0=$(posts "$SB"); REVMODE="refuses $SB"; ig_flush 2> err.txt && bad "flushed with a lookup that was refused"; REVMODE=
 grep -q "could not be asked" err.txt && [ "$(ls $IG/outbox/*.P | wc -l)" = 1 ] && ! ls $IG/outbox/failed/*.P > /dev/null 2>&1 && [ "$(posts "$SB")" = "$n0" ] || bad "a lookup answered too_large: $(cat err.txt)"
 ig_flush 2> err.txt && as SB && recv && [ "$(printf '%s\n' "$RECV_OUT" | jq -r .body | sort | tr '\n' '|')" = "asked first|waits for an answer|" ] &&
@@ -783,10 +784,10 @@ as SB; nSB1=$(num SB); ig_rekey $NOPQ 2> err.txt || bad "SB's renewal: $(cat err
 # control: a sender that is shown no revocation takes the old statement, and what it seals to that prekey leaves the box
 as SC; MODE="rollback $SB"; REVMODE="hide $SB"; printf 'sealed to the old prekey' | ig_send "$SB" 2> err.txt || true; MODE=honest; REVMODE=
 grep -q "^{\"prekey_serial\":$nSB1,\"certificate_serial\":$nSB1,\"ciphertext\":\"" $SRV/last-send.json && [ "$(cat $IG/peers/$SB/cert-serial)" = "$nSB1" ] && [ ! -e $IG/peers/$SB/revoked-certs.json ] && ok "control: a sender shown no revocation takes a statement under the revoked certificate, and posts what it sealed to that prekey" || bad "control: $(cat err.txt) / $(head -c 80 $SRV/last-send.json)"
-rm -f $IG/outbox/*.P $IG/outbox/*.json $IG/outbox/*.age $IG/outbox/*.sig
+rm -f $IG/outbox/*.P
 # the same operator, the revocation not hidden: SE has never met SB, asks first, keeps the revocation, and seals nothing
 as SE; n0=$(posts "$SB"); MODE="rollback $SB"; printf 'never sealed to the old prekey' | ig_send "$SB" 2> err.txt && bad "sent to a prekey under a revoked certificate"; MODE=honest
-grep -q "signed under a certificate its identity has revoked" err.txt && [ "$(posts "$SB")" = "$n0" ] && kept $IG/peers/$SB/revoked-certs.json | cmp -s - $W/SB1.certs && [ ! -e $IG/peers/$SB/serial ] && [ "$(ls $IG/outbox/*.P | wc -l)" = 1 ] && ! ls $IG/outbox/*.json > /dev/null 2>&1 &&
+grep -q "signed under a certificate its identity has revoked" err.txt && [ "$(posts "$SB")" = "$n0" ] && kept $IG/peers/$SB/revoked-certs.json | cmp -s - $W/SB1.certs && [ ! -e $IG/peers/$SB/serial ] && [ "$(ls $IG/outbox/*.P | wc -l)" = 1 ] && bare &&
   ok "a sender that has never read a box's mail asks before it sends: it keeps the identity's revocation, and a statement under a revoked certificate is REFUSED with nothing sealed or posted" || bad "asked before the send: $(cat err.txt)"
 ig_flush 2> err.txt && [ "$(cat $IG/peers/$SB/cert-serial)" = "$(num SB)" ] || bad "SE's flush: $(cat err.txt)"
 # what a box learned while the server showed it holds once the server hides it: SD asked once, at no send, and has seen no statement of SB's
@@ -795,27 +796,30 @@ n0=$(posts "$SB"); MODE="rollback $SB"; REVMODE="hide $SB"; printf 'never sealed
 grep -q "signed under a certificate its identity has revoked" err.txt && [ "$(posts "$SB")" = "$n0" ] && ok "what a box was shown once holds after the server hides it: the kept revocation refuses the old statement, though the box saw no later one" || bad "after the server turned: $(cat err.txt)"
 rm -f $IG/outbox/*.P
 as SB; recv; [ "$(printf '%s\n' "$RECV_OUT" | jq -r .body)" = "never sealed to the old prekey" ] || bad "SB's mail: $RECV_OUT / $RECV_ERR"
-# a seal that waited. SA seals to SF, and the post fails; SF's working key is taken, SF renews and revokes. The old seal is never posted
-as SA; SEND_FAILS="503 unavailable"; printf 'sealed before the theft' | ig_send "$SF" 2> err.txt && bad "the post was meant to fail"; SEND_FAILS=
-o=$(ls $IG/outbox/$SF.*.P); o=${o%.P}; nSF1=$(num SF); [ "$(ig_under "$o")" = "$nSF1" ] || bad "the waiting seal names certificate $(ig_under "$o")"
-printf '{"prekey_serial":7,"certificate_serial":9007199254740991,"ciphertext":"AAAA"}\n' > $W/u.json; [ "$(ig_under $W/u)" = 9007199254740991 ] || bad "a seal's certificate serial is not read exactly at 2^53 - 1, or the prekey's is read for it"
-for j in '{"prekey_serial":7,"certificate_serial":9007199254740992,"ciphertext":"AAAA"}' '{"prekey_serial":9007199254740992,"certificate_serial":3,"ciphertext":"AAAA"}' '{"certificate_serial":3,"prekey_serial":7,"ciphertext":"AAAA"}' '{"prekey_serial":7,"ciphertext":"AAAA"}' '{"prekey_serial":7,"certificate_serial":03,"ciphertext":"AAAA"}' '{"prekey_serial":7, "certificate_serial":3,"ciphertext":"AAAA"}'; do printf '%s\n' "$j" > $W/u.json; ! ig_under $W/u > /dev/null || bad "a seal in another form was read: $j"; done
-as SF; ig_rekey $NOPQ 2> err.txt || bad "SF's renewal: $(cat err.txt)"; mkcerts SF 1 $nSF1 $IG/identity; ig_api PUT "/v1/$SF/revocations" $W/SF1.json > /dev/null || bad "SF's revocation: $(ig_code)"
-as SA; n0=$(posts "$SF"); MODE="rollback $SF"; ig_flush 2> err.txt && bad "flushed a seal under a revoked certificate"; MODE=honest
-grep -q "signed under a certificate its identity has revoked" err.txt && [ "$(posts "$SF")" = "$n0" ] && [ -e "$o.P" ] && [ ! -e "$o.json" ] || bad "a waiting seal, the old statement still served: $(cat err.txt)"
-ig_flush 2> err.txt && [ $(($(posts "$SF") - n0)) = 1 ] && grep -q "^{\"prekey_serial\":$(num SF),\"certificate_serial\":$(num SF),\"ciphertext\":\"" $SRV/last-send.json || bad "a waiting seal, made again: $(cat err.txt) / $(($(posts "$SF") - n0)) posts"
-as SF; recv; [ "$(printf '%s\n' "$RECV_OUT" | jq -r .body)" = "sealed before the theft" ] &&
-  ok "a seal that waited in the outbox while its recipient's identity revoked the certificate it was made under is never posted: it is made again, to a statement under the certificate in use, in one post" || bad "SF's mail: $RECV_OUT / $RECV_ERR"
-# a seal this script cannot read cannot be checked against a revocation: it is made again too
-as SA; SEND_FAILS="503 unavailable"; printf 'sealed again' | ig_send "$SF" 2> err.txt && bad "the post was meant to fail"; SEND_FAILS=
-o=$(ls $IG/outbox/$SF.*.P); o=${o%.P}; printf 'not json' > "$o.json"; ! ig_under "$o" > /dev/null || bad "a seal that is not JSON was read"
-ig_flush 2> err.txt && as SF && recv && [ "$(printf '%s\n' "$RECV_OUT" | jq -r .body)" = "sealed again" ] && ok "a seal that cannot be read is made again, never posted as it is" || bad "an unreadable seal: $(cat err.txt) / $RECV_ERR"
-# an address revoked while a sealed message waits for it: nothing is posted
+# a message that waited. SA writes to SF, and the post fails; SF's working key is taken, SF renews and revokes. Nothing goes to the old prekey
+as SA; SEND_FAILS="503 unavailable"; printf 'written before the theft' | ig_send "$SF" 2> err.txt && bad "the post was meant to fail"; SEND_FAILS=
+o=$(ls $IG/outbox/$SF.*.P); o=${o%.P}; bare || bad "the outbox keeps more than the envelope: $(ls $IG/outbox)"
+as SF; nSF1=$(num SF); ig_rekey $NOPQ 2> err.txt || bad "SF's renewal: $(cat err.txt)"; mkcerts SF 1 $nSF1 $IG/identity; ig_api PUT "/v1/$SF/revocations" $W/SF1.json > /dev/null || bad "SF's revocation: $(ig_code)"
+as SA; n0=$(posts "$SF"); MODE="rollback $SF"; ig_flush 2> err.txt && bad "flushed to a statement under a revoked certificate"; MODE=honest
+grep -q "signed under a certificate its identity has revoked" err.txt && [ "$(posts "$SF")" = "$n0" ] && [ -e "$o.P" ] && bare || bad "a message that waited, the old statement still served: $(cat err.txt)"
+ig_flush 2> err.txt && [ $(($(posts "$SF") - n0)) = 1 ] && grep -q "^{\"prekey_serial\":$(num SF),\"certificate_serial\":$(num SF),\"ciphertext\":\"" $SRV/last-send.json || bad "a message that waited, sealed at the flush: $(cat err.txt) / $(($(posts "$SF") - n0)) posts"
+as SF; recv; [ "$(printf '%s\n' "$RECV_OUT" | jq -r .body)" = "written before the theft" ] &&
+  ok "a message that waited in the outbox while its recipient's identity revoked the certificate it was first sealed under goes nowhere near the old prekey: it is sealed at the flush, to the statement in use, in one post" || bad "SF's mail: $RECV_OUT / $RECV_ERR"
+# a message that waited while its recipient renewed, revoking nothing, goes under the renewal this box recorded, whatever the server serves at the flush
+as SA; SEND_FAILS="503 unavailable"; printf 'written before the renewal' | ig_send "$SF" 2> err.txt && bad "the post was meant to fail"; SEND_FAILS=
+as SF; nSF2=$(num SF); ig_rekey $NOPQ 2> err.txt || bad "SF's second renewal: $(cat err.txt)"
+as SA; ig_resolve "$SF" > /dev/null && [ "$(cat $IG/peers/$SF/cert-serial)" = "$(num SF)" ] || bad "SA did not record SF's renewal"
+n0=$(posts "$SF"); MODE="rollback $SF"; ig_flush 2> err.txt && bad "flushed to a statement before the one recorded"; MODE=honest
+grep -q rollback err.txt && [ "$(posts "$SF")" = "$n0" ] && [ -e "$(ls $IG/outbox/$SF.*.P)" ] || bad "a message that waited, an older statement served: $(cat err.txt)"
+ig_flush 2> err.txt && grep -q "^{\"prekey_serial\":$(num SF),\"certificate_serial\":$(num SF),\"ciphertext\":\"" $SRV/last-send.json && [ "$(num SF)" != "$nSF2" ] &&
+  ok "a message that waited while its recipient renewed is sealed at the flush under the renewal this box recorded: a server serving the statement before it gets nothing posted" || bad "a message that waited through a renewal: $(cat err.txt)"
+as SF; recv > /dev/null
+# an address revoked while a message waits for it: nothing is posted
 as SA; SEND_FAILS="503 unavailable"; printf 'sealed before the address was revoked' | ig_send "$SG" 2> err.txt && bad "the post was meant to fail"; SEND_FAILS=
 as SG; [ "$(ig_revoke "$SG" 2> err.txt)" = "$(jrevoked "$SG" published)" ] || bad "SG's revoke: $(cat err.txt)"
 as SA; n0=$(posts "$SG"); ig_flush 2> err.txt && bad "flushed to an address since revoked"
 grep -q "REVOKED: $SG is revoked" err.txt && [ "$(posts "$SG")" = "$n0" ] && [ "$(ls $IG/outbox/failed/$SG.*.P | wc -l)" = 1 ] && [ -s $IG/peers/$SG/revoke.sig ] && ! ls $IG/outbox/*.P > /dev/null 2>&1 &&
-  ok "a sealed message that waited while its recipient's address was revoked is never posted: the revocation is asked for, kept, and the message moves to outbox/failed/" || bad "a waiting seal to a revoked address: $(cat err.txt)"
+  ok "a message that waited while its recipient's address was revoked is never posted: the revocation is asked for, kept, and the message moves to outbox/failed/" || bad "a waiting seal to a revoked address: $(cat err.txt)"
 # --- 20. revocation servers. A box asks them beside its own server, about a recipient before a post and about each sender in a drain, and
 #     publishes its own revocation to them. Nothing above named one: every box there is on irongall.dev, so each asked irongall.dev's own
 REV=https://revocations.irongall.dev; R2=https://second.example; RVD=$SRV/rev/${REV#*://}

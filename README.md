@@ -69,7 +69,7 @@ A box is the directory `~/.config/irongall/default`: `$IRONGALL_BOX` names anoth
 - **An identity is an Ed25519 key, which every client verifies.** `irongall init --identity-type ecdsa-sha2-nistp256` makes the one optional type: only a box whose client verifies it can write to that box or hear from it (`PROTOCOL.md` §2, §2c).
 - **Never back up or sync `prekeys/`.** A copy undoes forward secrecy.
 - **Run `irongall recv` at least monthly.** It renews the prekey daily; a prekey lasts 33 days, and the server keeps mail 33 days.
-- **Never send a message a second time.** One the server has not taken waits in `outbox/`, and `irongall outbox flush` posts it again unchanged.
+- **Never send a message a second time.** One the server has not taken waits in `outbox/`, and `irongall outbox flush` posts it again, sealed afresh to what the box holds then.
 - **Delivery is at least once.** De-duplicate on `from` + `msg_id`.
 - **Mail from a sender this box has not allowed is held in `held/`, not printed.** Writing to a box allows it, and so do `alias` and `allow`; `block` drops a sender's mail, and the server then refuses it. A `policy` file in the box says `unknown inbox` to print every sender's mail, and `server allowed` to have the server refuse every sender not allowed, which tells the server who they are (`PROTOCOL.md` §5.6, §6.2).
 - **The box keeps mail in plaintext and never prunes it:** `inbox/`, `held/`, `sent/`, `quarantine/`. Delete a file to forget a message. Read `quarantine/` through `irongall quarantine list`, which says why each was refused, and empty it with `irongall quarantine rm`: its files keep what the server sent.
@@ -216,7 +216,7 @@ go test ./sh -v                                 # the stock-tools client (sh/tes
 | `client/hostile_test.go` | A refusal never carries the sender's text, a hostile server costs one bounded run, and a box never asks the server who a sender is |
 | `client/revocation_test.go` | A server's word revokes nothing, a revocation that verifies is kept for good, and mail from a revoked box is refused whenever it was signed |
 | `client/revokedcerts_test.go` | Mail under a certificate its sender's identity revoked is refused and the address goes on, only the highest revocation counts and nothing lowers it, a later certificate passes any prekey serial under an earlier one, and a send names both serials |
-| `client/ask_test.go` | A sender asks what the server holds about its recipient before every post and keeps what verifies, no answer posts nothing, and a seal that waited is checked again before it goes |
+| `client/ask_test.go` | A sender asks what the server holds about its recipient before every post and keeps what verifies, no answer posts nothing, and a message that waited is sealed at its post, never kept sealed |
 | `client/pad_test.go`, `client/renew_test.go` | Every send is padded; `recv` renews the prekey and deletes retired ones |
 | `sh/` | The script gives the same verdicts: against a forging server, on every vector, and with the Go client |
 

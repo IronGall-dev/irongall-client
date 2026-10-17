@@ -1709,11 +1709,12 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 	}
 }
 
-// A seal waits in the outbox as one format, so either client checks a seal
-// the other made: each reads the certificate it names, drops it once the
-// recipient's identity has revoked that certificate, and posts one made
-// again. The server sees the old seal from neither.
-func TestAWaitingSealInBothClients(t *testing.T) {
+// A message waits in the outbox as its envelope, the one file both clients
+// keep, and either client seals it at the post to what it holds then. So a
+// message one client wrote, whose post failed, goes from the other once the
+// recipient's identity has revoked the certificate it was first sealed
+// under: one post, under the certificate in use. Neither client keeps a seal.
+func TestAWaitingMessageInBothClients(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -1764,40 +1765,48 @@ func TestAWaitingSealInBothClients(t *testing.T) {
 		return b
 	}
 
-	// The Go client seals, and the script flushes the same box.
+	// bare reports whether a box's outbox keeps its envelopes alone.
+	bare := func(dir string) bool {
+		t.Helper()
+		all, _ := filepath.Glob(filepath.Join(dir, "outbox", "*.*"))
+		p, _ := filepath.Glob(filepath.Join(dir, "outbox", "*.P"))
+		return len(p) == 1 && len(all) == 1
+	}
+
+	// The Go client writes, and the script flushes the same box.
 	g, to := box(), box()
-	if _, err := g.Send(ctx, to.Address(), "sealed by the Go client"); err == nil {
+	if _, err := g.Send(ctx, to.Address(), "written by the Go client"); err == nil {
 		t.Fatal("the post was meant to fail")
 	}
 	sh := func(dir, commands string) (string, error) {
 		return bash(t, []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}, commands)
 	}
-	if out, err := sh(g.Dir(), `for f in "$IG"/outbox/*.P; do ig_under "${f%.P}"; done`); err != nil || out != fmt.Sprintf("%d\n", numberOf(t, to)) {
-		t.Fatalf("the script's reading of a seal the Go client made: %q %v", out, err)
+	if !bare(g.Dir()) {
+		t.Fatal("the Go client's outbox keeps more than the envelope")
 	}
 	theft(to)
 	down = false
 	if _, err := sh(g.Dir(), "ig_flush"); err != nil {
-		t.Fatalf("the script's flush of a seal the Go client made: %v", err)
+		t.Fatalf("the script's flush of a message the Go client wrote: %v", err)
 	}
 	if len(posts) != 1 || posts[0] != numberOf(t, to) {
 		t.Fatalf("the script posted under certificates %v, want one post under %d", posts, numberOf(t, to))
 	}
-	if res, err := to.Receive(ctx); err != nil || len(res.Delivered) != 1 || string(res.Delivered[0].Envelope.Body) != `"sealed by the Go client"` {
+	if res, err := to.Receive(ctx); err != nil || len(res.Delivered) != 1 || string(res.Delivered[0].Envelope.Body) != `"written by the Go client"` {
 		t.Fatalf("the drain after the script's flush: %+v %v", res, err)
 	}
 
-	// The script seals, and the Go client flushes the same box.
+	// The script writes, and the Go client flushes the same box.
 	dir, to := t.TempDir(), box()
 	if _, err := sh(dir, "ig_init "+mode); err != nil {
 		t.Fatalf("ig_init: %v", err)
 	}
 	down, posts = true, nil
-	if _, err := sh(dir, "printf 'sealed by the script' | ig_send "+to.Address().String()); err == nil {
+	if _, err := sh(dir, "printf 'written by the script' | ig_send "+to.Address().String()); err == nil {
 		t.Fatal("the post was meant to fail")
 	}
-	if sealed, _ := filepath.Glob(filepath.Join(dir, "outbox", "*.json")); len(sealed) != 1 {
-		t.Fatalf("%d sealed entries in the script's outbox", len(sealed))
+	if !bare(dir) {
+		t.Fatal("the script's outbox keeps more than the envelope")
 	}
 	theft(to)
 	down = false
@@ -1807,12 +1816,12 @@ func TestAWaitingSealInBothClients(t *testing.T) {
 	}
 	landAll(t, s)
 	if got, err := s.Flush(ctx); err != nil || len(got) != 1 {
-		t.Fatalf("the Go client's flush of a seal the script made: %v %v", got, err)
+		t.Fatalf("the Go client's flush of a message the script wrote: %v %v", got, err)
 	}
 	if len(posts) != 1 || posts[0] != numberOf(t, to) {
 		t.Fatalf("the Go client posted under certificates %v, want one post under %d", posts, numberOf(t, to))
 	}
-	if res, err := to.Receive(ctx); err != nil || len(res.Delivered) != 1 || string(res.Delivered[0].Envelope.Body) != `"sealed by the script"` {
+	if res, err := to.Receive(ctx); err != nil || len(res.Delivered) != 1 || string(res.Delivered[0].Envelope.Body) != `"written by the script"` {
 		t.Fatalf("the drain after the Go client's flush: %+v %v", res, err)
 	}
 }
