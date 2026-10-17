@@ -118,7 +118,7 @@
 
 **Where ours differs, and why:**
 - **Validity is judged at the verifier's clock,** as X.509 validation is without a trusted timestamp, where OpenPGP judges a signature at the time the signer states (both from memory). Nobody in irongall can vouch for when a signature was made, so a stated time proves nothing.
-- **66 days is long for "short-lived".** Mail may wait 33 days and must still verify when it is read, so a certificate has to outlast the mail it signed. So a certificate is to be revocable, which is decided and not built (§ 3b).
+- **66 days is long for "short-lived".** Mail may wait 33 days and must still verify when it is read, so a certificate has to outlast the mail it signed. So a certificate is revocable, by the identity's own statement through a serial (§ 3b; `PROTOCOL.md` §6.3a).
 - **A newer certificate does not retire an older one for mail already signed.** It does at the server and for prekey statements.
 
 ## 2a. A certificate's serial is taken from its maker's clock

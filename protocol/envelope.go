@@ -66,8 +66,8 @@ type Envelope struct {
 	// MsgID is a random UUID (version 4), made once per logical message and
 	// kept on every re-encryption, so a retry is never acted on twice.
 	MsgID string
-	// Body is the message: a JSON string, or the JSON value the recipient's
-	// profile schema describes.
+	// Body is the message: a JSON string, or any JSON value the sender sent
+	// as one (PROTOCOL.md §4.2).
 	Body json.RawMessage
 
 	Subject    string // optional

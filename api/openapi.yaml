@@ -1111,9 +1111,11 @@ components:
         A revocation record (`PROTOCOL.md` §6.3, §6.3a): a revocation of the
         address, of its certificates through a serial, or both. It proves
         itself: the document hashes to the address, and each signature is the
-        identity's own over its fixed statement, which a reader rebuilds from
-        the address. A reader takes one without `type`, and refuses one that
-        names another type.
+        identity's own: over the fixed statement of the revocation, which a
+        reader rebuilds from the address, and over the statement of the
+        revocation of certificates, which the record carries and a reader
+        parses exactly. A reader takes one without `type`, and refuses one
+        that names another type.
       type: object
       additionalProperties: false
       required: [identity]
