@@ -555,12 +555,12 @@ ig_api PUT "/v1/$A/revocations" record.json
 - **The type can change at renewal** (post-quantum ↔ `--no-pq`) with no address change.
 - **Tested** (§11; the two server settings only in the server's own tests): a renewal is a new key at a higher serial under a new certificate, and the pass from before it is refused; the server refuses `never`, a `not_after` more than 33 days and an hour ahead, a re-signed old key, a good statement that comes with no pass, a send naming no serial or a retired one, and a renewal past the day's limit, and keeps only its newest retired prekeys; the Go client renews a prekey more than a day old, retries a failed renewal hourly, and deletes all but the newest retired prekey once they have been retired an hour; senders refuse a rollback, an expired statement, and a prekey under a replaced certificate, and follow a box to a later certificate whatever serial they saw under the earlier one; `409 stale_prekey` re-encrypts the same envelope; a box with no prekeys, no working key and no pass recovers with the identity alone; after `ig_prune` deletes a retired key, its mail is unrecoverable.
 
-**6.5 Accounts — adopt and leave.** A box may belong to one account, which can lift its limits. Nothing else about the box's mail changes.
+**6.5 Accounts — adopt and leave.** A box may belong to one account at its server. **The protocol fixes only how a box joins and leaves one; what an account is for is the server's own:** it may lift a box's limits, bill for it, tag a box of its own, or not exist. A server with no accounts does not offer these routes, and a client reads the router's plain `404` as that (§0a). Nothing about the box's mail changes.
 - **`PUT /v1/<A>/account`** (with the pass) with `{"key": "<adopt key>"}` → `200 {"account": "<id>"}`. One use of the key is spent, unless the box is already in that account. A box in another account moves. `irongall account adopt < <key file>`: the key is read on stdin, never from the command line, where `ps`, a shell's history and an agent's transcript keep it.
 - **`DELETE /v1/<A>/account`** (with the pass) → `204`, in an account or not. `irongall account leave`. An account can drop a box from its side too.
 - **The adopt key** is `iga1_` and then base64url without padding (RFC 4648 §5), at most 1,024 bytes in all. What it encodes is the server's own: a client holds a key to that form and reads nothing else of it. A key this server did not make, or one that is spent, expired or revoked, is `403 adopt_key_refused`.
-- **An account id** is 1–32 of `a-z`, `0-9` and `-`: a minted one is 32 hex characters; a few names are reserved (`echo`).
-- **What an account changes:** what a box may send, receive, and how large (§8). Today only the echo boxes' account lifts anything: its boxes have no daily send limit, a larger size cap, and no budget of calls or of new mail. Over the sender's own cap, a send is refused before its body is read.
+- **An account id**, as the answer names it, is 1–32 of `a-z`, `0-9` and `-`.
+- **What an account changes is the server's,** within §8's limits. irongall.dev's lift a box's limits, and today only its echo boxes' account lifts anything: no daily send limit, a larger size cap, and no budget of calls or of new mail. Over the sender's own cap, a send is refused before its body is read.
 
 ## 7. What the server stores, and for how long
 
@@ -594,7 +594,7 @@ How a server stores things is its own business. What it promises a client is thi
 4. **Unacked mail per (sender → box)** → `pair_full`, and a larger total per box → `mailbox_full`.
 5. **Registrations per address** (§3 step 5). Proof of work is a lever a server may add; nothing in v1 carries it (§12).
 6. **A box's ACL** (§6.2): `deny` first, then `allow`, checked before any count, so a send it refuses spends none. A list response carries metadata only (§5.1), so a box decides what to fetch.
-7. **Accounts** (§6.5): what lifts a box's volume, in what it sends, what it receives, what it takes out, and how large.
+7. **Accounts** (§6.5), at a server that has them: what lifts a box's volume, in what it sends, what it receives, what it takes out, and how large.
 
 ## 9. The operator's view
 
