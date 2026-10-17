@@ -219,50 +219,73 @@ func (b *Box) revoked(a protocol.Address) (bool, error) {
 	return true, nil
 }
 
-// lookupRevocation asks what is held about a, of this box's own server and
-// then of each revocation server the box lists, and keeps what verifies. It
-// reports whether this box now holds a revocation of a.
+// readBox reads box a from this box's server (GET /v1/<a>, PROTOCOL.md
+// §4.1), keeps what verifies of the revocations it carries, and with l then
+// asks each revocation server the box lists. It returns the box served, and
+// whether this box now holds a revocation of a.
 //
-// The own server's three answers are kept apart. A revocation that verifies
-// is final. A server that says it holds none (not_revoked, or no such box)
-// has answered, and the caller goes on. Anything else is no answer: an error,
-// which the caller stops on. What a server sends that does not verify counts
-// as holding none: only a statement the identity signed can revoke an
-// address.
+// A served box carries the revocation of its certificates the server holds,
+// and a revoked address is answered 410 revoked with its record: either is
+// kept once it verifies, and what does not verify counts as nothing shown,
+// since only a statement the identity signed can revoke an address or a
+// certificate. No such box, and "revoked" with nothing that verifies, are
+// answers that serve no box: they come back as the server's error, which a
+// caller reads as none held (lookupRevocation) or as nothing to seal to
+// (resolve). Anything else is no answer, and no revocation server is asked.
 //
 // A revocation server is asked once the box's own has answered, and can only
 // add (askRevocationServers): its record is kept as any is, and neither its
 // "none held" nor its silence changes what the caller does.
+func (b *Box) readBox(ctx context.Context, a protocol.Address, l *lookups) (*protocol.BoxResponse, bool, error) {
+	var br protocol.BoxResponse
+	_, err := b.lookup(ctx, a, &br)
+	rec := br.Record()
+	switch {
+	case err == nil:
+	case Code(err) == protocol.CodeRevoked:
+		rec = recordOf(err)
+	case Code(err) != protocol.CodeNoSuchMailbox:
+		return nil, false, err
+	}
+	if rec != nil {
+		if gone, err := b.take(a, rec); gone || err != nil {
+			return nil, gone, err
+		}
+	}
+	if l != nil {
+		if gone, err := b.askRevocationServers(ctx, a, l); gone || err != nil {
+			return nil, gone, err
+		}
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return &br, false, nil
+}
+
+// recordOf is the revocation record a server's 410 revoked carries, or nil.
+func recordOf(err error) *protocol.Revocations {
+	var e *APIError
+	if errors.As(err, &e) && e.Problem.Code == protocol.CodeRevoked {
+		return e.Problem.Record
+	}
+	return nil
+}
+
+// lookupRevocation asks what is held about a, of this box's own server and
+// then of each revocation server the box lists (readBox), and keeps what
+// verifies. It reports whether this box now holds a revocation of a. A
+// server that serves no box, because it holds none or says "revoked" and
+// shows nothing that verifies, has answered that it holds no revocation,
+// and the caller goes on. No answer is an error, which the caller stops on.
 func (b *Box) lookupRevocation(ctx context.Context, a protocol.Address, l *lookups) (bool, error) {
 	if held, err := b.revoked(a); held || err != nil {
 		return held, err
 	}
-	var rec protocol.Revocations
-	_, err := b.lookup(ctx, a, "/revocations", &rec)
+	_, gone, err := b.readBox(ctx, a, l)
 	switch Code(err) {
-	case protocol.CodeNotRevoked, protocol.CodeNoSuchMailbox:
-		err, rec = nil, protocol.Revocations{}
-	}
-	if err != nil {
-		return false, err
-	}
-	if gone, err := b.take(a, &rec); gone || err != nil {
-		return gone, err
-	}
-	return b.askRevocationServers(ctx, a, l)
-}
-
-// ask asks what is held about a recipient before a message is posted to it,
-// once for each recipient in a flush, keeps what verifies, and reports
-// whether this box holds a revocation of it. l holds the recipients a flush
-// has an answer about: for those the box reads what it holds, with no call.
-func (b *Box) ask(ctx context.Context, to protocol.Address, l *lookups) (bool, error) {
-	if l.answered[to] {
-		return b.revoked(to)
-	}
-	gone, err := b.lookupRevocation(ctx, to, l)
-	if err == nil {
-		l.answered[to] = true
+	case protocol.CodeRevoked, protocol.CodeNoSuchMailbox:
+		err = nil
 	}
 	return gone, err
 }
@@ -477,15 +500,20 @@ func (b *Box) ownRevokes(n uint64) bool {
 // revocation still goes to whoever takes it.
 func (b *Box) askOwn(ctx context.Context) error {
 	own := b.id.Address()
-	var rec protocol.Revocations
-	if _, err := b.call(ctx, http.MethodGet, "/v1/"+own.String()+"/revocations", nil, nil, &rec); err == nil {
-		if _, err := b.take(own, &rec); err != nil {
+	var br protocol.BoxResponse
+	_, err := b.call(ctx, http.MethodGet, "/v1/"+own.String(), nil, nil, &br)
+	rec := br.Record()
+	if err != nil {
+		rec = recordOf(err)
+	}
+	if rec != nil {
+		if _, err := b.take(own, rec); err != nil {
 			return err
 		}
 	} else if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	_, err := b.askRevocationServers(ctx, own, newLookups())
+	_, err = b.askRevocationServers(ctx, own, newLookups())
 	return err
 }
 

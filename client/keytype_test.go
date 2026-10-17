@@ -121,8 +121,8 @@ func TestSendToAnIdentityOfAnUnknownType(t *testing.T) {
 	posted := false
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		switch {
-		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/"+addr.String()+"/identity"):
-			fakeserver.WriteJSON(w, http.StatusOK, protocol.IdentityResponse{Identity: doc, Prekey: st, PrekeySignature: sig})
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/"+addr.String():
+			fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: doc, Prekey: st, PrekeySignature: sig})
 			return
 		case r.Method == http.MethodPost:
 			posted = true

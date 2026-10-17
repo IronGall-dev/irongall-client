@@ -221,10 +221,12 @@ func TestAnEnvelopeDatedAheadWaitsInTheOutbox(t *testing.T) {
 		b := e.box(protocol.Classic)
 		off = c.off
 		if c.unsealed {
-			failOnce(e, http.MethodGet, "/identity") // the entry is written and cannot be sealed
+			failOnce(e, http.MethodGet, boxPath(b)) // the entry is written and cannot be sealed
 		}
 		if _, err := a.Send(ctx, b.Address(), "dated ahead"); err == nil {
 			t.Fatalf("%s: sent", c.name)
+		} else if c.unsealed && !strings.Contains(err.Error(), "could not be read") {
+			t.Fatalf("%s: sealed and posted: %v", c.name, err)
 		}
 		e.srv.SetMiddle(nil)
 		if kept, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "*.*")); len(kept) != 1 || !strings.HasSuffix(kept[0], ".P") {

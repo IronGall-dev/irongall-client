@@ -158,7 +158,7 @@ func TestARestoredBoxRevokesWhatTheLostMachineNeverPublished(t *testing.T) {
 	// The control: the taken key is good under its certificate, so the
 	// revocation is what refuses it. A reader shown none delivers what it signs.
 	control := e.box(protocol.Classic)
-	says(e, protocol.CodeNotRevoked, http.MethodGet, "/revocations")
+	hides(e)
 	mailAs(t, e, r, control, taken, "signed with the key the lost machine never published")
 	if res := receive(t, control); len(res.Delivered) != 1 {
 		t.Fatalf("the control: mail under the lost machine's certificate, no revocation shown: %+v", res)
@@ -233,16 +233,16 @@ func TestARestoredBoxShownAnOlderRecordNumbersAboveItAll(t *testing.T) {
 
 	e.clock.Add(time.Hour)
 	r := restore(t, e, b)
-	watch(e, func(w http.ResponseWriter, req *http.Request) bool {
-		if req.Method == http.MethodGet && req.URL.Path == "/v1/"+b.Address().String()+"/identity" {
-			fakeserver.WriteJSON(w, http.StatusOK, protocol.IdentityResponse{Identity: b.Identity().Document(), Prekey: st, PrekeySignature: sig})
+	op := watch(e, func(w http.ResponseWriter, req *http.Request) bool {
+		if req.Method == http.MethodGet && req.URL.Path == boxPath(b) {
+			fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: b.Identity().Document(), Prekey: st, PrekeySignature: sig})
 			return true
 		}
 		return false
 	})
 	p, err := r.Rekey(ctx, "")
-	if err != nil || p.Serial <= third {
-		t.Fatalf("a restored box shown the statement of certificate %d, where %d was in use: %+v, %v", first, third, p, err)
+	if err != nil || p.Serial <= third || op.count(http.MethodGet, boxPath(b)) == 0 {
+		t.Fatalf("a restored box shown the statement of certificate %d, where %d was in use: %+v, %v (shown %d times)", first, third, p, err, op.count(http.MethodGet, boxPath(b)))
 	}
 	e.srv.SetMiddle(nil)
 	certs, err := r.RevokeEarlier(ctx)

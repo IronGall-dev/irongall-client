@@ -152,8 +152,9 @@ func TestAnAPIErrorPrintsNoneOfTheServersWords(t *testing.T) {
 // server who a sender is, since a message carries what proves it, and keeps
 // nothing of one whose mail did not verify: peers/ holds only senders that
 // signed something this box delivered. The one thing it asks about a sender
-// is whether a revocation of it exists, and only once that sender's
-// signature has verified: a sender a server made up costs no call at all.
+// is whether a revocation of it exists, by one read of its box, and only once
+// that sender's signature has verified: a sender a server made up costs no
+// call at all.
 func TestMadeUpSendersLeaveNothingInPeers(t *testing.T) {
 	e := newEnv(t)
 	a, b, o := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
@@ -171,13 +172,10 @@ func TestMadeUpSendersLeaveNothingInPeers(t *testing.T) {
 		line := e.line(a.Identity().Document(), a.Address(), b.Address(), strconv.Itoa(i))
 		e.seal(b, madeUp, line, sign(t, worker(t, o), line, b.Address()))
 	}
-	asked, lookups, madeUp := 0, 0, 0
+	reads, madeUp := map[protocol.Address]int{}, 0
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if strings.HasSuffix(r.URL.Path, "/identity") {
-			asked++
-		}
-		if strings.HasSuffix(r.URL.Path, "/revocations") {
-			lookups++
+		if x, ok := readOf(r); ok {
+			reads[x]++
 		}
 		if strings.HasPrefix(r.URL.Path, "/v1/ee") {
 			madeUp++
@@ -193,11 +191,8 @@ func TestMadeUpSendersLeaveNothingInPeers(t *testing.T) {
 			t.Errorf("refused as %s: %s", r.Code, r.Reason)
 		}
 	}
-	if asked != 0 {
-		t.Errorf("the box asked the server for an identity %d times while receiving", asked)
-	}
-	if lookups != 1 || madeUp != 0 {
-		t.Errorf("%d lookups of a revocation, want one, for the sender whose signature verified; %d calls named a sender the server made up", lookups, madeUp)
+	if len(reads) != 1 || reads[a.Address()] != 1 || madeUp != 0 {
+		t.Errorf("reads of a box %v, want one, of the sender whose signature verified; %d calls named a sender the server made up", reads, madeUp)
 	}
 	pinned, _ := os.ReadDir(filepath.Join(b.Dir(), "peers"))
 	if len(pinned) != 1 || pinned[0].Name() != a.Address().String() {

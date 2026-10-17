@@ -23,6 +23,15 @@ func refuse(format string, args ...any) error {
 	return &RefusedError{Reason: fmt.Sprintf(format, args...)}
 }
 
+// lookupError is a read of a box that served nothing to seal to: no answer,
+// no such box, or "revoked" with nothing that verifies ([Box.resolve]).
+// Whatever code it carries, it is no answer about a message, which waits in
+// the outbox ([Box.post]).
+type lookupError struct{ err error }
+
+func (e *lookupError) Error() string { return e.err.Error() }
+func (e *lookupError) Unwrap() error { return e.err }
+
 // Why a message was refused, as codes: with protocol's (bad_message,
 // bad_envelope, bad_identity, bad_signature, reattributed, stale), a closed
 // set. A refusal's words are this client's own and never quote the message,

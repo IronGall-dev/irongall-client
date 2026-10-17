@@ -218,12 +218,13 @@ var undeliverable = []protocol.Code{
 // already that old is never posted: the server would take it and give a
 // receipt, and the recipient would refuse it.
 //
-// Before an entry is sealed, the server is asked what it holds about the
-// recipient (ask), and the seal is made to what this box then holds: nothing
-// goes to an address it holds a revocation of, and a prekey statement under
-// a certificate since revoked, or ordered before one the box has recorded,
-// is refused ([Box.Resolve]). No answer is not "none held": nothing is
-// sealed or posted, and the entry stays.
+// Each seal reads the recipient's box first, with what the server holds of
+// its revocations, and asks the revocation servers about it once in the
+// command ([Box.resolve]). The seal is made to what this box then holds:
+// nothing goes to an address it holds a revocation of, and a prekey
+// statement under a certificate since revoked, or ordered before one the box
+// has recorded, is refused. A read that serves no box is not "none held":
+// nothing is sealed or posted, and the entry stays.
 func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked *lookups) (*protocol.Receipt, error) {
 	if b.expired(stem) {
 		return nil, b.undelivered(stem, refuse("its envelope is older than %d days, and every recipient refuses that", protocol.TTL/(24*time.Hour)))
@@ -236,16 +237,13 @@ func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked 
 	if t, ok := b.sentAt(stem); ok && t.After(b.now()) {
 		return nil, refuse("its envelope is dated %s, ahead of this machine's clock: it was written while the clock read ahead of where it reads now, and a recipient would refuse it. It is kept in the outbox, and irongall outbox flush sends it once the clock passes that time", t.Format(protocol.TimeLayout))
 	}
-	// The answer to this question is never read as an answer about the
-	// message: whatever code a failed lookup carries, the entry stays.
-	gone, err := b.ask(ctx, to, asked)
-	if err != nil {
-		return nil, fmt.Errorf("what the server holds about %s could not be asked, so nothing is posted: %w (kept in the outbox: retry with irongall outbox flush)", to, err)
+	r, err := b.trySend(ctx, to, stem, asked)
+	// A read of the box is never an answer about the message: whatever code
+	// a failed one carries, the entry stays.
+	var unread *lookupError
+	if errors.As(err, &unread) {
+		return nil, fmt.Errorf("the box %s could not be read, so nothing is posted: %w (kept in the outbox: retry with irongall outbox flush)", to, err)
 	}
-	if gone {
-		return nil, b.undelivered(stem, &RevokedError{Address: to, Own: to == b.id.Address()})
-	}
-	r, err := b.trySend(ctx, to, stem)
 	if err != nil {
 		// A server's "revoked" is checked: with the revocation in hand it is
 		// final, and without one it is a call that failed.
@@ -324,14 +322,14 @@ func (b *Box) undelivered(stem string, why error) error {
 // same envelope to the newer prekey and posts that, once. A seal is made for
 // one post and never kept: what a message waited for in the outbox is its
 // envelope, and what it is sealed to is what the box holds at the post.
-func (b *Box) trySend(ctx context.Context, to protocol.Address, stem string) (*protocol.Receipt, error) {
-	req, err := b.seal(ctx, to, stem)
+func (b *Box) trySend(ctx context.Context, to protocol.Address, stem string, l *lookups) (*protocol.Receipt, error) {
+	req, err := b.seal(ctx, to, stem, l)
 	if err != nil {
 		return nil, err
 	}
 	r, err := b.postSealed(ctx, to, req)
 	if Code(err) == protocol.CodeStalePrekey {
-		if req, err = b.seal(ctx, to, stem); err != nil {
+		if req, err = b.seal(ctx, to, stem, l); err != nil {
 			return nil, err
 		}
 		r, err = b.postSealed(ctx, to, req)
@@ -407,7 +405,7 @@ func (b *Box) postSealed(ctx context.Context, to protocol.Address, req *protocol
 // type: an encryption after stale_prekey may be to a prekey of the other
 // type. It is outside what is signed, so the signature is over the envelope
 // as the outbox keeps it.
-func (b *Box) seal(ctx context.Context, to protocol.Address, stem string) (*protocol.SendRequest, error) {
+func (b *Box) seal(ctx context.Context, to protocol.Address, stem string, l *lookups) (*protocol.SendRequest, error) {
 	line, err := os.ReadFile(stem + ".P") //nolint:gosec // a path inside the box's own directory
 	if err != nil {
 		return nil, err
@@ -425,7 +423,7 @@ func (b *Box) seal(ctx context.Context, to protocol.Address, stem string) (*prot
 	if !cert.SignsMail(b.now()) {
 		return nil, refuse("this box's certificate ends within %d days, too soon to sign mail that may wait that long: irongall prekey renew makes a new one, as irongall recv does daily", protocol.TTL/(24*time.Hour))
 	}
-	pk, under, err := b.resolve(ctx, to)
+	pk, under, err := b.resolve(ctx, to, l)
 	if err != nil {
 		return nil, err
 	}

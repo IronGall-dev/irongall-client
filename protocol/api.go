@@ -85,11 +85,13 @@ type PrekeyRequest struct {
 	SenderKeyTypes []string `json:"sender_key_types,omitempty"`
 }
 
-// IdentityResponse is GET /v1/<address>/identity: the identity document and
-// the current prekey statement with its signature. None of it is trusted
+// BoxResponse is GET /v1/<address>, the one read of a box: everything a
+// sender needs before it posts (PROTOCOL.md §4.1). None of it is trusted
 // until checked: the document against the address, the signature's
-// certificate against the document, the statement against the certificate.
-type IdentityResponse struct {
+// certificate against the document, the statement against the certificate,
+// and the revocation of certificates against the identity. A revoked
+// address is answered 410 revoked with its record instead (Problem.Record).
+type BoxResponse struct {
 	Identity        Bytes `json:"identity"`
 	Prekey          Bytes `json:"prekey"`
 	PrekeySignature Bytes `json:"prekey_signature"`
@@ -97,6 +99,20 @@ type IdentityResponse struct {
 	// server's word: nothing signs it. A server that misstates it can only
 	// stop a message, which it can do without it.
 	SenderKeyTypes []string `json:"sender_key_types,omitempty"`
+	// RevokedCertificates and RevokedCertificatesSignature are the
+	// identity's revocation of its certificates that the server holds, as a
+	// record carries them (Revocations).
+	RevokedCertificates          Bytes `json:"revoked_certificates,omitempty"`
+	RevokedCertificatesSignature Bytes `json:"revoked_certificates_signature,omitempty"`
+}
+
+// Record is the revocation record that what b carries makes, or nil when it
+// carries no revocation of certificates.
+func (b *BoxResponse) Record() *Revocations {
+	if len(b.RevokedCertificates) == 0 && len(b.RevokedCertificatesSignature) == 0 {
+		return nil
+	}
+	return &Revocations{Identity: b.Identity, RevokedCertificates: b.RevokedCertificates, RevokedCertificatesSignature: b.RevokedCertificatesSignature}
 }
 
 // SendRequest is the body of POST /v1/<recipient>/messages: an age file encrypted to

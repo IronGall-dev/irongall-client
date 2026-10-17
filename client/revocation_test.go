@@ -66,7 +66,7 @@ func isRevoked(err error, a protocol.Address, own bool) bool {
 func TestAServersWordRevokesNothing(t *testing.T) {
 	ctx := context.Background()
 	for _, where := range []struct{ name, method, suffix string }{
-		{"at the identity", http.MethodGet, "/identity"},
+		{"at the read of the box", http.MethodGet, ""},
 		{"at the send", http.MethodPost, "/messages"},
 	} {
 		t.Run(where.name, func(t *testing.T) {
@@ -120,14 +120,11 @@ func TestWhatIsNotARevocationRevokesNothing(t *testing.T) {
 		"nothing":                                           {},
 	} {
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-			switch {
-			case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/v1/"+b.Address().String()+"/identity"):
-				fakeserver.WriteJSON(w, http.StatusGone, protocol.Problem{Code: protocol.CodeRevoked, Status: http.StatusGone})
-			case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/v1/"+b.Address().String()+"/revocations"):
-				fakeserver.WriteJSON(w, http.StatusOK, shown)
-			default:
-				next.ServeHTTP(w, r)
+			if r.Method == http.MethodGet && r.URL.Path == "/v1/"+b.Address().String() {
+				fakeserver.WriteJSON(w, http.StatusGone, protocol.Problem{Code: protocol.CodeRevoked, Status: http.StatusGone, Record: &shown})
+				return
 			}
+			next.ServeHTTP(w, r)
 		})
 		_, err := a.Send(ctx, b.Address(), name)
 		if err == nil || isRevoked(err, b.Address(), false) || !strings.Contains(err.Error(), "kept in the outbox") {
@@ -196,7 +193,7 @@ func TestMailFromARevokedSenderIsRefused(t *testing.T) {
 
 	var lookups atomic.Int32
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/revocations") {
+		if _, ok := readOf(r); ok {
 			lookups.Add(1)
 		}
 		next.ServeHTTP(w, r)
@@ -211,7 +208,7 @@ func TestMailFromARevokedSenderIsRefused(t *testing.T) {
 
 	// The operator hides the revocation and delivers mail A's working key
 	// signed, which its certificate still covers.
-	says(e, protocol.CodeNotRevoked, http.MethodGet, "/revocations")
+	hides(e)
 	line := e.line(a.Identity().Document(), a.Address(), b.Address(), "signed with a key that still verifies")
 	e.seal(b, a.Address(), line, sign(t, worker(t, a), line, b.Address()))
 	res = receive(t, b)
@@ -239,7 +236,7 @@ func TestNoAnswerAboutASenderStopsTheDrain(t *testing.T) {
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	send(t, a, b, "waits for an answer")
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if strings.HasSuffix(r.URL.Path, "/revocations") {
+		if x, ok := readOf(r); ok && x == a.Address() {
 			http.Error(w, "down", http.StatusServiceUnavailable)
 			return
 		}
@@ -252,10 +249,10 @@ func TestNoAnswerAboutASenderStopsTheDrain(t *testing.T) {
 	if q, _ := os.ReadDir(filepath.Join(b.Dir(), "quarantine")); len(q) != 0 {
 		t.Fatal("a message nobody could judge was quarantined")
 	}
-	// Nor has a 2xx whose body is no record, as PROTOCOL.md §0b reads one.
-	bad, _ := filepath.Glob("../testdata/vectors/answer/record-bad-*.json")
+	// Nor has a 2xx whose body is no box, as PROTOCOL.md §0b reads one.
+	bad, _ := filepath.Glob("../testdata/vectors/answer/box-bad-*.json")
 	if len(bad) == 0 {
-		t.Fatal("no answer/record-bad-* vectors")
+		t.Fatal("no answer/box-bad-* vectors")
 	}
 	for _, f := range bad {
 		body, err := os.ReadFile(f) //nolint:gosec // a test vector
@@ -263,7 +260,7 @@ func TestNoAnswerAboutASenderStopsTheDrain(t *testing.T) {
 			t.Fatal(err)
 		}
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-			if strings.HasSuffix(r.URL.Path, "/revocations") {
+			if x, ok := readOf(r); ok && x == a.Address() {
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write(body)
 				return
@@ -280,7 +277,7 @@ func TestNoAnswerAboutASenderStopsTheDrain(t *testing.T) {
 	for _, f := range problemBad(t) {
 		body, _ := os.ReadFile(f) //nolint:gosec // a test vector
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-			if strings.HasSuffix(r.URL.Path, "/revocations") {
+			if x, ok := readOf(r); ok && x == a.Address() {
 				w.Header().Set("Content-Type", "application/problem+json")
 				w.WriteHeader(http.StatusNotFound)
 				_, _ = w.Write(body)
@@ -290,7 +287,7 @@ func TestNoAnswerAboutASenderStopsTheDrain(t *testing.T) {
 		})
 		res, err := b.Receive(context.Background())
 		if err == nil || len(res.Delivered) != 0 || len(res.Refused) != 0 || e.srv.Count(b.Address()) != 1 {
-			t.Errorf("404 %s on the lookup: %v, %+v, %d left on the server", filepath.Base(f), err, res, e.srv.Count(b.Address()))
+			t.Errorf("404 %s on the read: %v, %+v, %d left on the server", filepath.Base(f), err, res, e.srv.Count(b.Address()))
 		}
 	}
 	e.srv.SetMiddle(nil)

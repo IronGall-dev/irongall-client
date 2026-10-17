@@ -76,8 +76,8 @@ func (b *Box) renew(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey,
 // key too, so sent again it would hand them the box's next certificate.
 func (b *Box) prepareRenewal(ctx context.Context, kt protocol.KeyType, unused bool) (*protocol.Prekey, uint64, protocol.PrekeyRequest, error) {
 	var req protocol.PrekeyRequest
-	var ir protocol.IdentityResponse
-	if _, err := b.call(ctx, http.MethodGet, b.boxPath("/identity"), nil, nil, &ir); err != nil {
+	var ir protocol.BoxResponse
+	if _, err := b.call(ctx, http.MethodGet, b.boxPath(""), nil, nil, &ir); err != nil {
 		return nil, 0, req, err
 	}
 	// Its own record, so judged as one: whether this identity ever certified

@@ -1140,13 +1140,13 @@ func TestHelpRunsNothing(t *testing.T) {
 			t.Fatalf("revocation publish <address> %s: %v %q", h, err, out.String())
 		}
 	}
-	resp, err := http.Get(srv.URL + "/v1/" + b.Address().String() + "/revocations")
+	resp, err := http.Get(srv.URL + "/v1/" + b.Address().String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("the server holds a revocation: %d", resp.StatusCode)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("the server holds the box revoked: %d", resp.StatusCode)
 	}
 	if _, err := os.Stat(filepath.Join(b.Dir(), "revoked.sig")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the box keeps a revocation of itself: %v", err)
@@ -1306,12 +1306,17 @@ func TestRevokedAsk(t *testing.T) {
 	}
 
 	// The same record as a file, to a box that never asked.
-	resp, err := http.Get(srv.URL + "/v1/" + addr + "/revocations")
+	resp, err := http.Get(srv.URL + "/v1/" + addr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec, err := io.ReadAll(resp.Body)
+	var br protocol.BoxResponse
+	err = json.NewDecoder(resp.Body).Decode(&br)
 	_ = resp.Body.Close()
+	if err != nil || br.Record() == nil {
+		t.Fatalf("the read of a box with its certificates revoked: %v", err)
+	}
+	rec, err := json.Marshal(br.Record())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1385,17 +1390,17 @@ func TestCertRevokeEarlier(t *testing.T) {
 	if err := do(ctx, "cert revoke-earlier", nil, strings.NewReader(""), &out, &errs); err != nil || printed(t, out.String())[1]["through"] != below(inUse(t, b)) {
 		t.Fatalf("a second time: %v %q", err, out.String())
 	}
-	var rec protocol.Revocations
-	resp, err := http.Get(srv.URL + "/v1/" + b.Address().String() + "/revocations")
+	var rec protocol.BoxResponse
+	resp, err := http.Get(srv.URL + "/v1/" + b.Address().String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if err := json.NewDecoder(resp.Body).Decode(&rec); err != nil {
-		t.Fatal(err)
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&rec) != nil {
+		t.Fatalf("the read of the box: %d", resp.StatusCode)
 	}
 	certs, err := protocol.VerifyRevokedCertificates(b.Address(), rec.Identity, rec.RevokedCertificates, rec.RevokedCertificatesSignature)
-	if err != nil || certs.Through != number(t, inUse(t, b))-1 || !certs.Revokes(number(t, first)) || !certs.Revokes(number(t, second)) || len(rec.Revocation) != 0 {
+	if err != nil || certs.Through != number(t, inUse(t, b))-1 || !certs.Revokes(number(t, first)) || !certs.Revokes(number(t, second)) {
 		t.Fatalf("the revocation of certificates the server holds: %+v, %v", certs, err)
 	}
 	// The box goes on working under the certificate it kept.

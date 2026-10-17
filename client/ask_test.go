@@ -29,17 +29,26 @@ import (
 type operator struct {
 	mu   sync.Mutex
 	seen []string
-	rule func(w http.ResponseWriter, r *http.Request) bool
+	rule func(w http.ResponseWriter, r *http.Request, next http.Handler) bool
 }
 
 // watch puts an operator in front of the server. rule may be nil.
 func watch(e *env, rule func(w http.ResponseWriter, r *http.Request) bool) *operator {
+	if rule == nil {
+		return watchWith(e, nil)
+	}
+	return watchWith(e, func(w http.ResponseWriter, r *http.Request, _ http.Handler) bool { return rule(w, r) })
+}
+
+// watchWith is watch for an operator whose rule reaches the server behind
+// it, as one that edits what the server answers does (env.serve).
+func watchWith(e *env, rule func(w http.ResponseWriter, r *http.Request, next http.Handler) bool) *operator {
 	o := &operator{rule: rule}
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		o.mu.Lock()
 		o.seen = append(o.seen, r.Method+" "+r.URL.Path)
 		o.mu.Unlock()
-		if o.rule != nil && o.rule(w, r) {
+		if o.rule != nil && o.rule(w, r, next) {
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -66,9 +75,8 @@ func answer(w http.ResponseWriter, code protocol.Code) bool {
 	return true
 }
 
-func lookupOf(a *client.Box) string { return "/v1/" + a.Address().String() + "/revocations" }
-func boxPath(a *client.Box) string  { return "/v1/" + a.Address().String() }
-func postTo(a *client.Box) string   { return boxPath(a) + "/messages" }
+func boxPath(a *client.Box) string { return "/v1/" + a.Address().String() }
+func postTo(a *client.Box) string  { return boxPath(a) + "/messages" }
 
 // waiting returns how many entries a box's outbox holds for an address, and
 // how many files it keeps for them beside their envelopes: none, since a
@@ -95,18 +103,21 @@ func theft(t *testing.T, e *env, a *client.Box) (statement, signature []byte) {
 	return statement, signature
 }
 
-// helpsTheThief is an operator that serves A's senders the old statement,
-// and takes whatever is then posted to A. With hide it also answers that it
-// holds nothing about A.
+// helpsTheThief is an operator that serves A's senders the old statement in
+// A's box, and takes whatever is then posted to A. With hide it also serves
+// A's box without the revocation of its certificates.
 func helpsTheThief(e *env, a *client.Box, statement, signature []byte, hide bool) *operator {
-	return watch(e, func(w http.ResponseWriter, r *http.Request) bool {
+	return watchWith(e, func(w http.ResponseWriter, r *http.Request, next http.Handler) bool {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == boxPath(a)+"/identity":
-			fakeserver.WriteJSON(w, http.StatusOK, protocol.IdentityResponse{Identity: a.Identity().Document(), Prekey: statement, PrekeySignature: signature})
+		case r.Method == http.MethodGet && r.URL.Path == boxPath(a):
+			e.serve(w, r, next, func(br *protocol.BoxResponse) {
+				br.Prekey, br.PrekeySignature = statement, signature
+				if hide {
+					br.RevokedCertificates, br.RevokedCertificatesSignature = nil, nil
+				}
+			})
 		case r.Method == http.MethodPost && r.URL.Path == postTo(a):
 			fakeserver.Take(w, r)
-		case hide && r.Method == http.MethodGet && r.URL.Path == lookupOf(a):
-			return answer(w, protocol.CodeNotRevoked)
 		default:
 			return false
 		}
@@ -134,8 +145,8 @@ func TestASenderAsksBeforeItSends(t *testing.T) {
 	if _, err := blind.Send(ctx, a.Address(), "to whoever holds the old prekey"); err != nil {
 		t.Fatalf("a sender shown no list: %v", err)
 	}
-	if op.count(http.MethodGet, lookupOf(a)) != 1 || op.count(http.MethodPost, postTo(a)) != 1 {
-		t.Fatalf("a sender shown no list asked once and posted once: %q", op.seen)
+	if op.count(http.MethodGet, boxPath(a)) != 1 || op.count(http.MethodPost, postTo(a)) != 1 {
+		t.Fatalf("a sender shown no list read the box once and posted once: %q", op.seen)
 	}
 
 	// The same operator, with the list not hidden: the sender asks first.
@@ -189,18 +200,18 @@ func TestNoAnswerAboutARecipientPostsNothing(t *testing.T) {
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 
 	op := watch(e, func(w http.ResponseWriter, r *http.Request) bool {
-		if r.Method == http.MethodGet && r.URL.Path == lookupOf(a) {
+		if r.Method == http.MethodGet && r.URL.Path == boxPath(a) {
 			http.Error(w, "down", http.StatusServiceUnavailable)
 			return true
 		}
 		return false
 	})
 	_, err := b.Send(ctx, a.Address(), "waits for an answer")
-	if err == nil || !strings.Contains(err.Error(), "could not be asked") || !strings.Contains(err.Error(), "kept in the outbox") {
+	if err == nil || !strings.Contains(err.Error(), "could not be read") || !strings.Contains(err.Error(), "kept in the outbox") {
 		t.Fatalf("a send with no answer about its recipient: %v", err)
 	}
-	if op.count(http.MethodPost, postTo(a)) != 0 || op.count(http.MethodGet, "/identity") != 0 {
-		t.Fatalf("something was asked or posted after no answer: %q", op.seen)
+	if op.count(http.MethodPost, postTo(a)) != 0 || op.count(http.MethodGet, boxPath(a)) != 1 {
+		t.Fatalf("something was asked again or posted after no answer: %q", op.seen)
 	}
 	if n, beside := waiting(b, a.Address()); n != 1 || beside != 0 {
 		t.Fatalf("the outbox: %d entries, %d files beside them", n, beside)
@@ -209,7 +220,7 @@ func TestNoAnswerAboutARecipientPostsNothing(t *testing.T) {
 	// A code that would end a message, had the post been answered with it.
 	for _, code := range []protocol.Code{protocol.CodeBadAddress, protocol.CodeTooLarge, protocol.CodeConflict, protocol.CodeRevoked} {
 		op = watch(e, func(w http.ResponseWriter, r *http.Request) bool {
-			return r.Method == http.MethodGet && r.URL.Path == lookupOf(a) && answer(w, code)
+			return r.Method == http.MethodGet && r.URL.Path == boxPath(a) && answer(w, code)
 		})
 		if _, err := b.Flush(ctx); err == nil || !strings.Contains(err.Error(), "kept in the outbox") {
 			t.Fatalf("a lookup answered %s: %v", code, err)
@@ -223,7 +234,7 @@ func TestNoAnswerAboutARecipientPostsNothing(t *testing.T) {
 	for _, f := range problemBad(t) {
 		body, _ := os.ReadFile(f) //nolint:gosec // a test vector
 		op = watch(e, func(w http.ResponseWriter, r *http.Request) bool {
-			if r.Method != http.MethodGet || r.URL.Path != lookupOf(a) {
+			if r.Method != http.MethodGet || r.URL.Path != boxPath(a) {
 				return false
 			}
 			w.Header().Set("Content-Type", "application/problem+json")
@@ -454,17 +465,20 @@ func TestALostAnswerCostsASendAndDeliversOnce(t *testing.T) {
 	}
 }
 
-// A send asks once, and a flush once for each recipient, however many
-// messages wait for it.
+// A send reads its recipient's box once for each post, which carries what
+// the server holds of its revocations, and a flush asks a revocation server
+// once for each recipient, however many messages wait for it.
 func TestAFlushAsksOnceForEachRecipient(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+	rs := newRevServer(t)
+	b := e.boxWith(e.listing(rs.URL))
+	a, c := e.box(protocol.Classic), e.box(protocol.Classic)
 
 	op := watch(e, nil)
 	send(t, b, a, "one send")
-	if n := op.count(http.MethodGet, lookupOf(a)); n != 1 {
-		t.Fatalf("a send asked %d times: %q", n, op.seen)
+	if n, m := op.count(http.MethodGet, boxPath(a)), rs.count(http.MethodGet, a.Address()); n != 1 || m != 1 || len(op.seen) != 2 {
+		t.Fatalf("a send read the box %d times and asked the revocation server %d: %q", n, m, op.seen)
 	}
 
 	watch(e, func(w http.ResponseWriter, r *http.Request) bool {
@@ -480,11 +494,15 @@ func TestAFlushAsksOnceForEachRecipient(t *testing.T) {
 		}
 	}
 	op = watch(e, nil)
+	before, beforeC := rs.count(http.MethodGet, a.Address()), rs.count(http.MethodGet, c.Address())
 	if got, err := b.Flush(ctx); err != nil || len(got) != 4 {
 		t.Fatalf("flush: %v, %v", got, err)
 	}
-	if na, nc := op.count(http.MethodGet, lookupOf(a)), op.count(http.MethodGet, lookupOf(c)); na != 1 || nc != 1 {
-		t.Fatalf("a flush of three messages to one box and one to another asked %d and %d times", na, nc)
+	if na, nc := op.count(http.MethodGet, boxPath(a)), op.count(http.MethodGet, boxPath(c)); na != 3 || nc != 1 {
+		t.Fatalf("a flush of three messages to one box and one to another read them %d and %d times", na, nc)
+	}
+	if ra, rc := rs.count(http.MethodGet, a.Address())-before, rs.count(http.MethodGet, c.Address())-beforeC; ra != 1 || rc != 1 {
+		t.Fatalf("a flush asked the revocation server %d and %d times", ra, rc)
 	}
 }
 
@@ -499,19 +517,20 @@ func throughOf(t *testing.T, rec *protocol.Revocations) uint64 {
 	return certs.Through
 }
 
-// record fetches what the server holds about a box, as anyone can.
+// record reads a box as anyone can, and returns the revocation of its
+// certificates the server holds, as a record.
 func record(t *testing.T, e *env, a *client.Box) *protocol.Revocations {
 	t.Helper()
-	resp, err := http.Get(e.srv.URL + lookupOf(a))
+	resp, err := http.Get(e.srv.URL + boxPath(a))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close() //nolint:errcheck // read only
-	var rec protocol.Revocations
-	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&rec) != nil {
+	var br protocol.BoxResponse
+	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&br) != nil || br.Record() == nil {
 		t.Fatalf("the record of %s: %d", a.Address(), resp.StatusCode)
 	}
-	return &rec
+	return br.Record()
 }
 
 // A box may ask at any time, and a record may come from anywhere: a
@@ -536,7 +555,7 @@ func TestAskingAtAnyTimeAndARevocationHandedOver(t *testing.T) {
 
 	// C never asks: the record reaches it as a file, and the server may say
 	// what it likes.
-	says(e, protocol.CodeNotRevoked, http.MethodGet, "/revocations")
+	hides(e)
 	got, held, err := c.KeepRevocation(first)
 	if err != nil || got != a.Address() || held.Revoked || held.Certificates == nil || held.Certificates.Through != firstThrough || !keptList(c, a.Address()) {
 		t.Fatalf("a revocation of certificates handed over: %+v, %v", held, err)
@@ -599,7 +618,7 @@ func TestAskingAtAnyTimeAndARevocationHandedOver(t *testing.T) {
 
 	// Asking about an address the box holds a revocation of asks nobody.
 	op := watch(e, nil)
-	if held, err := c.Ask(ctx, d.Address()); err != nil || !held.Revoked || op.count(http.MethodGet, lookupOf(d)) != 0 {
+	if held, err := c.Ask(ctx, d.Address()); err != nil || !held.Revoked || op.count(http.MethodGet, boxPath(d)) != 0 {
 		t.Fatalf("ask about a held revocation: %+v, %v, %q", held, err, op.seen)
 	}
 	// And no answer is an error, never "nothing held".

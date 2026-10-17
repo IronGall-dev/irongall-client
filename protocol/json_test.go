@@ -29,12 +29,12 @@ func TestVectorJSON(t *testing.T) {
 // answerTypes is what each kind of answer/ vector is read into, as the Go
 // client reads that answer.
 var answerTypes = map[string]func() any{
-	"identity": func() any { return new(IdentityResponse) },
-	"list":     func() any { return new(MessageList) },
-	"message":  func() any { return new(Message) },
-	"record":   func() any { return new(Revocations) },
-	"receipt":  func() any { return new(Receipt) },
-	"problem":  func() any { return new(Problem) },
+	"box":     func() any { return new(BoxResponse) },
+	"list":    func() any { return new(MessageList) },
+	"message": func() any { return new(Message) },
+	"record":  func() any { return new(Revocations) },
+	"receipt": func() any { return new(Receipt) },
+	"problem": func() any { return new(Problem) },
 }
 
 // Every answer/ vector gets the verdict its name gives when read as the Go
@@ -42,8 +42,8 @@ var answerTypes = map[string]func() any{
 // answer.
 func TestVectorAnswers(t *testing.T) {
 	files := glob(t, "answer/*.json")
-	if len(files) != 50 {
-		t.Fatalf("%d answer/ vectors, want 50", len(files))
+	if len(files) != 54 {
+		t.Fatalf("%d answer/ vectors, want 54", len(files))
 	}
 	for _, f := range files {
 		name := strings.TrimSuffix(filepath.Base(f), ".json")

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -279,6 +280,52 @@ func sign(t *testing.T, s ssh.Signer, line []byte, to protocol.Address) []byte {
 		t.Fatal(err)
 	}
 	return sig
+}
+
+// readOf reports whether r is a read of a box, GET /v1/<address>, and of
+// which box.
+func readOf(r *http.Request) (protocol.Address, bool) {
+	rest, ok := strings.CutPrefix(r.URL.Path, "/v1/")
+	if !ok || r.Method != http.MethodGet || strings.Contains(rest, "/") {
+		return protocol.Address{}, false
+	}
+	a, err := protocol.ParseAddress(rest)
+	return a, err == nil
+}
+
+// serve answers r, a read of a box, with the box the server holds, edited
+// first: an operator that serves a box otherwise than it holds it. A revoked
+// box is served as it was before, from its last prekey, with none of what
+// its identity signed about it, so edit can make it look like any box.
+func (e *env) serve(w http.ResponseWriter, r *http.Request, next http.Handler, edit func(*protocol.BoxResponse)) {
+	a, _ := readOf(r)
+	rec := httptest.NewRecorder()
+	next.ServeHTTP(rec, r)
+	var br protocol.BoxResponse
+	var p protocol.Problem
+	switch {
+	case rec.Code == http.StatusOK && protocol.Unmarshal(rec.Body.Bytes(), &br) == nil:
+	case rec.Code == http.StatusGone && protocol.Unmarshal(rec.Body.Bytes(), &p) == nil && p.Record != nil:
+		br.Identity = p.Record.Identity
+		br.Prekey, br.PrekeySignature = e.srv.Prekey(a)
+	default:
+		e.t.Fatalf("an operator edits the read of a box, and the server answered %d", rec.Code)
+	}
+	edit(&br)
+	fakeserver.WriteJSON(w, http.StatusOK, br)
+}
+
+// hides puts an operator in front of the server that serves every box
+// without what its identity signed about it: a revoked box as if it were
+// not, and no revocation of a box's certificates.
+func hides(e *env) {
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if _, ok := readOf(r); !ok {
+			next.ServeHTTP(w, r)
+			return
+		}
+		e.serve(w, r, next, func(br *protocol.BoxResponse) { br.RevokedCertificates, br.RevokedCertificatesSignature = nil, nil })
+	})
 }
 
 // capture records the JSON body of the next request matching method and

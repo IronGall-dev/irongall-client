@@ -17,6 +17,10 @@ info:
     built never to need. Use the Go client in this repository, or build to
     `PROTOCOL.md`.
 
+    It describes a mailbox server. A revocation server (§6.3) answers two of
+    its routes' shapes, `PUT` and `GET /v1/<addr>/revocations`, and is not
+    described here.
+
     No server publishes this file at a URL. It is for reading the API in one
     place, and for the tests that hold the reference server and this
     repository's fake server to it (`api/apitest`).
@@ -35,6 +39,8 @@ info:
       naming it in `member`); a client ignores an answer member it does not
       know. A new v1 member is optional (§0a).
     - An unknown route gets the router's plain `404` or `405`, with no code.
+      A server may add routes inside v1, and a client reads that answer as a
+      route this server does not offer (§0a).
   license:
     name: Apache-2.0
     identifier: Apache-2.0
@@ -43,8 +49,8 @@ security:
   - pass: []
 
 tags:
-  - name: identity
-    description: A box's identity and current prekey, and registering one (§3, §4.1).
+  - name: box
+    description: Registering a box, and the one read of everything a sender needs about it (§3, §4.1).
   - name: messages
     description: Sending, listing, fetching and acking mail (§4.5, §5).
   - name: owner
@@ -58,8 +64,71 @@ paths:
   /v1/{addr}:
     parameters:
       - $ref: '#/components/parameters/addr'
+    get:
+      tags: [box]
+      operationId: getBox
+      summary: Everything a sender needs about a box
+      description: |
+        `PROTOCOL.md` §4.1. One read: the identity document, the current
+        prekey statement with its signature, the key types the box's client
+        verifies, and the revocation of its certificates this server holds.
+        Nothing in it is trusted until checked: the document against the
+        address, the signature's certificate against the document, the
+        statement against the certificate, and the revocation against the
+        identity (§6.3a). A revoked address is `410 revoked`, with the record
+        held in `record`, which a client checks and never believes (§6.3).
+        With a pass the call is counted against the box that asks; with none,
+        against the address it comes from (§8). Answered for an active or a
+        closed box.
+      security:
+        - {}
+        - pass: []
+      responses:
+        '200':
+          description: The box, as its identity and working key signed it, and what the server says of its key types.
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BoxResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: '`revoked`, with the revocation record this server holds in `record`.'
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
+          content:
+            application/problem+json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Problem'
+                  - required: [record]
+                    properties:
+                      status:
+                        const: 410
+                      code:
+                        const: revoked
+                      record:
+                        $ref: '#/components/schemas/RevokedRecord'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
     put:
-      tags: [identity]
+      tags: [box]
       operationId: register
       summary: Register a box
       description: |
@@ -110,50 +179,6 @@ paths:
           $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
-        '410':
-          $ref: '#/components/responses/Gone'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '503':
-          $ref: '#/components/responses/Unavailable'
-
-  /v1/{addr}/identity:
-    parameters:
-      - $ref: '#/components/parameters/addr'
-    get:
-      tags: [identity]
-      operationId: identity
-      summary: A box's identity and current prekey
-      description: |
-        `PROTOCOL.md` §4.1. Nothing in the answer is trusted until checked:
-        the identity document against the address, the signature's certificate
-        against the document, the statement against the certificate. With a
-        pass the call is counted against the box that asks; with none,
-        against the address it comes from (§8). Answered for an active or a
-        closed box.
-      security:
-        - {}
-        - pass: []
-      responses:
-        '200':
-          description: The identity document, and the current prekey statement with its signature.
-          headers:
-            Date:
-              $ref: '#/components/headers/Date'
-            Cache-Control:
-              $ref: '#/components/headers/Cache-Control'
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IdentityResponse'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
         '410':
           $ref: '#/components/responses/Gone'
         '429':
@@ -233,44 +258,6 @@ paths:
           $ref: '#/components/responses/Gone'
         '413':
           $ref: '#/components/responses/ContentTooLarge'
-        '429':
-          $ref: '#/components/responses/TooManyRequests'
-        '503':
-          $ref: '#/components/responses/Unavailable'
-    get:
-      tags: [revocation]
-      operationId: revocations
-      summary: What is held of a box's revocations
-      description: |
-        `PROTOCOL.md` §6.3. A client checks the record and never believes
-        the server: one that does not verify counts as nothing shown.
-        `404 not_revoked` and `404 no_such_mailbox` are answers; anything else
-        is no answer, which stops a drain and holds a send. With a pass the
-        call is counted against the box that asks; with none, against the
-        address it comes from (§8).
-      security:
-        - {}
-        - pass: []
-      responses:
-        '200':
-          description: The record held.
-          headers:
-            Date:
-              $ref: '#/components/headers/Date'
-            Cache-Control:
-              $ref: '#/components/headers/Cache-Control'
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RevocationRecordAnswer'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '404':
-          $ref: '#/components/responses/NotFound'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -814,8 +801,8 @@ components:
     NotFound:
       description: |
         `no_such_mailbox` (never registered, or closed) · `no_such_message`
-        (acked or expired: treat it as gone) · `not_revoked` (no revocation of
-        this address is held here).
+        (acked or expired: treat it as gone) · `not_revoked` (a revocation
+        server's answer, §6.3: it holds no revocation of this address).
       headers:
         Date:
           $ref: '#/components/headers/Date'
@@ -836,8 +823,8 @@ components:
         `conflict` (what is held is newer, or another: with `version`,
         `prekey_serial` and `certificate_serial`, or `through`, as the call
         has one) · `box_changed` (send it again as it is) · `stale_prekey`
-        (with the current `prekey_serial` and `certificate_serial`: fetch the
-        identity and seal the same envelope again) · `prekey_expired` (the
+        (with the current `prekey_serial` and `certificate_serial`: read the
+        box again and seal the same envelope to its prekey) · `prekey_expired` (the
         box's owner must renew).
       headers:
         Date:
@@ -856,8 +843,9 @@ components:
                     enum: [conflict, box_changed, stale_prekey, prekey_expired]
     Gone:
       description: |
-        `revoked`: the box named is revoked, forever. A client asks for the
-        revocation and checks it, and believes nothing less (§6.3).
+        `revoked`: the box named is revoked, forever. A client checks the
+        revocation and believes nothing less (§6.3): the read of a box carries
+        it, so after any other call a client reads the box.
       headers:
         Date:
           $ref: '#/components/headers/Date'
@@ -1009,9 +997,16 @@ components:
           $ref: '#/components/schemas/Bytes'
         sender_key_types:
           $ref: '#/components/schemas/KeyTypes'
-    IdentityResponse:
+    BoxResponse:
+      description: |
+        The one read of a box (`PROTOCOL.md` §4.1). A later version may add a
+        member, as any answer may: a box's signed profile is the one named so
+        far (§12), and no server sends it yet.
       type: object
       required: [identity, prekey, prekey_signature]
+      dependentRequired:
+        revoked_certificates: [revoked_certificates_signature]
+        revoked_certificates_signature: [revoked_certificates]
       properties:
         identity:
           description: The identity document. A client checks that it hashes to the address.
@@ -1024,6 +1019,16 @@ components:
           $ref: '#/components/schemas/Bytes'
         sender_key_types:
           $ref: '#/components/schemas/KeyTypes'
+        revoked_certificates:
+          description: The identity's revocation of its certificates through a serial, when this server holds one (`PROTOCOL.md` §6.3a), as a record carries it.
+          anyOf:
+            - $ref: '#/components/schemas/Bytes'
+            - type: 'null'
+        revoked_certificates_signature:
+          description: The identity's SSHSIG over that statement, armored.
+          anyOf:
+            - $ref: '#/components/schemas/Bytes'
+            - type: 'null'
     SendRequest:
       type: object
       additionalProperties: false
@@ -1147,6 +1152,36 @@ components:
           properties:
             type:
               const: revocation_record
+    RevokedRecord:
+      description: |
+        The record a revoked address is answered with on the read of its box
+        (`PROTOCOL.md` §6.3): always the revocation of the address, and the
+        revocation of its certificates when the server holds one. It proves
+        itself, as any record does.
+      type: object
+      required: [type, identity, revocation]
+      dependentRequired:
+        revoked_certificates: [revoked_certificates_signature]
+        revoked_certificates_signature: [revoked_certificates]
+      properties:
+        type:
+          const: revocation_record
+        identity:
+          description: The identity document.
+          $ref: '#/components/schemas/Bytes'
+        revocation:
+          description: The identity's SSHSIG over `irongall-revoke-v1\n<address>\n`, armored.
+          $ref: '#/components/schemas/Bytes'
+        revoked_certificates:
+          description: The statement `irongall-revoke-certs-v1\n<address>\n<serial>\n`.
+          anyOf:
+            - $ref: '#/components/schemas/Bytes'
+            - type: 'null'
+        revoked_certificates_signature:
+          description: The identity's SSHSIG over that statement, armored.
+          anyOf:
+            - $ref: '#/components/schemas/Bytes'
+            - type: 'null'
     ACLRequest:
       type: object
       additionalProperties: false
@@ -1278,6 +1313,11 @@ components:
         member:
           description: '`bad_request`: the request member that is missing or unknown, or holds a value its call does not take.'
           type: [string, 'null']
+        record:
+          description: '`revoked`, on the read of a box: the revocation record the server holds (§6.3). A client checks it, and believes nothing less.'
+          anyOf:
+            - $ref: '#/components/schemas/RevokedRecord'
+            - type: 'null'
       allOf:
         - if:
             required: [code]

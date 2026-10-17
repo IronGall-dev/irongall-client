@@ -279,8 +279,8 @@ func TestAServerThatFailsEveryRenewalGetsEachKeyOnce(t *testing.T) {
 	first := byKey[order[0]]
 	doc, _ := os.ReadFile(filepath.Join(b.Dir(), "identity.doc"))
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, b.Address().String()+"/identity") {
-			fakeserver.WriteJSON(w, http.StatusOK, protocol.IdentityResponse{Identity: doc, Prekey: first.st.Prekey, PrekeySignature: first.st.PrekeySignature})
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/"+b.Address().String() {
+			fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: doc, Prekey: first.st.Prekey, PrekeySignature: first.st.PrekeySignature})
 			return
 		}
 		next.ServeHTTP(w, r)

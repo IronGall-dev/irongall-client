@@ -62,7 +62,7 @@ func TestOnlyAPacedFetchEndsADrainQuietly(t *testing.T) {
 	fetch := func(r *http.Request) bool {
 		return r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/messages/")
 	}
-	lookup := func(r *http.Request) bool { return strings.HasSuffix(r.URL.Path, "/revocations") }
+	lookup := func(r *http.Request) bool { _, ok := readOf(r); return ok }
 	for _, c := range []struct {
 		name   string
 		match  func(*http.Request) bool

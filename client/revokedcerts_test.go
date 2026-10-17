@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/IronGall-dev/irongall-client/client"
@@ -64,7 +65,7 @@ func TestRevokeEarlierEndsWhatAnOldWorkingKeySigns(t *testing.T) {
 
 	// The operator now hides the revocation and delivers what the thief
 	// signs.
-	says(e, protocol.CodeNotRevoked, http.MethodGet, "/revocations")
+	hides(e)
 	mailAs(t, e, a, b, stolen, "signed by the key that was taken")
 	if res := receive(t, b); len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedCertificate {
 		t.Fatalf("a thief's mail under the revoked certificate, the revocation hidden: %+v", res)
@@ -95,10 +96,17 @@ func TestOnlyTheIdentitysHighestRevocationCounts(t *testing.T) {
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	doc := a.Identity().Document()
+	// show serves A's box with rec's revocation of certificates in place of
+	// what the server holds, and counts the reads it served so.
+	var shown atomic.Int32
 	show := func(rec protocol.Revocations) {
+		shown.Store(0)
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-			if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/v1/"+a.Address().String()+"/revocations") {
-				fakeserver.WriteJSON(w, http.StatusOK, rec)
+			if x, ok := readOf(r); ok && x == a.Address() {
+				shown.Add(1)
+				e.serve(w, r, next, func(br *protocol.BoxResponse) {
+					br.RevokedCertificates, br.RevokedCertificatesSignature = rec.RevokedCertificates, rec.RevokedCertificatesSignature
+				})
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -117,8 +125,8 @@ func TestOnlyTheIdentitysHighestRevocationCounts(t *testing.T) {
 	}
 	show(protocol.Revocations{Identity: doc, RevokedCertificates: forged.Statement(), RevokedCertificatesSignature: byWorker})
 	send(t, a, b, "under certificate 1, which a working key cannot revoke")
-	if res := receive(t, b); len(res.Delivered) != 1 || keptList(b, a.Address()) {
-		t.Fatalf("a revocation a working key signed was applied or kept: %+v", res)
+	if res := receive(t, b); len(res.Delivered) != 1 || keptList(b, a.Address()) || shown.Load() == 0 {
+		t.Fatalf("a revocation a working key signed was applied or kept, or never shown: %+v", res)
 	}
 	e.srv.SetMiddle(nil)
 
@@ -130,15 +138,16 @@ func TestOnlyTheIdentitysHighestRevocationCounts(t *testing.T) {
 	if _, err := a.RevokeEarlier(ctx); err != nil {
 		t.Fatal(err)
 	}
-	var firstList protocol.Revocations
-	resp, err := http.Get(e.srv.URL + "/v1/" + a.Address().String() + "/revocations")
+	var served protocol.BoxResponse
+	resp, err := http.Get(e.srv.URL + "/v1/" + a.Address().String())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&firstList); err != nil || len(firstList.RevokedCertificates) == 0 || len(firstList.Revocation) != 0 {
-		t.Fatalf("the record of a box with its certificates revoked and its address not: %+v, %v", firstList, err)
+	if err := json.NewDecoder(resp.Body).Decode(&served); err != nil || served.Record() == nil {
+		t.Fatalf("the read of a box with its certificates revoked: %+v, %v", served, err)
 	}
 	_ = resp.Body.Close()
+	firstList := *served.Record()
 	second := workerAt(t, a, numberOf(t, a)) // read before the next renewal deletes it
 	if _, err := a.Rekey(ctx, ""); err != nil {
 		t.Fatal(err)
@@ -156,13 +165,13 @@ func TestOnlyTheIdentitysHighestRevocationCounts(t *testing.T) {
 	// higher one: what was revoked stays revoked.
 	show(firstList)
 	mailAs(t, e, a, b, second, "under certificate 2, with the lower revocation shown again")
-	if res := receive(t, b); len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedCertificate {
-		t.Fatalf("a lower revocation replaced the higher one: %+v", res)
+	if res := receive(t, b); len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedCertificate || shown.Load() == 0 {
+		t.Fatalf("a lower revocation replaced the higher one, or was never shown: %+v", res)
 	}
 	// And with nothing shown at all, the kept revocation still stands.
 	show(protocol.Revocations{Identity: doc})
 	mailAs(t, e, a, b, second, "under certificate 2, with no revocation shown")
-	if res := receive(t, b); len(res.Delivered) != 0 || len(res.Refused) != 1 {
+	if res := receive(t, b); len(res.Delivered) != 0 || len(res.Refused) != 1 || shown.Load() == 0 {
 		t.Fatalf("the kept revocation did not hold once the server stopped showing it: %+v", res)
 	}
 }
@@ -216,8 +225,8 @@ func TestALaterCertificateOutranksAnyPrekeySerial(t *testing.T) {
 	}
 	// And never back: the thief's statement, served again, is a rollback.
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if r.URL.Path == "/v1/"+a.Address().String()+"/identity" {
-			fakeserver.WriteJSON(w, http.StatusOK, protocol.IdentityResponse{Identity: a.Identity().Document(), Prekey: p.Statement(), PrekeySignature: sig})
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/"+a.Address().String() {
+			fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: a.Identity().Document(), Prekey: p.Statement(), PrekeySignature: sig})
 			return
 		}
 		next.ServeHTTP(w, r)

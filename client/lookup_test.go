@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strings"
 	"sync"
 	"testing"
 
@@ -12,13 +11,12 @@ import (
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
-// lookups records, for each GET of an identity or of revocations, whether it
-// carried a pass.
+// lookups records, for each read of a box, whether it carried a pass.
 func lookups(e *env) (seen func() map[string]bool) {
 	var mu sync.Mutex
 	got := map[string]bool{}
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if r.Method == http.MethodGet && (strings.HasSuffix(r.URL.Path, "/identity") || strings.HasSuffix(r.URL.Path, "/revocations")) {
+		if _, ok := readOf(r); ok {
 			mu.Lock()
 			got[r.URL.Path] = r.Header.Get("Authorization") != ""
 			mu.Unlock()
@@ -38,9 +36,9 @@ func lookups(e *env) (seen func() map[string]bool) {
 
 // A box's lookups of another box carry its pass, so a server counts them
 // against the box and not against the address it calls from (PROTOCOL.md
-// §4.1, §8): the recipient's identity and revocations before a send, and a
-// sender's revocations in a drain. What a box asks about itself carries
-// none, since its pass may be what is wrong.
+// §4.1, §8): the recipient's box before a send, and a sender's in a drain.
+// What a box asks about itself carries none, since its pass may be what is
+// wrong.
 func TestLookupsCarryThePass(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
@@ -51,7 +49,7 @@ func TestLookupsCarryThePass(t *testing.T) {
 		t.Fatalf("delivered %d", len(res.Delivered))
 	}
 	got := seen()
-	for _, p := range []string{"/v1/" + b.Address().String() + "/identity", "/v1/" + b.Address().String() + "/revocations", "/v1/" + a.Address().String() + "/revocations"} {
+	for _, p := range []string{boxPath(b), boxPath(a)} {
 		if carried, asked := got[p]; !asked || !carried {
 			t.Errorf("GET %s: asked %v, with a pass %v", p, asked, carried)
 		}
@@ -60,8 +58,8 @@ func TestLookupsCarryThePass(t *testing.T) {
 	if _, err := b.Rekey(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
-	if carried, asked := seen()["/v1/"+b.Address().String()+"/identity"]; !asked || carried {
-		t.Errorf("a box's lookup of its own identity: asked %v, with a pass %v", asked, carried)
+	if carried, asked := seen()[boxPath(b)]; !asked || carried {
+		t.Errorf("a box's read of its own box: asked %v, with a pass %v", asked, carried)
 	}
 }
 
@@ -74,7 +72,7 @@ func TestALookupWhosePassIsRefusedAsksWithout(t *testing.T) {
 	var mu sync.Mutex
 	without := 0
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		lookup := r.Method == http.MethodGet && (strings.HasSuffix(r.URL.Path, "/identity") || strings.HasSuffix(r.URL.Path, "/revocations"))
+		_, lookup := readOf(r)
 		if lookup && r.Header.Get("Authorization") != "" {
 			w.Header().Set("Content-Type", protocol.ProblemContentType)
 			w.Header().Set("WWW-Authenticate", protocol.PassScheme)
@@ -92,8 +90,8 @@ func TestALookupWhosePassIsRefusedAsksWithout(t *testing.T) {
 	send(t, a, b, "asked again without the pass")
 	mu.Lock()
 	defer mu.Unlock()
-	if without < 2 {
-		t.Fatalf("%d lookups asked again without the pass, want the identity and the revocations", without)
+	if without != 1 {
+		t.Fatalf("%d lookups asked again without the pass, want the read of the recipient's box", without)
 	}
 }
 

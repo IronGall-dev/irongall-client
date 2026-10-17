@@ -119,9 +119,9 @@ func TestAReencryptionToTheOtherKeyTypeIsPaddedAgain(t *testing.T) {
 		old := true
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			switch {
-			case old && r.Method == http.MethodGet && r.URL.Path == "/v1/"+b.Address().String()+"/identity":
+			case old && r.Method == http.MethodGet && r.URL.Path == "/v1/"+b.Address().String():
 				old = false
-				fakeserver.WriteJSON(w, http.StatusOK, protocol.IdentityResponse{Identity: b.Identity().Document(), Prekey: statement, PrekeySignature: signature})
+				fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: b.Identity().Document(), Prekey: statement, PrekeySignature: signature})
 				return
 			case r.Method == http.MethodPost && r.URL.Path == "/v1/"+b.Address().String()+"/messages":
 				body, _ := io.ReadAll(r.Body)
@@ -162,7 +162,7 @@ func TestSealRefusesAnEntryItsRecipientWould(t *testing.T) {
 	e := newEnv(t)
 	a, b, other := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
 	ctx := context.Background()
-	failOnce(e, http.MethodGet, "/v1/"+b.Address().String()+"/identity")
+	failOnce(e, http.MethodGet, "/v1/"+b.Address().String())
 	if _, err := a.Send(ctx, b.Address(), "to b"); err == nil {
 		t.Fatal("the send should have failed")
 	}

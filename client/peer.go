@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"strconv"
@@ -36,22 +37,39 @@ import (
 // the box's lock ([Box.hold]).
 func (b *Box) Resolve(ctx context.Context, peer protocol.Address) (*protocol.Prekey, error) {
 	return locked(ctx, b, func() (*protocol.Prekey, error) {
-		p, _, err := b.resolve(ctx, peer)
+		p, _, err := b.resolve(ctx, peer, nil)
 		return p, err
 	})
 }
 
 // resolve is Resolve with the lock held. It also returns the certificate the
-// prekey statement verified under.
-func (b *Box) resolve(ctx context.Context, peer protocol.Address) (*protocol.Prekey, *protocol.Certificate, error) {
+// prekey statement verified under. It reads the peer's box once (readBox),
+// and keeps what verifies of the revocations it carries before it checks the
+// statement against them. With l, a send's lookups, the revocation servers
+// are asked about the peer too, once in the command.
+//
+// A read that serves no box is a [lookupError]: there is nothing to seal to,
+// and what the server answered is never an answer about a message.
+func (b *Box) resolve(ctx context.Context, peer protocol.Address, l *lookups) (*protocol.Prekey, *protocol.Certificate, error) {
 	if held, err := b.revoked(peer); err != nil {
 		return nil, nil, err
 	} else if held {
-		return nil, nil, &RevokedError{Address: peer}
+		return nil, nil, &RevokedError{Address: peer, Own: peer == b.id.Address()}
 	}
-	var ir protocol.IdentityResponse
-	if _, err := b.lookup(ctx, peer, "/identity", &ir); err != nil {
-		return nil, nil, err
+	asked := l
+	if l != nil && l.answered[peer] {
+		asked = nil
+	}
+	ir, gone, err := b.readBox(ctx, peer, asked)
+	switch {
+	case gone:
+		return nil, nil, &RevokedError{Address: peer, Own: peer == b.id.Address()}
+	case Code(err) == protocol.CodeRevoked:
+		return nil, nil, &lookupError{fmt.Errorf("%w; it showed no revocation of %s that verifies, so this box does not take that address as revoked", err, peer)}
+	case err != nil:
+		return nil, nil, &lookupError{err}
+	case asked != nil:
+		l.answered[peer] = true
 	}
 	id, err := b.identityOf(peer, ir.Identity)
 	if err != nil {

@@ -147,8 +147,8 @@ func TestForgeries(t *testing.T) {
 		a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
 		st, sig := e.srv.Prekey(c.Address())
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-			if r.URL.Path == "/v1/"+b.Address().String()+"/identity" {
-				fakeserver.WriteJSON(w, http.StatusOK, protocol.IdentityResponse{Identity: c.Identity().Document(), Prekey: st, PrekeySignature: sig})
+			if r.Method == http.MethodGet && r.URL.Path == "/v1/"+b.Address().String() {
+				fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: c.Identity().Document(), Prekey: st, PrekeySignature: sig})
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -166,8 +166,8 @@ func TestForgeries(t *testing.T) {
 		a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
 		st, sig := e.srv.Prekey(c.Address())
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-			if r.URL.Path == "/v1/"+b.Address().String()+"/identity" {
-				fakeserver.WriteJSON(w, http.StatusOK, protocol.IdentityResponse{Identity: b.Identity().Document(), Prekey: st, PrekeySignature: sig})
+			if r.Method == http.MethodGet && r.URL.Path == "/v1/"+b.Address().String() {
+				fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: b.Identity().Document(), Prekey: st, PrekeySignature: sig})
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -208,8 +208,8 @@ func TestForgeries(t *testing.T) {
 		}
 		send(t, a, b, "sees the second prekey")
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-			if r.URL.Path == "/v1/"+b.Address().String()+"/identity" {
-				fakeserver.WriteJSON(w, http.StatusOK, protocol.IdentityResponse{Identity: b.Identity().Document(), Prekey: st, PrekeySignature: sig})
+			if r.Method == http.MethodGet && r.URL.Path == "/v1/"+b.Address().String() {
+				fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: b.Identity().Document(), Prekey: st, PrekeySignature: sig})
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -242,8 +242,8 @@ func TestForgeries(t *testing.T) {
 			t.Fatal(err)
 		}
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-			if r.URL.Path == "/v1/"+b.Address().String()+"/identity" {
-				fakeserver.WriteJSON(w, http.StatusOK, protocol.IdentityResponse{Identity: b.Identity().Document(), Prekey: p.Statement(), PrekeySignature: sig})
+			if r.Method == http.MethodGet && r.URL.Path == "/v1/"+b.Address().String() {
+				fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: b.Identity().Document(), Prekey: p.Statement(), PrekeySignature: sig})
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -264,8 +264,8 @@ func TestForgeries(t *testing.T) {
 		// The first statement again: rekey would number from it, at or below
 		// what this box published, and publish over its own later statement.
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-			if r.URL.Path == "/v1/"+b.Address().String()+"/identity" {
-				fakeserver.WriteJSON(w, http.StatusOK, protocol.IdentityResponse{Identity: b.Identity().Document(), Prekey: st, PrekeySignature: sig})
+			if r.Method == http.MethodGet && r.URL.Path == "/v1/"+b.Address().String() {
+				fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: b.Identity().Document(), Prekey: st, PrekeySignature: sig})
 				return
 			}
 			next.ServeHTTP(w, r)

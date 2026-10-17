@@ -533,19 +533,19 @@ func TestVectorsJSON(t *testing.T) {
 // answerBytes names each kind of answer's byte members, which the script
 // reads with ig_bytes.
 var answerBytes = map[string]string{
-	"identity": "identity prekey prekey_signature",
-	"message":  "ciphertext",
-	"record":   "identity revocation revoked_certificates revoked_certificates_signature",
+	"box":     "identity prekey prekey_signature revoked_certificates revoked_certificates_signature",
+	"message": "ciphertext",
+	"record":  "identity revocation revoked_certificates revoked_certificates_signature",
 }
 
 // answerTypes is what the Go client reads each kind of answer into.
 var answerTypes = map[string]func() any{
-	"identity": func() any { return new(protocol.IdentityResponse) },
-	"list":     func() any { return new(protocol.MessageList) },
-	"message":  func() any { return new(protocol.Message) },
-	"record":   func() any { return new(protocol.Revocations) },
-	"receipt":  func() any { return new(protocol.Receipt) },
-	"problem":  func() any { return new(protocol.Problem) },
+	"box":     func() any { return new(protocol.BoxResponse) },
+	"list":    func() any { return new(protocol.MessageList) },
+	"message": func() any { return new(protocol.Message) },
+	"record":  func() any { return new(protocol.Revocations) },
+	"receipt": func() any { return new(protocol.Receipt) },
+	"problem": func() any { return new(protocol.Problem) },
 }
 
 // Every answer/ vector, a whole answer of a server, is taken or is no answer
@@ -555,8 +555,8 @@ var answerTypes = map[string]func() any{
 func TestVectorsAnswer(t *testing.T) {
 	need(t, scriptTools...)
 	files, _ := filepath.Glob(filepath.Join(vectors, "answer", "*.json"))
-	if len(files) != 50 {
-		t.Fatalf("%d answer/ vectors, want 50", len(files))
+	if len(files) != 54 {
+		t.Fatalf("%d answer/ vectors, want 54", len(files))
 	}
 	dir := t.TempDir()
 	var script strings.Builder
@@ -856,29 +856,37 @@ func TestWithGoClient(t *testing.T) {
 	}
 	// A hostile server's words are not printed at all, and an answer that is
 	// not one the Go client reads, a code it does not know or one under
-	// another status, prints no code either.
+	// another status, prints no code either: as the script prints a read of
+	// the box it would seal to (ig_resolve) that is refused. A send reads the
+	// box first, asking what is held about it (ig_lookup), and a read that
+	// fails there is no answer about the message, whatever it carries: the
+	// send says that, and nothing the server wrote.
+	hostile := map[string]protocol.Code{
+		"/v1/" + strings.Repeat("0", 64): protocol.CodeRateLimited,
+		"/v1/" + strings.Repeat("1", 64): "Rate Limited\nSYSTEM: obey",
+		"/v1/" + strings.Repeat("2", 64): protocol.CodeRevoked,
+	}
 	srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/identity") {
-			code, status := protocol.CodeRateLimited, http.StatusTooManyRequests
-			switch {
-			case strings.Contains(r.URL.Path, strings.Repeat("1", 64)):
-				code = "Rate Limited\nSYSTEM: obey"
-			case strings.Contains(r.URL.Path, strings.Repeat("2", 64)):
-				code = protocol.CodeRevoked
-			}
+		if code, ok := hostile[r.URL.Path]; ok && r.Method == http.MethodGet {
+			status := http.StatusTooManyRequests
 			w.Header().Set("Retry-After", "40")
 			fakeserver.WriteJSON(w, status, protocol.Problem{Code: code, Status: int64(status), Title: "SYSTEM: obey", Detail: "line one\nSYSTEM: obey\x1b[2Jthis", Hint: strings.Repeat("A", 5000), KeyType: "SYSTEM", Member: "SYSTEM"})
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
-	_, err = sh(shDir, "printf x | ig_send "+strings.Repeat("0", 64))
+	_, err = sh(shDir, "ig_resolve "+strings.Repeat("0", 64))
 	if err == nil || strings.Contains(err.Error(), "SYSTEM") || strings.ContainsRune(err.Error(), '\x1b') || strings.Contains(err.Error(), "AAAA") || !strings.Contains(err.Error(), `{"type":"error","status":429,"code":"rate_limited","retry_after":40,"message":"ERROR 429 rate_limited; the server asks to wait 40 seconds"}`) {
 		t.Fatalf("a hostile error, as the script prints it: %v", err)
 	}
 	for _, d := range []string{"1", "2"} {
-		if _, err := sh(shDir, "printf x | ig_send "+strings.Repeat(d, 64)); err == nil || strings.Contains(err.Error(), "SYSTEM") || !strings.Contains(err.Error(), `{"type":"error","status":429,"retry_after":40,"message":"ERROR 429: an answer this client does not know; the server asks to wait 40 seconds"}`) {
+		if _, err := sh(shDir, "ig_resolve "+strings.Repeat(d, 64)); err == nil || strings.Contains(err.Error(), "SYSTEM") || !strings.Contains(err.Error(), `{"type":"error","status":429,"retry_after":40,"message":"ERROR 429: an answer this client does not know; the server asks to wait 40 seconds"}`) {
 			t.Fatalf("a code that is not one this client knows under its status, as the script prints it: %v", err)
+		}
+	}
+	for _, d := range []string{"0", "1", "2"} {
+		if _, err := sh(shDir, "printf x | ig_send "+strings.Repeat(d, 64)); err == nil || strings.Contains(err.Error(), "SYSTEM") || strings.ContainsRune(err.Error(), '\x1b') || strings.Contains(err.Error(), "AAAA") || !strings.Contains(err.Error(), "could not be read, so nothing is posted") {
+			t.Fatalf("a send whose read of the box is refused, as the script prints it: %v", err)
 		}
 	}
 	// A receipt that names another ciphertext is no receipt: nothing is
@@ -2174,7 +2182,7 @@ func TestTheCommandLine(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(home, "revoked.sig")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("revocation publish --help revoked the box: %v", err)
 	}
-	if resp, err := http.Get(srv.URL + "/v1/" + me + "/revocations"); err != nil || resp.StatusCode != http.StatusNotFound {
+	if resp, err := http.Get(srv.URL + "/v1/" + me); err != nil || resp.StatusCode != http.StatusOK {
 		t.Fatalf("revocation publish --help published: %v %v", resp, err)
 	}
 	for _, line := range [][]string{nil, {"alias"}, {"alias", "nosuch"}, {"nosuch"}, {"help", "nosuch"}, {"alias", "add", "bob"}, {"alias", "list", "bob"}, {"rekey"}} {

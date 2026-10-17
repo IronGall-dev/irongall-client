@@ -103,8 +103,10 @@ func (b *Box) RevocationServers() ([]string, error) {
 // lookups is what one command has asked as it went: one send, one flush,
 // one drain, or one question.
 type lookups struct {
-	// answered are the addresses the box's own server has answered about:
-	// for those the box reads what it holds, with no call.
+	// answered are the addresses this command has its answers about, of the
+	// box's own server and of the revocation servers: a drain asks nothing
+	// more about them, and a send reads their box at each post but asks no
+	// revocation server again.
 	answered map[protocol.Address]bool
 	// silent are the revocation servers that gave no answer. One is not
 	// asked again by the same command: a server that is down costs a
@@ -299,10 +301,11 @@ func (b *Box) publishRecord(ctx context.Context, a protocol.Address, rec *protoc
 // §6.3); that answer is taken only once what it serves is checked, and
 // nothing of it is kept here.
 func (b *Box) servesRevocation(ctx context.Context, a protocol.Address) bool {
-	var rec protocol.Revocations
-	if _, err := b.call(ctx, http.MethodGet, "/v1/"+a.String()+"/revocations", nil, nil, &rec); err != nil || len(rec.Revocation) == 0 {
+	_, err := b.call(ctx, http.MethodGet, "/v1/"+a.String(), nil, nil, nil)
+	rec := recordOf(err)
+	if rec == nil || len(rec.Revocation) == 0 {
 		return false
 	}
-	_, err := protocol.VerifyRevocation(a, rec.Identity, rec.Revocation)
+	_, err = protocol.VerifyRevocation(a, rec.Identity, rec.Revocation)
 	return err == nil
 }

@@ -195,8 +195,11 @@ func TestARevocationServerShowsWhatTheMailboxServerHides(t *testing.T) {
 	if !isRevoked(err, gone.Address(), false) {
 		t.Fatalf("a send to an address a revocation server holds a revocation of: %v", err)
 	}
-	if op.count(http.MethodPost, postTo(gone)) != 1 || op.count(http.MethodGet, boxPath(gone)+"/identity") != 1 {
-		t.Fatalf("something was fetched or posted after the revocation was in hand: %q", op.seen)
+	// One read of the box each, the control's and this one's, which asked the
+	// revocation server after it: nothing more once the revocation was in
+	// hand.
+	if op.count(http.MethodPost, postTo(gone)) != 1 || op.count(http.MethodGet, boxPath(gone)) != 2 {
+		t.Fatalf("something was read or posted after the revocation was in hand: %q", op.seen)
 	}
 	if !keptRevocation(a, gone.Address()) || failed(a, gone.Address()) != 1 {
 		t.Fatal("the revocation was not kept, or the message was not moved to outbox/failed/")
@@ -363,13 +366,13 @@ func TestARevocationServerIsNoSubstituteForTheBoxsOwn(t *testing.T) {
 	a, b := e.boxWith(e.listing(rs.URL)), e.box(protocol.Classic)
 
 	op := watch(e, func(w http.ResponseWriter, r *http.Request) bool {
-		if r.Method == http.MethodGet && r.URL.Path == lookupOf(b) {
+		if r.Method == http.MethodGet && r.URL.Path == boxPath(b) {
 			return down(w, r)
 		}
 		return false
 	})
 	_, err := a.Send(ctx, b.Address(), "waits for an answer")
-	if err == nil || !strings.Contains(err.Error(), "could not be asked") {
+	if err == nil || !strings.Contains(err.Error(), "could not be read") {
 		t.Fatalf("a send with no answer from the box's own server: %v", err)
 	}
 	if rs.total() != 0 || op.count(http.MethodPost, postTo(b)) != 0 {

@@ -66,12 +66,11 @@ type message struct {
 func New(t testing.TB, now func() time.Time) *Server {
 	s := &Server{now: now, boxes: map[protocol.Address]*box{}, keys: map[string]string{}}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/{addr}", s.getBox)
 	mux.HandleFunc("PUT /v1/{addr}", s.register)
 	mux.HandleFunc("POST /v1/{addr}/messages", s.send)
-	mux.HandleFunc("GET /v1/{addr}/identity", s.identity)
 	mux.HandleFunc("PUT /v1/{addr}/prekey", s.newPrekey)
 	mux.HandleFunc("PUT /v1/{addr}/revocations", s.revoke)
-	mux.HandleFunc("GET /v1/{addr}/revocations", s.revocations)
 	mux.HandleFunc("GET /v1/{addr}/messages", s.owner(s.list))
 	mux.HandleFunc("GET /v1/{addr}/messages/{id}", s.owner(s.fetch))
 	mux.HandleFunc("DELETE /v1/{addr}/messages/{id}", s.owner(s.ack))
@@ -270,7 +269,10 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusCreated, struct{}{})
 }
 
-func (s *Server) identity(w http.ResponseWriter, r *http.Request) {
+// getBox is the one read of a box: its identity, its current prekey
+// statement, and the revocation of its certificates held; a revoked box is
+// 410 with its record.
+func (s *Server) getBox(w http.ResponseWriter, r *http.Request) {
 	a, ok := pathAddr(w, r)
 	if !ok {
 		return
@@ -283,10 +285,14 @@ func (s *Server) identity(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if b.revoked != nil {
-		problem(w, protocol.CodeRevoked, "this box is revoked")
+		rec := &protocol.Revocations{Identity: b.identity, Revocation: b.revoked, RevokedCertificates: b.certList, RevokedCertificatesSignature: b.certListSig}
+		problem(w, protocol.CodeRevoked, "this box is revoked", func(p *protocol.Problem) { p.Record = rec })
 		return
 	}
-	WriteJSON(w, http.StatusOK, protocol.IdentityResponse{Identity: b.identity, Prekey: b.statement, PrekeySignature: b.signature, SenderKeyTypes: b.senders})
+	WriteJSON(w, http.StatusOK, protocol.BoxResponse{
+		Identity: b.identity, Prekey: b.statement, PrekeySignature: b.signature, SenderKeyTypes: b.senders,
+		RevokedCertificates: b.certList, RevokedCertificatesSignature: b.certListSig,
+	})
 }
 
 // revoke takes a revocation of a box this server has: the identity's own
@@ -343,26 +349,6 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 // has not revoked: a box whose certificate is revoked has no pass the server
 // takes and no prekey a sender may use, until it publishes under a new one.
 func (b *box) current() bool { return b.listed == nil || !b.listed.Revokes(b.cert.Serial()) }
-
-// revocations answers with what is held about an address: its revocation,
-// which proves itself, or not_revoked.
-func (s *Server) revocations(w http.ResponseWriter, r *http.Request) {
-	a, ok := pathAddr(w, r)
-	if !ok {
-		return
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	b := s.boxes[a]
-	switch {
-	case b == nil:
-		problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
-	case b.revoked == nil && b.listed == nil:
-		problem(w, protocol.CodeNotRevoked, "no revocation of this address is held here")
-	default:
-		WriteJSON(w, http.StatusOK, protocol.Revocations{Identity: b.identity, Revocation: b.revoked, RevokedCertificates: b.certList, RevokedCertificatesSignature: b.certListSig})
-	}
-}
 
 func (s *Server) newPrekey(w http.ResponseWriter, r *http.Request) {
 	a, ok := pathAddr(w, r)

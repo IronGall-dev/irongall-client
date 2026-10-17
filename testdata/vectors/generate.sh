@@ -519,7 +519,7 @@ jt bad-vertical-tab '{"a":\v1}'
 # type or null, which is as if it were left out; a byte member is base64 in its one encoding.
 mkdir -p answer
 at() { local name=$1; shift; printf "$@" > "answer/$name.json"; }
-REV=$(b64 < a/revoke.sig); P1=$(b64 < a/prekey-1.txt); P1S=$(b64 < a/prekey-1.txt.sig); CT=$(b64 < message/a-to-b.age); HASH=$(sha256sum < message/a-to-b.age | cut -c1-64)
+REV=$(b64 < a/revoke.sig); RC=$(b64 < revoked/ok-through-4.txt); RCS=$(b64 < revoked/ok-through-4.sig); P1=$(b64 < a/prekey-1.txt); P1S=$(b64 < a/prekey-1.txt.sig); CT=$(b64 < message/a-to-b.age); HASH=$(sha256sum < message/a-to-b.age | cut -c1-64)
 wrap() { printf '%s' "$1" | fold -w 64 | sed 's/$/\\n/' | tr -d '\n' | sed 's/\\n$//'; } # base64 with a JSON \n escape after each 64 characters
 NOPAD=${REV%%=*}; LASTBITS=$(printf '%s' "$REV" | sed 's/A==$/B==/; s/Q==$/R==/; s/g==$/h==/; s/w==$/x==/') # the revocation is 403 bytes: two = of padding, and 4 unused bits
 [ "$NOPAD" != "$REV" ] && [ "$LASTBITS" != "$REV" ] || { echo "a/revoke.sig is not base64 with padding and unused bits, which the bad answers need" >&2; exit 1; }
@@ -543,11 +543,13 @@ at record-ok-type-null '{"type":null,"identity":"%s","revocation":"%s"}' "$ID_A"
 at record-bad-type-another '{"type":"revocation","identity":"%s","revocation":"%s"}' "$ID_A" "$REV" # and never another
 at record-bad-type-empty '{"type":"","identity":"%s","revocation":"%s"}' "$ID_A" "$REV"
 at record-bad-type-a-number '{"type":1,"identity":"%s","revocation":"%s"}' "$ID_A" "$REV"
-at identity-ok '{"identity":"%s","prekey":"%s","prekey_signature":"%s"}' "$ID_A" "$P1" "$P1S"
-at identity-ok-sender-key-types '{"identity":"%s","prekey":"%s","prekey_signature":"%s","sender_key_types":["ecdsa-sha2-nistp256"]}' "$ID_A" "$P1" "$P1S"
-at identity-bad-sender-key-types-a-string '{"identity":"%s","prekey":"%s","prekey_signature":"%s","sender_key_types":"any"}' "$ID_A" "$P1" "$P1S"
-at identity-bad-signature-unpadded '{"identity":"%s","prekey":"%s","prekey_signature":"%s"}' "$ID_A" "$P1" "${P1S%%=*}"
-at identity-bad-prekey-a-number '{"identity":"%s","prekey":1,"prekey_signature":"%s"}' "$ID_A" "$P1S"
+at box-ok '{"identity":"%s","prekey":"%s","prekey_signature":"%s"}' "$ID_A" "$P1" "$P1S"
+at box-ok-sender-key-types '{"identity":"%s","prekey":"%s","prekey_signature":"%s","sender_key_types":["ecdsa-sha2-nistp256"]}' "$ID_A" "$P1" "$P1S"
+at box-ok-revoked-certificates '{"identity":"%s","prekey":"%s","prekey_signature":"%s","revoked_certificates":"%s","revoked_certificates_signature":"%s"}' "$ID_A" "$P1" "$P1S" "$RC" "$RCS" # the revocation of its certificates the server holds, beside the box
+at box-bad-sender-key-types-a-string '{"identity":"%s","prekey":"%s","prekey_signature":"%s","sender_key_types":"any"}' "$ID_A" "$P1" "$P1S"
+at box-bad-signature-unpadded '{"identity":"%s","prekey":"%s","prekey_signature":"%s"}' "$ID_A" "$P1" "${P1S%%=*}"
+at box-bad-prekey-a-number '{"identity":"%s","prekey":1,"prekey_signature":"%s"}' "$ID_A" "$P1S"
+at box-bad-revoked-certificates-a-number '{"identity":"%s","prekey":"%s","prekey_signature":"%s","revoked_certificates":4}' "$ID_A" "$P1" "$P1S"
 at list-ok '{"count":1,"messages":[{"id":"%s","from":"%s","size":%s,"received_at":"%s","expires_at":"2026-11-12T00:00:00Z"}],"next_cursor":null,"poll_after":60}' "$HASH" "$A" "$(wc -c < message/a-to-b.age)" "$NOW"
 at list-ok-empty '{"count":0,"messages":[],"next_cursor":null,"poll_after":60}'
 at list-bad-count-negative '{"count":-1,"messages":[],"next_cursor":null,"poll_after":60}'
@@ -574,3 +576,5 @@ at problem-bad-limit-written-with-an-exponent '{"code":"too_large","status":413,
 at problem-bad-through-above-2-53 '{"code":"conflict","status":409,"through":9007199254740992}'
 at problem-bad-key-types-a-string '{"code":"unsupported_key_type","status":400,"key_types":"ssh-ed25519"}'
 at problem-bad-member-a-number '{"code":"bad_request","status":400,"member":7}'
+at problem-ok-record '{"type":"https://irongall.dev/errors/revoked","title":"Revoked","status":410,"detail":"this box is revoked","code":"revoked","record":{"type":"revocation_record","identity":"%s","revocation":"%s"}}' "$ID_A" "$REV" # a read of a revoked box carries its record
+at problem-bad-record-another-type '{"code":"revoked","status":410,"record":{"type":"revocation","identity":"%s","revocation":"%s"}}' "$ID_A" "$REV" # held to its type as a record alone is

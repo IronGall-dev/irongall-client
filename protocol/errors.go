@@ -186,4 +186,17 @@ type Problem struct {
 	KeyType  string   `json:"key_type,omitempty"`
 	// Member is the request member that is missing or unknown (bad_request).
 	Member string `json:"member,omitempty"`
+	// Record is the revocation record of the address a read of a box named
+	// (revoked, on GET /v1/<address>). A client checks it, and takes
+	// "revoked" on nothing less.
+	Record *Revocations `json:"record,omitempty"`
+}
+
+// checkType holds a record a problem carries to the type it names, as one
+// read alone is held.
+func (p *Problem) checkType() error {
+	if p.Record != nil {
+		return p.Record.checkType()
+	}
+	return nil
 }
