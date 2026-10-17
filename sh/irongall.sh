@@ -517,8 +517,8 @@ ig_post(){ # <address> <outbox stem> → seals it and POSTs it; on 409 stale_pre
     2) rm -f "$IG/error.json"; ig_err "what the server holds about $B could not be asked, so nothing is posted: kept in the outbox, retry with ig_flush"; return 1 ;;      # no answer is not "none held". Whatever code the failed lookup carried is no answer about the message
     *) ig_refuse "what this box keeps about $B does not verify, or could not be written: kept in the outbox"; return 1 ;;
   esac
-  ig_seal "$B" "$o" && ig_owner POST "/v1/$B" "$IG/seal.json" > "$IG/receipt.json" && ig_receipt && { ig_sent "$o"; return; }
-  if [ "$(ig_code)" = stale_prekey ]; then ig_seal "$B" "$o" && ig_owner POST "/v1/$B" "$IG/seal.json" > "$IG/receipt.json" && ig_receipt && { ig_sent "$o"; return; }; fi
+  ig_seal "$B" "$o" && ig_owner POST "/v1/$B/messages" "$IG/seal.json" > "$IG/receipt.json" && ig_receipt && { ig_sent "$o"; return; }
+  if [ "$(ig_code)" = stale_prekey ]; then ig_seal "$B" "$o" && ig_owner POST "/v1/$B/messages" "$IG/seal.json" > "$IG/receipt.json" && ig_receipt && { ig_sent "$o"; return; }; fi
   c=$(ig_code)
   case $c in revoked) ig_lookup "$B" ;; sender_revoked) ig_lookup "$(cat "$IG/address")" ;; esac      # a server's "revoked" is checked: with the revocation in hand it is final, and without one it is a call that failed
   if ig_gone "$B" || ig_gone "$(cat "$IG/address")"; then ig_failed "$o"; ig_err "REVOKED: the revocation verifies, so it can never be delivered: moved to outbox/failed/"; return 1; fi

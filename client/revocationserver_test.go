@@ -195,7 +195,7 @@ func TestARevocationServerShowsWhatTheMailboxServerHides(t *testing.T) {
 	if !isRevoked(err, gone.Address(), false) {
 		t.Fatalf("a send to an address a revocation server holds a revocation of: %v", err)
 	}
-	if op.count(http.MethodPost, postTo(gone)) != 1 || op.count(http.MethodGet, postTo(gone)+"/identity") != 1 {
+	if op.count(http.MethodPost, postTo(gone)) != 1 || op.count(http.MethodGet, boxPath(gone)+"/identity") != 1 {
 		t.Fatalf("something was fetched or posted after the revocation was in hand: %q", op.seen)
 	}
 	if !keptRevocation(a, gone.Address()) || failed(a, gone.Address()) != 1 {

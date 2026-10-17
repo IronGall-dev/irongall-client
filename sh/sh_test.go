@@ -928,7 +928,7 @@ func TestWithGoClient(t *testing.T) {
 	// whole number of blocks: both pad, and pad alike.
 	var onWire []int
 	srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if r.Method == http.MethodPost && !strings.Contains(strings.TrimPrefix(r.URL.Path, "/v1/"), "/") {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/messages") {
 			body, _ := io.ReadAll(r.Body)
 			r.Body = io.NopCloser(bytes.NewReader(body))
 			var req protocol.SendRequest

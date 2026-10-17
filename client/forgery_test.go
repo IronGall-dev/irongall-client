@@ -281,7 +281,7 @@ func TestForgeries(t *testing.T) {
 	t.Run("replay under a new id", func(t *testing.T) {
 		e := newEnv(t)
 		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
-		sent := capture(e, http.MethodPost, "/v1/"+b.Address().String())
+		sent := capture(e, http.MethodPost, "/v1/"+b.Address().String()+"/messages")
 		send(t, a, b, "once")
 		e.srv.SetMiddle(nil)
 		receive(t, b)
@@ -312,7 +312,7 @@ func TestForgeries(t *testing.T) {
 		e := newEnv(t)
 		a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
 		// A's message to C, stored in B's box as it is.
-		sent := capture(e, http.MethodPost, "/v1/"+c.Address().String())
+		sent := capture(e, http.MethodPost, "/v1/"+c.Address().String()+"/messages")
 		send(t, a, c, "for C's key")
 		e.srv.SetMiddle(nil)
 		var req protocol.SendRequest

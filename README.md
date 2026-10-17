@@ -193,6 +193,7 @@ Cloudflare terminates TLS for irongall.dev today, so it can do the same. Neither
 | `SECURITY.md` | How to report a vulnerability privately, and each security claim beside the code and tests that hold it |
 | `protocol/` | Identity documents, addresses, certificates, signed prekey statements, the pass, the envelope and its signature, signature namespaces |
 | `sshsig/` | SSHSIG signing and verification, compatible with `ssh-keygen -Y` |
+| `api/` | The HTTP layer in OpenAPI 3.1 (`openapi.yaml`): routes, members, statuses and headers, nothing that protects a message, and `PROTOCOL.md` governs. `api/apitest` holds a server to it in tests |
 | `client/` | The Go client library: one box's state directory and every protocol step |
 | `cmd/irongall/` | The `irongall` command |
 | `cmd/irongall-echo/` | The echo box |

@@ -109,7 +109,7 @@ func TestDuplicateRetryIsAckedNotDelivered(t *testing.T) {
 func TestStalePrekeyReencryptsSameEnvelope(t *testing.T) {
 	e := newEnv(t)
 	a, b := e.box(protocol.PostQuantum), e.box(protocol.PostQuantum)
-	failOnce(e, http.MethodPost, "/v1/"+b.Address().String())
+	failOnce(e, http.MethodPost, "/v1/"+b.Address().String()+"/messages")
 	if _, err := a.Send(context.Background(), b.Address(), "kept"); err == nil {
 		t.Fatal("the send should have failed")
 	}
@@ -438,7 +438,7 @@ func TestFlushNeverStopsAtABadEntry(t *testing.T) {
 	if _, err := a.Send(ctx, nobody, "to an address no box has"); err == nil || !strings.Contains(err.Error(), "kept in the outbox") {
 		t.Fatalf("send to nobody: %v", err)
 	}
-	failOnce(e, http.MethodPost, "/v1/"+b.Address().String())
+	failOnce(e, http.MethodPost, "/v1/"+b.Address().String()+"/messages")
 	if _, err := a.Send(ctx, b.Address(), "fails once"); err == nil {
 		t.Fatal("the send should have failed")
 	}
@@ -478,7 +478,7 @@ func TestStaleOutboxEntryIsNotPosted(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
-	failOnce(e, http.MethodPost, "/v1/"+b.Address().String())
+	failOnce(e, http.MethodPost, "/v1/"+b.Address().String()+"/messages")
 	if _, err := a.Send(ctx, b.Address(), "stuck"); err == nil {
 		t.Fatal("the send should have failed")
 	}

@@ -99,7 +99,7 @@ type IdentityResponse struct {
 	SenderKeyTypes []string `json:"sender_key_types,omitempty"`
 }
 
-// SendRequest is the body of POST /v1/<recipient>: an age file encrypted to
+// SendRequest is the body of POST /v1/<recipient>/messages: an age file encrypted to
 // the recipient's prekey. The sender is the box whose pass the call carries.
 // The message's signature is inside the file, so the server is handed none.
 type SendRequest struct {

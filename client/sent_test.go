@@ -216,7 +216,7 @@ func TestSentHoldsOnlyWhatTheServerTook(t *testing.T) {
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	ctx := context.Background()
-	failOnce(e, http.MethodPost, "/v1/"+b.Address().String())
+	failOnce(e, http.MethodPost, "/v1/"+b.Address().String()+"/messages")
 	if _, err := a.Send(ctx, b.Address(), "fails once"); err == nil {
 		t.Fatal("the send did not fail")
 	}
@@ -239,7 +239,7 @@ func TestSentHoldsOnlyWhatTheServerTook(t *testing.T) {
 
 	// Refused for good: it moves to outbox/failed/, and never to sent/.
 	e.srv.SetMiddle(func(w http.ResponseWriter, req *http.Request, next http.Handler) {
-		if req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/v1/"+b.Address().String()) {
+		if req.Method == http.MethodPost && strings.HasSuffix(req.URL.Path, "/v1/"+b.Address().String()+"/messages") {
 			fakeserver.WriteJSON(w, http.StatusRequestEntityTooLarge, protocol.Problem{Code: protocol.CodeTooLarge, Status: http.StatusRequestEntityTooLarge})
 			return
 		}

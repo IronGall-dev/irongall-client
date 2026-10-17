@@ -1,0 +1,1323 @@
+openapi: 3.1.0
+info:
+  title: irongall
+  version: v1-pre-stable
+  summary: The HTTP layer of the irongall protocol, v1, before it is declared stable.
+  description: |
+    The routes, members, statuses and headers of an irongall server, as
+    `PROTOCOL.md` in this repository specifies them. `PROTOCOL.md` is the
+    specification: where the two differ, it governs and this file is wrong.
+
+    **This file describes transport only, and nothing in it protects a
+    message.** The identity documents, certificates, prekey statements,
+    passes, signatures and age files it carries are byte formats, here opaque
+    base64, and every check a client makes on them is in `PROTOCOL.md` (§2 to
+    §6), with its test vectors in `testdata/vectors/`. A client built from this
+    file alone checks nothing, so it trusts the server, which the protocol is
+    built never to need. Use the Go client in this repository, or build to
+    `PROTOCOL.md`.
+
+    No server publishes this file at a URL. It is for reading the API in one
+    place, and for the tests that hold the reference server and this
+    repository's fake server to it (`api/apitest`).
+
+    **What every answer under `/v1/` shares** (`PROTOCOL.md` §13):
+    - `Date`, by the clock the server's checks read, and `Cache-Control: no-store`.
+    - An error body is RFC 9457 Problem Details in AEP-193's form. A client
+      reads `code` and the members, never `detail`, `hint` or `title`, and takes
+      a code it does not know, or one under another status, as no code.
+    - Every JSON text is read by `PROTOCOL.md` §0b's rules: I-JSON, one object,
+      names matched exactly, nested at most 32 deep, integers from 0 to
+      2^53 − 1 written in digits alone, byte members standard base64 in its one
+      encoding (padded, the unused bits of the last character zero), and null
+      the same as leaving a member out.
+    - A server refuses a request member it does not know (`400 bad_request`,
+      naming it in `member`); a client ignores an answer member it does not
+      know. A new v1 member is optional (§0a).
+    - An unknown route gets the router's plain `404` or `405`, with no code.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+
+security:
+  - pass: []
+
+tags:
+  - name: identity
+    description: A box's identity and current prekey, and registering one (§3, §4.1).
+  - name: messages
+    description: Sending, listing, fetching and acking mail (§4.5, §5).
+  - name: owner
+    description: What a box's owner manages with its pass (§6).
+  - name: revocation
+    description: Revocations of an address and of its certificates (§6.3, §6.3a). No pass is needed.
+  - name: link
+    description: The page a box's link opens (§2).
+
+paths:
+  /v1/{addr}:
+    parameters:
+      - $ref: '#/components/parameters/addr'
+    put:
+      tags: [identity]
+      operationId: register
+      summary: Register a box
+      description: |
+        `PROTOCOL.md` §3. The pass is under the certificate of the prekey
+        statement the body brings, not under one on record. A registration
+        never changes a box that exists: an identical retry is `200`, anything
+        else `409 conflict`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/Done'
+        '201':
+          $ref: '#/components/responses/Done'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+    delete:
+      tags: [owner]
+      operationId: close
+      summary: Close a box
+      description: |
+        `PROTOCOL.md` §6.2. Deletes its unacked mail and marks it closed; a new
+        prekey reopens it (§6.4).
+      responses:
+        '204':
+          $ref: '#/components/responses/NoContent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /v1/{addr}/identity:
+    parameters:
+      - $ref: '#/components/parameters/addr'
+    get:
+      tags: [identity]
+      operationId: identity
+      summary: A box's identity and current prekey
+      description: |
+        `PROTOCOL.md` §4.1. Nothing in the answer is trusted until checked:
+        the identity document against the address, the signature's certificate
+        against the document, the statement against the certificate. With a
+        pass the call is counted against the box that asks; with none,
+        against the address it comes from (§8). Answered for an active or a
+        closed box.
+      security:
+        - {}
+        - pass: []
+      responses:
+        '200':
+          description: The identity document, and the current prekey statement with its signature.
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IdentityResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /v1/{addr}/prekey:
+    parameters:
+      - $ref: '#/components/parameters/addr'
+    put:
+      tags: [owner]
+      operationId: renew
+      summary: Publish a new prekey
+      description: |
+        `PROTOCOL.md` §6.4. The pass is under the certificate the new
+        statement is signed under: a statement ordered after the current one
+        (§2b) is the authority, so a box that lost its working key comes back
+        this way, and a closed box reopens.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PrekeyRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/Done'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /v1/{addr}/revocations:
+    parameters:
+      - $ref: '#/components/parameters/addr'
+    put:
+      tags: [revocation]
+      operationId: revoke
+      summary: Publish a revocation
+      description: |
+        `PROTOCOL.md` §6.3, §6.3a. The record proves itself, so no pass is
+        taken. A revocation of the address is `201`; a revocation of
+        certificates taken, or one through the same serial again, `200`. A box
+        already revoked is `410`, answered before the body is read.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RevocationRecord'
+      responses:
+        '200':
+          $ref: '#/components/responses/Done'
+        '201':
+          $ref: '#/components/responses/Done'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+    get:
+      tags: [revocation]
+      operationId: revocations
+      summary: What is held of a box's revocations
+      description: |
+        `PROTOCOL.md` §6.3. A client checks the record and never believes
+        the server: one that does not verify counts as nothing shown.
+        `404 not_revoked` and `404 no_such_mailbox` are answers; anything else
+        is no answer, which stops a drain and holds a send. With a pass the
+        call is counted against the box that asks; with none, against the
+        address it comes from (§8).
+      security:
+        - {}
+        - pass: []
+      responses:
+        '200':
+          description: The record held.
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevocationRecordAnswer'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /v1/{addr}/acl:
+    parameters:
+      - $ref: '#/components/parameters/addr'
+    put:
+      tags: [owner]
+      operationId: putACL
+      summary: Replace the box's ACL
+      description: |
+        `PROTOCOL.md` §6.2: whom the server takes the box's mail from,
+        replaced whole by a higher `version`. Mail held from a sender the new
+        `deny` matches is deleted with it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ACLRequest'
+      responses:
+        '200':
+          $ref: '#/components/responses/ACL'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+    get:
+      tags: [owner]
+      operationId: getACL
+      summary: The box's ACL
+      description: |
+        `PROTOCOL.md` §6.2. A box with none answers
+        `{"version":0,"allow":["*"],"deny":[]}`, which is what none means.
+      responses:
+        '200':
+          $ref: '#/components/responses/ACL'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /v1/{addr}/account:
+    parameters:
+      - $ref: '#/components/parameters/addr'
+    put:
+      tags: [owner]
+      operationId: adopt
+      summary: Join an account with an adopt key
+      description: '`PROTOCOL.md` §6.5. A box in another account moves.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdoptRequest'
+      responses:
+        '200':
+          description: The account the box now belongs to.
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+    delete:
+      tags: [owner]
+      operationId: leave
+      summary: Leave the box's account
+      description: '`PROTOCOL.md` §6.5. `204` in an account or not.'
+      responses:
+        '204':
+          $ref: '#/components/responses/NoContent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /v1/{addr}/messages:
+    parameters:
+      - $ref: '#/components/parameters/addr'
+    post:
+      tags: [messages]
+      operationId: send
+      summary: Send a message to the box
+      description: |
+        `PROTOCOL.md` §4.5. The sender is the box whose pass the call carries;
+        `addr` is the recipient. The ciphertext is an age file encrypted to the
+        recipient's current prekey, with the signed envelope and its padding
+        inside (§4.3, §4.4): the server is handed no signature. The same
+        ciphertext posted again is `200` with the original receipt, whatever
+        has changed at the recipient since. A refusal for a quota waits in the
+        sender's outbox and is posted again after `Retry-After`;
+        `403 sender_not_allowed` is final.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendRequest'
+      responses:
+        '200':
+          description: This ciphertext was stored before; the receipt is the original one.
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Receipt'
+        '201':
+          description: Stored. `Location` names the message made, which only the recipient may fetch.
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
+            Location:
+              $ref: '#/components/headers/Location'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Receipt'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+    get:
+      tags: [messages]
+      operationId: list
+      summary: List the box's mail
+      description: |
+        `PROTOCOL.md` §5.1. One page of up to 50, oldest first; pass
+        `cursor` until `next_cursor` is null. `count` is every live message.
+        An empty box is `{"count":0,"messages":[],"next_cursor":null,"poll_after":<seconds>}`.
+        There is no long poll: a client polls, about every `poll_after` seconds.
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          description: The `next_cursor` of the page before. Any other is answered as a poll (§5.1).
+          schema:
+            type: string
+        - name: If-None-Match
+          in: header
+          required: false
+          description: The `ETag` of an earlier answer. Unchanged, the answer is `304`.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: One page of the box's mail.
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
+            ETag:
+              $ref: '#/components/headers/ETag'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageList'
+        '304':
+          description: The box is as it was at the `ETag` sent.
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /v1/{addr}/messages/{id}:
+    parameters:
+      - $ref: '#/components/parameters/addr'
+      - $ref: '#/components/parameters/id'
+    get:
+      tags: [messages]
+      operationId: fetch
+      summary: Fetch a message
+      description: |
+        `PROTOCOL.md` §5.2–§5.5. `from` is the box whose pass the send
+        carried, on the server's word: a client holds it to the sender it
+        verifies inside the ciphertext. A message is meant to be fetched once:
+        past the box's budget, `429 fetch_paced` or `429 refetch_spent` (§5.7).
+      responses:
+        '200':
+          description: The message.
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+    delete:
+      tags: [messages]
+      operationId: ack
+      summary: Ack a message
+      description: |
+        `PROTOCOL.md` §5.7. Deletes the ciphertext; the server keeps a dedupe
+        record until the message's `expires_at`. `404 no_such_message`: treat
+        it as gone.
+      responses:
+        '204':
+          $ref: '#/components/responses/NoContent'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /to/{addr}:
+    parameters:
+      - name: addr
+        in: path
+        required: true
+        description: A box's address, 64 lowercase hex characters. Any other path is `404`.
+        schema:
+          $ref: '#/components/schemas/Address'
+    get:
+      tags: [link]
+      operationId: link
+      summary: The page a box's link opens
+      description: |
+        `PROTOCOL.md` §2: fixed text and the address, never text a box
+        supplied, for a person or an agent handed the link. It reads no store,
+        so it is served while the API still answers `503`. A client takes the
+        address from the path and never fetches the page.
+      security: []
+      responses:
+        '200':
+          description: The page.
+          headers:
+            Referrer-Policy:
+              required: true
+              schema:
+                const: no-referrer
+            X-Robots-Tag:
+              required: true
+              schema:
+                const: noindex
+            Content-Security-Policy:
+              description: The reference server's, which lets the page run nothing.
+              schema:
+                type: string
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+          content:
+            text/html:
+              schema:
+                type: string
+        '404':
+          description: Not an address.
+          content:
+            text/plain:
+              schema:
+                type: string
+        '429':
+          description: '`rate_limited`: past the calls a server takes with no pass from the address the request comes from (§8).'
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Retry-After:
+              $ref: '#/components/headers/Retry-After'
+          content:
+            application/problem+json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Problem'
+                  - properties:
+                      status:
+                        const: 429
+                      code:
+                        const: rate_limited
+
+components:
+  securitySchemes:
+    pass:
+      type: http
+      scheme: irongall-pass
+      description: |
+        A pass the box signs for itself with its working key, good for ten
+        minutes (`PROTOCOL.md` §6.1b), in exactly this form:
+        `Authorization: irongall-pass address="<address>", not_after="<RFC 3339 UTC>", signature="<base64 of the SSHSIG>"`.
+        The server issues nothing: there is no token. A `401` carries
+        `WWW-Authenticate: irongall-pass`; on one, a client signs another pass
+        and tries once more.
+
+  parameters:
+    addr:
+      name: addr
+      in: path
+      required: true
+      description: A box's address, 64 hex characters (`PROTOCOL.md` §2). The server folds case on the path; any other form is `400 bad_address`.
+      schema:
+        type: string
+        pattern: '^[0-9A-Fa-f]{64}$'
+    id:
+      name: id
+      in: path
+      required: true
+      description: A message id, the lowercase hex SHA-256 of its ciphertext. Any other form is `404 no_such_message`.
+      schema:
+        $ref: '#/components/schemas/MessageID'
+
+  headers:
+    Date:
+      description: The time by the clock the server's checks read (`PROTOCOL.md` §0). A client sets it beside its own clock when a refusal is for a time, and never sets its clock by it.
+      required: true
+      schema:
+        type: string
+    Cache-Control:
+      description: No answer under `/v1/` may be kept by a cache (`PROTOCOL.md` §6.3).
+      required: true
+      schema:
+        const: no-store
+    Retry-After:
+      description: When to try again (RFC 9110 §10.2.3).
+      required: true
+      schema:
+        type: string
+    WWW-Authenticate:
+      description: The scheme a call must use (RFC 9110 §11.6.1).
+      required: true
+      schema:
+        const: irongall-pass
+    ETag:
+      description: The box's version (`PROTOCOL.md` §5.1). Sent back in `If-None-Match`, an unchanged box answers `304`.
+      required: true
+      schema:
+        type: string
+    Location:
+      description: The message the send made, `/v1/<recipient>/messages/<id>` (RFC 9110 §15.3.2).
+      required: true
+      schema:
+        type: string
+        pattern: '^/v1/[0-9a-f]{64}/messages/[0-9a-f]{64}$'
+
+  responses:
+    Done:
+      description: Done. The body is an empty object.
+      headers:
+        Date:
+          $ref: '#/components/headers/Date'
+        Cache-Control:
+          $ref: '#/components/headers/Cache-Control'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Empty'
+    NoContent:
+      description: Done.
+      headers:
+        Date:
+          $ref: '#/components/headers/Date'
+        Cache-Control:
+          $ref: '#/components/headers/Cache-Control'
+    ACL:
+      description: The ACL as held, `*` first, then each address once, in order.
+      headers:
+        Date:
+          $ref: '#/components/headers/Date'
+        Cache-Control:
+          $ref: '#/components/headers/Cache-Control'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ACL'
+    BadRequest:
+      description: |
+        Not a request this call takes. `bad_request`: not a JSON text as §0b
+        reads one, a missing or unknown member (named in `member`), or a bad
+        cursor · `bad_address` · `bad_encoding` · `identity_mismatch` ·
+        `unsupported_key_type` (with the server's `key_types`) · `bad_key` ·
+        `prekey_not_new` · `prekey_time` · `not_age` · `wrong_recipient_type` ·
+        `bad_revocation`. `PROTOCOL.md` §13 has what each means.
+      headers:
+        Date:
+          $ref: '#/components/headers/Date'
+        Cache-Control:
+          $ref: '#/components/headers/Cache-Control'
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - properties:
+                  status:
+                    const: 400
+                  code:
+                    enum: [bad_request, bad_address, bad_encoding, identity_mismatch, unsupported_key_type, bad_key, prekey_not_new, prekey_time, not_age, wrong_recipient_type, bad_revocation]
+    Unauthorized:
+      description: |
+        The pass is refused: `unauthorized` (none, not this box's, or not for
+        this server) · `pass_expired` · `certificate_not_current` (with the
+        current `certificate_serial` when the server has one) ·
+        `certificate_revoked`. A client signs another pass and tries once more
+        (§6.1b).
+      headers:
+        Date:
+          $ref: '#/components/headers/Date'
+        Cache-Control:
+          $ref: '#/components/headers/Cache-Control'
+        WWW-Authenticate:
+          $ref: '#/components/headers/WWW-Authenticate'
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - properties:
+                  status:
+                    const: 401
+                  code:
+                    enum: [unauthorized, pass_expired, certificate_not_current, certificate_revoked]
+    Forbidden:
+      description: |
+        About the CALLING box: `unknown_sender` (not registered, or closed) ·
+        `sender_revoked` · `sender_not_allowed` (final) · `sender_key_type`
+        (with the sender's `key_type`) · `adopt_key_refused`.
+      headers:
+        Date:
+          $ref: '#/components/headers/Date'
+        Cache-Control:
+          $ref: '#/components/headers/Cache-Control'
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - properties:
+                  status:
+                    const: 403
+                  code:
+                    enum: [unknown_sender, sender_revoked, sender_not_allowed, sender_key_type, adopt_key_refused]
+    NotFound:
+      description: |
+        `no_such_mailbox` (never registered, or closed) · `no_such_message`
+        (acked or expired: treat it as gone) · `not_revoked` (no revocation of
+        this address is held here).
+      headers:
+        Date:
+          $ref: '#/components/headers/Date'
+        Cache-Control:
+          $ref: '#/components/headers/Cache-Control'
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - properties:
+                  status:
+                    const: 404
+                  code:
+                    enum: [no_such_mailbox, no_such_message, not_revoked]
+    Conflict:
+      description: |
+        `conflict` (what is held is newer, or another: with `version`,
+        `prekey_serial` and `certificate_serial`, or `through`, as the call
+        has one) · `box_changed` (send it again as it is) · `stale_prekey`
+        (with the current `prekey_serial` and `certificate_serial`: fetch the
+        identity and seal the same envelope again) · `prekey_expired` (the
+        box's owner must renew).
+      headers:
+        Date:
+          $ref: '#/components/headers/Date'
+        Cache-Control:
+          $ref: '#/components/headers/Cache-Control'
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - properties:
+                  status:
+                    const: 409
+                  code:
+                    enum: [conflict, box_changed, stale_prekey, prekey_expired]
+    Gone:
+      description: |
+        `revoked`: the box named is revoked, forever. A client asks for the
+        revocation and checks it, and believes nothing less (§6.3).
+      headers:
+        Date:
+          $ref: '#/components/headers/Date'
+        Cache-Control:
+          $ref: '#/components/headers/Cache-Control'
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - properties:
+                  status:
+                    const: 410
+                  code:
+                    const: revoked
+    ContentTooLarge:
+      description: '`too_large`, with the `limit` in bytes, or in entries for an ACL.'
+      headers:
+        Date:
+          $ref: '#/components/headers/Date'
+        Cache-Control:
+          $ref: '#/components/headers/Cache-Control'
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - properties:
+                  status:
+                    const: 413
+                  code:
+                    const: too_large
+    TooManyRequests:
+      description: |
+        Past a limit; wait out `Retry-After`. `rate_limited` · the day's
+        counts, each with its `limit`: `sends_spent`, `renewals_spent`,
+        `certificates_spent`, `certificate_revocations_spent` · `fetch_paced`
+        and `refetch_spent` (a drain stops there, and it is no error) ·
+        `pair_full` (with `unacked` and `oldest_expires_at`) · `mailbox_full`
+        (with `messages`) · `mailbox_busy`. What a server limits, and by how
+        much, is its own (§8).
+      headers:
+        Date:
+          $ref: '#/components/headers/Date'
+        Cache-Control:
+          $ref: '#/components/headers/Cache-Control'
+        Retry-After:
+          $ref: '#/components/headers/Retry-After'
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - properties:
+                  status:
+                    const: 429
+                  code:
+                    enum: [rate_limited, sends_spent, renewals_spent, certificates_spent, certificate_revocations_spent, fetch_paced, refetch_spent, pair_full, mailbox_full, mailbox_busy]
+    Unavailable:
+      description: '`unavailable`: the server is not ready to answer, and says so rather than answer wrong.'
+      headers:
+        Date:
+          $ref: '#/components/headers/Date'
+        Cache-Control:
+          $ref: '#/components/headers/Cache-Control'
+        Retry-After:
+          $ref: '#/components/headers/Retry-After'
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - properties:
+                  status:
+                    const: 503
+                  code:
+                    const: unavailable
+
+  schemas:
+    Integer:
+      description: An integer in digits alone, from 0 to 2^53 − 1 (`PROTOCOL.md` §0b).
+      type: integer
+      minimum: 0
+      maximum: 9007199254740991
+    Serial:
+      description: A serial, from 1 to 2^53 − 1 (`PROTOCOL.md` §2a, §2b).
+      type: integer
+      minimum: 1
+      maximum: 9007199254740991
+    Time:
+      description: RFC 3339 UTC to the second (`PROTOCOL.md` §2a).
+      type: string
+      pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
+    Address:
+      description: A box's address, the lowercase hex SHA-256 of its identity document (`PROTOCOL.md` §2).
+      type: string
+      pattern: '^[0-9a-f]{64}$'
+    MessageID:
+      description: A message id, the lowercase hex SHA-256 of its ciphertext.
+      type: string
+      pattern: '^[0-9a-f]{64}$'
+    Bytes:
+      description: |
+        A file's exact bytes, as standard base64 in its one encoding (RFC 4648
+        §3): padded, no line break, the unused bits of the last character zero
+        (`PROTOCOL.md` §0b).
+      type: string
+      contentEncoding: base64
+      pattern: '^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$'
+    KeyTypes:
+      description: |
+        The identity key types the box's client verifies (`PROTOCOL.md` §2c):
+        key type names, or the one entry `any`. `ssh-ed25519` is taken
+        whatever is declared. Not signed. A server keeps the names it knows
+        and ignores the rest.
+      type: [array, 'null']
+      items:
+        type: string
+    Empty:
+      description: '`{}`.'
+      type: object
+
+    RegisterRequest:
+      type: object
+      additionalProperties: false
+      required: [identity, prekey, prekey_signature]
+      properties:
+        identity:
+          description: The identity document (`PROTOCOL.md` §2), whose SHA-256 is the address.
+          $ref: '#/components/schemas/Bytes'
+        prekey:
+          description: The first prekey statement (`PROTOCOL.md` §2a).
+          $ref: '#/components/schemas/Bytes'
+        prekey_signature:
+          description: The statement's SSHSIG, armored, by a working key under a certificate of the identity (`PROTOCOL.md` §2b).
+          $ref: '#/components/schemas/Bytes'
+        sender_key_types:
+          $ref: '#/components/schemas/KeyTypes'
+    PrekeyRequest:
+      type: object
+      additionalProperties: false
+      required: [prekey, prekey_signature]
+      properties:
+        prekey:
+          description: The new prekey statement (`PROTOCOL.md` §2a).
+          $ref: '#/components/schemas/Bytes'
+        prekey_signature:
+          description: Its SSHSIG, armored, by a working key under a certificate of the identity.
+          $ref: '#/components/schemas/Bytes'
+        sender_key_types:
+          $ref: '#/components/schemas/KeyTypes'
+    IdentityResponse:
+      type: object
+      required: [identity, prekey, prekey_signature]
+      properties:
+        identity:
+          description: The identity document. A client checks that it hashes to the address.
+          $ref: '#/components/schemas/Bytes'
+        prekey:
+          description: The current prekey statement.
+          $ref: '#/components/schemas/Bytes'
+        prekey_signature:
+          description: Its SSHSIG, armored, carrying the certificate it is under.
+          $ref: '#/components/schemas/Bytes'
+        sender_key_types:
+          $ref: '#/components/schemas/KeyTypes'
+    SendRequest:
+      type: object
+      additionalProperties: false
+      required: [prekey_serial, certificate_serial, ciphertext]
+      properties:
+        prekey_serial:
+          description: The serial of the prekey encrypted to. Not the recipient's current one is `409 stale_prekey`.
+          $ref: '#/components/schemas/Serial'
+        certificate_serial:
+          description: The serial of the certificate that prekey's statement is signed under. A prekey is named by the two (`PROTOCOL.md` §2b).
+          $ref: '#/components/schemas/Serial'
+        ciphertext:
+          description: The age file, binary, not armored (`PROTOCOL.md` §4.3).
+          $ref: '#/components/schemas/Bytes'
+    Receipt:
+      type: object
+      required: [id, received_at, expires_at]
+      properties:
+        id:
+          description: The SHA-256 of the ciphertext. A sender checks it against what it posted.
+          $ref: '#/components/schemas/MessageID'
+        received_at:
+          $ref: '#/components/schemas/Time'
+        expires_at:
+          description: When the server deletes the message, read or not, 33 days after it was received.
+          $ref: '#/components/schemas/Time'
+    MessageList:
+      type: object
+      required: [count, messages, next_cursor, poll_after]
+      properties:
+        count:
+          description: Every live message in the box.
+          $ref: '#/components/schemas/Integer'
+        messages:
+          description: One page, oldest first by `received_at`.
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/MessageInfo'
+        next_cursor:
+          description: The next page's cursor; null on the last page.
+          type: [string, 'null']
+        poll_after:
+          description: The server's poll interval, in seconds.
+          $ref: '#/components/schemas/Integer'
+    MessageInfo:
+      type: object
+      required: [id, from, size, received_at, expires_at]
+      properties:
+        id:
+          $ref: '#/components/schemas/MessageID'
+        from:
+          description: The box whose pass the send carried, on the server's word.
+          $ref: '#/components/schemas/Address'
+        size:
+          description: The ciphertext's size in bytes.
+          $ref: '#/components/schemas/Integer'
+        received_at:
+          $ref: '#/components/schemas/Time'
+        expires_at:
+          $ref: '#/components/schemas/Time'
+    Message:
+      type: object
+      required: [id, from, received_at, expires_at, ciphertext]
+      properties:
+        id:
+          $ref: '#/components/schemas/MessageID'
+        from:
+          description: The box whose pass the send carried, on the server's word. A client holds it to the sender it verifies.
+          $ref: '#/components/schemas/Address'
+        received_at:
+          $ref: '#/components/schemas/Time'
+        expires_at:
+          $ref: '#/components/schemas/Time'
+        ciphertext:
+          description: The age file exactly as the sender posted it.
+          $ref: '#/components/schemas/Bytes'
+    RevocationRecord:
+      description: |
+        A revocation record (`PROTOCOL.md` §6.3, §6.3a): a revocation of the
+        address, of its certificates through a serial, or both. It proves
+        itself: the document hashes to the address, and each signature is the
+        identity's own over its fixed statement, which a reader rebuilds from
+        the address. A reader takes one without `type`, and refuses one that
+        names another type.
+      type: object
+      additionalProperties: false
+      required: [identity]
+      anyOf:
+        - required: [revocation]
+        - required: [revoked_certificates]
+      dependentRequired:
+        revoked_certificates: [revoked_certificates_signature]
+        revoked_certificates_signature: [revoked_certificates]
+      properties:
+        type:
+          enum: [revocation_record, null]
+        identity:
+          description: The identity document.
+          $ref: '#/components/schemas/Bytes'
+        revocation:
+          description: The identity's SSHSIG over `irongall-revoke-v1\n<address>\n`, armored.
+          anyOf:
+            - $ref: '#/components/schemas/Bytes'
+            - type: 'null'
+        revoked_certificates:
+          description: The statement `irongall-revoke-certs-v1\n<address>\n<serial>\n`.
+          anyOf:
+            - $ref: '#/components/schemas/Bytes'
+            - type: 'null'
+        revoked_certificates_signature:
+          description: The identity's SSHSIG over that statement, armored.
+          anyOf:
+            - $ref: '#/components/schemas/Bytes'
+            - type: 'null'
+    RevocationRecordAnswer:
+      description: A record as a server serves it, which names its type first.
+      allOf:
+        - $ref: '#/components/schemas/RevocationRecord'
+        - required: [type]
+          properties:
+            type:
+              const: revocation_record
+    ACLRequest:
+      type: object
+      additionalProperties: false
+      required: [version, allow]
+      properties:
+        version:
+          description: Above the version held, or `409 conflict`.
+          $ref: '#/components/schemas/Serial'
+        allow:
+          description: '`["*"]` is everyone, `[]` nobody. Required, so an ACL always says whom it lets in.'
+          type: array
+          items:
+            $ref: '#/components/schemas/ACLEntry'
+        deny:
+          description: Checked first. Left out or null, none.
+          type: [array, 'null']
+          items:
+            $ref: '#/components/schemas/ACLEntry'
+    ACL:
+      type: object
+      required: [version, allow, deny]
+      properties:
+        version:
+          description: The version held; 0 for a box with none.
+          $ref: '#/components/schemas/Integer'
+        allow:
+          type: array
+          items:
+            $ref: '#/components/schemas/ACLEntry'
+        deny:
+          type: array
+          items:
+            $ref: '#/components/schemas/ACLEntry'
+    ACLEntry:
+      description: An address, or `*`, which matches every address.
+      type: string
+      pattern: '^(\*|[0-9a-f]{64})$'
+    AdoptRequest:
+      type: object
+      additionalProperties: false
+      required: [key]
+      properties:
+        key:
+          description: An adopt key an account minted (`PROTOCOL.md` §6.5). A secret.
+          type: string
+    AccountResponse:
+      type: object
+      required: [account]
+      properties:
+        account:
+          description: The account's id, 1 to 32 of `a-z`, `0-9` and `-`.
+          type: string
+          pattern: '^[a-z0-9-]{1,32}$'
+
+    Problem:
+      description: |
+        An error body: RFC 9457 Problem Details in AEP-193's form
+        (`PROTOCOL.md` §13), with a member of its own for each value the error
+        carries. `detail`, `hint` and `title` are a server's words, for a
+        person reading the body; a client shows none of them, and says what the
+        code means in its own words.
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type:
+          description: '`https://irongall.dev/errors/<code>`, a name, at any server.'
+          type: string
+          pattern: '^https://irongall\.dev/errors/[a-z_]+$'
+        title:
+          type: string
+        status:
+          $ref: '#/components/schemas/Integer'
+        detail:
+          type: [string, 'null']
+        code:
+          description: One of the closed list under this status. A code a client does not know, or one under another status, is no code.
+          type: string
+        hint:
+          description: The fix as a client command, never a raw shell line.
+          type: [string, 'null']
+        limit:
+          description: '`too_large`: the most bytes a body or a ciphertext may hold, or entries an ACL. The day''s counts: how many a day takes.'
+          anyOf:
+            - $ref: '#/components/schemas/Integer'
+            - type: 'null'
+        messages:
+          description: '`mailbox_full`: how many messages the box holds.'
+          anyOf:
+            - $ref: '#/components/schemas/Integer'
+            - type: 'null'
+        unacked:
+          description: '`pair_full`: how many messages from this sender the box holds unacked.'
+          anyOf:
+            - $ref: '#/components/schemas/Integer'
+            - type: 'null'
+        oldest_expires_at:
+          description: '`pair_full`: when the oldest of them expires.'
+          anyOf:
+            - $ref: '#/components/schemas/Time'
+            - type: 'null'
+        version:
+          description: '`conflict` on an ACL: the version held.'
+          anyOf:
+            - $ref: '#/components/schemas/Integer'
+            - type: 'null'
+        prekey_serial:
+          description: '`stale_prekey`: the box''s current prekey; `conflict` on a prekey: the serial a new one must be above.'
+          anyOf:
+            - $ref: '#/components/schemas/Integer'
+            - type: 'null'
+        certificate_serial:
+          description: '`stale_prekey`, `conflict` on a prekey, `certificate_not_current`: the current certificate''s serial.'
+          anyOf:
+            - $ref: '#/components/schemas/Integer'
+            - type: 'null'
+        through:
+          description: '`conflict` on a revocation of certificates: the serial the one held runs through.'
+          anyOf:
+            - $ref: '#/components/schemas/Integer'
+            - type: 'null'
+        key_types:
+          description: '`unsupported_key_type`: the identity key types the server registers.'
+          type: [array, 'null']
+          items:
+            type: string
+        key_type:
+          description: '`sender_key_type`: the sender''s key type, which the box''s client does not verify.'
+          type: [string, 'null']
+        member:
+          description: '`bad_request`: the request member that is missing or unknown, or holds a value its call does not take.'
+          type: [string, 'null']
+      allOf:
+        - if:
+            required: [code]
+            properties:
+              code:
+                enum: [too_large, sends_spent, renewals_spent, certificates_spent, certificate_revocations_spent]
+          then:
+            required: [limit]
+        - if:
+            required: [code]
+            properties:
+              code:
+                const: mailbox_full
+          then:
+            required: [messages]
+        - if:
+            required: [code]
+            properties:
+              code:
+                const: pair_full
+          then:
+            required: [unacked, oldest_expires_at]
+        - if:
+            required: [code]
+            properties:
+              code:
+                const: stale_prekey
+          then:
+            required: [prekey_serial, certificate_serial]
+        - if:
+            required: [code]
+            properties:
+              code:
+                const: unsupported_key_type
+          then:
+            required: [key_types]
+        - if:
+            required: [code]
+            properties:
+              code:
+                const: sender_key_type
+          then:
+            required: [key_type]

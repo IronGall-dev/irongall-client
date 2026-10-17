@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/IronGall-dev/irongall-client/api/apitest"
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
@@ -66,7 +67,7 @@ func New(t testing.TB, now func() time.Time) *Server {
 	s := &Server{now: now, boxes: map[protocol.Address]*box{}, keys: map[string]string{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("PUT /v1/{addr}", s.register)
-	mux.HandleFunc("POST /v1/{addr}", s.send)
+	mux.HandleFunc("POST /v1/{addr}/messages", s.send)
 	mux.HandleFunc("GET /v1/{addr}/identity", s.identity)
 	mux.HandleFunc("PUT /v1/{addr}/prekey", s.newPrekey)
 	mux.HandleFunc("PUT /v1/{addr}/revocations", s.revoke)
@@ -78,6 +79,13 @@ func New(t testing.TB, now func() time.Time) *Server {
 	mux.HandleFunc("DELETE /v1/{addr}/account", s.owner(s.leave))
 	mux.HandleFunc("PUT /v1/{addr}/acl", s.owner(s.putACL))
 	mux.HandleFunc("GET /v1/{addr}/acl", s.owner(s.getACL))
+	// What the fake answers is held to the API's description, before a
+	// test's middleware forges anything.
+	api := apitest.Handler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Date", s.now().UTC().Format(http.TimeFormat))
+		w.Header().Set("Cache-Control", "no-store")
+		mux.ServeHTTP(w, r)
+	}))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Dated by the server's own clock, which a test sets: a client
 		// compares an answer's Date with its clock when a pass is refused.
@@ -86,10 +94,10 @@ func New(t testing.TB, now func() time.Time) *Server {
 		m := s.middle
 		s.mu.Unlock()
 		if m != nil {
-			m(w, r, mux)
+			m(w, r, api)
 			return
 		}
-		mux.ServeHTTP(w, r)
+		api.ServeHTTP(w, r)
 	}))
 	t.Cleanup(srv.Close)
 	s.URL = srv.URL
@@ -141,10 +149,18 @@ func WriteJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-func problem(w http.ResponseWriter, code protocol.Code, detail string) {
+// problem answers with an error body; each of with sets a member it carries.
+func problem(w http.ResponseWriter, code protocol.Code, detail string, with ...func(*protocol.Problem)) {
 	w.Header().Set("Content-Type", protocol.ProblemContentType)
+	if code.Status() == http.StatusUnauthorized {
+		w.Header().Set("WWW-Authenticate", protocol.PassScheme)
+	}
 	w.WriteHeader(code.Status())
-	_ = json.NewEncoder(w).Encode(protocol.Problem{Type: code.TypeURI(), Status: int64(code.Status()), Code: code, Detail: detail})
+	p := protocol.Problem{Type: code.TypeURI(), Title: code.Title(), Status: int64(code.Status()), Code: code, Detail: detail}
+	for _, set := range with {
+		set(&p)
+	}
+	_ = json.NewEncoder(w).Encode(p)
 }
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
@@ -435,7 +451,10 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		problem(w, protocol.CodePrekeyExpired, "the box must publish a new prekey: its current one is under a revoked certificate")
 		return
 	case req.PrekeySerial != nil && *req.PrekeySerial != rcpt.prekey.Serial, req.CertificateSerial != nil && *req.CertificateSerial != rcpt.cert.Serial():
-		problem(w, protocol.CodeStalePrekey, "a newer prekey exists")
+		prekey, cert := rcpt.prekey.Serial, rcpt.cert.Serial()
+		problem(w, protocol.CodeStalePrekey, "a newer prekey exists", func(p *protocol.Problem) {
+			p.PrekeySerial, p.CertificateSerial = &prekey, &cert
+		})
 		return
 	}
 	h := sha256.Sum256(req.Ciphertext)
@@ -451,6 +470,7 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 	m := &message{from: from, ciphertext: req.Ciphertext, receivedAt: s.now()}
 	rcpt.messages[key] = m
 	rcpt.order = append(rcpt.order, key)
+	w.Header().Set("Location", r.URL.Path+"/"+key)
 	WriteJSON(w, http.StatusCreated, receipt(key, m))
 }
 

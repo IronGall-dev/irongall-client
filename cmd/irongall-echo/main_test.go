@@ -245,7 +245,7 @@ func TestEchoRetriesThenDropsAReply(t *testing.T) {
 				t.Fatal(err)
 			}
 			down := func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-				if r.Method == http.MethodPost && r.URL.Path == "/v1/"+a.Address().String() {
+				if r.Method == http.MethodPost && r.URL.Path == "/v1/"+a.Address().String()+"/messages" {
 					w.WriteHeader(http.StatusServiceUnavailable)
 					return
 				}
@@ -290,7 +290,7 @@ func TestEchoDropsAnUndeliverableReply(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if r.Method == http.MethodPost && r.URL.Path == "/v1/"+a.Address().String() {
+		if r.Method == http.MethodPost && r.URL.Path == "/v1/"+a.Address().String()+"/messages" {
 			fakeserver.WriteJSON(w, http.StatusGone, protocol.Problem{Code: protocol.CodeRevoked})
 			return
 		}

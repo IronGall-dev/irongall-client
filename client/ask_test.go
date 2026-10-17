@@ -67,7 +67,8 @@ func answer(w http.ResponseWriter, code protocol.Code) bool {
 }
 
 func lookupOf(a *client.Box) string { return "/v1/" + a.Address().String() + "/revocations" }
-func postTo(a *client.Box) string   { return "/v1/" + a.Address().String() }
+func boxPath(a *client.Box) string  { return "/v1/" + a.Address().String() }
+func postTo(a *client.Box) string   { return boxPath(a) + "/messages" }
 
 // waiting returns how many entries a box's outbox holds for an address, and
 // how many files it keeps for them beside their envelopes: none, since a
@@ -100,7 +101,7 @@ func theft(t *testing.T, e *env, a *client.Box) (statement, signature []byte) {
 func helpsTheThief(e *env, a *client.Box, statement, signature []byte, hide bool) *operator {
 	return watch(e, func(w http.ResponseWriter, r *http.Request) bool {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == postTo(a)+"/identity":
+		case r.Method == http.MethodGet && r.URL.Path == boxPath(a)+"/identity":
 			fakeserver.WriteJSON(w, http.StatusOK, protocol.IdentityResponse{Identity: a.Identity().Document(), Prekey: statement, PrekeySignature: signature})
 		case r.Method == http.MethodPost && r.URL.Path == postTo(a):
 			fakeserver.Take(w, r)

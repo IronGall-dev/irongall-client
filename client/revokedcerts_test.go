@@ -234,7 +234,7 @@ func TestASendNamesBothSerials(t *testing.T) {
 	if _, err := b.Rekey(context.Background(), ""); err != nil {
 		t.Fatal(err)
 	}
-	sent := capture(e, http.MethodPost, "/v1/"+b.Address().String())
+	sent := capture(e, http.MethodPost, "/v1/"+b.Address().String()+"/messages")
 	send(t, a, b, "names the prekey it was sealed to")
 	var req map[string]json.RawMessage
 	if err := json.Unmarshal(*sent, &req); err != nil {

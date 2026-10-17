@@ -67,7 +67,7 @@ func TestAServersWordRevokesNothing(t *testing.T) {
 	ctx := context.Background()
 	for _, where := range []struct{ name, method, suffix string }{
 		{"at the identity", http.MethodGet, "/identity"},
-		{"at the send", http.MethodPost, ""},
+		{"at the send", http.MethodPost, "/messages"},
 	} {
 		t.Run(where.name, func(t *testing.T) {
 			e := newEnv(t)

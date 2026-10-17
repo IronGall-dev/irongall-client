@@ -20,7 +20,7 @@ import (
 func posted(e *env, b protocol.Address) *[][]byte {
 	var got [][]byte
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/v1/"+b.String()) {
+		if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/v1/"+b.String()+"/messages") {
 			body, _ := io.ReadAll(r.Body)
 			r.Body = io.NopCloser(bytes.NewReader(body))
 			var req protocol.SendRequest
@@ -123,7 +123,7 @@ func TestAReencryptionToTheOtherKeyTypeIsPaddedAgain(t *testing.T) {
 				old = false
 				fakeserver.WriteJSON(w, http.StatusOK, protocol.IdentityResponse{Identity: b.Identity().Document(), Prekey: statement, PrekeySignature: signature})
 				return
-			case r.Method == http.MethodPost && r.URL.Path == "/v1/"+b.Address().String():
+			case r.Method == http.MethodPost && r.URL.Path == "/v1/"+b.Address().String()+"/messages":
 				body, _ := io.ReadAll(r.Body)
 				r.Body = io.NopCloser(bytes.NewReader(body))
 				var req protocol.SendRequest

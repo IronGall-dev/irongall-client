@@ -380,7 +380,7 @@ func (b *Box) postSealed(ctx context.Context, to protocol.Address, req *protocol
 	// The post carries this box's pass: that is how the server knows the
 	// sender.
 	var r protocol.Receipt
-	if _, err := b.owner(ctx, http.MethodPost, "/v1/"+to.String(), req, nil, &r); err != nil {
+	if _, err := b.owner(ctx, http.MethodPost, "/v1/"+to.String()+"/messages", req, nil, &r); err != nil {
 		return nil, err
 	}
 	// A receipt names the ciphertext it is for, and this box knows which

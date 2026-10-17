@@ -230,7 +230,7 @@ ig_api(){ # the fake: the same contract as irongall.sh's ig_api (METHOD PATH [JS
     "PUT /prekey") srv_prekey "$a" "$f" "$tok" ;;
     "PUT /revocations") srv_revoke "$a" "$f" ;;
     "GET /revocations") srv_revocations "$a" ;;
-    "POST ") srv_send "$a" "$f" "$tok" ;;
+    "POST /messages") srv_send "$a" "$f" "$tok" ;;
     "GET /messages/"*) srv_auth "$a" "$tok" && srv_fetch "$a" "${rest#/messages/}" ;;
     "GET /messages"*) srv_auth "$a" "$tok" && srv_list "$a" "${rest#/messages}" ;;
     "DELETE /messages/"*) srv_auth "$a" "$tok" && srv_ack "$a" "${rest#/messages/}" ;;
@@ -290,8 +290,8 @@ as B; recv
 [ "$(cat $IG/inbox/*.json | wc -l)" = 0 ] && [ "$(ls $IG/inbox | sed 's/\.json$//' | sort)" = "$(cut -d' ' -f1 $IG/seen | sort)" ] && ok "each inbox/ file is one line, named by the ciphertext hash computed here" || bad "inbox names"
 # --- 3. a retried envelope: re-encrypted, so a new ciphertext id, but the same msg_id
 as A; line "$A" "$B" 11111111-2222-4333-8444-555555555555 once $IG/identity.doc > $IG/outbox/$B.retry.P
-ig_seal "$B" $IG/outbox/$B.retry && ig_owner POST "/v1/$B" $IG/seal.json > /dev/null && ig_seal "$B" $IG/outbox/$B.retry && ig_owner POST "/v1/$B" $IG/seal.json > /dev/null || bad "retry setup"
-ig_owner POST "/v1/$B" $IG/seal.json > r.json && [ "$(box_count "$B")" = 2 ] && ok "a byte-identical re-POST gets the original receipt, stored once" || bad "dedupe"
+ig_seal "$B" $IG/outbox/$B.retry && ig_owner POST "/v1/$B/messages" $IG/seal.json > /dev/null && ig_seal "$B" $IG/outbox/$B.retry && ig_owner POST "/v1/$B/messages" $IG/seal.json > /dev/null || bad "retry setup"
+ig_owner POST "/v1/$B/messages" $IG/seal.json > r.json && [ "$(box_count "$B")" = 2 ] && ok "a byte-identical re-POST gets the original receipt, stored once" || bad "dedupe"
 rm -f $IG/outbox/$B.retry.*
 as B; recv
 [ "$(printf '%s\n' "$RECV_OUT" | awk NF | wc -l)" = 1 ] && printf '%s' "$RECV_ERR" | grep -q duplicate && ok "a re-encrypted retry with the same msg_id is delivered ONCE (recipient dedupe on from + msg_id)" || bad "msg_id dedupe: $RECV_OUT / $RECV_ERR"
@@ -349,13 +349,13 @@ as A; printf 'a\302\205b\342\200\250c\342\200\251d' > seps; ig_send "$B" seps ||
 as B; recv
 [ "$(printf '%s' "$RECV_OUT" | wc -l)" = 0 ] && ! printf '%s' "$RECV_OUT" | LC_ALL=C grep -q $'\xc2\x85\|\xe2\x80\xa8\|\xe2\x80\xa9' && [ "$(printf '%s' "$RECV_OUT" | jq -r .body)" = "$(cat $W/seps)" ] && ok "U+0085, U+2028 and U+2029 in a body are escaped: one line, the same body" || bad "separators: $RECV_OUT"
 # --- 5. the sender's checks: nothing is encrypted unless every one passes
-as A; printf 'secret' > body3; n0=$(grep -c "^POST /v1/$B\$" $SRV/log)
+as A; printf 'secret' > body3; n0=$(grep -c "^POST /v1/$B/messages\$" $SRV/log)
 MODE="evil-keys $B"; ig_send "$B" body3 2> err.txt || true; MODE=honest
-grep -q "not signed by a working key its identity certified" err.txt && [ "$(grep -c "^POST /v1/$B\$" $SRV/log)" = "$n0" ] && ok "the operator swaps B's prekey: REFUSED, nothing encrypted or sent" || bad "evil-keys: $(cat err.txt)"
+grep -q "not signed by a working key its identity certified" err.txt && [ "$(grep -c "^POST /v1/$B/messages\$" $SRV/log)" = "$n0" ] && ok "the operator swaps B's prekey: REFUSED, nothing encrypted or sent" || bad "evil-keys: $(cat err.txt)"
 bare && [ ! -e $IG/seal.age ] && [ ! -e $IG/seal.json ] && ok "no ciphertext to the swapped key exists" || bad "a ciphertext was left"
 rm -f $IG/outbox/*.P                                                    # the refused message is abandoned
 printf 'bad \377 byte' > badbody; ig_send "$B" badbody 2> err.txt
-grep -q "not UTF-8" err.txt && [ "$(grep -c "^POST /v1/$B\$" $SRV/log)" = "$n0" ] && ! ls $IG/outbox/*.P > /dev/null 2>&1 && ok "a body that is not UTF-8 is REFUSED before anything is built or sent" || bad "non-UTF-8 body: $(cat err.txt)"
+grep -q "not UTF-8" err.txt && [ "$(grep -c "^POST /v1/$B/messages\$" $SRV/log)" = "$n0" ] && ! ls $IG/outbox/*.P > /dev/null 2>&1 && ok "a body that is not UTF-8 is REFUSED before anything is built or sent" || bad "non-UTF-8 body: $(cat err.txt)"
 as D; MODE="evil-identity $C"; ig_send "$C" $W/body3 2> $W/err.txt || true; MODE=honest; rm -f $IG/outbox/*.P
 grep -q "does not hash" $W/err.txt && [ ! -e $IG/peers/$C ] && ok "first contact, server-forged identity for the recipient: REFUSED, nothing pinned" || bad "send first contact: $(cat $W/err.txt)"
 # a key holder's PADDED identity document: it hashes to its own address, and a lenient server (this fake, told to check only the hash) accepts it
@@ -366,7 +366,7 @@ ssh-keygen -q -Y sign -n "irongall-prekey-v1:$EA" -f E.work-cert.pub < E.prekey 
 as A; jq -n --arg i "$(ig_b64 E.doc)" --arg p "$(ig_b64 E.prekey)" --arg s "$(ig_b64 E.prekey.sig)" '{identity:$i, prekey:$p, prekey_signature:$s}' > E.json
 LENIENT=1; ig_api PUT "/v1/$EA" E.json > /dev/null || bad "padded registration setup"; LENIENT=
 ig_send "$EA" body3 2> err.txt || true; rm -f $IG/outbox/*.P
-grep -q "not a two-line identity document" err.txt && [ "$(grep -c "^POST /v1/$EA\$" $SRV/log)" = 0 ] && [ ! -e $IG/peers/$EA ] && ok "a padded identity document that hashes to its own address is REFUSED: one key never gets a second address" || bad "padded identity: $(cat err.txt)"
+grep -q "not a two-line identity document" err.txt && [ "$(grep -c "^POST /v1/$EA/messages\$" $SRV/log)" = 0 ] && [ ! -e $IG/peers/$EA ] && ok "a padded identity document that hashes to its own address is REFUSED: one key never gets a second address" || bad "padded identity: $(cat err.txt)"
 BW=$W/box/B/work/$(cat $W/box/B/serial)-cert.pub      # B's working key in use: what a thief of it, with the server's help, could sign
 as A; printf 'irongall-prekey-v1\n%s\n%s\n%s\n2020-01-01T00:00:00Z\n' "$B" "$((B1 + 9))" "$(sed -n 4p $SRV/$B/prekey.txt)" > $SRV/forged.txt
 ssh-keygen -q -Y sign -n "irongall-prekey-v1:$B" -f $BW < $SRV/forged.txt > $SRV/forged.sig
@@ -468,12 +468,12 @@ as A; printf 'the answer' > body8; R=11111111-2222-4333-8444-555555555555; S=222
 ig_send --subject "re: yours" --reply-to $R --supersedes $S "$B" body8 || bad "send with options"
 as B; recv
 printf '%s' "$RECV_OUT" | jq -e --arg r $R --arg s $S '.subject == "re: yours" and .in_reply_to == $r and .supersedes == $s and .body == "the answer"' > /dev/null && ok "--subject, --reply-to and --supersedes reach the recipient, in the line it delivers" || bad "options: $RECV_OUT / $RECV_ERR"
-as A; n0=$(grep -c "^POST /v1/$B\$" $SRV/log)
+as A; n0=$(grep -c "^POST /v1/$B/messages\$" $SRV/log)
 ig_send --reply-to "$B" "$B" body8 2> err.txt && bad "a 64-character id was taken as a msg_id"; grep -q "not a msg_id" err.txt || bad "not a msg_id: $(cat err.txt)"
 ig_send --supersedes 2> err.txt && bad "an option with no value was taken"; grep -q "needs a value" err.txt || bad "no value: $(cat err.txt)"
 ig_send --urgent yes "$B" body8 2> err.txt && bad "an unknown option was taken"; grep -q "unknown option --urgent" err.txt || bad "unknown option: $(cat err.txt)"
 printf 'bad \377 subject' > badsubject; ig_send --subject "$(cat badsubject)" "$B" body8 2> err.txt && bad "a subject that is not UTF-8 was taken"; grep -q "not UTF-8" err.txt || bad "subject: $(cat err.txt)"
-[ "$(grep -c "^POST /v1/$B\$" $SRV/log)" = "$n0" ] && ! ls $IG/outbox/*.P > /dev/null 2>&1 && ok "a --reply-to that is not a msg_id, an option with no value, an unknown option and a subject that is not UTF-8 are REFUSED before anything is built" || bad "a refused option made mail"
+[ "$(grep -c "^POST /v1/$B/messages\$" $SRV/log)" = "$n0" ] && ! ls $IG/outbox/*.P > /dev/null 2>&1 && ok "a --reply-to that is not a msg_id, an option with no value, an unknown option and a subject that is not UTF-8 are REFUSED before anything is built" || bad "a refused option made mail"
 for f in $IG/sent/*.json; do
   [ "$(wc -l < "$f")" = 0 ] && [ "$(stat -c %a "$f")" = 600 ] && jq -e --arg n "$(basename "$f" .json)" --arg a "$A" '.to + "." + .msg_id == $n and .from == $a and (has("identity") | not)' "$f" > /dev/null || bad "sent/ entry $f"
   [ "$(sed -n 2p "$SRV/$(jq -r .to "$f")/dedupe/$(jq -r .receipt.id "$f")")" = "$(jq -c .receipt "$f")" ] || bad "the receipt in $f is not the server's"
@@ -544,17 +544,17 @@ as P; echo "$Q" > $SRV/stale-once; printf 'sealed twice' | ig_send "$Q" 2> err.t
 [ "$(sizes "$Q")" = 2048 ] && ok "a re-encryption after stale_prekey, to an X25519 prekey, is padded for that key: 2,048 bytes" || bad "padding: the re-encrypted message is $(sizes "$Q") bytes"
 as Q; recv; printf '%s' "$RECV_OUT" | jq -e '.body == "sealed twice"' > /dev/null && ok "and it is delivered once" || bad "padding: recv after the re-encryption: $RECV_ERR"
 # the sender reads its envelope as the recipient will, and checks the size of what age wrote
-as P; n0=$(grep -c "^POST /v1/$Q\$" $SRV/log)
+as P; n0=$(grep -c "^POST /v1/$Q/messages\$" $SRV/log)
 line "$P" "$A" 33333333-2222-4333-8444-555555555555 "for another box" $IG/identity.doc > $IG/outbox/$Q.other.P
 ig_seal "$Q" $IG/outbox/$Q.other 2> err.txt && bad "sealed an envelope addressed to another box" || grep -q "not an envelope this box made for that address: reattributed" err.txt && ok "an outbox entry whose envelope names another recipient is REFUSED, not sealed" || bad "padding: seal of a misaddressed entry: $(cat err.txt)"
 rm -f $IG/outbox/$Q.other.*
 age(){ command age "$@" && printf x; }      # an age whose files are one byte longer than this script's arithmetic says
-printf 'a size that tells' | ig_send "$Q" 2> err.txt && bad "sent at a size its padding was not made for" || grep -q "is not the 2048 bytes its padding was made for" err.txt && [ "$(grep -c "^POST /v1/$Q\$" $SRV/log)" = "$n0" ] &&
+printf 'a size that tells' | ig_send "$Q" 2> err.txt && bad "sent at a size its padding was not made for" || grep -q "is not the 2048 bytes its padding was made for" err.txt && [ "$(grep -c "^POST /v1/$Q/messages\$" $SRV/log)" = "$n0" ] &&
   ok "an age file that is not the size the padding was made for is REFUSED, and nothing is posted" || bad "padding: size check: $(cat err.txt)"
 unset -f age; rm -f $IG/outbox/*.P $IG/outbox/*.age
 # a certificate with 33 days or less left signs no mail: it would not outlast what it signed
-as P; n0=$(grep -c "^POST /v1/$Q\$" $SRV/log); real_now=$(declare -f ig_now); ig_now(){ echo $(($(date -u +%s) + 33*86400)); }
-printf 'too late to sign' | ig_send "$Q" 2> err.txt && bad "signed mail under a certificate with 32 days left" || grep -q "ends within 33 days" err.txt && [ "$(grep -c "^POST /v1/$Q\$" $SRV/log)" = "$n0" ] && ok "mail is not signed under a certificate with 33 days or less left: REFUSED, and rekey is named" || bad "certificate age: $(cat err.txt)"
+as P; n0=$(grep -c "^POST /v1/$Q/messages\$" $SRV/log); real_now=$(declare -f ig_now); ig_now(){ echo $(($(date -u +%s) + 33*86400)); }
+printf 'too late to sign' | ig_send "$Q" 2> err.txt && bad "signed mail under a certificate with 32 days left" || grep -q "ends within 33 days" err.txt && [ "$(grep -c "^POST /v1/$Q/messages\$" $SRV/log)" = "$n0" ] && ok "mail is not signed under a certificate with 33 days or less left: REFUSED, and rekey is named" || bad "certificate age: $(cat err.txt)"
 eval "$real_now"; rm -f $IG/outbox/*.P
 # --- 16. the clock: every check is exact at the clock of whoever makes it, and what a box makes leaves an hour of room. The fake server keeps the real clock; a box's is ig_now
 real_now=$(declare -f ig_now)
@@ -591,7 +591,7 @@ off=-90; ig_rekey $NOPQ 2> err.txt && [ "$(cat $IG/serial)" = $((n2 + 1)) ] && [
   ok "a renewal is numbered by this machine's clock once the clock has passed the last number, and one above the last when the clock reads behind it: a serial never goes back" || bad "clock: a renewal with the clock behind its last number: $(cat $IG/serial) after $n2: $(cat err.txt)"
 eval "$real_now"
 # an envelope dated ahead of this machine's clock is not posted until the clock passes that time
-as P; n0=$(grep -c "^POST /v1/$Q\$" $SRV/log); off=7200; ig_now(){ echo $(($(date -u +%s) + off)); }
+as P; n0=$(grep -c "^POST /v1/$Q/messages\$" $SRV/log); off=7200; ig_now(){ echo $(($(date -u +%s) + off)); }
 printf 'dated two hours ahead' | ig_send "$Q" 2> err.txt && bad "sent with a clock two hours fast" || { grep -q "pass_expired" err.txt && bare; } || bad "clock: send two hours fast: $(cat err.txt)"
 eval "$real_now"; ig_flush 2> err.txt && bad "an envelope dated two hours ahead was posted" || grep -q "ahead of this machine's clock" err.txt && [ "$(ls $IG/outbox/*.P | wc -l)" = 1 ] && as Q && recv && [ -z "$RECV_OUT" ] && ! printf '%s' "$RECV_ERR" | grep -q future &&
   ok "an envelope written while the clock read two hours ahead is not posted once the clock is right: it waits in the outbox, and its reader is sent nothing to refuse" || bad "clock: flush of an envelope dated ahead: $(cat err.txt) / $RECV_ERR"
@@ -769,9 +769,9 @@ ig_rekey $NOPQ 2> err.txt && bad "CE renewed under a certificate its identity re
 # --- 19. a sender asks before it posts. What a box holds about a peer is only as new as the last time it asked, so it asks before every post,
 #     of a new message or one that waited, keeps what verifies, and seals to what it then holds. No answer is not "none held"
 for X in SA SB SC SD SE SF SG; do as $X; ig_init $NOPQ > /dev/null || bad "init $X"; eval "$X=\$(cat \$IG/address)"; done
-posts(){ grep -c "^POST /v1/$1\$" $SRV/log || true; }      # <box> → how many posts to it the server has seen
+posts(){ grep -c "^POST /v1/$1/messages\$" $SRV/log || true; }      # <box> → how many posts to it the server has seen
 as SA; printf 'asked first' | ig_send "$SB" || bad "SA's send"
-[ "$(tail -n 3 $SRV/log | tr '\n' '|')" = "GET /v1/$SB/revocations|GET /v1/$SB/identity|POST /v1/$SB|" ] && ok "a send asks what the server holds about its recipient, once, before it asks for the prekey and before it posts" || bad "the calls of a send: $(tail -n 3 $SRV/log | tr '\n' '|')"
+[ "$(tail -n 3 $SRV/log | tr '\n' '|')" = "GET /v1/$SB/revocations|GET /v1/$SB/identity|POST /v1/$SB/messages|" ] && ok "a send asks what the server holds about its recipient, once, before it asks for the prekey and before it posts" || bad "the calls of a send: $(tail -n 3 $SRV/log | tr '\n' '|')"
 # no answer: nothing is sealed and nothing is posted. And whatever code a failed lookup carries is no answer about the message
 n0=$(wc -l < $SRV/log); REVMODE="silent $SB"; printf 'waits for an answer' | ig_send "$SB" 2> err.txt && bad "sent with no answer about the recipient"
 grep -q "could not be asked" err.txt && [ "$(ls $IG/outbox/*.P | wc -l)" = 1 ] && bare && [ "$(tail -n +$((n0 + 1)) $SRV/log)" = "GET /v1/$SB/revocations" ] || bad "no answer about a recipient: $(cat err.txt) / $(tail -n +$((n0 + 1)) $SRV/log)"
@@ -826,7 +826,7 @@ REV=https://revocations.irongall.dev; R2=https://second.example; RVD=$SRV/rev/${
 revs(){ grep -c "^$REV $1 /*$2\$" $SRV/revlog 2> /dev/null || true; }      # <method> <address> → how many such calls the revocation server has seen
 for X in TA TB TC TD TE; do as $X; ig_init $NOPQ > /dev/null || bad "init $X"; eval "$X=\$(cat \$IG/address)"; done
 as TA; n0=$(revs GET "$TB"); printf 'the default' | ig_send "$TB" || bad "TA's send"
-[ "$(ig_revservers)" = "$REV" ] && [ $(($(revs GET "$TB") - n0)) = 1 ] && [ "$(tail -n 3 $SRV/log | tr '\n' '|')" = "GET /v1/$TB/revocations|GET /v1/$TB/identity|POST /v1/$TB|" ] &&
+[ "$(ig_revservers)" = "$REV" ] && [ $(($(revs GET "$TB") - n0)) = 1 ] && [ "$(tail -n 3 $SRV/log | tr '\n' '|')" = "GET /v1/$TB/revocations|GET /v1/$TB/identity|POST /v1/$TB/messages|" ] &&
   ok "a box on irongall.dev asks irongall.dev's own revocation server, once for a post, with no pass" || bad "the default revocation server: $(ig_revservers) / $(tail -n 2 $SRV/revlog)"
 [ -z "$(IG_BASE=https://other.example ig_revservers)" ] && [ -z "$(IG_REVOCATION_SERVERS=none ig_revservers)" ] && [ "$(IG_REVOCATION_SERVERS="$R2,$REV $R2 $R2:8443" ig_revservers | tr '\n' ' ')" = "$R2 $REV $R2:8443 " ] && [ -z "$(IG_REVOCATION_SERVERS=$IG_BASE ig_revservers)" ] &&
   printf '%s\n%s\n' $R2 $REV > $IG/revocation-servers && [ "$(ig_revservers | tr '\n' ' ')" = "$R2 $REV " ] && [ "$(IG_REVOCATION_SERVERS=$REV ig_revservers)" = "$REV" ] && echo none > $IG/revocation-servers && [ -z "$(ig_revservers)" ] &&
