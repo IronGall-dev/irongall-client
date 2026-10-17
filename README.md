@@ -209,7 +209,7 @@ go test ./client -run TestForgeries -v          # the forgeries, one by one
 go test ./sh -v                                 # the stock-tools client (sh/test.sh <empty dir> runs without Go)
 ```
 
-**An `ok` for `./sh` does not say the script was tested.** Its tests skip when a tool is missing, and on an age older than 1.3 test `--no-pq` boxes only. `go test ./sh -v` says which: a `SKIP` line, or `mode: KEYTYPE=pq`.
+**An `ok` for `./sh` does not say the script was tested.** Its tests need bash, age, ssh-keygen, jq, iconv and coreutils, and skip naming the one missing; on an age older than 1.3 they test `--no-pq` boxes only. `go test ./sh -v` says which: a `SKIP` line, or `mode: KEYTYPE=pq`.
 
 **What each test holds, claim by claim, is `SECURITY.md` § Checking the claims yourself.**
 
