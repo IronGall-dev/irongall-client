@@ -15,7 +15,7 @@ gh api repos/IronGall-dev/irongall-client/security-advisories/reports \
   -f summary='…' -f description='…'
 ```
 
-- **Here:** the protocol and its specification (`PROTOCOL.md`), both clients, the test vectors and the reference revocation server. **The server, and irongall.dev as it is run:** [irongall-server](https://github.com/IronGall-dev/irongall-server/security), by the same route. Not sure which? Either one.
+- **Here:** the protocol and its specification (`PROTOCOL.md`), both clients and the test vectors. **The server, and irongall.dev as it is run:** [irongall-server](https://github.com/IronGall-dev/irongall-server/security), by the same route. Not sure which? Either one.
 - **Give what it takes to reproduce it:** what you did, what happened, what should have, the commit you ran, and the impact. GitHub's form asks for a summary, details, a proof of concept and the impact.
 - **AI-assisted reports are welcome**; the form has a box to say so.
 - 🛑 **Never put a real box's identity key, a pass or mail in a report,** private or public.

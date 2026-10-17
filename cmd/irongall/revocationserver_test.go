@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,28 +16,23 @@ import (
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
 	"github.com/IronGall-dev/irongall-client/protocol"
-	"github.com/IronGall-dev/irongall-client/revocationserver"
 )
 
 // The commands, with a revocation server listed beside the box's own server
-// in $IRONGALL_REVOCATION_SERVERS: a real one, which a test can take down.
+// in $IRONGALL_REVOCATION_SERVERS: a second fake server, since every mailbox
+// server is one, which a test can take down.
 func TestTheCommandsWithARevocationServer(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
-	x, err := revocationserver.Open(revocationserver.Options{Dir: t.TempDir(), WritesPerHour: -1})
-	if err != nil {
-		t.Fatal(err)
-	}
 	var down atomic.Bool
-	h := x.Handler()
-	rs := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	rs := fakeserver.New(t, time.Now)
+	rs.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		if down.Load() {
 			http.Error(w, "down", http.StatusServiceUnavailable)
 			return
 		}
-		h.ServeHTTP(w, r)
-	}))
-	t.Cleanup(func() { rs.Close(); _ = x.Close() })
+		next.ServeHTTP(w, r)
+	})
 	holds := func(a protocol.Address) int {
 		t.Helper()
 		resp, err := http.Get(rs.URL + "/v1/" + a.String() + "/revocations")
@@ -161,12 +155,13 @@ func TestTheCommandsWithARevocationServer(t *testing.T) {
 	}
 }
 
-// The help says where the list comes from, and names the default; the cert
-// group's says how a revocation a server did not take is sent again.
+// The help says where the list comes from, and that none is asked without
+// one; the cert group's says how a revocation a server did not take is sent
+// again.
 func TestHelpNamesTheRevocationServers(t *testing.T) {
 	t.Setenv("IRONGALL_HOME", t.TempDir())
 	for words, wants := range map[string][]string{
-		"help":      {"$IRONGALL_REVOCATION_SERVERS", "revocation-servers file", client.DefaultRevocationServer},
+		"help":      {"$IRONGALL_REVOCATION_SERVERS", "revocation-servers file", "With neither, it asks none"},
 		"help cert": {"publish-revoked"},
 	} {
 		var out bytes.Buffer

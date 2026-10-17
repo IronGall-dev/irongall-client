@@ -15,13 +15,6 @@ import (
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
-// DefaultRevocationServer is the revocation server irongall.dev's operator
-// runs beside its mailbox server (PROTOCOL.md §6.3): a box whose server is
-// DefaultBase asks it too, unless told otherwise. It is run by the party
-// that runs the mailbox server, which knows who a box writes to already, so
-// asking it tells nobody anything new.
-const DefaultRevocationServer = "https://revocations.irongall.dev"
-
 // NoRevocationServers is the one word that, in place of a list of
 // revocation servers, means none: a box then asks its own server only.
 const NoRevocationServers = "none"
@@ -65,14 +58,12 @@ func ParseRevocationServers(s string) ([]string, error) {
 
 // RevocationServers returns the revocation servers this box asks beside its
 // own server, and publishes to (PROTOCOL.md §6.3): what Options named;
-// otherwise what the box's revocation-servers file names; otherwise
-// DefaultRevocationServer for a box whose server is DefaultBase, and none
-// for a box on any other server. The box's own server is never among them:
-// it is asked anyway.
+// otherwise what the box's revocation-servers file names; otherwise none.
+// The box's own server is never among them: it is asked anyway, and every
+// mailbox server is a revocation server too.
 //
 // A lookup tells a revocation server which address its asker corresponds
-// with. So a server run by anyone but the operator of the box's own is
-// asked only because the box's owner named it.
+// with. So none is asked unless the box's owner named it.
 func (b *Box) RevocationServers() ([]string, error) {
 	list := b.revocationServers
 	if list == nil && b.dir != "" {
@@ -84,9 +75,6 @@ func (b *Box) RevocationServers() ([]string, error) {
 		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return nil, err
 		}
-	}
-	if list == nil && b.base == DefaultBase {
-		list = []string{DefaultRevocationServer}
 	}
 	var out []string
 	for _, s := range list {
@@ -283,7 +271,11 @@ func (b *Box) publishRecord(ctx context.Context, a protocol.Address, rec *protoc
 		e.Took = append(e.Took, b.base)
 	}
 	for _, s := range servers {
-		if err := b.revocationServer(ctx, s, http.MethodPut, a, rec, nil); err != nil {
+		err := b.revocationServer(ctx, s, http.MethodPut, a, rec, nil)
+		if Code(err) == protocol.CodeRevoked && b.servesRevocationAt(ctx, s, a) {
+			err = nil // as at the box's own server: the address is ended there already
+		}
+		if err != nil {
 			e.Failed = append(e.Failed, ServerError{Server: s, Err: err})
 			continue
 		}
@@ -307,5 +299,16 @@ func (b *Box) servesRevocation(ctx context.Context, a protocol.Address) bool {
 		return false
 	}
 	_, err = protocol.VerifyRevocation(a, rec.Identity, rec.Revocation)
+	return err == nil
+}
+
+// servesRevocationAt is servesRevocation of a revocation server, by its own
+// read: whether what it serves of address a is a revocation that verifies.
+func (b *Box) servesRevocationAt(ctx context.Context, server string, a protocol.Address) bool {
+	var rec protocol.Revocations
+	if err := b.revocationServer(ctx, server, http.MethodGet, a, nil, &rec); err != nil || len(rec.Revocation) == 0 {
+		return false
+	}
+	_, err := protocol.VerifyRevocation(a, rec.Identity, rec.Revocation)
 	return err == nil
 }

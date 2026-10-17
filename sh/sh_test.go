@@ -26,7 +26,6 @@ import (
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
 	"github.com/IronGall-dev/irongall-client/protocol"
-	"github.com/IronGall-dev/irongall-client/revocationserver"
 )
 
 const vectors = "../testdata/vectors"
@@ -1219,12 +1218,7 @@ func TestARevocationServerInBothClients(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
-	x, err := revocationserver.Open(revocationserver.Options{Dir: t.TempDir(), WritesPerHour: -1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	rs := httptest.NewServer(x.Handler())
-	t.Cleanup(func() { rs.Close(); _ = x.Close() })
+	rs := fakeserver.New(t, time.Now) // every mailbox server is a revocation server too
 	held := func(a protocol.Address) *protocol.Revocations {
 		t.Helper()
 		resp, err := http.Get(rs.URL + "/v1/" + a.String() + "/revocations")

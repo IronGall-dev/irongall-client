@@ -432,12 +432,11 @@ ig_isbox(){ # <file> → 0 only for a box as the Go client reads one: an answer 
   for m in identity prekey prekey_signature revoked_certificates revoked_certificates_signature; do ig_bytes "$1" $m "$IG/box.part" || { r=1; break; }; done
   rm -f "$IG/box.part"; return $r
 }
-ig_revservers(){ # → the revocation servers this box asks beside its own server, and publishes to (PROTOCOL.md §6.3), one to a line: those $IG_REVOCATION_SERVERS names, with spaces or commas between; or else those the box's revocation-servers file names, one to a line; or else irongall.dev's own for a box on irongall.dev, and none for a box on any other server. The one word "none" is none. Each is https://host or https://host:port, in lowercase, with nothing after it, and each learns which addresses this box asks about: name one run by anyone but your server's operator only if you mean to tell it. Read from the file each time: state lives in files
+ig_revservers(){ # → the revocation servers this box asks beside its own server, and publishes to (PROTOCOL.md §6.3), one to a line: those $IG_REVOCATION_SERVERS names, with spaces or commas between; or else those the box's revocation-servers file names, one to a line; or else none, since the box's own server is one already. The one word "none" is none. Each is https://host or https://host:port, in lowercase, with nothing after it, and each learns which addresses this box asks about: name one only if you mean to tell it. Read from the file each time: state lives in files
   local l=${IG_REVOCATION_SERVERS-} s seen=" "; local -a a
   [[ $l =~ [^[:space:],] ]] || l=      # text that names nothing is as if it were not there
   [ -n "$l" ] || [ ! -s "$IG/revocation-servers" ] || l=$(cat "$IG/revocation-servers") || return 1
   [[ $l =~ [^[:space:],] ]] || l=
-  [ -n "$l" ] || [ "$IG_BASE" != https://irongall.dev ] || l=https://revocations.irongall.dev
   l=${l//,/ }; l=${l//$'\n'/ }; l=${l//$'\r'/ }; read -ra a <<< "$l"
   [ "${#a[@]}" != 1 ] || [ "${a[0]}" != none ] || return 0
   for s in "${a[@]}"; do
@@ -497,7 +496,8 @@ ig_revoke(){ # <address> [record] → revokes the address at the server and at e
   if ig_api PUT "/v1/$A/revocations" "$IG/revoke.put" > /dev/null 2> "$IG/put.err" || { [ "$(ig_code)" = revoked ] && ! ig_api GET "/v1/$A" > /dev/null 2>&1 && [ "$(ig_code)" = revoked ] && jq -ce '.record | objects' "$IG/error.json" > "$IG/held.json" 2> /dev/null && [ "$(ig_record "$IG/held.json")" = "$A" ]; }; then took=$IG_BASE      # revoked, from a server that holds the address revoked, is taken once the record its read of the box carries verifies: the address is ended there already
   else r=1; cat "$IG/put.err" >&2; ig_err "NOT taken by $IG_BASE"; fi
   while IFS= read -r s <&3; do [ -n "$s" ] || continue
-    if IG_BASE=$s ig_api PUT "/v1/$A/revocations" "$IG/revoke.put" --max-time 10 > /dev/null; then took="$took $s"; else r=1; ig_err "NOT taken by the revocation server $s"; fi
+    if IG_BASE=$s ig_api PUT "/v1/$A/revocations" "$IG/revoke.put" --max-time 10 > /dev/null 2> "$IG/put.err" || { [ "$(ig_code)" = revoked ] && IG_BASE=$s ig_api GET "/v1/$A/revocations" "" --max-time 10 > "$IG/held.json" 2> /dev/null && [ "$(ig_record "$IG/held.json")" = "$A" ]; }; then took="$took $s"      # revoked is taken once the record it serves verifies, as from the box's own server
+    else r=1; cat "$IG/put.err" >&2; ig_err "NOT taken by the revocation server $s"; fi
   done 3<<< "$l"
   [ -n "$took" ] || return 1      # once any server has taken it, it is out: if the box it is about is the one here, it keeps it too
   [ "$A" != "$(cat "$IG/address" 2> /dev/null)" ] || { [ "$(ig_record "$f")" = "$A" ] && ig_keep "$A" "$IG/rev.doc" "$IG/rev.sig"; } || return 1

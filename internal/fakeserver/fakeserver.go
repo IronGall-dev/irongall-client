@@ -1,7 +1,9 @@
 // Package fakeserver is an in-memory irongall server for the client's tests:
 // honest, and just enough of the API for a client to register, renew its
 // prekey, send, list, fetch and ack, each call carrying its box's pass. It is NOT the irongall.dev server, and
-// checks little of what that server checks.
+// checks little of what that server checks. Like every mailbox server it is
+// also a revocation server (PROTOCOL.md §6.3), for addresses it has no box
+// for as well, so a second one stands in for a revocation server a box lists.
 //
 // A test plays the hostile operator two ways: with SetMiddle, a function that
 // sees every request and can rewrite it, answer it or forge the reply; and
@@ -33,10 +35,12 @@ import (
 type Server struct {
 	URL string
 
+	srv    *httptest.Server
 	now    func() time.Time
 	mu     sync.Mutex
 	boxes  map[protocol.Address]*box
-	keys   map[string]string // adopt key → account, each good once
+	held   map[protocol.Address]*held // the revocations of addresses with no box here
+	keys   map[string]string          // adopt key → account, each good once
 	middle func(w http.ResponseWriter, r *http.Request, next http.Handler)
 }
 
@@ -48,13 +52,27 @@ type box struct {
 	cert      *protocol.Certificate // the one the current statement is signed under: passes are taken under it only
 	account   string                // the account it is in, or ""
 	senders   []string              // the sender key types it declared with its current prekey
-	revoked   []byte                // the identity's revocation, once the box is revoked: it is gone for good
+	revocations
+	acl      *protocol.ACL // its sender ACL; nil: none, which admits everyone
+	messages map[string]*message
+	order    []string // ids, oldest first
+}
+
+// revocations are what an address's identity signed about it that the server
+// keeps, whether or not the address has a box here.
+type revocations struct {
+	revoked []byte // the identity's revocation: the address is ended for good
 	// The identity's revocation of its certificates, as put, and parsed.
 	certList, certListSig []byte
 	listed                *protocol.RevokedCertificates
-	acl                   *protocol.ACL // its sender ACL; nil: none, which admits everyone
-	messages              map[string]*message
-	order                 []string // ids, oldest first
+}
+
+// held is what the server keeps of an address with no box here: the
+// identity's document and what it signed about the address. A registration
+// of the address takes them on.
+type held struct {
+	identity []byte
+	revocations
 }
 
 type message struct {
@@ -65,13 +83,14 @@ type message struct {
 
 // New starts a server on the clock now, stopped when the test ends.
 func New(t testing.TB, now func() time.Time) *Server {
-	s := &Server{now: now, boxes: map[protocol.Address]*box{}, keys: map[string]string{}}
+	s := &Server{now: now, boxes: map[protocol.Address]*box{}, held: map[protocol.Address]*held{}, keys: map[string]string{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/{addr}", s.getBox)
 	mux.HandleFunc("PUT /v1/{addr}", s.register)
 	mux.HandleFunc("POST /v1/{addr}/messages", s.send)
 	mux.HandleFunc("PUT /v1/{addr}/prekey", s.newPrekey)
 	mux.HandleFunc("PUT /v1/{addr}/revocations", s.revoke)
+	mux.HandleFunc("GET /v1/{addr}/revocations", s.getRevocations)
 	mux.HandleFunc("GET /v1/{addr}/messages", s.owner(s.list))
 	mux.HandleFunc("GET /v1/{addr}/messages/{id}", s.owner(s.fetch))
 	mux.HandleFunc("DELETE /v1/{addr}/messages/{id}", s.owner(s.ack))
@@ -100,9 +119,13 @@ func New(t testing.TB, now func() time.Time) *Server {
 		api.ServeHTTP(w, r)
 	}))
 	t.Cleanup(srv.Close)
-	s.URL = srv.URL
+	s.URL, s.srv = srv.URL, srv
 	return s
 }
+
+// Close stops the server for good, as one that is gone: whoever calls it
+// gets no answer at all.
+func (s *Server) Close() { s.srv.Close() }
 
 // SetMiddle puts m between the clients and the server, or removes it if m is
 // nil. It sees every request, and calls next to let the server answer.
@@ -265,8 +288,24 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		problem(w, protocol.CodeConflict, "registered with another prekey")
 		return
 	}
+	// What the identity signed about the address before it had a box here
+	// holds the registration to it: none of a revoked address, and none
+	// under a certificate it revoked.
+	var kept revocations
+	if h := s.held[a]; h != nil {
+		if h.revoked != nil {
+			problem(w, protocol.CodeRevoked, "this address is revoked")
+			return
+		}
+		if h.listed != nil && h.listed.Revokes(cert.Serial()) {
+			problem(w, protocol.CodeCertificateRevoked, "the statement is signed under a certificate this address's identity revoked")
+			return
+		}
+		kept = h.revocations
+		delete(s.held, a)
+	}
 	s.boxes[a] = &box{identity: req.Identity, statement: req.Prekey, signature: req.PrekeySignature, prekey: p, cert: cert,
-		senders: req.SenderKeyTypes, messages: map[string]*message{}}
+		senders: req.SenderKeyTypes, revocations: kept, messages: map[string]*message{}}
 	WriteJSON(w, http.StatusCreated, struct{}{})
 }
 
@@ -281,6 +320,12 @@ func (s *Server) getBox(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	b := s.boxes[a]
+	if h := s.held[a]; b == nil && h != nil && h.revoked != nil {
+		// A revoked address is read as its record, box or none.
+		rec := &protocol.Revocations{Identity: h.identity, Revocation: h.revoked, RevokedCertificates: h.certList, RevokedCertificatesSignature: h.certListSig}
+		problem(w, protocol.CodeRevoked, "this address is revoked", func(p *protocol.Problem) { p.Record = rec })
+		return
+	}
 	if b == nil {
 		problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
 		return
@@ -296,9 +341,9 @@ func (s *Server) getBox(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// revoke takes a revocation of a box this server has: the identity's own
-// signature over the fixed statement, with no pass. The box is gone for good
-// and its mail with it. A second one changes nothing.
+// revoke takes a revocation of an address, whether or not it has a box here:
+// the identity's own signature over the fixed statement, with no pass. A box
+// is gone for good and its mail with it. A second one changes nothing.
 func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 	a, ok := pathAddr(w, r)
 	var req protocol.Revocations
@@ -308,14 +353,21 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	b := s.boxes[a]
-	if b == nil {
-		problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
-		return
+	h := s.held[a]
+	var kept *revocations
+	switch {
+	case b != nil:
+		kept = &b.revocations
+	case h != nil:
+		kept = &h.revocations
+	default:
+		h = &held{identity: req.Identity}
+		kept = &h.revocations
 	}
-	// A revoked box takes nothing more, and nothing sent for it is checked
-	// (PROTOCOL.md §6.3).
-	if b.revoked != nil {
-		problem(w, protocol.CodeRevoked, "this box is revoked")
+	// A revoked address takes nothing more, and nothing sent for it is
+	// checked (PROTOCOL.md §6.3).
+	if kept.revoked != nil {
+		problem(w, protocol.CodeRevoked, "this address is revoked")
 		return
 	}
 	// A revocation of certificates: the address goes on. The highest serial
@@ -326,14 +378,17 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 		case err != nil:
 			problem(w, protocol.CodeBadRevocation, "not a revocation of this address's certificates")
 			return
-		case b.listed != nil && bytes.Equal(b.certList, req.RevokedCertificates):
-		case b.listed != nil && certs.Through <= b.listed.Through:
+		case kept.listed != nil && bytes.Equal(kept.certList, req.RevokedCertificates):
+		case kept.listed != nil && certs.Through <= kept.listed.Through:
 			problem(w, protocol.CodeConflict, "a revocation through that serial or a higher one is held")
 			return
 		default:
-			b.certList, b.certListSig, b.listed = req.RevokedCertificates, req.RevokedCertificatesSignature, certs
+			kept.certList, kept.certListSig, kept.listed = req.RevokedCertificates, req.RevokedCertificatesSignature, certs
 		}
 		if len(req.Revocation) == 0 {
+			if b == nil {
+				s.held[a] = h
+			}
 			WriteJSON(w, http.StatusOK, struct{}{})
 			return
 		}
@@ -342,8 +397,36 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 		problem(w, protocol.CodeBadRevocation, "not a revocation of this address")
 		return
 	}
-	b.revoked, b.messages, b.order = req.Revocation, map[string]*message{}, nil
+	kept.revoked = req.Revocation
+	if b != nil {
+		b.messages, b.order = map[string]*message{}, nil
+	} else {
+		s.held[a] = h
+	}
 	WriteJSON(w, http.StatusCreated, struct{}{})
+}
+
+// getRevocations is the revocation server's read: what the server keeps of
+// the address, with or without a box here, or not_revoked.
+func (s *Server) getRevocations(w http.ResponseWriter, r *http.Request) {
+	a, ok := pathAddr(w, r)
+	if !ok {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var identity []byte
+	var kept *revocations
+	if b := s.boxes[a]; b != nil {
+		identity, kept = b.identity, &b.revocations
+	} else if h := s.held[a]; h != nil {
+		identity, kept = h.identity, &h.revocations
+	}
+	if kept == nil || kept.revoked == nil && kept.certList == nil {
+		problem(w, protocol.CodeNotRevoked, "no revocation of this address is held here")
+		return
+	}
+	WriteJSON(w, http.StatusOK, &protocol.Revocations{Identity: identity, Revocation: kept.revoked, RevokedCertificates: kept.certList, RevokedCertificatesSignature: kept.certListSig})
 }
 
 // current reports whether the box's current certificate is one its identity

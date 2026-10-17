@@ -69,9 +69,8 @@ type Options struct {
 	// RevocationServers are the revocation servers the box asks beside its
 	// own server, and publishes to: each a server's URL, as https://host or
 	// https://host:port. Nil: the ones the box's revocation-servers file
-	// names, or else DefaultRevocationServer for a box whose server is
-	// DefaultBase and none for any other ([Box.RevocationServers]). An empty
-	// list that is not nil: none, and the box asks its own server only.
+	// names, or else none ([Box.RevocationServers]). An empty list that is
+	// not nil: none as well, whatever the file names.
 	RevocationServers []string
 	// NoAnswer, if not nil, is told of each revocation server that gave no
 	// answer, with why, once in a command. Nothing changes for it: a box

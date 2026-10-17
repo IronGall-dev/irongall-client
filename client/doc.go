@@ -29,7 +29,7 @@
 //	acl.json                   the ACL this box's server last took, as it answered: made from the three files above, and sent when they change
 //	sent/                      sent mail the server took: each envelope with the server's receipt
 //	aliases                    this box's own names for peers: "<name> <address>" lines
-//	revocation-servers         the revocation servers this box asks beside its own server, and publishes to: one URL to a line, or the word none. Yours to write; without it, the default for the box's server
+//	revocation-servers         the revocation servers this box asks beside its own server, and publishes to: one URL to a line, or the word none. Yours to write; without it, none
 //	lock/                      the box's lock, held by each command that writes the box: a directory, with this client's flocked lock/pid inside
 //	.gitignore                 "*": the box ignores itself in any repository it lands in
 package client

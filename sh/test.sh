@@ -222,12 +222,12 @@ srv_fetch(){ local f n; f=$(ls $SRV/$1/msgs | grep -- "-$2.json\$" | head -n1); 
     *) jq -r .ciphertext $SRV/$1/msgs/$f | base64 -d ;;
   esac; }
 srv_ack(){ local f; f=$(ls $SRV/$1/msgs | grep -- "-$2.json\$" | head -n1); [ -n "$f" ] || { srv_err 404 no_such_message "acked or expired"; return 1; }; rm -f $SRV/$1/msgs/$f; }
-srv_rev(){ # <METHOD> <address> [JSON file]: a revocation server, the one at $IG_BASE, on files and with a log of its own. It checks nothing: what a record is worth is its reader's to check. With a file named down beside its records it gives no answer
+srv_rev(){ # <METHOD> <address> [JSON file]: a revocation server, the one at $IG_BASE, on files and with a log of its own. It checks nothing, what a record is worth being its reader's to check, but answers a record for an address it holds revoked 410 revoked, as every mailbox server does. With a file named down beside its records it gives no answer
   local d=$SRV/rev/${IG_BASE#*://}; mkdir -p "$d"; echo "$IG_BASE $1 $2" >> $SRV/revlog
   [ ! -e "$d/down" ] || { srv_err 503 unavailable "down"; return 1; }
   case $1 in
     GET) [ -e "$d/$2.json" ] || { srv_err 404 not_revoked "no revocation of this address is held here"; return 1; }; cat "$d/$2.json" ;;
-    PUT) cp "$3" "$d/$2.json" && echo '{}' ;;
+    PUT) [ ! -e "$d/$2.json" ] || [ -z "$(jq -r '.revocation_signature // empty' "$d/$2.json")" ] || { srv_err 410 revoked "this address is revoked"; return 1; }; cp "$3" "$d/$2.json" && echo '{}' ;;
   esac; }
 ig_api(){ # the fake: the same contract as irongall.sh's ig_api (METHOD PATH [body file] [curl args…]), no network
   local m=$1 p=$2 f=${3-} tok="" a rest; shift 2; [ $# -gt 0 ] && shift
@@ -685,8 +685,8 @@ as RD; out=$(ig_revoke "$RD" 2> err.txt) && [ "$out" = "$(jrevoked "$RD" publish
   ok "revoke, with the address in full: the box is revoked for good, its mail deleted, and a second one changes nothing" || bad "revoke: $out $(cat err.txt)"
 recv; [ $RECV_RC != 0 ] && printf '%s' "$RECV_ERR" | grep -q "REVOKED: this box's own address is revoked" && ok "a revoked box is told so by its own revocation, which it checks" || bad "a revoked box's recv: $RECV_ERR"
 printf 'from a revoked box' | ig_send "$RA" 2> err.txt && bad "a revoked box sent"; grep -q "REVOKED" err.txt && [ "$(ls $IG/outbox/failed/*.P | wc -l)" = 1 ] && ok "a revoked box's own mail can never be delivered: moved to outbox/failed/" || bad "a revoked box's send: $(cat err.txt)"
-# mail from a box revoked since: refused when it is read, the server asked once for that sender, and its 410 revoked carries the record: no revocation server is asked
-as RA; n0=$(grep -c "^GET /v1/$RD\$" $SRV/log || true); r0=$(grep -c " GET $RD\$" $SRV/revlog || true); recv
+# mail from a box revoked since: refused when it is read, the server asked once for that sender, and its 410 revoked carries the record: no revocation server is asked, though one is listed
+as RA; n0=$(grep -c "^GET /v1/$RD\$" $SRV/log || true); r0=$(grep -c " GET $RD\$" $SRV/revlog || true); IG_REVOCATION_SERVERS=https://revocations.example; recv; unset IG_REVOCATION_SERVERS
 [ -z "$RECV_OUT" ] && [ "$(printf '%s\n' "$RECV_ERR" | grep -c "^REFUSED .*: revoked: ")" = 2 ] && [ $(($(grep -c "^GET /v1/$RD\$" $SRV/log) - n0)) = 1 ] && [ "$(grep -c " GET $RD\$" $SRV/revlog)" = "$r0" ] && [ -s $IG/peers/$RD/revoke.sig ] && [ "$(box_count "$RA")" = 0 ] &&
   ok "mail from a box revoked since is REFUSED as revoked, whenever it was signed: one lookup for the sender, answered by the record its 410 carries, and the revocation is kept" || bad "mail from a revoked sender: $RECV_OUT / $RECV_ERR"
 # the operator then hides the revocation and delivers mail that sender's working key signed, which its certificate still covers
@@ -856,18 +856,21 @@ as SG; [ "$(ig_revoke "$SG" 2> err.txt)" = "$(jrevoked "$SG" published)" ] || ba
 as SA; n0=$(posts "$SG"); ig_flush 2> err.txt && bad "flushed to an address since revoked"
 grep -q "REVOKED: $SG is revoked" err.txt && [ "$(posts "$SG")" = "$n0" ] && [ "$(ls $IG/outbox/failed/$SG.*.P | wc -l)" = 1 ] && [ -s $IG/peers/$SG/revoke.sig ] && ! ls $IG/outbox/*.P > /dev/null 2>&1 &&
   ok "a message that waited while its recipient's address was revoked is never posted: the revocation is asked for, kept, and the message moves to outbox/failed/" || bad "a waiting seal to a revoked address: $(cat err.txt)"
-# --- 20. revocation servers. A box asks them beside its own server, about a recipient before a post and about each sender in a drain, and
-#     publishes its own revocation to them. Nothing above named one: every box there is on irongall.dev, so each asked irongall.dev's own
-REV=https://revocations.irongall.dev; R2=https://second.example; RVD=$SRV/rev/${REV#*://}
+# --- 20. revocation servers. A box asks those it lists beside its own server, about a recipient before a post and about each sender in a
+#     drain, and publishes its own revocation to them. It lists none unless told, since its own server is one already: above, only RA's one
+#     drain listed one
+REV=https://revocations.example; R2=https://second.example; RVD=$SRV/rev/${REV#*://}
 revs(){ grep -c "^$REV $1 /*$2\$" $SRV/revlog 2> /dev/null || true; }      # <method> <address> → how many such calls the revocation server has seen
 for X in TA TB TC TD TE; do as $X; ig_init $NOPQ > /dev/null || bad "init $X"; eval "$X=\$(cat \$IG/address)"; done
-as TA; n0=$(revs GET "$TB"); l0=$(wc -l < $SRV/log); printf 'the default' | ig_send "$TB" || bad "TA's send"
-[ "$(ig_revservers)" = "$REV" ] && [ $(($(revs GET "$TB") - n0)) = 1 ] && [ "$(tail -n +$((l0 + 1)) $SRV/log | tr '\n' '|')" = "GET /v1/$TB|POST /v1/$TB/messages|" ] &&
-  ok "a box on irongall.dev asks irongall.dev's own revocation server, once for a post, with no pass" || bad "the default revocation server: $(ig_revservers) / $(tail -n 2 $SRV/revlog)"
+as TA; r0=$(wc -l < $SRV/revlog); l0=$(wc -l < $SRV/log); printf 'none listed' | ig_send "$TB" || bad "TA's send"
+[ -z "$(ig_revservers)" ] && [ "$(wc -l < $SRV/revlog)" = "$r0" ] && [ "$(tail -n +$((l0 + 1)) $SRV/log | tr '\n' '|')" = "GET /v1/$TB|POST /v1/$TB/messages|" ] &&
+  ok "a box on irongall.dev that lists no revocation server asks its own server alone: one read, then the post" || bad "a box with no revocation server listed: $(ig_revservers) / $(tail -n 2 $SRV/revlog)"
 [ -z "$(IG_BASE=https://other.example ig_revservers)" ] && [ -z "$(IG_REVOCATION_SERVERS=none ig_revservers)" ] && [ "$(IG_REVOCATION_SERVERS="$R2,$REV $R2 $R2:8443" ig_revservers | tr '\n' ' ')" = "$R2 $REV $R2:8443 " ] && [ -z "$(IG_REVOCATION_SERVERS=$IG_BASE ig_revservers)" ] &&
   printf '%s\n%s\n' $R2 $REV > $IG/revocation-servers && [ "$(ig_revservers | tr '\n' ' ')" = "$R2 $REV " ] && [ "$(IG_REVOCATION_SERVERS=$REV ig_revservers)" = "$REV" ] && echo none > $IG/revocation-servers && [ -z "$(ig_revservers)" ] &&
-  printf ' \n\n' > $IG/revocation-servers && [ "$(ig_revservers)" = "$REV" ] && [ "$(IG_REVOCATION_SERVERS=' , ' ig_revservers)" = "$REV" ] && [ -z "$(IG_BASE=https://other.example ig_revservers)" ] && rm $IG/revocation-servers &&
-  ok "which revocation servers a box lists: the variable, or else its revocation-servers file, or else the default for its server; none for a box on another server; never its own server; and the word none" || bad "the list of revocation servers"
+  printf ' \n\n' > $IG/revocation-servers && [ -z "$(ig_revservers)" ] && [ -z "$(IG_REVOCATION_SERVERS=' , ' ig_revservers)" ] && rm $IG/revocation-servers &&
+  ok "which revocation servers a box lists: the variable, or else its revocation-servers file, or else none, on any server; never its own server; and the word none" || bad "the list of revocation servers"
+for X in TA TB TC TD TE; do as $X; echo $REV > $IG/revocation-servers; done      # from here on, each lists the revocation server
+as TA
 for L in revocations.example "$R2/path" "$R2/" HTTPS://second.example "none $R2" "ftp://second.example" "https://user@second.example"; do IG_REVOCATION_SERVERS=$L ig_revservers > out.txt 2> err.txt && bad "'$L' was taken as a list of revocation servers: $(cat out.txt)"; grep -q "^{\"type\":\"error\",\"message\":\"REFUSED: this box's list of revocation servers" err.txt || bad "'$L': $(cat err.txt)"; done
 n0=$(wc -l < $SRV/log); IG_REVOCATION_SERVERS=revocations.example; printf 'never posted' | ig_send "$TB" 2> err.txt && bad "sent with a list that names no server"; unset IG_REVOCATION_SERVERS
 [ "$(wc -l < $SRV/log)" = "$n0" ] && [ "$(ls $IG/outbox/*.P | wc -l)" = 1 ] && ig_flush 2> err.txt && ok "a list that names something that is no server is REFUSED: nobody is asked and nothing is posted until it is put right" || bad "a bad list: $(cat err.txt)"
@@ -894,4 +897,7 @@ as TE; ig_revoke "$TE" > out.txt 2> err.txt && bad "revoke succeeded with a serv
 [ ! -s out.txt ] && grep -qxF "{\"type\":\"error\",\"message\":\"NOT taken by the revocation server $REV\"}" err.txt && grep -q "is not at every server" err.txt && [ "$(cat $SRV/$TE/state)" = revoked ] && [ -s $IG/revoked.sig ] && [ ! -e $RVD/$TE.json ] || bad "revoke with the revocation server down: $(cat out.txt) / $(cat err.txt)"
 rm $RVD/down; [ "$(ig_revoke "$TE" 2> err.txt)" = "$(jrevoked "$TE" published)" ] && [ "$(ig_record $RVD/$TE.json)" = "$TE" ] &&
   ok "revoke publishes at the box's own server and at each revocation server, every one whatever the others answer: it fails, saying which did not take it, until every one has, and the same command again is the cure" || bad "revoke again: $(cat err.txt)"
+[ "$(ig_revoke "$TE" 2> err.txt)" = "$(jrevoked "$TE" published)" ] && [ ! -s err.txt ] && [ "$(tail -n 2 $SRV/revlog | cut -d' ' -f2 | tr '\n' ' ')" = "PUT GET " ] && cp $RVD/$TE.json $W/te.json &&
+  jq -c --arg s "$(jq -r .revocation_signature $W/tc.json)" '.revocation_signature = $s' $W/te.json > $RVD/$TE.json && ! ig_revoke "$TE" > /dev/null 2> err.txt && grep -qxF "{\"type\":\"error\",\"message\":\"NOT taken by the revocation server $REV\"}" err.txt && cp $W/te.json $RVD/$TE.json &&
+  ok "revoke again, at a revocation server that holds the address revoked: its 410 revoked is taken once the record it then serves verifies, and not while that does not" || bad "revoke again at a revocation server that holds it: $(cat err.txt)"
 echo "--- $PASS PASS, 0 FAIL (KEYTYPE=$KEYTYPE)"

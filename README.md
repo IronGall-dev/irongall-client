@@ -77,7 +77,7 @@ A box is the directory `~/.config/irongall/default`: `$IRONGALL_BOX` names anoth
 - **The box keeps mail in plaintext and never prunes it:** `inbox/`, `held/`, `sent/`, `quarantine/`. Delete a file to forget a message. Read `quarantine/` through `irongall quarantine list`, which says why each was refused, and empty it with `irongall quarantine rm`: its files keep what the server sent.
 - **A stolen identity is ended with `irongall revocation publish <address>`, for good.** Nothing undoes it, and the address written out in full is the confirmation. `irongall revocation make` prints a record that does the same later with no box and no key (`irongall revocation publish --record <file> <address>`): keep it somewhere other than the box. `irongall revocation keep <file>` takes a record of another box that someone handed you, and `irongall revocation ask <link>` asks for one, as `send` does by itself before it posts (`PROTOCOL.md` §6.3).
 - **A stolen working key (`work/`) is ended with `irongall cert revoke-earlier`, and the address goes on:** a new working key and prekey, and every certificate before the new one revoked. Mail this box sent under those, and that is not yet read, is refused too: send it again. The old certificates are revoked before the new prekey is sent, so a thief holding the old key cannot hold the remedy back; if the server refuses the new prekey, the box takes no mail until `irongall recv` gets it taken (`PROTOCOL.md` §6.3a).
-- **A revocation belongs to the identity, not to one server, so a box asks revocation servers too, and publishes its own revocations to them** (`PROTOCOL.md` §6.3). A box on irongall.dev asks `https://revocations.irongall.dev`, which irongall.dev's operator runs. `$IRONGALL_REVOCATION_SERVERS`, or a `revocation-servers` file in the box, names others, or `none`: each one learns which addresses the box asks about. No answer from one changes nothing. `revocation publish` and `cert revoke-earlier` fail, saying which server did not take the record, until every one has: run the command it names.
+- **A revocation belongs to the identity, not to one server, so a box can ask other revocation servers too, and publish its own revocations to them** (`PROTOCOL.md` §6.3). Every mailbox server is one, and a box asks no other unless told: `$IRONGALL_REVOCATION_SERVERS`, or a `revocation-servers` file in the box, names them, and each one learns which addresses the box asks about. No answer from one changes nothing. `revocation publish` and `cert revoke-earlier` fail, saying which server did not take the record, until every one has: run the command it names.
 - **Limits are the server's.** Its `llms.txt` states them, and a refusal names the limit and the seconds to wait.
 
 Forward secrecy, padding, accounts and the rest: `PROTOCOL.md`.
@@ -181,7 +181,7 @@ What it lacks against the Go client, though it gives the Go client's verdict on 
 - keep serving a box's previous prekey until it expires, 33 days after it was signed;
 - list mail from senders it made up, which costs a box one bounded run;
 - refuse a box's renewals, which `recv` reports with exit `3`;
-- keep a box's revocation, or its revocation of certificates, from a peer that has never seen it. It cannot make either: a client checks every one itself, and takes "revoked" on no server's word. The revocation server irongall.dev runs beside it is the same operator's, and no witness against it: one that someone else runs would be (`PROTOCOL.md` §6.3).
+- keep a box's revocation, or its revocation of certificates, from a peer that has never seen it. It cannot make either: a client checks every one itself, and takes "revoked" on no server's word. A revocation server that someone else runs is a witness against it, if a box lists one (`PROTOCOL.md` §6.3).
 
 Cloudflare terminates TLS for irongall.dev today, so it can do the same. Neither can read or forge mail. In full: `PROTOCOL.md` §9.
 
@@ -198,7 +198,6 @@ Cloudflare terminates TLS for irongall.dev today, so it can do the same. Neither
 | `client/` | The Go client library: one box's state directory and every protocol step |
 | `cmd/irongall/` | The `irongall` command |
 | `cmd/irongall-echo/` | The echo box |
-| `revocationserver/`, `cmd/irongall-revocation-server/` | The reference revocation server, and the command that runs it: it keeps what an identity signed about its own address, for any address, with no boxes and no keys (`PROTOCOL.md` §6.3) |
 | `sh/` | `irongall.sh` and its tests |
 | `testdata/vectors/` | Test vectors any implementation can check itself against (`README.md` there) |
 | `internal/fakeserver/` | An in-memory server for the tests, which a test turns hostile |

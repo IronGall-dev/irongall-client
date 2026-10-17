@@ -17,14 +17,14 @@ import (
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
 	"github.com/IronGall-dev/irongall-client/protocol"
-	"github.com/IronGall-dev/irongall-client/revocationserver"
 )
 
 // A box asks revocation servers beside its own server, and publishes its
-// revocations to them (PROTOCOL.md §6.3). These tests run the real one,
-// package revocationserver, beside the fake mailbox server, and play an
-// operator of the mailbox server who hides a revocation from the first: the
-// case that asking the mailbox server alone cannot catch.
+// revocations to them (PROTOCOL.md §6.3). Every mailbox server is one, so
+// these tests run a second fake server as the revocation server a box lists,
+// one where the box has no box, beside the box's own, and play an operator
+// of the box's own server who hides a revocation from the first: the case
+// that asking that server alone cannot catch.
 
 // revServer is a revocation server a test can stand in front of.
 type revServer struct {
@@ -39,12 +39,9 @@ type revServer struct {
 
 func newRevServer(t *testing.T) *revServer {
 	t.Helper()
-	x, err := revocationserver.Open(revocationserver.Options{Dir: t.TempDir(), WritesPerHour: -1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	rs, h := &revServer{}, x.Handler()
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	x := fakeserver.New(t, time.Now)
+	rs := &revServer{URL: x.URL}
+	x.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		rs.mu.Lock()
 		rs.seen = append(rs.seen, r.Method+" "+r.URL.Path)
 		if r.Header.Get("Authorization") != "" {
@@ -55,10 +52,8 @@ func newRevServer(t *testing.T) *revServer {
 		if rule != nil && rule(w, r) {
 			return
 		}
-		h.ServeHTTP(w, r)
-	}))
-	t.Cleanup(func() { srv.Close(); _ = x.Close() })
-	rs.URL = srv.URL
+		next.ServeHTTP(w, r)
+	})
 	return rs
 }
 
@@ -446,6 +441,7 @@ func TestARecordIsPublishedAtEveryServer(t *testing.T) {
 	if rec, err = gone.Revocation(); err != nil {
 		t.Fatal(err)
 	}
+	goneRec := rec
 	says(e, protocol.CodeUnavailable, http.MethodPut, "/revocations")
 	_, err = gone.Revoke(ctx, rec)
 	if !errors.As(err, &part) || !slices.Equal(part.Took, []string{rs.URL}) || len(part.Failed) != 1 || part.Failed[0].Server != e.srv.URL || client.Code(err) != protocol.CodeUnavailable {
@@ -464,6 +460,25 @@ func TestARecordIsPublishedAtEveryServer(t *testing.T) {
 		t.Fatalf("revoke at the only server there is: %v", err)
 	}
 	e.srv.SetMiddle(nil)
+
+	// Once the mailbox server is back, the same again is the cure there too.
+	// The revocation server holds the address revoked and answers 410, which
+	// is taken once the record it serves verifies, and not while what it
+	// serves does not.
+	rs.set(func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method != http.MethodGet {
+			return false
+		}
+		fakeserver.WriteJSON(w, http.StatusOK, &protocol.Revocations{Identity: goneRec.Identity, Revocation: []byte("no signature")})
+		return true
+	})
+	if _, err := gone.Revoke(ctx, goneRec); !errors.As(err, &part) || !slices.Equal(part.Took, []string{e.srv.URL}) || len(part.Failed) != 1 || client.Code(part.Failed[0].Err) != protocol.CodeRevoked {
+		t.Fatalf("a 410 from a revocation server that serves no revocation that verifies: %v", err)
+	}
+	rs.set(nil)
+	if _, err := gone.Revoke(ctx, goneRec); err != nil {
+		t.Fatalf("revoke again, with the revocation server holding it: %v", err)
+	}
 
 	// A record that does not verify goes nowhere.
 	before := rs.total()
@@ -530,7 +545,7 @@ func TestRevokedCertificatesNotEverywhereAreKeptAndPublishedAgain(t *testing.T) 
 }
 
 // Which revocation servers a box asks: what its options name, or else what
-// its file names, or else the default for its server.
+// its file names, or else none, whatever its server.
 func TestTheRevocationServersABoxLists(t *testing.T) {
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
@@ -544,13 +559,11 @@ func TestTheRevocationServersABoxLists(t *testing.T) {
 	}
 	file := filepath.Join(b.Dir(), "revocation-servers")
 
-	// A box on another server than the default asks none unless told.
-	if got, err := list(e.opts()); err != nil || len(got) != 0 {
-		t.Fatalf("a box on its own server: %q, %v", got, err)
-	}
-	// A box on the default server asks the default revocation server.
-	if got, err := list(client.Options{}); err != nil || !slices.Equal(got, []string{client.DefaultRevocationServer}) {
-		t.Fatalf("a box on the default server: %q, %v", got, err)
+	// A box asks none unless told, on the default server as on any other.
+	for name, o := range map[string]client.Options{"its own server": e.opts(), "the default server": {}} {
+		if got, err := list(o); err != nil || len(got) != 0 {
+			t.Fatalf("a box on %s: %q, %v", name, got, err)
+		}
 	}
 	// Its file says otherwise, one to a line.
 	if err := os.WriteFile(file, []byte("https://one.example\nhttps://two.example:8443\n"), 0o600); err != nil {
@@ -570,11 +583,10 @@ func TestTheRevocationServersABoxLists(t *testing.T) {
 	if err := os.WriteFile(file, []byte(" \n\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := list(client.Options{}); err != nil || !slices.Equal(got, []string{client.DefaultRevocationServer}) {
-		t.Fatalf("a file with nothing in it, on the default server: %q, %v", got, err)
-	}
-	if got, err := list(e.opts()); err != nil || len(got) != 0 {
-		t.Fatalf("a file with nothing in it, on another server: %q, %v", got, err)
+	for _, o := range []client.Options{{}, e.opts()} {
+		if got, err := list(o); err != nil || len(got) != 0 {
+			t.Fatalf("a file with nothing in it: %q, %v", got, err)
+		}
 	}
 	// None: an empty list that is not nil, or the one word in the file.
 	if got, err := list(client.Options{RevocationServers: []string{}}); err != nil || len(got) != 0 {

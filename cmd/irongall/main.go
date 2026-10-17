@@ -26,11 +26,10 @@ The server is $IRONGALL_BASE, or https://irongall.dev.
 Beside its server a box asks revocation servers whether an address is revoked,
 and publishes its own revocations to them: those $IRONGALL_REVOCATION_SERVERS
 names (URLs with spaces or commas between, or "none"), or else those its
-revocation-servers file names, one to a line. With neither, a box on
-irongall.dev asks ` + client.DefaultRevocationServer + `, which irongall.dev's
-operator runs, and a box on another server asks none. A revocation server
-learns which addresses a box asks about: name one run by anyone else only if
-you mean to tell it. No answer from one changes nothing, and status lists them.
+revocation-servers file names, one to a line. With neither, it asks none:
+its own server is one already. A revocation server learns which addresses a
+box asks about: name one only if you mean to tell it. No answer from one
+changes nothing, and status lists them.
 The box's policy file says where mail from a sender it has not allowed
 lands, "unknown held" (the default) or "unknown inbox", and whom its server
 takes mail from, "server all" (the default: everyone it has not blocked) or

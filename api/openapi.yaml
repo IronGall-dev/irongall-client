@@ -17,9 +17,9 @@ info:
     built never to need. Use the Go client in this repository, or build to
     `PROTOCOL.md`.
 
-    It describes a mailbox server. A revocation server (§6.3) answers two of
-    its routes' shapes, `PUT` and `GET /v1/<addr>/revocations`, and is not
-    described here.
+    It describes a mailbox server, which is also a revocation server
+    (§6.3): it answers both `PUT` and `GET /v1/<addr>/revocations`. A server
+    that is only a revocation server answers those two routes alone.
 
     No server publishes this file at a URL. It is for reading the API in one
     place, and for the tests that hold the reference server and this
@@ -231,6 +231,38 @@ paths:
   /v1/{addr}/revocations:
     parameters:
       - $ref: '#/components/parameters/addr'
+    get:
+      tags: [revocation]
+      operationId: revocations
+      summary: Read the revocations held
+      description: |
+        `PROTOCOL.md` §6.3, a revocation server's read, which every mailbox
+        server answers too: the record held of the address, whether or not it
+        has a box there, or `404 not_revoked`. It takes no pass, and is
+        counted against the address it comes from (§8). A box's own clients
+        learn the same from the read of the box; this is for a client that
+        lists the server among its revocation servers.
+      security: []
+      responses:
+        '200':
+          description: The record held, which proves itself and names its type first.
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RevocationRecordAnswer'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
     put:
       tags: [revocation]
       operationId: revoke
@@ -794,8 +826,8 @@ components:
     NotFound:
       description: |
         `no_such_mailbox` (never registered, or closed) · `no_such_message`
-        (acked or expired: treat it as gone) · `not_revoked` (a revocation
-        server's answer, §6.3: it holds no revocation of this address).
+        (acked or expired: treat it as gone) · `not_revoked` (the read of
+        the revocations held, §6.3: the server holds none of this address).
       headers:
         Date:
           $ref: '#/components/headers/Date'
