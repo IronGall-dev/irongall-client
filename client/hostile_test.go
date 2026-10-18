@@ -248,7 +248,7 @@ func TestADrainIsBounded(t *testing.T) {
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, h http.Handler) {
 			if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/messages") {
 				lists++
-				fakeserver.WriteJSON(w, http.StatusOK, protocol.MessageList{Count: 1, Messages: []protocol.MessageInfo{}, NextCursor: &next, PollAfter: 60})
+				fakeserver.WriteList(w, protocol.MessageList{Count: 1, Messages: []protocol.MessageInfo{}, NextCursor: &next})
 				return
 			}
 			h.ServeHTTP(w, r)
@@ -315,7 +315,7 @@ func TestQuarantineKeepsNoServerTextInTheClear(t *testing.T) {
 		for i := range l.Messages {
 			l.Messages[i].From, l.Messages[i].ReceivedAt = injected, injected
 		}
-		fakeserver.WriteJSON(w, http.StatusOK, l)
+		fakeserver.WriteList(w, l)
 	})
 	send(t, a, b, "refused for the from its server gave")
 	first := receive(t, b)
@@ -440,7 +440,7 @@ func TestAFetchIsTheSizeItsListGives(t *testing.T) {
 						return
 					}
 					c.listed(&list.Messages[0])
-					fakeserver.WriteJSON(w, http.StatusOK, list)
+					fakeserver.WriteList(w, list)
 					return
 				}
 				// The fetch, with the Content-Length of the body the test
@@ -493,7 +493,7 @@ func TestAListsCursorIsURLSafe(t *testing.T) {
 				}
 				queries = append(queries, r.URL.RawQuery)
 				if len(queries) == 1 {
-					fakeserver.WriteJSON(w, http.StatusOK, protocol.MessageList{Count: 1, Messages: []protocol.MessageInfo{}, NextCursor: &c.cursor, PollAfter: 60})
+					fakeserver.WriteList(w, protocol.MessageList{Count: 1, Messages: []protocol.MessageInfo{}, NextCursor: &c.cursor})
 					return
 				}
 			}

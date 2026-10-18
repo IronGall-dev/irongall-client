@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -644,9 +645,11 @@ func (s *Server) owner(h func(http.ResponseWriter, *http.Request, *box)) http.Ha
 	}
 }
 
-// list answers with every message, on one page.
-func (s *Server) list(w http.ResponseWriter, _ *http.Request, b *box) {
-	l := protocol.MessageList{Messages: []protocol.MessageInfo{}, PollAfter: 60}
+// list answers with every message, on one page, as a first page is
+// answered (PROTOCOL.md §5.1): with an ETag, the SHA-256 of its JSON, and 304
+// to an If-None-Match that names it.
+func (s *Server) list(w http.ResponseWriter, r *http.Request, b *box) {
+	l := protocol.MessageList{Messages: []protocol.MessageInfo{}}
 	for _, id := range b.order {
 		if m := b.messages[id]; m != nil {
 			l.Messages = append(l.Messages, protocol.MessageInfo{ID: id, From: m.from.String(), Size: int64(len(m.ciphertext)),
@@ -654,6 +657,30 @@ func (s *Server) list(w http.ResponseWriter, _ *http.Request, b *box) {
 		}
 	}
 	l.Count = int64(len(l.Messages))
+	body, _ := json.Marshal(l)
+	sum := sha256.Sum256(body)
+	tag := `"` + hex.EncodeToString(sum[:16]) + `"`
+	w.Header().Set("ETag", tag)
+	for _, t := range strings.Split(r.Header.Get("If-None-Match"), ",") {
+		if t = strings.TrimPrefix(strings.TrimSpace(t), "W/"); t == tag || t == "*" {
+			w.Header().Set("Retry-After", PollInterval)
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
+	}
+	WriteList(w, l)
+}
+
+// PollInterval is the Retry-After every list answer carries: the poll
+// interval, in seconds.
+const PollInterval = "60"
+
+// WriteList writes a list answer as the server does, with its Retry-After:
+// PollInterval, unless the caller set one. A middleware forging one uses it.
+func WriteList(w http.ResponseWriter, l protocol.MessageList) {
+	if w.Header().Get("Retry-After") == "" {
+		w.Header().Set("Retry-After", PollInterval)
+	}
 	WriteJSON(w, http.StatusOK, l)
 }
 

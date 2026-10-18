@@ -77,7 +77,8 @@ type Result struct {
 	// more, when it paced the drain (a 429 fetch_paced or refetch_spent with
 	// Retry-After, on a fetch); zero otherwise.
 	Paced time.Duration
-	// PollAfter is the server's poll interval, in seconds.
+	// PollAfter is the server's poll interval, in seconds: the list's
+	// Retry-After.
 	PollAfter int64
 	// Renewed is the prekey this Receive published, the current one being
 	// more than a day old; nil if none was due.
@@ -164,12 +165,34 @@ func (b *Box) drain(ctx context.Context) (*Result, error) {
 			// makes the list no answer (protocol.CheckCursor).
 			path += "?cursor=" + cursor
 		}
+		var hdr http.Header
+		if page == 0 {
+			// The tag of the last poll that found the box empty: a 304 then
+			// says it is empty still (PROTOCOL.md §5.1).
+			hdr, err = b.ifNoneMatch()
+			if err != nil {
+				return nil, err
+			}
+		}
 		var list protocol.MessageList
-		if _, err := b.owner(ctx, http.MethodGet, path, nil, &list); err != nil {
+		resp, err := b.ownerWith(ctx, http.MethodGet, path, hdr, nil, &list)
+		if err != nil {
 			// A server that says this box is revoked is asked to show it.
 			return res, b.proved(ctx, b.id.Address(), err, asked)
 		}
-		res.PollAfter = min(list.PollAfter, maxWaitSeconds)
+		n, err := protocol.PollInterval(resp.Header.Get("Retry-After"))
+		if err != nil {
+			return res, fmt.Errorf("GET %s: %w", path, err)
+		}
+		res.PollAfter = int64(min(n, maxWaitSeconds))
+		if resp.StatusCode == http.StatusNotModified {
+			return res, nil
+		}
+		if page == 0 {
+			if err := b.keepETag(&list, resp.Header.Get("ETag")); err != nil {
+				return nil, err
+			}
+		}
 		for _, m := range list.Messages {
 			if !hexID.MatchString(m.ID) {
 				continue
@@ -544,4 +567,36 @@ func (b *Box) pruneSeen() error {
 		}
 	}
 	return writeFile(b.path("seen"), out.Bytes())
+}
+
+// entityTag is an ETag as a box keeps one: an entity-tag of RFC 9110 §8.8.3,
+// weak or strong, in printable ASCII, and short. A server's tag of any other
+// form is not sent back.
+var entityTag = regexp.MustCompile(`\A(W/)?"[\x21\x23-\x7e]{0,128}"\z`)
+
+// ifNoneMatch is the header a poll sends: If-None-Match with the tag kept in
+// etag, or none when the box keeps none.
+func (b *Box) ifNoneMatch() (http.Header, error) {
+	t, err := os.ReadFile(b.path("etag"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !entityTag.Match(t) {
+		return nil, removeIfExists(b.path("etag"))
+	}
+	return http.Header{"If-None-Match": {string(t)}}, nil
+}
+
+// keepETag keeps the tag of a first page that found the box empty, so the
+// next poll can be answered 304, and drops any once a page holds mail: a 304
+// then says only that the box is still empty, and never hides mail
+// (PROTOCOL.md §5.1).
+func (b *Box) keepETag(list *protocol.MessageList, tag string) error {
+	if list.Count == 0 && len(list.Messages) == 0 && entityTag.MatchString(tag) {
+		return writeFile(b.path("etag"), []byte(tag))
+	}
+	return removeIfExists(b.path("etag"))
 }

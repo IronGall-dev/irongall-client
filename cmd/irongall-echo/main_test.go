@@ -370,8 +370,8 @@ func TestEchoRefusesAnotherIdentity(t *testing.T) {
 	}
 }
 
-// The wait before the next poll is the server's: its poll_after, or a rate
-// limit's Retry-After.
+// The wait before the next poll is the server's: its list's Retry-After, or a
+// rate limit's.
 func TestEchoPacesItself(t *testing.T) {
 	e := newEnv(t)
 	x := e.echo()
@@ -385,10 +385,11 @@ func TestEchoPacesItself(t *testing.T) {
 		})
 	}
 	polls(func(w http.ResponseWriter) {
-		fakeserver.WriteJSON(w, http.StatusOK, protocol.MessageList{Messages: []protocol.MessageInfo{}, PollAfter: 23})
+		w.Header().Set("Retry-After", "23")
+		fakeserver.WriteList(w, protocol.MessageList{Messages: []protocol.MessageInfo{}})
 	})
 	if d := x.once(context.Background()); d != 23*time.Second {
-		t.Fatalf("waits %s, want the server's poll_after", d)
+		t.Fatalf("waits %s, want its list's Retry-After", d)
 	}
 	polls(func(w http.ResponseWriter) {
 		w.Header().Set("Retry-After", "17")

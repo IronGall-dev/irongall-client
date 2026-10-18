@@ -579,22 +579,22 @@ at box-bad-sender-key-types-a-string '{"identity":"%s","prekey":"%s","prekey_sig
 at box-bad-signature-unpadded '{"identity":"%s","prekey":"%s","prekey_signature":"%s"}' "$ID_A" "$P1" "${P1S%%=*}"
 at box-bad-prekey-a-number '{"identity":"%s","prekey":1,"prekey_signature":"%s"}' "$ID_A" "$P1S"
 at box-bad-revoked-certificates-a-number '{"identity":"%s","prekey":"%s","prekey_signature":"%s","revoked_certificates":4}' "$ID_A" "$P1" "$P1S"
-at list-ok '{"count":1,"messages":[{"id":"%s","from":"%s","size":%s,"received_at":"%s","expires_at":"2026-11-12T00:00:00Z"}],"next_cursor":null,"poll_after":60}' "$HASH" "$A" "$(wc -c < message/a-to-b.age)" "$NOW"
-at list-ok-empty '{"count":0,"messages":[],"next_cursor":null,"poll_after":60}'
-at list-bad-count-negative '{"count":-1,"messages":[],"next_cursor":null,"poll_after":60}'
-at list-bad-count-above-2-53 '{"count":9007199254740992,"messages":[],"next_cursor":null,"poll_after":60}'
-at list-bad-count-a-fraction '{"count":0.5,"messages":[],"next_cursor":null,"poll_after":60}'
-at list-bad-count-written-with-a-fraction '{"count":1.0,"messages":[],"next_cursor":null,"poll_after":60}' # an integer member is written as one
-at list-bad-count-written-with-an-exponent '{"count":1e0,"messages":[],"next_cursor":null,"poll_after":60}' # jq gives it back as 1, so the script takes it: a known variance
-at list-bad-size-a-string '{"count":1,"messages":[{"id":"%s","from":"%s","size":"2048"}],"next_cursor":null,"poll_after":60}' "$HASH" "$A"
-at list-bad-messages-an-object '{"count":0,"messages":{},"next_cursor":null,"poll_after":60}'
-at list-bad-cursor-a-number '{"count":0,"messages":[],"next_cursor":7,"poll_after":60}'
+at list-ok '{"count":1,"messages":[{"id":"%s","from":"%s","size":%s,"received_at":"%s","expires_at":"2026-11-12T00:00:00Z"}],"next_cursor":null}' "$HASH" "$A" "$(wc -c < message/a-to-b.age)" "$NOW"
+at list-ok-empty '{"count":0,"messages":[],"next_cursor":null}'
+at list-bad-count-negative '{"count":-1,"messages":[],"next_cursor":null}'
+at list-bad-count-above-2-53 '{"count":9007199254740992,"messages":[],"next_cursor":null}'
+at list-bad-count-a-fraction '{"count":0.5,"messages":[],"next_cursor":null}'
+at list-bad-count-written-with-a-fraction '{"count":1.0,"messages":[],"next_cursor":null}' # an integer member is written as one
+at list-bad-count-written-with-an-exponent '{"count":1e0,"messages":[],"next_cursor":null}' # jq gives it back as 1, so the script takes it: a known variance
+at list-bad-size-a-string '{"count":1,"messages":[{"id":"%s","from":"%s","size":"2048"}],"next_cursor":null}' "$HASH" "$A"
+at list-bad-messages-an-object '{"count":0,"messages":{},"next_cursor":null}'
+at list-bad-cursor-a-number '{"count":0,"messages":[],"next_cursor":7}'
 # A cursor is opaque and URL-safe (AEP-158): one or more of A-Z, a-z, 0-9, - and _, pasted into the next query as it is
-at list-ok-cursor '{"count":2,"messages":[],"next_cursor":"AZaz09-_","poll_after":60}'
-at list-bad-cursor-a-slash '{"count":2,"messages":[],"next_cursor":"a/b","poll_after":60}'
-at list-bad-cursor-a-percent '{"count":2,"messages":[],"next_cursor":"a%%2Fb","poll_after":60}'
-at list-bad-cursor-empty '{"count":2,"messages":[],"next_cursor":"","poll_after":60}'
-at list-bad-from-a-number '{"count":1,"messages":[{"id":"%s","from":5,"size":%s}],"next_cursor":null,"poll_after":60}' "$HASH" "$(wc -c < message/a-to-b.age)" # the fetch answers the ciphertext alone: who sent it is the list's
+at list-ok-cursor '{"count":2,"messages":[],"next_cursor":"AZaz09-_"}'
+at list-bad-cursor-a-slash '{"count":2,"messages":[],"next_cursor":"a/b"}'
+at list-bad-cursor-a-percent '{"count":2,"messages":[],"next_cursor":"a%%2Fb"}'
+at list-bad-cursor-empty '{"count":2,"messages":[],"next_cursor":""}'
+at list-bad-from-a-number '{"count":1,"messages":[{"id":"%s","from":5,"size":%s}],"next_cursor":null}' "$HASH" "$(wc -c < message/a-to-b.age)" # the fetch answers the ciphertext alone: who sent it is the list's
 at receipt-ok '{"id":"%s","received_at":"%s","expires_at":"2026-11-12T00:00:00Z"}' "$HASH" "$NOW"
 at receipt-bad-id-an-array '{"id":["%s"],"received_at":"%s"}' "$HASH" "$NOW"
 at problem-ok '{"type":"tag:irongall.dev,2026-10-17:errors/not_revoked","title":"Not revoked","status":404,"detail":"no revocation of this address is held here","code":"not_revoked","hint":"nothing to do"}'

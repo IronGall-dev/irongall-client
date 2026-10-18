@@ -2140,7 +2140,7 @@ func TestWhatABoxKeepsIsOneInBothClients(t *testing.T) {
 		for i := range l.Messages {
 			l.Messages[i].From, l.Messages[i].ReceivedAt, l.Messages[i].ExpiresAt = injected, "2026-02-30T00:00:00Z", "2026-11-18T19:02:06Z"
 		}
-		fakeserver.WriteJSON(w, http.StatusOK, l)
+		fakeserver.WriteList(w, l)
 	})
 	sh("printf q | ig_send " + g.Link())
 	if res, err := g.Receive(ctx); err != nil || len(res.Refused) != 1 {

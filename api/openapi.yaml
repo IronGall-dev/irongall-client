@@ -517,8 +517,11 @@ paths:
       description: |
         `PROTOCOL.md` §5.1. One page of up to 50, oldest first; pass
         `cursor` until `next_cursor` is null. `count` is every live message.
-        An empty box is `{"count":0,"messages":[],"next_cursor":null,"poll_after":<seconds>}`.
-        There is no long poll: a client polls, about every `poll_after` seconds.
+        An empty box is `{"count":0,"messages":[],"next_cursor":null}`.
+        There is no long poll: a client polls, about every `Retry-After`
+        seconds, the interval every list answer carries. A first page has an
+        `ETag`; a poll that sends it back in `If-None-Match` is `304` while
+        the page is unchanged, and takes from the poll rate all the same.
       parameters:
         - name: cursor
           in: query
@@ -526,6 +529,12 @@ paths:
           description: The `next_cursor` of the page before. Any other is answered as a poll (§5.1).
           schema:
             $ref: '#/components/schemas/Cursor'
+        - name: If-None-Match
+          in: header
+          required: false
+          description: The `ETag` of a first page this box was answered; a client keeps only an empty box's (§5.1). Compared weakly (RFC 9110 §13.1.2).
+          schema:
+            type: string
       responses:
         '200':
           description: One page of the box's mail.
@@ -534,10 +543,28 @@ paths:
               $ref: '#/components/headers/Date'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
+            Retry-After:
+              $ref: '#/components/headers/PollInterval'
+            ETag:
+              $ref: '#/components/headers/ETag'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/MessageList'
+        '304':
+          description: The first page is unchanged since the `ETag` the poll sent back, and it has no content (RFC 9110 §15.4.5).
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
+            Retry-After:
+              $ref: '#/components/headers/PollInterval'
+            ETag:
+              description: The page's tag, the one the poll sent back.
+              required: true
+              schema:
+                type: string
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -721,6 +748,17 @@ components:
       schema:
         type: string
         pattern: '^[0-9]+$'
+    PollInterval:
+      description: A list's `Retry-After`, on every list answer, a `304` among them - the server's poll interval in seconds, in digits alone, as RFC 9773 §4.3 uses the field (`PROTOCOL.md` §5.1). A list answer without one breaks its form.
+      required: true
+      schema:
+        type: string
+        pattern: '^[0-9]+$'
+    ETag:
+      description: A first page's entity tag (RFC 9110 §8.8.3), opaque; a page after the first has none.
+      required: false
+      schema:
+        type: string
     WWW-Authenticate:
       description: The scheme a call must use, `irongall-pass`, with any auth-params a server adds (RFC 9110 §11.6.1).
       required: true
@@ -1084,7 +1122,7 @@ components:
           $ref: '#/components/schemas/Time'
     MessageList:
       type: object
-      required: [count, messages, next_cursor, poll_after]
+      required: [count, messages, next_cursor]
       properties:
         count:
           description: Every live message in the box.
@@ -1100,9 +1138,6 @@ components:
           anyOf:
             - $ref: '#/components/schemas/Cursor'
             - type: 'null'
-        poll_after:
-          description: The server's poll interval, in seconds.
-          $ref: '#/components/schemas/Integer'
     MessageInfo:
       type: object
       required: [id, from, size, received_at, expires_at]

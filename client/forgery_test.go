@@ -327,6 +327,9 @@ func TestForgeries(t *testing.T) {
 			r.URL.Path = strings.Replace(r.URL.Path, fake, realID, 1)
 			rec := httptest.NewRecorder()
 			next.ServeHTTP(rec, r)
+			for k, v := range rec.Header() {
+				w.Header()[k] = v
+			}
 			w.WriteHeader(rec.Code)
 			_, _ = w.Write(bytes.ReplaceAll(rec.Body.Bytes(), []byte(realID), []byte(fake)))
 		})

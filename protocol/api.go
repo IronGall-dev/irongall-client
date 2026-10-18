@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math"
 	"net/url"
 	"regexp"
 	"slices"
 	"strconv"
+	"strings"
 )
 
 // The API's JSON bodies. Every byte field is standard base64 of the exact
@@ -227,12 +229,28 @@ type Receipt struct {
 
 // MessageList is GET /v1/<address>/messages: one page of metadata, oldest
 // first. NextCursor is null on the last page, and otherwise a cursor
-// (CheckCursor).
+// (CheckCursor). The poll interval is no member: every list answer, a 304
+// among them, carries it in Retry-After (PollInterval).
 type MessageList struct {
 	Count      int64         `json:"count"`
 	Messages   []MessageInfo `json:"messages"`
 	NextCursor *string       `json:"next_cursor"`
-	PollAfter  int64         `json:"poll_after"`
+}
+
+// PollInterval reads a list answer's Retry-After: the server's poll interval
+// in seconds, delay-seconds in digits alone, as a 429's (PROTOCOL.md §5.1,
+// §13). A list answer without one, or with one of another form, breaks its
+// form. More digits than a uint64 holds read as the most it holds: a reader
+// bounds the wait it takes.
+func PollInterval(v string) (uint64, error) {
+	if v == "" || strings.Trim(v, "0123456789") != "" {
+		return 0, errors.New("the list's Retry-After is not delay-seconds")
+	}
+	n, err := strconv.ParseUint(v, 10, 64)
+	if err != nil {
+		return math.MaxUint64, nil
+	}
+	return n, nil
 }
 
 // MessageInfo is one message in a list. From is the box whose pass the send

@@ -17,6 +17,7 @@
 //	prekeys/<serial>.agekey    age keys, each with its signed statement (.txt, .txt.sig); never backed up
 //	serial                     the number of the prekey this box published last, which is its certificate's serial too: the box's clock gave it
 //	pass                       the pass this box last signed for its server, used until it runs out
+//	etag                       the ETag of the last poll that found the box empty, sent back in If-None-Match; gone once a poll finds mail
 //	peers/<address>/           the pinned identity document, the highest prekey serial and certificate serial seen, revoke.sig, its revocation, once one has verified, and revoked-certs.json, the highest revocation of its certificates that has verified
 //	revoked.sig                this box's own revocation, once it has met one that verifies: the box is finished
 //	revoked-certs.json         this box's own revocation of its certificates, once it has published one: the record that carries it, one line of JSON

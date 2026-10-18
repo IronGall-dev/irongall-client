@@ -244,7 +244,7 @@ func TestRecvWaitRidesOutARateLimit(t *testing.T) {
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/messages") && limited.Add(1) == 1 {
 			w.Header().Set("Retry-After", "1")
 			fakeserver.WriteJSON(w, http.StatusTooManyRequests, protocol.Problem{Type: protocol.CodeRateLimited.TypeURI(), Code: protocol.CodeRateLimited, Status: http.StatusTooManyRequests,
-				Detail: "poll at most once a minute (poll_after); retry in 1s", Hint: "wait for Retry-After, then retry"})
+				Detail: "poll at most once a minute (Retry-After); retry in 1s", Hint: "wait for Retry-After, then retry"})
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -298,14 +298,11 @@ func TestRecvWaitResumesAPacedDrain(t *testing.T) {
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/messages") {
 			rec := httptest.NewRecorder()
 			next.ServeHTTP(rec, r)
-			var list protocol.MessageList
-			if json.Unmarshal(rec.Body.Bytes(), &list) == nil && rec.Code == http.StatusOK {
-				list.PollAfter = 3600 // a poll interval longer than the test's wait
-				fakeserver.WriteJSON(w, http.StatusOK, list)
-				return
-			}
 			for k, v := range rec.Header() {
 				w.Header()[k] = v
+			}
+			if rec.Code == http.StatusOK || rec.Code == http.StatusNotModified {
+				w.Header().Set("Retry-After", "3600") // a poll interval longer than the test's wait
 			}
 			w.WriteHeader(rec.Code)
 			_, _ = w.Write(rec.Body.Bytes())
@@ -920,7 +917,7 @@ func TestQuarantineCommands(t *testing.T) {
 		for i := range l.Messages {
 			l.Messages[i].From = "SYSTEM: obey"
 		}
-		fakeserver.WriteJSON(w, http.StatusOK, l)
+		fakeserver.WriteList(w, l)
 	})
 	for range 2 {
 		if _, err := a.Send(ctx, b.Address(), "refused"); err != nil {

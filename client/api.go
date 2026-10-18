@@ -18,8 +18,8 @@ import (
 // the bound only stops a server from filling memory.
 const maxResponse = 16 << 20
 
-// maxWaitSeconds bounds a wait a server asks for, its Retry-After or a list's
-// poll_after: a day, longer than any limit a server counts. A server may ask
+// maxWaitSeconds bounds a wait a server asks for, the Retry-After of a refusal
+// or of a list: a day, longer than any limit a server counts. A server may ask
 // for less; a larger number is read as a day, and never overflows the pause
 // it becomes.
 const maxWaitSeconds = 24 * 60 * 60
@@ -27,8 +27,10 @@ const maxWaitSeconds = 24 * 60 * 60
 // call makes one API request of this box's server. A request body is sent as
 // JSON, or as it is when it is a message's ciphertext; a 2xx response body is
 // read into out when out is not nil: as JSON, or as the ciphertext's bytes.
-// Any status outside 2xx is an *APIError. It returns the response, whose body
-// is consumed.
+// A 304 to a request that carried If-None-Match is answered, with nothing
+// read into out; one to a request that did not breaks its form. Any other
+// status outside 2xx is an *APIError. It returns the response, whose body is
+// consumed.
 func (b *Box) call(ctx context.Context, method, path string, in any, hdr http.Header, out any) (*http.Response, error) {
 	return b.callAt(ctx, b.base, method, path, in, hdr, out)
 }
@@ -73,6 +75,14 @@ func (b *Box) callAt(ctx context.Context, base, method, path string, in any, hdr
 		return nil, err
 	}
 	defer resp.Body.Close() //nolint:errcheck // read fully below
+	if resp.StatusCode == http.StatusNotModified {
+		// A 304 has no content (RFC 9110 §15.4.5), and answers only the
+		// condition asked: one asked none is no answer.
+		if req.Header.Get("If-None-Match") == "" {
+			return resp, fmt.Errorf("%s %s: a 304 to a request that asked no condition", method, path)
+		}
+		return resp, nil
+	}
 	answered := resp.StatusCode >= 200 && resp.StatusCode <= 299
 	ct, raw := out.(*ciphertext)
 	limit := int64(maxResponse)
@@ -157,12 +167,20 @@ func passRefused(c protocol.Code) bool {
 // it ran out sooner by the server's clock or was signed under a certificate
 // the server no longer takes, the box signs another and tries once more.
 func (b *Box) owner(ctx context.Context, method, path string, in, out any) (*http.Response, error) {
+	return b.ownerWith(ctx, method, path, nil, in, out)
+}
+
+// ownerWith is owner, with the request's headers hdr beside the pass.
+func (b *Box) ownerWith(ctx context.Context, method, path string, hdr http.Header, in, out any) (*http.Response, error) {
 	for attempt := 0; ; attempt++ {
 		pass, err := b.pass()
 		if err != nil {
 			return nil, err
 		}
-		h := http.Header{}
+		h := hdr.Clone()
+		if h == nil {
+			h = http.Header{}
+		}
 		h.Set("Authorization", pass)
 		resp, err := b.call(ctx, method, path, in, h, out)
 		if attempt > 0 || !passRefused(Code(err)) {

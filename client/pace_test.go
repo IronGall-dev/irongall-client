@@ -99,7 +99,7 @@ func TestOnlyAPacedFetchEndsADrainQuietly(t *testing.T) {
 }
 
 // A wait a server asks for is at most a day, however large the number it
-// writes: a poll_after or a Retry-After past what a time.Duration holds once
+// writes: a list's Retry-After or a 429's past what a time.Duration holds once
 // wrapped to a negative pause, or a short one, and polled without end.
 func TestAWaitTheServerAsksForIsAtMostADay(t *testing.T) {
 	e := newEnv(t)
@@ -108,13 +108,14 @@ func TestAWaitTheServerAsksForIsAtMostADay(t *testing.T) {
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/messages") {
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`{"count":0,"messages":[],"next_cursor":null,"poll_after":` + huge + `}`))
+			w.Header().Set("Retry-After", huge)
+			_, _ = w.Write([]byte(`{"count":0,"messages":[],"next_cursor":null}`))
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
 	if res := receive(t, b); res.PollAfter != 24*60*60 {
-		t.Errorf("poll_after %s is read as %d seconds, want a day", huge, res.PollAfter)
+		t.Errorf("a list's Retry-After %s is read as %d seconds, want a day", huge, res.PollAfter)
 	}
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/messages") {

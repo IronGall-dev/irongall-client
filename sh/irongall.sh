@@ -78,7 +78,7 @@ ig_shape(){ # <answer> <box|list|record|receipt|problem> → 0 only for an answe
   ig_json "$1" && jq -e --arg k "$2" 'def s: . == null or type == "string"; def n: . == null or (type == "number" and . == floor and . >= 0 and . <= 9007199254740991 and (tostring | test("\\A(0|[1-9][0-9]*)\\z")));
     def record: all(.identity, .revocation_signature, .revoked_certificates, .revoked_certificates_signature; s) and (.type | . == null or . == "revocation_record");
     {box: (all(.identity, .prekey, .prekey_signature, .revoked_certificates, .revoked_certificates_signature; s) and (.sender_key_types | . == null or (type == "array" and all(.[]; s)))),
-     list: (all(.count, .poll_after; n) and (.next_cursor | . == null or (type == "string" and test("\\A[A-Za-z0-9_-]+\\z"))) and (.messages | . == null or (type == "array" and all(.[]; . == null or (type == "object" and all(.id, .from, .received_at, .expires_at; s) and (.size | n)))))),
+     list: (all(.count; n) and (.next_cursor | . == null or (type == "string" and test("\\A[A-Za-z0-9_-]+\\z"))) and (.messages | . == null or (type == "array" and all(.[]; . == null or (type == "object" and all(.id, .from, .received_at, .expires_at; s) and (.size | n)))))),
      record: record,
      receipt: all(.id, .received_at, .expires_at; s),
      problem: (all(.type, .title, .detail, .code, .hint, .oldest_expires_at, .key_type, .member; s) and all(.status, .unacked, .limit, .count, .version, .prekey_serial, .certificate_serial, .through; n) and (.key_types | . == null or (type == "array" and all(.[]; s))) and (.record | . == null or (type == "object" and record)))}[$k]' "$1" > /dev/null 2>&1
@@ -614,6 +614,7 @@ ig_drain(){ # stops at a transient error or a fault of this box, leaving the res
     [ $((pages += 1)) -le 100 ] || { ig_out more --arg message "this run stopped at the most one drain takes: run recv again for the rest, which is still on the server"; return 0; }
     ig_owner GET "/v1/$B/messages${c:+?cursor=$c}" > "$IG/list.json" || { ig_own; return 1; }
     ig_shape "$IG/list.json" list && n=$(jq -r '.messages | length' "$IG/list.json") || { ig_err "the server's list of messages is not one this client reads, as PROTOCOL.md §0b reads JSON: the mail stays on the server"; return 1; }
+    LC_ALL=C grep -Eqi $'^retry-after: *[0-9]+\r?$' "$IG/response.headers" || { ig_err "the server's list of messages carries no poll interval, a Retry-After of digits alone (PROTOCOL.md §5.1): the mail stays on the server"; return 1; }      # read and not kept: this script drains once and never waits, so it keeps no ETag either
     for ((i = 0; i < n; i++)); do
       id=$(jq -r --argjson i "$i" '.messages[$i].id | strings | select(test("\\A[0-9a-f]{64}\\z"))' "$IG/list.json") && ig_hex "$id" || continue      # tested in jq: $(…) drops trailing LFs and every NUL
       [ $((k += 1)) -le 1000 ] || { ig_out more --arg message "this run stopped at the most one drain takes: run recv again for the rest, which is still on the server"; return 0; }

@@ -208,13 +208,14 @@ srv_inject(){ # <box> <from> <c.age> [id]: what a malicious operator can do, put
   local d=$SRV/$1 s id=${4:-$(sha256sum < "$3" | cut -c1-64)}; s=$(($(cat $d/seq) + 1)); echo $s > $d/seq
   ig_b64 "$3" > $SRV/tmp/c.b64; jq -n --arg id "$id" --arg from "$2" --rawfile c $SRV/tmp/c.b64 --argjson t "$(date -u +%s)" '{id:$id, from:$from, received_at:($t|todate), expires_at:($t + 33*86400 | todate), ciphertext:$c}' > $d/msgs/$(printf %06d $s)-$id.json; }
 srv_list(){ local d=$SRV/$1 c=${2#\?cursor=} all page last nc=null x; [ -n "$2" ] || c=0
-  [ "$MODE" != "endless $1" ] || { echo '{"count":0,"messages":[],"next_cursor":"1","poll_after":60}'; return 0; }      # a server that always has another page
+  printf 'HTTP/1.1 200 OK\r\n' > "$IG/response.headers"; [ "$MODE" = "nointerval $1" ] || printf 'Retry-After: 60\r\n' >> "$IG/response.headers"      # the poll interval, which every list answer carries
+  [ "$MODE" != "endless $1" ] || { echo '{"count":0,"messages":[],"next_cursor":"1"}'; return 0; }      # a server that always has another page
   all=$(ls $d/msgs | sort); page=$(printf '%s\n' "$all" | awk -F- -v c="$c" 'NF && $1 + 0 > c + 0' | head -n "${PAGE:-50}")
   last=$(printf '%s\n' "$page" | tail -n1 | cut -d- -f1)
   [ -n "$page" ] && [ "$(printf '%s\n' "$all" | awk -F- -v c="$last" 'NF && $1 + 0 > c + 0' | wc -l)" -gt 0 ] && nc="\"$last\""
   [ "$MODE" != "badcursor $1" ] || nc='"a/b"'      # a cursor that is not URL-safe
   for x in $page; do jq -c '{id, from, size:(.ciphertext | length * 3 / 4 - (match("=*$").string | length)), received_at, expires_at}' $d/msgs/$x; done \
-    | jq -s --argjson n "$(printf '%s\n' "$all" | awk NF | wc -l)" --argjson nc "$nc" '{count:$n, messages:., next_cursor:$nc, poll_after:60}'; }
+    | jq -s --argjson n "$(printf '%s\n' "$all" | awk NF | wc -l)" --argjson nc "$nc" '{count:$n, messages:., next_cursor:$nc}'; }
 srv_fetch(){ local f n; f=$(ls $SRV/$1/msgs | grep -- "-$2.json\$" | head -n1); [ -n "$f" ] || { srv_err 404 no_such_message "acked or expired"; return 1; }      # the ciphertext's bytes, and nothing else: the list says who sent it and when
   n=$(jq -r .ciphertext $SRV/$1/msgs/$f | base64 -d | wc -c)
   case "$MODE" in
@@ -232,7 +233,7 @@ srv_rev(){ # <METHOD> <address> [JSON file]: a revocation server, the one at $IG
   esac; }
 ig_api(){ # the fake: the same contract as irongall.sh's ig_api (METHOD PATH [body file] [curl args…]), no network
   local m=$1 p=$2 f=${3-} tok="" a rest; shift 2; [ $# -gt 0 ] && shift
-  rm -f "$IG/error.json" "$IG/error.headers"; [ "${1-}" = -H ] && tok=${2#Authorization: }
+  rm -f "$IG/error.json" "$IG/error.headers" "$IG/response.headers"; [ "${1-}" = -H ] && tok=${2#Authorization: }
   a=${p#/v1/}; a=${a%%/*}; a=${a%%\?*}; rest=${p#/v1/$a}
   [ "$IG_BASE" = "$OWN" ] || { [ -z "$tok" ] || bad "a revocation server was shown a pass"; [ "$rest" = /revocations ] || bad "a revocation server was asked for $m $p"; srv_rev "$m" "$a" "$f"; return; }      # any other base is a revocation server
   echo "$m ${p%%\?*}" >> $SRV/log      # the path, without its query
@@ -551,6 +552,8 @@ MODE="long $B"; recv; MODE=honest
 [ $RECV_RC != 0 ] && [ "$(box_count "$B")" = 1 ] && [ "$(ls $IG/quarantine | wc -l)" = "$q0" ] && printf '%s' "$RECV_ERR" | grep -q "not the [0-9]* bytes of ciphertext its list gives" && ok "and so is one a byte past it" || bad "long fetch: $RECV_RC / $RECV_ERR"
 n0=$(grep -c "^GET /v1/$B/messages/" $SRV/log); MODE="badcursor $B"; recv; MODE=honest
 [ $RECV_RC != 0 ] && [ "$(grep -c "^GET /v1/$B/messages/" $SRV/log)" = "$n0" ] && printf '%s' "$RECV_ERR" | grep -q "list of messages is not one this client reads" && ok "a list whose cursor is not URL-safe is no answer: nothing is fetched" || bad "a bad cursor: $RECV_RC / $RECV_ERR"
+n0=$(grep -c "^GET /v1/$B/messages/" $SRV/log); MODE="nointerval $B"; recv; MODE=honest
+[ $RECV_RC != 0 ] && [ "$(grep -c "^GET /v1/$B/messages/" $SRV/log)" = "$n0" ] && [ "$(box_count "$B")" = 1 ] && printf '%s' "$RECV_ERR" | grep -q "carries no poll interval" && ok "a list with no Retry-After is no answer: nothing is fetched, and the mail stays" || bad "a list with no interval: $RECV_RC / $RECV_ERR"
 recv; printf '%s' "$RECV_OUT" | jq -e '.body == "whole or not at all"' > /dev/null && [ "$(box_count "$B")" = 0 ] && ok "from an honest server, the next drain delivers it" || bad "after the forged fetches: $RECV_OUT / $RECV_ERR"
 # a code counts only beside its own type, and a Retry-After is delay-seconds, digits alone
 printf 'HTTP/1.1 429 x\r\nRetry-After: 0017\r\n' > $IG/error.headers
