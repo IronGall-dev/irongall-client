@@ -7,7 +7,9 @@
 //   - every request: one the description refuses must not be answered 2xx;
 //   - a route the description lacks gets the router's plain 404 or 405;
 //   - every error's code counts (protocol.Problem.CodeAt): one the
-//     description knows, under its own status, beside its own type.
+//     description knows, under its own status, beside its own type;
+//   - an answer in gzip is one to a request that takes gzip, and is checked
+//     as the JSON beneath; the description says which answers may be.
 //
 // The server and the Go client share protocol's structs, so a member that
 // drifts from PROTOCOL.md passes every test the two run together. This is
@@ -16,6 +18,7 @@ package apitest
 
 import (
 	"bytes"
+	"compress/gzip"
 	"fmt"
 	"io"
 	"mime"
@@ -133,10 +136,14 @@ func check(t testing.TB, v validator.Validator, r *http.Request, body *tee, rec 
 	if !ok && rec.status < 400 && read {
 		t.Errorf("apitest: %s: a request the description refuses is answered as taken: %s", where, list(errs))
 	}
+	answer, ok := decoded(t, where, r, rec)
+	if !ok {
+		return
+	}
 	resp := &http.Response{
 		StatusCode: rec.status,
 		Header:     rec.header,
-		Body:       io.NopCloser(bytes.NewReader(rec.body.Bytes())),
+		Body:       io.NopCloser(bytes.NewReader(answer)),
 		Request:    req,
 	}
 	req.Body = io.NopCloser(bytes.NewReader(body.buf.Bytes()))
@@ -144,14 +151,42 @@ func check(t testing.TB, v validator.Validator, r *http.Request, body *tee, rec 
 	ok, errs = v.ValidateHttpResponse(req, resp)
 	mu.Unlock()
 	if !ok {
-		t.Errorf("apitest: %s: the answer is not the description's: %s\n%s", where, list(errs), rec.body.Bytes())
+		t.Errorf("apitest: %s: the answer is not the description's: %s\n%s", where, list(errs), answer)
 	}
 	if isProblem(rec.header) {
 		var p protocol.Problem
-		if protocol.Unmarshal(rec.body.Bytes(), &p) == nil && p.CodeAt(rec.status) == "" {
-			t.Errorf("apitest: %s: the error's code does not count: one of this status, beside its own type\n%s", where, rec.body.Bytes())
+		if protocol.Unmarshal(answer, &p) == nil && p.CodeAt(rec.status) == "" {
+			t.Errorf("apitest: %s: the error's code does not count: one of this status, beside its own type\n%s", where, answer)
 		}
 	}
+}
+
+// decoded is the body of an answer as its Content-Encoding has it: gzip, to
+// a request whose Accept-Encoding names gzip or "*", or none. That is a
+// looser reading than RFC 9110 §12.5.3's, weights and all, which a server's
+// own tests hold it to. Whether a coding may be on that answer at all is the
+// description's to say.
+func decoded(t testing.TB, where string, r *http.Request, rec *recorder) ([]byte, bool) {
+	ce := rec.header.Get("Content-Encoding")
+	if ce == "" || rec.body.Len() == 0 {
+		return rec.body.Bytes(), true
+	}
+	ae := strings.ToLower(strings.Join(r.Header.Values("Accept-Encoding"), ","))
+	if ce != "gzip" || !strings.Contains(ae, "gzip") && !strings.Contains(ae, "*") {
+		t.Errorf("apitest: %s: an answer in %q, which the request did not take (Accept-Encoding %q)", where, ce, r.Header.Values("Accept-Encoding"))
+		return nil, false
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(rec.body.Bytes()))
+	if err != nil {
+		t.Errorf("apitest: %s: an answer in gzip that is not gzip: %v", where, err)
+		return nil, false
+	}
+	b, err := io.ReadAll(zr)
+	if err != nil {
+		t.Errorf("apitest: %s: an answer in gzip that is not gzip: %v", where, err)
+		return nil, false
+	}
+	return b, true
 }
 
 func missing(errs []*errors.ValidationError) bool {
