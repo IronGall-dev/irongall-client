@@ -15,7 +15,7 @@
 //	identity.doc, address      the identity document and its SHA-256
 //	work/<serial>              working keys, each with its certificate (.pub, -cert.pub): they sign what the box says
 //	prekeys/<serial>.agekey    age keys, each with its signed statement (.txt, .txt.sig) and when it was signed (.made); never backed up
-//	prekey-lifetime            how long each new prekey is valid for: a number of seconds, from 90000 (a day and an hour) to 2851200 (33 days), the default. Yours to write, or irongall prekey lifetime's
+//	prekey-lifetime            how long each new prekey is valid for: a number of seconds, from 93600 (a day and two hours) to 2851200 (33 days), the default. Yours to write, or irongall prekey lifetime's
 //	serial                     the number of the prekey this box published last, which is its certificate's serial too: the box's clock gave it
 //	pass                       the pass this box last signed for its server, used until it runs out
 //	etag                       the ETag of the last poll that found the box empty, sent back in If-None-Match; gone once a poll finds mail

@@ -99,8 +99,9 @@ func TestAReplayIsRefusedAfterTheClockStepsBack(t *testing.T) {
 	}
 }
 
-// A recv the server refuses for its clock prunes nothing: the seen-set is
-// pruned only once the server has taken a pass dated by that clock.
+// A recv refused for its clock prunes nothing, whether its server refuses the
+// pass or the box its own certificate first: the seen-set is pruned only once
+// the server has taken a pass dated by that clock.
 func TestARefusedDrainPrunesNothing(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
@@ -116,9 +117,10 @@ func TestARefusedDrainPrunesNothing(t *testing.T) {
 	if err != nil || len(before) == 0 {
 		t.Fatalf("no seen-set after a delivery: %v", err)
 	}
-	off = 40 * 24 * time.Hour
-	if _, err := r.Receive(ctx); client.Code(err) != protocol.CodePassExpired {
-		t.Fatalf("a drain 40 days ahead: %v, want pass_expired", err)
+	// Far enough ahead that a prune by this clock would drop the line.
+	off = protocol.SeenFor + 4*24*time.Hour
+	if _, err := r.Receive(ctx); err == nil {
+		t.Fatalf("a drain %v ahead was taken", off)
 	}
 	after, err := os.ReadFile(filepath.Join(r.Dir(), "seen"))
 	if err != nil || !bytes.Equal(before, after) {

@@ -661,8 +661,8 @@ as Q; srv_inject "$Q" "$P" old.P.age; recv; [ "$RECV_RC" = 0 ] && printf '%s' "$
 off=3000; ig_now(){ echo $(($(date -u +%s) + off)); }; recv; [ "$RECV_RC" = 0 ] || bad "replay set: a drain 50 minutes fast: $RECV_ERR"      # 33 days and a minute old by this clock, which a server takes
 off=-540; srv_inject "$Q" "$P" old.P.age "$oid"; recv; [ -z "$RECV_OUT" ] && [ "$RECV_RC" = 0 ] && grep -q "^$oid " $IG/seen && [ ! -e $IG/seen-floor ] &&
   ok "a message delivered, a drain 50 minutes fast, then the clock 9 minutes slow: the server's replay of it is not delivered again, since a line is kept 66 days and an hour" || bad "replay set: the replay after a step back: $RECV_OUT / $RECV_ERR"
-cp $IG/seen seen.before; off=$((40*86400)); recv; grep -q pass_expired $SRV/recv.err && cmp -s seen.before $IG/seen && [ ! -e $IG/seen-floor ] &&
-  ok "a recv refused for a clock 40 days fast prunes nothing: the replay set is pruned only once the server has taken a pass" || bad "replay set: a refused recv: $RECV_ERR"
+cp $IG/seen seen.before; off=$((70*86400)); recv; [ "$RECV_RC" != 0 ] && cmp -s seen.before $IG/seen && [ ! -e $IG/seen-floor ] &&      # far enough ahead that a prune by this clock would drop the line
+  ok "a recv refused for a clock 70 days fast prunes nothing: the replay set is pruned only once the server has taken a pass" || bad "replay set: a refused recv: $RECV_ERR"
 eval "$real_now"; printf '%s %s %s %s\n' "$(printf '%064d' 7)" $(($(date -u +%s) - 67*86400)) "$P" 00000000-0000-4000-8000-0000000000f3 >> $IG/seen; t0=$(($(date -u +%s) - 66*86400 - 3600))
 recv; f=$(cat $IG/seen-floor 2> /dev/null) && [ "$f" -ge "$t0" ] && [ "$f" -le $((t0 + 5)) ] && ! grep -q "^$(printf '%064d' 7) " $IG/seen && grep -q "^$oid " $IG/seen &&
   ok "a prune that drops a line raises the floor to the cutoff it dropped it at, first" || bad "replay set: the floor after a prune: '$(cat $IG/seen-floor 2> /dev/null)', cutoff $t0"

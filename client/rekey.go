@@ -21,9 +21,10 @@ import (
 // if kt is empty, signed by a NEW working key under a new certificate. The
 // three share one number, which this machine's clock gives
 // ([protocol.SerialAt]). If an earlier Rekey signed one and the server did
-// not take it, that one is sent again, unchanged, until it expires: a key is
-// signed once, so no key is encrypted to for longer than its lifetime, at
-// most 33 days, whatever the server does with what it was sent. It needs only the identity, so it also
+// not take it, that one is sent again, unchanged, until it expires or the
+// box's lifetime is set lower than it was made for: a key is signed once, so
+// no key is encrypted to for longer than its lifetime, at most 33 days or
+// the box's shorter one, whatever the server does with what it was sent. It needs only the identity, so it also
 // recovers a box that lost its prekeys or its working key, and such a box
 // needs no record of the numbers the lost machine used. The upload carries a
 // pass under the new certificate, and the server then takes no pass under an
@@ -237,8 +238,9 @@ func (b *Box) publishedType(n uint64) protocol.KeyType {
 // signedPrekey looks at what an earlier attempt left for a serial. If it
 // signed a statement that can still be sent, that statement is returned: the
 // box's own, for this serial and the key it holds, of type kt, not expired,
-// under a certificate that is valid now and whose working key the box holds.
-// If it signed one that cannot be, the serial is spent. If it signed nothing,
+// made for no longer than the box's lifetime now allows, under a certificate
+// that is valid now and whose working key the box holds. If it signed one
+// that cannot be, the serial is spent. If it signed nothing,
 // neither: a key it made and never signed is free to use.
 func (b *Box) signedPrekey(serial uint64, kt protocol.KeyType) (p *protocol.Prekey, spent bool, err error) {
 	stem := b.path("prekeys", strconv.FormatUint(serial, 10))
@@ -265,6 +267,16 @@ func (b *Box) signedPrekey(serial uint64, kt protocol.KeyType) (p *protocol.Prek
 	}
 	if held, err := ageRecipient(stem + ".agekey"); err != nil || held != p.Key {
 		return nil, true, nil //nolint:nilerr // a statement for a key this box does not hold
+	}
+	// Made for longer than the box's lifetime now allows, or with no record
+	// of when: spent, as an expired one is, so a lifetime set lower holds
+	// from the next renewal whatever waited (PROTOCOL.md §6.4).
+	lifetime, err := b.PrekeyLifetime()
+	if err != nil {
+		return nil, false, err
+	}
+	if made, err := b.made(serial); err != nil || p.NotAfter.Sub(made) > lifetime {
+		return nil, true, nil //nolint:nilerr // a statement made for longer than this box now signs one for
 	}
 	return p, false, nil
 }
@@ -320,14 +332,19 @@ func (b *Box) recordPublished(serial uint64) error {
 const renewAfter = 24 * time.Hour
 
 // MinPrekeyLifetime is the shortest a box's prekeys may be valid for: the
-// day Receive waits to renew one (renewAfter), and an hour of slip for when
-// recv runs and for clocks less than that hour apart.
-const MinPrekeyLifetime = renewAfter + time.Hour
+// day Receive waits to renew one (renewAfter), an hour of slip for when recv
+// runs, and protocol.MaxSkew for clocks, the hour a sender's may read ahead
+// of the box's (PROTOCOL.md §0, §6.4).
+const MinPrekeyLifetime = renewAfter + time.Hour + protocol.MaxSkew
 
 // RecvWithin is how often a box must run Receive for a prekey of the given
-// lifetime never to run out: Receive renews one once it is a day old, so
-// what is left of the lifetime after that day.
-func RecvWithin(lifetime time.Duration) time.Duration { return lifetime - renewAfter }
+// lifetime to be renewed while every sender whose clock a server takes still
+// takes it: Receive renews one once it is a day old, and the prekey then has
+// protocol.MaxSkew left, which whoever makes a time-limited thing leaves
+// (PROTOCOL.md §0).
+func RecvWithin(lifetime time.Duration) time.Duration {
+	return lifetime - renewAfter - protocol.MaxSkew
+}
 
 // lifetimeGrammar is what a box's prekey-lifetime file holds: a number of
 // seconds, alone on its line. Both clients hold the file to it.
@@ -356,7 +373,7 @@ func (b *Box) PrekeyLifetime() (time.Duration, error) {
 }
 
 // lifetimeRule is what a prekey lifetime is, as a box's owner is told it.
-var lifetimeRule = fmt.Sprintf("one is a number of seconds, alone on its line, from %d (a day and an hour) to %d (33 days)", int64(MinPrekeyLifetime/time.Second), int64(protocol.PrekeyLifetime/time.Second))
+var lifetimeRule = fmt.Sprintf("one is a number of seconds, alone on its line, from %d (a day and two hours) to %d (33 days)", int64(MinPrekeyLifetime/time.Second), int64(protocol.PrekeyLifetime/time.Second))
 
 // SetPrekeyLifetime writes the box's prekey-lifetime file: each prekey made
 // from now on is valid for d, a whole number of seconds from

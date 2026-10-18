@@ -661,18 +661,21 @@ neither --no-pq nor --pq it keeps the type the box has.`,
 }
 
 // shortLifetime is the prekey lifetime under which setting one warns: with
-// less, a recv once a day does not renew a prekey before it runs out.
-const shortLifetime = 49 * time.Hour
+// less, a recv once a day does not renew a prekey while an hour of it is left
+// for clocks (client.RecvWithin): the day between two recv runs, the day recv
+// waits to renew, and that hour.
+const shortLifetime = 2*24*time.Hour + protocol.MaxSkew
 
 func (e *cli) lifetimeCmd() *cobra.Command {
 	return command("lifetime [<time>]", "how long each new prekey is valid for: print it, or set it",
 		`Print how long each new prekey of this box is valid for, or set it, from
-1d1h to 33d, the default. A time is written as sshd writes one: numbers, each
+1d2h to 33d, the default. A time is written as sshd writes one: numbers, each
 with its unit, s, m, h, d or w, added together, as in 2d1h or 90m; a number
 with no unit is seconds. recv renews the prekey once it is a day old, so with
-a lifetime L it must run at least every L less a day, or the prekey runs out
-and senders are refused until the box renews. A lifetime set lower holds
-from the next recv, which renews a prekey made for longer.`,
+a lifetime L it must run at least every L less a day and an hour, or the
+prekey runs out, or comes so near it that a sender whose clock is ahead
+refuses it, and senders are refused until the box renews. A lifetime set
+lower holds from the next recv, which renews a prekey made for longer.`,
 		nargs(0, 1), func(c *cobra.Command, args []string) error {
 			b, err := e.box()
 			if err != nil {

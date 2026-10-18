@@ -2,6 +2,7 @@ package client_test
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -153,7 +154,7 @@ func TestAPrekeyWithNoRecordIsRenewedAndItsKeysKept(t *testing.T) {
 // read.
 func TestALifetimeOutOfFormIsNeverTheDefault(t *testing.T) {
 	ctx := context.Background()
-	for _, raw := range []string{"", "\n", "abc\n", "0\n", "89999\n", "2851201\n", "090000\n", " 90000\n", "90000 \n", "90000\n\n", "90000\r\n", "9e4\n", "+90000\n", "1d1h\n", "99999999999\n"} {
+	for _, raw := range []string{"", "\n", "abc\n", "0\n", "89999\n", "90000\n", "93599\n", "2851201\n", "090000\n", " 90000\n", "90000 \n", "90000\n\n", "90000\r\n", "9e4\n", "+90000\n", "1d1h\n", "99999999999\n"} {
 		e := newEnv(t)
 		b := e.box(protocol.Classic)
 		n := numberOf(t, b)
@@ -174,7 +175,7 @@ func TestALifetimeOutOfFormIsNeverTheDefault(t *testing.T) {
 			t.Errorf("%q: status %+v, %v", raw, st, err)
 		}
 	}
-	for raw, want := range map[string]time.Duration{"90000": client.MinPrekeyLifetime, "90000\n": client.MinPrekeyLifetime, "2851200\n": protocol.PrekeyLifetime, "172800\n": 48 * time.Hour} {
+	for raw, want := range map[string]time.Duration{"93600": client.MinPrekeyLifetime, "93600\n": client.MinPrekeyLifetime, "2851200\n": protocol.PrekeyLifetime, "172800\n": 48 * time.Hour} {
 		b := newEnv(t).box(protocol.Classic)
 		if err := os.WriteFile(filepath.Join(b.Dir(), "prekey-lifetime"), []byte(raw), 0o600); err != nil {
 			t.Fatal(err)
@@ -197,7 +198,7 @@ func TestALifetimeOutOfFormIsNeverTheDefault(t *testing.T) {
 // At the shortest lifetime, the two clocks furthest apart that a server
 // takes, a box 9 minutes slow and a sender 49 fast (PROTOCOL.md §0), still
 // meet: the box renews once its prekey is a day old, which leaves that
-// sender two minutes of it.
+// sender an hour of it and two minutes.
 func TestTheShortestLifetimeAtTheClocksFurthestApart(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
@@ -216,13 +217,104 @@ func TestTheShortestLifetimeAtTheClocksFurthestApart(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.clock.Add(24*time.Hour + time.Second)
-	send(t, a, b, "with two minutes of the prekey left, by the sender's clock")
+	send(t, a, b, "with an hour and two minutes of the prekey left, by the sender's clock")
 	if res := receive(t, b); res.Renewed == nil || len(res.Delivered) != 1 {
 		t.Fatalf("the slow box's receive: %+v", res)
 	}
-	e.clock.Add(time.Hour)
+	e.clock.Add(2 * time.Hour)
 	send(t, a, b, "to the renewed prekey, after the first ran out")
 	if res := receive(t, b); len(res.Delivered) != 1 {
 		t.Fatalf("after the first prekey ran out: %+v", res)
+	}
+}
+
+// PROTOCOL.md §6.4: "With a lifetime L, recv must run at least every L less
+// a day and an hour". At that cadence the renewal comes with an hour of the
+// prekey left by the box's clock, so a sender up to that hour fast, which a
+// server takes (§0), is never refused: at the shortest lifetime and at one a
+// little longer, with recv a minute short of the day the first time.
+func TestTheDocumentedCadenceLeavesRoomForAClock(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		life      time.Duration
+		box, from time.Duration // the box's clock and the sender's, from the server's
+	}{
+		{client.MinPrekeyLifetime, 0, 30 * time.Minute},
+		{client.MinPrekeyLifetime, -9 * time.Minute, 49 * time.Minute},
+		{3*24*time.Hour + time.Hour, 0, 30 * time.Minute},
+	} {
+		e := newEnv(t)
+		boxOff, fromOff := c.box, c.from
+		b, err := client.Init(ctx, t.TempDir(), e.skewed(&boxOff), protocol.Classic)
+		if err != nil {
+			t.Fatal(err)
+		}
+		landAll(t, b)
+		a, err := client.Init(ctx, t.TempDir(), e.skewed(&fromOff), protocol.Classic)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lifetimeOf(t, b, c.life)
+		if _, err := b.Rekey(ctx, ""); err != nil {
+			t.Fatal(err)
+		}
+		every := client.RecvWithin(c.life)
+		e.clock.Add(24*time.Hour - time.Minute) // a recv a minute short of the day
+		if res := receive(t, b); res.Renewed != nil {
+			t.Fatal("renewed early")
+		}
+		e.clock.Add(every - time.Hour)
+		refused := 0
+		for m := 2; m <= 120; m += 2 {
+			e.clock.Add(2 * time.Minute)
+			if m == 60 {
+				receive(t, b) // the next recv, every after the last
+			}
+			if _, err := a.Send(ctx, b.Address(), "a message every two minutes"); err != nil {
+				refused++
+			}
+		}
+		if refused > 0 {
+			t.Errorf("lifetime %v, recv every %v, box %v and sender %v off: refused %d of 60 sends, two minutes apart", c.life, every, c.box, c.from, refused)
+		}
+	}
+}
+
+// A renewal the server never took waits, signed for 33 days, and the owner
+// then sets the shortest lifetime. PROTOCOL.md §6.4: "A lifetime set lower
+// holds from the next recv, which renews a prekey made for longer." The one
+// that waited is spent, and a new key is made for the lifetime now set.
+func TestALowerLifetimeHoldsOverAWaitingRenewal(t *testing.T) {
+	for _, via := range []string{"recv", "prekey renew"} {
+		t.Run(via, func(t *testing.T) {
+			e := newEnv(t)
+			b := e.box(protocol.Classic)
+			e.clock.Add(25 * time.Hour)
+			failOnce(e, http.MethodPut, "/prekey") // the server is down: it never sees the upload
+			if res := receive(t, b); res.RenewErr == nil {
+				t.Fatal("the renewal did not fail")
+			}
+			lifetimeOf(t, b, client.MinPrekeyLifetime)
+			e.clock.Add(time.Hour)
+			var p *protocol.Prekey
+			if via == "recv" {
+				p = receive(t, b).Renewed
+			} else {
+				var err error
+				if p, err = b.Rekey(context.Background(), ""); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if p == nil {
+				t.Fatal("no renewal")
+			}
+			made, err := protocol.ParseTime(strings.TrimSuffix(madeOf(t, b, p.Serial), "\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if life := p.NotAfter.Sub(made); life > client.MinPrekeyLifetime {
+				t.Errorf("%s published a prekey made for %v after the lifetime was set to %v", via, life, client.MinPrekeyLifetime)
+			}
+		})
 	}
 }
