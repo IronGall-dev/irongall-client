@@ -3,7 +3,8 @@
 //
 //   - every answer, in strict mode, so a member, a status or a header the
 //     description does not name fails, as does one it requires and the answer
-//     lacks;
+//     lacks (a header it does not name is looked for only once every header
+//     it names is right: the validator checks that last);
 //   - every request: one the description refuses must not be answered 2xx;
 //   - a route the description lacks gets the router's plain 404 or 405;
 //   - every error's code counts (protocol.Problem.CodeAt): one the
