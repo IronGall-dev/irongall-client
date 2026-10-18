@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf16"
@@ -2318,5 +2319,96 @@ func TestTheScriptsPassNamesTheServerAsAnOrigin(t *testing.T) {
 		if got, err := bash(t, nil, "ig_server '"+base+"'"); err != nil || got != want+"\n" {
 			t.Errorf("%s: the pass names %q, %v; want %q", base, got, err, want)
 		}
+	}
+}
+
+// Both clients call a server over https, or over http only on this machine
+// (PROTOCOL.md §0), and give one verdict on each URL: as the box's own
+// server, and as a revocation server a list names. The script refuses one
+// before any command runs.
+func TestBothClientsCallTheSameServers(t *testing.T) {
+	need(t, "bash", "jq")
+	const refusal = "is not a server this client calls"
+	for _, u := range []string{
+		"https://irongall.dev", "HTTPS://irongall.dev", "https://10.0.0.1:8443", "https://someone@irongall.dev",
+		"http://127.0.0.1:8080", "http://127.255.0.9", "http://[::1]:8080", "http://[::1]", "http://someone@127.0.0.1:1",
+		"http://example.com", "http://irongall:8080", "http://10.0.0.1:8080", "http://127.0.0.256", "http://127.01.0.1",
+		"http://127.0.0.1.example", "http://localhost.example", "http://localhost:1", "http://LOCALHOST", "http://[::2]:8080", "http://[::ffff:127.0.0.1]:8080",
+		"ftp://irongall.dev", "irongall.dev", "https://", "http://",
+	} {
+		_, err := client.Open(t.TempDir(), client.Options{Base: u})
+		goTakes := err == nil || !strings.Contains(err.Error(), refusal)
+		_, shErr := bash(t, []string{"U=" + u}, `ig_tls "$U"`)
+		if goTakes != (shErr == nil) {
+			t.Errorf("%q as the box's server: the Go client %v, the script %v", u, err, shErr)
+		}
+		if !goTakes && (shErr == nil || !strings.Contains(shErr.Error(), refusal)) {
+			t.Errorf("%q: the script's refusal: %v", u, shErr)
+		}
+		_, err = client.ParseRevocationServers(u)
+		_, shErr = bash(t, []string{"IG_REVOCATION_SERVERS=" + u}, "ig_revservers")
+		if (err == nil) != (shErr == nil) {
+			t.Errorf("%q as a revocation server: the Go client %v, the script %v", u, err, shErr)
+		}
+	}
+	// Each call is held to it too, as the Go client's are: ig_api calls no
+	// curl for a server out of form, whoever named it.
+	if _, err := bash(t, []string{"IRONGALL_HOME=" + t.TempDir()}, `curl(){ echo "curl was called" >&2; return 7; }; IG_BASE=http://example.com ig_api GET /v1/x`); err == nil || !strings.Contains(err.Error(), refusal) || strings.Contains(err.Error(), "curl was called") {
+		t.Errorf("ig_api to a server over http elsewhere: %v", err)
+	}
+	cmd := exec.Command("bash", abs(t, "irongall.sh"), "addr")
+	cmd.Env = append(os.Environ(), "IRONGALL_HOME="+t.TempDir(), "IG_BASE=http://example.com")
+	if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), refusal) {
+		t.Errorf("irongall.sh addr with a server over http elsewhere: %v %q", err, out)
+	}
+}
+
+// The script follows no redirect, and takes none as an answer: curl, with
+// no -L, exits 0 on a 3xx, whose body is not the API's. The issue's repro,
+// as the Go client's test has it: nothing reaches the other server, and
+// the read fails with the redirect's status.
+func TestTheScriptFollowsNoRedirect(t *testing.T) {
+	need(t, append(scriptTools, "curl")...)
+	srv := fakeserver.New(t, time.Now)
+	var mu sync.Mutex
+	var reached []string
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		reached = append(reached, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(other.Close)
+	mode := "--no-pq"
+	if pq() {
+		mode = ""
+	}
+	dir := t.TempDir()
+	env := []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}
+	if _, err := bash(t, env, "ig_init "+mode); err != nil {
+		t.Fatalf("ig_init: %v", err)
+	}
+	for _, status := range []int{http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if strings.HasSuffix(r.URL.Path, "/messages") {
+				// A body a list would take, so that only the status can refuse it.
+				w.Header().Set("Location", other.URL+r.URL.RequestURI())
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(`{"messages":[]}`))
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+		_, err := bash(t, env, "ig_recv")
+		if err == nil || !strings.Contains(err.Error(), `"status":`+strconv.Itoa(status)) || !strings.Contains(err.Error(), "a redirect, which this client never follows") {
+			t.Errorf("a drain answered %d: %v", status, err)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(reached) != 0 {
+		t.Fatalf("a redirect was followed: %q", reached)
 	}
 }

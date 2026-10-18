@@ -27,13 +27,22 @@ var revocationServerWait = 10 * time.Second
 
 // serverGrammar is a server as a box's list names one: http or https, a
 // host, a port if it has one, and nothing after it. Both clients hold a
-// list to the same form.
+// list to the same form, and to https but for a server on this machine
+// (namesAServer).
 var serverGrammar = regexp.MustCompile(`^https?://(\[[0-9a-f:]+\]|[a-z0-9]([a-z0-9.-]*[a-z0-9])?)(:[0-9]{1,5})?$`)
+
+// namesAServer reports whether s is a revocation server as a box's list may
+// name one: of serverGrammar's form, and a URL [checkServerURL] takes.
+func namesAServer(s string) bool { return serverGrammar.MatchString(s) && checkServerURL(s) == nil }
+
+// notAServer is what a list is told of an entry namesAServer refuses.
+const notAServer = "one is named as https://host or https://host:port, in lowercase, with nothing after it, and as http only for a server on this machine, by its address (127.0.0.0/8, ::1)"
 
 // ParseRevocationServers reads a list of revocation servers as a box's
 // owner writes one, in $IRONGALL_REVOCATION_SERVERS or in the box's
 // revocation-servers file: each is a server's URL, as https://host or
-// https://host:port, with spaces, commas or line ends between. The one word
+// https://host:port (http only on this machine), with spaces, commas or
+// line ends between. The one word
 // NoRevocationServers is the empty list, which is not nil: the box asks its
 // own server only. Text that names nothing is nil, as if it were not there.
 func ParseRevocationServers(s string) ([]string, error) {
@@ -46,8 +55,8 @@ func ParseRevocationServers(s string) ([]string, error) {
 	}
 	list := []string{}
 	for _, f := range fields {
-		if !serverGrammar.MatchString(f) {
-			return nil, fmt.Errorf("%.80q is not a revocation server: one is named as https://host or https://host:port, in lowercase, with nothing after it; %q alone means none", f, NoRevocationServers)
+		if !namesAServer(f) {
+			return nil, fmt.Errorf("%.80q is not a revocation server: %s; %q alone means none", f, notAServer, NoRevocationServers)
 		}
 		if !slices.Contains(list, f) {
 			list = append(list, f)
@@ -78,8 +87,8 @@ func (b *Box) RevocationServers() ([]string, error) {
 	}
 	var out []string
 	for _, s := range list {
-		if !serverGrammar.MatchString(s) {
-			return nil, fmt.Errorf("%.80q is not a revocation server: one is named as https://host or https://host:port, in lowercase, with nothing after it", s)
+		if !namesAServer(s) {
+			return nil, fmt.Errorf("%.80q is not a revocation server: %s", s, notAServer)
 		}
 		if s != b.base && !slices.Contains(out, s) {
 			out = append(out, s)

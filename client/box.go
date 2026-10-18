@@ -11,7 +11,9 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -43,11 +45,13 @@ const requestTimeout = time.Minute
 
 // Options configures a [Box]. The zero value is ready to use.
 type Options struct {
-	// Base is the server's base URL; DefaultBase if empty.
+	// Base is the server's base URL; DefaultBase if empty. It is https, or
+	// http only to a server on this machine ([checkServerURL]).
 	Base string
 	// HTTPClient makes the requests; if nil, a client whose requests time
 	// out after a minute, so a server that never answers cannot hold the
-	// box's lock for ever.
+	// box's lock for ever. The box uses a copy of it that follows no
+	// redirect ([followNone]).
 	HTTPClient *http.Client
 	// Now is the clock; time.Now if nil.
 	Now func() time.Time
@@ -111,6 +115,9 @@ type Box struct {
 // directories; [Box.Rekey] then gives it a working key and a prekey.
 func Open(dir string, opt Options) (*Box, error) {
 	b := newBox(dir, opt)
+	if err := checkServerURL(b.base); err != nil {
+		return nil, err
+	}
 	if err := b.loadIdentity(); err != nil {
 		return nil, err
 	}
@@ -130,11 +137,47 @@ func newBox(dir string, opt Options) *Box {
 	}
 	if b.http == nil {
 		b.http = &http.Client{Timeout: requestTimeout}
+	} else {
+		c := *b.http
+		b.http = &c
 	}
+	b.http.CheckRedirect = followNone
 	if b.now == nil {
 		b.now = time.Now
 	}
 	return b
+}
+
+// followNone is every box's redirect policy: a 3xx comes back as the answer
+// it is, an [*APIError]. The API redirects nowhere (PROTOCOL.md §0), so a
+// redirect is a server's mistake or its attack, and what one can do is send
+// the pass, or the address a lookup asks about, somewhere else: Go's own
+// policy keeps Authorization on a redirect to the same host name, whatever
+// its scheme or port. The script's curl follows none either.
+func followNone(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+
+// checkServerURL holds the URL of a server a box calls, its own or a
+// revocation server, to https, or to http only for a server on this
+// machine (onThisMachine). A pass is a bearer credential for the minutes it
+// has left, and a lookup names the address it asks about, so neither
+// crosses a network in the clear (RFC 6750 §5.3). Nothing allows more.
+func checkServerURL(s string) error {
+	u, err := url.Parse(s)
+	if err == nil && u.Host != "" && (u.Scheme == "https" || u.Scheme == "http" && onThisMachine(u.Hostname())) {
+		return nil
+	}
+	return fmt.Errorf("%.80q is not a server this client calls: one is https, or http only to this machine, by its address (127.0.0.0/8, ::1)", s)
+}
+
+// onThisMachine reports whether host is this machine's loopback, written as
+// an address: one in 127.0.0.0/8, or ::1. A name is not: "localhost" is
+// what a resolver says it is (RFC 8252 §8.3).
+func onThisMachine(host string) bool {
+	if host == "::1" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && !strings.Contains(host, ":") && ip.To4()[0] == 127
 }
 
 // Address returns the box's address.
@@ -178,6 +221,9 @@ func (b *Box) path(elem ...string) string {
 // once. Run again on a finished box, it changes nothing.
 func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*Box, error) {
 	b := newBox(dir, opt)
+	if err := checkServerURL(b.base); err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}

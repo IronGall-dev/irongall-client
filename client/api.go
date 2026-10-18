@@ -29,7 +29,9 @@ const maxWaitSeconds = 24 * 60 * 60
 // read into out when out is not nil: as JSON, or as the ciphertext's bytes.
 // A 304 to a request that carried If-None-Match is answered, with nothing
 // read into out; one to a request that did not breaks its form. Any other
-// status outside 2xx is an *APIError. It returns the response, whose body is
+// status outside 2xx is an *APIError, a redirect among them, which no box
+// follows ([followNone]). A server whose URL [checkServerURL] refuses is
+// called not at all. It returns the response, whose body is
 // consumed.
 func (b *Box) call(ctx context.Context, method, path string, in any, hdr http.Header, out any) (*http.Response, error) {
 	return b.callAt(ctx, b.base, method, path, in, hdr, out)
@@ -47,6 +49,9 @@ type ciphertext struct {
 // callAt is call, of the server at base: this box's own, or a revocation
 // server, which is sent no pass.
 func (b *Box) callAt(ctx context.Context, base, method, path string, in any, hdr http.Header, out any) (*http.Response, error) {
+	if err := checkServerURL(base); err != nil {
+		return nil, err
+	}
 	var body io.Reader
 	contentType := ""
 	switch v := in.(type) {

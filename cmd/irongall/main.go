@@ -22,7 +22,8 @@ import (
 const about = `The box lives in $IRONGALL_HOME, or ${XDG_CONFIG_HOME:-~/.config}/irongall/${IRONGALL_BOX:-default}.
 Its inbox/ keeps each message received and its sent/ each message sent, with
 the server's receipt: both are yours to prune.
-The server is $IRONGALL_BASE, or https://irongall.dev.
+The server is $IRONGALL_BASE, or https://irongall.dev: https, or http only
+to a server on this machine, and a redirect is never followed.
 Beside its server a box asks revocation servers whether an address is revoked,
 and publishes its own revocations to them: those $IRONGALL_REVOCATION_SERVERS
 names (URLs with spaces or commas between, or "none"), or else those its

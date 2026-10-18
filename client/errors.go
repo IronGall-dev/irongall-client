@@ -75,8 +75,11 @@ type APIError struct {
 func (e *APIError) Error() string {
 	c := e.Problem.Code
 	s := fmt.Sprintf("ERROR %d: an answer this client does not know", e.Status)
-	if c.Known() {
+	switch {
+	case c.Known():
 		s = fmt.Sprintf("ERROR %d %s: %s", e.Status, c, e.words())
+	case e.Status >= 300 && e.Status <= 399:
+		s = fmt.Sprintf("ERROR %d: a redirect, which this client never follows: the API answers where it is called", e.Status)
 	}
 	if n := int(e.RetryAfter / time.Second); n == 1 {
 		s += "; the server asks to wait 1 second"

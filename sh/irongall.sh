@@ -51,13 +51,15 @@ ig_time(){ # <timestamp> → its Unix time, only for exactly YYYY-MM-DDTHH:MM:SS
 ig_api(){ # <METHOD> <PATH> [body file] [curl args…] → the body on stdout, as curl -o wrote it. The body file is sent as it is: a message's ciphertext, POSTed to …/messages, as application/octet-stream (PROTOCOL.md §4.5), and any other body as JSON. Any non-2xx: an error line with its status, its code (ig_code) and the wait its Retry-After asks for, and nothing the server wrote: its detail, hint and title are for a person reading the body (PROTOCOL.md §13). No answer at all: an error line with curl's words. Keeps the answer in $IG/error.json and its headers in $IG/error.headers, returns 1
   local m=$1 p=$2 f=${3-} t=application/json s c w; shift 2; [ $# -gt 0 ] && shift
   [[ "$m $p" == "POST /v1/"*"/messages?"* ]] && t=application/octet-stream
+  ig_tls "$IG_BASE" || return 1
   rm -f "$IG/error.json" "$IG/error.headers" "$IG/response.body"
-  curl -sS --max-time 60 --max-filesize 16777216 --fail-with-body -D "$IG/response.headers" -o "$IG/response.body" -X "$m" ${f:+-H "Content-Type: $t" --data-binary "@$f"} "$@" "$IG_BASE$p" 2> "$IG/curl.err" && { cat "$IG/response.body"; return 0; }
+  curl -sS --max-time 60 --max-filesize 16777216 --fail-with-body -D "$IG/response.headers" -o "$IG/response.body" -X "$m" ${f:+-H "Content-Type: $t" --data-binary "@$f"} "$@" "$IG_BASE$p" 2> "$IG/curl.err" &&
+    [[ $(LC_ALL=C sed -n 's/^HTTP\/[0-9.]* \([0-9][0-9][0-9]\).*/\1/p' "$IG/response.headers" | tail -n 1) = 2?? ]] && { cat "$IG/response.body"; return 0; }      # only a 2xx is an answer: curl, which follows no redirect without -L, exits 0 on a 3xx too
   mv "$IG/response.body" "$IG/error.json" 2> /dev/null; mv "$IG/response.headers" "$IG/error.headers" 2> /dev/null
   s=$(ig_status); c=$(ig_code); w=$(ig_wait)
   [ -n "$s" ] || { ig_err "no answer from $IG_BASE: $(tr '\n' ' ' < "$IG/curl.err")"; return 1; }
   jq -cn --argjson s "$s" --arg c "$c" --arg w "$w" '{type:"error", status:$s} + (if $c != "" then {code:$c} else {} end) + (if $w != "" then {retry_after:($w | tonumber)} else {} end) +
-    {message:("ERROR \($s)" + (if $c != "" then " \($c)" else ": an answer this client does not know" end) + (if $w != "" then "; the server asks to wait \($w) seconds" else "" end))}' >&2; return 1
+    {message:("ERROR \($s)" + (if $c != "" then " \($c)" elif $s >= 300 and $s <= 399 then ": a redirect, which this client never follows: the API answers where it is called" else ": an answer this client does not know" end) + (if $w != "" then "; the server asks to wait \($w) seconds" else "" end))}' >&2; return 1
 }
 IG_TYPE='tag:irongall.dev,2026-10-17:errors/'      # an error's type is this and its code, which names the problem and resolves to nothing (PROTOCOL.md §13): a code counts only beside its own
 IG_CODES='{"bad_request":400,"bad_address":400,"bad_encoding":400,"identity_mismatch":400,"bad_key":400,"prekey_not_new":400,"prekey_time":400,"unsupported_key_type":400,"not_age":400,"wrong_recipient_type":400,"bad_revocation":400,"unauthorized":401,"pass_expired":401,"certificate_not_current":401,"certificate_revoked":401,"unknown_sender":403,"sender_revoked":403,"sender_not_allowed":403,"sender_key_type":403,"adopt_key_refused":403,"no_such_mailbox":404,"no_such_message":404,"not_revoked":404,"conflict":409,"box_changed":409,"stale_prekey":409,"prekey_expired":409,"revoked":410,"too_large":413,"rate_limited":429,"renewals_spent":429,"certificates_spent":429,"certificate_revocations_spent":429,"sends_spent":429,"fetch_paced":429,"refetch_spent":429,"pair_full":429,"mailbox_full":429,"mailbox_busy":429,"unavailable":503}'      # every code, and its status (PROTOCOL.md §13)
@@ -114,6 +116,12 @@ ig_server(){ # <URL> → the server's name, as a pass names it: the URL's host, 
   if [[ $h =~ ^(.*):([0-9]*)$ ]]; then h=${BASH_REMATCH[1]}; p=${BASH_REMATCH[2]}; fi      # an IPv6 address ends in ], so a colon there begins no port
   [ -z "$p" ] || { p=$((10#$p)); case ${s,,}:$p in https:443 | http:80) ;; *) h+=:$p ;; esac; }
   echo "$h"
+}
+ig_tls(){ # <URL> → 0 when it is a server this box may call: https, or http only to a server on this machine, by its address: an IPv4 address in 127.0.0.0/8, or [::1]. A name is not, since localhost is what a resolver says it is (RFC 8252 §8.3), so that a pass, or the address a lookup asks about, never crosses a network in the clear (PROTOCOL.md §0). Otherwise a refusal, and 1
+  local h=${1#*://}; h=${h%%[/?#]*}; h=${h##*@}; h=${h,,}
+  [[ $h =~ ^(.*):[0-9]*$ ]] && h=${BASH_REMATCH[1]}      # an IPv6 address ends in ], so a colon there begins no port
+  [[ ${1,,} = https://?* ]] || { [[ ${1,,} = http://?* ]] && [[ $h = '[::1]' || $h =~ ^127(\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}$ ]]; } ||
+    ig_refuse "$(printf '%.80s' "$1") is not a server this client calls: one is https, or http only to this machine, by its address (127.0.0.0/8, ::1)"
 }
 ig_pass(){ # [serial] → the Authorization value of a call as this box. Without a serial: the pass kept in $IG/pass while it has more than 30 seconds left and no more than the ten minutes it was signed for, otherwise a new one, signed by the working key in use and kept. With one: a pass signed by that working key, for the call that publishes its prekey, left in $IG/pass.new until the server has taken it
   local A n=${1-} na h; A=$(cat "$IG/address") || return 1
@@ -440,7 +448,7 @@ ig_revservers(){ # → the revocation servers this box asks beside its own serve
   l=${l//,/ }; l=${l//$'\n'/ }; l=${l//$'\r'/ }; read -ra a <<< "$l"
   [ "${#a[@]}" != 1 ] || [ "${a[0]}" != none ] || return 0
   for s in "${a[@]}"; do
-    [[ $s =~ ^https?://(\[[0-9a-f:]+\]|[a-z0-9]([a-z0-9.-]*[a-z0-9])?)(:[0-9]{1,5})?$ ]] || { ig_refuse "this box's list of revocation servers names something that is not one: each is https://host or https://host:port, in lowercase, with nothing after it, and the one word none means none"; return 1; }
+    [[ $s =~ ^https?://(\[[0-9a-f:]+\]|[a-z0-9]([a-z0-9.-]*[a-z0-9])?)(:[0-9]{1,5})?$ ]] && ig_tls "$s" 2> /dev/null || { ig_refuse "this box's list of revocation servers names something that is not one: each is https://host or https://host:port, in lowercase, with nothing after it, and http only for a server on this machine, by its address (127.0.0.0/8, ::1); the one word none means none"; return 1; }
     [ "$s" = "$IG_BASE" ] || [[ $seen = *" $s "* ]] || echo "$s"      # the box's own server is asked anyway, and each of the others once
     seen="$seen$s "
   done
@@ -807,5 +815,6 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   fi
   words=${*:1:ig_n}; shift $ig_n
   if [ $ig_args -ge 0 ] && [ $# -ne $ig_args ]; then ig_wrong "irongall.sh $words takes $ig_args arguments, and was given $#" "$(ig_lines "$words" | head -n 1 | sed 's/   .*//')" "bash irongall.sh help $words"; fi
+  ig_tls "$IG_BASE" || exit 1      # refused before anything, as the Go client refuses to open a box whose server it would not call
   "$ig_cmd" "$@"; exit
 fi

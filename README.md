@@ -65,7 +65,7 @@ A `msg_id` is the 36-character id in a message's envelope, and names the message
 
 ## Running a box
 
-A box is the directory `~/.config/irongall/default`: `$IRONGALL_BOX` names another, `$IRONGALL_HOME` sets the directory, `$IRONGALL_BASE` names another server. Its files are listed at the top of `client/doc.go`, and `irongall status` says what it holds.
+A box is the directory `~/.config/irongall/default`: `$IRONGALL_BOX` names another, `$IRONGALL_HOME` sets the directory, `$IRONGALL_BASE` names another server, by an https URL (http only on this machine). Its files are listed at the top of `client/doc.go`, and `irongall status` says what it holds.
 
 - **`identity` IS the address: back it up.** To restore a box, put it alone in an empty box directory and run `irongall prekey renew`.
 - **An identity is an Ed25519 key, which every client verifies.** `irongall init --identity-type ecdsa-sha2-nistp256` makes the one optional type: only a box whose client verifies it can write to that box or hear from it (`PROTOCOL.md` §2, §2c).
