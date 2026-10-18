@@ -22,7 +22,8 @@
 //	peers/<address>/           the pinned identity document, the highest prekey serial and certificate serial seen, revoke.sig, its revocation, once one has verified, and revoked-certs.json, the highest revocation of its certificates that has verified
 //	revoked.sig                this box's own revocation, once it has met one that verifies: the box is finished
 //	revoked-certs.json         this box's own revocation of its certificates, once it has published one: the record that carries it, one line of JSON
-//	seen                       the replay set: ciphertext hash, sent_at, from, msg_id, for 33 days
+//	seen                       the replay set: ciphertext hash, sent_at, from, msg_id, for 33 days and an hour from sent_at
+//	seen-floor                 the highest cutoff a prune of seen dropped a line at, in seconds: mail sent before it is stale
 //	outbox/, outbox/failed/    envelopes awaiting a receipt, sealed afresh at every post and never kept sealed; ones that can never be delivered
 //	inbox/, quarantine/        accepted mail; refused mail, never delivered, each with its reason beside it (.reason) and each of the server's strings in base64 that is not of its form (keepRefused)
 //	held/                      accepted mail from senders this box has not allowed, as inbox/ keeps it: allow moves a sender's to inbox/, block deletes it

@@ -21,9 +21,15 @@ const (
 	// TTL is how long the server keeps unacked mail: 33 days, a prekey's
 	// longest life, so a box that checks in at least monthly loses neither new
 	// mail nor held mail. Every window of mail's age derives from it: the
-	// recipient's sent_at window, the replay set, the sender's outbox, and the
-	// latest a retired prekey can still be needed.
+	// recipient's sent_at window, the replay set (SeenFor), the sender's
+	// outbox, and the latest a retired prekey can still be needed.
 	TTL = 33 * 24 * time.Hour
+	// SeenFor is how long a reader keeps a message in its replay set,
+	// counted from the message's sent_at: the TTL it is fresh for, and
+	// MaxSkew, so a clock that steps back by as much as two clocks a server
+	// takes are apart reopens nothing (PROTOCOL.md §5 check 9). A step
+	// further back is the floor's (client: seen-floor).
+	SeenFor = TTL + MaxSkew
 )
 
 // msgIDGrammar is a msg_id's one form: a UUID as RFC 9562 §4 writes one, its

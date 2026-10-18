@@ -140,9 +140,6 @@ var (
 
 func (b *Box) drain(ctx context.Context) (*Result, error) {
 	res := &Result{}
-	if err := b.pruneSeen(); err != nil {
-		return nil, err
-	}
 	// Where mail lands is read once, before anything is acked: a policy or
 	// a list that cannot be read stops the drain, and the mail stays on the
 	// server.
@@ -179,6 +176,14 @@ func (b *Box) drain(ctx context.Context) (*Result, error) {
 		if err != nil {
 			// A server that says this box is revoked is asked to show it.
 			return res, b.proved(ctx, b.id.Address(), err, asked)
+		}
+		if page == 0 {
+			// Pruned by this clock only once the server has taken a pass
+			// dated by it: a drain that a clock far off would prune is
+			// stopped at its pass first (PROTOCOL.md §0, §5 check 9).
+			if err := b.pruneSeen(); err != nil {
+				return nil, err
+			}
 		}
 		n, err := protocol.PollInterval(resp.Header.Get("Retry-After"))
 		if err != nil {
@@ -340,7 +345,8 @@ func (b *Box) receiveOne(ctx context.Context, m protocol.MessageInfo, res *Resul
 //  4. The signature over the line as decrypted, in this box's message
 //     namespace, by a working key that identity certified.
 //  5. The envelope: version 1, to is this box.
-//  6. Freshness: sent_at no older than protocol.TTL (33 days).
+//  6. Freshness: sent_at no older than protocol.TTL (33 days), and not
+//     before the floor the seen-set was pruned at (seenFloor).
 //  7. The server's from for it is the sender that was verified.
 //  8. Revocation: this box holds no revocation of the sender. The server is
 //     asked for one, once for each sender in a drain. A revocation that
@@ -384,6 +390,15 @@ func (b *Box) judge(ctx context.Context, ct []byte, listedFrom string, asked *lo
 		return nil, false, nil, err
 	}
 	from, env := signed.Sender.Address(), signed.Envelope
+	// Freshness has a floor too: a sent_at before the highest cutoff the
+	// seen-set was pruned at may be a message whose line went.
+	floor, err := b.seenFloor()
+	if err != nil {
+		return nil, false, nil, err
+	}
+	if env.SentAt.Unix() < floor {
+		return refused(protocol.RefusedStale, "sent_at is before this box's replay set reaches back to, since its clock once read later than it does now")
+	}
 	// The server says who posted it, from the pass the post carried. It is
 	// held to the sender the signature proved.
 	if listedFrom != from.String() {
@@ -489,8 +504,9 @@ var defaultIgnorable = [][2]rune{
 }
 
 // The seen-set: one line per accepted message, "<ciphertext hash> <sent_at,
-// unix seconds> <from> <msg_id>", kept until sent_at + protocol.TTL, so the
-// replay check and the freshness check cover the same window.
+// unix seconds> <from> <msg_id>", kept until sent_at + protocol.SeenFor, so
+// the replay check covers the window the freshness check takes a message in,
+// and the floor (seenFloor) covers a clock that steps back further.
 
 func (b *Box) seenLines() ([][]string, error) {
 	f, err := os.Open(b.path("seen"))
@@ -554,19 +570,63 @@ func (b *Box) recordSeen(ciphertext []byte, env *protocol.Envelope) error {
 	return syncDir(b.dir)
 }
 
+// pruneSeen drops the lines past protocol.SeenFor by this clock. When it
+// drops one, the floor rises to the cutoff first, so a clock that later reads
+// further back than SeenFor allows for still takes no message whose line went
+// (seenFloor).
 func (b *Box) pruneSeen() error {
 	lines, err := b.seenLines()
 	if err != nil || lines == nil {
 		return err
 	}
-	cutoff := b.now().Add(-protocol.TTL).Unix()
+	cutoff := b.now().Add(-protocol.SeenFor).Unix()
 	var out bytes.Buffer
+	dropped := false
 	for _, l := range lines {
 		if sa, err := strconv.ParseInt(l[1], 10, 64); err == nil && sa >= cutoff {
 			out.WriteString(strings.Join(l, " ") + "\n")
+		} else {
+			dropped = true
 		}
 	}
+	if !dropped {
+		return nil
+	}
+	if err := b.raiseFloor(cutoff); err != nil {
+		return err
+	}
 	return writeFile(b.path("seen"), out.Bytes())
+}
+
+// seenFloor is the highest cutoff a prune of the seen-set has dropped a line
+// at, from the box's seen-floor file, or 0 when it has none: a message whose
+// sent_at is before it is stale whatever the clock now reads, since its line
+// may be gone. It is how a Kerberos server that has lost its replay cache
+// refuses until the window has passed (RFC 4120 §3.2.3). A file that names
+// anything but a number of seconds is an error, never the default.
+func (b *Box) seenFloor() (int64, error) {
+	raw, err := os.ReadFile(b.path("seen-floor"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	s, ok := bytes.CutSuffix(raw, []byte("\n"))
+	n, perr := strconv.ParseInt(string(s), 10, 64)
+	if !ok || perr != nil || n < 0 || strconv.FormatInt(n, 10) != string(s) {
+		return 0, fmt.Errorf("%s names no time: it is a number of seconds and a line feed, written by recv", b.path("seen-floor"))
+	}
+	return n, nil
+}
+
+// raiseFloor sets the floor to t, unless it is already that high.
+func (b *Box) raiseFloor(t int64) error {
+	floor, err := b.seenFloor()
+	if err != nil || floor >= t {
+		return err
+	}
+	return writeFile(b.path("seen-floor"), []byte(strconv.FormatInt(t, 10)+"\n"))
 }
 
 // entityTag is an ETag as a box keeps one: an entity-tag of RFC 9110 §8.8.3,

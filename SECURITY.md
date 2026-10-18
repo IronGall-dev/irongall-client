@@ -49,6 +49,7 @@ Each row is a claim the code makes, the section of `PROTOCOL.md` with the whole 
 | **A certificate its identity revoked loses everything it signed,** the address goes on, and nothing lowers what is revoked | §6.3a, §2b | `client/revokedcerts_test.go` |
 | **A sender reads its recipient's box before every post,** keeps what verifies of the revocations it carries, posts nothing on no answer, and seals a message that waited at its post | §4.1, §4.5 | `client/ask_test.go` |
 | **A failure never loses mail, and a retry is never delivered twice** | §4.5, §5 | `client/failure_test.go` |
+| **A server's replay of mail already delivered is refused, however the reader's clock has stepped since** | §5 check 9 | `client/replay_test.go`; `sh/test.sh` § 16 |
 | **Two independent clients give one verdict:** the Go client, and `sh/irongall.sh` on stock `age` and `ssh-keygen`, against a forging server, on every vector, and with each other | §11 | `sh/` |
 
 **Run them:** `README.md` § Tests, which says what each needs and what an `ok` does not tell you.

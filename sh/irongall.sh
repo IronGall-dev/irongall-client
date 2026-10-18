@@ -624,10 +624,10 @@ ig_recv(){ # drains the box, every page up to a drain's limits. ACCEPT → inbox
 ig_drain(){ # stops at a transient error or a fault of this box, leaving the rest on the server for the next drain. And at a number of messages and of pages (below): a server that lists mail without end costs one run that much
   local B c="" n i id k=0 pages=0; B=$(cat "$IG/address") || return 1
   rm -f "$IG/asked"      # the senders this drain has asked the server about: one lookup each
-  if [ -e "$IG/seen" ]; then awk -v c=$(($(ig_now) - 33*86400)) '$2 >= c' "$IG/seen" > "$IG/seen.new" && mv "$IG/seen.new" "$IG/seen" && sync "$IG/seen" "$IG" || return 1; fi
   while :; do
     [ $((pages += 1)) -le 100 ] || { ig_out more --arg message "this run stopped at the most one drain takes: run recv again for the rest, which is still on the server"; return 0; }
     ig_owner GET "/v1/$B/messages${c:+?cursor=$c}" > "$IG/list.json" || { ig_own; return 1; }
+    [ "$pages" -gt 1 ] || ig_forget || return 1      # the replay set pruned by this clock only once the server has taken a pass dated by it: a drain that a clock far off would prune is stopped at its pass first
     ig_shape "$IG/list.json" list && n=$(jq -r '.messages | length' "$IG/list.json") || { ig_err "the server's list of messages is not one this client reads, as PROTOCOL.md §0b reads JSON: the mail stays on the server"; return 1; }
     LC_ALL=C grep -Eqi $'^retry-after: *[0-9]+\r?$' "$IG/response.headers" || { ig_err "the server's list of messages carries no poll interval, a Retry-After of digits alone (PROTOCOL.md §5.1): the mail stays on the server"; return 1; }      # read and not kept: this script drains once and never waits, so it keeps no ETag either
     for ((i = 0; i < n; i++)); do
@@ -666,11 +666,13 @@ ig_kept(){ # <message stem> → the message as quarantine/ keeps it, the Go clie
     [k("id"; hex), k("from"; hex), k("received_at"; time), k("expires_at"; time), {ciphertext: $c}] | add' "$1.json"; rc=$?; rm -f "$1.b64"; return $rc      # base64 of the bytes, a file of ASCII, which jq carries as it is
 }
 ig_judge(){ # <me> <message stem> → 0 only if EVERY check passes, in this order; 2 for a resend of an accepted msg_id; 1 refused, with "<code>: <words>" on stdout, the words this script's own and never the message's; 3 a fault of this box, no verdict; 4 no answer from the server on whether the sender is revoked, no verdict. Who the sender is, is never asked of the server: the message carries what proves it. The one thing asked is whether a revocation of that sender exists, and the answer proves itself
-  local B=$1 m=$2 ids=() k h A c
+  local B=$1 m=$2 ids=() k h A c f
   for k in "$IG"/prekeys/*.agekey; do [ -e "$k" ] || continue; [ -r "$k" ] || { echo "cannot read $k"; return 3; }; ids+=(-i "$k"); done
   [ ${#ids[@]} -gt 0 ] || { echo "this box has no prekeys"; return 3; }
   age -d "${ids[@]}" < "$m.age" > "$m.T" 2> /dev/null || { echo "undecryptable: it does not decrypt with this box's prekeys"; return 1; }
   A=$(ig_open "$B" "$m") || { echo "$A"; return 1; }      # the sender, proved by what was decrypted
+  f=$(ig_floor 2> /dev/null) || { echo "$IG/seen-floor names no time"; return 3; }
+  [ "$(ig_time "$(jq -r .sent_at "$m.P")")" -ge "$f" ] || { echo "stale: sent_at is before this box's replay set reaches back to, since its clock once read later than it does now"; return 1; }      # freshness has a floor too: a sent_at before the highest cutoff the replay set was pruned at may be a message whose line went. ig_open checked sent_at's grammar
   jq -e --arg a "$A" '.from == $a' "$m.json" > /dev/null 2>&1 || { echo "reattributed: the server lists it as from another box than the one that signed it"; return 1; }      # the server's from, compared in jq: $(…) drops trailing LFs and every NUL
   if ! grep -qx "$A" "$IG/asked" 2> /dev/null; then      # the server is asked once for each sender in a drain. That it holds none is an answer; no answer is not, and the message then stays where it is
     ig_lookup "$A" >> "$IG/said"; case $? in 0) ;; 1) echo "$A" >> "$IG/asked" ;; 3) echo "what this box keeps of its sender's revocations does not verify, or cannot be written"; return 3 ;; *) echo "whether its sender is revoked could not be asked"; return 4 ;; esac
@@ -733,6 +735,20 @@ ig_line(){ # <checked envelope> [receipt] → the one line delivered: built from
   jq -j --slurpfile r "${2:-/dev/null}" 'def h4: . as $n | [range(3; -1; -1) | ($n / pow(16; .) | floor) % 16] | map("0123456789abcdef"[.:. + 1]) | add;
     def ig_esc: if . > 65535 then (. - 65536) as $v | "\\u" + ((55296 + ($v / 1024 | floor)) | h4) + "\\u" + ((56320 + $v % 1024) | h4) else "\\u" + h4 end;      # a code point as JSON escapes it, lowercase, as Go writes it: a surrogate pair above U+FFFF
     {v: 1, from, to, sent_at, msg_id, body} + ([{subject}, {in_reply_to}, {supersedes}] | map(select(.[] | . != null and . != "")) | add // {}) + ($r[0] | if . then {receipt: {id, received_at, expires_at}} else {} end) | tojson | gsub("(?<c>[\\x{85}\\x{2028}\\x{2029}\\x{AD}\\x{34F}\\x{61C}\\x{115F}-\\x{1160}\\x{17B4}-\\x{17B5}\\x{180B}-\\x{180F}\\x{200B}-\\x{200F}\\x{202A}-\\x{202E}\\x{2060}-\\x{206F}\\x{3164}\\x{FE00}-\\x{FE0F}\\x{FEFF}\\x{FFA0}\\x{FFF0}-\\x{FFF8}\\x{1BCA0}-\\x{1BCA3}\\x{1D173}-\\x{1D17A}\\x{E0000}-\\x{E0FFF}])"; .c | explode[0] | ig_esc)' "$1"
+}
+ig_forget(){ # → the replay set without the lines past 33 days and an hour from their sent_at by this clock. When it drops one, the floor rises to the cutoff first, so a clock that later reads further back still takes no message whose line went (ig_floor)
+  local c=$(($(ig_now) - 33*86400 - 3600)) f; [ -e "$IG/seen" ] || return 0
+  awk -v c="$c" '$2 >= c' "$IG/seen" > "$IG/seen.new" || return 1
+  if ! cmp -s "$IG/seen" "$IG/seen.new"; then
+    f=$(ig_floor) || return 1
+    if [ "$f" -lt "$c" ]; then printf '%s\n' "$c" > "$IG/seen-floor.new" && sync "$IG/seen-floor.new" && mv "$IG/seen-floor.new" "$IG/seen-floor" && sync "$IG" || return 1; fi      # on disk before any line goes
+  fi
+  mv "$IG/seen.new" "$IG/seen" && sync "$IG/seen" "$IG"
+}
+ig_floor(){ # → the highest cutoff a prune of the replay set has dropped a line at, from seen-floor, or 0 when it has none: a message sent before it is stale whatever the clock now reads, since its line may be gone, as a Kerberos server that has lost its replay cache refuses until the window has passed (RFC 4120 §3.2.3). A file that names anything else is an error, never the default
+  local f; [ -e "$IG/seen-floor" ] || { echo 0; return 0; }
+  f=$(cat "$IG/seen-floor" 2> /dev/null) && [[ $f =~ ^(0|[1-9][0-9]{0,17})$ ]] && printf '%s\n' "$f" | cmp -s - "$IG/seen-floor" && echo "$f" ||      # compared with itself rebuilt: $(…) drops line feeds and NULs
+    { ig_err "$IG/seen-floor names no time: it is a number of seconds and a line feed, written by recv"; return 1; }
 }
 ig_seen(){ # <sender> <message stem> <hash> → the message, in the replay set and on disk
   local new=; [ -e "$IG/seen" ] || new=$IG

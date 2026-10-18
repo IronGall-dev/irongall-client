@@ -648,6 +648,23 @@ eval "$real_now"; rm -f $IG/pass
 # sent_at more than an hour ahead of the reader's clock
 line "$P" "$Q" 00000000-0000-4000-8000-0000000000f1 "dated ahead" $W/box/P/identity.doc -3700 > ahead.P; seal_as P "$Q" ahead.P
 as Q; srv_inject "$Q" "$P" ahead.P.age; recv; [ -z "$RECV_OUT" ] && printf '%s' "$RECV_ERR" | grep -q "future: sent_at is more than 60 minutes ahead" && ok "sent_at more than an hour ahead of this machine's clock: REFUSED as future" || bad "future: $RECV_OUT / $RECV_ERR"
+# the replay set: pruned by this clock only once the server has taken a pass dated by it, a line kept 33 days and an hour from its sent_at, and a floor below which mail is stale whatever the clock reads
+line "$P" "$Q" 00000000-0000-4000-8000-0000000000f2 "pay invoice 7 once" $W/box/P/identity.doc $((33*86400 - 49*60)) > old.P; seal_as P "$Q" old.P; oid=$(sha256sum < old.P.age | cut -c1-64)
+as Q; srv_inject "$Q" "$P" old.P.age; recv; [ "$RECV_RC" = 0 ] && printf '%s' "$RECV_OUT" | grep -q "pay invoice 7 once" || bad "replay set: the first delivery: $RECV_OUT / $RECV_ERR"
+off=3000; ig_now(){ echo $(($(date -u +%s) + off)); }; recv; [ "$RECV_RC" = 0 ] || bad "replay set: a drain 50 minutes fast: $RECV_ERR"      # 33 days and a minute old by this clock, which a server takes
+off=-540; srv_inject "$Q" "$P" old.P.age "$oid"; recv; [ -z "$RECV_OUT" ] && [ "$RECV_RC" = 0 ] && grep -q "^$oid " $IG/seen && [ ! -e $IG/seen-floor ] &&
+  ok "a message delivered, a drain 50 minutes fast, then the clock 9 minutes slow: the server's replay of it is not delivered again, since a line is kept 33 days and an hour" || bad "replay set: the replay after a step back: $RECV_OUT / $RECV_ERR"
+cp $IG/seen seen.before; off=$((40*86400)); recv; grep -q pass_expired $SRV/recv.err && cmp -s seen.before $IG/seen && [ ! -e $IG/seen-floor ] &&
+  ok "a recv refused for a clock 40 days fast prunes nothing: the replay set is pruned only once the server has taken a pass" || bad "replay set: a refused recv: $RECV_ERR"
+eval "$real_now"; printf '%s %s %s %s\n' "$(printf '%064d' 7)" $(($(date -u +%s) - 34*86400)) "$P" 00000000-0000-4000-8000-0000000000f3 >> $IG/seen; t0=$(($(date -u +%s) - 33*86400 - 3600))
+recv; f=$(cat $IG/seen-floor 2> /dev/null) && [ "$f" -ge "$t0" ] && [ "$f" -le $((t0 + 5)) ] && ! grep -q "^$(printf '%064d' 7) " $IG/seen && grep -q "^$oid " $IG/seen &&
+  ok "a prune that drops a line raises the floor to the cutoff it dropped it at, first" || bad "replay set: the floor after a prune: '$(cat $IG/seen-floor 2> /dev/null)', cutoff $t0"
+printf '%s\n' $(($(date -u +%s) + 100)) > $IG/seen-floor; line "$P" "$Q" 00000000-0000-4000-8000-0000000000f4 "under the floor" $W/box/P/identity.doc > under.P; seal_as P "$Q" under.P
+srv_inject "$Q" "$P" under.P.age; recv; [ -z "$RECV_OUT" ] && printf '%s' "$RECV_ERR" | grep -q "stale: sent_at is before this box's replay set reaches back to" &&
+  ok "mail sent before the floor is REFUSED as stale, whatever the clock reads" || bad "replay set: mail under the floor: $RECV_OUT / $RECV_ERR"
+printf 'soon\n' > $IG/seen-floor; line "$P" "$Q" 00000000-0000-4000-8000-0000000000f5 "a floor that names no time" $W/box/P/identity.doc > nofloor.P; seal_as P "$Q" nofloor.P
+srv_inject "$Q" "$P" nofloor.P.age; recv; [ "$RECV_RC" != 0 ] && [ -z "$RECV_OUT" ] && printf '%s' "$RECV_ERR" | grep -q "seen-floor names no time" && [ "$(box_count "$Q")" = 1 ] && rm $IG/seen-floor && recv && printf '%s' "$RECV_OUT" | grep -q "a floor that names no time" &&
+  ok "a seen-floor that names no time stops the drain with the mail left on the server, and nothing is read as the default" || bad "replay set: a floor that names no time: $RECV_OUT / $RECV_ERR"
 # --- 17. revocation: the identity's own signature ends a box for good, and nothing else does. A client takes "revoked" only
 #     with the revocation in hand, keeps it, and takes no server's word against it afterwards
 VEC=$HERE/../testdata/vectors; VA=$(cat $VEC/a/address)
