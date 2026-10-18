@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,11 +46,12 @@ in quarantine/, as evidence of who sent what. Read it through these commands,
 which print this client's words only: the files keep what the server served,
 with each of its strings in base64 that is not of its form.`,
 			e.quarantineListCmd(), e.quarantineRmCmd()),
-		e.group("prekey", "the key senders encrypt to: renew",
-			`A prekey is valid for 33 days, under a working key and a certificate made
-with it. irongall recv renews it once a day, so run recv at least monthly and
-the box never lapses.`,
-			e.renewCmd()),
+		e.group("prekey", "the key senders encrypt to: renew, lifetime",
+			`A prekey is valid for 33 days, or the shorter lifetime this box is set to,
+under a working key and a certificate made with it. irongall recv renews it
+once it is a day old, so run recv at least monthly, or within the lifetime
+less a day, and the box never lapses.`,
+			e.renewCmd(), e.lifetimeCmd()),
 		e.group("cert", "this box's certificates: revoke-earlier, publish-revoked",
 			`This box's identity certifies a working key with each prekey, and the working
 key signs what the box says. A box whose working key may have been taken
@@ -656,6 +658,109 @@ neither --no-pq nor --pq it keeps the type the box has.`,
 	c.Flags().BoolVar(&noPQ, "no-pq", false, "switch to a prekey without post-quantum encryption (X25519 only)")
 	c.Flags().BoolVar(&pq, "pq", false, "switch to a post-quantum prekey")
 	return c
+}
+
+// shortLifetime is the prekey lifetime under which setting one warns: with
+// less, a recv once a day does not renew a prekey before it runs out.
+const shortLifetime = 49 * time.Hour
+
+func (e *cli) lifetimeCmd() *cobra.Command {
+	return command("lifetime [<time>]", "how long each new prekey is valid for: print it, or set it",
+		`Print how long each new prekey of this box is valid for, or set it, from
+1d1h to 33d, the default. A time is written as sshd writes one: numbers, each
+with its unit, s, m, h, d or w, added together, as in 2d1h or 90m; a number
+with no unit is seconds. recv renews the prekey once it is a day old, so with
+a lifetime L it must run at least every L less a day, or the prekey runs out
+and senders are refused until the box renews. A lifetime set lower holds
+from the next recv, which renews a prekey made for longer.`,
+		nargs(0, 1), func(c *cobra.Command, args []string) error {
+			b, err := e.box()
+			if err != nil {
+				return err
+			}
+			if len(args) == 1 {
+				d, err := parseTime(args[0])
+				if err != nil {
+					return wrong(c, "%v", err)
+				}
+				if d < client.MinPrekeyLifetime || d > protocol.PrekeyLifetime {
+					return wrong(c, "a prekey lifetime is from %s to %s, and %s is not", formatTime(client.MinPrekeyLifetime), formatTime(protocol.PrekeyLifetime), formatTime(d))
+				}
+				if err := b.SetPrekeyLifetime(c.Context(), d); err != nil {
+					return err
+				}
+			}
+			d, err := b.PrekeyLifetime()
+			if err != nil {
+				return err
+			}
+			var warning any
+			if d < shortLifetime {
+				warning = fmt.Sprintf("WARNING: with this lifetime, irongall recv must run at least every %s: a run missed past that lets the prekey run out, and senders are refused until the box renews", formatTime(client.RecvWithin(d)))
+			}
+			return e.out(line("prekey_lifetime", "seconds", int64(d/time.Second), "lifetime", formatTime(d), "message", warning))
+		})
+}
+
+// timeUnits are the units of a time as sshd reads one (sshd_config(5), TIME
+// FORMATS), in either case.
+var timeUnits = map[byte]time.Duration{'s': time.Second, 'm': time.Minute, 'h': time.Hour, 'd': 24 * time.Hour, 'w': 7 * 24 * time.Hour}
+
+// maxTime bounds what parseTime adds up, far above any lifetime, so that
+// no sum overflows.
+const maxTime = 100 * 365 * 24 * time.Hour
+
+// parseTime reads a time as sshd does: a sequence of numbers, each with a
+// unit or none for seconds, added together, as in 600, 10m or 2d1h.
+func parseTime(s string) (time.Duration, error) {
+	var total time.Duration
+	rest := s
+	for rest != "" {
+		i := 0
+		for i < len(rest) && i < 10 && rest[i] >= '0' && rest[i] <= '9' {
+			i++
+		}
+		if i == 0 || i < len(rest) && rest[i] >= '0' && rest[i] <= '9' {
+			return 0, fmt.Errorf("%.40q is no time: one is numbers, each with its unit (s, m, h, d or w), as in 2d1h", s)
+		}
+		n, _ := strconv.ParseInt(rest[:i], 10, 64)
+		unit := time.Second
+		if i < len(rest) {
+			u, ok := timeUnits[rest[i]|0x20]
+			if !ok {
+				return 0, fmt.Errorf("%.40q is no time: one is numbers, each with its unit (s, m, h, d or w), as in 2d1h", s)
+			}
+			unit, i = u, i+1
+		}
+		if time.Duration(n) > maxTime/unit || total+time.Duration(n)*unit > maxTime {
+			return 0, fmt.Errorf("%.40q is longer than any prekey lifetime", s)
+		}
+		total += time.Duration(n) * unit
+		rest = rest[i:]
+	}
+	if total == 0 {
+		return 0, fmt.Errorf("%.40q is no time: it is empty, or zero", s)
+	}
+	return total, nil
+}
+
+// formatTime writes d as parseTime reads it, in days, hours, minutes and
+// seconds, as in 1d1h or 33d.
+func formatTime(d time.Duration) string {
+	var b strings.Builder
+	for _, u := range []struct {
+		d time.Duration
+		c string
+	}{{24 * time.Hour, "d"}, {time.Hour, "h"}, {time.Minute, "m"}, {time.Second, "s"}} {
+		if n := d / u.d; n > 0 {
+			fmt.Fprintf(&b, "%d%s", n, u.c)
+			d -= n * u.d
+		}
+	}
+	if b.Len() == 0 {
+		return "0s"
+	}
+	return b.String()
 }
 
 func (e *cli) revokeEarlierCmd() *cobra.Command {

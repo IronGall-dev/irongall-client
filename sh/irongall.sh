@@ -16,7 +16,7 @@
 #   bash irongall.sh alias add <name> <link>         name a peer for this box only, so send takes the name
 #   bash irongall.sh alias list                      list the names
 #   bash irongall.sh outbox flush                    retry what is still in outbox/
-#   bash irongall.sh prekey renew [--no-pq]          a new prekey, working key and certificate: at least monthly, as a prekey is valid for 33 days
+#   bash irongall.sh prekey renew [--no-pq]          a new prekey, working key and certificate: at least monthly, as a prekey is valid for 33 days, or within the lifetime a prekey-lifetime file sets
 #   bash irongall.sh revocation make                 print this box's revocation record, one "revocation_record" line, and publish nothing: keep it somewhere other than this box
 #   bash irongall.sh revocation publish <address> [record]
 #                                                    revoke this box's address FOR GOOD (the address in full is the confirmation), or publish a record made earlier
@@ -158,12 +158,19 @@ ig_work(){ # <serial> → work/<serial>, .pub and -cert.pub: a NEW working key, 
   ssh-keygen -q -t ed25519 -N '' -C '' -f "$w" < /dev/null &&
   ssh-keygen -q -s "$IG/identity" -I irongall-cert-v1 -n "$A" -z "$1" -V "$(ig_stamp $((t - 3600))):$(ig_stamp $((t + 65*86400)))" -O clear "$w.pub"      # one principal, the address; no option and no extension. It starts an hour back, as -V -1h:+65d dates one, so that a verifier whose clock is behind this one takes it at once
 }
-ig_prekey(){ # <serial> [--no-pq] → prekeys/<serial>.agekey and its statement, signed by a NEW working key (ig_work): a NEW key, valid for 33 days. A re-run reuses the key a failed attempt left, whatever its type
-  local A p="$IG/prekeys/$1"; A=$(cat "$IG/address") || return 1
+ig_lifetime(){ # → the seconds each new prekey of this box is valid for: what its prekey-lifetime file names, a number of seconds alone on its line from 90000 (a day and an hour) to 2851200 (33 days), or 2851200 when it has none. A file that names anything else is a refusal, never the default: no prekey is signed until it is put right (PROTOCOL.md §6.4)
+  local l; [ -e "$IG/prekey-lifetime" ] || { echo 2851200; return 0; }
+  l=$(cat "$IG/prekey-lifetime" 2> /dev/null) && [[ $l =~ ^[1-9][0-9]{0,9}$ ]] && { printf '%s\n' "$l" | cmp -s - "$IG/prekey-lifetime" || printf '%s' "$l" | cmp -s - "$IG/prekey-lifetime"; } && [ "$l" -ge 90000 ] && [ "$l" -le 2851200 ] && echo "$l" ||      # compared with itself rebuilt: $(…) drops line feeds and NULs
+    ig_refuse "this box's prekey-lifetime file names no lifetime: one is a number of seconds, alone on its line, from 90000 (a day and an hour) to 2851200 (33 days)"
+}
+ig_prekey(){ # <serial> [--no-pq] → prekeys/<serial>.agekey and its statement, signed by a NEW working key (ig_work): a NEW key, valid for the box's prekey lifetime (ig_lifetime), and prekeys/<serial>.made, when it was signed, which the Go client times its renewals by. A re-run reuses the key a failed attempt left, whatever its type
+  local A p="$IG/prekeys/$1" l t; A=$(cat "$IG/address") || return 1
   [ -s "$p.txt.sig" ] && return 0
+  l=$(ig_lifetime) || return 1
   if [ ! -e "$p.agekey" ]; then if [ "${2-}" = --no-pq ]; then age-keygen -o "$p.agekey"; else age-keygen -pq -o "$p.agekey"; fi 2> /dev/null || ig_refuse "age-keygen failed: post-quantum needs age >= 1.3 (or make a box with --no-pq)" || return 1; fi
-  ig_work "$1" || return 1
-  printf 'irongall-prekey-v1\n%s\n%s\n%s\n%s\n' "$A" "$1" "$(age-keygen -y "$p.agekey")" "$(jq -nr --argjson t "$(ig_now)" '$t + 33*86400 | todate')" > "$p.txt" &&
+  ig_work "$1" && t=$(ig_now) || return 1
+  printf 'irongall-prekey-v1\n%s\n%s\n%s\n%s\n' "$A" "$1" "$(age-keygen -y "$p.agekey")" "$(jq -nr --argjson t "$t" --argjson l "$l" '$t + $l | todate')" > "$p.txt" &&
+  jq -nr --argjson t "$t" '$t | todate' > "$p.made" &&      # before the signature: a statement is signed once its record is there
   ssh-keygen -q -Y sign -n "irongall-prekey-v1:$A" -f "$IG/work/$1-cert.pub" < "$p.txt" > "$p.txt.sig"      # stdin to stdout: never a stale .sig
 }
 ig_init(){ # [--no-pq] → creates this box, or finishes a half-done init, and registers it; prints its address and link. The registration carries a pass the new working key signs, so the box is in use at once
@@ -176,7 +183,7 @@ ig_init(){ # [--no-pq] → creates this box, or finishes a half-done init, and r
   local A n p h c; A=$(cat "$IG/address")
   n=$(ls "$IG/prekeys" | sed -n 's/\.agekey$//p; s/\.txt\.sig$//p' | sort -n | tail -n 1); [ -n "$n" ] || n=$(ig_now); [ "$n" -ge 1 ] || n=1; p="$IG/prekeys/$n"      # the box's first prekey, working key and certificate take their number as every later one does, from this machine's clock in seconds (ig_renew): a second machine handed the same identity then makes no certificate of a serial this one used. An attempt that got as far as a key keeps the number it took, so a registration whose answer was lost is sent again as it was
   if c=$(ig_cert "$p.txt.sig" "$IG/identity.doc" "$A" 2> /dev/null) && c=${c#* } && [ "${c% *}" -gt "$(ig_now)" ]; then      # a first statement an earlier attempt left, under a certificate that has not begun by this machine's clock: made while the clock read more than an hour ahead. The working key, its certificate and the statement are made again. The prekey's own key stays: a server may have taken a registration whose answer was lost, and then mail may be waiting that only this key opens
-    rm -f "$p.txt" "$p.txt.sig" "$IG/work/$n" "$IG/work/$n.pub" "$IG/work/$n-cert.pub" "$IG/pass.new"
+    rm -f "$p.txt" "$p.made" "$p.txt.sig" "$IG/work/$n" "$IG/work/$n.pub" "$IG/work/$n-cert.pub" "$IG/pass.new"
   fi
   ig_prekey "$n" "${1-}" || return 1
   jq -n --arg i "$(ig_b64 "$IG/identity.doc")" --arg p "$(ig_b64 "$p.txt")" --arg s "$(ig_b64 "$p.txt.sig")" --argjson k "$IG_SENDERS" '{identity:$i, prekey:$p, prekey_signature:$s, sender_key_types:$k}' > "$IG/register.json"
@@ -760,7 +767,7 @@ ig_renew(){ # [--no-pq] → what ig_rekey does, the lock held. A serial is signe
   t=$(ls "$IG/prekeys" | sed -n 's/\.agekey$//p; s/\.txt\.sig$//p' | sort -n | tail -n 1); new=1      # s is the highest number this box knows of, and the new statement goes above it: above the served CERTIFICATE's serial, never the served prekey's, since it is under a new certificate, which outranks any prekey serial under the one before. So a prekey published in this box's name at the highest serial there is holds nothing. t is the highest number this box began a prekey at
   if [ "${t:-0}" -gt "$s" ]; then s=$t; new=; [ ! -s "$IG/prekeys/$s.txt.sig" ] || { na=$(ig_time "$(sed -n 5p "$IG/prekeys/$s.txt")") && [ "$na" -gt "$(ig_now)" ] && [ -s "$IG/work/$s-cert.pub" ] && c=$(ig_cert "$IG/prekeys/$s.txt.sig" "$IG/identity.doc" "$A") && c=${c#* } && [ "${c% *}" -le "$(ig_now)" ]; } || new=1; fi      # a number an earlier run took, and that nothing has passed since, is kept. Signed and never seen published: sent again AS IT IS until it expires, then a new number. Signed again, the same key would get 33 more days from a server that keeps what it refuses. One under a certificate that has not begun, by this clock, was signed while the clock read over an hour ahead: a server refuses it until that time comes, so it is spent too. Never signed: its key is used
   if [ -n "$new" ]; then [ "$s" -lt 9007199254740991 ] || ig_refuse "this box's certificate serial is the highest there is, so no later certificate can be made: the address cannot renew" || return 1; t=$(ig_now); s=$((t > s ? t : s + 1)); fi      # a new number: this machine's clock, in seconds, or one above the highest this box knows of when the clock gives nothing higher. An identity is a key and keeps no record of what it signed, and a box restored from it knows only what the server shows: by the clock, its certificate is above every one made before, on whatever machine. A verifier never reads a serial as a time, it only compares two
-  [ -s "$IG/prekeys/$s.txt.sig" ] || rm -f "$IG/prekeys/$s.txt"; ig_prekey "$s" "${1-}" || return 1
+  [ -s "$IG/prekeys/$s.txt.sig" ] || rm -f "$IG/prekeys/$s.txt" "$IG/prekeys/$s.made"; ig_prekey "$s" "${1-}" || return 1
   if [ -n "$gone" ]; then u="/v1/$A"; w='{identity:$i}'; else u="/v1/$A/prekey"; w='{}'; fi      # a registration is the identity document, then what a new prekey carries
   jq -n --arg i "$(ig_b64 "$IG/identity.doc")" --arg p "$(ig_b64 "$IG/prekeys/$s.txt")" --arg g "$(ig_b64 "$IG/prekeys/$s.txt.sig")" --argjson k "$IG_SENDERS" "$w"' + {prekey:$p, prekey_signature:$g, sender_key_types:$k}' > "$IG/rekey.json"
   h=$(ig_pass "$s") && ig_api PUT "$u" "$IG/rekey.json" -H "Authorization: $h" > /dev/null || { ig_clock; return 1; }      # a pass under the NEW certificate: that is how a box moves to one, and the server then takes no pass under an older

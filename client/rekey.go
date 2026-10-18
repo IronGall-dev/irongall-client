@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -21,8 +22,8 @@ import (
 // three share one number, which this machine's clock gives
 // ([protocol.SerialAt]). If an earlier Rekey signed one and the server did
 // not take it, that one is sent again, unchanged, until it expires: a key is
-// signed once, so no key is encrypted to for more than 33 days whatever the
-// server does with what it was sent. It needs only the identity, so it also
+// signed once, so no key is encrypted to for longer than its lifetime, at
+// most 33 days, whatever the server does with what it was sent. It needs only the identity, so it also
 // recovers a box that lost its prekeys or its working key, and such a box
 // needs no record of the numbers the lost machine used. The upload carries a
 // pass under the new certificate, and the server then takes no pass under an
@@ -242,6 +243,9 @@ func (b *Box) publishedType(n uint64) protocol.KeyType {
 func (b *Box) signedPrekey(serial uint64, kt protocol.KeyType) (p *protocol.Prekey, spent bool, err error) {
 	stem := b.path("prekeys", strconv.FormatUint(serial, 10))
 	if !exists(stem + ".txt.sig") {
+		if err := removeIfExists(stem + ".made"); err != nil {
+			return nil, false, err
+		}
 		return nil, false, removeIfExists(stem + ".txt")
 	}
 	st, err := os.ReadFile(stem + ".txt") //nolint:gosec // a path inside the box's own directory
@@ -315,6 +319,58 @@ func (b *Box) recordPublished(serial uint64) error {
 // box renews at most daily.
 const renewAfter = 24 * time.Hour
 
+// MinPrekeyLifetime is the shortest a box's prekeys may be valid for: the
+// day Receive waits to renew one (renewAfter), and an hour of slip for when
+// recv runs and for clocks less than that hour apart.
+const MinPrekeyLifetime = renewAfter + time.Hour
+
+// RecvWithin is how often a box must run Receive for a prekey of the given
+// lifetime never to run out: Receive renews one once it is a day old, so
+// what is left of the lifetime after that day.
+func RecvWithin(lifetime time.Duration) time.Duration { return lifetime - renewAfter }
+
+// lifetimeGrammar is what a box's prekey-lifetime file holds: a number of
+// seconds, alone on its line. Both clients hold the file to it.
+var lifetimeGrammar = regexp.MustCompile(`\A[1-9][0-9]{0,9}\n?\z`)
+
+// PrekeyLifetime is how long each new prekey of this box is valid for: the
+// seconds its prekey-lifetime file names, or protocol.PrekeyLifetime when it
+// has none. A file that names anything but a lifetime from
+// MinPrekeyLifetime to protocol.PrekeyLifetime is an error, never read as the
+// default: the box renews no prekey until it is put right.
+func (b *Box) PrekeyLifetime() (time.Duration, error) {
+	raw, err := os.ReadFile(b.path("prekey-lifetime"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return protocol.PrekeyLifetime, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	if lifetimeGrammar.Match(raw) {
+		n, err := strconv.ParseInt(strings.TrimSuffix(string(raw), "\n"), 10, 64)
+		if d := time.Duration(n) * time.Second; err == nil && d >= MinPrekeyLifetime && d <= protocol.PrekeyLifetime {
+			return d, nil
+		}
+	}
+	return 0, fmt.Errorf("this box's prekey-lifetime file names no lifetime: %s", lifetimeRule)
+}
+
+// lifetimeRule is what a prekey lifetime is, as a box's owner is told it.
+var lifetimeRule = fmt.Sprintf("one is a number of seconds, alone on its line, from %d (a day and an hour) to %d (33 days)", int64(MinPrekeyLifetime/time.Second), int64(protocol.PrekeyLifetime/time.Second))
+
+// SetPrekeyLifetime writes the box's prekey-lifetime file: each prekey made
+// from now on is valid for d, a whole number of seconds from
+// MinPrekeyLifetime to protocol.PrekeyLifetime. The prekey in use keeps its
+// own; Receive renews it at once if it was made for longer.
+func (b *Box) SetPrekeyLifetime(ctx context.Context, d time.Duration) error {
+	if d < MinPrekeyLifetime || d > protocol.PrekeyLifetime || d%time.Second != 0 {
+		return fmt.Errorf("%v is no prekey lifetime: %s", d, lifetimeRule)
+	}
+	return b.lockedDo(ctx, func() error {
+		return writeFile(b.path("prekey-lifetime"), []byte(strconv.FormatInt(int64(d/time.Second), 10)+"\n"))
+	})
+}
+
 // retiredGrace is how long after a renewal a drain must begin before it may
 // delete prekeys: room for a send the server took as the renewal landed.
 const retiredGrace = time.Hour
@@ -323,28 +379,26 @@ const retiredGrace = time.Hour
 // refused one (a rate limit, a server that is down) is not tried every poll.
 const renewRetry = time.Hour
 
-// current returns the serial of the prekey this box published last, and
-// when that prekey was made.
-func (b *Box) current() (uint64, time.Time, error) {
+// current returns the serial of the prekey this box published last.
+func (b *Box) current() (uint64, error) {
 	n, err := b.publishedSerial()
-	if err != nil {
-		return 0, time.Time{}, err
+	if err == nil && n == 0 {
+		err = errors.New("this box has published no prekey")
 	}
-	if n == 0 {
-		return 0, time.Time{}, errors.New("this box has published no prekey")
-	}
-	made, err := b.made(n)
-	return n, made, err
+	return n, err
 }
 
-// made returns when prekey n was made. Both clients give every prekey the
-// full lifetime, so it was made at its not_after less PrekeyLifetime.
+// made returns when prekey n was signed, as the client that signed it kept
+// it, in prekeys/<n>.made: a timestamp alone on its line. Nothing is
+// inferred from the statement, whose lifetime is the box's to set. A
+// prekey with no record has no time: Receive renews it, and dropRetired
+// keeps every retired key while the newest has none.
 func (b *Box) made(n uint64) (time.Time, error) {
-	p, err := b.prekeyStatement(n)
+	raw, err := os.ReadFile(b.path("prekeys", strconv.FormatUint(n, 10)+".made")) //nolint:gosec // a path inside the box's own directory
 	if err != nil {
 		return time.Time{}, err
 	}
-	return p.NotAfter.Add(-protocol.PrekeyLifetime), nil
+	return protocol.ParseTime(strings.TrimSuffix(string(raw), "\n"))
 }
 
 // prekeyStatement returns prekey n's statement, as this box wrote it.
@@ -356,14 +410,11 @@ func (b *Box) prekeyStatement(n uint64) (*protocol.Prekey, error) {
 	return protocol.ParsePrekey(st)
 }
 
-// renewIfDue publishes a new prekey, of the current type, when the current
-// one is more than renewAfter old or cannot be read, or when this box's own
-// identity has revoked the certificate it is using: such a box takes no mail
-// until it publishes under a new one, and [Box.RenewAndRevoke] leaves it so
-// when the server refused its renewal. The caller holds the lock. A failure is
-// retried after renewRetry.
+// renewIfDue publishes a new prekey, of the current type, when renewDue
+// says so. The caller holds the lock. A failure is retried after
+// renewRetry.
 func (b *Box) renewIfDue(ctx context.Context) (*protocol.Prekey, error) {
-	if n, made, err := b.current(); err == nil && b.now().Sub(made) <= renewAfter && !b.ownRevokes(n) {
+	if !b.renewDue() {
 		return nil, nil
 	}
 	if !b.renewFailed.IsZero() && b.now().Sub(b.renewFailed) < renewRetry {
@@ -376,6 +427,28 @@ func (b *Box) renewIfDue(ctx context.Context) (*protocol.Prekey, error) {
 	}
 	b.renewFailed = time.Time{}
 	return p, nil
+}
+
+// renewDue reports whether the current prekey is to be renewed: once it is
+// more than renewAfter old; when it, or the record of when it was made,
+// cannot be read; when it was made for longer than the box's prekey
+// lifetime now allows, so a lifetime set lower holds from the next recv; when
+// that lifetime cannot be read, so that the renewal fails and says why; and
+// when this box's own identity has revoked the certificate it is using: such
+// a box takes no mail until it publishes under a new one, and
+// [Box.RenewAndRevoke] leaves it so when the server refused its renewal.
+func (b *Box) renewDue() bool {
+	n, err := b.current()
+	if err != nil || b.ownRevokes(n) {
+		return true
+	}
+	made, err := b.made(n)
+	if err != nil || b.now().Sub(made) > renewAfter {
+		return true
+	}
+	p, err := b.prekeyStatement(n)
+	lifetime, lerr := b.PrekeyLifetime()
+	return err != nil || lerr != nil || p.NotAfter.Sub(made) > lifetime
 }
 
 // dropRetired deletes every retired prekey but the newest, after a drain
@@ -422,7 +495,7 @@ func (b *Box) dropRetired(began time.Time) error {
 // made with it, if a renewal the server never took left one.
 func (b *Box) removePrekey(n uint64) error {
 	stem := b.path("prekeys", strconv.FormatUint(n, 10))
-	for _, ext := range []string{".agekey", ".txt", ".txt.sig"} {
+	for _, ext := range []string{".agekey", ".txt", ".made", ".txt.sig"} {
 		if err := removeIfExists(stem + ext); err != nil {
 			return err
 		}

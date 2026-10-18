@@ -200,7 +200,7 @@ func (b *Box) dropUnbegun(n uint64) error {
 		return nil
 	}
 	stem := b.path("prekeys", strconv.FormatUint(n, 10))
-	for _, name := range []string{stem + ".txt.sig", stem + ".txt", b.workStem(n), b.workStem(n) + ".pub", b.workStem(n) + "-cert.pub"} {
+	for _, name := range []string{stem + ".txt.sig", stem + ".made", stem + ".txt", b.workStem(n), b.workStem(n) + ".pub", b.workStem(n) + "-cert.pub"} {
 		if err := removeIfExists(name); err != nil {
 			return err
 		}

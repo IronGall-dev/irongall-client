@@ -2412,3 +2412,69 @@ func TestTheScriptFollowsNoRedirect(t *testing.T) {
 		t.Fatalf("a redirect was followed: %q", reached)
 	}
 }
+
+// Both clients read one prekey-lifetime file and give one verdict on what it
+// holds, and a prekey the script signs under a lifetime is one the Go client
+// times by: it ends that long after the record the script kept, and a
+// receive at once does not renew it (PROTOCOL.md §6.4).
+func TestBothClientsReadTheLifetimeAlike(t *testing.T) {
+	need(t, append(scriptTools, "curl")...)
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	mode := "--no-pq"
+	if pq() {
+		mode = ""
+	}
+	dir := t.TempDir()
+	env := []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}
+	if _, err := bash(t, env, "ig_init "+mode); err != nil {
+		t.Fatalf("ig_init: %v", err)
+	}
+	b, err := client.Open(dir, client.Options{Base: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, "prekey-lifetime")
+	for _, raw := range []string{
+		"90000", "90000\n", "2851200\n", "172800\n",
+		"", "\n", "abc\n", "0\n", "89999\n", "2851201\n", "090000\n", " 90000\n", "90000 \n", "90000\n\n", "90000\r\n", "9e4\n", "+90000\n", "1d1h\n", "99999999999\n", "9000\x000\n",
+	} {
+		if err := os.WriteFile(file, []byte(raw), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		d, goErr := b.PrekeyLifetime()
+		out, shErr := bash(t, env, "ig_lifetime")
+		if (goErr == nil) != (shErr == nil) || goErr == nil && strings.TrimSpace(out) != strconv.FormatInt(int64(d/time.Second), 10) {
+			t.Errorf("%q: the Go client %v (%v), the script %q (%v)", raw, d, goErr, out, shErr)
+		}
+	}
+	if err := os.WriteFile(file, []byte("90000\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bash(t, env, "ig_rekey "+mode); err != nil {
+		t.Fatalf("the script's renewal: %v", err)
+	}
+	st, err := b.Status()
+	if err != nil {
+		t.Fatal(err)
+	}
+	made, err1 := protocol.ParseTime(st.PrekeyMade)
+	notAfter, err2 := protocol.ParseTime(st.PrekeyNotAfter)
+	if err1 != nil || err2 != nil || notAfter.Sub(made) != 25*time.Hour || st.PrekeyLifetime != 90000 {
+		t.Fatalf("what the script signed, as the Go client reads it: %+v", st)
+	}
+	if res, err := b.Receive(ctx); err != nil || res.Renewed != nil {
+		t.Fatalf("the Go client's receive just after: %+v, %v", res, err)
+	}
+	// A file out of form: the script signs nothing.
+	serial := st.PrekeySerial
+	if err := os.WriteFile(file, []byte("1d1h\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bash(t, env, "ig_rekey "+mode); err == nil || !strings.Contains(err.Error(), "prekey-lifetime") {
+		t.Fatalf("the script's renewal with a file out of form: %v", err)
+	}
+	if st, err := b.Status(); err != nil || st.PrekeySerial != serial {
+		t.Fatalf("after it: %+v, %v", st, err)
+	}
+}

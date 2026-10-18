@@ -406,11 +406,13 @@ func (b *Box) loadIdentity() error {
 	return nil
 }
 
-// makePrekey makes prekey serial, a NEW key of type kt valid for 33 days, and
-// its statement, signed by a NEW working key under a new certificate, unless
-// its statement is already signed. A key an earlier attempt made and never
-// signed is reused. A statement never outlives the certificate it is signed
-// under.
+// makePrekey makes prekey serial, a NEW key of type kt valid for the box's
+// prekey lifetime ([Box.PrekeyLifetime]), and its statement, signed by a NEW
+// working key under a new certificate, unless its statement is already
+// signed. A key an earlier attempt made and never signed is reused. A
+// statement never outlives the certificate it is signed under. When it was
+// signed is kept beside it, in prekeys/<serial>.made, which is what the box
+// times its renewals and deletions by ([Box.made]).
 func (b *Box) makePrekey(serial uint64, kt protocol.KeyType) (*protocol.Prekey, error) {
 	stem := b.path("prekeys", fmt.Sprint(serial))
 	if exists(stem + ".txt.sig") {
@@ -419,6 +421,10 @@ func (b *Box) makePrekey(serial uint64, kt protocol.KeyType) (*protocol.Prekey, 
 			return nil, err
 		}
 		return protocol.ParsePrekey(st)
+	}
+	lifetime, err := b.PrekeyLifetime()
+	if err != nil {
+		return nil, err
 	}
 	if !exists(stem+".agekey") || keyType(stem+".agekey") != kt {
 		if err := newAgeKey(stem+".agekey", kt, b.now()); err != nil {
@@ -433,7 +439,8 @@ func (b *Box) makePrekey(serial uint64, kt protocol.KeyType) (*protocol.Prekey, 
 	if err != nil {
 		return nil, err
 	}
-	notAfter := b.now().UTC().Add(protocol.PrekeyLifetime).Truncate(time.Second)
+	made := b.now().UTC().Truncate(time.Second)
+	notAfter := made.Add(lifetime)
 	if cert.NotAfter().Before(notAfter) {
 		notAfter = cert.NotAfter()
 	}
@@ -443,6 +450,10 @@ func (b *Box) makePrekey(serial uint64, kt protocol.KeyType) (*protocol.Prekey, 
 		return nil, err
 	}
 	if err := writeFile(stem+".txt", p.Statement()); err != nil {
+		return nil, err
+	}
+	// Before the signature: a statement is signed once its record is there.
+	if err := writeFile(stem+".made", []byte(made.Format(protocol.TimeLayout)+"\n")); err != nil {
 		return nil, err
 	}
 	return p, writeFile(stem+".txt.sig", sig)

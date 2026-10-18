@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
@@ -18,6 +19,13 @@ type Status struct {
 	// last: zero and empty if it holds none.
 	PrekeySerial   uint64 `json:"prekey_serial"`
 	PrekeyNotAfter string `json:"prekey_not_after"`
+	// PrekeyMade is when that prekey was signed, by the record its client
+	// kept: empty if there is none, and the next recv renews it.
+	PrekeyMade string `json:"prekey_made,omitempty"`
+	// PrekeyLifetime is how long each new prekey is valid for, in seconds:
+	// the box's prekey-lifetime file, or 33 days. Zero if the file names no
+	// lifetime, and the box then renews no prekey until it is put right.
+	PrekeyLifetime int64 `json:"prekey_lifetime"`
 	// CertificateSerial and CertificateNotAfter are the certificate of the
 	// working key in use, the one made with that prekey: zero and empty if
 	// the box holds none it can sign with.
@@ -80,13 +88,21 @@ func (b *Box) Status() (*Status, error) {
 		}
 		*n = len(names)
 	}
-	serial, _, err := b.current()
+	if d, err := b.PrekeyLifetime(); err != nil {
+		s.Attention = append(s.Attention, fmt.Sprintf("the box's prekey lifetime cannot be read, so it renews no prekey until that is put right (irongall prekey lifetime sets it): %v", err))
+	} else {
+		s.PrekeyLifetime = int64(d / time.Second)
+	}
+	serial, err := b.current()
 	cur, perr := b.prekeyStatement(serial)
 	switch {
 	case err != nil || perr != nil:
 		s.Attention = append(s.Attention, "this box holds no prekey it published: irongall prekey renew publishes one, and senders are refused until then")
 	default:
 		s.PrekeySerial, s.PrekeyNotAfter = serial, cur.NotAfter.UTC().Format(protocol.TimeLayout)
+		if made, err := b.made(serial); err == nil {
+			s.PrekeyMade = made.Format(protocol.TimeLayout)
+		}
 		if cur.Expired(b.now()) {
 			s.Attention = append(s.Attention, fmt.Sprintf("the prekey expired at %s: senders are refused until irongall recv or irongall prekey renew renews it", s.PrekeyNotAfter))
 		}
@@ -116,8 +132,8 @@ func (b *Box) Status() (*Status, error) {
 	}
 	if first != 0 {
 		since := "an unknown time"
-		if p, err := b.prekeyStatement(first); err == nil {
-			since = p.NotAfter.Add(-protocol.PrekeyLifetime).UTC().Format(protocol.TimeLayout)
+		if made, err := b.made(first); err == nil {
+			since = made.Format(protocol.TimeLayout)
 			s.RenewalPendingSince = since
 		}
 		s.Attention = append(s.Attention, fmt.Sprintf("a new prekey signed at %s was never seen published: the server refused it or did not answer; irongall recv sends it again", since))

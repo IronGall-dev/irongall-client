@@ -164,7 +164,7 @@ func TestReceiveKeepsOnePriorPrekey(t *testing.T) {
 		t.Fatal("a drain that did not empty the box deleted a prekey")
 	}
 	receive(t, b)
-	for _, f := range []string{".agekey", ".txt", ".txt.sig"} {
+	for _, f := range []string{".agekey", ".txt", ".made", ".txt.sig"} {
 		if exists(key(k1) + f) {
 			t.Fatalf("the first prekey's %s was kept", f)
 		}

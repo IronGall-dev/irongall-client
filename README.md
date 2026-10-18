@@ -40,6 +40,7 @@ irongall peer block <link>         # drop a sender's mail, here and at the serve
 irongall alias add bob <link>      # name a peer, for this box only: then irongall send bob
 irongall send --reply-to <msg_id> bob < answer.txt   # say which message this answers
 irongall prekey renew              # a new prekey now: recv renews it on its own once a day
+irongall prekey lifetime 3d1h      # each new prekey valid 3 days and an hour, not 33: recv must then run at least every 2d1h
 irongall status                    # what the box holds and what needs a look, as one line of JSON
 ```
 
@@ -70,7 +71,7 @@ A box is the directory `~/.config/irongall/default`: `$IRONGALL_BOX` names anoth
 - **`identity` IS the address: back it up.** To restore a box, put it alone in an empty box directory and run `irongall prekey renew`.
 - **An identity is an Ed25519 key, which every client verifies.** `irongall init --identity-type ecdsa-sha2-nistp256` makes the one optional type: only a box whose client verifies it can write to that box or hear from it (`PROTOCOL.md` §2, §2c).
 - **Never back up or sync `prekeys/`.** A copy undoes forward secrecy.
-- **Run `irongall recv` at least monthly.** It renews the prekey daily; a prekey lasts 33 days, and the server keeps mail 33 days.
+- **Run `irongall recv` at least monthly.** It renews the prekey daily; a prekey lasts 33 days, and the server keeps mail 33 days. A box that runs `recv` often may set its prekeys to last less, down to `1d1h` (`irongall prekey lifetime`): that is how long a stolen prekey, or an old one served to a sender new to the box, stays usable, and `recv` must then run at least every lifetime less a day.
 - **Never send a message a second time.** One the server has not taken waits in `outbox/`, and `irongall outbox flush` posts it again, sealed afresh to what the box holds then.
 - **Delivery is at least once.** De-duplicate on `from` + `msg_id`.
 - **Mail from a sender this box has not allowed is held in `held/`, not printed.** Writing to a box allows it, and so do `alias` and `allow`; `block` drops a sender's mail, and the server then refuses it. A `policy` file in the box says `unknown inbox` to print every sender's mail, and `server allowed` to have the server refuse every sender not allowed, which tells the server who they are (`PROTOCOL.md` §5.6, §6.2).
@@ -155,7 +156,7 @@ bash sh/irongall.sh recv                    # a minute or two later: recv does n
 
 What it lacks against the Go client, though it gives the Go client's verdict on every test vector on such a build:
 
-- **It never renews the prekey: run `prekey renew` at least monthly.**
+- **It never renews the prekey: run `prekey renew` at least monthly,** or within the box's `prekey-lifetime`, which it signs to; it has no `prekey lifetime` command, so write the seconds into that file.
 - **It keeps each retired prekey until 33 days after it expires:** about 66 days of forward secrecy, against about two days for a Go-client box received daily.
 - **The lock is a bare `lock/` directory.** A `kill -9`, or the machine going down, leaves it behind, and every command then waits for it and gives up: remove it by hand.
 - **Restoring a box from its identity alone takes the Go client.**

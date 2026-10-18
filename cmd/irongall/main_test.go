@@ -1619,3 +1619,71 @@ func TestHeldAndPeerCommands(t *testing.T) {
 		t.Fatal("peer allow --rebuild with an address was taken")
 	}
 }
+
+// prekey lifetime prints the box's prekey lifetime, or sets it: a time as
+// sshd writes one, from 1d1h to 33d, with a warning under 2d1h that says how
+// often recv must then run. A time out of form or out of range is a usage
+// error, and changes nothing.
+func TestPrekeyLifetime(t *testing.T) {
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("IRONGALL_HOME", b.Dir())
+	t.Setenv("IRONGALL_BASE", srv.URL)
+	file := filepath.Join(b.Dir(), "prekey-lifetime")
+	say := func(args ...string) map[string]any {
+		t.Helper()
+		var out bytes.Buffer
+		if err := do(ctx, "prekey lifetime", args, strings.NewReader(""), &out, io.Discard); err != nil {
+			t.Fatalf("prekey lifetime %q: %v", args, err)
+		}
+		ls := printed(t, out.String())
+		if len(ls) != 1 || ls[0]["type"] != "prekey_lifetime" {
+			t.Fatalf("prekey lifetime %q printed %q", args, out.String())
+		}
+		return ls[0]
+	}
+	if l := say(); l["seconds"] != json.Number("2851200") || l["lifetime"] != "33d" || l["message"] != nil {
+		t.Fatalf("the default: %v", l)
+	}
+	for _, c := range []struct{ arg, seconds, shown, every string }{
+		{"1d1h", "90000", "1d1h", "1h"},
+		{"25h", "90000", "1d1h", "1h"},
+		{"90000", "90000", "1d1h", "1h"},
+		{"1D1H", "90000", "1d1h", "1h"},
+		{"1h30m24h", "91800", "1d1h30m", "1h30m"},
+		{"2d", "172800", "2d", "1d"},
+		{"2d59m59s", "176399", "2d59m59s", "1d59m59s"},
+		{"2d1h", "176400", "2d1h", ""},
+		{"1w", "604800", "7d", ""},
+		{"4w5d", "2851200", "33d", ""},
+	} {
+		l := say(c.arg)
+		if l["seconds"] != json.Number(c.seconds) || l["lifetime"] != c.shown {
+			t.Errorf("%s: %v", c.arg, l)
+		}
+		msg, _ := l["message"].(string)
+		if c.every == "" && msg != "" || c.every != "" && !strings.Contains(msg, "at least every "+c.every+":") {
+			t.Errorf("%s: the warning %q", c.arg, msg)
+		}
+		if got, err := os.ReadFile(file); err != nil || string(got) != c.seconds+"\n" {
+			t.Errorf("%s: the file holds %q, %v", c.arg, got, err)
+		}
+	}
+	for arg, why := range map[string]string{
+		"1d": "is from", "1d59m59s": "is from", "33d1s": "is from", "34d": "is from", "10000000000s": "no time", "9999999999w": "longer than any",
+		"0": "no time", "0s": "no time", "": "no time", "-1h": "flag", "+1h": "no time", "1.5h": "no time", "1x": "no time", "90000x": "no time", "2d1hx": "no time",
+		"h": "no time", "1h ": "no time", " 1h": "no time", "1dd": "no time",
+	} {
+		var wrong *usageError
+		if err := do(ctx, "prekey lifetime", []string{arg}, strings.NewReader(""), io.Discard, io.Discard); !errors.As(err, &wrong) || !strings.Contains(err.Error(), why) {
+			t.Errorf("%q: %v", arg, err)
+		}
+		if got, err := os.ReadFile(file); err != nil || string(got) != "2851200\n" {
+			t.Errorf("%q changed the file to %q, %v", arg, got, err)
+		}
+	}
+}
