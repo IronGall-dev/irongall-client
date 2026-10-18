@@ -145,6 +145,22 @@ func (s *Server) Count(a protocol.Address) int {
 	return 0
 }
 
+// Forget forgets box a, as a server does once its record's expiry has
+// passed (PROTOCOL.md §7): what its identity revoked is kept, and nothing
+// else.
+func (s *Server) Forget(a protocol.Address) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b := s.boxes[a]
+	if b == nil {
+		return
+	}
+	delete(s.boxes, a)
+	if b.revoked != nil || b.listed != nil {
+		s.held[a] = &held{identity: b.identity, revocations: b.revocations}
+	}
+}
+
 // Prekey returns a box's current prekey statement and its signature, as
 // served.
 func (s *Server) Prekey(a protocol.Address) (statement, signature []byte) {

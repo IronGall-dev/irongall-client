@@ -116,6 +116,7 @@ srv_check(){ # <addr> <identity doc> <statement> <sig> <current serial> <current
   if grep -qxF "$(sed -n 4p "$3")" $SRV/$1/keys.used 2> /dev/null; then srv_err 400 prekey_not_new "every prekey must be a NEW key"; return 1; fi
   echo "${r##* }" > $SRV/tmp/cert-serial; }
 srv_install(){ cp $SRV/tmp/pk.txt $SRV/$1/prekey.txt; cp $SRV/tmp/pk.sig $SRV/$1/prekey.sig; cp $SRV/tmp/cert-serial $SRV/$1/cert-serial; sed -n 4p $SRV/tmp/pk.txt >> $SRV/$1/keys.used; }
+srv_forget(){ rm -f $SRV/$1/state $SRV/$1/prekey.txt $SRV/$1/prekey.sig $SRV/$1/cert-serial $SRV/$1/keys.used $SRV/$1/msgs/*; }      # <addr>: the server forgets the box, as one does past its record's expiry (PROTOCOL.md §7); what its identity revoked stays
 srv_register(){ local a=$1 f=$2 d=$SRV/$1 tok=$3
   if [ -e $d/state ]; then [ "$(cat $d/state)" = revoked ] && { srv_err 410 revoked "revoked"; return 1; }
     jq -er .identity "$f" | base64 -d > $SRV/tmp/id.doc; jq -er .prekey "$f" | base64 -d > $SRV/tmp/pk.txt; jq -er .prekey_signature "$f" | base64 -d > $SRV/tmp/pk.sig
@@ -129,13 +130,13 @@ srv_register(){ local a=$1 f=$2 d=$SRV/$1 tok=$3
   srv_install "$a"; echo '{}'; }
 srv_prekey(){ local a=$1 f=$2 d=$SRV/$1 tok=$3
   [ -z "$PREKEY_FAILS" ] || { srv_err 503 unavailable "set by the test"; return 1; }
-  srv_state "$a" active closed || return 1
+  srv_state "$a" active || return 1
   jq -er .prekey "$f" | base64 -d > $SRV/tmp/pk.txt && jq -er .prekey_signature "$f" | base64 -d > $SRV/tmp/pk.sig || { srv_err 400 bad_request "prekey, prekey_signature"; return 1; }
   if cmp -s $SRV/tmp/pk.txt $d/prekey.txt && cmp -s $SRV/tmp/pk.sig $d/prekey.sig; then echo '{}'; return; fi
   srv_check "$a" $d/identity.doc $SRV/tmp/pk.txt $SRV/tmp/pk.sig "$(sed -n 3p $d/prekey.txt)" "$(cat $d/cert-serial)" || return 1
   srv_pass "$a" "$tok" $d/identity.doc "$(cat $SRV/tmp/cert-serial)" || return 1      # under the NEW certificate: that is how a box moves to one
   cp $d/prekey.txt $d/prev.txt; cp $d/prekey.sig $d/prev.sig; srv_install "$a"
-  echo active > $d/state; echo '{}'; }
+  echo '{}'; }
 srv_record(){ local d=$SRV/$1      # <addr> → the record of what the server holds against an address: its revocation, and the revocation of its certificates, each when held. It proves itself
   jq -n --arg i "$(ig_b64 $d/identity.doc)" --arg s "$([ ! -e $d/revoke.sig ] || ig_b64 $d/revoke.sig)" --arg l "$([ ! -e $d/revoked-certs.txt ] || ig_b64 $d/revoked-certs.txt)" --arg g "$([ ! -e $d/revoked-certs.sig ] || ig_b64 $d/revoked-certs.sig)" \
     '{type:"revocation_record", identity:$i} + ([{revocation_signature:$s}, {revoked_certificates:$l}, {revoked_certificates_signature:$g}] | map(select(.[] != "")) | add // {})'; }      # the record names its type, as every server writes it
@@ -151,7 +152,7 @@ srv_box(){ local a=$1 d=$SRV/$1 st doc txt sig      # GET /v1/<addr>, the one re
   if [ "$st" = revoked ] && [ "$REVMODE" != "hide $a" ]; then      # the operator that hides a revocation it holds serves the box as if it were not revoked, from its last prekey
     if [ "$REVMODE" = "show $a" ]; then cp $SRV/shown.json $SRV/tmp/record.json; else srv_record "$a" > $SRV/tmp/record.json; fi
     srv_err 410 revoked "revoked" $SRV/tmp/record.json; return 1; fi
-  [ "$st" = revoked ] || srv_state "$a" active closed || return 1
+  [ "$st" = revoked ] || srv_state "$a" active || return 1
   doc=$d/identity.doc; txt=$d/prekey.txt; sig=$d/prekey.sig
   if [ -e $SRV/stale-once ] && [ "$(cat $SRV/stale-once)" = "$a" ]; then rm -f $SRV/stale-once; txt=$d/prev.txt; sig=$d/prev.sig; fi
   case "$MODE" in
@@ -464,6 +465,11 @@ cp held2.txt $IG/prekeys/$B2.txt
 as B; rm -f $W/box/B/prekeys/* $W/box/B/work/* $W/box/B/pass $W/box/B/serial
 ig_rekey $NOPQ && B3=$(num B) && [ "$B3" -gt "$B2" ] && [ "$(sed -n 3p $SRV/$B/prekey.txt)" = "$B3" ] && [ -s $IG/work/$B3 ] && [ -s $IG/pass ] && ok "lost prekeys, working key and pass: ig_rekey with the identity alone publishes a later number under a new certificate, and needs no record of the numbers it used" || bad "restore"
 as A; printf 'after restore' > body6; ig_send "$B" body6 && as B && recv && printf '%s' "$RECV_OUT" | jq -e '.body == "after restore"' > /dev/null && ok "mail flows again after the restore" || bad "after restore: $RECV_OUT / $RECV_ERR"
+# A box the server forgot, past its record's expiry (PROTOCOL.md §7): no box is served to number above, so ig_rekey numbers above what it published and registers anew
+as B; srv_forget "$B"; n0=$(num B)
+ig_rekey $NOPQ 2> err.txt && n1=$(num B) && [ "$n1" -gt "$n0" ] && [ "$(cat $SRV/$B/state)" = active ] && [ "$(sed -n 3p $SRV/$B/prekey.txt)" = "$n1" ] && grep -qx "PUT /v1/$B" $SRV/log && [ ! -s err.txt ] &&
+  ok "a box the server forgot: ig_rekey registers it anew, at a later number, and prints no error" || bad "a forgotten box: $(cat err.txt)"
+as A; printf 'after it was forgotten' > body6f; ig_send "$B" body6f && as B && recv && printf '%s' "$RECV_OUT" | jq -e '.body == "after it was forgotten"' > /dev/null && ok "mail flows to a box registered anew" || bad "after it was forgotten: $RECV_OUT / $RECV_ERR"
 # --- 11. pagination, a pass the server no longer takes, the lock, a fault in the box itself
 as A; for i in 1 2 3; do printf 'page %s' $i > p$i; ig_send "$B" p$i || bad "send p$i"; done
 as B; printf '%s\n' "$OLD_PASS" > $IG/pass; PAGE=2; recv; PAGE=50

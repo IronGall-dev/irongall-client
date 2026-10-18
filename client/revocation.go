@@ -465,7 +465,7 @@ func (b *Box) renewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy,
 	}
 	r := &Remedy{Below: made}
 	r.Revoked, r.NotRevoked = b.revokeBelow(ctx, made)
-	r.NotRenewed = b.publish(ctx, b.boxPath("/prekey"), req, made)
+	r.NotRenewed = b.sendRenewal(ctx, req, made)
 	var api *APIError
 	if errors.As(r.NotRenewed, &api) && api.Status == http.StatusTooManyRequests && api.RetryAfter > 0 && api.RetryAfter <= remedyWait {
 		select {
@@ -473,7 +473,7 @@ func (b *Box) renewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy,
 			return r, nil
 		case <-time.After(api.RetryAfter):
 		}
-		r.NotRenewed = b.publish(ctx, b.boxPath("/prekey"), req, made)
+		r.NotRenewed = b.sendRenewal(ctx, req, made)
 	}
 	if r.NotRenewed != nil {
 		r.NotRenewed = b.proved(ctx, own, r.NotRenewed, newLookups())

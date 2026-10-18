@@ -129,7 +129,7 @@ func (e *APIError) words() string {
 	case protocol.CodeCertificateRevoked:
 		return "the server holds the certificate this box signs under as one its identity revoked: irongall prekey renew certifies a new working key above it"
 	case protocol.CodeUnknownSender:
-		return "the server does not know this box: it is not registered there, or is closed (irongall init registers a box, and irongall prekey renew reopens one)"
+		return "the server does not know this box: it is not registered there, or was deleted or forgotten there (irongall init registers a box, and irongall prekey renew registers one again)"
 	case protocol.CodeSenderRevoked:
 		return "the server answers that this box is revoked: this client takes that only from a revocation that verifies"
 	case protocol.CodeSenderNotAllowed:
@@ -139,7 +139,7 @@ func (e *APIError) words() string {
 	case protocol.CodeAdoptKeyRefused:
 		return "the server refused the adopt key as spent, expired, revoked or not its own: ask the account for a new one"
 	case protocol.CodeNoSuchMailbox:
-		return "the server holds no box at that address: never registered, or closed"
+		return "the server holds no box at that address: never registered, deleted, or forgotten"
 	case protocol.CodeNoSuchMessage:
 		return "the server holds no message with that id: acked or expired"
 	case protocol.CodeNotRevoked:

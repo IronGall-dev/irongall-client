@@ -730,15 +730,18 @@ ig_rekey(){ # [--no-pq] → publishes a new prekey, signed by a new working key 
   ig_renew "${1-}"
 }
 ig_renew(){ # [--no-pq] → what ig_rekey does, the lock held. A serial is signed ONCE
-  local A r s t na h c f cs p new x; A=$(cat "$IG/address") || return 1; mkdir -p "$IG/prekeys"
-  ig_api GET "/v1/$A" > "$IG/self.json" || return 1
-  ig_shape "$IG/self.json" box && ig_bytes "$IG/self.json" identity "$IG/self.doc" && ig_bytes "$IG/self.json" prekey "$IG/self.txt" && ig_bytes "$IG/self.json" prekey_signature "$IG/self.sig" ||
-    ig_refuse "the server's answer for this box is not one this client reads: a JSON object as PROTOCOL.md §0b reads one, each byte field base64 in its one encoding" || return 1
-  [ -s "$IG/self.txt" ] && [ -s "$IG/self.sig" ] || ig_refuse "the server sent no prekey for this box" || return 1
-  c=$(ig_cert "$IG/self.sig" "$IG/identity.doc" "$A") && c=${c#* } && r=$(ig_prekeycheck "$IG/self.txt" "$IG/self.sig" "$A" "$IG/identity.doc" "${c% *}") || ig_refuse "this box's current prekey, as served: ${r:-it is not signed under a certificate of this identity}" || return 1      # its own record, judged where its certificate begins: whether this identity ever certified the key that signed it, even if that certificate has since ended
-  s=${r%% *}; cs=${r##* }; p=$(cat "$IG/serial" 2> /dev/null || echo 0)      # a box's statements are ordered by certificate first, then by serial, and this box gives a renewal's certificate and prekey one number: what it published is (p, p), and the server may serve nothing ordered before it
-  [ "$cs" -gt "$p" ] || { [ "$cs" -eq "$p" ] && [ "$s" -ge "$p" ]; } || ig_refuse "rollback: the server serves this box's prekey serial $s under certificate $cs, before serial $p, which this box published" || return 1
-  s=$((cs > p ? cs : p))
+  local A r s t na h c f cs p new x gone u w; A=$(cat "$IG/address") || return 1; mkdir -p "$IG/prekeys"
+  ig_api GET "/v1/$A" > "$IG/self.json" 2> "$IG/self.err" || { [ "$(ig_code)" = no_such_mailbox ] || { cat "$IG/self.err" >&2; return 1; }; gone=1; }      # 404: the server holds no box here any more, past its record's expiry or deleted (PROTOCOL.md §7), so nothing is served to number above or to hold to its order, and the renewal goes as a registration
+  p=$(cat "$IG/serial" 2> /dev/null || echo 0)
+  if [ -n "$gone" ]; then s=$p; else
+    ig_shape "$IG/self.json" box && ig_bytes "$IG/self.json" identity "$IG/self.doc" && ig_bytes "$IG/self.json" prekey "$IG/self.txt" && ig_bytes "$IG/self.json" prekey_signature "$IG/self.sig" ||
+      ig_refuse "the server's answer for this box is not one this client reads: a JSON object as PROTOCOL.md §0b reads one, each byte field base64 in its one encoding" || return 1
+    [ -s "$IG/self.txt" ] && [ -s "$IG/self.sig" ] || ig_refuse "the server sent no prekey for this box" || return 1
+    c=$(ig_cert "$IG/self.sig" "$IG/identity.doc" "$A") && c=${c#* } && r=$(ig_prekeycheck "$IG/self.txt" "$IG/self.sig" "$A" "$IG/identity.doc" "${c% *}") || ig_refuse "this box's current prekey, as served: ${r:-it is not signed under a certificate of this identity}" || return 1      # its own record, judged where its certificate begins: whether this identity ever certified the key that signed it, even if that certificate has since ended
+    s=${r%% *}; cs=${r##* }      # a box's statements are ordered by certificate first, then by serial, and this box gives a renewal's certificate and prekey one number: what it published is (p, p), and the server may serve nothing ordered before it
+    [ "$cs" -gt "$p" ] || { [ "$cs" -eq "$p" ] && [ "$s" -ge "$p" ]; } || ig_refuse "rollback: the server serves this box's prekey serial $s under certificate $cs, before serial $p, which this box published" || return 1
+    s=$((cs > p ? cs : p))
+  fi
   x=$(ig_certskept "$A"); case $? in      # above every serial this box's identity has revoked too: a certificate numbered there would be revoked as it was made
     0) [ "$x" -lt 9007199254740991 ] || ig_refuse "this box's identity has revoked its certificates through the highest serial there is, so no later certificate can be made: the address cannot renew" || return 1; [ "$x" -le "$s" ] || s=$x ;;
     1) ;;
@@ -749,8 +752,9 @@ ig_renew(){ # [--no-pq] → what ig_rekey does, the lock held. A serial is signe
   if [ "${t:-0}" -gt "$s" ]; then s=$t; new=; [ ! -s "$IG/prekeys/$s.txt.sig" ] || { na=$(ig_time "$(sed -n 5p "$IG/prekeys/$s.txt")") && [ "$na" -gt "$(ig_now)" ] && [ -s "$IG/work/$s-cert.pub" ] && c=$(ig_cert "$IG/prekeys/$s.txt.sig" "$IG/identity.doc" "$A") && c=${c#* } && [ "${c% *}" -le "$(ig_now)" ]; } || new=1; fi      # a number an earlier run took, and that nothing has passed since, is kept. Signed and never seen published: sent again AS IT IS until it expires, then a new number. Signed again, the same key would get 33 more days from a server that keeps what it refuses. One under a certificate that has not begun, by this clock, was signed while the clock read over an hour ahead: a server refuses it until that time comes, so it is spent too. Never signed: its key is used
   if [ -n "$new" ]; then [ "$s" -lt 9007199254740991 ] || ig_refuse "this box's certificate serial is the highest there is, so no later certificate can be made: the address cannot renew" || return 1; t=$(ig_now); s=$((t > s ? t : s + 1)); fi      # a new number: this machine's clock, in seconds, or one above the highest this box knows of when the clock gives nothing higher. An identity is a key and keeps no record of what it signed, and a box restored from it knows only what the server shows: by the clock, its certificate is above every one made before, on whatever machine. A verifier never reads a serial as a time, it only compares two
   [ -s "$IG/prekeys/$s.txt.sig" ] || rm -f "$IG/prekeys/$s.txt"; ig_prekey "$s" "${1-}" || return 1
-  jq -n --arg p "$(ig_b64 "$IG/prekeys/$s.txt")" --arg g "$(ig_b64 "$IG/prekeys/$s.txt.sig")" --argjson k "$IG_SENDERS" '{prekey:$p, prekey_signature:$g, sender_key_types:$k}' > "$IG/rekey.json"
-  h=$(ig_pass "$s") && ig_api PUT "/v1/$A/prekey" "$IG/rekey.json" -H "Authorization: $h" > /dev/null || { ig_clock; return 1; }      # a pass under the NEW certificate: that is how a box moves to one, and the server then takes no pass under an older
+  if [ -n "$gone" ]; then u="/v1/$A"; w='{identity:$i}'; else u="/v1/$A/prekey"; w='{}'; fi      # a registration is the identity document, then what a new prekey carries
+  jq -n --arg i "$(ig_b64 "$IG/identity.doc")" --arg p "$(ig_b64 "$IG/prekeys/$s.txt")" --arg g "$(ig_b64 "$IG/prekeys/$s.txt.sig")" --argjson k "$IG_SENDERS" "$w"' + {prekey:$p, prekey_signature:$g, sender_key_types:$k}' > "$IG/rekey.json"
+  h=$(ig_pass "$s") && ig_api PUT "$u" "$IG/rekey.json" -H "Authorization: $h" > /dev/null || { ig_clock; return 1; }      # a pass under the NEW certificate: that is how a box moves to one, and the server then takes no pass under an older
   [ "$s" -le "$(cat "$IG/serial" 2> /dev/null || echo 0)" ] || echo "$s" > "$IG/serial" || return 1
   mv "$IG/pass.new" "$IG/pass" || return 1
   for f in "$IG"/work/*-cert.pub; do t=$(basename "$f" -cert.pub); [[ $t =~ ^[0-9]+$ ]] && [ "$t" -lt "$s" ] && rm -f "$IG/work/$t" "$IG/work/$t.pub" "$f"; done      # older working keys: what they signed is signed, and the server takes no pass under them

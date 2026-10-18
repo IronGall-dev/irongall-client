@@ -35,14 +35,14 @@ const (
 	CodeCertificateRevoked    Code = "certificate_revoked"     // the pass or statement is under a certificate the box's identity revoked
 
 	// 403
-	CodeUnknownSender    Code = "unknown_sender"     // not registered, or closed
+	CodeUnknownSender    Code = "unknown_sender"     // not registered, or deleted
 	CodeSenderRevoked    Code = "sender_revoked"     // YOUR box is revoked
 	CodeSenderNotAllowed Code = "sender_not_allowed" // not on the box's allow list, or on its block list
 	CodeSenderKeyType    Code = "sender_key_type"    // the box's client does not verify identities of YOUR box's key type
 	CodeAdoptKeyRefused  Code = "adopt_key_refused"  // an adopt key that is spent, expired, revoked or not this server's
 
 	// 404
-	CodeNoSuchMailbox Code = "no_such_mailbox" // never registered, or closed
+	CodeNoSuchMailbox Code = "no_such_mailbox" // never registered, deleted, or forgotten
 	CodeNoSuchMessage Code = "no_such_message" // acked or expired: treat it as gone
 	CodeNotRevoked    Code = "not_revoked"     // no revocation of this address is held here
 

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -55,6 +56,36 @@ func TestReceiveRenewsADayOldPrekey(t *testing.T) {
 	}
 	if again := receive(t, b); again.Renewed != nil || servedSerial(t, e, b) != res.Renewed.Serial {
 		t.Fatal("renewed again at the next receive")
+	}
+}
+
+// A box its server forgot, once its record's expiry passed (PROTOCOL.md §7),
+// comes back at its next receive: with no box served to number above, the
+// renewal is numbered above what the box published, and goes as a
+// registration. Mail reaches it again.
+func TestAForgottenBoxRegistersAnewAtItsRenewal(t *testing.T) {
+	e := newEnv(t)
+	a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+	if _, err := b.Block(context.Background(), c.Address()); err != nil || e.srv.ACL(b.Address()) == nil {
+		t.Fatalf("the block before the box was forgotten: %v", err)
+	}
+	first := numberOf(t, b)
+	e.srv.Forget(b.Address())
+	e.clock.Add(24*time.Hour + time.Second)
+	res := receive(t, b)
+	if res.Renewed == nil || res.Renewed.Serial <= first || servedSerial(t, e, b) != res.Renewed.Serial {
+		t.Fatalf("a box its server forgot did not register anew at its renewal: %+v", res)
+	}
+	if res.Renewed.Type() != protocol.Classic {
+		t.Fatalf("the registration changed the box's key type to %s", res.Renewed.Type())
+	}
+	send(t, a, b, "to a box registered anew")
+	if got := receive(t, b); len(got.Delivered) != 1 {
+		t.Fatalf("mail to a box registered anew: %+v", got)
+	}
+	// The server lost the box's ACL with the box, and the box sends it again.
+	if acl := e.srv.ACL(b.Address()); acl == nil || !slices.Contains(acl.Deny.Addrs, c.Address()) {
+		t.Fatalf("a box registered anew did not send its ACL again: %+v", acl)
 	}
 }
 

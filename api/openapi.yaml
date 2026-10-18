@@ -82,8 +82,8 @@ paths:
         identity (§6.3a). A revoked address is `410 revoked`, with the record
         held in `record`, which a client checks and never believes (§6.3).
         With a pass the call is counted against the box that asks; with none,
-        against the address it comes from (§8). Answered for an active or a
-        closed box.
+        against the address it comes from (§8). Answered for an active box: a
+        deleted one, and an address with no box, are `404`.
       security:
         - {}
         - pass: []
@@ -138,8 +138,13 @@ paths:
       description: |
         `PROTOCOL.md` §3. The pass is under the certificate of the prekey
         statement the body brings, not under one on record. A registration
-        never changes a box that exists: an identical retry is `200`, anything
-        else `409 conflict`.
+        never changes a registered box: an identical retry is `200`, anything
+        else `409 conflict`. It is held to what the server keeps of the
+        address, box or none: `410` while it is revoked, `401
+        certificate_revoked` under a certificate its identity revoked, and,
+        while the record of a box its owner deleted is kept, a later
+        certificate than that box's last and a key it never published. Such a
+        registration undoes the delete, `201`.
       requestBody:
         required: true
         content:
@@ -167,11 +172,13 @@ paths:
           $ref: '#/components/responses/Unavailable'
     delete:
       tags: [owner]
-      operationId: close
-      summary: Close a box
+      operationId: deleteBox
+      summary: Delete a box
       description: |
-        `PROTOCOL.md` §6.2. Deletes its unacked mail and marks it closed; a new
-        prekey reopens it (§6.4).
+        `PROTOCOL.md` §6.2. The box is then answered as if it had never been
+        registered, and its unacked mail is deleted at once. The server keeps
+        its record until its newest certificate ends, and a registration
+        until then undoes the delete (§3).
       responses:
         '204':
           $ref: '#/components/responses/NoContent'
@@ -201,7 +208,8 @@ paths:
         `PROTOCOL.md` §6.4. The pass is under the certificate the new
         statement is signed under: a statement ordered after the current one
         (§2b) is the authority, so a box that lost its working key comes back
-        this way, and a closed box reopens.
+        this way. A deleted box, and one the server has forgotten, are `404`:
+        each comes back by a registration (§3).
       requestBody:
         required: true
         content:
@@ -269,9 +277,11 @@ paths:
       summary: Publish a revocation
       description: |
         `PROTOCOL.md` §6.3, §6.3a. The record proves itself, so no pass is
-        taken. A revocation of the address is `201`; a revocation of
-        certificates taken, or one through the same serial again, `200`. A box
-        already revoked is `410`, answered before the body is read.
+        taken. It is kept with or without a box: for an address registered,
+        deleted, forgotten or never registered. A revocation of the address is
+        `201`; a revocation of certificates taken, or one through the same
+        serial again, `200`. An address already revoked is `410`, answered
+        before the body is read.
       security: []
       requestBody:
         required: true
@@ -286,8 +296,6 @@ paths:
           $ref: '#/components/responses/Done'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '404':
-          $ref: '#/components/responses/NotFound'
         '409':
           $ref: '#/components/responses/Conflict'
         '410':
@@ -805,7 +813,7 @@ components:
                     enum: [unauthorized, pass_expired, certificate_not_current, certificate_revoked]
     Forbidden:
       description: |
-        About the CALLING box: `unknown_sender` (not registered, or closed) ·
+        About the CALLING box: `unknown_sender` (not registered, or deleted) ·
         `sender_revoked` · `sender_not_allowed` (final) · `sender_key_type`
         (with the sender's `key_type`) · `adopt_key_refused`.
       headers:
@@ -825,7 +833,7 @@ components:
                     enum: [unknown_sender, sender_revoked, sender_not_allowed, sender_key_type, adopt_key_refused]
     NotFound:
       description: |
-        `no_such_mailbox` (never registered, or closed) · `no_such_message`
+        `no_such_mailbox` (never registered, deleted, or forgotten) · `no_such_message`
         (acked or expired: treat it as gone) · `not_revoked` (the read of
         the revocations held, §6.3: the server holds none of this address).
       headers:
