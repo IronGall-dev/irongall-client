@@ -696,7 +696,7 @@ from the next recv, which renews a prekey made for longer.`,
 			}
 			var warning any
 			if d < shortLifetime {
-				warning = fmt.Sprintf("WARNING: with this lifetime, irongall recv must run at least every %s: a run missed past that lets the prekey run out, and senders are refused until the box renews", formatTime(client.RecvWithin(d)))
+				warning = fmt.Sprintf("WARNING: a lifetime under %s risks a single missed check-in leaving this box unable to receive messages. At %s, run irongall recv at least every %s.", formatTime(shortLifetime), formatTime(d), formatTime(client.RecvWithin(d)))
 			}
 			return e.out(line("prekey_lifetime", "seconds", int64(d/time.Second), "lifetime", formatTime(d), "message", warning))
 		})

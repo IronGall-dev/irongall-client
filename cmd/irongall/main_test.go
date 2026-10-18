@@ -1666,7 +1666,7 @@ func TestPrekeyLifetime(t *testing.T) {
 			t.Errorf("%s: %v", c.arg, l)
 		}
 		msg, _ := l["message"].(string)
-		if c.every == "" && msg != "" || c.every != "" && !strings.Contains(msg, "at least every "+c.every+":") {
+		if c.every == "" && msg != "" || c.every != "" && !strings.Contains(msg, "unable to receive messages. At "+c.shown+", run irongall recv at least every "+c.every+".") {
 			t.Errorf("%s: the warning %q", c.arg, msg)
 		}
 		if got, err := os.ReadFile(file); err != nil || string(got) != c.seconds+"\n" {
