@@ -28,11 +28,11 @@ func TestAReplayIsRefusedAfterTheClockStepsBack(t *testing.T) {
 		name        string
 		wait        time.Duration // from sent_at to the drain while ahead
 		ahead, back time.Duration // the reader's clock then, and at the replay
-		serverToo   bool          // the server's clock is moved with the reader's: a hostile server that takes a pass from a clock an honest one refuses
+		serverToo   bool          // the server's clock is moved with the reader's: a hostile server that takes a pass from a clock an honest one refuses, and refuses the renewal it would make
 	}{
 		{"50m fast at a drain the server takes, then 9m slow", protocol.TTL - 49*time.Minute, 50 * time.Minute, -9 * time.Minute, false},
 		{"40 days fast at a recv the server refuses, then right", 5 * 24 * time.Hour, 40 * 24 * time.Hour, 0, false},
-		{"4 hours fast at a drain a hostile server takes, then right", protocol.TTL - 2*time.Hour, 4 * time.Hour, 0, true},
+		{"62 days fast at a drain a hostile server takes, then right", 5 * 24 * time.Hour, 62 * 24 * time.Hour, 0, true},
 		{"control: never ahead", 5 * 24 * time.Hour, 0, 0, false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -67,10 +67,18 @@ func TestAReplayIsRefusedAfterTheClockStepsBack(t *testing.T) {
 			if c.serverToo {
 				e.clock.Add(c.ahead)
 				off = 0
+				e.srv.SetMiddle(func(w http.ResponseWriter, q *http.Request, next http.Handler) {
+					if q.Method == http.MethodPut && strings.HasSuffix(q.URL.Path, "/prekey") {
+						http.Error(w, "down", http.StatusServiceUnavailable)
+						return
+					}
+					next.ServeHTTP(w, q)
+				})
 			}
 			_, err = r.Receive(ctx)
 			if c.serverToo {
 				e.clock.Add(-c.ahead)
+				e.srv.SetMiddle(nil)
 			}
 			off = c.back
 			id := sha256.Sum256(kept)
@@ -80,9 +88,12 @@ func TestAReplayIsRefusedAfterTheClockStepsBack(t *testing.T) {
 			if len(res.Delivered) != 0 || err2 != nil {
 				t.Error("a message already delivered was delivered again, or the replay was not judged")
 			}
-			// Past the hour, the floor is what refuses it.
-			if c.serverToo && (len(res.Refused) != 1 || res.Refused[0].Code != protocol.RefusedStale) {
-				t.Errorf("the replay after a step back past the hour: refused %v, want one stale", res.Refused)
+			// Past what the replay set reaches back over, the prekey it was
+			// sealed to is gone too, and it is refused as undecryptable: the
+			// floor's own refusal, for a key kept longer than that, is
+			// TestTheSeenFloor's.
+			if c.serverToo && len(res.Refused) != 1 {
+				t.Errorf("the replay after a step back of 62 days: refused %v, want one refusal", res.Refused)
 			}
 		})
 	}

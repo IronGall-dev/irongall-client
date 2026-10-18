@@ -603,7 +603,7 @@ func TakeAs(w http.ResponseWriter, r *http.Request, edit func(*protocol.Receipt)
 	body, _ := io.ReadAll(io.LimitReader(r.Body, maxCiphertext))
 	h := sha256.Sum256(body)
 	now := time.Now()
-	rec := protocol.Receipt{ID: hex.EncodeToString(h[:]), ReceivedAt: formatTime(now), ExpiresAt: formatTime(now.Add(protocol.TTL))}
+	rec := protocol.Receipt{ID: hex.EncodeToString(h[:]), ReceivedAt: formatTime(now), ExpiresAt: formatTime(now.Add(protocol.Retention))}
 	if edit != nil {
 		edit(&rec)
 	}
@@ -611,7 +611,7 @@ func TakeAs(w http.ResponseWriter, r *http.Request, edit func(*protocol.Receipt)
 }
 
 func receipt(id string, m *message) protocol.Receipt {
-	return protocol.Receipt{ID: id, ReceivedAt: formatTime(m.receivedAt), ExpiresAt: formatTime(m.receivedAt.Add(protocol.TTL))}
+	return protocol.Receipt{ID: id, ReceivedAt: formatTime(m.receivedAt), ExpiresAt: formatTime(m.receivedAt.Add(protocol.Retention))}
 }
 
 func formatTime(t time.Time) string { return t.UTC().Format(protocol.TimeLayout) }
@@ -653,7 +653,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request, b *box) {
 	for _, id := range b.order {
 		if m := b.messages[id]; m != nil {
 			l.Messages = append(l.Messages, protocol.MessageInfo{ID: id, From: m.from.String(), Size: int64(len(m.ciphertext)),
-				ReceivedAt: formatTime(m.receivedAt), ExpiresAt: formatTime(m.receivedAt.Add(protocol.TTL))})
+				ReceivedAt: formatTime(m.receivedAt), ExpiresAt: formatTime(m.receivedAt.Add(protocol.Retention))})
 		}
 	}
 	l.Count = int64(len(l.Messages))

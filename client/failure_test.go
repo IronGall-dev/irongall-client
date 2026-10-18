@@ -462,18 +462,21 @@ func TestFlushNeverStopsAtABadEntry(t *testing.T) {
 	if failed, _ := filepath.Glob(filepath.Join(outbox, "failed", c.Address().String()+".*.P")); len(failed) != 1 {
 		t.Fatal("the revoked box's entry did not move to outbox/failed/")
 	}
-	// Past 33 days no recipient accepts it: it moves to failed/ too.
+	// Written more than 33 days ago, it is posted no more: it moves to
+	// failed/ too.
 	e.clock.Add(protocol.TTL + time.Second)
 	if _, err := a.Flush(ctx); err == nil {
 		t.Fatal("flush of an undeliverable entry reported nothing")
 	}
 	if left, _ := filepath.Glob(filepath.Join(outbox, "*.P")); len(left) != 0 {
-		t.Fatalf("an entry older than 33 days stayed: %v", left)
+		t.Fatalf("an entry written more than 33 days ago stayed: %v", left)
 	}
 }
 
-// An entry older than any recipient accepts is never posted, even when the
-// server would take it: it moves to outbox/failed/, with no receipt.
+// An entry written more than 33 days ago is never posted, even when the
+// server would take it: an outbox posts one for 33 days from when it was
+// written, the window a reader's replay set reaches back over past a first
+// post. It moves to outbox/failed/, with no receipt.
 func TestStaleOutboxEntryIsNotPosted(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
@@ -484,11 +487,11 @@ func TestStaleOutboxEntryIsNotPosted(t *testing.T) {
 	}
 	e.clock.Add(protocol.TTL + time.Second)
 	rs, err := a.Flush(ctx)
-	if len(rs) != 0 || err == nil || !strings.Contains(err.Error(), "outbox/failed") {
+	if len(rs) != 0 || err == nil || !strings.Contains(err.Error(), "outbox/failed") || !strings.Contains(err.Error(), "written more than 33 days ago") {
 		t.Fatalf("flush: %d sent, %v", len(rs), err)
 	}
 	if e.srv.Count(b.Address()) != 0 {
-		t.Fatal("an entry older than 33 days was posted")
+		t.Fatal("an entry written more than 33 days ago was posted")
 	}
 	if failed, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "failed", b.Address().String()+".*.P")); len(failed) != 1 {
 		t.Fatal("the stale entry did not move to outbox/failed/")

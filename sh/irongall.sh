@@ -559,25 +559,29 @@ ig_padding(){ # <message bytes: the envelope's line and its signature> <age reci
   local n=$1 s c; s=$(ig_blocks "$(ig_sealed "$n" "$2")"); c=$((s - $(ig_agehead "$2") - 16))      # what a file of that size has for its chunks, each with its tag
   echo "$((c - 16 * (c > 65552 ? (c + 65551) / 65552 : 1) - n)) $s"
 }
-ig_seal(){ # <address> <outbox stem> [the box ig_lookup read] → what to post: $IG/seal.age, the envelope <stem>.P signed for that recipient only, by the working key in use, then the line, the signature and the padding encrypted to the recipient's VERIFIED prekey; and $IG/seal.query, the query that names that prekey. It is git's layout for a signed tag: the signed bytes as they are, then the signature block. The envelope is read as its recipient will read it first. A seal is made for one post and never kept: the outbox keeps the envelope, and ig_post seals it again at every post
-  local B=$1 o=$2 s="$IG/seal" A r k n f t c why ps pc; rm -f "$s.sig" "$s.age" "$s.query"; A=$(cat "$IG/address") && n=$(cat "$IG/serial") || return 1
+ig_seal(){ # <address> <outbox stem> [the box ig_lookup read] → what to post: $IG/seal.age, the envelope <stem>.P dated at this post ($IG/seal.P: its sent_at this clock, and nothing else changed, as a signed request's time is when it was signed, made anew for each attempt), signed for that recipient only, by the working key in use, then the line, the signature and the padding encrypted to the recipient's VERIFIED prekey; and $IG/seal.query, the query that names that prekey. It is git's layout for a signed tag: the signed bytes as they are, then the signature block. The envelope is read as its recipient will read it first. A seal is made for one post and never kept: the outbox keeps the envelope, and ig_post seals it again at every post
+  local B=$1 o=$2 s="$IG/seal" A r k n f t c why ps pc d l; rm -f "$s.P" "$s.sig" "$s.age" "$s.query"; A=$(cat "$IG/address") && n=$(cat "$IG/serial") || return 1
   why=$(ig_envcheck "$o.P" "$A" "$B") && [ "$(wc -l < "$o.P")" -eq 1 ] && [ "$(jq -r .identity "$o.P")" = "$(ig_b64 "$IG/identity.doc")" ] || ig_refuse "the outbox entry is not an envelope this box made for that address${why:+: $why}" || return 1
+  d=$(jq -nr --argjson t "$(ig_now)" '$t | todate') && l=$(cat "$o.P") && [[ $l == *'"sent_at":"'* ]] || return 1      # the line, its one line feed dropped by $(…): ig_envcheck holds it to no control byte
+  printf '%s"sent_at":"%s%s\n' "${l%%'"sent_at":"'*}" "$d" "$(t=${l#*'"sent_at":"'}; printf '%s' "${t:20}")" > "$s.P" || return 1      # the first sent_at member's 20 characters replaced: both clients write it before the body
+  why=$(ig_envcheck "$s.P" "$A" "$B") && [ "$(wc -l < "$s.P")" -eq 1 ] && jq -e --arg d "$d" --slurpfile w "$o.P" '.sent_at == $d and del(.sent_at) == ($w[0] | del(.sent_at))' "$s.P" > /dev/null 2>&1 ||
+    ig_refuse "the outbox entry does not read back as itself once dated at this post${why:+: $why}" || return 1
   c=$(ig_cert "$IG/prekeys/$n.txt.sig" "$IG/identity.doc" "$A") && [ $((${c##* } - $(ig_now))) -gt $((33*86400)) ] ||      # the certificate in use: the one this box's published prekey is signed under
     ig_refuse "this box's certificate ends within 33 days, too soon to sign mail that may wait that long (or it has no working key): rekey makes a new one" || return 1
   r=$(ig_resolve "$B" "${3-}") && read -r ps k pc <<< "$r" && [ -n "$pc" ] || return 1
-  ssh-keygen -q -Y sign -n "irongall-msg-v1:$B" -f "$IG/work/$n-cert.pub" < "$o.P" > "$s.sig" || return 1
-  read -r f t <<< "$(ig_padding $(($(wc -c < "$o.P") + $(wc -c < "$s.sig"))) "$k")" && [ -n "$t" ] || return 1
-  { cat "$o.P" "$s.sig" && head -c "$f" /dev/zero | tr '\0' .; } | age -r "$k" > "$s.age" || return 1
+  ssh-keygen -q -Y sign -n "irongall-msg-v1:$B" -f "$IG/work/$n-cert.pub" < "$s.P" > "$s.sig" || return 1
+  read -r f t <<< "$(ig_padding $(($(wc -c < "$s.P") + $(wc -c < "$s.sig"))) "$k")" && [ -n "$t" ] || return 1
+  { cat "$s.P" "$s.sig" && head -c "$f" /dev/zero | tr '\0' .; } | age -r "$k" > "$s.age" || return 1
   [ "$(wc -c < "$s.age")" -eq "$t" ] || { rm -f "$s.age"; ig_refuse "the encrypted message is not the $t bytes its padding was made for: it is not sent at a size that tells its length"; return 1; }
   printf 'prekey_serial=%s&certificate_serial=%s\n' "$ps" "$pc" > "$s.query"      # the prekey is named by both serials, its own and its certificate's, written as the digits ig_resolve checked. The body is the age file as it is, and no signature is beside it: the server knows the sender from the pass the post carries
 }
 ig_post(){ # <address> <outbox stem> → seals it and POSTs it; on 409 stale_prekey, seals the SAME envelope again, once, to the box read again. One that can never be delivered moves to outbox/failed/. Before anything is sealed, the recipient's box is read and the revocation servers asked (ig_lookup), and the seal is made to what this box then holds. A post whose answer was lost is posted again as a new ciphertext, which its reader drops by its msg_id
   local B=$1 o=$2 sa c
-  if sa=$(ig_time "$(jq -r .sent_at "$o.P" 2> /dev/null)") && [ "$sa" -lt $(($(ig_now) - 33*86400)) ]; then      # the server would take it, and every recipient refuses it
-    ig_failed "$o"; ig_refuse "its envelope is older than 33 days, and every recipient refuses that: moved to outbox/failed/"; return 1
+  if sa=$(ig_time "$(jq -r .sent_at "$o.P" 2> /dev/null)") && [ "$sa" -lt $(($(ig_now) - 33*86400)) ]; then      # the outbox keeps the envelope as written, and posts it, dated afresh each time, for 33 days from then: a reader's replay set reaches back that far past a first post (66 days and an hour), and no further
+    ig_failed "$o"; ig_refuse "it was written more than 33 days ago, and an outbox posts a message no longer than that: moved to outbox/failed/"; return 1
   fi
-  if [ -n "$sa" ] && [ "$sa" -gt "$(ig_now)" ]; then      # dated ahead of this clock: written while the clock read ahead of where it reads now. Not posted until the clock passes that time: a reader has an hour of room for two clocks a server takes, and none to spare for one that was wrong
-    ig_refuse "its envelope is dated $(jq -r .sent_at "$o.P"), ahead of this machine's clock: it was written while the clock read ahead of where it reads now, and a recipient would refuse it. It is kept in the outbox, and ig_flush sends it once the clock passes that time"; return 1
+  if [ -n "$sa" ] && [ "$sa" -gt "$(ig_now)" ]; then      # dated ahead of this clock: written while the clock read ahead of where it reads now. Not posted until the clock passes that time: the outbox's 33 days are counted from when it was written, and a reader's replay set reaches back that far past a first post and no further
+    ig_refuse "its envelope is dated $(jq -r .sent_at "$o.P"), ahead of this machine's clock: it was written while the clock read ahead of where it reads now, and the outbox counts its 33 days from when it was written. It is kept in the outbox, and ig_flush sends it once the clock passes that time"; return 1
   fi
   rm -f "$IG/error.json"
   ig_lookup "$B"; case $? in      # asked before every post: what verifies is kept, and "none held" is the server's word, kept nowhere
@@ -603,9 +607,9 @@ ig_receipt(){ # → 0 only for a receipt in $IG/receipt.json that names the ciph
     ig_time "$(jq -r '.received_at | strings' "$IG/receipt.json")" > /dev/null && ig_time "$(jq -r '.expires_at | strings' "$IG/receipt.json")" > /dev/null && return 0
   ig_refuse "the server's receipt does not name the ciphertext this box posted, or its times are not times: kept in the outbox"
 }
-ig_sent(){ # <outbox stem> → sent/<address>.<msg_id>.json: the envelope as one line, as the recipient's inbox/ keeps it, with the server's receipt. Stored, and only then does the outbox entry go, and a sent line is printed: the server's id, the msg_id and the address. sent/ is yours to prune
+ig_sent(){ # <outbox stem> → sent/<address>.<msg_id>.json: the envelope as the post that was taken dated and signed it ($IG/seal.P), one line as the recipient's inbox/ keeps it, with the server's receipt. Stored, and only then does the outbox entry go, and a sent line is printed: the server's id, the msg_id and the address. sent/ is yours to prune
   local t="$IG/sent/${1##*/}.json" n=${1##*/}
-  mkdir -p "$IG/sent" && ig_line "$1.P" "$IG/receipt.json" > "$t" && sync "$t" "$IG/sent" && rm -f "$1.P" || { ig_err "sent, but not recorded in sent/ (still in the outbox: ig_flush posts it again, and its reader drops the copy)"; return 1; }
+  mkdir -p "$IG/sent" && ig_line "$IG/seal.P" "$IG/receipt.json" > "$t" && sync "$t" "$IG/sent" && rm -f "$1.P" || { ig_err "sent, but not recorded in sent/ (still in the outbox: ig_flush posts it again, and its reader drops the copy)"; return 1; }
   ig_out sent --arg id "$(jq -r .receipt.id "$t")" --arg msg_id "${n#*.}" --arg to "${n%%.*}"
 }
 ig_failed(){ # <outbox stem> → moves its envelope to outbox/failed/, where ig_flush no longer sees it. Delete it there to drop the message
@@ -736,8 +740,8 @@ ig_line(){ # <checked envelope> [receipt] → the one line delivered: built from
     def ig_esc: if . > 65535 then (. - 65536) as $v | "\\u" + ((55296 + ($v / 1024 | floor)) | h4) + "\\u" + ((56320 + $v % 1024) | h4) else "\\u" + h4 end;      # a code point as JSON escapes it, lowercase, as Go writes it: a surrogate pair above U+FFFF
     {v: 1, from, to, sent_at, msg_id, body} + ([{subject}, {in_reply_to}, {supersedes}] | map(select(.[] | . != null and . != "")) | add // {}) + ($r[0] | if . then {receipt: {id, received_at, expires_at}} else {} end) | tojson | gsub("(?<c>[\\x{85}\\x{2028}\\x{2029}\\x{AD}\\x{34F}\\x{61C}\\x{115F}-\\x{1160}\\x{17B4}-\\x{17B5}\\x{180B}-\\x{180F}\\x{200B}-\\x{200F}\\x{202A}-\\x{202E}\\x{2060}-\\x{206F}\\x{3164}\\x{FE00}-\\x{FE0F}\\x{FEFF}\\x{FFA0}\\x{FFF0}-\\x{FFF8}\\x{1BCA0}-\\x{1BCA3}\\x{1D173}-\\x{1D17A}\\x{E0000}-\\x{E0FFF}])"; .c | explode[0] | ig_esc)' "$1"
 }
-ig_forget(){ # → the replay set without the lines past 33 days and an hour from their sent_at by this clock. When it drops one, the floor rises to the cutoff first, so a clock that later reads further back still takes no message whose line went (ig_floor)
-  local c=$(($(ig_now) - 33*86400 - 3600)) f; [ -e "$IG/seen" ] || return 0
+ig_forget(){ # → the replay set without the lines past 66 days and an hour from their sent_at by this clock: a retry, dated afresh, may be posted up to 33 days after a first copy that was delivered, and read up to 33 days after that, and an hour covers a clock that steps back as far as two clocks a server takes are apart. When it drops one, the floor rises to the cutoff first, so a clock that later reads further back still takes no message whose line went (ig_floor)
+  local c=$(($(ig_now) - 66*86400 - 3600)) f; [ -e "$IG/seen" ] || return 0
   awk -v c="$c" '$2 >= c' "$IG/seen" > "$IG/seen.new" || return 1
   if ! cmp -s "$IG/seen" "$IG/seen.new"; then
     f=$(ig_floor) || return 1

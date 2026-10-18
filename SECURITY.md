@@ -50,6 +50,7 @@ Each row is a claim the code makes, the section of `PROTOCOL.md` with the whole 
 | **A sender reads its recipient's box before every post,** keeps what verifies of the revocations it carries, posts nothing on no answer, and seals a message that waited at its post | §4.1, §4.5 | `client/ask_test.go` |
 | **A failure never loses mail, and a retry is never delivered twice** | §4.5, §5 | `client/failure_test.go` |
 | **A server's replay of mail already delivered is refused, however the reader's clock has stepped since** | §5 check 9 | `client/replay_test.go`; `sh/test.sh` § 16 |
+| **A message a server still serves is one its reader takes:** each post is dated afresh, and a server keeps mail an hour less than its reader takes it for, a message that waited in the outbox included | §4.5, §7 | `client/dating_test.go`; `sh/test.sh` § 16; irongall-server's `TestMailIsTakenWhileTheServerServesIt` |
 | **Two independent clients give one verdict:** the Go client, and `sh/irongall.sh` on stock `age` and `ssh-keygen`, against a forging server, on every vector, and with each other | §11 | `sh/` |
 
 **Run them:** `README.md` § Tests, which says what each needs and what an `ok` does not tell you.

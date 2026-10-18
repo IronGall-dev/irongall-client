@@ -63,10 +63,10 @@ func (b *Box) Send(ctx context.Context, to protocol.Address, body string) (*Sent
 }
 
 // SendWith sends one logical message: its envelope is built once and kept in
-// the outbox, then sealed for the post: signed for that peer only by this
-// box's working key, and encrypted with that signature to the peer's
-// verified prekey. On 409 stale_prekey it seals the SAME envelope to the
-// newer prekey, once. If the post fails, the envelope stays in the outbox:
+// the outbox, then sealed for the post: dated at the post, signed for that
+// peer only by this box's working key, and encrypted with that signature to
+// the peer's verified prekey. On 409 stale_prekey it seals the SAME envelope
+// to the newer prekey, once. If the post fails, the envelope stays in the outbox:
 // retry with [Box.Flush], never by sending again, or the peer gets it twice.
 // Once the server has it, the envelope and the server's receipt are kept in
 // sent/.
@@ -213,10 +213,12 @@ var undeliverable = []protocol.Code{
 
 // post seals the outbox entry stem and posts it. On failure the entry stays
 // in the outbox for the next flush, unless it can never be delivered: the
-// server refused it for good, its recipient is revoked, or its envelope is
-// older than any recipient accepts. Then it moves to outbox/failed/. An entry
-// already that old is never posted: the server would take it and give a
-// receipt, and the recipient would refuse it.
+// server refused it for good, its recipient is revoked, or it was written
+// more than protocol.TTL ago. Then it moves to outbox/failed/. Each post is
+// dated afresh, so the TTL an outbox posts an entry for is counted from the
+// envelope it keeps, as written: a reader's replay set reaches back that far
+// past a first post (protocol.SeenFor), so a retry of a message already
+// delivered is dropped by its msg_id however late it comes.
 //
 // Each seal reads the recipient's box first, with what the server holds of
 // its revocations, and asks the revocation servers about it once in the
@@ -227,17 +229,17 @@ var undeliverable = []protocol.Code{
 // nothing is sealed or posted, and the entry stays.
 func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked *lookups) (*protocol.Receipt, error) {
 	if b.expired(stem) {
-		return nil, b.undelivered(stem, refuse("its envelope is older than %d days, and every recipient refuses that", protocol.TTL/(24*time.Hour)))
+		return nil, b.undelivered(stem, refuse("it was written more than %d days ago, and an outbox posts a message no longer than that", protocol.TTL/(24*time.Hour)))
 	}
 	// An envelope dated ahead of this machine's clock was written while the
 	// clock read ahead of where it reads now. It is not posted until the
-	// clock passes that time: a reader takes a sent_at up to
-	// MaxSkew ahead of its own clock, which is the room for two clocks a
-	// server takes, and has none to spare for one that was wrong.
+	// clock passes that time: the outbox's TTL is counted from when it was
+	// written, and a reader's replay set reaches back that far past a first
+	// post and no further (protocol.SeenFor).
 	if t, ok := b.sentAt(stem); ok && t.After(b.now()) {
-		return nil, refuse("its envelope is dated %s, ahead of this machine's clock: it was written while the clock read ahead of where it reads now, and a recipient would refuse it. It is kept in the outbox, and irongall outbox flush sends it once the clock passes that time", t.Format(protocol.TimeLayout))
+		return nil, refuse("its envelope is dated %s, ahead of this machine's clock: it was written while the clock read ahead of where it reads now, and the outbox counts its 33 days from when it was written. It is kept in the outbox, and irongall outbox flush sends it once the clock passes that time", t.Format(protocol.TimeLayout))
 	}
-	r, err := b.trySend(ctx, to, stem, asked)
+	r, posted, err := b.trySend(ctx, to, stem, asked)
 	// A read of the box is never an answer about the message: whatever code
 	// a failed one carries, the entry stays.
 	var unread *lookupError
@@ -256,7 +258,7 @@ func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked 
 	}
 	// Recorded before the outbox entry goes: a crash in between seals and
 	// posts it again, and its reader drops the copy by its msg_id.
-	if err := b.recordSent(stem, r); err != nil {
+	if err := b.recordSent(stem, posted, r); err != nil {
 		return r, fmt.Errorf("sent, but not recorded in sent/ (still in the outbox: irongall outbox flush posts it again, and its reader drops the copy): %w", err)
 	}
 	if err := removeIfExists(stem + ".P"); err != nil {
@@ -266,14 +268,11 @@ func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked 
 }
 
 // recordSent keeps a sent message in sent/, under its outbox name,
-// <address>.<msg_id>: its envelope as one line of JSON, as the recipient's
-// recv delivers it, with one more member, "receipt", the server's answer.
-// The client never deletes from sent/.
-func (b *Box) recordSent(stem string, r *protocol.Receipt) error {
-	signed, err := os.ReadFile(stem + ".P") //nolint:gosec // a path inside the box's own directory
-	if err != nil {
-		return err
-	}
+// <address>.<msg_id>: its envelope as that post signed it (signed), one line
+// of JSON as the recipient's recv delivers it, with one more member,
+// "receipt", the server's answer to that post. The client never deletes
+// from sent/.
+func (b *Box) recordSent(stem string, signed []byte, r *protocol.Receipt) error {
 	to, _, _ := strings.Cut(filepath.Base(stem), ".")
 	peer, err := protocol.ParseAddress(to)
 	if err != nil {
@@ -284,7 +283,7 @@ func (b *Box) recordSent(stem string, r *protocol.Receipt) error {
 	// document.
 	env, err := protocol.OpenEnvelopeRecord(signed, b.id.Address(), peer)
 	if err != nil {
-		return errors.New("the outbox entry's envelope is not one this box made for that address")
+		return errors.New("the posted envelope is not one this box made for that address")
 	}
 	env.Identity = nil
 	p, err := env.Marshal()
@@ -321,30 +320,32 @@ func (b *Box) undelivered(stem string, why error) error {
 // trySend seals the entry and posts it, and on 409 stale_prekey seals the
 // same envelope to the newer prekey and posts that, once. A seal is made for
 // one post and never kept: what a message waited for in the outbox is its
-// envelope, and what it is sealed to is what the box holds at the post.
-func (b *Box) trySend(ctx context.Context, to protocol.Address, stem string, l *lookups) (*protocol.Receipt, error) {
+// envelope, and what it is dated and sealed to is the post's. It returns the
+// envelope's line as the post that was taken signed it.
+func (b *Box) trySend(ctx context.Context, to protocol.Address, stem string, l *lookups) (*protocol.Receipt, []byte, error) {
 	req, err := b.seal(ctx, to, stem, l)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	r, err := b.postSealed(ctx, to, req)
 	if Code(err) == protocol.CodeStalePrekey {
 		if req, err = b.seal(ctx, to, stem, l); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		r, err = b.postSealed(ctx, to, req)
 	}
-	return r, err
+	return r, req.line, err
 }
 
-// expired reports whether an entry's envelope is older than protocol.TTL, the
-// most a recipient accepts: past that, every recipient refuses it as stale.
+// expired reports whether an entry was written more than protocol.TTL ago,
+// by its envelope as the outbox keeps it: the longest an outbox posts one.
 func (b *Box) expired(stem string) bool {
 	t, ok := b.sentAt(stem)
 	return ok && t.Before(b.now().Add(-protocol.TTL))
 }
 
-// sentAt returns the sent_at of an outbox entry's envelope.
+// sentAt returns the sent_at of an outbox entry's envelope as the outbox
+// keeps it: when the entry was written.
 func (b *Box) sentAt(stem string) (time.Time, bool) {
 	p, err := os.ReadFile(stem + ".P") //nolint:gosec // a path inside the box's own directory
 	if err != nil {
@@ -375,10 +376,12 @@ func (b *Box) moveToFailed(stem string) error {
 }
 
 // sealed is a seal made for one post: the ciphertext, the whole body of the
-// send, and the query that names the prekey it is encrypted to.
+// send, the query that names the prekey it is encrypted to, and the
+// envelope's line as it signed it, dated at the post.
 type sealed struct {
 	query      protocol.SendQuery
 	ciphertext []byte
+	line       []byte
 }
 
 func (b *Box) postSealed(ctx context.Context, to protocol.Address, s *sealed) (*protocol.Receipt, error) {
@@ -401,25 +404,39 @@ func (b *Box) postSealed(ctx context.Context, to protocol.Address, s *sealed) (*
 	return &r, nil
 }
 
-// seal signs the entry's envelope for the peer only, with the working key
-// in use, and encrypts the envelope, the signature and the padding to the
-// peer's VERIFIED current prekey, and returns what to post. Nothing of it is
-// written: the outbox keeps the envelope, and a seal is made again for every
-// post.
+// seal dates the entry's envelope at this post, signs it for the peer only,
+// with the working key in use, and encrypts the envelope, the signature and
+// the padding to the peer's VERIFIED current prekey, and returns what to
+// post. Nothing of it is written: the outbox keeps the envelope as written,
+// and a seal is made again for every post.
+//
+// The dating changes the envelope's sent_at and nothing else: a post's
+// sent_at is its sender's clock at that post, as a signed request's time is
+// when it was signed, made anew for each attempt (PROTOCOL.md §4.2, §4.5), so
+// the server keeps a message about as long as its reader takes it
+// (protocol.Retention). The msg_id stays, and the reader drops a retry by it.
 //
 // The envelope is read as its recipient will read it, so one the recipient
 // would refuse is never sealed. The padding is made here, for the prekey's
 // type: an encryption after stale_prekey may be to a prekey of the other
 // type. It is outside what is signed, so the signature is over the envelope
-// as the outbox keeps it.
+// as dated.
 func (b *Box) seal(ctx context.Context, to protocol.Address, stem string, l *lookups) (*sealed, error) {
-	line, err := os.ReadFile(stem + ".P") //nolint:gosec // a path inside the box's own directory
+	written, err := os.ReadFile(stem + ".P") //nolint:gosec // a path inside the box's own directory
 	if err != nil {
 		return nil, err
 	}
-	env, err := protocol.OpenEnvelopeRecord(line, b.id.Address(), to)
-	if err != nil || !bytes.Equal(env.Identity, b.id.Document()) || !bytes.HasSuffix(line, []byte("\n")) {
+	env, err := protocol.OpenEnvelopeRecord(written, b.id.Address(), to)
+	if err != nil || !bytes.Equal(env.Identity, b.id.Document()) || !bytes.HasSuffix(written, []byte("\n")) {
 		return nil, refuse("the outbox entry is not an envelope this box made for that address")
+	}
+	env.SentAt = b.now().UTC().Truncate(time.Second)
+	line, err := env.Line()
+	if err != nil {
+		return nil, err
+	}
+	if dated, err := protocol.OpenEnvelopeRecord(line, b.id.Address(), to); err != nil || !sameEnvelope(dated, env) {
+		return nil, refuse("the outbox entry does not read back as itself once dated at this post")
 	}
 	worker, cert, err := b.currentWorker()
 	if err != nil {
@@ -461,5 +478,12 @@ func (b *Box) seal(ctx context.Context, to protocol.Address, stem string, l *loo
 	// certificate resolve verified it under. Never read back from what the
 	// box recorded: that is the highest seen, which another statement may
 	// have raised.
-	return &sealed{query: protocol.SendQuery{PrekeySerial: pk.Serial, CertificateSerial: under.Serial()}, ciphertext: ct.Bytes()}, nil
+	return &sealed{query: protocol.SendQuery{PrekeySerial: pk.Serial, CertificateSerial: under.Serial()}, ciphertext: ct.Bytes(), line: line}, nil
+}
+
+// sameEnvelope reports whether two envelopes are one message, dated alike.
+func sameEnvelope(a, b *protocol.Envelope) bool {
+	return a.From == b.From && a.To == b.To && a.SentAt.Equal(b.SentAt) && a.MsgID == b.MsgID &&
+		bytes.Equal(a.Body, b.Body) && a.Subject == b.Subject && a.InReplyTo == b.InReplyTo &&
+		a.Supersedes == b.Supersedes && bytes.Equal(a.Identity, b.Identity)
 }

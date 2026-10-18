@@ -18,18 +18,29 @@ const (
 	// EnvelopeVersion is the envelope's "v". It changes only for a breaking
 	// change, and a receiver rejects a version it does not know.
 	EnvelopeVersion = 1
-	// TTL is how long the server keeps unacked mail: 33 days, a prekey's
-	// longest life, so a box that checks in at least monthly loses neither new
-	// mail nor held mail. Every window of mail's age derives from it: the
-	// recipient's sent_at window, the replay set (SeenFor), the sender's
-	// outbox, and the latest a retired prekey can still be needed.
+	// TTL is how old a message may be, counted from its sent_at, which its
+	// sender dates afresh at every post: 33 days, a prekey's longest life, so
+	// a box that checks in at least monthly loses neither new mail nor held
+	// mail. Every window of mail's age derives from it: the recipient's
+	// sent_at window, how long a server keeps mail (Retention), the replay
+	// set (SeenFor), how long the sender's outbox posts an entry, and the
+	// latest a retired prekey can still be needed.
 	TTL = 33 * 24 * time.Hour
+	// Retention is how long a server keeps a message after it received it:
+	// the TTL less MaxSkew, the hour whoever makes a time-limited thing
+	// leaves (PROTOCOL.md §0, §7). A post's sent_at is its sender's clock at
+	// the post, which a server takes from up to MaxSkew apart from its own,
+	// so a reader whose clock a server takes refuses as stale no message the
+	// server still serves.
+	Retention = TTL - MaxSkew
 	// SeenFor is how long a reader keeps a message in its replay set,
-	// counted from the message's sent_at: the TTL it is fresh for, and
-	// MaxSkew, so a clock that steps back by as much as two clocks a server
-	// takes are apart reopens nothing (PROTOCOL.md §5 check 9). A step
-	// further back is the floor's (client: seen-floor).
-	SeenFor = TTL + MaxSkew
+	// counted from the message's sent_at: the TTL in which a retry of it may
+	// still be posted, dated afresh, since an outbox posts an entry until it
+	// was written TTL ago; the TTL that retry is fresh for; and MaxSkew, so a
+	// clock that steps back by as much as two clocks a server takes are apart
+	// reopens nothing (PROTOCOL.md §5 check 9). A step further back is the
+	// floor's (client: seen-floor).
+	SeenFor = 2*TTL + MaxSkew
 )
 
 // msgIDGrammar is a msg_id's one form: a UUID as RFC 9562 §4 writes one, its

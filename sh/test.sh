@@ -416,7 +416,7 @@ ig_flush 2> err.txt && [ $(($(box_count "$B") + $(box_count "$C"))) = 2 ] && ! l
 as B; recv; as C; recv
 line "$A" "$B" 66666666-2222-4333-8444-555555555555 stuck $W/box/A/identity.doc $((33*86400 + 60)) > $W/box/A/outbox/$B.stuck.P
 as A; ig_flush 2> err.txt
-grep -q "older than 33 days" err.txt && [ "$(box_count "$B")" = 0 ] && [ -e $IG/outbox/failed/$B.stuck.P ] && ok "an entry older than 33 days is never posted: moved to outbox/failed/" || bad "stuck: $(cat err.txt)"
+grep -q "written more than 33 days ago" err.txt && [ "$(box_count "$B")" = 0 ] && [ -e $IG/outbox/failed/$B.stuck.P ] && ok "an entry written more than 33 days ago is never posted: moved to outbox/failed/" || bad "stuck: $(cat err.txt)"
 # --- 7. the server's prekey rules
 as B; printf 'irongall-prekey-v1\n%s\n%s\n%s\nnever\n' "$B" "$((B1 + 5))" "$(age-keygen -y $IG/prekeys/$B1.agekey)" > never.txt
 ssh-keygen -q -Y sign -n "irongall-prekey-v1:$B" -f $BW < never.txt > never.sig
@@ -641,6 +641,13 @@ printf 'dated two hours ahead' | ig_send "$Q" 2> err.txt && bad "sent with a clo
 eval "$real_now"; ig_flush 2> err.txt && bad "an envelope dated two hours ahead was posted" || grep -q "ahead of this machine's clock" err.txt && [ "$(ls $IG/outbox/*.P | wc -l)" = 1 ] && as Q && recv && [ -z "$RECV_OUT" ] && ! printf '%s' "$RECV_ERR" | grep -q future &&
   ok "an envelope written while the clock read two hours ahead is not posted once the clock is right: it waits in the outbox, and its reader is sent nothing to refuse" || bad "clock: flush of an envelope dated ahead: $(cat err.txt) / $RECV_ERR"
 as P; rm -f $IG/outbox/*.P
+# each post dates the envelope afresh: an entry written while the clock read 20 days back is posted dated now, the outbox keeping it as written, and its reader takes it with that date
+as P; off=$((-20*86400)); ig_now(){ echo $(($(date -u +%s) + off)); }
+printf 'written 20 days before its post' | ig_send "$Q" > /dev/null 2> err.txt && bad "sent with a clock 20 days slow" || true
+f=$(ls $IG/outbox/$Q.*.P 2> /dev/null) && [ "$(echo "$f" | wc -l)" = 1 ] && w=$(ig_time "$(jq -r .sent_at "$f")") || bad "dated afresh: no outbox entry: $(cat err.txt)"
+eval "$real_now"; n=${f##*/}; n=${n%.P}; t0=$(date -u +%s); ig_flush > /dev/null 2> err.txt && st=$(ig_time "$(jq -r .sent_at $IG/sent/$n.json)") || bad "dated afresh: flush: $(cat err.txt)"
+[ "$w" -le $((t0 - 20*86400 + 5)) ] && [ "$st" -ge "$t0" ] && [ "$st" -le "$(date -u +%s)" ] && [ "$(jq -r .msg_id $IG/sent/$n.json)" = "${n#*.}" ] && as Q && recv && printf '%s' "$RECV_OUT" | grep -q "written 20 days before its post" && [ "$(printf '%s' "$RECV_OUT" | grep "written 20 days" | jq -r .sent_at)" = "$(jq -r .sent_at $W/box/P/sent/$n.json)" ] &&
+  ok "an entry written 20 days back is posted dated at its post, under the same msg_id: sent/ keeps it so, and its reader takes it with that date" || bad "dated afresh: written $w, posted $st, from $t0: $RECV_OUT / $RECV_ERR"
 # a kept pass with more left than it was signed for means the clock has gone back: it is not used
 as P; ig_pass > /dev/null; kept=$(cat $IG/pass); off=-1800; ig_now(){ echo $(($(date -u +%s) + off)); }
 [ "$(ig_pass)" != "$kept" ] && ok "a kept pass is not used once this machine's clock has gone back: a new one is signed, dated by the clock as it is" || bad "clock: the kept pass was used after the clock went back"
@@ -653,10 +660,10 @@ line "$P" "$Q" 00000000-0000-4000-8000-0000000000f2 "pay invoice 7 once" $W/box/
 as Q; srv_inject "$Q" "$P" old.P.age; recv; [ "$RECV_RC" = 0 ] && printf '%s' "$RECV_OUT" | grep -q "pay invoice 7 once" || bad "replay set: the first delivery: $RECV_OUT / $RECV_ERR"
 off=3000; ig_now(){ echo $(($(date -u +%s) + off)); }; recv; [ "$RECV_RC" = 0 ] || bad "replay set: a drain 50 minutes fast: $RECV_ERR"      # 33 days and a minute old by this clock, which a server takes
 off=-540; srv_inject "$Q" "$P" old.P.age "$oid"; recv; [ -z "$RECV_OUT" ] && [ "$RECV_RC" = 0 ] && grep -q "^$oid " $IG/seen && [ ! -e $IG/seen-floor ] &&
-  ok "a message delivered, a drain 50 minutes fast, then the clock 9 minutes slow: the server's replay of it is not delivered again, since a line is kept 33 days and an hour" || bad "replay set: the replay after a step back: $RECV_OUT / $RECV_ERR"
+  ok "a message delivered, a drain 50 minutes fast, then the clock 9 minutes slow: the server's replay of it is not delivered again, since a line is kept 66 days and an hour" || bad "replay set: the replay after a step back: $RECV_OUT / $RECV_ERR"
 cp $IG/seen seen.before; off=$((40*86400)); recv; grep -q pass_expired $SRV/recv.err && cmp -s seen.before $IG/seen && [ ! -e $IG/seen-floor ] &&
   ok "a recv refused for a clock 40 days fast prunes nothing: the replay set is pruned only once the server has taken a pass" || bad "replay set: a refused recv: $RECV_ERR"
-eval "$real_now"; printf '%s %s %s %s\n' "$(printf '%064d' 7)" $(($(date -u +%s) - 34*86400)) "$P" 00000000-0000-4000-8000-0000000000f3 >> $IG/seen; t0=$(($(date -u +%s) - 33*86400 - 3600))
+eval "$real_now"; printf '%s %s %s %s\n' "$(printf '%064d' 7)" $(($(date -u +%s) - 67*86400)) "$P" 00000000-0000-4000-8000-0000000000f3 >> $IG/seen; t0=$(($(date -u +%s) - 66*86400 - 3600))
 recv; f=$(cat $IG/seen-floor 2> /dev/null) && [ "$f" -ge "$t0" ] && [ "$f" -le $((t0 + 5)) ] && ! grep -q "^$(printf '%064d' 7) " $IG/seen && grep -q "^$oid " $IG/seen &&
   ok "a prune that drops a line raises the floor to the cutoff it dropped it at, first" || bad "replay set: the floor after a prune: '$(cat $IG/seen-floor 2> /dev/null)', cutoff $t0"
 printf '%s\n' $(($(date -u +%s) + 100)) > $IG/seen-floor; line "$P" "$Q" 00000000-0000-4000-8000-0000000000f4 "under the floor" $W/box/P/identity.doc > under.P; seal_as P "$Q" under.P
