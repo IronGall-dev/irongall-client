@@ -368,9 +368,12 @@ func TestPassAgainstSSHKeygen(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := id.Address()
+	must(nil, "-q", "-s", "identity", "-I", CertificateKeyID, "-n", a.String(), "-z", "1", "-V", "+66d", "-O", "clear", "work.pub")
+	// Read after ssh-keygen dates the certificate from its own clock: read
+	// before, a run slowed past a second gave a certificate that ends more
+	// than 66 days from now.
 	now := time.Now()
 	notAfter := now.UTC().Truncate(time.Second).Add(PassLifetime)
-	must(nil, "-q", "-s", "identity", "-I", CertificateKeyID, "-n", a.String(), "-z", "1", "-V", "+66d", "-O", "clear", "work.pub")
 
 	// printf and ssh-keygen make a pass; it verifies here.
 	stmt := "irongall-pass-v1\n" + a.String() + "\nirongall.dev\n" + notAfter.Format(TimeLayout) + "\n"
