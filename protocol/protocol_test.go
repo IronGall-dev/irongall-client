@@ -236,7 +236,7 @@ func TestCodes(t *testing.T) {
 		CodeNoSuchMailbox, CodeNoSuchMessage, CodeNotRevoked,
 		CodeConflict, CodeBoxChanged, CodeStalePrekey, CodePrekeyExpired,
 		CodeRevoked, CodeTooLarge,
-		CodeRateLimited, CodeRenewalsSpent, CodeCertificatesSpent, CodeCertificateRevocationsSpent, CodeSendsSpent, CodeFetchPaced, CodeRefetchSpent, CodePairFull, CodeMailboxFull, CodeMailboxBusy,
+		CodeRateLimited, CodeFetchPaced, CodeRefetchSpent, CodePairFull, CodeMailboxFull, CodeMailboxBusy,
 		CodeUnavailable,
 	}
 	if len(codes) != len(Codes()) {
@@ -252,6 +252,30 @@ func TestCodes(t *testing.T) {
 	}
 	b, _ := json.Marshal(Problem{Type: CodePairFull.TypeURI(), Title: "t", Status: 429, Code: CodePairFull})
 	if string(b) != `{"type":"tag:irongall.dev,2026-10-17:errors/pair_full","title":"t","status":429,"code":"pair_full"}` {
+		t.Errorf("Problem JSON %s", b)
+	}
+}
+
+// Every quota a rate_limited names has the form of a code and one of the two
+// subjects, and the two members are written as Google's QuotaFailure names them.
+func TestQuotas(t *testing.T) {
+	quotas := []Quota{
+		QuotaPolls, QuotaPages, QuotaCalls, QuotaSends, QuotaRenewals, QuotaCertificates, QuotaCertificateRevocations,
+		QuotaRegistrations, QuotaRegistrationsRange, QuotaMisses, QuotaSendsBeforePass, QuotaRequests,
+	}
+	if len(quotas) != len(Quotas()) {
+		t.Errorf("%d quotas listed, %d known", len(quotas), len(Quotas()))
+	}
+	for _, q := range quotas {
+		if !q.Known() || !q.Subject().Known() || !regexp.MustCompile(`\A[a-z0-9_]{1,40}\z`).MatchString(string(q)) {
+			t.Errorf("%s is not known, has no subject, or is not a code's form", q)
+		}
+	}
+	if Quota("nope").Known() || Quota("nope").Subject() != "" || Subject("nope").Known() {
+		t.Error("an unknown quota or subject is known")
+	}
+	b, _ := json.Marshal(Problem{Type: CodeRateLimited.TypeURI(), Title: "t", Status: 429, Code: CodeRateLimited, QuotaID: QuotaSends, Subject: SubjectBox})
+	if string(b) != `{"type":"tag:irongall.dev,2026-10-17:errors/rate_limited","title":"t","status":429,"code":"rate_limited","quota_id":"sends","subject":"box"}` {
 		t.Errorf("Problem JSON %s", b)
 	}
 }

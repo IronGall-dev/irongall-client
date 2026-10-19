@@ -59,16 +59,12 @@ const (
 	CodeTooLarge Code = "too_large"
 
 	// 429, all with Retry-After
-	CodeRateLimited                 Code = "rate_limited"                  // more calls than a limit takes for now
-	CodeRenewalsSpent               Code = "renewals_spent"                // the box's prekey renewals for the day
-	CodeCertificatesSpent           Code = "certificates_spent"            // the identity's new certificates for the day
-	CodeCertificateRevocationsSpent Code = "certificate_revocations_spent" // the identity's raises of its revocation of certificates for the day
-	CodeSendsSpent                  Code = "sends_spent"                   // the box's sends for the day
-	CodeFetchPaced                  Code = "fetch_paced"                   // the box has taken out as much new mail as it may for now: the rest waits
-	CodeRefetchSpent                Code = "refetch_spent"                 // the message was fetched before, and fetching again is spent for now
-	CodePairFull                    Code = "pair_full"
-	CodeMailboxFull                 Code = "mailbox_full"
-	CodeMailboxBusy                 Code = "mailbox_busy" // the box has taken as much new mail as it takes for now
+	CodeRateLimited  Code = "rate_limited"  // a limit takes no more for now: which one is quota_id, and whom it counted against subject
+	CodeFetchPaced   Code = "fetch_paced"   // the box has taken out as much new mail as it may for now: the rest waits
+	CodeRefetchSpent Code = "refetch_spent" // the message was fetched before, and fetching again is spent for now
+	CodePairFull     Code = "pair_full"
+	CodeMailboxFull  Code = "mailbox_full"
+	CodeMailboxBusy  Code = "mailbox_busy" // the box has taken as much new mail as it takes for now
 
 	// 503, with Retry-After
 	CodeUnavailable Code = "unavailable"
@@ -78,46 +74,42 @@ var codes = map[Code]struct {
 	status int
 	title  string
 }{
-	CodeBadRequest:                  {http.StatusBadRequest, "Bad request"},
-	CodeBadAddress:                  {http.StatusBadRequest, "Bad address"},
-	CodeBadEncoding:                 {http.StatusBadRequest, "Bad encoding"},
-	CodeIdentityMismatch:            {http.StatusBadRequest, "Identity mismatch"},
-	CodeBadKey:                      {http.StatusBadRequest, "Bad key"},
-	CodePrekeyNotNew:                {http.StatusBadRequest, "Prekey not new"},
-	CodePrekeyTime:                  {http.StatusBadRequest, "Prekey not valid now"},
-	CodeUnsupportedKeyType:          {http.StatusBadRequest, "Unsupported key type"},
-	CodeNotAge:                      {http.StatusBadRequest, "Not an age file"},
-	CodeWrongRecipientType:          {http.StatusBadRequest, "Wrong recipient type"},
-	CodeBadRevocation:               {http.StatusBadRequest, "Bad revocation"},
-	CodeUnauthorized:                {http.StatusUnauthorized, "Unauthorized"},
-	CodePassExpired:                 {http.StatusUnauthorized, "Pass expired"},
-	CodeCertificateNotCurrent:       {http.StatusUnauthorized, "Certificate not current"},
-	CodeCertificateRevoked:          {http.StatusUnauthorized, "Certificate revoked"},
-	CodeUnknownSender:               {http.StatusForbidden, "Unknown sender"},
-	CodeSenderRevoked:               {http.StatusForbidden, "Sender revoked"},
-	CodeSenderNotAllowed:            {http.StatusForbidden, "Sender not allowed"},
-	CodeSenderKeyType:               {http.StatusForbidden, "Sender key type"},
-	CodeAdoptKeyRefused:             {http.StatusForbidden, "Adopt key refused"},
-	CodeNoSuchMailbox:               {http.StatusNotFound, "No such mailbox"},
-	CodeNoSuchMessage:               {http.StatusNotFound, "No such message"},
-	CodeNotRevoked:                  {http.StatusNotFound, "Not revoked"},
-	CodeConflict:                    {http.StatusConflict, "Conflict"},
-	CodeBoxChanged:                  {http.StatusConflict, "Box changed"},
-	CodeStalePrekey:                 {http.StatusConflict, "Stale prekey"},
-	CodePrekeyExpired:               {http.StatusConflict, "Prekey expired"},
-	CodeRevoked:                     {http.StatusGone, "Revoked"},
-	CodeTooLarge:                    {http.StatusRequestEntityTooLarge, "Too large"},
-	CodeRateLimited:                 {http.StatusTooManyRequests, "Rate limited"},
-	CodeRenewalsSpent:               {http.StatusTooManyRequests, "Renewals spent"},
-	CodeCertificatesSpent:           {http.StatusTooManyRequests, "Certificates spent"},
-	CodeCertificateRevocationsSpent: {http.StatusTooManyRequests, "Certificate revocations spent"},
-	CodeSendsSpent:                  {http.StatusTooManyRequests, "Sends spent"},
-	CodeFetchPaced:                  {http.StatusTooManyRequests, "Fetch paced"},
-	CodeRefetchSpent:                {http.StatusTooManyRequests, "Refetch spent"},
-	CodePairFull:                    {http.StatusTooManyRequests, "Pair full"},
-	CodeMailboxFull:                 {http.StatusTooManyRequests, "Mailbox full"},
-	CodeMailboxBusy:                 {http.StatusTooManyRequests, "Mailbox busy"},
-	CodeUnavailable:                 {http.StatusServiceUnavailable, "Unavailable"},
+	CodeBadRequest:            {http.StatusBadRequest, "Bad request"},
+	CodeBadAddress:            {http.StatusBadRequest, "Bad address"},
+	CodeBadEncoding:           {http.StatusBadRequest, "Bad encoding"},
+	CodeIdentityMismatch:      {http.StatusBadRequest, "Identity mismatch"},
+	CodeBadKey:                {http.StatusBadRequest, "Bad key"},
+	CodePrekeyNotNew:          {http.StatusBadRequest, "Prekey not new"},
+	CodePrekeyTime:            {http.StatusBadRequest, "Prekey not valid now"},
+	CodeUnsupportedKeyType:    {http.StatusBadRequest, "Unsupported key type"},
+	CodeNotAge:                {http.StatusBadRequest, "Not an age file"},
+	CodeWrongRecipientType:    {http.StatusBadRequest, "Wrong recipient type"},
+	CodeBadRevocation:         {http.StatusBadRequest, "Bad revocation"},
+	CodeUnauthorized:          {http.StatusUnauthorized, "Unauthorized"},
+	CodePassExpired:           {http.StatusUnauthorized, "Pass expired"},
+	CodeCertificateNotCurrent: {http.StatusUnauthorized, "Certificate not current"},
+	CodeCertificateRevoked:    {http.StatusUnauthorized, "Certificate revoked"},
+	CodeUnknownSender:         {http.StatusForbidden, "Unknown sender"},
+	CodeSenderRevoked:         {http.StatusForbidden, "Sender revoked"},
+	CodeSenderNotAllowed:      {http.StatusForbidden, "Sender not allowed"},
+	CodeSenderKeyType:         {http.StatusForbidden, "Sender key type"},
+	CodeAdoptKeyRefused:       {http.StatusForbidden, "Adopt key refused"},
+	CodeNoSuchMailbox:         {http.StatusNotFound, "No such mailbox"},
+	CodeNoSuchMessage:         {http.StatusNotFound, "No such message"},
+	CodeNotRevoked:            {http.StatusNotFound, "Not revoked"},
+	CodeConflict:              {http.StatusConflict, "Conflict"},
+	CodeBoxChanged:            {http.StatusConflict, "Box changed"},
+	CodeStalePrekey:           {http.StatusConflict, "Stale prekey"},
+	CodePrekeyExpired:         {http.StatusConflict, "Prekey expired"},
+	CodeRevoked:               {http.StatusGone, "Revoked"},
+	CodeTooLarge:              {http.StatusRequestEntityTooLarge, "Too large"},
+	CodeRateLimited:           {http.StatusTooManyRequests, "Rate limited"},
+	CodeFetchPaced:            {http.StatusTooManyRequests, "Fetch paced"},
+	CodeRefetchSpent:          {http.StatusTooManyRequests, "Refetch spent"},
+	CodePairFull:              {http.StatusTooManyRequests, "Pair full"},
+	CodeMailboxFull:           {http.StatusTooManyRequests, "Mailbox full"},
+	CodeMailboxBusy:           {http.StatusTooManyRequests, "Mailbox busy"},
+	CodeUnavailable:           {http.StatusServiceUnavailable, "Unavailable"},
 }
 
 // Status returns the code's HTTP status, or 0 for a code this version does
@@ -164,10 +156,15 @@ type Problem struct {
 	Hint   string `json:"hint,omitempty"`
 
 	// Limit is the limit hit: the most bytes a body or a ciphertext may
-	// hold, or entries an ACL (too_large); the sends, renewals, certificates
-	// or raises of a revocation of certificates a day takes (sends_spent,
-	// renewals_spent, certificates_spent, certificate_revocations_spent).
+	// hold, or entries an ACL (too_large); how many a day a limit counted by
+	// the day takes (rate_limited with QuotaSends, QuotaRenewals,
+	// QuotaCertificates or QuotaCertificateRevocations).
 	Limit *uint64 `json:"limit,omitempty"`
+	// QuotaID is the limit a rate_limited names, and Subject whom it was
+	// counted against (Google's QuotaFailure.Violation). A client shows each
+	// only once it knows the value.
+	QuotaID Quota   `json:"quota_id,omitempty"`
+	Subject Subject `json:"subject,omitempty"`
 	// Count is how many messages a full box holds, as its list counts them
 	// (mailbox_full).
 	Count *uint64 `json:"count,omitempty"`
@@ -220,3 +217,63 @@ func (p *Problem) CodeAt(status int) Code {
 	}
 	return ""
 }
+
+// Quota is a limit a rate_limited names in quota_id, from the closed set
+// below (PROTOCOL.md §8, §13), as Google's QuotaFailure names one in its
+// quota_id. Each is counted against one subject. A server's limit outside the
+// set names none, and gives its subject alone.
+type Quota string
+
+// The quotas, by whom each is counted against.
+const (
+	QuotaPolls                  Quota = "polls"                   // a box's polls
+	QuotaPages                  Quota = "pages"                   // a box's list pages after the first
+	QuotaCalls                  Quota = "calls"                   // a box's calls with its pass that no other limit counts
+	QuotaSends                  Quota = "sends"                   // a box's sends, a number a day
+	QuotaRenewals               Quota = "renewals"                // a box's renewals under its current certificate, a number a day
+	QuotaCertificates           Quota = "certificates"            // its identity's new certificates, a number a day
+	QuotaCertificateRevocations Quota = "certificate_revocations" // its identity's raises of its revocation of certificates, a number a day
+
+	QuotaRegistrations      Quota = "registrations"       // registrations from an IP address: an IPv4 address or an IPv6 /64
+	QuotaRegistrationsRange Quota = "registrations_range" // registrations from an IPv6 /48
+	QuotaMisses             Quota = "misses"              // calls from an IP address that named no box or carried nothing that verified
+	QuotaSendsBeforePass    Quota = "sends_before_pass"   // sends from an IP address, counted before their pass is read
+	QuotaRequests           Quota = "requests"            // calls from an IP address with no pass, and requests no route matches
+)
+
+// Subject is whom a rate_limited was counted against (subject).
+type Subject string
+
+// The subjects.
+const (
+	SubjectBox Subject = "box" // the box the call proved itself to be, or whose identity signed it
+	SubjectIP  Subject = "ip"  // the IP address the call came from, as the quota keys it
+)
+
+var quotas = map[Quota]Subject{
+	QuotaPolls:                  SubjectBox,
+	QuotaPages:                  SubjectBox,
+	QuotaCalls:                  SubjectBox,
+	QuotaSends:                  SubjectBox,
+	QuotaRenewals:               SubjectBox,
+	QuotaCertificates:           SubjectBox,
+	QuotaCertificateRevocations: SubjectBox,
+	QuotaRegistrations:          SubjectIP,
+	QuotaRegistrationsRange:     SubjectIP,
+	QuotaMisses:                 SubjectIP,
+	QuotaSendsBeforePass:        SubjectIP,
+	QuotaRequests:               SubjectIP,
+}
+
+// Known reports whether q is a quota this version knows.
+func (q Quota) Known() bool { _, ok := quotas[q]; return ok }
+
+// Subject returns whom q is counted against, or "" for a quota this version
+// does not know.
+func (q Quota) Subject() Subject { return quotas[q] }
+
+// Quotas returns every quota this version knows, sorted.
+func Quotas() []Quota { return slices.Sorted(maps.Keys(quotas)) }
+
+// Known reports whether s is a subject this version knows.
+func (s Subject) Known() bool { return s == SubjectBox || s == SubjectIP }

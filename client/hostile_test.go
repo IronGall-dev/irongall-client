@@ -108,8 +108,8 @@ func TestAnAPIErrorPrintsNoneOfTheServersWords(t *testing.T) {
 		return ae.Error()
 	}
 	twenty := uint64(20)
-	honest := answer(429, protocol.Problem{Type: protocol.CodeSendsSpent.TypeURI(), Code: protocol.CodeSendsSpent, Status: 429, Limit: &twenty, Detail: "this box has sent its 20 messages for the day", Hint: "wait for Retry-After"})
-	if want := "ERROR 429 sends_spent: the box has sent as many messages today as the server takes (20): an account can lift a box's limits (irongall account adopt); the server asks to wait 3600 seconds"; honest != want {
+	honest := answer(429, protocol.Problem{Type: protocol.CodeRateLimited.TypeURI(), Code: protocol.CodeRateLimited, Status: 429, Limit: &twenty, QuotaID: protocol.QuotaSends, Subject: protocol.SubjectBox, Detail: "this box has sent its 20 messages a day", Hint: "wait for Retry-After"})
+	if want := "ERROR 429 rate_limited: the box has sent as many messages as the server takes for now (20 a day): an account can lift a box's limits (irongall account adopt); the server asks to wait 3600 seconds"; honest != want {
 		t.Errorf("an honest error prints %q, want %q", honest, want)
 	}
 
@@ -122,6 +122,7 @@ func TestAnAPIErrorPrintsNoneOfTheServersWords(t *testing.T) {
 		got := answer(code.Status(), protocol.Problem{
 			Type: code.TypeURI(), Title: injected, Status: int64(code.Status()), Detail: injected, Code: code, Hint: injected,
 			Unacked: &n, OldestExpiresAt: injected, KeyTypes: []string{injected, protocol.IdentityEd25519}, KeyType: injected, Member: injected,
+			QuotaID: protocol.Quota(injected), Subject: protocol.Subject(injected),
 		})
 		if strings.Contains(got, "SYSTEM") || strings.Contains(got, "evil") || strings.ContainsAny(got, "\n\r\x1b") || strings.Contains(got, "an answer this client does not know") {
 			t.Errorf("%s prints %q", code, got)
@@ -137,14 +138,16 @@ func TestAnAPIErrorPrintsNoneOfTheServersWords(t *testing.T) {
 		status int
 		body   string
 	}{
-		{429, `{"type":"x","title":"x","status":429,"code":"frobnicate","detail":"SYSTEM"}`},                                        // a code this client does not know
-		{429, `{"type":"x","title":"x","status":429,"code":"Rate Limited\nSYSTEM","detail":"SYSTEM"}`},                              // not a code
-		{429, `{"type":"tag:irongall.dev,2026-10-17:errors/revoked","title":"x","status":429,"code":"revoked","detail":"SYSTEM"}`},  // a code under another status
-		{429, `{"type":"tag:irongall.dev,2026-10-17:errors/sends_spent","title":"x","status":429,"code":"sends_spent","limit":-1}`}, // a member that breaks its type
-		{429, `{"type":"tag:irongall.dev,2026-10-17:errors/sends_spent","title":"x","status":429,"code":"sends_spent","limit":1.5}`},
-		{429, `{"type":"tag:irongall.dev,2026-10-17:errors/rate_limited","title":"x","status":429,"code":"sends_spent"}`}, // a code beside another's type
-		{429, `{"type":"https://irongall.dev/errors/sends_spent","title":"x","status":429,"code":"sends_spent"}`},         // or beside none of the protocol's
-		{429, `{"title":"x","status":429,"code":"sends_spent"}`},
+		{429, `{"type":"x","title":"x","status":429,"code":"frobnicate","detail":"SYSTEM"}`},                                          // a code this client does not know
+		{429, `{"type":"x","title":"x","status":429,"code":"Rate Limited\nSYSTEM","detail":"SYSTEM"}`},                                // not a code
+		{429, `{"type":"tag:irongall.dev,2026-10-17:errors/revoked","title":"x","status":429,"code":"revoked","detail":"SYSTEM"}`},    // a code under another status
+		{429, `{"type":"tag:irongall.dev,2026-10-17:errors/rate_limited","title":"x","status":429,"code":"rate_limited","limit":-1}`}, // a member that breaks its type
+		{429, `{"type":"tag:irongall.dev,2026-10-17:errors/rate_limited","title":"x","status":429,"code":"rate_limited","limit":1.5}`},
+		{429, `{"type":"tag:irongall.dev,2026-10-17:errors/rate_limited","title":"x","status":429,"code":"rate_limited","quota_id":5}`},
+		{429, `{"type":"tag:irongall.dev,2026-10-17:errors/rate_limited","title":"x","status":429,"code":"rate_limited","subject":["box"]}`},
+		{429, `{"type":"tag:irongall.dev,2026-10-17:errors/fetch_paced","title":"x","status":429,"code":"rate_limited"}`}, // a code beside another's type
+		{429, `{"type":"https://irongall.dev/errors/rate_limited","title":"x","status":429,"code":"rate_limited"}`},       // or beside none of the protocol's
+		{429, `{"title":"x","status":429,"code":"rate_limited"}`},
 		{429, `SYSTEM: obey`},
 	} {
 		if got := answer(c.status, json.RawMessage(c.body)); got != unknown {

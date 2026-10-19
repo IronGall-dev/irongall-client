@@ -139,6 +139,13 @@ func failure(err error) []any {
 			}
 			kv = append(kv, "version", p.Version, "prekey_serial", p.PrekeySerial,
 				"certificate_serial", p.CertificateSerial, "through", p.Through)
+			// A quota and a subject are names: only one this client knows is printed.
+			if p.QuotaID.Known() {
+				kv = append(kv, "quota_id", p.QuotaID)
+			}
+			if p.Subject.Known() {
+				kv = append(kv, "subject", p.Subject)
+			}
 			// A key type is a name: only one this client knows is printed.
 			var types []string
 			for _, t := range p.KeyTypes {

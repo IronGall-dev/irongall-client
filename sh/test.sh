@@ -565,7 +565,7 @@ recv; printf '%s' "$RECV_OUT" | jq -e '.body == "whole or not at all"' > /dev/nu
 printf 'HTTP/1.1 429 x\r\nRetry-After: 0017\r\n' > $IG/error.headers
 printf '{"type":"tag:irongall.dev,2026-10-17:errors/rate_limited","status":429,"code":"rate_limited"}' > $IG/error.json; c1=$(ig_code); w1=$(ig_wait)
 printf '{"type":"https://irongall.dev/errors/rate_limited","status":429,"code":"rate_limited"}' > $IG/error.json; c2=$(ig_code)
-printf '{"type":"tag:irongall.dev,2026-10-17:errors/sends_spent","status":429,"code":"rate_limited"}' > $IG/error.json; c3=$(ig_code)
+printf '{"type":"tag:irongall.dev,2026-10-17:errors/fetch_paced","status":429,"code":"rate_limited"}' > $IG/error.json; c3=$(ig_code)
 printf 'HTTP/1.1 429 x\r\nRetry-After: Fri, 31 Dec 2027 23:59:59 GMT\r\n' > $IG/error.headers; w2=$(ig_wait)
 printf 'HTTP/1.1 429 x\r\nRetry-After: +17\r\n' > $IG/error.headers; w3=$(ig_wait)
 printf 'HTTP/1.1 429 x\r\nRetry-After: 123456789012345678901234567890\r\n' > $IG/error.headers; w4=$(ig_wait)

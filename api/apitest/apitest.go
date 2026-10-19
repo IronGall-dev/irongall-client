@@ -126,10 +126,12 @@ func check(t testing.TB, v validator.Validator, r *http.Request, body *tee, rec 
 	ok, errs := v.ValidateHttpRequest(req)
 	mu.Unlock()
 	if !ok && missing(errs) {
-		// No such route: the router's plain answer, or a server that is not
-		// ready, which answers 503 to everything under /v1/.
-		if (rec.status != http.StatusNotFound && rec.status != http.StatusMethodNotAllowed && rec.status != http.StatusServiceUnavailable) ||
-			(rec.status != http.StatusServiceUnavailable && isProblem(rec.header)) {
+		// No such route: the router's plain answer, a server that is not
+		// ready, which answers 503 to everything under /v1/, or a limit's
+		// 429, which any request may meet (PROTOCOL.md §13).
+		limited := rec.status == http.StatusTooManyRequests && isProblem(rec.header)
+		if !limited && ((rec.status != http.StatusNotFound && rec.status != http.StatusMethodNotAllowed && rec.status != http.StatusServiceUnavailable) ||
+			(rec.status != http.StatusServiceUnavailable && isProblem(rec.header))) {
 			t.Errorf("apitest: %s: a route the description lacks is answered as one it has", where)
 		}
 		return

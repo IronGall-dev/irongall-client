@@ -169,15 +169,7 @@ func (e *APIError) words() string {
 	case protocol.CodeTooLarge:
 		return "too large for the server" + limit(p, ": its limit is %d")
 	case protocol.CodeRateLimited:
-		return "the server takes no more calls of this kind for now"
-	case protocol.CodeRenewalsSpent:
-		return "the box has renewed its prekey as many times today as the server takes" + limit(p, " (%d)")
-	case protocol.CodeCertificatesSpent:
-		return "the box's identity has certified as many new working keys today as the server takes" + limit(p, " (%d)")
-	case protocol.CodeCertificateRevocationsSpent:
-		return "the box's identity has raised its revocation of certificates as many times today as the server takes" + limit(p, " (%d)")
-	case protocol.CodeSendsSpent:
-		return "the box has sent as many messages today as the server takes" + limit(p, " (%d)") + ": an account can lift a box's limits (irongall account adopt)"
+		return rateLimited(p)
 	case protocol.CodeFetchPaced:
 		return "the server paces how much new mail the box takes out: the rest waits on the server"
 	case protocol.CodeRefetchSpent:
@@ -203,6 +195,44 @@ func (e *APIError) words() string {
 		return "the server is not ready to answer"
 	}
 	return "an answer this client does not know"
+}
+
+// quotaWords say what each limit a rate_limited names has counted.
+var quotaWords = map[protocol.Quota]string{
+	protocol.QuotaPolls:                  "the box has polled as often as the server takes for now",
+	protocol.QuotaPages:                  "the box has listed as many pages after the first as the server takes for now",
+	protocol.QuotaCalls:                  "the box has made as many calls as the server takes for now",
+	protocol.QuotaSends:                  "the box has sent as many messages as the server takes for now",
+	protocol.QuotaRenewals:               "the box has renewed its prekey as many times as the server takes for now",
+	protocol.QuotaCertificates:           "the box's identity has certified as many new working keys as the server takes for now",
+	protocol.QuotaCertificateRevocations: "the box's identity has raised its revocation of certificates as many times as the server takes for now",
+	protocol.QuotaRegistrations:          "as many boxes have been registered from this machine's IP address as the server takes for now",
+	protocol.QuotaRegistrationsRange:     "as many boxes have been registered from this machine's IPv6 /48 as the server takes for now",
+	protocol.QuotaMisses:                 "this machine's IP address has made as many calls that named no box or carried nothing that verified as the server takes for now",
+	protocol.QuotaSendsBeforePass:        "this machine's IP address has made as many sends as the server takes for now",
+	protocol.QuotaRequests:               "this machine's IP address has made as many calls with no pass as the server takes for now",
+}
+
+// rateLimited says which limit a rate_limited names, when this client knows
+// it, with how many a day it takes for one counted by the day; otherwise whom
+// it was counted against, when this client knows that.
+func rateLimited(p *protocol.Problem) string {
+	if s, ok := quotaWords[p.QuotaID]; ok {
+		switch p.QuotaID {
+		case protocol.QuotaSends:
+			return s + limit(p, " (%d a day)") + ": an account can lift a box's limits (irongall account adopt)"
+		case protocol.QuotaRenewals, protocol.QuotaCertificates, protocol.QuotaCertificateRevocations:
+			return s + limit(p, " (%d a day)")
+		}
+		return s
+	}
+	switch p.Subject {
+	case protocol.SubjectBox:
+		return "the server takes no more calls of this kind from this box for now"
+	case protocol.SubjectIP:
+		return "the server takes no more calls of this kind from this machine's IP address for now"
+	}
+	return "the server takes no more calls of this kind for now"
 }
 
 // limit is format with the limit p carries, or "" when it carries none.

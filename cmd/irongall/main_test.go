@@ -91,8 +91,10 @@ func TestReport(t *testing.T) {
 		ae   *client.APIError
 		want string
 	}{
-		{&client.APIError{Status: 429, RetryAfter: 30 * time.Second, Problem: protocol.Problem{Code: protocol.CodeSendsSpent, Status: 429, Limit: &limit, Detail: injected, Hint: injected, Title: injected}},
-			`{"type":"error","status":429,"code":"sends_spent","limit":500,"retry_after":30,"message":"sending: ERROR 429 sends_spent: `},
+		{&client.APIError{Status: 429, RetryAfter: 30 * time.Second, Problem: protocol.Problem{Code: protocol.CodeRateLimited, Status: 429, Limit: &limit, QuotaID: protocol.QuotaSends, Subject: protocol.SubjectBox, Detail: injected, Hint: injected, Title: injected}},
+			`{"type":"error","status":429,"code":"rate_limited","limit":500,"quota_id":"sends","subject":"box","retry_after":30,"message":"sending: ERROR 429 rate_limited: `},
+		{&client.APIError{Status: 429, RetryAfter: 30 * time.Second, Problem: protocol.Problem{Code: protocol.CodeRateLimited, Status: 429, QuotaID: injected, Subject: injected}},
+			`{"type":"error","status":429,"code":"rate_limited","retry_after":30,"message":"sending: ERROR 429 rate_limited: the server takes no more calls of this kind for now; `},
 		{&client.APIError{Status: 400, Problem: protocol.Problem{Code: protocol.CodeUnsupportedKeyType, Status: 400, KeyTypes: []string{protocol.IdentityEd25519, injected, protocol.IdentityEd25519}, KeyType: injected}},
 			`{"type":"error","status":400,"code":"unsupported_key_type","key_types":["ssh-ed25519"],"message":"sending: ERROR 400 unsupported_key_type: `},
 		{&client.APIError{Status: 418, Problem: protocol.Problem{Code: injected, Status: 418, Limit: &limit}},
@@ -1440,7 +1442,7 @@ func TestCertRevokeEarlierWhenTheRenewalIsRefused(t *testing.T) {
 	first := inUse(t, b)
 	t.Setenv("IRONGALL_HOME", b.Dir())
 	t.Setenv("IRONGALL_BASE", srv.URL)
-	for _, code := range []protocol.Code{protocol.CodeUnavailable, protocol.CodeRateLimited, protocol.CodeCertificatesSpent} {
+	for _, code := range []protocol.Code{protocol.CodeUnavailable, protocol.CodeRateLimited, protocol.CodeFetchPaced} {
 		srv.SetMiddle(refusing(code, http.MethodPut, "/prekey"))
 		var out, errs bytes.Buffer
 		err = do(ctx, "cert revoke-earlier", nil, strings.NewReader(""), &out, &errs)

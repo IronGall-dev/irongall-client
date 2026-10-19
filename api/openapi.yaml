@@ -691,7 +691,7 @@ paths:
               schema:
                 type: string
         '429':
-          description: '`rate_limited`: past the calls a server takes with no pass from the address the request comes from (§8).'
+          description: '`rate_limited`: past the calls a server takes with no pass from the IP address the request comes from (§8).'
           headers:
             Date:
               $ref: '#/components/headers/Date'
@@ -967,13 +967,13 @@ components:
                     const: too_large
     TooManyRequests:
       description: |
-        Past a limit; wait out `Retry-After`. `rate_limited` · the day's
-        counts, each with its `limit`: `sends_spent`, `renewals_spent`,
-        `certificates_spent`, `certificate_revocations_spent` · `fetch_paced`
-        and `refetch_spent` (a drain stops there, and it is no error) ·
-        `pair_full` (with `unacked` and `oldest_expires_at`) · `mailbox_full`
-        (with `count`) · `mailbox_busy`. What a server limits, and by how
-        much, is its own (§8).
+        Past a limit; wait out `Retry-After`. `rate_limited`, with
+        `subject`, whom it was counted against, and `quota_id`, which limit,
+        from a closed set (a limit counted by the day also with its `limit`)
+        · `fetch_paced` and `refetch_spent` (a drain stops there, and it is
+        no error) · `pair_full` (with `unacked` and `oldest_expires_at`) ·
+        `mailbox_full` (with `count`) · `mailbox_busy`. What a server limits,
+        and by how much, is its own (§8).
       headers:
         Date:
           $ref: '#/components/headers/Date'
@@ -990,7 +990,7 @@ components:
                   status:
                     const: 429
                   code:
-                    enum: [rate_limited, sends_spent, renewals_spent, certificates_spent, certificate_revocations_spent, fetch_paced, refetch_spent, pair_full, mailbox_full, mailbox_busy]
+                    enum: [rate_limited, fetch_paced, refetch_spent, pair_full, mailbox_full, mailbox_busy]
     Unavailable:
       description: '`unavailable`: the server is not ready to answer, and says so rather than answer wrong.'
       headers:
@@ -1329,10 +1329,18 @@ components:
           description: The fix as a client command, never a raw shell line.
           type: [string, 'null']
         limit:
-          description: '`too_large`: the most bytes a body or a ciphertext may hold, or entries an ACL. The day''s counts: how many a day takes.'
+          description: '`too_large`: the most bytes a body or a ciphertext may hold, or entries an ACL. `rate_limited` with a quota counted by the day: how many a day it takes.'
           anyOf:
             - $ref: '#/components/schemas/Integer'
             - type: 'null'
+        quota_id:
+          description: '`rate_limited`: which limit, from this closed set (§13), as Google''s `QuotaFailure` names one. A limit of a server''s own outside it names none. A client shows one it knows, and no other.'
+          type: [string, 'null']
+          enum: [polls, pages, calls, sends, renewals, certificates, certificate_revocations, registrations, registrations_range, misses, sends_before_pass, requests, null]
+        subject:
+          description: '`rate_limited`: whom the limit counted the call against, the box or the IP address it came from (§8).'
+          type: [string, 'null']
+          enum: [box, ip, null]
         count:
           description: '`mailbox_full`: how many messages the box holds, as its list counts them.'
           anyOf:
@@ -1389,7 +1397,21 @@ components:
             required: [code]
             properties:
               code:
-                enum: [too_large, sends_spent, renewals_spent, certificates_spent, certificate_revocations_spent]
+                const: too_large
+          then:
+            required: [limit]
+        - if:
+            required: [code]
+            properties:
+              code:
+                const: rate_limited
+          then:
+            required: [subject]
+        - if:
+            required: [quota_id]
+            properties:
+              quota_id:
+                enum: [sends, renewals, certificates, certificate_revocations]
           then:
             required: [limit]
         - if:

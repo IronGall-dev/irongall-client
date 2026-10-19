@@ -32,9 +32,9 @@ func TestTheRemedyWhenTheRenewalIsRefused(t *testing.T) {
 	inUse := numberOf(t, a)
 	taken := worker(t, a)
 
-	says(e, protocol.CodeCertificatesSpent, http.MethodPut, "/prekey")
+	says(e, protocol.CodeRateLimited, http.MethodPut, "/prekey")
 	r, err := a.RenewAndRevoke(ctx, "")
-	if err != nil || r == nil || r.Prekey != nil || r.NotRevoked != nil || client.Code(r.NotRenewed) != protocol.CodeCertificatesSpent {
+	if err != nil || r == nil || r.Prekey != nil || r.NotRevoked != nil || client.Code(r.NotRenewed) != protocol.CodeRateLimited {
 		t.Fatalf("the remedy with the renewal refused: %+v, %v", r, err)
 	}
 	if r.Below <= inUse || r.Revoked == nil || r.Revoked.Through != r.Below-1 || !r.Revoked.Revokes(inUse) {
@@ -63,7 +63,7 @@ func TestTheRemedyWhenTheRenewalIsRefused(t *testing.T) {
 
 	// The box is dark: its pass is under a revoked certificate, and its drain
 	// tries the renewal first, which the server still refuses.
-	if res, err := a.Receive(ctx); err == nil || res == nil || client.Code(res.RenewErr) != protocol.CodeCertificatesSpent {
+	if res, err := a.Receive(ctx); err == nil || res == nil || client.Code(res.RenewErr) != protocol.CodeRateLimited {
 		t.Fatalf("a drain while the renewal is refused: %+v, %v", res, err)
 	}
 
@@ -206,7 +206,7 @@ func TestTheRemedyAsksForItsOwnRevocationFirst(t *testing.T) {
 	// An hour on, the renewal is refused, so the server holds a revocation
 	// through one below the renewal that waits: above the certificate in use.
 	e.clock.Add(time.Hour)
-	says(e, protocol.CodeCertificatesSpent, http.MethodPut, "/prekey")
+	says(e, protocol.CodeRateLimited, http.MethodPut, "/prekey")
 	r, err := a.RenewAndRevoke(ctx, "")
 	if err != nil || r.Revoked == nil || r.Revoked.Through != r.Below-1 || servedCertificate(t, e, a) != first {
 		t.Fatalf("the first remedy: %+v, %v", r, err)
