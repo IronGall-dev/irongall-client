@@ -222,7 +222,12 @@ const passMargin = 30 * time.Second
 // signed. The new pass is dated by the clock as it is now, and a server
 // refuses it if the clock is too far behind: a box whose clock is wrong is
 // stopped at its pass, before it fetches mail it would judge by that clock.
+//
+// A box that holds its own revocation uses no pass, the kept one included.
 func (b *Box) pass() (string, error) {
+	if err := b.finished(); err != nil {
+		return "", err
+	}
 	if kept, err := os.ReadFile(b.path("pass")); err == nil {
 		h := strings.TrimSuffix(string(kept), "\n")
 		if p, err := protocol.ParsePass(h); err == nil && p.Address == b.id.Address() {
@@ -243,7 +248,11 @@ func (b *Box) pass() (string, error) {
 }
 
 // signPass signs a pass with signer, a working key under its certificate.
+// A box that holds its own revocation signs none.
 func (b *Box) signPass(signer ssh.Signer) (string, error) {
+	if err := b.finished(); err != nil {
+		return "", err
+	}
 	server, err := b.serverName()
 	if err != nil {
 		return "", err

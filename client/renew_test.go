@@ -321,11 +321,24 @@ func TestAServerThatFailsEveryRenewalGetsEachKeyOnce(t *testing.T) {
 	if _, err := a.Resolve(context.Background(), b.Address()); err == nil || !strings.Contains(err.Error(), "has ended") {
 		t.Fatalf("a sender given the first key's statement on day 75: %v", err)
 	}
-	// Signed on day 2, expired on day 35, deleted on day 68: with its
-	// statement. The key in service and the one before it are held.
+	// Signed on day 2, expired on day 35, its deletion time day 68. No
+	// server has taken a pass from the box since day 65, so it is kept: a
+	// box deletes by its clock only what a server's answer dated by that
+	// clock lets it (PROTOCOL.md §0), and this box cannot tell a lost pass
+	// from a clock far ahead.
 	stem := func(l lease) string { return filepath.Join(b.Dir(), "prekeys", strconv.FormatUint(l.p.Serial, 10)) }
+	if !exists(stem(first) + ".agekey") {
+		t.Error("a passed-over key was deleted by a clock no server has taken a pass dated by since day 65")
+	}
+	// The first time a server takes one again, here the waiting renewal
+	// (recv tries it again within the hour), it goes, with its statement. The
+	// key in service and the one before it are held.
+	e.srv.SetMiddle(nil)
+	if _, err := b.Rekey(context.Background(), ""); err != nil {
+		t.Fatalf("day 75, the server back: prekey renew: %v", err)
+	}
 	if exists(stem(first)+".agekey") || exists(stem(first)+".txt.sig") {
-		t.Error("a passed-over key outlived its not_after + 33 days")
+		t.Error("a passed-over key outlived its not_after + 33 days once a server took a pass again")
 	}
 	for _, key := range order[1:] {
 		if !exists(stem(byKey[key]) + ".agekey") {

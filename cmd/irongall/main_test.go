@@ -1428,7 +1428,8 @@ func TestCertRevokeEarlier(t *testing.T) {
 
 // cert revoke-earlier when the server refuses the new prekey: the revocation
 // went out first, whatever the refusal, and the command says the new prekey
-// is NOT published and the box takes no mail until it is, and fails.
+// is NOT published, the box sends none and its server takes none until it is,
+// and fails.
 func TestCertRevokeEarlierWhenTheRenewalIsRefused(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -1444,7 +1445,7 @@ func TestCertRevokeEarlierWhenTheRenewalIsRefused(t *testing.T) {
 		var out, errs bytes.Buffer
 		err = do(ctx, "cert revoke-earlier", nil, strings.NewReader(""), &out, &errs)
 		lines := printed(t, out.String())
-		if err == nil || !strings.Contains(err.Error(), "NOT published") || !strings.Contains(err.Error(), "takes no mail") || typesOf(lines) != "certificates_revoked" {
+		if err == nil || !strings.Contains(err.Error(), "NOT published") || !strings.Contains(err.Error(), "sends no mail, and its server takes none") || typesOf(lines) != "certificates_revoked" {
 			t.Fatalf("refused %s: %v, stdout %q", code, err, out.String())
 		}
 		through := number(t, lines[0]["through"].(json.Number).String())
@@ -1487,7 +1488,7 @@ func TestCertRevokeEarlierSaysWhatHappenedToEach(t *testing.T) {
 	srv.SetMiddle(refusing(protocol.CodeRateLimited, http.MethodPut, "/prekey"))
 	var out, errs bytes.Buffer
 	err = do(ctx, "cert revoke-earlier", nil, strings.NewReader(""), &out, &errs)
-	if err == nil || !strings.Contains(err.Error(), "NOT published") || !strings.Contains(err.Error(), "takes no mail") || !strings.Contains(err.Error(), "not everywhere") || !strings.Contains(err.Error(), "irongall cert publish-revoked") || !strings.HasSuffix(typesOf(printed(t, out.String())), "certificates_revoked") {
+	if err == nil || !strings.Contains(err.Error(), "NOT published") || !strings.Contains(err.Error(), "sends no mail, and its server takes none") || !strings.Contains(err.Error(), "not everywhere") || !strings.Contains(err.Error(), "irongall cert publish-revoked") || !strings.HasSuffix(typesOf(printed(t, out.String())), "certificates_revoked") {
 		t.Fatalf("taken by the box's server alone: %v, stdout %q", err, out.String())
 	}
 
@@ -1685,5 +1686,49 @@ func TestPrekeyLifetime(t *testing.T) {
 		if got, err := os.ReadFile(file); err != nil || string(got) != "2851200\n" {
 			t.Errorf("%q changed the file to %q, %v", arg, got, err)
 		}
+	}
+}
+
+// The box's own server refuses every PUT and a revocation server it lists
+// takes the remedy's revocation: the command says the box's own server did
+// not take it, so the box still takes mail there, and a sender that lists no
+// revocation server sends to it.
+func TestCertRevokeEarlierWhenOnlyARevocationServerTookIt(t *testing.T) {
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	rs := fakeserver.New(t, time.Now)
+	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, RevocationServers: []string{rs.URL}}, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.SetPolicy(client.Policy{Unknown: client.LandInbox, Server: client.AdmitAll}); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("IRONGALL_HOME", b.Dir())
+	t.Setenv("IRONGALL_BASE", srv.URL)
+	t.Setenv("IRONGALL_REVOCATION_SERVERS", rs.URL)
+	srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.Method == http.MethodPut {
+			c := protocol.CodeUnavailable
+			fakeserver.WriteJSON(w, c.Status(), protocol.Problem{Type: c.TypeURI(), Code: c, Status: int64(c.Status())})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	var out, errs bytes.Buffer
+	err = do(ctx, "cert revoke-earlier", nil, strings.NewReader(""), &out, &errs)
+	if err == nil || !strings.Contains(err.Error(), "own server did not take the revocation") || strings.Contains(err.Error(), "its server takes none") {
+		t.Fatalf("the command: %v", err)
+	}
+	if _, err := sender.Send(ctx, b.Address(), "to a box whose own server missed the revocation"); err != nil {
+		t.Fatal(err)
+	}
+	srv.SetMiddle(nil)
+	if res, err := b.Receive(ctx); err != nil || len(res.Delivered) != 1 {
+		t.Errorf("the box's drain: %v", err)
 	}
 }

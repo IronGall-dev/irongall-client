@@ -773,7 +773,8 @@ func (e *cli) revokeEarlierCmd() *cobra.Command {
 new working key and certificate, revoke every certificate before that one, and
 then publish the new prekey. The address goes on, and mail this box sent that
 is still unread is refused with the rest, so send it again. Until the server
-takes the new prekey, the box takes no mail.`,
+takes the new prekey, the box sends no mail, and once its server holds the
+revocation it takes none there either.`,
 		nargs(0, 0), func(c *cobra.Command, _ []string) error {
 			kt, err := keyType(noPQ, pq)
 			if err != nil {
@@ -791,6 +792,11 @@ takes the new prekey, the box takes no mail.`,
 				}
 				return fmt.Errorf("no new prekey, and nothing is revoked: %w", err)
 			}
+			if r.Unread != nil {
+				if err := e.out(line("box_unread", failure(fmt.Errorf("this box's server could not be read, or served what this box does not take, so the new certificate was numbered from what this box knows: %w", r.Unread))...)); err != nil {
+					return err
+				}
+			}
 			if r.Prekey != nil {
 				if err := e.out(prekey(r.Prekey)); err != nil {
 					return err
@@ -804,7 +810,10 @@ takes the new prekey, the box takes no mail.`,
 			}
 			// What became of the new prekey first, then of the revocation.
 			const again = "This box keeps it, and this publishes it again: irongall cert publish-revoked"
-			dark := fmt.Sprintf("Every certificate before %d is revoked, the one this box was using among them, so it takes no mail until the new prekey is taken: irongall prekey renew sends it again, and so does irongall recv", r.Below)
+			dark := fmt.Sprintf("Every certificate before %d is revoked, the one this box was using among them, so it sends no mail, and its server takes none for it, until the new prekey is taken: irongall prekey renew sends it again, and so does irongall recv", r.Below)
+			if !r.OwnTook {
+				dark = fmt.Sprintf("Every certificate before %d is revoked where the revocation was taken, the one this box was using among them, so it sends no mail until the new prekey is taken: irongall prekey renew sends it again, and so does irongall recv. This box's own server did not take the revocation, so until it does it still takes mail for this box, and the pass of the certificate it was using", r.Below)
+			}
 			switch {
 			case r.NotRenewed == nil && r.NotRevoked == nil && r.Revoked == nil:
 				if err != nil {

@@ -38,23 +38,35 @@ import (
 // published (a rollback), whose next serial's key was already published.
 func (b *Box) Rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey, error) {
 	return locked(ctx, b, func() (*protocol.Prekey, error) {
-		p, err := b.rekey(ctx, kt)
-		return p, b.proved(ctx, b.id.Address(), err, newLookups())
+		l := newLookups()
+		p, err := b.rekey(ctx, kt, l)
+		return p, b.proved(ctx, b.id.Address(), err, l)
 	})
 }
 
 // rekey is Rekey with the lock held. It returns the prekey once the server
-// took it.
-func (b *Box) rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey, error) {
-	p, err := b.renew(ctx, kt)
+// took it. l is what the command has asked as it went.
+func (b *Box) rekey(ctx context.Context, kt protocol.KeyType, l *lookups) (*protocol.Prekey, error) {
+	if err := b.finished(); err != nil {
+		return nil, err
+	}
+	p, err := b.renew(ctx, kt, l)
 	if err != nil {
 		return nil, err
 	}
 	return p, b.prune()
 }
 
-func (b *Box) renew(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey, error) {
-	p, next, req, err := b.prepareRenewal(ctx, kt, false)
+func (b *Box) renew(ctx context.Context, kt protocol.KeyType, l *lookups) (*protocol.Prekey, error) {
+	st, err := b.readOwn(ctx, kt, false, l)
+	if err != nil {
+		return nil, err
+	}
+	next, signed, err := b.nextNumber(st, false)
+	if err != nil {
+		return nil, err
+	}
+	p, req, err := b.makeRenewal(st, next, signed)
 	if err != nil {
 		return nil, err
 	}
@@ -91,65 +103,140 @@ func (b *Box) sendRenewal(ctx context.Context, r renewal, n uint64) error {
 	return removeIfExists(b.path("acl.json"))
 }
 
-// prepareRenewal is renew up to the upload: it numbers the renewal, and
-// makes and signs what it sends, or takes the statement an earlier attempt
-// signed. It returns the prekey, its number, and the renewal that publishes
-// it. A server that holds no box at this address shows nothing to number
-// above or to hold to its order: the renewal is numbered above what this box
-// knows of its own, and goes as a registration.
+// ownRead is what a renewal learned from its read of its own box.
+type ownRead struct {
+	// forgotten is set when the box's server holds no box at its address.
+	forgotten bool
+	// known is the highest certificate serial this box knows it has used:
+	// what it published, and the served certificate's when the read could be
+	// used.
+	known uint64
+	// kt is the key type the renewal makes: the one asked for, or the served
+	// prekey's, or the published one's.
+	kt protocol.KeyType
+	// unread is why the remedy went on without its server's answer, or nil.
+	unread error
+}
+
+// readOwn reads this box at its server (GET /v1/<own>), as a renewal does
+// before it numbers anything, and keeps what verifies of the box's own
+// revocations: what that answer carries, then what each revocation server
+// it lists holds, asked once in the command (l). Every renewal asks, so the
+// certificate it makes next is numbered above the highest serial it has been
+// shown revoked, and is never revoked as it is made (PROTOCOL.md §2b), on a
+// box restored from its identity too. A server that holds no box here
+// carries no revocations in its answer, so they are read on their own.
+//
+// A server that holds no box at this address shows nothing to number above
+// or to hold to its order: the renewal is numbered above what this box knows
+// of its own, and goes as a registration.
+//
+// With unused set, for the remedy, an answer it cannot use stops nothing: no
+// answer, a served statement that does not verify, or one ordered before
+// what this box published. The renewal is numbered from what the box knows,
+// and the revocation still goes to whoever takes it (PROTOCOL.md §6.3). A
+// plain renewal stops there: the refusal is the check.
+func (b *Box) readOwn(ctx context.Context, kt protocol.KeyType, unused bool, l *lookups) (*ownRead, error) {
+	out := &ownRead{kt: kt}
+	own := b.id.Address()
+	var ir protocol.BoxResponse
+	_, rerr := b.call(ctx, http.MethodGet, b.boxPath(""), nil, nil, &ir)
+	out.forgotten = Code(rerr) == protocol.CodeNoSuchMailbox
+	rec := ir.Record()
+	switch {
+	case rerr == nil:
+	case out.forgotten:
+		// What its identity revoked outlives the box, and is read on its own.
+		var held protocol.Revocations
+		_, err := b.call(ctx, http.MethodGet, b.boxPath("/revocations"), nil, nil, &held)
+		switch {
+		case err == nil:
+			rec = &held
+		case Code(err) == protocol.CodeNotRevoked, Code(err) == protocol.CodeNoSuchMailbox:
+		case unused && ctx.Err() == nil:
+			out.unread = err
+		default:
+			return nil, err
+		}
+	default:
+		// A revoked address is answered with its record, which proves itself.
+		rec = recordOf(rerr)
+		if !unused || ctx.Err() != nil {
+			if rec != nil {
+				if _, err := b.take(own, rec); err != nil {
+					return nil, err
+				}
+			}
+			return nil, rerr
+		}
+		out.unread = rerr
+	}
+	if rec != nil {
+		if _, err := b.take(own, rec); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := b.askRevocationServers(ctx, own, l); err != nil {
+		return nil, err
+	}
+	published, err := b.publishedSerial()
+	if err != nil {
+		return nil, err
+	}
+	out.known = published
+	if rerr == nil {
+		// Its own record, so judged as one: whether this identity ever
+		// certified the key that signed it, even if that certificate has
+		// since ended.
+		cur, curCert, err := protocol.VerifyPrekeyRecord(b.id, ir.Prekey, ir.PrekeySignature)
+		switch {
+		case err != nil:
+			err = refuse("this box's current prekey, as served: %v", err)
+		// A box's statements are ordered by certificate first, then by
+		// serial, and this box gives a renewal's certificate and prekey one
+		// number. So what it published is (published, published), and the
+		// server may serve nothing ordered before it.
+		case curCert.Serial() < published || (curCert.Serial() == published && cur.Serial < published):
+			err = refuse("rollback: the server serves this box's prekey serial %d under certificate %d, before serial %d, which this box published", cur.Serial, curCert.Serial(), published)
+		default:
+			if out.kt == "" {
+				out.kt = cur.Type()
+			}
+			out.known = max(curCert.Serial(), published)
+		}
+		if err != nil {
+			if !unused {
+				return nil, err
+			}
+			out.unread = err
+		}
+	}
+	if out.kt == "" {
+		out.kt = b.publishedType(published)
+	}
+	return out, nil
+}
+
+// nextNumber is the serial a renewal takes. It returns, too, the statement
+// an earlier attempt signed at that serial when that one is sent again.
+//
+// A serial is signed once. A statement an earlier attempt signed, and
+// never saw published, is sent again exactly as it is: signed again, its
+// not_after counted from now, it would hand a server that fails every
+// renewal and keeps what it was sent the same key for 33 more days at
+// each retry, without end. Once such a statement can no longer be sent
+// (it expired, or a key of another type is wanted), a new number is
+// taken, above it: its key stays, as a retired one, for mail it may yet
+// decrypt. Nothing at or below the highest serial this box signed is
+// signed anew, and that one's files are never pruned, so a serial is
+// never used twice.
 //
 // With unused set it takes nothing an earlier attempt left: not a statement
 // signed before this call, and not a key or working key made for one. It is
 // for a box whose working key may have been taken ([Box.RenewAndRevoke]):
 // whoever copied the box while a renewal waited holds that renewal's working
 // key too, so sent again it would hand them the box's next certificate.
-func (b *Box) prepareRenewal(ctx context.Context, kt protocol.KeyType, unused bool) (*protocol.Prekey, uint64, renewal, error) {
-	var out renewal
-	req := &out.req
-	var ir protocol.BoxResponse
-	_, err := b.call(ctx, http.MethodGet, b.boxPath(""), nil, nil, &ir)
-	out.forgotten = Code(err) == protocol.CodeNoSuchMailbox
-	if err != nil && !out.forgotten {
-		return nil, 0, out, err
-	}
-	published, err := b.publishedSerial()
-	if err != nil {
-		return nil, 0, out, err
-	}
-	known := published
-	if !out.forgotten {
-		// Its own record, so judged as one: whether this identity ever
-		// certified the key that signed it, even if that certificate has
-		// since ended.
-		cur, curCert, err := protocol.VerifyPrekeyRecord(b.id, ir.Prekey, ir.PrekeySignature)
-		if err != nil {
-			return nil, 0, out, refuse("this box's current prekey, as served: %v", err)
-		}
-		// A box's statements are ordered by certificate first, then by
-		// serial, and this box gives a renewal's certificate and prekey one
-		// number. So what it published is (published, published), and the
-		// server may serve nothing ordered before it.
-		if curCert.Serial() < published || (curCert.Serial() == published && cur.Serial < published) {
-			return nil, 0, out, refuse("rollback: the server serves this box's prekey serial %d under certificate %d, before serial %d, which this box published", cur.Serial, curCert.Serial(), published)
-		}
-		if kt == "" {
-			kt = cur.Type()
-		}
-		known = max(curCert.Serial(), published)
-	} else if kt == "" {
-		kt = b.publishedType(published)
-	}
-	// A serial is signed once. A statement an earlier attempt signed, and
-	// never saw published, is sent again exactly as it is: signed again, its
-	// not_after counted from now, it would hand a server that fails every
-	// renewal and keeps what it was sent the same key for 33 more days at
-	// each retry, without end. Once such a statement can no longer be sent
-	// (it expired, or a key of another type is wanted), a new number is
-	// taken, above it: its key stays, as a retired one, for mail it may yet
-	// decrypt. Nothing at or below the highest serial this box signed is
-	// signed anew, and that one's files are never pruned, so a serial is
-	// never used twice.
-	//
+func (b *Box) nextNumber(st *ownRead, unused bool) (uint64, *protocol.Prekey, error) {
 	// The number must be above the served CERTIFICATE's serial, not the
 	// served prekey's: the new statement is under a new certificate, which
 	// outranks any prekey serial under the one before. So a prekey published
@@ -157,19 +244,21 @@ func (b *Box) prepareRenewal(ctx context.Context, kt protocol.KeyType, unused bo
 	// working key, holds nothing: the next certificate passes it.
 	// And above every serial this box's identity has revoked: a certificate
 	// numbered there would be revoked as it was made, and the box could not
-	// renew until its identity revoked fewer, which it never does.
+	// renew until its identity revoked fewer, which it never does. So a
+	// waiting statement at or below one is passed over too.
+	known := st.known
 	own, err := b.revokedCerts(b.id.Address())
 	if err != nil {
-		return nil, 0, out, err
+		return 0, nil, err
 	}
 	if own != nil && own.Through >= protocol.MaxSerial {
-		return nil, 0, out, refuse("this box's identity has revoked its certificates through the highest serial there is, so no later certificate can be made: the address cannot renew")
+		return 0, nil, refuse("this box's identity has revoked its certificates through the highest serial there is, so no later certificate can be made: the address cannot renew")
 	}
 	if own != nil {
 		known = max(known, own.Through)
 	}
 	if known >= protocol.MaxSerial {
-		return nil, 0, out, refuse("this box's certificate serial is the highest there is, so no later certificate can be made: the address cannot renew")
+		return 0, nil, refuse("this box's certificate serial is the highest there is, so no later certificate can be made: the address cannot renew")
 	}
 	// A number an earlier attempt took, and that nothing has passed since,
 	// is kept: its statement is the one sent again, and a key made for it
@@ -179,46 +268,50 @@ func (b *Box) prepareRenewal(ctx context.Context, kt protocol.KeyType, unused bo
 	// certificate above every one made before, on whatever machine.
 	begun, err := b.highestBegun()
 	if err != nil {
-		return nil, 0, out, err
+		return 0, nil, err
 	}
-	var next uint64
-	var p *protocol.Prekey
 	switch {
 	case begun > known && unused:
 		// Whatever an earlier attempt left is passed over, as a spent
 		// statement is: its key stays, as a retired one.
 		known = begun
 	case begun > known:
-		signed, spent, err := b.signedPrekey(begun, kt)
+		signed, spent, err := b.signedPrekey(begun, st.kt)
 		if err != nil {
-			return nil, 0, out, err
+			return 0, nil, err
 		}
-		if spent {
-			known = begun // the new number is above the spent one too
-		} else {
-			next, p = begun, signed
+		if !spent {
+			return begun, signed, nil
 		}
+		known = begun // the new number is above the spent one too
 	}
-	if next == 0 {
-		if known >= protocol.MaxSerial {
-			return nil, 0, out, refuse("this box's certificate serial is the highest there is, so no later certificate can be made: the address cannot renew")
-		}
-		next = protocol.SerialAt(b.now(), known)
+	if known >= protocol.MaxSerial {
+		return 0, nil, refuse("this box's certificate serial is the highest there is, so no later certificate can be made: the address cannot renew")
 	}
+	return protocol.SerialAt(b.now(), known), nil, nil
+}
+
+// makeRenewal makes and signs renewal next, of st's key type, or takes p,
+// the statement an earlier attempt signed at next, and reads what it sends.
+func (b *Box) makeRenewal(st *ownRead, next uint64, p *protocol.Prekey) (*protocol.Prekey, renewal, error) {
+	out := renewal{forgotten: st.forgotten}
+	req := &out.req
 	if p == nil {
-		if p, err = b.makePrekey(next, kt); err != nil {
-			return nil, 0, out, err
+		var err error
+		if p, err = b.makePrekey(next, st.kt); err != nil {
+			return nil, out, err
 		}
 	}
 	stem := b.path("prekeys", strconv.FormatUint(next, 10))
 	req.SenderKeyTypes = b.senderKeyTypes
+	var err error
 	if req.Prekey, err = os.ReadFile(stem + ".txt"); err != nil { //nolint:gosec // a path inside the box's own directory
-		return nil, 0, out, err
+		return nil, out, err
 	}
 	if req.PrekeySignature, err = os.ReadFile(stem + ".txt.sig"); err != nil { //nolint:gosec // a path inside the box's own directory
-		return nil, 0, out, err
+		return nil, out, err
 	}
-	return p, next, out, nil
+	return p, out, nil
 }
 
 // publishedType is the key type of statement n, which this box published, or
@@ -430,14 +523,14 @@ func (b *Box) prekeyStatement(n uint64) (*protocol.Prekey, error) {
 // renewIfDue publishes a new prekey, of the current type, when renewDue
 // says so. The caller holds the lock. A failure is retried after
 // renewRetry.
-func (b *Box) renewIfDue(ctx context.Context) (*protocol.Prekey, error) {
+func (b *Box) renewIfDue(ctx context.Context, l *lookups) (*protocol.Prekey, error) {
 	if !b.renewDue() {
 		return nil, nil
 	}
 	if !b.renewFailed.IsZero() && b.now().Sub(b.renewFailed) < renewRetry {
 		return nil, nil
 	}
-	p, err := b.rekey(ctx, "")
+	p, err := b.rekey(ctx, "", l)
 	if err != nil {
 		b.renewFailed = b.now()
 		return nil, err
@@ -525,10 +618,12 @@ func (b *Box) removePrekey(n uint64) error {
 	return nil
 }
 
-// Prune deletes every retired prekey whose deletion time has come, whatever
-// else happened: its not_after plus protocol.TTL. All mail encrypted to it
-// arrived by its not_after and has expired by then; after this, that mail is
-// unrecoverable from the box's keys. The newest prekey is never deleted.
+// Prune deletes every prekey but the newest this box holds whose deletion
+// time has come by this machine's clock: its not_after plus protocol.TTL. All
+// mail encrypted to it arrived by its not_after and has expired by then;
+// after this, that mail is unrecoverable from the box's keys. [Box.Receive]
+// runs it only once its server has answered the drain's list, so has taken a
+// pass dated by that clock: a clock far ahead deletes nothing there.
 func (b *Box) Prune() error {
 	return b.lockedDo(context.Background(), b.prune)
 }

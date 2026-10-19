@@ -228,6 +228,15 @@ var undeliverable = []protocol.Code{
 // has recorded, is refused. A read that serves no box is not "none held":
 // nothing is sealed or posted, and the entry stays.
 func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked *lookups) (*protocol.Receipt, error) {
+	// A box that holds its own revocation can never deliver it: every reader
+	// that holds the revocation refuses its mail, whenever it was signed.
+	if err := b.finished(); err != nil {
+		var gone *RevokedError
+		if errors.As(err, &gone) {
+			return nil, b.undelivered(stem, err)
+		}
+		return nil, err
+	}
 	if b.expired(stem) {
 		return nil, b.undelivered(stem, refuse("it was written more than %d days ago, and an outbox posts a message no longer than that", protocol.TTL/(24*time.Hour)))
 	}
@@ -441,6 +450,16 @@ func (b *Box) seal(ctx context.Context, to protocol.Address, stem string, l *loo
 	worker, cert, err := b.currentWorker()
 	if err != nil {
 		return nil, err
+	}
+	// A certificate this box's own identity has revoked signs no mail: every
+	// reader that holds the revocation refuses it, whatever this box's server
+	// took. That is the remedy's window while its renewal waits (PROTOCOL.md
+	// §6.3a): the entry waits too. A kept revocation that does not verify is a
+	// fault, never "nothing revoked".
+	if held, err := b.revokedCerts(b.id.Address()); err != nil {
+		return nil, err
+	} else if held != nil && held.Revokes(cert.Serial()) {
+		return nil, refuse("this box's identity has revoked the certificate it signs under, so mail signed now would be refused: irongall recv or irongall prekey renew publishes the new one first")
 	}
 	// Mail may wait 33 days to be read, and its certificate must still be
 	// valid then.

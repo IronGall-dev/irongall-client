@@ -90,6 +90,10 @@ type Result struct {
 	// was not sent ([Box.SyncACL]). The drain went ahead, and the next
 	// Receive sends it.
 	ACLErr error
+	// listed is set once the server answered the drain's first list: it
+	// took a pass dated by this machine's clock, so what that clock deletes
+	// is deleted by a clock a server takes.
+	listed bool
 }
 
 // Receive drains the box: every page, every message. Each message is judged
@@ -104,16 +108,26 @@ type Result struct {
 // First it renews the prekey if the current one is more than a day old, so
 // a box received at least monthly never lapses. A drain that empties the box
 // then deletes the retired prekeys no mail can still need (see
-// [Box.dropRetired]): all but the newest.
+// [Box.dropRetired]): all but the newest. And once the server has answered
+// the drain's list, so has taken a pass dated by this machine's clock, the
+// prekeys whose deletion time has come by that clock go too ([Box.Prune]).
+//
+// A box that holds its own revocation receives nothing.
 func (b *Box) Receive(ctx context.Context) (*Result, error) {
 	return locked(ctx, b, func() (*Result, error) { return b.receive(ctx) })
 }
 
 func (b *Box) receive(ctx context.Context) (*Result, error) {
+	if err := b.finished(); err != nil {
+		return nil, err
+	}
 	began := b.now()
-	renewed, renewErr := b.renewIfDue(ctx)
+	// What this command has asked as it went: the renewal's ask for the
+	// box's own revocation, then the drain's about each sender.
+	asked := newLookups()
+	renewed, renewErr := b.renewIfDue(ctx, asked)
 	aclErr := b.syncACL(ctx)
-	res, err := b.drain(ctx)
+	res, err := b.drain(ctx, asked)
 	if res == nil {
 		res = &Result{}
 	}
@@ -122,8 +136,13 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 	if err == nil && !res.More {
 		err = b.dropRetired(began)
 	}
-	if e := b.prune(); err == nil {
-		err = e
+	// Deleted by this clock only once the server has taken a pass dated by
+	// it: a clock far ahead is stopped at its pass, and the keys that mail
+	// waits for stay (PROTOCOL.md §0).
+	if res.listed {
+		if e := b.prune(); err == nil {
+			err = e
+		}
 	}
 	return res, err
 }
@@ -138,7 +157,7 @@ var (
 	maxDrainPages    = 100      // list pages followed in one drain
 )
 
-func (b *Box) drain(ctx context.Context) (*Result, error) {
+func (b *Box) drain(ctx context.Context, asked *lookups) (*Result, error) {
 	res := &Result{}
 	// Where mail lands is read once, before anything is acked: a policy or
 	// a list that cannot be read stops the drain, and the mail stays on the
@@ -147,8 +166,6 @@ func (b *Box) drain(ctx context.Context) (*Result, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The senders this drain has asked the server about: one lookup each.
-	asked := newLookups()
 	cursor := ""
 	messages, fetched := 0, 0
 	for page := 0; ; page++ {
@@ -178,6 +195,7 @@ func (b *Box) drain(ctx context.Context) (*Result, error) {
 			return res, b.proved(ctx, b.id.Address(), err, asked)
 		}
 		if page == 0 {
+			res.listed = true
 			// Pruned by this clock only once the server has taken a pass
 			// dated by it: a drain that a clock far off would prune is
 			// stopped at its pass first (PROTOCOL.md §0, §5 check 9).
@@ -405,13 +423,14 @@ func (b *Box) judge(ctx context.Context, ct []byte, listedFrom string, asked *lo
 		return refused(protocol.RefusedAttribution, "the server lists it as from another box than the one that signed it")
 	}
 	gone, err := b.revoked(from)
-	if err == nil && !gone && !asked.answered[from] {
-		if gone, err = b.lookupRevocation(ctx, from, asked); err == nil {
-			asked.answered[from] = true
-		}
-	}
 	if err != nil {
-		return nil, false, nil, fmt.Errorf("whether its sender is revoked could not be asked, so the message stays on the server: %w", err)
+		return nil, false, nil, fmt.Errorf("a fault of this box, so the message stays on the server: %w", err)
+	}
+	if !gone && !asked.answered[from] {
+		if gone, err = b.lookupRevocation(ctx, from, asked); err != nil {
+			return nil, false, nil, fmt.Errorf("whether its sender is revoked could not be asked, so the message stays on the server: %w", err)
+		}
+		asked.answered[from] = true
 	}
 	if gone {
 		return refused(RefusedRevoked, "its sender's address is revoked, and the revocation verifies: nothing signed for that address is taken, whenever it was signed")

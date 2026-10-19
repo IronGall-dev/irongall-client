@@ -388,7 +388,8 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A revocation of certificates: the address goes on. The highest serial
-	// it runs through stands.
+	// it runs through stands. Beside a revocation of the address, a lower one
+	// changes nothing, and the address's is kept (PROTOCOL.md §6.3a).
 	if len(req.RevokedCertificates) > 0 {
 		certs, err := protocol.VerifyRevokedCertificates(a, req.Identity, req.RevokedCertificates, req.RevokedCertificatesSignature)
 		switch {
@@ -396,6 +397,7 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 			problem(w, protocol.CodeBadRevocation, "not a revocation of this address's certificates")
 			return
 		case kept.listed != nil && bytes.Equal(kept.certList, req.RevokedCertificates):
+		case kept.listed != nil && certs.Through <= kept.listed.Through && len(req.Revocation) > 0:
 		case kept.listed != nil && certs.Through <= kept.listed.Through:
 			problem(w, protocol.CodeConflict, "a revocation through that serial or a higher one is held")
 			return

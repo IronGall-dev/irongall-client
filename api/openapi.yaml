@@ -284,8 +284,10 @@ paths:
         taken. It is kept with or without a box: for an address registered,
         deleted, forgotten or never registered. A revocation of the address is
         `201`; a revocation of certificates taken, or one through the same
-        serial again, `200`. An address already revoked is `410`, answered
-        before the body is read.
+        serial again, `200`; beside a revocation of the address, one no higher
+        than the one held changes nothing, and the answer is `201`. An address
+        already revoked is `410`, answered from the record before any
+        signature in the body is checked.
       security: []
       requestBody:
         required: true

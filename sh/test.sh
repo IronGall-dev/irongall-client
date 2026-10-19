@@ -195,8 +195,8 @@ srv_revoke(){ local a=$1 f=$2 d=$SRV/$1 v      # no pass: the identity's own sig
     jq -er .identity "$f" | base64 -d > $SRV/tmp/rv.doc && cmp -s $SRV/tmp/rv.doc $d/identity.doc && jq -er .revoked_certificates "$f" | base64 -d > $SRV/tmp/rl.txt && jq -er .revoked_certificates_signature "$f" | base64 -d > $SRV/tmp/rl.sig &&
       v=$(ig_certscheck "$a" $d/identity.doc $SRV/tmp/rl.txt $SRV/tmp/rl.sig) || { srv_err 400 bad_revocation "this is not a revocation of this address's certificates"; return 1; }
     if ! cmp -s $SRV/tmp/rl.txt $d/revoked-certs.txt; then
-      [ ! -e $d/revoked-certs.txt ] || [ "$v" -gt "$(sed -n 3p $d/revoked-certs.txt)" ] || { srv_err 409 conflict "a revocation through that serial or a higher one is held"; return 1; }
-      cp $SRV/tmp/rl.txt $d/revoked-certs.txt; cp $SRV/tmp/rl.sig $d/revoked-certs.sig
+      if [ ! -e $d/revoked-certs.txt ] || [ "$v" -gt "$(sed -n 3p $d/revoked-certs.txt)" ]; then cp $SRV/tmp/rl.txt $d/revoked-certs.txt; cp $SRV/tmp/rl.sig $d/revoked-certs.sig
+      elif ! jq -e 'has("revocation_signature")' "$f" > /dev/null; then srv_err 409 conflict "a revocation through that serial or a higher one is held"; return 1; fi      # beside a revocation of the address, a lower one changes nothing, and the address's is kept
     fi
     jq -e 'has("revocation_signature")' "$f" > /dev/null || { echo '{}'; return 0; }
   fi
@@ -242,6 +242,7 @@ ig_api(){ # the fake: the same contract as irongall.sh's ig_api (METHOD PATH [bo
     "GET ") srv_box "$a" ;;
     "PUT /prekey") srv_prekey "$a" "$f" "$tok" ;;
     "PUT /revocations") srv_revoke "$a" "$f" ;;
+    "GET /revocations") [ -e $SRV/$a/revoke.sig ] || [ -e $SRV/$a/revoked-certs.txt ] || { srv_err 404 not_revoked "no revocation of this address is held here"; return 1; }; srv_record "$a" ;;      # every mailbox server is a revocation server too: what it holds against an address, with a box here or not (PROTOCOL.md §6.3)
     "POST /messages"*) srv_send "$a" "$f" "$tok" "${rest#/messages}" ;;
     "GET /messages/"*) srv_auth "$a" "$tok" && srv_fetch "$a" "${rest#/messages/}" ;;
     "GET /messages"*) srv_auth "$a" "$tok" && srv_list "$a" "${rest#/messages}" ;;
@@ -933,4 +934,38 @@ rm $RVD/down; [ "$(ig_revoke "$TE" 2> err.txt)" = "$(jrevoked "$TE" published)" 
 [ "$(ig_revoke "$TE" 2> err.txt)" = "$(jrevoked "$TE" published)" ] && [ ! -s err.txt ] && [ "$(tail -n 2 $SRV/revlog | cut -d' ' -f2 | tr '\n' ' ')" = "PUT GET " ] && cp $RVD/$TE.json $W/te.json &&
   jq -c --arg s "$(jq -r .revocation_signature $W/tc.json)" '.revocation_signature = $s' $W/te.json > $RVD/$TE.json && ! ig_revoke "$TE" > /dev/null 2> err.txt && grep -qxF "{\"type\":\"error\",\"message\":\"NOT taken by the revocation server $REV\"}" err.txt && cp $W/te.json $RVD/$TE.json &&
   ok "revoke again, at a revocation server that holds the address revoked: its 410 revoked is taken once the record it then serves verifies, and not while that does not" || bad "revoke again at a revocation server that holds it: $(cat err.txt)"
+# --- 21. a box's own revocations: a renewal takes what is held of them, a box that holds its own revocation of its address signs nothing
+#     more, a certificate its identity revoked signs no mail, a clock far ahead deletes no key that mail waits for, and an address's
+#     revocation beside a lower revocation of its certificates is kept
+unset IG_REVOCATION_SERVERS; eval "$real_now"
+for X in S1 S2 S3 S4 S5; do as $X; ig_init $NOPQ > /dev/null 2> err.txt || bad "init of $X: $(cat err.txt)"; done
+S1=$(cat $W/box/S1/address); S2=$(cat $W/box/S2/address); S3=$(cat $W/box/S3/address); S4=$(cat $W/box/S4/address); S5=$(cat $W/box/S5/address)
+own_certs(){ printf 'irongall-revoke-certs-v1\n%s\n%s\n' "$1" "$2" > $W/oc.txt && ssh-keygen -q -Y sign -n "irongall-revoke-certs-v1:$1" -f $IG/identity < $W/oc.txt > $W/oc.sig && rec $IG/identity.doc $W/oc.txt $W/oc.sig; }      # <the box in use's address> <serial> → the record of its identity's revocation of its certificates through that serial
+as S1; x=$(($(num S1) + 10*365*86400)); own_certs "$S1" "$x" > $W/s1.json && ig_api PUT "/v1/$S1/revocations" $W/s1.json > /dev/null && [ ! -e $IG/revoked-certs.json ] || bad "S1's revocation of its certificates, at its server alone"
+sleep 1; ig_rekey $NOPQ > out.txt 2> err.txt && [ "$(num S1)" -gt "$x" ] && [ "$(ig_certskept "$S1")" = "$x" ] &&
+  ok "a renewal takes what its server holds of the box's own revocation of its certificates, here through a serial ten years past its clock that the box never held, and numbers above it at the first attempt" || bad "a renewal under a revocation it did not hold: $(num S1) against $x: $(cat err.txt)"
+# a clock far ahead: the box's drain is refused at its pass, and no key that mail waits for is deleted by that clock
+as S1; printf 'sealed to a prekey about to retire' | ig_send "$S4" > /dev/null 2> err.txt || bad "S1 to S4: $(cat err.txt)"
+as S4; sleep 1; ig_rekey $NOPQ > /dev/null 2> err.txt || bad "S4's renewal: $(cat err.txt)"; k0=$(ls $IG/prekeys/*.agekey | wc -l)
+off=$((70*86400)); ig_now(){ echo $(($(date -u +%s) + off)); }; recv; f=$RECV_RC; eval "$real_now"
+[ "$f" != 0 ] && [ "$(ls $IG/prekeys/*.agekey | wc -l)" = "$k0" ] && recv && [ "$(printf '%s\n' "$RECV_OUT" | jq -r .body)" = "sealed to a prekey about to retire" ] &&
+  ok "a drain at a clock 70 days ahead is refused at its pass and deletes no prekey by that clock: once the clock is right, the mail sealed to the retired prekey is delivered" || bad "a fast clock and the keys: rc $f, $k0 keys then $(ls $IG/prekeys/*.agekey | wc -l), $RECV_OUT / $RECV_ERR"
+# a certificate this box's own identity revoked signs no mail, whatever its server took: the entry waits, and goes once the renewal is taken
+as S3; own_certs "$S3" "$(num S3)" > $IG/revoked-certs.json; n0=$(wc -l < $SRV/log)
+printf 'signed under a certificate its identity revoked' | ig_send "$S4" > out.txt 2> err.txt && bad "sent under a certificate the box's own identity revoked"
+grep -q "has revoked the certificate it signs under" err.txt && [ "$(ls $IG/outbox/*.P | wc -l)" = 1 ] && ! grep -q "^POST /v1/$S4/messages\$" <(tail -n +$((n0 + 1)) $SRV/log) &&
+  sleep 1 && ig_rekey $NOPQ > /dev/null 2> err.txt && ig_flush > out.txt 2>> err.txt && grep -q '^{"type":"sent",' out.txt && as S4 && recv && [ "$(printf '%s\n' "$RECV_OUT" | jq -r .body)" = "signed under a certificate its identity revoked" ] &&
+  ok "a box signs no mail under a certificate its own identity revoked, whatever its server took: the entry waits in the outbox, and goes once the renewal is taken" || bad "a seal under a revoked certificate: $(cat err.txt)"
+# a box that holds its own revocation of its address signs nothing more: no send, no drain, no renewal, no pass, with nothing asked of the server
+as S2; out=$(ig_revoke "$S2" 2> err.txt) && [ -s $IG/revoked.sig ] || bad "S2's revocation: $(cat err.txt)"; n0=$(wc -l < $SRV/log)
+printf 'from a revoked address' | ig_send "$S3" 2> err.txt && bad "a box that holds its own revocation sent"
+grep -q "REVOKED: this box's own address is revoked" err.txt && [ "$(ls $IG/outbox/failed/*.P | wc -l)" = 1 ] && ! ig_recv > /dev/null 2>&1 && ! ig_rekey $NOPQ > /dev/null 2>&1 && ! ig_pass > /dev/null 2>&1 &&
+  [ "$(wc -l < $SRV/log)" = "$n0" ] && [ "$(ig_revoke "$S2" 2> err.txt)" = "$(jrevoked "$S2" published)" ] &&
+  ok "a box that holds its own revocation of its address signs nothing more, with nothing asked of its server: no send (moved to outbox/failed/), no drain, no renewal, no pass; publishing the record again still goes" || bad "a finished box: $(cat err.txt)"
+# beside the address's revocation, a revocation of certificates through a lower serial than the one held changes nothing, and the address's is kept
+as S5; own_certs "$S5" "$(($(num S5) + 10))" > $W/s5.json && ig_api PUT "/v1/$S5/revocations" $W/s5.json > /dev/null || bad "S5's revocation of its certificates"
+ig_revocation > $W/s5r.json 2> /dev/null && own_certs "$S5" "$(($(num S5) + 5))" > $W/s5l.json && jq -c -s '.[0] + .[1]' $W/s5r.json $W/s5l.json > $W/s5both.json || bad "S5's record of both"
+ig_revoke "$S5" $W/s5both.json > /dev/null 2> err.txt && [ "$(cat $SRV/$S5/state)" = revoked ] &&
+  ok "an address's revocation beside a revocation of its certificates through a lower serial than the server holds is kept: the lower part changes nothing" || bad "both parts, the lower one beside: $(cat err.txt)"
+[ -z "$(find $W/box -name '*.new' ! -name pass.new)" ] && ok "every file a box keeps is written beside it, synced and moved into place: none is left half done (a pass.new waits for its upload by design)" || bad "a .new left: $(find $W/box -name '*.new' ! -name pass.new)"
 echo "--- $PASS PASS, 0 FAIL (KEYTYPE=$KEYTYPE)"
