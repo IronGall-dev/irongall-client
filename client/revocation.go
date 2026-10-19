@@ -536,7 +536,7 @@ func (b *Box) renewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy,
 		return r, nil
 	}
 	r.Prekey = p
-	return r, b.prune()
+	return r, b.prune(b.now())
 }
 
 // ownTook reports whether the box's own server took a record whose

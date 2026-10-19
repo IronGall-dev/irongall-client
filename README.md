@@ -99,7 +99,7 @@ Forward secrecy, padding, accounts and the rest: `PROTOCOL.md`.
 | `no_answer` | any command that asks revocation servers | `server`: one gave no answer, which changes nothing |
 | `sent` | `send`, `outbox flush` | `id`, `msg_id`, `to` |
 | `box` | `init`, `addr` | `address`, `link` |
-| `quarantined` | `quarantine list` | `id`, `code` (below), and `from` and `received_at`, the server's, each when it has its form |
+| `quarantined` | `quarantine list` | `id`, `code` (below), `reason`, and `from` and `received_at`, the server's, each when it has its form; then what the checks established when they judged it: `judged_at`, this machine's clock; `signed_by` when its signature verifies, by a working key that identity certified, at that certificate's own start, or else `claims_identity`; and with `signed_by`, `certificate_serial`, `certificate_began`, `certificate_ends`, `sent_at` and `msg_id` |
 | `error` | any, on stderr | `message`; from a server's answer, `status`, its `code` when this client knows it, `retry_after`, and the values the code carries, each checked to its type; from a refusal with a code of its own, that `code` (below) |
 
 The rest are named for what they report: `status`, `held_sender`, `allowed`, `allowed_rebuilt`, `blocked`, `alias`, `alias_removed`, `removed` (from `quarantine/`), `prekey`, `certificates_revoked`, `no_earlier_certificate`, `account`, `revoked`, `not_revoked`, and `revocation_record`, which is the record itself, exactly the body every server takes: save it where only you can read it (`umask 077; irongall revocation make > <file>`).
@@ -162,7 +162,7 @@ What it lacks against the Go client, though it gives the Go client's verdict on 
 - **The lock is a bare `lock/` directory.** A `kill -9`, or the machine going down, leaves it behind, and every command then waits for it and gives up: remove it by hand.
 - **Restoring a box from its identity alone takes the Go client.**
 - `recv` drains once and never waits, a drain has no limit in bytes, and it keeps no `ETag`, so every poll is answered in full.
-- No `status`, no `account`, no `alias rm`, no `show`, no `quarantine` and no `recv --headers`.
+- No `status`, no `account`, no `alias rm`, no `show`, no `quarantine` and no `recv --headers`. A message it refuses is kept without what its checks found (`judged`).
 - It applies a revocation of certificates and makes none: it has no `cert` group, its `revocation keep` takes none from a file, and it has no `revocation ask`. A revocation server that gave no answer is asked again for the next address.
 - `prekey renew` makes a post-quantum prekey unless told `--no-pq`; the Go client keeps the box's type, but for #61.
 - It checks that an Ed25519 identity key is canonical and not of small order, but not that it is on the curve. No signature verifies under such a key.

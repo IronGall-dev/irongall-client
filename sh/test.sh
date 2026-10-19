@@ -458,11 +458,16 @@ IG=$W/box/B; ig_api GET "/v1/$B/messages" "" -H "Authorization: $OLD_PASS" > /de
 # --- 9. forward secrecy: a retired prekey is deleted at its not_after + 33 days, then its mail is unrecoverable
 as B; age -d -i key1.agekey < relabel.age > /dev/null && age -d -i $IG/prekeys/$B1.agekey < relabel.age > /dev/null && ok "control: mail to the retired key decrypts while it is retained" || bad "retained"
 sed -i "5s/.*/$(jq -nr 'now - 34*86400 | floor | todate')/" $IG/prekeys/$B1.txt     # pretend its not_after was 34 days ago
+ig_prune $(($(date -u +%s) - 2*86400)); [ -e $IG/prekeys/$B1.agekey ] && ok "ig_prune by a reading of the clock before that key's deletion time, as ig_recv gives it the one the server took, deletes nothing" || bad "prune by an earlier reading deleted the key"
 ig_prune; [ ! -e $IG/prekeys/$B1.agekey ] && [ -e $IG/prekeys/$B2.agekey ] && ok "ig_prune deletes the retired key past not_after + 33 days, keeps the current one" || bad "prune"
 age -d -i $IG/prekeys/$B2.agekey < relabel.age > /dev/null 2>&1 && bad "old mail still decryptable" || ok "after deletion, mail to the retired key is unrecoverable from the box's keys"
 cp $IG/prekeys/$B2.txt held2.txt; sed -i "5s/.*/$(jq -nr 'now - 34*86400 | floor | todate')/" $IG/prekeys/$B2.txt
 ig_prune; [ -e $IG/prekeys/$B2.agekey ] && ok "ig_prune never deletes the newest key, even past its deletion time" || bad "prune deleted the newest key"
 cp held2.txt $IG/prekeys/$B2.txt
+# and ig_recv prunes, by the reading at which the server answered its list: a retired key past its deletion time goes
+as PRUNED; ig_init $NOPQ > /dev/null 2> err.txt && p1=$(newest) && ig_rekey $NOPQ > /dev/null 2>> err.txt && [ "$(newest)" -gt "$p1" ] || bad "prune by recv: setup: $(cat err.txt)"
+sed -i "5s/.*/$(jq -nr 'now - 34*86400 | floor | todate')/" $IG/prekeys/$p1.txt; recv
+[ "$RECV_RC" = 0 ] && [ ! -e $IG/prekeys/$p1.agekey ] && [ -e $IG/prekeys/$(newest).agekey ] && ok "ig_recv deletes a retired key past its deletion time, by the reading the server took at the drain's list" || bad "prune by recv: rc $RECV_RC, $RECV_ERR"
 # --- 10. restore from the identity alone: no prekeys, no working key, no pass
 as B; rm -f $W/box/B/prekeys/* $W/box/B/work/* $W/box/B/pass $W/box/B/serial
 ig_rekey $NOPQ && B3=$(num B) && [ "$B3" -gt "$B2" ] && [ "$(sed -n 3p $SRV/$B/prekey.txt)" = "$B3" ] && [ -s $IG/work/$B3 ] && [ -s $IG/pass ] && ok "lost prekeys, working key and pass: ig_rekey with the identity alone publishes a later number under a new certificate, and needs no record of the numbers it used" || bad "restore"
@@ -630,6 +635,15 @@ as FAST; s0=$(cat $IG/serial); off=7200; ig_now(){ echo $(($(date -u +%s) + off)
 ig_rekey $NOPQ 2> err.txt && bad "a renewal signed two hours ahead was taken" || { m=$(newest) && [ "$m" -gt "$s0" ] && [ "$m" -ge "$t0" ]; } || bad "clock: the renewal two hours ahead left no statement numbered by that clock: $(cat err.txt)"
 eval "$real_now"; ig_rekey $NOPQ 2> err.txt && [ "$(cat $IG/serial)" = $((m + 1)) ] && [ "$(sed -n 3p $SRV/$(cat $IG/address)/prekey.txt)" = $((m + 1)) ] &&
   ok "a renewal signed while the clock read two hours ahead is spent once the clock is right: a number one above it is signed and taken, and a serial never goes back" || bad "clock: renewal after two hours ahead: serial $(cat $IG/serial), $(cat err.txt)"
+# 55 minutes ahead, which a server's check of a certificate alone would take, and refused at the pass: with the clock right, what that attempt left is not used, since its certificate began only five minutes back and a reader 9 minutes slow, a clock a server takes, has not reached its start (PROTOCOL.md §0)
+off=3300; ig_now(){ echo $(($(date -u +%s) + off)); }
+as AHEAD; ig_init $NOPQ > /dev/null 2> err.txt && bad "a box 55 minutes fast registered" || grep -q "pass_expired" err.txt && f1=$(newest) && k1=$(cat $IG/work/$f1.pub) && a1=$(cat $IG/prekeys/$f1.agekey) || bad "clock: 55 minutes fast: $(cat err.txt)"
+eval "$real_now"; ig_init $NOPQ > /dev/null 2> err.txt && [ "$(cat $IG/work/$f1.pub)" != "$k1" ] && [ "$(cat $IG/prekeys/$f1.agekey)" = "$a1" ] &&
+  ok "a box first made while its clock read 55 minutes ahead is refused; with the clock right it registers under a new first certificate, not the one that began five minutes back, for the same prekey" || bad "clock: after 55 minutes fast: $(cat err.txt)"
+s0=$(cat $IG/serial); off=3300; ig_now(){ echo $(($(date -u +%s) + off)); }
+ig_rekey $NOPQ 2> err.txt && bad "a renewal signed 55 minutes ahead was taken" || { m=$(newest) && [ "$m" -gt "$s0" ]; } || bad "clock: the renewal 55 minutes ahead left no statement: $(cat err.txt)"
+eval "$real_now"; ig_rekey $NOPQ 2> err.txt && [ "$(cat $IG/serial)" = $((m + 1)) ] &&
+  ok "a renewal signed while the clock read 55 minutes ahead is spent once the clock is right: its certificate began five minutes back, and one above it is signed and taken" || bad "clock: renewal after 55 minutes ahead: serial $(cat $IG/serial), $(cat err.txt)"
 # a box's number is this machine's clock: a renewal takes the clock's seconds once the clock has passed the last number, and one above the last when it has not. A verifier only compares two serials, so the fake takes both
 as NUM; ig_init $NOPQ > /dev/null 2> err.txt || bad "clock: init of NUM: $(cat err.txt)"; n1=$(cat $IG/serial); off=90; ig_now(){ echo $(($(date -u +%s) + off)); }
 ig_rekey $NOPQ 2> err.txt && n2=$(cat $IG/serial) && [ "$n2" -le "$(ig_now)" ] && [ "$n2" -ge $(($(ig_now) - 30)) ] && [ "$n2" -gt $((n1 + 60)) ] && [ "$(cat $SRV/$(cat $IG/address)/cert-serial)" = "$n2" ] || bad "clock: a renewal 90 seconds on: $n1, then $(cat $IG/serial): $(cat err.txt)"

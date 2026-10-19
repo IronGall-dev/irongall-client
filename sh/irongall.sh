@@ -108,7 +108,7 @@ ig_look(){ # <address> → ig_api GET of another box from this box's server (GET
 ig_clock(){ # after a call the server refused: if it refused the pass, or a prekey statement, for its time, says what the server dates its answer and what this machine's clock reads. A new pass does not cure that, so it is nearly always a clock. The date is the server's word: a clock set by a server's lie makes an ended certificate valid again, so this sends its reader to a time source of their own
   local d; case $(ig_code) in pass_expired | prekey_time) ;; *) return 0 ;; esac
   d=$(ig_dated) && d="the server dates its answer $d, and "
-  ig_err "${d}this machine's clock reads $(jq -nr --argjson t "$(ig_now)" '$t | todate'). A server refuses a pass from a clock 10 minutes or more behind its own, or more than 50 ahead, and a certificate or prekey statement this machine dated more than an hour ahead of it. Check this machine's clock against a time source you trust, not against the server"
+  ig_err "${d}this machine's clock reads $(jq -nr --argjson t "$(ig_now)" '$t | todate'). A server refuses a pass from a clock 10 minutes or more behind its own, or more than 50 ahead, a certificate made by a clock more than 50 ahead, and a prekey statement dated more than an hour ahead of it. Check this machine's clock against a time source you trust, not against the server"
 }
 ig_server(){ # <URL> → the server's name, as a pass names it: the URL's host, lowercase, and its port only when that is not the scheme's default, as an origin is written (PROTOCOL.md §6.1b): the port as a number, and none for https on 443 or http on 80. A user and an @ before the host are no part of it, as Go's url.Parse has it
   local s=${1%%://*} h=${1#*://} p=
@@ -184,7 +184,7 @@ ig_init(){ # [--no-pq] → creates this box, or finishes a half-done init, and r
   [ ! -s "$IG/serial" ] || { ig_addr; return; }      # registered already
   local A n p h c; A=$(cat "$IG/address")
   n=$(ls "$IG/prekeys" | sed -n 's/\.agekey$//p; s/\.txt\.sig$//p' | sort -n | tail -n 1); [ -n "$n" ] || n=$(ig_now); [ "$n" -ge 1 ] || n=1; p="$IG/prekeys/$n"      # the box's first prekey, working key and certificate take their number as every later one does, from this machine's clock in seconds (ig_renew): a second machine handed the same identity then makes no certificate of a serial this one used. An attempt that got as far as a key keeps the number it took, so a registration whose answer was lost is sent again as it was
-  if c=$(ig_cert "$p.txt.sig" "$IG/identity.doc" "$A" 2> /dev/null) && c=${c#* } && [ "${c% *}" -gt "$(ig_now)" ]; then      # a first statement an earlier attempt left, under a certificate that has not begun by this machine's clock: made while the clock read more than an hour ahead. The working key, its certificate and the statement are made again. The prekey's own key stays: a server may have taken a registration whose answer was lost, and then mail may be waiting that only this key opens
+  if c=$(ig_cert "$p.txt.sig" "$IG/identity.doc" "$A" 2> /dev/null) && c=${c#* } && [ "${c% *}" -gt $(($(ig_now) - 3600)) ]; then      # a first statement an earlier attempt left, under a certificate that began less than an hour before this machine's clock: made while the clock read ahead of where it reads now, as a pass or an outbox entry made then is not used either (PROTOCOL.md §0), so a reader whose clock a server takes may not have reached its start. The working key, its certificate and the statement are made again. The prekey's own key stays: a server may have taken a registration whose answer was lost, and then mail may be waiting that only this key opens
     rm -f "$p.txt" "$p.made" "$p.txt.sig" "$IG/work/$n" "$IG/work/$n.pub" "$IG/work/$n-cert.pub" "$IG/pass.new"
   fi
   ig_prekey "$n" "${1-}" || return 1
@@ -651,7 +651,7 @@ ig_flush(){ # posts again every message still in the outbox, each sealed afresh 
 # recipe: receive
 ig_recv(){ # drains the box, every page up to a drain's limits. ACCEPT → inbox/ and a mail line on stdout. REFUSED → quarantine/, never delivered, and a refused line on stdout. Both are acked
   ig_held || { ig_lock ig_recv "$@"; return; }
-  IG_LISTED=; ig_drain; local rc=$?; [ -z "$IG_LISTED" ] || ig_prune; return $rc      # keys deleted by this clock only once the server has answered the list, so has taken a pass dated by it: a clock far ahead is stopped at its pass, and the keys that mail waits for stay (PROTOCOL.md §0)
+  IG_LISTED=; ig_drain; local rc=$?; [ -z "$IG_LISTED" ] || ig_prune "$IG_LISTED"; return $rc      # keys deleted by this clock only once the server has answered the list, so has taken a pass dated by it: a clock far ahead is stopped at its pass, and the keys that mail waits for stay (PROTOCOL.md §0). By the clock as it read then: one that moves on during the drain deletes nothing more
 }
 ig_drain(){ # stops at a transient error or a fault of this box, leaving the rest on the server for the next drain. And at a number of messages and of pages (below): a server that lists mail without end costs one run that much
   local B c="" n i id k=0 pages=0; B=$(cat "$IG/address") || return 1
@@ -660,7 +660,7 @@ ig_drain(){ # stops at a transient error or a fault of this box, leaving the res
   while :; do
     [ $((pages += 1)) -le 100 ] || { ig_out more --arg message "this run stopped at the most one drain takes: run recv again for the rest, which is still on the server"; return 0; }
     ig_owner GET "/v1/$B/messages${c:+?cursor=$c}" > "$IG/list.json" || { ig_own; return 1; }
-    [ "$pages" -gt 1 ] || { IG_LISTED=1; ig_forget; } || return 1      # the replay set pruned by this clock only once the server has taken a pass dated by it: a drain that a clock far off would prune is stopped at its pass first. IG_LISTED tells ig_recv the same of the keys
+    [ "$pages" -gt 1 ] || { IG_LISTED=$(ig_now); ig_forget; } || return 1      # the replay set pruned by this clock only once the server has taken a pass dated by it: a drain that a clock far off would prune is stopped at its pass first. IG_LISTED tells ig_recv the same of the keys, and holds the reading the server took
     ig_shape "$IG/list.json" list && n=$(jq -r '.messages | length' "$IG/list.json") || { ig_err "the server's list of messages is not one this client reads, as PROTOCOL.md §0b reads JSON: the mail stays on the server"; return 1; }
     LC_ALL=C grep -Eqi $'^retry-after: *[0-9]+\r?$' "$IG/response.headers" || { ig_err "the server's list of messages carries no poll interval, a Retry-After of digits alone (PROTOCOL.md §5.1): the mail stays on the server"; return 1; }      # read and not kept: this script drains once and never waits, so it keeps no ETag either
     for ((i = 0; i < n; i++)); do
@@ -821,7 +821,7 @@ ig_renew(){ # [--no-pq] → what ig_rekey does, the lock held. A serial is signe
   esac
   [ "$s" -lt 9007199254740991 ] || ig_refuse "this box's certificate serial is the highest there is, so no later certificate can be made: the address cannot renew" || return 1
   t=$(ls "$IG/prekeys" | sed -n 's/\.agekey$//p; s/\.txt\.sig$//p' | sort -n | tail -n 1); new=1      # s is the highest number this box knows of, and the new statement goes above it: above the served CERTIFICATE's serial, never the served prekey's, since it is under a new certificate, which outranks any prekey serial under the one before. So a prekey published in this box's name at the highest serial there is holds nothing. t is the highest number this box began a prekey at
-  if [ "${t:-0}" -gt "$s" ]; then s=$t; new=; [ ! -s "$IG/prekeys/$s.txt.sig" ] || { na=$(ig_time "$(sed -n 5p "$IG/prekeys/$s.txt")") && [ "$na" -gt "$(ig_now)" ] && [ -s "$IG/work/$s-cert.pub" ] && c=$(ig_cert "$IG/prekeys/$s.txt.sig" "$IG/identity.doc" "$A") && c=${c#* } && [ "${c% *}" -le "$(ig_now)" ] && u=$(ig_time "$(cat "$IG/prekeys/$s.made" 2> /dev/null)") && w=$(ig_lifetime 2> /dev/null) && [ $((na - u)) -le "$w" ]; } || new=1; fi      # a number an earlier run took, and that nothing has passed since, is kept. Signed and never seen published: sent again AS IT IS until it expires, then a new number. Signed again, the same key would get 33 more days from a server that keeps what it refuses. One under a certificate that has not begun, by this clock, was signed while the clock read over an hour ahead: a server refuses it until that time comes, so it is spent too. Never signed: its key is used
+  if [ "${t:-0}" -gt "$s" ]; then s=$t; new=; [ ! -s "$IG/prekeys/$s.txt.sig" ] || { na=$(ig_time "$(sed -n 5p "$IG/prekeys/$s.txt")") && [ "$na" -gt "$(ig_now)" ] && [ -s "$IG/work/$s-cert.pub" ] && c=$(ig_cert "$IG/prekeys/$s.txt.sig" "$IG/identity.doc" "$A") && c=${c#* } && [ "${c% *}" -le $(($(ig_now) - 3600)) ] && u=$(ig_time "$(cat "$IG/prekeys/$s.made" 2> /dev/null)") && w=$(ig_lifetime 2> /dev/null) && [ $((na - u)) -le "$w" ]; } || new=1; fi      # a number an earlier run took, and that nothing has passed since, is kept. Signed and never seen published: sent again AS IT IS until it expires, then a new number. Signed again, the same key would get 33 more days from a server that keeps what it refuses. One under a certificate that began less than an hour before this clock was signed while the clock read ahead of where it reads now: a reader a server takes may not have reached its start, so it is spent too. Never signed: its key is used
   if [ -n "$new" ]; then [ "$s" -lt 9007199254740991 ] || ig_refuse "this box's certificate serial is the highest there is, so no later certificate can be made: the address cannot renew" || return 1; t=$(ig_now); s=$((t > s ? t : s + 1)); fi      # a new number: this machine's clock, in seconds, or one above the highest this box knows of when the clock gives nothing higher. An identity is a key and keeps no record of what it signed, and a box restored from it knows only what the server shows: by the clock, its certificate is above every one made before, on whatever machine. A verifier never reads a serial as a time, it only compares two
   [ -s "$IG/prekeys/$s.txt.sig" ] || rm -f "$IG/prekeys/$s.txt" "$IG/prekeys/$s.made"; ig_prekey "$s" "${1-}" || return 1
   if [ -n "$gone" ]; then u="/v1/$A"; w='{identity:$i}'; else u="/v1/$A/prekey"; w='{}'; fi      # a registration is the identity document, then what a new prekey carries
@@ -832,13 +832,13 @@ ig_renew(){ # [--no-pq] → what ig_rekey does, the lock held. A serial is signe
   for f in "$IG"/work/*-cert.pub; do t=$(basename "$f" -cert.pub); [[ $t =~ ^[0-9]+$ ]] && [ "$t" -lt "$s" ] && rm -f "$IG/work/$t" "$IG/work/$t.pub" "$f"; done      # older working keys: what they signed is signed, and the server takes no pass under them
   ig_prune && ig_out prekey --argjson serial "$s" --arg not_after "$(sed -n 5p "$IG/prekeys/$s.txt")"
 }
-ig_prune(){ # deletes every retired prekey past its deletion time: its not_after + the 33 days mail is kept. After that, mail encrypted to it is unrecoverable. (The Go client also deletes them sooner.)
+ig_prune(){ # [Unix time] → deletes every retired prekey past its deletion time by that reading of this machine's clock (now, without one): its not_after + the 33 days mail is kept. ig_recv gives the reading the server answered the drain's list at, a clock a server took, never a later one. After that, mail encrypted to it is unrecoverable. (The Go client also deletes them sooner.)
   local f n top na; top=$(ls "$IG/prekeys" | sed -n 's/\.agekey$//p' | sort -n | tail -n 1); [ -n "$top" ] || return 0
   for f in "$IG"/prekeys/*.txt; do
     [ -e "$f" ] || continue
     n=$(basename "$f" .txt); [ "$n" -lt "$top" ] || continue      # never the newest
     na=$(ig_time "$(sed -n 5p "$f")") || continue
-    [ "$(ig_now)" -lt $((na + 33*86400)) ] || rm -f "$IG/prekeys/$n.agekey" "$IG/work/$n" "$IG/work/$n.pub" "$IG/work/$n-cert.pub"      # and the working key made with it, if a renewal the server never took left one
+    [ "${1:-$(ig_now)}" -lt $((na + 33*86400)) ] || rm -f "$IG/prekeys/$n.agekey" "$IG/work/$n" "$IG/work/$n.pub" "$IG/work/$n-cert.pub"      # and the working key made with it, if a renewal the server never took left one
   done
 }
 

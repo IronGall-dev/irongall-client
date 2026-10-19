@@ -115,47 +115,125 @@ type Signed struct {
 // checked. That is sound: the document proves itself, since its hash is the
 // address, and the signature must then verify under it.
 func OpenSigned(plaintext []byte, me Address, now time.Time) (*Signed, error) {
+	signed, _, err := Examine(plaintext, me, now)
+	return signed, err
+}
+
+// Findings is what Examine established about a message on the way to its
+// verdict, kept with a refused one so that its owner can judge it later. Each
+// is a value whose form was checked, or one computed here: nothing the sender
+// wrote as text.
+type Findings struct {
+	// At is this machine's clock when it judged the message.
+	At time.Time
+	// Identity is the address the identity document the envelope carries
+	// hashes to. Anyone can copy a document into an envelope, so it is who
+	// signed only when Signed is true.
+	Identity *Address
+	// Signed reports that the signature over the line verifies, by a working
+	// key Identity certified, checked at that certificate's own start: so it
+	// holds of a certificate that has not begun, or has ended, by At. It says
+	// who made the message, not that it is good now.
+	Signed bool
+	// What follows is kept only when Signed, since before that it is
+	// anyone's numbers: the certificate's serial and the moments it begins
+	// and ends, and the envelope's sent_at and msg_id when each has its form.
+	Serial      uint64
+	Began, Ends time.Time
+	SentAt      time.Time
+	MsgID       string
+}
+
+// Examine is OpenSigned, and returns what it established about the message
+// whether or not it passes: Findings, never nil.
+func Examine(plaintext []byte, me Address, now time.Time) (*Signed, *Findings, error) {
+	f := &Findings{At: now}
 	line, signature, ok := splitPlaintext(plaintext)
 	if !ok {
-		return nil, &EnvelopeError{RefusedMessage, "what was decrypted is not an envelope line and then a signature block"}
+		return nil, f, &EnvelopeError{RefusedMessage, "what was decrypted is not an envelope line and then a signature block"}
 	}
 	doc, from, err := envelopeSender(line)
 	if err != nil {
-		return nil, err
+		return nil, f, err
 	}
 	if len(doc) == 0 {
-		return nil, &EnvelopeError{RefusedIdentity, "the envelope carries no identity document"}
+		return nil, f, &EnvelopeError{RefusedIdentity, "the envelope carries no identity document"}
 	}
+	a := Address(sha256.Sum256(doc))
+	f.Identity = &a
 	id, err := ParseIdentity(doc)
 	notTheSenders := &EnvelopeError{RefusedAttribution, "the envelope's from is not the address of the identity it carries"}
 	switch {
 	case errors.Is(err, ErrIdentityType):
-		if from != Address(sha256.Sum256(doc)).String() {
-			return nil, notTheSenders
+		if from != a.String() {
+			return nil, f, notTheSenders
 		}
-		return nil, &EnvelopeError{RefusedKeyType, "the sender's identity is of a key type this client does not verify"}
+		return nil, f, &EnvelopeError{RefusedKeyType, "the sender's identity is of a key type this client does not verify"}
 	case err != nil:
-		return nil, &EnvelopeError{RefusedIdentity, "the envelope's identity document breaks its format or its key checks"}
+		return nil, f, &EnvelopeError{RefusedIdentity, "the envelope's identity document breaks its format or its key checks"}
 	case from != id.Address().String():
-		return nil, notTheSenders
+		return nil, f, notTheSenders
 	}
 	cert, err := VerifyCertified(id, line, signature, MessageNamespace(me), now)
 	switch {
+	case err == nil:
+		f.signed(cert, signature, line)
+	case errors.Is(err, ErrCertificateTime):
+		f.whoMade(id, line, signature, MessageNamespace(me))
+	}
+	switch {
 	case errors.Is(err, ErrCertificateTime):
 		if errors.Is(err, ErrCertificateNotBegun) {
-			return nil, &EnvelopeError{RefusedSignature, "the certificate of the key that signed it has not begun, by this machine's clock"}
+			return nil, f, &EnvelopeError{RefusedSignature, "the certificate of the key that signed it has not begun, by this machine's clock"}
 		}
-		return nil, &EnvelopeError{RefusedSignature, "the certificate of the key that signed it has ended"}
+		return nil, f, &EnvelopeError{RefusedSignature, "the certificate of the key that signed it has ended"}
 	case errors.Is(err, ErrCertificate):
-		return nil, &EnvelopeError{RefusedSignature, "it is not signed under a certificate of the sender's identity"}
+		return nil, f, &EnvelopeError{RefusedSignature, "it is not signed under a certificate of the sender's identity"}
 	case err != nil:
-		return nil, &EnvelopeError{RefusedSignature, "the signature does not verify for its sender and this box"}
+		return nil, f, &EnvelopeError{RefusedSignature, "the signature does not verify for its sender and this box"}
 	}
 	env, err := OpenEnvelope(line, id.Address(), me, now)
 	if err != nil {
-		return nil, err
+		return nil, f, err
 	}
-	return &Signed{Envelope: env, Line: line, Signature: signature, Sender: id, Certificate: cert}, nil
+	return &Signed{Envelope: env, Line: line, Signature: signature, Sender: id, Certificate: cert}, f, nil
+}
+
+// whoMade is for a signature refused for its certificate's time: it is
+// verified again at that certificate's own start, so a certificate that is
+// not valid now still says whether id made the message.
+func (f *Findings) whoMade(id *Identity, line, signature []byte, namespace string) {
+	began, err := CertificateBegan(signature)
+	if err != nil {
+		return
+	}
+	if cert, err := VerifyCertified(id, line, signature, namespace, began); err == nil {
+		f.signed(cert, signature, line)
+	}
+}
+
+// signed fills in Signed and what goes with it, for a signature that
+// verified under cert.
+func (f *Findings) signed(cert *Certificate, signature, line []byte) {
+	began, err := CertificateBegan(signature)
+	if err != nil {
+		return
+	}
+	f.Signed, f.Serial, f.Began, f.Ends = true, cert.Serial(), began, cert.NotAfter()
+	fields, err := objectFields(line)
+	if err != nil {
+		return
+	}
+	var s string
+	if unmarshalString(fields["sent_at"], &s) == nil {
+		if t, err := ParseTime(s); err == nil {
+			f.SentAt = t
+		}
+	}
+	s = ""
+	if unmarshalString(fields["msg_id"], &s) == nil && msgIDGrammar.MatchString(s) {
+		f.MsgID = s
+	}
 }
 
 // envelopeSender reads the two members of an envelope's line that say who

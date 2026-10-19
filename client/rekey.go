@@ -54,7 +54,7 @@ func (b *Box) rekey(ctx context.Context, kt protocol.KeyType, l *lookups) (*prot
 	if err != nil {
 		return nil, err
 	}
-	return p, b.prune()
+	return p, b.prune(b.now())
 }
 
 func (b *Box) renew(ctx context.Context, kt protocol.KeyType, l *lookups) (*protocol.Prekey, error) {
@@ -332,9 +332,11 @@ func (b *Box) publishedType(n uint64) protocol.KeyType {
 // signed a statement that can still be sent, that statement is returned: the
 // box's own, for this serial and the key it holds, of type kt, not expired,
 // made for no longer than the box's lifetime now allows, under a certificate
-// that is valid now and whose working key the box holds. If it signed one
-// that cannot be, the serial is spent. If it signed nothing,
-// neither: a key it made and never signed is free to use.
+// that is valid now, began at least protocol.MaxSkew before now (so was not
+// made while the clock read ahead of where it reads now: dropUnbegun), and
+// whose working key the box holds. If it signed one that cannot be, the
+// serial is spent. If it signed nothing, neither: a key it made and never
+// signed is free to use.
 func (b *Box) signedPrekey(serial uint64, kt protocol.KeyType) (p *protocol.Prekey, spent bool, err error) {
 	stem := b.path("prekeys", strconv.FormatUint(serial, 10))
 	if !exists(stem + ".txt.sig") {
@@ -354,6 +356,9 @@ func (b *Box) signedPrekey(serial uint64, kt protocol.KeyType) (p *protocol.Prek
 	p, _, err = protocol.VerifyPrekey(b.id, st, sig, b.now())
 	if err != nil || p.Serial != serial || p.Type() != kt || p.Expired(b.now()) {
 		return nil, true, nil //nolint:nilerr // a statement that does not verify is one this box will not send
+	}
+	if began, err := protocol.CertificateBegan(sig); err != nil || began.After(b.now().Add(-protocol.MaxSkew)) {
+		return nil, true, nil //nolint:nilerr // under a certificate made while the clock read ahead
 	}
 	if _, _, err := b.worker(serial); err != nil {
 		return nil, true, nil //nolint:nilerr // a statement whose working key this box cannot sign a pass with
@@ -623,12 +628,15 @@ func (b *Box) removePrekey(n uint64) error {
 // mail encrypted to it arrived by its not_after and has expired by then;
 // after this, that mail is unrecoverable from the box's keys. [Box.Receive]
 // runs it only once its server has answered the drain's list, so has taken a
-// pass dated by that clock: a clock far ahead deletes nothing there.
+// pass dated by that clock, and by the clock as it read then: a clock far
+// ahead deletes nothing there, and neither does one that moves on during the
+// drain.
 func (b *Box) Prune() error {
-	return b.lockedDo(context.Background(), b.prune)
+	return b.lockedDo(context.Background(), func() error { return b.prune(b.now()) })
 }
 
-func (b *Box) prune() error {
+// prune deletes by the clock reading at: one a server took.
+func (b *Box) prune(at time.Time) error {
 	keys, err := filepath.Glob(b.path("prekeys", "*.agekey"))
 	if err != nil {
 		return err
@@ -652,7 +660,7 @@ func (b *Box) prune() error {
 		if err != nil {
 			continue
 		}
-		if !b.now().Before(p.NotAfter.Add(protocol.TTL)) {
+		if !at.Before(p.NotAfter.Add(protocol.TTL)) {
 			if err := b.removePrekey(n); err != nil {
 				return err
 			}

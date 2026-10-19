@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
+	"unicode/utf8"
 
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
@@ -53,10 +55,50 @@ type keptRefusal struct {
 	ExpiresAt     string         `json:"expires_at,omitempty"`
 	ExpiresAtB64  string         `json:"expires_at_b64,omitempty"`
 	Ciphertext    protocol.Bytes `json:"ciphertext"`
+	Judged        *keptFindings  `json:"judged,omitempty"`
 }
 
-func keepRefused(m *protocol.MessageInfo, ct []byte) ([]byte, error) {
-	k := keptRefusal{Ciphertext: ct}
+// keptFindings is what this client's checks established about a refused
+// message (protocol.Findings), so that its owner can judge it once its key is
+// gone: when it was judged, by this machine's clock; who signed it, or only
+// the identity it carries when the signature does not verify; and, when it
+// does, the certificate's serial and dates and the envelope's sent_at and
+// msg_id. Each is a value this client checked the form of.
+type keptFindings struct {
+	At                string `json:"at"`
+	SignedBy          string `json:"signed_by,omitempty"`
+	ClaimsIdentity    string `json:"claims_identity,omitempty"`
+	CertificateSerial uint64 `json:"certificate_serial,omitempty"`
+	CertificateBegan  string `json:"certificate_began,omitempty"`
+	CertificateEnds   string `json:"certificate_ends,omitempty"`
+	SentAt            string `json:"sent_at,omitempty"`
+	MsgID             string `json:"msg_id,omitempty"`
+}
+
+func stamp(t time.Time) string { return t.UTC().Format(protocol.TimeLayout) }
+
+func newKeptFindings(f *protocol.Findings) *keptFindings {
+	if f == nil {
+		return nil
+	}
+	k := &keptFindings{At: stamp(f.At)}
+	switch {
+	case f.Identity != nil && f.Signed:
+		k.SignedBy = f.Identity.String()
+		k.CertificateSerial = f.Serial
+		k.CertificateBegan, k.CertificateEnds = stamp(f.Began), stamp(f.Ends)
+		if !f.SentAt.IsZero() {
+			k.SentAt = stamp(f.SentAt)
+		}
+		k.MsgID = f.MsgID
+	case f.Identity != nil:
+		k.ClaimsIdentity = f.Identity.String()
+	}
+	return k
+}
+
+func keepRefused(m *protocol.MessageInfo, ct []byte, f *protocol.Findings) ([]byte, error) {
+	k := keptRefusal{Ciphertext: ct, Judged: newKeptFindings(f)}
 	for _, f := range []struct {
 		served       string
 		plain, coded *string
@@ -81,14 +123,24 @@ func keepRefused(m *protocol.MessageInfo, ct []byte) ([]byte, error) {
 func isTime(s string) bool { _, err := protocol.ParseTime(s); return err == nil }
 
 // Quarantined is a refused message in quarantine/, in this client's words:
-// its id, the code it was refused for, and the sender and the time the
-// server gave, each only when it has its form. Nothing else of what the
-// server or the sender wrote is in it.
+// its id, the code it was refused for and why, the sender and the time the
+// server gave, and what this client's checks established about it when it
+// judged it (keptFindings), each only when it has its form. Nothing else of
+// what the server or the sender wrote is in it.
 type Quarantined struct {
-	ID         string `json:"id"`
-	Code       string `json:"code"`
-	From       string `json:"from,omitempty"`
-	ReceivedAt string `json:"received_at,omitempty"`
+	ID                string `json:"id"`
+	Code              string `json:"code"`
+	Reason            string `json:"reason,omitempty"`
+	From              string `json:"from,omitempty"`
+	ReceivedAt        string `json:"received_at,omitempty"`
+	JudgedAt          string `json:"judged_at,omitempty"`
+	SignedBy          string `json:"signed_by,omitempty"`
+	ClaimsIdentity    string `json:"claims_identity,omitempty"`
+	CertificateSerial uint64 `json:"certificate_serial,omitempty"`
+	CertificateBegan  string `json:"certificate_began,omitempty"`
+	CertificateEnds   string `json:"certificate_ends,omitempty"`
+	SentAt            string `json:"sent_at,omitempty"`
+	MsgID             string `json:"msg_id,omitempty"`
 }
 
 // Quarantined lists quarantine/, by id. A file is read whichever form it was
@@ -104,17 +156,45 @@ func (b *Box) Quarantined() ([]Quarantined, error) {
 		if !IsID(id) {
 			continue
 		}
-		q := Quarantined{ID: id, Code: b.quarantineCode(id)}
+		q := Quarantined{ID: id}
+		q.Code, q.Reason = b.quarantineReason(id)
 		var kept struct {
 			From       any `json:"from"`
 			ReceivedAt any `json:"received_at"`
+			Judged     struct {
+				At                any `json:"at"`
+				SignedBy          any `json:"signed_by"`
+				ClaimsIdentity    any `json:"claims_identity"`
+				CertificateSerial any `json:"certificate_serial"`
+				CertificateBegan  any `json:"certificate_began"`
+				CertificateEnds   any `json:"certificate_ends"`
+				SentAt            any `json:"sent_at"`
+				MsgID             any `json:"msg_id"`
+			} `json:"judged"`
 		}
 		if data, err := os.ReadFile(name); err == nil && json.Unmarshal(data, &kept) == nil { //nolint:gosec // a path inside the box's own directory
-			if s, ok := kept.From.(string); ok && IsID(s) {
-				q.From = s
+			j := kept.Judged
+			for _, v := range []struct {
+				kept any
+				dst  *string
+				ok   func(string) bool
+			}{
+				{kept.From, &q.From, IsID},
+				{kept.ReceivedAt, &q.ReceivedAt, isTime},
+				{j.At, &q.JudgedAt, isTime},
+				{j.SignedBy, &q.SignedBy, IsID},
+				{j.ClaimsIdentity, &q.ClaimsIdentity, IsID},
+				{j.CertificateBegan, &q.CertificateBegan, isTime},
+				{j.CertificateEnds, &q.CertificateEnds, isTime},
+				{j.SentAt, &q.SentAt, isTime},
+				{j.MsgID, &q.MsgID, protocol.IsMsgID},
+			} {
+				if s, ok := v.kept.(string); ok && v.ok(s) {
+					*v.dst = s
+				}
 			}
-			if s, ok := kept.ReceivedAt.(string); ok && isTime(s) {
-				q.ReceivedAt = s
+			if n, ok := j.CertificateSerial.(float64); ok && n >= 1 && n <= protocol.MaxSerial && n == float64(uint64(n)) {
+				q.CertificateSerial = uint64(n)
 			}
 		}
 		qs = append(qs, q)
@@ -122,17 +202,22 @@ func (b *Box) Quarantined() ([]Quarantined, error) {
 	return qs, nil
 }
 
-// quarantineCode is the code a refused message's .reason file starts with,
-// which this client wrote; "unknown" when it does not start with one.
-func (b *Box) quarantineCode(id string) string {
+// quarantineReason is the code a refused message's .reason file starts
+// with, "unknown" when it does not start with one, and the words after it,
+// which a client wrote: given only as one line of printable text.
+func (b *Box) quarantineReason(id string) (code, reason string) {
 	data, err := os.ReadFile(b.path("quarantine", id+".reason")) //nolint:gosec // a path inside the box's own directory
 	if err != nil {
-		return "unknown"
+		return "unknown", ""
 	}
-	if c, _, ok := strings.Cut(string(data), ":"); ok && codeGrammar.MatchString(c) {
-		return c
+	c, words, ok := strings.Cut(strings.TrimSuffix(string(data), "\n"), ": ")
+	if !ok || !codeGrammar.MatchString(c) {
+		return "unknown", ""
 	}
-	return "unknown"
+	if len(words) > 500 || !utf8.ValidString(words) || strings.ContainsFunc(words, func(r rune) bool { return r < 0x20 || r == 0x7f || escaped(r) }) {
+		words = ""
+	}
+	return c, words
 }
 
 // RemoveQuarantined deletes refused messages from quarantine/, each with its

@@ -179,11 +179,15 @@ func (b *Box) serverName() (string, error) {
 var defaultPort = map[string]uint64{"https": 443, "http": 80}
 
 // dropUnbegun deletes prekey n's statement and its working key, if the
-// working key's certificate has not begun at this machine's clock, so that
-// both are made again. The prekey's own key stays, and the new statement is
-// for it: a box cannot know that a statement was never published (a server
-// may have taken a registration whose answer was lost), so mail may be
-// waiting that only this key opens.
+// working key's certificate began less than protocol.MaxSkew before this
+// machine's clock, so that both are made again. A client dates a certificate
+// from MaxSkew before it makes it, so such a one was made while the clock
+// read ahead of where it reads now, as a pass or an outbox entry made then is
+// not used either (PROTOCOL.md §0): a reader whose clock a server takes may
+// not have reached its start. The prekey's own key stays, and the new
+// statement is for it: a box cannot know that a statement was never
+// published (a server may have taken a registration whose answer was lost),
+// so mail may be waiting that only this key opens.
 func (b *Box) dropUnbegun(n uint64) error {
 	line, err := os.ReadFile(b.workStem(n) + "-cert.pub")
 	if err != nil {
@@ -196,7 +200,7 @@ func (b *Box) dropUnbegun(n uint64) error {
 	if err != nil {
 		return nil // not a certificate: whoever reads it next says so
 	}
-	if _, err := protocol.CheckCertificate(b.id, key, b.now()); !errors.Is(err, protocol.ErrCertificateNotBegun) {
+	if _, err := protocol.CheckCertificate(b.id, key, b.now().Add(-protocol.MaxSkew)); !errors.Is(err, protocol.ErrCertificateNotBegun) {
 		return nil
 	}
 	stem := b.path("prekeys", strconv.FormatUint(n, 10))

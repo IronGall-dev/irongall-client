@@ -25,7 +25,7 @@
 //	seen                       the replay set: ciphertext hash, sent_at, from, msg_id, for 33 days and an hour from sent_at
 //	seen-floor                 the highest cutoff a prune of seen dropped a line at, in seconds: mail sent before it is stale
 //	outbox/, outbox/failed/    envelopes awaiting a receipt, sealed afresh at every post and never kept sealed; ones that can never be delivered
-//	inbox/, quarantine/        accepted mail; refused mail, never delivered, each with its reason beside it (.reason) and each of the server's strings in base64 that is not of its form (keepRefused)
+//	inbox/, quarantine/        accepted mail; refused mail, never delivered, each with its reason beside it (.reason), each of the server's strings in base64 that is not of its form, and what the checks established when they judged it (keepRefused)
 //	held/                      accepted mail from senders this box has not allowed, as inbox/ keeps it: allow moves a sender's to inbox/, block deletes it
 //	allowed, blocked           the senders whose mail lands in inbox/, and those whose mail is dropped: one address to a line. send, alias and allow add to allowed, block to blocked; both are yours to edit
 //	policy                     where mail from a sender not allowed lands ("unknown held", the default, or "unknown inbox"), and whom the server takes mail from ("server all", the default, or "server allowed"). Yours to write

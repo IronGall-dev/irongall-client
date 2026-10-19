@@ -40,6 +40,9 @@ type Delivery struct {
 	// neither on disk.
 	Plaintext []byte
 	Signature []byte
+	// findings is what judge established, kept should the message yet be
+	// refused (bad_id).
+	findings *protocol.Findings
 }
 
 // Refusal is a message that failed a check. It was quarantined, never
@@ -52,6 +55,9 @@ type Refusal struct {
 	// quote the message.
 	Code   string
 	Reason string
+	// Findings is what the checks established about it before it was
+	// refused (protocol.Findings): kept with it in quarantine/.
+	Findings *protocol.Findings
 }
 
 // Result is what one Receive did.
@@ -90,10 +96,11 @@ type Result struct {
 	// was not sent ([Box.SyncACL]). The drain went ahead, and the next
 	// Receive sends it.
 	ACLErr error
-	// listed is set once the server answered the drain's first list: it
-	// took a pass dated by this machine's clock, so what that clock deletes
-	// is deleted by a clock a server takes.
-	listed bool
+	// listedAt is this machine's clock when the server answered the drain's
+	// first list, and zero until it has: the server took a pass dated by
+	// that reading, so what is deleted by it is deleted by a clock a server
+	// takes, and never by a later reading no server has seen.
+	listedAt time.Time
 }
 
 // Receive drains the box: every page, every message. Each message is judged
@@ -139,8 +146,8 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 	// Deleted by this clock only once the server has taken a pass dated by
 	// it: a clock far ahead is stopped at its pass, and the keys that mail
 	// waits for stay (PROTOCOL.md §0).
-	if res.listed {
-		if e := b.prune(); err == nil {
+	if !res.listedAt.IsZero() {
+		if e := b.prune(res.listedAt); err == nil {
 			err = e
 		}
 	}
@@ -195,7 +202,7 @@ func (b *Box) drain(ctx context.Context, asked *lookups) (*Result, error) {
 			return res, b.proved(ctx, b.id.Address(), err, asked)
 		}
 		if page == 0 {
-			res.listed = true
+			res.listedAt = b.now()
 			// Pruned by this clock only once the server has taken a pass
 			// dated by it: a drain that a clock far off would prune is
 			// stopped at its pass first (PROTOCOL.md §0, §5 check 9).
@@ -294,17 +301,18 @@ func (b *Box) receiveOne(ctx context.Context, m protocol.MessageInfo, res *Resul
 			return fetched, err
 		}
 		if why == nil && local != id {
-			d, dup, why = nil, false, &Refusal{Code: RefusedID, Reason: "the server's id for it is not the SHA-256 of its ciphertext"}
+			d, dup, why = nil, false, &Refusal{Code: RefusedID, Reason: "the server's id for it is not the SHA-256 of its ciphertext", Findings: d.findings}
 		}
 		switch {
 		case why != nil:
-			raw, err := keepRefused(&m, ct.bytes)
+			raw, err := keepRefused(&m, ct.bytes, why.Findings)
 			if err != nil {
 				return fetched, err
 			}
 			// The message as served, with none of the server's strings in
-			// the clear but those of their form (keptRefusal), and beside it
-			// why it was refused, in this client's words.
+			// the clear but those of their form, what the checks established
+			// about it (keptRefusal), and beside it why it was refused, in
+			// this client's words.
 			if err := writeFile(b.path("quarantine", local+".json"), raw); err != nil {
 				return fetched, err
 			}
@@ -384,8 +392,10 @@ func (b *Box) receiveOne(ctx context.Context, m protocol.MessageInfo, res *Resul
 // whether a revocation of that sender exists, and the answer proves itself.
 // The sender's identity is pinned only once all of that has passed.
 func (b *Box) judge(ctx context.Context, ct []byte, listedFrom string, asked *lookups) (d *Delivery, dup bool, why *Refusal, err error) {
+	now := b.now()
+	found := &protocol.Findings{At: now}
 	refused := func(code, reason string) (*Delivery, bool, *Refusal, error) {
-		return nil, false, &Refusal{Code: code, Reason: reason}, nil
+		return nil, false, &Refusal{Code: code, Reason: reason, Findings: found}, nil
 	}
 	ids, err := b.prekeyIdentities()
 	if err != nil {
@@ -399,7 +409,7 @@ func (b *Box) judge(ctx context.Context, ct []byte, listedFrom string, asked *lo
 	if err != nil {
 		return refused(RefusedDecrypt, "it does not decrypt with this box's prekeys")
 	}
-	signed, err := protocol.OpenSigned(p, b.id.Address(), b.now())
+	signed, found, err := protocol.Examine(p, b.id.Address(), now)
 	if err != nil {
 		var e *protocol.EnvelopeError
 		if errors.As(err, &e) {
@@ -466,7 +476,7 @@ func (b *Box) judge(ctx context.Context, ct []byte, listedFrom string, asked *lo
 	if err != nil {
 		return nil, false, nil, err
 	}
-	return &Delivery{Envelope: env, Line: escapeUnseen(line), Plaintext: signed.Line, Signature: signed.Signature}, false, nil, nil
+	return &Delivery{Envelope: env, Line: escapeUnseen(line), Plaintext: signed.Line, Signature: signed.Signature, findings: found}, false, nil, nil
 }
 
 // escapeUnseen escapes, in a line a reader is shown or a box keeps, the

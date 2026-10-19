@@ -160,7 +160,7 @@ func (b *Box) quarantineCodes() string {
 	names, _ := filepath.Glob(b.path("quarantine", "*.json"))
 	var codes []string
 	for _, name := range names {
-		code := b.quarantineCode(strings.TrimSuffix(filepath.Base(name), ".json"))
+		code, _ := b.quarantineReason(strings.TrimSuffix(filepath.Base(name), ".json"))
 		if !slices.Contains(codes, code) {
 			codes = append(codes, code)
 		}

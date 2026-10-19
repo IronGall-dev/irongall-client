@@ -319,3 +319,142 @@ func mustRead(t *testing.T, name string) []byte {
 	}
 	return b
 }
+
+// A box whose clock read 55 minutes ahead made a certificate at init, and the
+// server refused it. Once its clock is right, the next init does not use that
+// certificate, which began five minutes before the clock: a reader 9 minutes
+// slow, a clock the server takes, would refuse mail under it as not begun.
+// It makes another, by the clock as it is (PROTOCOL.md §0).
+func TestACertificateKeptFromARefusedAttemptLeavesTheHour(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	off, dir := 55*time.Minute, t.TempDir()
+	if _, err := client.Init(ctx, dir, e.skewed(&off), protocol.Classic); client.Code(err) != protocol.CodePassExpired {
+		t.Fatalf("init, 55 minutes ahead: %v", err)
+	}
+	off = 0 // the clock is set right
+	b, err := client.Init(ctx, dir, e.skewed(&off), protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slow := -9 * time.Minute // a clock the server takes
+	r, err := client.Init(ctx, t.TempDir(), e.skewed(&slow), protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	landAll(t, r)
+	send(t, b, r, "under the certificate the refused attempt left")
+	if res, err := r.Receive(ctx); err != nil || len(res.Delivered) != 1 || len(res.Refused) != 0 {
+		t.Errorf("%+v, %v", res, err)
+	}
+}
+
+// The same of a renewal: one made while the clock read 55 minutes ahead, and
+// refused, is not sent again once the clock is right. Its number is spent,
+// and the renewal is made again at a later one.
+func TestARenewalKeptFromARefusedAttemptLeavesTheHour(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	var off time.Duration
+	b, err := client.Init(ctx, t.TempDir(), e.skewed(&off), protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.clock.Add(2 * time.Second)
+	off = 55 * time.Minute
+	if _, err := b.Rekey(ctx, ""); client.Code(err) != protocol.CodePassExpired {
+		t.Fatalf("a renewal 55 minutes ahead: %v", err)
+	}
+	off = 0
+	if _, err := b.Rekey(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	slow := -9 * time.Minute
+	r, err := client.Init(ctx, t.TempDir(), e.skewed(&slow), protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	landAll(t, r)
+	send(t, b, r, "under the renewal made once the clock was right")
+	if res, err := r.Receive(ctx); err != nil || len(res.Delivered) != 1 || len(res.Refused) != 0 {
+		t.Errorf("%+v, %v", res, err)
+	}
+}
+
+// jumpAtFetch sets a box's clock off by `by` once the first message it
+// fetches has arrived: a clock that moves during a drain.
+type jumpAtFetch struct {
+	off *time.Duration
+	by  time.Duration
+}
+
+func (j jumpAtFetch) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := http.DefaultTransport.RoundTrip(r)
+	if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/messages/") {
+		*j.off = j.by
+	}
+	return resp, err
+}
+
+// A clock that jumps 70 days ahead during a drain, after the server answered
+// its list, deletes no prekey: keys are deleted by the clock as it read when
+// the server took the drain's pass, and never by a later reading no server
+// has seen (PROTOCOL.md §0). The mail waiting for the retired key is
+// delivered once the clock is right.
+func TestAClockThatJumpsDuringADrainDeletesNoKey(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	send(t, a, b, "first, sealed to the prekey about to retire")
+	send(t, a, b, "second, sealed to it too")
+	e.clock.Add(2 * time.Second)
+	if _, err := b.Rekey(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	keys, _ := filepath.Glob(filepath.Join(b.Dir(), "prekeys", "*.agekey"))
+	var off time.Duration
+	o := e.skewed(&off)
+	o.HTTPClient = &http.Client{Transport: jumpAtFetch{&off, 70 * 24 * time.Hour}}
+	jumpy, err := client.Open(b.Dir(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := jumpy.Receive(ctx); err == nil {
+		t.Fatal("a drain whose clock jumped 70 days went through")
+	}
+	if after, _ := filepath.Glob(filepath.Join(b.Dir(), "prekeys", "*.agekey")); len(after) < len(keys) {
+		t.Fatalf("%d prekeys before a drain whose clock jumped, %d after", len(keys), len(after))
+	}
+	right, err := client.Open(b.Dir(), e.opts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res, err := right.Receive(ctx); err != nil || len(res.Delivered) != 2 {
+		t.Errorf("once the clock is right: %+v, %v", res, err)
+	}
+}
+
+// And a drain deletes, by the reading at which the server answered its list,
+// a retired key whose deletion time has come: the backstop to dropRetired,
+// which keeps the newest retired key (PROTOCOL.md, the Terms' deletion time).
+func TestADrainDeletesARetiredKeyPastItsDeletionTime(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	b := e.box(protocol.Classic)
+	retired := numberOf(t, b)
+	e.clock.Add(2 * time.Second)
+	if _, err := b.Rekey(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	// Its not_after 34 days back, so its deletion time, a day back, has come.
+	name := prekeyFile(b, retired, ".txt")
+	lines := strings.Split(string(mustRead(t, name)), "\n")
+	lines[4] = e.clock.Now().Add(-34 * 24 * time.Hour).UTC().Format(protocol.TimeLayout)
+	if err := os.WriteFile(name, []byte(strings.Join(lines, "\n")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	receive(t, b)
+	if exists(prekeyFile(b, retired, ".agekey")) || !exists(prekeyFile(b, numberOf(t, b), ".agekey")) {
+		t.Errorf("after a drain: the retired key is kept %v, the current one %v", exists(prekeyFile(b, retired, ".agekey")), exists(prekeyFile(b, numberOf(t, b), ".agekey")))
+	}
+}

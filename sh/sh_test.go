@@ -2163,7 +2163,14 @@ func TestWhatABoxKeepsIsOneInBothClients(t *testing.T) {
 		}
 		return regexp.MustCompile(`"ciphertext":"[A-Za-z0-9+/=]+"`).ReplaceAllString(regexp.MustCompile(`"id":"[0-9a-f]{64}"`).ReplaceAllString(k, `"id":ID`), `"ciphertext":C`)
 	}
-	if gk, sk := kept(g.Dir()), kept(dir); gk != sk {
+	// What the Go client's checks found is its own (README § Stock tools):
+	// the rest is kept alike.
+	gk, sk := kept(g.Dir()), kept(dir)
+	judged := regexp.MustCompile(`,"judged":\{[^{}]*\}`)
+	if !judged.MatchString(gk) || judged.MatchString(sk) {
+		t.Errorf("what the checks found: the Go client keeps %s, the script %s", gk, sk)
+	}
+	if gk = judged.ReplaceAllString(gk, ""); gk != sk {
 		t.Errorf("the two clients keep a refused message as\n%s\n%s", gk, sk)
 	}
 }

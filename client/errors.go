@@ -249,8 +249,8 @@ func (e *APIError) clock() string {
 	case d > 0:
 		how = fmt.Sprintf("%s ahead of that", d)
 	}
-	return fmt.Sprintf("; the server dates its answer %s, and this machine's clock reads %s, %s. A server refuses a pass from a clock %d minutes or more behind its own, or more than %d ahead, and a certificate or prekey statement this machine dated more than an hour ahead of it. Check this machine's clock against a time source you trust, not against the server",
-		e.Dated.Format(protocol.TimeLayout), e.Read.Format(protocol.TimeLayout), how, slow/time.Minute, fast/time.Minute)
+	return fmt.Sprintf("; the server dates its answer %s, and this machine's clock reads %s, %s. A server refuses a pass from a clock %d minutes or more behind its own, or more than %d ahead, a certificate made by a clock more than %d ahead, and a prekey statement dated more than an hour ahead of it. Check this machine's clock against a time source you trust, not against the server",
+		e.Dated.Format(protocol.TimeLayout), e.Read.Format(protocol.TimeLayout), how, slow/time.Minute, fast/time.Minute, fast/time.Minute)
 }
 
 // codeGrammar is the grammar of a code, as a quarantined message's .reason

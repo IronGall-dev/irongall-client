@@ -270,11 +270,11 @@ func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*B
 		first = protocol.SerialAt(b.now(), 0)
 	}
 	// A first statement an earlier attempt left, under a certificate that
-	// has not begun by this machine's clock, was made while the clock read
-	// more than an hour ahead of what it reads now. A server whose clock is
-	// right refused it for that, and would again until that time comes: the
-	// working key, its certificate and the statement are made again, by the
-	// clock as it is, for the same prekey.
+	// began less than an hour before this machine's clock, was made while
+	// the clock read ahead of what it reads now: a server may have refused it
+	// for that, and a reader whose clock the server takes may not have
+	// reached its start. The working key, its certificate and the statement
+	// are made again, by the clock as it is, for the same prekey.
 	if err := b.dropUnbegun(first); err != nil {
 		return nil, err
 	}
