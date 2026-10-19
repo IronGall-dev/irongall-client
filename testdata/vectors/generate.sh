@@ -293,6 +293,7 @@ printf 'irongall-v1\n%s' "$GOOD" > identity/no-final-newline.doc
 printf 'irongall-v1\n%s\n \n' "$GOOD" > identity/padded.doc
 printf 'irongall-v2\n%s\n' "$GOOD" > identity/wrong-tag.doc
 printf 'irongall-v1\nssh-rsa %s\n' "$(cut -d' ' -f2 "$KEYS/a.pub")" > identity/key-type-mismatch.doc
+printf 'irongall-v1\nssh-ed25519 %s\n' "$(bin "$(str "$(asc ssh-ed25519)")00000021$(printf %s "${GOOD#* }" | base64 -d | tail -c 32 | od -An -v -tx1 | tr -d ' \n')" | b64)" > identity/length-field.doc # A's key, its length written 33: no key OpenSSH reads, and its 26th character is not A to P
 identity_doc f0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f > identity/non-canonical.doc # y = p + 3: a large-order point, encoded non-canonically
 identity_doc 0100000000000000000000000000000000000000000000000000000000000080 > identity/negative-zero.doc
 identity_doc 0100000000000000000000000000000000000000000000000000000000000000 > identity/small-order-1.doc
@@ -420,6 +421,8 @@ case_env refuse-body-nested-to-33 "$E$(printf '%.0s[' $(seq 32))$(printf '%.0s]'
 case_env refuse-key-twice-in-the-body "$E{\"x\":1,\"x\":2}}" "$A" "$B"
 case_env refuse-nan-in-the-body "${E}NaN}" "$A" "$B"
 case_env refuse-leading-zero-in-the-body "$E[01]}" "$A" "$B"
+case_env refuse-number-past-binary64-in-the-body "$E{\"n\":1e400}}" "$A" "$B"
+case_env accept-body-jq-spells-otherwise "$E{\"n\":1e5,\"s\":\"a\\\\/b \\\\u00e9\"}}" "$A" "$B" # the same value in another spelling from the script: a known variance (PROTOCOL.md §0b)
 case_env refuse-noncharacter-in-the-body "$E\"\\\\uffff\"}" "$A" "$B"
 case_env refuse-above-u10ffff-in-the-body "$E\"\xf4\x90\x80\x80\"}" "$A" "$B"
 case_env refuse-byte-order-mark "\xef\xbb\xbf{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
@@ -477,6 +480,7 @@ line "$A" "$B" "$ID_A\\n" > "$L"; refuse refuse-identity-ending-in-a-line-feed "
 line "$A" "$B" "$ID_A\\u0000" > "$L"; refuse refuse-identity-ending-in-a-nul "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
 printf '{"v":1,"from":null,"to":"%s","sent_at":"%s","msg_id":"%s","identity":"%s","body":"hello"}\n' "$B" "$NOW" "$MSG_ID" "$ID_A" > "$L"; refuse refuse-from-null "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B" # null is a member left out: it names no sender
 line "$(sha256sum < identity/small-order-1.doc | cut -c1-64)" "$B" "$(b64 < identity/small-order-1.doc)" > "$L"; refuse refuse-identity-of-small-order "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
+line "$(sha256sum < identity/length-field.doc | cut -c1-64)" "$B" "$(b64 < identity/length-field.doc)" > "$L"; refuse refuse-identity-with-its-length-written-33 "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B" # A's key bytes, in a document that breaks its form
 line "$A" "$A" "$ID_A" > "$L"; refuse refuse-to-another-box "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
 # The layout. Each part has one place, and nothing is searched for.
 head -c -1 message/a-to-b.line > plain/refuse-no-line-feed.txt
@@ -499,7 +503,13 @@ deep() { printf '{"a":'; printf '%.0s[' $(seq "$1"); printf '%.0s]' $(seq "$1");
 jt ok-object '{"a":1}\n'
 jt ok-empty '{}'
 jt ok-whitespace '{ "a" :\t[ 1 ,\r\n 2 ] }\n'
-jt ok-numbers '{"a":[0,-0,1.5,-1e10,1E+2,0.5e-3,9007199254740993]}' # outside a member the protocol defines, any JSON number
+jt ok-numbers '{"a":[0,-0,1.5,-1e10,1E+2,0.5e-3,9007199254740993]}' # outside a member the protocol defines, any JSON number a binary64 holds
+jt ok-number-the-largest-binary64 '{"a":[1.7976931348623157e308,-1.7976931348623157e308]}'
+jt ok-number-too-small-for-binary64 '{"a":[1e-400,2e-324]}' # a binary64 reader reads each as zero
+jt bad-number-past-binary64 '{"a":1e400}' # RFC 7493 §2.2's own example
+jt bad-number-just-past-binary64 '{"a":1.797693134862315808e308}' # jq reads it through 17 digits, as the largest binary64: a known variance
+jt bad-number-just-past-binary64-in-18-digits '{"a":1.79769313486231581e308}' # the same
+jt bad-number-just-past-binary64-negative '{"a":-1.797693134862315808e308}' # the same
 jt ok-escapes '{"a":"\\u0000\\\\\\"\\/\\b\\f\\n\\r\\t\\u00e9"}'
 jt ok-surrogate-pair '{"a":"\\ud83d\\ude00"}'
 jt ok-beside-the-noncharacters '{"a":"\xef\xb7\x8f\xef\xb7\xb0\xef\xbf\xbd"}' # U+FDCF, U+FDF0 and U+FFFD

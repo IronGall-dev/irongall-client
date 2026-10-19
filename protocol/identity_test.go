@@ -130,6 +130,34 @@ func TestP256DocumentForm(t *testing.T) {
 	}
 }
 
+// The Ed25519 form's 26th character holds the low two bits of the key's
+// length, 32, and the high four of its first byte: the pattern takes a key
+// whatever that byte is, and refuses the same key with its length written
+// 33, 34 or 35, which no SSH parser reads, as a broken form (#118).
+func TestEd25519DocumentForm(t *testing.T) {
+	seen := map[byte]bool{}
+	for len(seen) < 16 {
+		pub, _, err := ed25519.GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatal(err)
+		}
+		id, err := NewIdentity(pub)
+		if err != nil || len(id.Document()) != 93 {
+			t.Fatalf("an Ed25519 document does not parse: %v", err)
+		}
+		seen[pub[0]>>4] = true
+		for _, n := range []byte{33, 34, 35} {
+			wire := append(append(sshString(IdentityEd25519), 0, 0, 0, n), pub...)
+			if _, err := ParseIdentity(docOf(IdentityEd25519, wire)); !errors.Is(err, ErrIdentityFormat) {
+				t.Fatalf("its key with the length written %d: %v, want ErrIdentityFormat", n, err)
+			}
+			if _, err := ssh.ParsePublicKey(wire); err == nil {
+				t.Fatalf("control: x/crypto/ssh reads the length written %d", n)
+			}
+		}
+	}
+}
+
 // What OpenSSH required of a P-256 point beyond being on the curve up to
 // 10.2p1, and the protocol still does: each coordinate more than 128 bits
 // long, and below the group's order less one.

@@ -692,6 +692,7 @@ var plainVerdicts = map[string]string{
 	"refuse-identity-ending-in-a-line-feed":              RefusedIdentity,
 	"refuse-identity-ending-in-a-nul":                    RefusedIdentity,
 	"refuse-identity-of-small-order":                     RefusedIdentity,
+	"refuse-identity-with-its-length-written-33":         RefusedIdentity,
 	"refuse-no-line-feed":                                RefusedMessage,
 	"refuse-no-signature":                                RefusedMessage,
 	"refuse-blank-line-before-the-signature":             RefusedMessage,

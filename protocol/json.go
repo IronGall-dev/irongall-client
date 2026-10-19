@@ -117,7 +117,8 @@ func unmarshal(data []byte, v any, request bool) error {
 
 // checkJSON holds data to the rules encoding/json/v2's parser does not make
 // by itself: one object, nested at most MaxDepth deep, with no surrogate or
-// noncharacter in a name or a string (RFC 7493 §2.1). Its parser makes the
+// noncharacter in a name or a string (RFC 7493 §2.1) and no number of greater
+// magnitude than a binary64 holds (§2.2). Its parser makes the
 // rest as it reads. It returns why data breaks a rule, in fixed words, or ""
 // for none.
 func checkJSON(data []byte) string { return checkText(data, true, MaxDepth) }
@@ -140,6 +141,8 @@ func checkText(data []byte, object bool, depth int) string {
 			return fmt.Sprintf("it nests more than %d deep", depth)
 		case t.Kind() == '"' && hasNoncharacter(t.String()):
 			return "a string in it holds a Unicode noncharacter"
+		case t.Kind() == '0' && pastBinary64(t.String()):
+			return "a number in it is larger than binary64 holds"
 		}
 		if d.StackDepth() == 0 {
 			break
@@ -149,6 +152,16 @@ func checkText(data []byte, object bool, depth int) string {
 		return "it is not one JSON text in UTF-8"
 	}
 	return ""
+}
+
+// pastBinary64 reports whether a JSON number is of greater magnitude than a
+// binary64 holds (RFC 7493 §2.2: "for example, 1E400"): strconv reads it as
+// ±Inf with ErrRange, and jq writes 1e1000000000 as the largest binary64, so
+// one text would be two values. A number too small for binary64 reads as
+// zero, and is taken (PROTOCOL.md §0b).
+func pastBinary64(n string) bool {
+	_, err := strconv.ParseFloat(n, 64)
+	return errors.Is(err, strconv.ErrRange)
 }
 
 // whyTwice is checkJSON's word for a name given twice in one object.

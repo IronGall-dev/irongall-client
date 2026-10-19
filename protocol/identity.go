@@ -65,7 +65,8 @@ var identityTypes = map[string]struct {
 	check func(ssh.PublicKey) error
 	bound int
 }{
-	// 93 bytes: the key's base64 is 68 characters, of which 25 are fixed.
+	// 93 bytes: the key's base64 is 68 characters, of which 25 are fixed and
+	// the 26th is one of A to P, the low two bits of the key's length, 32.
 	// Its largest signature is 850 bytes, a prekey statement's.
 	IdentityEd25519: {
 		form:  identityGrammar,
@@ -88,8 +89,10 @@ var identityTypes = map[string]struct {
 
 // identityGrammar is the whole ssh-ed25519 document: the tag line, then an
 // OpenSSH Ed25519 public key with no comment, each line ending in LF, nothing
-// after.
-var identityGrammar = regexp.MustCompile(`\A` + IdentityTag + `\nssh-ed25519 (AAAAC3NzaC1lZDI1NTE5AAAAI[A-Za-z0-9+/]{43})\n\z`)
+// after. The key's length is 32 (RFC 8709 §4), so the character holding its
+// low two bits is one of A to P: a length of 33 to 35 is no key OpenSSH or
+// x/crypto/ssh reads, and would be another document for the same 32 bytes.
+var identityGrammar = regexp.MustCompile(`\A` + IdentityTag + `\nssh-ed25519 (AAAAC3NzaC1lZDI1NTE5AAAAI[A-P][A-Za-z0-9+/]{42})\n\z`)
 
 // Identity is a box's identity: its identity document, the key in it, and the
 // address that document hashes to.

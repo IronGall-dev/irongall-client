@@ -11,8 +11,8 @@ import (
 // the protocol reads one (PROTOCOL.md §0b), bad-* is not.
 func TestVectorJSON(t *testing.T) {
 	files := glob(t, "json/*.json")
-	if len(files) != 46 {
-		t.Fatalf("%d json/ vectors, want 46", len(files))
+	if len(files) != 52 {
+		t.Fatalf("%d json/ vectors, want 52", len(files))
 	}
 	for _, f := range files {
 		name := strings.TrimSuffix(filepath.Base(f), ".json")

@@ -162,6 +162,7 @@ func TestAJSONBodyIsSentAsWrittenOrRefused(t *testing.T) {
 	for _, in := range []string{
 		"", " ", "1 2", `{"a":1}x`, `{"a":1,"a":2}`, `{"x":[{"a":1,"a":2}]}`, "\"\xff\"", "\ufeff{}",
 		`"\uFFFE"`, "\"\uFDD0\"", `{"\uFFFF":1}`, `"\uD800"`, "NaN", "01", "+1", ".5", "[1,]", "{'a':1}", deep(32),
+		"1e400", `{"n":[-1e1000000000]}`, "1.797693134862315808e308",
 	} {
 		if _, err := NewJSONEnvelope(from, to, []byte(in), now); err == nil {
 			t.Errorf("%q: sent", in)

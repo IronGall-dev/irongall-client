@@ -498,8 +498,44 @@ var answerVariances = map[string]string{
 	"list-bad-count-written-with-an-exponent": "the script takes count written 1e0, which jq gives back as 1",
 }
 
+// jsonVariances are the json/ vectors the script judges otherwise than the Go
+// client, each a known variance held to its shape (PROTOCOL.md §0b).
+var jsonVariances = map[string]string{
+	"bad-number-just-past-binary64":              "the script takes a number just past binary64, which jq reads through 17 digits as the largest binary64",
+	"bad-number-just-past-binary64-in-18-digits": "the script takes a number just past binary64, which jq reads through 17 digits as the largest binary64",
+	"bad-number-just-past-binary64-negative":     "the script takes a number just past binary64, which jq reads through 17 digits as the largest binary64",
+}
+
+// sameLine holds the script's delivered line to the Go client's, byte for
+// byte, or, where jq spells a number or a string otherwise, to the Go
+// client's line in jq's spelling, which ig_line writes from it: the one
+// difference the two may have, a known variance (PROTOCOL.md §0b). It reports
+// whether the spelling differed.
+func sameLine(t *testing.T, goLine []byte, shLine string) (respelled bool, ok bool) {
+	t.Helper()
+	if string(goLine) == shLine {
+		return false, true
+	}
+	f := filepath.Join(t.TempDir(), "go.line")
+	if err := os.WriteFile(f, goLine, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	spelled, err := bash(t, nil, "ig_line "+f)
+	return true, err == nil && spelled == shLine
+}
+
+// sameValue reports whether two lines hold the same value as encoding/json
+// reads one. sameLine's reference is the script's own ig_line, so this is
+// the check that holds the script to the Go client where ig_line itself
+// went wrong for both.
+func sameValue(goLine []byte, shLine string) bool {
+	var got, exp any
+	return json.Unmarshal([]byte(shLine), &got) == nil && json.Unmarshal(goLine, &exp) == nil && reflect.DeepEqual(got, exp)
+}
+
 // Every envelope gets the Go client's verdict, but for envelopeVariances, and
-// every accepted one gives the same delivered line, value for value.
+// every accepted one gives the same delivered line, byte for byte but for
+// jq's spelling (sameLine).
 func TestVectorsEnvelope(t *testing.T) {
 	need(t, scriptTools...)
 	now, setNow := vectorNow(t)
@@ -534,9 +570,14 @@ func TestVectorsEnvelope(t *testing.T) {
 			}
 			env.Identity = nil
 			want, _ := env.Marshal()
-			var got, exp any
-			if json.Unmarshal([]byte(line), &got) != nil || json.Unmarshal(want, &exp) != nil || !reflect.DeepEqual(got, exp) {
+			respelled, ok := sameLine(t, want, line)
+			switch {
+			case !ok || !sameValue(want, line):
 				t.Errorf("%s: the script delivers %s, the Go client %s", name, line, want)
+			case respelled:
+				t.Logf("%s: a known variance: the script delivers it in jq's spelling, %s, where the Go client delivers %s", name, line, want)
+			case name == "accept-body-jq-spells-otherwise":
+				t.Errorf("%s: control: the script delivers it as the Go client does, so no run meets the variance", name)
 			}
 		case strings.HasPrefix(name, "refuse-"):
 			if err == nil {
@@ -558,8 +599,8 @@ func TestVectorsEnvelope(t *testing.T) {
 func TestVectorsJSON(t *testing.T) {
 	need(t, scriptTools...)
 	files, _ := filepath.Glob(filepath.Join(vectors, "json", "*.json"))
-	if len(files) != 46 {
-		t.Fatalf("%d json/ vectors, want 46", len(files))
+	if len(files) != 52 {
+		t.Fatalf("%d json/ vectors, want 52", len(files))
 	}
 	var script strings.Builder
 	for _, f := range files {
@@ -577,6 +618,13 @@ func TestVectorsJSON(t *testing.T) {
 		name := strings.TrimSuffix(filepath.Base(f), ".json")
 		data, _ := os.ReadFile(f) //nolint:gosec // a test vector
 		goTakes, shTakes := protocol.Unmarshal(data, &struct{}{}) == nil, verdicts[i] == "0"
+		if why, ok := jsonVariances[name]; ok {
+			if goTakes || !shTakes {
+				t.Errorf("%s: the Go client takes it: %v, the script: %v, where the known variance is that %s", name, goTakes, shTakes, why)
+			}
+			t.Logf("%s: a known variance: %s", name, why)
+			continue
+		}
 		if goTakes != shTakes || goTakes != strings.HasPrefix(name, "ok-") {
 			t.Errorf("%s: the Go client takes it: %v, the script: %v", name, goTakes, shTakes)
 		}
@@ -690,9 +738,11 @@ func TestVectorsPlain(t *testing.T) {
 		shown := *signed.Envelope
 		shown.Identity = nil
 		want, _ := shown.Marshal()
-		var got, exp any
-		if sender != signed.Sender.Address().String() || json.Unmarshal([]byte(line), &got) != nil || json.Unmarshal(want, &exp) != nil || !reflect.DeepEqual(got, exp) {
+		respelled, ok := sameLine(t, want, line)
+		if sender != signed.Sender.Address().String() || !ok || !sameValue(want, line) {
 			t.Errorf("%s: the script delivers %s from %s, the Go client %s from %s", name, line, sender, want, signed.Sender.Address())
+		} else if respelled {
+			t.Logf("%s: a known variance: the script delivers it in jq's spelling, %s, where the Go client delivers %s", name, line, want)
 		}
 		codes["delivered"]++
 	}
@@ -1968,7 +2018,8 @@ func TestAJSONBodyInBothClients(t *testing.T) {
 	}
 
 	// Both ways. The script writes the value through jq, so it arrives as
-	// that value, and the Go client as written.
+	// that value in jq's spelling (2e3 as 2E+3: PROTOCOL.md §0b), and the Go
+	// client's as written.
 	in := "{\"action\": \"approve\",\n \"ids\": [3, 1.50, 2e3], \"note\": \"<&>\", \"none\": null}\n"
 	if _, err := sh("ig_send --json " + g.Link() + " " + file(in)); err != nil {
 		t.Fatal(err)

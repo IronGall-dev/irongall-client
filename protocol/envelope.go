@@ -133,7 +133,8 @@ func NewEnvelope(from, to Address, body string, now time.Time) (*Envelope, error
 // to the rules its reader holds it to inside the envelope (PROTOCOL.md §0b,
 // §5 check 3), and refused whole when it breaks one, never repaired: one JSON
 // value and nothing after it, in UTF-8, with no name twice in any object,
-// nested at most MaxDepth − 1 deep, and no noncharacter. It is sent compact,
+// nested at most MaxDepth − 1 deep, no noncharacter, and no number past
+// binary64. It is sent compact,
 // its members in the order given and its strings and numbers as written, but
 // that the line escapes U+2028 and U+2029, as in every string it carries.
 func NewJSONEnvelope(from, to Address, body []byte, now time.Time) (*Envelope, error) {
