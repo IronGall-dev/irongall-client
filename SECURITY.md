@@ -4,7 +4,7 @@ IronGall is built so that nobody has to trust its server. Everything that protec
 
 ## Supported versions
 
-**IronGall is before v1, and only the latest commit on `main` is supported.** There are no releases or tags yet (the release chain is #16), so a fix is a commit on `main`. The protocol may still change until it is frozen, which we expect by 31 October 2026; what must be settled first is the milestone `M1: protocol freeze`. **Nothing is externally audited yet.**
+**IronGall is before v1, and only the latest commit on `main` is supported.** There are no releases or tags yet (the release chain is #16), so a fix is a commit on `main`. The protocol may still change until it is frozen, which we expect by 15 November 2026; what must be settled first is the milestone `M1: protocol freeze`. **Nothing is externally audited yet.**
 
 ## Reporting a vulnerability
 
