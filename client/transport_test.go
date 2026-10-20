@@ -302,7 +302,7 @@ func TestAServerIsCalledOverHTTPSOrOnThisMachine(t *testing.T) {
 // failure, in this client's own words, and keeps net/http's error for
 // errors.Is and errors.As (PROTOCOL.md §13): a server that is not there, one
 // that never answers, a wait the caller ended, and a certificate that does
-// not verify, and a server's TLS alert.
+// not verify, a server's TLS alert, and an answer that is no TLS.
 func TestACallWithNoAnswerSaysWhatKind(t *testing.T) {
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
@@ -324,6 +324,23 @@ func TestACallWithNoAnswerSaysWhatKind(t *testing.T) {
 	alerting.TLS = &tls.Config{ClientAuth: tls.RequireAnyClientCert, MinVersion: tls.VersionTLS13}
 	alerting.StartTLS()
 	t.Cleanup(alerting.Close)
+	// A server that answers neither TLS nor HTTP.
+	garbled, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = garbled.Close() })
+	go func() {
+		for {
+			c, err := garbled.Accept()
+			if err != nil {
+				return
+			}
+			_, _ = c.Read(make([]byte, 512))
+			_, _ = c.Write([]byte("\x00\x01\x02\x03\x04 neither TLS nor HTTP\r\n"))
+			_ = c.Close()
+		}
+	}()
 	stopped, stop := context.WithCancel(context.Background())
 	stop()
 	waited, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
@@ -339,6 +356,7 @@ func TestACallWithNoAnswerSaysWhatKind(t *testing.T) {
 		{"a call its caller stopped", silent.URL, "stopped before an answer came", stopped, context.Canceled, nil},
 		{"a certificate that does not verify", untrusted.URL, "the server's TLS certificate does not verify", context.Background(), nil, nil},
 		{"a server's TLS alert", alerting.URL, "TLS failed", context.Background(), nil, alerting.Client()},
+		{"a server that answers neither TLS nor HTTP", "https://" + garbled.Addr().String(), "TLS failed", context.Background(), nil, nil},
 	} {
 		opt := e.opts()
 		opt.Base = c.base
