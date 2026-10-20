@@ -210,7 +210,7 @@ var quotaWords = map[protocol.Quota]string{
 	protocol.QuotaRegistrationsRange:     "as many boxes have been registered from this machine's IPv6 /48 as the server takes for now",
 	protocol.QuotaMisses:                 "this machine's IP address has made as many calls that named no box or carried nothing that verified as the server takes for now",
 	protocol.QuotaSendsBeforePass:        "this machine's IP address has made as many sends as the server takes for now",
-	protocol.QuotaRequests:               "this machine's IP address has made as many calls with no pass as the server takes for now",
+	protocol.QuotaRequests:               "this machine's IP address has made as many requests as the server takes for now",
 }
 
 // rateLimited says which limit a rate_limited names, when this client knows
