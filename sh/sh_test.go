@@ -7,10 +7,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/json/jsontext"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -528,13 +530,38 @@ func sameLine(t *testing.T, goLine []byte, shLine string) (respelled bool, ok bo
 	return true, err == nil && spelled == shLine
 }
 
-// sameValue reports whether two lines hold the same value as encoding/json
-// reads one. sameLine's reference is the script's own ig_line, so this is
-// the check that holds the script to the Go client where ig_line itself
-// went wrong for both.
+// sameValue reports whether two lines hold the same value, token for token:
+// the same members in the same order (a sender sends them in the order
+// given, PROTOCOL.md §4.2, and jq keeps it), each string the same once
+// unescaped, and each number the same decimal value, a zero's sign included.
+// That allows jq's spelling and nothing else (§0b). sameLine's reference is
+// the script's own ig_line, so this is the check that holds the script to
+// the Go client where ig_line itself went wrong for both: read as binary64,
+// 9007199254740993 and 9007199254740992 would be one value.
 func sameValue(goLine []byte, shLine string) bool {
-	var got, exp any
-	return json.Unmarshal([]byte(shLine), &got) == nil && json.Unmarshal(goLine, &exp) == nil && reflect.DeepEqual(got, exp)
+	a, b := jsontext.NewDecoder(bytes.NewReader(goLine)), jsontext.NewDecoder(strings.NewReader(shLine))
+	for {
+		x, errA := a.ReadToken()
+		y, errB := b.ReadToken()
+		switch {
+		case errA == io.EOF && errB == io.EOF:
+			return true
+		case errA != nil || errB != nil || x.Kind() != y.Kind():
+			return false
+		case x.Kind() == '"' && x.String() != y.String():
+			return false
+		case x.Kind() == '0' && !sameNumber(x.String(), y.String()):
+			return false
+		}
+	}
+}
+
+// sameNumber reports whether two JSON numbers have one exact decimal value
+// and, for a zero, one sign.
+func sameNumber(x, y string) bool {
+	p, okP := new(big.Rat).SetString(x)
+	q, okQ := new(big.Rat).SetString(y)
+	return okP && okQ && p.Cmp(q) == 0 && strings.HasPrefix(x, "-") == strings.HasPrefix(y, "-")
 }
 
 // Every envelope gets the Go client's verdict, but for envelopeVariances, and
@@ -2484,9 +2511,104 @@ func TestTheScriptFollowsNoRedirect(t *testing.T) {
 	}
 }
 
+// Every other call the script makes is held to it too, for each status a
+// redirect has (PROTOCOL.md §11): the read of a recipient before a send and
+// the post itself, which leave the message in the outbox and post nothing
+// anywhere, and a revocation server's lookup, which is no answer: the send
+// goes on.
+func TestNoCallOfTheScriptFollowsARedirect(t *testing.T) {
+	need(t, append(scriptTools, "curl")...)
+	ctx := context.Background()
+	kt, mode := protocol.Classic, "--no-pq"
+	if pq() {
+		kt, mode = protocol.PostQuantum, ""
+	}
+	var mu sync.Mutex
+	var reached []string
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		reached = append(reached, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(other.Close)
+	srv := fakeserver.New(t, time.Now)
+	dir := t.TempDir()
+	env := []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}
+	if _, err := bash(t, env, "ig_init "+mode); err != nil {
+		t.Fatalf("ig_init: %v", err)
+	}
+	r, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, kt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	landAll(t, r)
+	waiting := func() int {
+		p, _ := filepath.Glob(filepath.Join(dir, "outbox", "*.P"))
+		return len(p)
+	}
+	for _, status := range []int{http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		for _, call := range []struct {
+			name string
+			on   func(*http.Request) bool
+		}{
+			{"the read of the recipient", func(q *http.Request) bool {
+				return q.Method == http.MethodGet && q.URL.Path == "/v1/"+r.Address().String()
+			}},
+			{"the post", func(q *http.Request) bool {
+				return q.Method == http.MethodPost && strings.HasSuffix(q.URL.Path, "/messages")
+			}},
+		} {
+			srv.SetMiddle(func(w http.ResponseWriter, q *http.Request, next http.Handler) {
+				if call.on(q) {
+					http.Redirect(w, q, other.URL+q.URL.RequestURI(), status)
+					return
+				}
+				next.ServeHTTP(w, q)
+			})
+			before := waiting()
+			_, err := bash(t, env, "printf 'never posted' | ig_send "+r.Link())
+			if err == nil || !strings.Contains(err.Error(), `"status":`+strconv.Itoa(status)) || !strings.Contains(err.Error(), "a redirect, which this client never follows") {
+				t.Errorf("%d on %s: %v", status, call.name, err)
+			}
+			if waiting() != before+1 {
+				t.Errorf("%d on %s: the outbox holds %d, not %d", status, call.name, waiting(), before+1)
+			}
+		}
+		srv.SetMiddle(nil)
+		if n := srv.Count(r.Address()); n != 0 {
+			t.Fatalf("%d: the recipient's server holds %d messages", status, n)
+		}
+	}
+
+	// A revocation server that redirects gave no answer, and the send goes
+	// on.
+	for _, status := range []int{http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+		redirecting := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, q *http.Request) {
+			http.Redirect(w, q, other.URL+q.URL.RequestURI(), status)
+		}))
+		t.Cleanup(redirecting.Close)
+		before := srv.Count(r.Address())
+		out, err := bash(t, append(env, "IG_REVOCATION_SERVERS="+redirecting.URL), "printf 'posted' | ig_send "+r.Link())
+		if err != nil || strings.Count(out, `"type":"no_answer"`) < 1 || !strings.Contains(out, redirecting.URL) {
+			t.Errorf("a send whose revocation server answers %d: %v %s", status, err, out)
+		}
+		if srv.Count(r.Address()) <= before {
+			t.Errorf("a send whose revocation server answers %d posted nothing", status)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(reached) != 0 {
+		t.Fatalf("a redirect was followed: %q", reached)
+	}
+}
+
 // A record a server redirects is taken by none: the script says so, keeps
-// no revocation of its own, and exits 1. The publish case of the redirects
-// §11 names, from the box's own server and from a revocation server.
+// no revocation of its own, and exits 1, and the server redirected to holds
+// nothing. The publish case of the redirects §11 names, for each status,
+// from the box's own server and from a revocation server.
 func TestARedirectedPublishIsNotTaken(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	mode := "--no-pq"
@@ -2501,7 +2623,7 @@ func TestARedirectedPublishIsNotTaken(t *testing.T) {
 		_ = resp.Body.Close()
 		return resp.StatusCode
 	}
-	for _, code := range []int{301, 308} {
+	for _, code := range []int{http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
 		srv := fakeserver.New(t, time.Now)
 		rs := fakeserver.New(t, time.Now)
 		front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2527,8 +2649,8 @@ func TestARedirectedPublishIsNotTaken(t *testing.T) {
 		_ = os.WriteFile(filepath.Join(dir, "revocation-servers"), []byte(front.URL+"\n"), 0o600)
 		out, err := sh(dir, "ig_revoke "+a.String())
 		t.Logf("%d from the revocation server: %q, err %v; the revocation server holds %d", code, out, err, held(rs.URL, a))
-		if err == nil {
-			t.Errorf("%d: a record the revocation server does not hold is reported published", code)
+		if err == nil || held(rs.URL, a) == http.StatusOK {
+			t.Errorf("%d: a record the revocation server does not hold is reported published, or the redirect was followed", code)
 		}
 
 		// The box's own server, whose PUT of the record is redirected.
@@ -2544,8 +2666,8 @@ func TestARedirectedPublishIsNotTaken(t *testing.T) {
 		out, err = sh(dir, "ig_revoke "+a.String())
 		_, kept := os.Stat(filepath.Join(dir, "revoked.sig"))
 		t.Logf("%d from the own server: %q, err %v; the own server holds %d; revoked.sig kept: %v", code, out, err, held(srv.URL, a), kept == nil)
-		if err == nil {
-			t.Errorf("%d: a record no server holds is reported published, and kept", code)
+		if err == nil || kept == nil || held(rs.URL, a) == http.StatusOK {
+			t.Errorf("%d: a record no server holds is reported published, or kept, or the redirect was followed", code)
 		}
 	}
 }

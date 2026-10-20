@@ -716,6 +716,7 @@ var plainVerdicts = map[string]string{
 	"accept-padded":                                      "",
 	"accept-anything-after-the-signature":                "",
 	"accept-every-field":                                 "",
+	"accept-body-more-precise-than-binary64":             "",
 	"refuse-signed-for-another-box":                      RefusedSignature,
 	"refuse-signed-by-the-identity":                      RefusedSignature,
 	"refuse-signed-by-a-bare-working-key":                RefusedSignature,

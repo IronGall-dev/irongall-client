@@ -466,6 +466,7 @@ case_env refuse-nan-in-the-body "${E}NaN}" "$A" "$B"
 case_env refuse-leading-zero-in-the-body "$E[01]}" "$A" "$B"
 case_env refuse-number-past-binary64-in-the-body "$E{\"n\":1e400}}" "$A" "$B"
 case_env accept-body-jq-spells-otherwise "$E{\"n\":1e5,\"s\":\"a\\\\/b \\\\u00e9\"}}" "$A" "$B" # the same value in another spelling from the script: a known variance (PROTOCOL.md §0b)
+case_env accept-body-more-precise-than-binary64 "$E{\"b\":{\"z\":1,\"a\":2},\"n\":9007199254740993,\"m\":-0}}" "$A" "$B" # delivered as it is: a number binary64 does not hold exactly, a zero's sign, members in the order given
 case_env refuse-noncharacter-in-the-body "$E\"\\\\uffff\"}" "$A" "$B"
 case_env refuse-above-u10ffff-in-the-body "$E\"\xf4\x90\x80\x80\"}" "$A" "$B"
 case_env refuse-byte-order-mark "\xef\xbb\xbf{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
@@ -493,6 +494,9 @@ cp message/a-to-b.plain plain/accept-padded.txt
 printf '{"v":1,"from":"%s","to":"%s","sent_at":"%s","msg_id":"%s","identity":"%s","body":{"task":"ping"},"subject":"hi","in_reply_to":"%s","supersedes":"%s","later":true}\n' "$A" "$B" "$NOW" "$MSG_ID" "$ID_A" "$MSG_ID" "$MSG_ID" > plain/every-field.line
 { cat plain/every-field.line; under a-work a/work-cert.pub "irongall-msg-v1:$B" < plain/every-field.line; } > plain/accept-every-field.txt
 rm plain/every-field.line
+printf '{"v":1,"from":"%s","to":"%s","sent_at":"%s","msg_id":"%s","identity":"%s","body":{"b":{"z":1,"a":2},"n":9007199254740993,"m":-0}}\n' "$A" "$B" "$NOW" "$MSG_ID" "$ID_A" > plain/more-precise.line # delivered as it is (envelope/accept-body-more-precise-than-binary64)
+{ cat plain/more-precise.line; under a-work a/work-cert.pub "irongall-msg-v1:$B" < plain/more-precise.line; } > plain/accept-body-more-precise-than-binary64.txt
+rm plain/more-precise.line
 refuse() { # <name> <line file> <signature command…>: the line, then the signature the command makes over it
   local name=$1 l=$2; shift 2
   { cat "$l"; "$@" < "$l"; } > "plain/$name.txt"

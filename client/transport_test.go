@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -66,34 +67,40 @@ func isRedirect(err error, status int) bool {
 	return errors.As(err, &apiErr) && apiErr.Status == status && strings.Contains(err.Error(), "a redirect, which this client never follows")
 }
 
-// The issue's repro: a 307 from a box's list, to another port of the same
-// host, which Go's own policy would follow with the box's pass. Nothing
-// reaches the other server, whether the box made its HTTP client or was
-// handed one, and the client it was handed is left as it was.
+// redirects are the statuses of a redirect, each of which a client is held
+// to, from every call it makes (PROTOCOL.md §11).
+var redirects = []int{http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect}
+
+// A redirect from a box's list, to another port of the same host, which Go's
+// own policy would follow with the box's pass. Nothing reaches the other
+// server, whether the box made its HTTP client or was handed one, and the
+// client it was handed is left as it was.
 func TestARedirectIsNeverFollowed(t *testing.T) {
 	ctx := context.Background()
-	e := newEnv(t)
-	b := e.box(protocol.Classic)
-	x := newElsewhere(t)
-	redirect(e, http.StatusTemporaryRedirect, x.URL, http.MethodGet, func(p string) bool { return strings.HasSuffix(p, "/messages") })
-	if _, err := b.Receive(ctx); !isRedirect(err, http.StatusTemporaryRedirect) {
-		t.Fatalf("a drain answered with a redirect: %v", err)
-	}
-	given := &http.Client{}
-	opt := e.opts()
-	opt.HTTPClient = given
-	handed, err := client.Open(b.Dir(), opt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := handed.Receive(ctx); !isRedirect(err, http.StatusTemporaryRedirect) {
-		t.Fatalf("a drain by a box handed an HTTP client that follows redirects: %v", err)
-	}
-	if given.CheckRedirect != nil {
-		t.Fatal("the HTTP client the box was handed was changed")
-	}
-	if got := x.reached(); len(got) != 0 {
-		t.Fatalf("a redirect was followed: %q", got)
+	for _, status := range redirects {
+		e := newEnv(t)
+		b := e.box(protocol.Classic)
+		x := newElsewhere(t)
+		redirect(e, status, x.URL, http.MethodGet, func(p string) bool { return strings.HasSuffix(p, "/messages") })
+		if _, err := b.Receive(ctx); !isRedirect(err, status) {
+			t.Fatalf("a drain answered with a %d: %v", status, err)
+		}
+		given := &http.Client{}
+		opt := e.opts()
+		opt.HTTPClient = given
+		handed, err := client.Open(b.Dir(), opt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := handed.Receive(ctx); !isRedirect(err, status) {
+			t.Fatalf("a drain answered with a %d by a box handed an HTTP client that follows redirects: %v", status, err)
+		}
+		if given.CheckRedirect != nil {
+			t.Fatal("the HTTP client the box was handed was changed")
+		}
+		if got := x.reached(); len(got) != 0 {
+			t.Fatalf("%d was followed: %q", status, got)
+		}
 	}
 }
 
@@ -102,7 +109,7 @@ func TestARedirectIsNeverFollowed(t *testing.T) {
 // is redirected posts nothing anywhere, and waits in the outbox.
 func TestNoCallOfABoxFollowsARedirect(t *testing.T) {
 	ctx := context.Background()
-	for _, status := range []int{http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
+	for _, status := range redirects {
 		e := newEnv(t)
 		a, r := e.box(protocol.Classic), e.box(protocol.Classic)
 		x := newElsewhere(t)
@@ -128,31 +135,80 @@ func TestNoCallOfABoxFollowsARedirect(t *testing.T) {
 // else, and the send goes on.
 func TestARevocationServersRedirectIsNoAnswer(t *testing.T) {
 	ctx := context.Background()
-	e := newEnv(t)
-	rs := newRevServer(t)
-	x := newElsewhere(t)
-	rs.set(func(w http.ResponseWriter, r *http.Request) bool {
-		http.Redirect(w, r, x.URL+r.URL.RequestURI(), http.StatusFound)
-		return true
-	})
-	opt := e.opts()
-	opt.RevocationServers = []string{rs.URL}
-	var silent []error
-	opt.NoAnswer = func(_ string, err error) { silent = append(silent, err) }
-	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
-	if err != nil {
-		t.Fatal(err)
+	for _, status := range redirects {
+		e := newEnv(t)
+		rs := newRevServer(t)
+		x := newElsewhere(t)
+		rs.set(func(w http.ResponseWriter, r *http.Request) bool {
+			http.Redirect(w, r, x.URL+r.URL.RequestURI(), status)
+			return true
+		})
+		opt := e.opts()
+		opt.RevocationServers = []string{rs.URL}
+		var silent []error
+		opt.NoAnswer = func(_ string, err error) { silent = append(silent, err) }
+		a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+		if err != nil {
+			t.Fatal(err)
+		}
+		landAll(t, a)
+		r := e.box(protocol.Classic)
+		if _, err := a.Send(ctx, r.Address(), "posted"); err != nil {
+			t.Fatalf("a send whose revocation server answers %d: %v", status, err)
+		}
+		if len(silent) == 0 || !isRedirect(silent[0], status) {
+			t.Fatalf("what the box was told of the revocation server's %d: %v", status, silent)
+		}
+		if got := x.reached(); len(got) != 0 {
+			t.Fatalf("the revocation server's %d was followed: %q", status, got)
+		}
 	}
-	landAll(t, a)
-	r := e.box(protocol.Classic)
-	if _, err := a.Send(ctx, r.Address(), "posted"); err != nil {
-		t.Fatalf("a send whose revocation server redirects: %v", err)
-	}
-	if len(silent) == 0 || !isRedirect(silent[0], http.StatusFound) {
-		t.Fatalf("what the box was told of the revocation server: %v", silent)
-	}
-	if got := x.reached(); len(got) != 0 {
-		t.Fatalf("the revocation server's redirect was followed: %q", got)
+}
+
+// A record a server redirects is not taken there, from the box's own server
+// and from a revocation server: the owner is told which did not take it, and
+// the record goes nowhere else.
+func TestARedirectedPublishIsNotTaken(t *testing.T) {
+	ctx := context.Background()
+	for _, status := range redirects {
+		e := newEnv(t)
+		rs := newRevServer(t)
+		x := newElsewhere(t)
+		toX := func(w http.ResponseWriter, r *http.Request) bool {
+			if r.Method != http.MethodPut {
+				return false
+			}
+			http.Redirect(w, r, x.URL+r.URL.RequestURI(), status)
+			return true
+		}
+
+		// The revocation server redirects; the box's own server takes it.
+		b := e.boxWith(e.listing(rs.URL))
+		rec, err := b.Revocation()
+		if err != nil {
+			t.Fatal(err)
+		}
+		rs.set(toX)
+		_, err = b.Revoke(ctx, rec)
+		var part *client.NotPublishedError
+		if !errors.As(err, &part) || !slices.Equal(part.Took, []string{e.srv.URL}) || len(part.Failed) != 1 || part.Failed[0].Server != rs.URL || !isRedirect(err, status) {
+			t.Fatalf("%d from the revocation server: %v", status, err)
+		}
+
+		// The box's own server redirects; the revocation server takes it.
+		rs.set(nil)
+		b = e.boxWith(e.listing(rs.URL))
+		if rec, err = b.Revocation(); err != nil {
+			t.Fatal(err)
+		}
+		redirect(e, status, x.URL, http.MethodPut, func(p string) bool { return strings.HasSuffix(p, "/revocations") })
+		_, err = b.Revoke(ctx, rec)
+		if !errors.As(err, &part) || !slices.Equal(part.Took, []string{rs.URL}) || len(part.Failed) != 1 || part.Failed[0].Server != e.srv.URL || !isRedirect(err, status) {
+			t.Fatalf("%d from the box's own server: %v", status, err)
+		}
+		if got := x.reached(); len(got) != 0 {
+			t.Fatalf("a publish's %d was followed: %q", status, got)
+		}
 	}
 }
 
