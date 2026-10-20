@@ -460,10 +460,10 @@ IG=$W/box/B; ig_api GET "/v1/$B/messages" "" -H "Authorization: $OLD_PASS" > /de
 as B; age -d -i key1.agekey < relabel.age > /dev/null && age -d -i $IG/prekeys/$B1.agekey < relabel.age > /dev/null && ok "control: mail to the retired key decrypts while it is retained" || bad "retained"
 sed -i "5s/.*/$(jq -nr 'now - 34*86400 | floor | todate')/" $IG/prekeys/$B1.txt     # pretend its not_after was 34 days ago
 ig_prune $(($(date -u +%s) - 2*86400)); [ -e $IG/prekeys/$B1.agekey ] && ok "ig_prune by a reading of the clock before that key's deletion time, as ig_recv gives it the one the server took, deletes nothing" || bad "prune by an earlier reading deleted the key"
-ig_prune; [ ! -e $IG/prekeys/$B1.agekey ] && [ -e $IG/prekeys/$B2.agekey ] && ok "ig_prune deletes the retired key past not_after + 33 days, keeps the current one" || bad "prune"
+ig_prune "$(date -u +%s)"; [ ! -e $IG/prekeys/$B1.agekey ] && [ -e $IG/prekeys/$B2.agekey ] && ok "ig_prune deletes the retired key past not_after + 33 days, keeps the current one" || bad "prune"
 age -d -i $IG/prekeys/$B2.agekey < relabel.age > /dev/null 2>&1 && bad "old mail still decryptable" || ok "after deletion, mail to the retired key is unrecoverable from the box's keys"
 cp $IG/prekeys/$B2.txt held2.txt; sed -i "5s/.*/$(jq -nr 'now - 34*86400 | floor | todate')/" $IG/prekeys/$B2.txt
-ig_prune; [ -e $IG/prekeys/$B2.agekey ] && ok "ig_prune never deletes the newest key, even past its deletion time" || bad "prune deleted the newest key"
+ig_prune "$(date -u +%s)"; [ -e $IG/prekeys/$B2.agekey ] && ok "ig_prune never deletes the newest key, even past its deletion time" || bad "prune deleted the newest key"
 cp held2.txt $IG/prekeys/$B2.txt
 # and ig_recv prunes, by the reading at which the server answered its list: a retired key past its deletion time goes
 as PRUNED; ig_init $NOPQ > /dev/null 2> err.txt && p1=$(newest) && ig_rekey $NOPQ > /dev/null 2>> err.txt && [ "$(newest)" -gt "$p1" ] || bad "prune by recv: setup: $(cat err.txt)"

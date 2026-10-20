@@ -105,6 +105,9 @@ ig_owner(){ # <METHOD> <PATH> [body file] [curl args…] → ig_api as this box:
   rm -f "$IG/pass"; p=$(ig_pass) && ig_api "$1" "$2" "${3-}" -H "Authorization: $p" "${@:4}" && return 0
   ig_clock; return 1
 }
+ig_taken(){ # → the reading of this machine's clock a server took, in Unix time: the date of the pass in $IG/pass, which the call ig_owner made, or the renewal ig_renew sent, carried once the server answered it: its not_after less the ten minutes a pass is signed for. Every deletion by the clock is by one, never by a reading of the clock (PROTOCOL.md §0): a clock far off is stopped at its pass, and one that jumps or steps back while a call is in flight deletes nothing by where it went
+  local na; na=$(ig_time "$(sed -n 's/.* not_after="\([^"]*\)".*/\1/p' "$IG/pass" 2> /dev/null)") && echo $((na - 600))
+}
 ig_look(){ # <address> → ig_api GET of a box from this box's server (GET /v1/<address>), with no pass: the read is public, and a pass would only have the server count it against this box (PROTOCOL.md §4.1)
   ig_api GET "/v1/$1"
 }
@@ -174,10 +177,10 @@ ig_work(){ # <serial> → work/<serial>, .pub and -cert.pub: a NEW working key, 
   ssh-keygen -q -t ed25519 -N '' -C '' -f "$w" < /dev/null &&
   ssh-keygen -q -s "$IG/identity" -I irongall-cert-v1 -n "$A" -z "$1" -V "$(ig_stamp $((t - 3600))):$(ig_stamp $((t + 65*86400)))" -O clear "$w.pub"      # one principal, the address; no option and no extension. It starts an hour back, as -V -1h:+65d dates one, so that a verifier whose clock is behind this one takes it at once
 }
-ig_lifetime(){ # → the seconds each new prekey of this box is valid for: what its prekey-lifetime file names, a number of seconds alone on its line from 93600 (a day and two hours) to 2851200 (33 days), or 2851200 when it has none. A file that names anything else is a refusal, never the default: no prekey is signed until it is put right (PROTOCOL.md §6.4)
+ig_lifetime(){ # → the seconds each new prekey of this box is valid for: what its prekey-lifetime file names, a number of seconds alone on its line from 97200 (a day and three hours) to 2851200 (33 days), or 2851200 when it has none. A file that names anything else is a refusal, never the default: no prekey is signed until it is put right (PROTOCOL.md §6.4)
   local l; [ -e "$IG/prekey-lifetime" ] || { echo 2851200; return 0; }
-  l=$(cat "$IG/prekey-lifetime" 2> /dev/null) && [[ $l =~ ^[1-9][0-9]{0,9}$ ]] && { printf '%s\n' "$l" | cmp -s - "$IG/prekey-lifetime" || printf '%s' "$l" | cmp -s - "$IG/prekey-lifetime"; } && [ "$l" -ge 93600 ] && [ "$l" -le 2851200 ] && echo "$l" ||      # compared with itself rebuilt: $(…) drops line feeds and NULs
-    ig_refuse "this box's prekey-lifetime file names no lifetime: one is a number of seconds, alone on its line, from 93600 (a day and two hours) to 2851200 (33 days)"
+  l=$(cat "$IG/prekey-lifetime" 2> /dev/null) && [[ $l =~ ^[1-9][0-9]{0,9}$ ]] && { printf '%s\n' "$l" | cmp -s - "$IG/prekey-lifetime" || printf '%s' "$l" | cmp -s - "$IG/prekey-lifetime"; } && [ "$l" -ge 97200 ] && [ "$l" -le 2851200 ] && echo "$l" ||      # compared with itself rebuilt: $(…) drops line feeds and NULs
+    ig_refuse "this box's prekey-lifetime file names no lifetime: one is a number of seconds, alone on its line, from 97200 (a day and three hours) to 2851200 (33 days)"
 }
 ig_prekey(){ # <serial> [--no-pq] → prekeys/<serial>.agekey and its statement, signed by a NEW working key (ig_work): a NEW key, valid for the box's prekey lifetime (ig_lifetime), and prekeys/<serial>.made, when it was signed, which the Go client times its renewals by. A re-run reuses the key a failed attempt left, whatever its type, unless it is empty
   local A p="$IG/prekeys/$1" l t k; A=$(cat "$IG/address") || return 1
@@ -672,7 +675,7 @@ ig_flush(){ # posts again every message still in the outbox, each sealed afresh 
 # recipe: receive
 ig_recv(){ # drains the box, every page up to a drain's limits. ACCEPT → inbox/ and a mail line on stdout. REFUSED → quarantine/, never delivered, and a refused line on stdout. Both are acked
   ig_held || { ig_lock ig_recv "$@"; return; }
-  IG_LISTED=; ig_drain; local rc=$?; [ -z "$IG_LISTED" ] || ig_prune "$IG_LISTED"; return $rc      # keys deleted by this clock only once the server has answered the list, so has taken a pass dated by it: a clock far ahead is stopped at its pass, and the keys that mail waits for stay (PROTOCOL.md §0). By the clock as it read then: one that moves on during the drain deletes nothing more
+  IG_LISTED=; ig_drain; local rc=$?; [ -z "$IG_LISTED" ] || ig_prune "$IG_LISTED"; return $rc      # keys deleted by this clock only once the server has answered the list, so has taken a pass dated by it, and by that pass's date: a clock far ahead is stopped at its pass, one that moves while the list is in flight deletes nothing by where it went, and the keys that mail waits for stay (PROTOCOL.md §0)
 }
 ig_drain(){ # stops at a transient error or a fault of this box, leaving the rest on the server for the next drain. And at a number of messages and of pages (below): a server that lists mail without end costs one run that much
   local B c="" n i id k=0 pages=0; B=$(cat "$IG/address") || return 1
@@ -681,7 +684,7 @@ ig_drain(){ # stops at a transient error or a fault of this box, leaving the res
   while :; do
     [ $((pages += 1)) -le 100 ] || { ig_out more --arg message "this run stopped at the most one drain takes: run recv again for the rest, which is still on the server"; return 0; }
     ig_owner GET "/v1/$B/messages${c:+?cursor=$c}" > "$IG/list.json" || { ig_own; return 1; }
-    [ "$pages" -gt 1 ] || { IG_LISTED=$(ig_now); ig_forget; } || return 1      # the replay set pruned by this clock only once the server has taken a pass dated by it: a drain that a clock far off would prune is stopped at its pass first. IG_LISTED tells ig_recv the same of the keys, and holds the reading the server took
+    [ "$pages" -gt 1 ] || { IG_LISTED=$(ig_taken) && ig_forget "$IG_LISTED"; } || return 1      # the replay set pruned by this clock only once the server has taken a pass dated by it, and by that pass's date (ig_taken): a drain that a clock far off would prune is stopped at its pass first. IG_LISTED tells ig_recv the same reading for the keys
     ig_shape "$IG/list.json" list && n=$(jq -r '.messages | length' "$IG/list.json") || { ig_err "the server's list of messages is not one this client reads, as PROTOCOL.md §0b reads JSON: the mail stays on the server"; return 1; }
     sed -n 2p "$IG/response.meta" | grep -Eqx '[0-9]+' || { ig_err "the server's list of messages carries no poll interval, a Retry-After of digits alone (PROTOCOL.md §5.1): the mail stays on the server"; return 1; }      # the final answer's first Retry-After, trimmed (ig_status), as the Go client reads it; read and not kept: this script drains once and never waits, so it keeps no ETag either
     for ((i = 0; i < n; i++)); do
@@ -726,7 +729,7 @@ ig_judge(){ # <me> <message stem> → 0 only if EVERY check passes, in this orde
   age -d "${ids[@]}" < "$m.age" > "$m.T" 2> /dev/null || { echo "undecryptable: it does not decrypt with this box's prekeys"; return 1; }
   A=$(ig_open "$B" "$m") || { echo "$A"; return 1; }      # the sender, proved by what was decrypted
   f=$(ig_floor 2> /dev/null) || { echo "$IG/seen-floor names no time"; return 3; }
-  [ "$(ig_time "$(jq -r .sent_at "$m.P")")" -ge "$f" ] || { echo "stale: sent_at is before this box's replay set reaches back to, since its clock once read later than it does now"; return 1; }      # freshness has a floor too: a sent_at before the highest cutoff the replay set was pruned at may be a message whose line went. ig_open checked sent_at's grammar
+  [ "$f" -eq 0 ] || [ "$(ig_time "$(jq -r .sent_at "$m.P")")" -ge $((f + 33*86400)) ] || { echo "stale: sent_at is before this box's replay set reaches back to, since its clock once read later than it does now"; return 1; }      # freshness has a floor too: a sent_at before the highest cutoff the replay set was pruned at may be a message whose line went, and so may one up to 33 days above it, a retry of such a message, dated afresh up to 33 days after its first copy (check 10 knows a retry by that copy's line). ig_open checked sent_at's grammar
   jq -e --arg a "$A" '.from == $a' "$m.json" > /dev/null 2>&1 || { echo "reattributed: the server lists it as from another box than the one that signed it"; return 1; }      # the server's from, compared in jq: $(…) drops trailing LFs and every NUL
   if ! grep -qx "$A" "$IG/asked" 2> /dev/null; then      # the server is asked once for each sender in a drain. That it holds none is an answer; no answer is not, and the message then stays where it is
     ig_lookup "$A" >> "$IG/said"; case $? in 0) ;; 1) echo "$A" >> "$IG/asked" ;; 3) echo "what this box keeps of its sender's revocations does not verify, or cannot be written"; return 3 ;; *) echo "whether its sender is revoked could not be asked"; return 4 ;; esac
@@ -790,8 +793,8 @@ ig_line(){ # <checked envelope> [receipt] → the one line delivered: built from
     def ig_esc: if . > 65535 then (. - 65536) as $v | "\\u" + ((55296 + ($v / 1024 | floor)) | h4) + "\\u" + ((56320 + $v % 1024) | h4) else "\\u" + h4 end;      # a code point as JSON escapes it, lowercase, as Go writes it: a surrogate pair above U+FFFF
     {v: 1, from, to, sent_at, msg_id, body} + ([{subject}, {in_reply_to}, {supersedes}] | map(select(.[] | . != null and . != "")) | add // {}) + ($r[0] | if . then {receipt: {id, received_at, expires_at}} else {} end) | tojson | gsub("(?<c>[\\x{85}\\x{2028}\\x{2029}\\x{AD}\\x{34F}\\x{61C}\\x{115F}-\\x{1160}\\x{17B4}-\\x{17B5}\\x{180B}-\\x{180F}\\x{200B}-\\x{200F}\\x{202A}-\\x{202E}\\x{2060}-\\x{206F}\\x{3164}\\x{FE00}-\\x{FE0F}\\x{FEFF}\\x{FFA0}\\x{FFF0}-\\x{FFF8}\\x{1BCA0}-\\x{1BCA3}\\x{1D173}-\\x{1D17A}\\x{E0000}-\\x{E0FFF}])"; .c | explode[0] | ig_esc)' "$1"
 }
-ig_forget(){ # → the replay set without the lines past 66 days and an hour from their sent_at by this clock: a retry, dated afresh, may be posted up to 33 days after a first copy that was delivered, and read up to 33 days after that, and an hour covers a clock that steps back as far as two clocks a server takes are apart. When it drops one, the floor rises to the cutoff first, so a clock that later reads further back still takes no message whose line went (ig_floor)
-  local c=$(($(ig_now) - 66*86400 - 3600)) f; [ -e "$IG/seen" ] || return 0
+ig_forget(){ # <Unix time, one a server took (ig_taken)> → the replay set without the lines past 66 days and an hour from their sent_at by that reading: a retry, dated afresh, may be posted up to 33 days after a first copy that was delivered, and read up to 33 days after that, and an hour covers a clock that steps back as far as two clocks a server takes are apart. When it drops one, the floor rises to the cutoff first, so a clock that later reads further back still takes no message whose line went (ig_floor)
+  local c=$(($1 - 66*86400 - 3600)) f; [ -e "$IG/seen" ] || return 0
   awk -v c="$c" '$2 >= c' "$IG/seen" > "$IG/seen.new" || return 1
   if ! cmp -s "$IG/seen" "$IG/seen.new"; then
     f=$(ig_floor) || return 1
@@ -799,7 +802,7 @@ ig_forget(){ # → the replay set without the lines past 66 days and an hour fro
   fi
   mv "$IG/seen.new" "$IG/seen" && sync "$IG/seen" "$IG"
 }
-ig_floor(){ # → the highest cutoff a prune of the replay set has dropped a line at, from seen-floor, or 0 when it has none: a message sent before it is stale whatever the clock now reads, since its line may be gone, as a Kerberos server that has lost its replay cache refuses until the window has passed (RFC 4120 §3.2.3). A file that names anything else is an error, never the default
+ig_floor(){ # → the highest cutoff a prune of the replay set has dropped a line at, from seen-floor, or 0 when it has none: a message sent before it, or less than 33 days after it, is stale whatever the clock now reads, since its line, or its first copy's, may be gone, as a Kerberos server that has lost its replay cache refuses until the window has passed (RFC 4120 §3.2.3). A file that names anything else is an error, never the default
   local f; [ -e "$IG/seen-floor" ] || { echo 0; return 0; }
   f=$(cat "$IG/seen-floor" 2> /dev/null) && [[ $f =~ ^(0|[1-9][0-9]{0,17})$ ]] && printf '%s\n' "$f" | cmp -s - "$IG/seen-floor" && echo "$f" ||      # compared with itself rebuilt: $(…) drops line feeds and NULs
     { ig_err "$IG/seen-floor names no time: it is a number of seconds and a line feed, written by recv"; return 1; }
@@ -816,7 +819,7 @@ ig_rekey(){ # [--no-pq] → publishes a new prekey, signed by a new working key 
   ig_renew "${1-}"
 }
 ig_renew(){ # [--no-pq] → what ig_rekey does, the lock held. A serial is signed ONCE
-  local A r s t na h c f cs p new x gone u w; A=$(cat "$IG/address") || return 1; mkdir -p "$IG/prekeys"
+  local A r s t na h c f cs p new x gone u w at; A=$(cat "$IG/address") || return 1; mkdir -p "$IG/prekeys"
   ig_finished || { ig_done $?; return 1; }
   ig_api GET "/v1/$A" > "$IG/self.json" 2> "$IG/self.err" || { [ "$(ig_code)" = no_such_mailbox ] || { cat "$IG/self.err" >&2; return 1; }; gone=1; }      # 404: the server holds no box here any more, past its record's expiry or deleted (PROTOCOL.md §7), so nothing is served to number above or to hold to its order, and the renewal goes as a registration
   p=$(cat "$IG/serial" 2> /dev/null || echo 0)
@@ -851,15 +854,15 @@ ig_renew(){ # [--no-pq] → what ig_rekey does, the lock held. A serial is signe
   [ "$s" -le "$(cat "$IG/serial" 2> /dev/null || echo 0)" ] || ig_putline "$IG/serial" "$s" || return 1
   mv "$IG/pass.new" "$IG/pass" || return 1
   for f in "$IG"/work/*-cert.pub; do t=$(basename "$f" -cert.pub); [[ $t =~ ^[0-9]+$ ]] && [ "$t" -lt "$s" ] && rm -f "$IG/work/$t" "$IG/work/$t.pub" "$f"; done      # older working keys: what they signed is signed, and the server takes no pass under them
-  ig_prune && ig_out prekey --argjson serial "$s" --arg not_after "$(sed -n 5p "$IG/prekeys/$s.txt")"
+  at=$(ig_taken) && ig_prune "$at" && ig_out prekey --argjson serial "$s" --arg not_after "$(sed -n 5p "$IG/prekeys/$s.txt")"      # by the reading the server took the renewal at: the date of its pass, now $IG/pass
 }
-ig_prune(){ # [Unix time] → deletes every retired prekey past its deletion time by that reading of this machine's clock (now, without one): its not_after + the 33 days mail is kept. ig_recv gives the reading the server answered the drain's list at, a clock a server took, never a later one. After that, mail encrypted to it is unrecoverable. (The Go client also deletes them sooner.)
+ig_prune(){ # <Unix time, one a server took (ig_taken)> → deletes every retired prekey past its deletion time by that reading of this machine's clock: its not_after + the 33 days mail is kept. ig_recv gives the date of the pass its list carried, ig_renew that of the renewal's: a clock a server took, never a later reading. After that, mail encrypted to it is unrecoverable. (The Go client also deletes them sooner.)
   local f n top na; top=$(ls "$IG/prekeys" | sed -n 's/\.agekey$//p' | sort -n | tail -n 1); [ -n "$top" ] || return 0
   for f in "$IG"/prekeys/*.txt; do
     [ -e "$f" ] || continue
     n=$(basename "$f" .txt); [ "$n" -lt "$top" ] || continue      # never the newest
     na=$(ig_time "$(sed -n 5p "$f")") || continue
-    [ "${1:-$(ig_now)}" -lt $((na + 33*86400)) ] || rm -f "$IG/prekeys/$n.agekey" "$IG/work/$n" "$IG/work/$n.pub" "$IG/work/$n-cert.pub"      # and the working key made with it, if a renewal the server never took left one
+    [ "$1" -lt $((na + 33*86400)) ] || rm -f "$IG/prekeys/$n.agekey" "$IG/work/$n" "$IG/work/$n.pub" "$IG/work/$n-cert.pub"      # and the working key made with it, if a renewal the server never took left one
   done
 }
 

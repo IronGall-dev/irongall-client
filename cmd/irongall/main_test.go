@@ -1645,7 +1645,7 @@ func TestHeldAndPeerCommands(t *testing.T) {
 }
 
 // prekey lifetime prints the box's prekey lifetime, or sets it: a time as
-// sshd writes one, from 1d2h to 33d, with a warning under 2d1h that says how
+// sshd writes one, from 1d3h to 33d, with a warning under 2d2h that says how
 // often recv must then run. A time out of form or out of range is a usage
 // error, and changes nothing.
 func TestPrekeyLifetime(t *testing.T) {
@@ -1674,14 +1674,14 @@ func TestPrekeyLifetime(t *testing.T) {
 		t.Fatalf("the default: %v", l)
 	}
 	for _, c := range []struct{ arg, seconds, shown, every string }{
-		{"1d2h", "93600", "1d2h", "1h"},
-		{"26h", "93600", "1d2h", "1h"},
-		{"93600", "93600", "1d2h", "1h"},
-		{"1D2H", "93600", "1d2h", "1h"},
-		{"2h30m24h", "95400", "1d2h30m", "1h30m"},
-		{"2d", "172800", "2d", "23h"},
-		{"2d59m59s", "176399", "2d59m59s", "23h59m59s"},
-		{"2d1h", "176400", "2d1h", ""},
+		{"1d3h", "97200", "1d3h", "1h"},
+		{"27h", "97200", "1d3h", "1h"},
+		{"97200", "97200", "1d3h", "1h"},
+		{"1D3H", "97200", "1d3h", "1h"},
+		{"3h30m24h", "99000", "1d3h30m", "1h30m"},
+		{"2d", "172800", "2d", "22h"},
+		{"2d1h59m59s", "179999", "2d1h59m59s", "23h59m59s"},
+		{"2d2h", "180000", "2d2h", ""},
 		{"1w", "604800", "7d", ""},
 		{"4w5d", "2851200", "33d", ""},
 	} {
@@ -1698,7 +1698,7 @@ func TestPrekeyLifetime(t *testing.T) {
 		}
 	}
 	for arg, why := range map[string]string{
-		"1d": "is from", "1d59m59s": "is from", "1d1h": "is from", "1d1h59m59s": "is from", "90000": "is from", "33d1s": "is from", "34d": "is from", "10000000000s": "no time", "9999999999w": "longer than any",
+		"1d": "is from", "1d59m59s": "is from", "1d1h": "is from", "1d2h": "is from", "1d2h59m59s": "is from", "93600": "is from", "33d1s": "is from", "34d": "is from", "10000000000s": "no time", "9999999999w": "longer than any",
 		"0": "no time", "0s": "no time", "": "no time", "-1h": "flag", "+1h": "no time", "1.5h": "no time", "1x": "no time", "90000x": "no time", "2d1hx": "no time",
 		"h": "no time", "1h ": "no time", " 1h": "no time", "1dd": "no time",
 	} {

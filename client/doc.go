@@ -15,15 +15,15 @@
 //	identity.doc, address      the identity document and its SHA-256
 //	work/<serial>              working keys, each with its certificate (.pub, -cert.pub): they sign what the box says
 //	prekeys/<serial>.agekey    age keys, each with its signed statement (.txt, .txt.sig) and when it was signed (.made); never backed up
-//	prekey-lifetime            how long each new prekey is valid for: a number of seconds, from 93600 (a day and two hours) to 2851200 (33 days), the default. Yours to write, or irongall prekey lifetime's
+//	prekey-lifetime            how long each new prekey is valid for: a number of seconds, from 97200 (a day and three hours) to 2851200 (33 days), the default. Yours to write, or irongall prekey lifetime's
 //	serial                     the number of the prekey this box published last, which is its certificate's serial too: the box's clock gave it
 //	pass                       the pass this box last signed for its server, used until it runs out
 //	etag                       the ETag of the last poll that found the box empty, sent back in If-None-Match; gone once a poll finds mail
 //	peers/<address>/           the pinned identity document, the highest prekey serial and certificate serial seen, revoke.sig, its revocation, once one has verified, and revoked-certs.json, the highest revocation of its certificates that has verified
 //	revoked.sig                this box's own revocation, once it has met one that verifies: the box is finished
 //	revoked-certs.json         this box's own revocation of its certificates, once it has published one or been shown one that verifies: the record that carries it, one line of JSON
-//	seen                       the replay set: ciphertext hash, sent_at, from, msg_id, for 33 days and an hour from sent_at
-//	seen-floor                 the highest cutoff a prune of seen dropped a line at, in seconds: mail sent before it is stale
+//	seen                       the replay set: ciphertext hash, sent_at, from, msg_id, for 66 days and an hour from sent_at
+//	seen-floor                 the highest cutoff a prune of seen dropped a line at, in seconds: mail sent before it, or less than 33 days after it, is stale
 //	outbox/, outbox/failed/    envelopes awaiting a receipt, sealed afresh at every post and never kept sealed; ones that can never be delivered
 //	inbox/, quarantine/        accepted mail; refused mail, never delivered, each with its reason beside it (.reason), each of the server's strings in base64 that is not of its form, and what the checks established when they judged it (keepRefused)
 //	held/                      accepted mail from senders this box has not allowed, as inbox/ keeps it: allow moves a sender's to inbox/, block deletes it

@@ -40,7 +40,7 @@ irongall peer block <link>         # drop a sender's mail, here and at the serve
 irongall alias add bob <link>      # name a peer, for this box only: then irongall send bob
 irongall send --reply-to <msg_id> bob < answer.txt   # say which message this answers
 irongall prekey renew              # a new prekey now: recv renews it on its own once a day
-irongall prekey lifetime 3d1h      # each new prekey valid 3 days and an hour, not 33: recv must then run at least every 2d1h
+irongall prekey lifetime 3d2h      # each new prekey valid 3 days and two hours, not 33: recv must then run at least every 2d
 irongall status                    # what the box holds and what needs a look, as one line of JSON
 ```
 
@@ -71,7 +71,7 @@ A box is the directory `~/.config/irongall/default`: `$IRONGALL_BOX` names anoth
 - **`identity` IS the address: back it up.** To restore a box, put it alone in an empty box directory and run `irongall prekey renew`.
 - **An identity is an Ed25519 key, which every client verifies.** `irongall init --identity-type ecdsa-sha2-nistp256` makes the one optional type: only a box whose client verifies it can write to that box or hear from it (`PROTOCOL.md` §2, §2c).
 - **Never back up or sync `prekeys/`.** A copy undoes forward secrecy.
-- **Run `irongall recv` at least monthly.** It renews the prekey daily; a prekey lasts 33 days, and the server keeps mail 33 days less an hour, each post dated afresh. A box that runs `recv` often may set its prekeys to last less, down to `1d2h` (`irongall prekey lifetime`): that is how long a stolen prekey, or an old one served to a sender new to the box, stays usable, and `recv` must then run at least every lifetime less a day and an hour.
+- **Run `irongall recv` at least monthly.** It renews the prekey daily; a prekey lasts 33 days, and the server keeps mail 33 days less an hour and two minutes, each post dated afresh. A box that runs `recv` often may set its prekeys to last less, down to `1d3h` (`irongall prekey lifetime`): that is how long a stolen prekey, or an old one served to a sender new to the box, stays usable, and `recv` must then run at least every lifetime less a day and two hours, hourly at the shortest.
 - **Never send a message a second time.** One the server has not taken waits in `outbox/`, and `irongall outbox flush` posts it again, sealed afresh to what the box holds then.
 - **Delivery is at least once.** De-duplicate on `from` + `msg_id`.
 - **Mail from a sender this box has not allowed is held in `held/`, not printed.** Writing to a box allows it, and so do `alias` and `allow`; `block` drops a sender's mail, and the server then refuses it. A `policy` file in the box says `unknown inbox` to print every sender's mail, and `server allowed` to have the server refuse every sender not allowed, which tells the server who they are (`PROTOCOL.md` §5.6, §6.2).

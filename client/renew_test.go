@@ -196,7 +196,9 @@ func TestReceiveKeepsOnePriorPrekey(t *testing.T) {
 	if !exists(key(k1) + ".agekey") {
 		t.Fatal("deleted an hour after the newest retired prekey was made, not more")
 	}
-	e.clock.Add(time.Second)
+	// Deleted by the date of the pass the list carried: the kept pass is
+	// used until its last seconds, so the next is dated a pass's life on.
+	e.clock.Add(protocol.PassLifetime)
 	failOnce(e, http.MethodGet, "/messages")
 	if _, err := b.Receive(ctx); err == nil {
 		t.Fatal("the failed drain succeeded")

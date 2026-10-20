@@ -225,10 +225,18 @@ func (b *Box) owner(ctx context.Context, method, path string, in, out any) (*htt
 
 // ownerWith is owner, with the request's headers hdr beside the pass.
 func (b *Box) ownerWith(ctx context.Context, method, path string, hdr http.Header, in, out any) (*http.Response, error) {
+	resp, _, err := b.ownerTaken(ctx, method, path, hdr, in, out)
+	return resp, err
+}
+
+// ownerTaken is ownerWith, and, once the server has answered, the reading
+// of this box's clock it took: the date of the pass the answered call
+// carried.
+func (b *Box) ownerTaken(ctx context.Context, method, path string, hdr http.Header, in, out any) (*http.Response, taken, error) {
 	for attempt := 0; ; attempt++ {
 		pass, err := b.pass()
 		if err != nil {
-			return nil, err
+			return nil, taken{}, err
 		}
 		h := hdr.Clone()
 		if h == nil {
@@ -237,12 +245,33 @@ func (b *Box) ownerWith(ctx context.Context, method, path string, hdr http.Heade
 		h.Set("Authorization", pass)
 		resp, err := b.call(ctx, method, path, in, h, out)
 		if attempt > 0 || !passRefused(Code(err)) {
-			return resp, err
+			if err != nil {
+				return resp, taken{}, err
+			}
+			at, err := takenBy(pass)
+			return resp, at, err
 		}
 		if err := removeIfExists(b.path("pass")); err != nil {
-			return nil, err
+			return nil, taken{}, err
 		}
 	}
+}
+
+// taken is a reading of this box's clock that a server took: the date of a
+// pass it checked, on a call it answered, the pass's not_after less
+// protocol.PassLifetime. Every deletion by the clock is by one, and never by
+// a reading of the clock (PROTOCOL.md §0): a box whose clock is far off is
+// stopped at its pass, and one whose clock jumps or steps back while a call
+// is in flight deletes nothing by where it went.
+type taken struct{ at time.Time }
+
+// takenBy is the reading pass is dated by, for a call the server answered.
+func takenBy(pass string) (taken, error) {
+	p, err := protocol.ParsePass(pass)
+	if err != nil {
+		return taken{}, err
+	}
+	return taken{p.NotAfter.Add(-protocol.PassLifetime)}, nil
 }
 
 // lookup GETs box a from this box's server (GET /v1/<a>), with no pass: the

@@ -350,7 +350,8 @@ func TestLiveLockExcludes(t *testing.T) {
 }
 
 // A retired prekey decrypts mail until its deletion time, not_after + 33
-// days, and is deleted then: the forward-secrecy bound.
+// days, and is deleted then: the forward-secrecy bound. A renewal deletes by
+// the date of its own pass, which the server took, and it signs a new one.
 func TestPruneDeletesRetiredKeys(t *testing.T) {
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -363,14 +364,14 @@ func TestPruneDeletesRetiredKeys(t *testing.T) {
 		t.Fatal("mail to the retired key was not delivered")
 	}
 	e.clock.Add(protocol.PrekeyLifetime + protocol.TTL - time.Second)
-	if err := b.Prune(); err != nil {
+	if _, err := b.Rekey(context.Background(), ""); err != nil {
 		t.Fatal(err)
 	}
 	if !exists(key1) {
 		t.Fatal("deleted before its deletion time")
 	}
 	e.clock.Add(time.Second)
-	if err := b.Prune(); err != nil {
+	if _, err := b.Rekey(context.Background(), ""); err != nil {
 		t.Fatal(err)
 	}
 	if exists(key1) {

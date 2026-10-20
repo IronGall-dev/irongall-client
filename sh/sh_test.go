@@ -2950,8 +2950,8 @@ func TestBothClientsReadTheLifetimeAlike(t *testing.T) {
 	}
 	file := filepath.Join(dir, "prekey-lifetime")
 	for _, raw := range []string{
-		"93600", "93600\n", "2851200\n", "172800\n",
-		"", "\n", "abc\n", "0\n", "89999\n", "90000\n", "93599\n", "2851201\n", "090000\n", " 90000\n", "90000 \n", "90000\n\n", "90000\r\n", "9e4\n", "+90000\n", "1d1h\n", "99999999999\n", "9000\x000\n",
+		"97200", "97200\n", "2851200\n", "172800\n",
+		"", "\n", "abc\n", "0\n", "89999\n", "90000\n", "93599\n", "93600\n", "97199\n", "2851201\n", "090000\n", " 90000\n", "90000 \n", "90000\n\n", "90000\r\n", "9e4\n", "+90000\n", "1d1h\n", "99999999999\n", "9000\x000\n",
 	} {
 		if err := os.WriteFile(file, []byte(raw), 0o600); err != nil {
 			t.Fatal(err)
@@ -2962,7 +2962,7 @@ func TestBothClientsReadTheLifetimeAlike(t *testing.T) {
 			t.Errorf("%q: the Go client %v (%v), the script %q (%v)", raw, d, goErr, out, shErr)
 		}
 	}
-	if err := os.WriteFile(file, []byte("93600\n"), 0o600); err != nil {
+	if err := os.WriteFile(file, []byte("97200\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := bash(t, env, "ig_rekey "+mode); err != nil {
@@ -2974,7 +2974,7 @@ func TestBothClientsReadTheLifetimeAlike(t *testing.T) {
 	}
 	made, err1 := protocol.ParseTime(st.PrekeyMade)
 	notAfter, err2 := protocol.ParseTime(st.PrekeyNotAfter)
-	if err1 != nil || err2 != nil || notAfter.Sub(made) != 26*time.Hour || st.PrekeyLifetime != 93600 {
+	if err1 != nil || err2 != nil || notAfter.Sub(made) != 27*time.Hour || st.PrekeyLifetime != 97200 {
 		t.Fatalf("what the script signed, as the Go client reads it: %+v", st)
 	}
 	if res, err := b.Receive(ctx); err != nil || res.Renewed != nil {
@@ -3019,7 +3019,7 @@ func TestTheScriptHoldsALowerLifetimeOverAWaitingRenewal(t *testing.T) {
 	if _, err := bash(t, env, "sleep 1; ig_rekey "+mode); err == nil {
 		t.Fatal("the renewal went through")
 	}
-	if err := os.WriteFile(filepath.Join(dir, "prekey-lifetime"), []byte("93600\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "prekey-lifetime"), []byte("97200\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	srv.SetMiddle(nil)
@@ -3036,7 +3036,7 @@ func TestTheScriptHoldsALowerLifetimeOverAWaitingRenewal(t *testing.T) {
 	}
 	made, err1 := protocol.ParseTime(st.PrekeyMade)
 	notAfter, err2 := protocol.ParseTime(st.PrekeyNotAfter)
-	if err1 != nil || err2 != nil || notAfter.Sub(made) > 26*time.Hour {
-		t.Errorf("the script published a prekey made for %v after the lifetime was set to 1d2h: %+v", notAfter.Sub(made), st)
+	if err1 != nil || err2 != nil || notAfter.Sub(made) > 27*time.Hour {
+		t.Errorf("the script published a prekey made for %v after the lifetime was set to 1d3h: %+v", notAfter.Sub(made), st)
 	}
 }

@@ -521,7 +521,8 @@ func (b *Box) renewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy,
 		r.NotRenewed = err
 		return r, nil
 	}
-	r.NotRenewed = b.sendRenewal(ctx, req, r.Below)
+	at, err := b.sendRenewal(ctx, req, r.Below)
+	r.NotRenewed = err
 	var api *APIError
 	if errors.As(r.NotRenewed, &api) && api.Status == http.StatusTooManyRequests && api.RetryAfter > 0 && api.RetryAfter <= remedyWait {
 		select {
@@ -529,14 +530,15 @@ func (b *Box) renewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy,
 			return r, nil
 		case <-time.After(api.RetryAfter):
 		}
-		r.NotRenewed = b.sendRenewal(ctx, req, r.Below)
+		at, r.NotRenewed = b.sendRenewal(ctx, req, r.Below)
 	}
 	if r.NotRenewed != nil {
 		r.NotRenewed = b.proved(ctx, own, r.NotRenewed, l)
 		return r, nil
 	}
 	r.Prekey = p
-	return r, b.prune(b.now())
+	// By the reading the server took the renewal at (PROTOCOL.md §0).
+	return r, b.prune(at)
 }
 
 // ownTook reports whether the box's own server took a record whose

@@ -51,32 +51,34 @@ func (b *Box) rekey(ctx context.Context, kt protocol.KeyType, l *lookups) (*prot
 	if err := b.finished(); err != nil {
 		return nil, err
 	}
-	p, err := b.renew(ctx, kt, l)
+	p, at, err := b.renew(ctx, kt, l)
 	if err != nil {
 		return nil, err
 	}
-	return p, b.prune(b.now())
+	// By the reading the server took the renewal at (PROTOCOL.md §0).
+	return p, b.prune(at)
 }
 
-func (b *Box) renew(ctx context.Context, kt protocol.KeyType, l *lookups) (*protocol.Prekey, error) {
+func (b *Box) renew(ctx context.Context, kt protocol.KeyType, l *lookups) (*protocol.Prekey, taken, error) {
 	st, err := b.readOwn(ctx, kt, false, l)
 	if err != nil {
-		return nil, err
+		return nil, taken{}, err
 	}
 	next, signed, err := b.nextNumber(st, false)
 	if err != nil {
-		return nil, err
+		return nil, taken{}, err
 	}
 	p, req, err := b.makeRenewal(st, next, signed)
 	if err != nil {
-		return nil, err
+		return nil, taken{}, err
 	}
 	// From here a statement at next exists, signed, whatever the server
 	// makes of it.
-	if err := b.sendRenewal(ctx, req, next); err != nil {
-		return nil, err
+	at, err := b.sendRenewal(ctx, req, next)
+	if err != nil {
+		return nil, taken{}, err
 	}
-	return p, nil
+	return p, at, nil
 }
 
 // renewal is a renewal made and signed, ready to send.
@@ -92,16 +94,18 @@ type renewal struct {
 // sendRenewal publishes renewal r of statement n: as a new prekey, or to a
 // server that forgot the box, as its registration. A box registered anew
 // has no ACL at its server, so what this box kept of the last one the server
-// took goes, and the next send or recv sends it again.
-func (b *Box) sendRenewal(ctx context.Context, r renewal, n uint64) error {
+// took goes, and the next send or recv sends it again. It returns the
+// reading the server took.
+func (b *Box) sendRenewal(ctx context.Context, r renewal, n uint64) (taken, error) {
 	if !r.forgotten {
 		return b.publish(ctx, b.boxPath("/prekey"), r.req, n)
 	}
 	reg := protocol.RegisterRequest{Identity: b.id.Document(), Prekey: r.req.Prekey, PrekeySignature: r.req.PrekeySignature, SenderKeyTypes: r.req.SenderKeyTypes}
-	if err := b.publish(ctx, b.boxPath(""), reg, n); err != nil {
-		return err
+	at, err := b.publish(ctx, b.boxPath(""), reg, n)
+	if err != nil {
+		return taken{}, err
 	}
-	return removeIfExists(b.path("acl.json"))
+	return at, removeIfExists(b.path("acl.json"))
 }
 
 // ownRead is what a renewal learned from its read of its own box.
@@ -437,19 +441,26 @@ func (b *Box) recordPublished(serial uint64) error {
 // box renews at most daily.
 const renewAfter = 24 * time.Hour
 
+// renewTime is the room a renewal leaves for its own calls, beside
+// protocol.MaxSkew: from the start of the Receive that renews to the server
+// taking the new prekey, the read of the box's own box, the revocation
+// servers it asks and the upload.
+const renewTime = time.Hour
+
 // MinPrekeyLifetime is the shortest a box's prekeys may be valid for: the
 // day Receive waits to renew one (renewAfter), an hour of slip for when recv
-// runs, and protocol.MaxSkew for clocks, the hour a sender's may read ahead
-// of the box's (PROTOCOL.md §0, §6.4).
-const MinPrekeyLifetime = renewAfter + time.Hour + protocol.MaxSkew
+// runs, renewTime, and protocol.MaxSkew for clocks, the hour a sender's may
+// read ahead of the box's (PROTOCOL.md §0, §6.4). At it, an hourly recv
+// renews in time.
+const MinPrekeyLifetime = renewAfter + time.Hour + renewTime + protocol.MaxSkew
 
 // RecvWithin is how often a box must run Receive for a prekey of the given
 // lifetime to be renewed while every sender whose clock a server takes still
 // takes it: Receive renews one once it is a day old, and the prekey then has
-// protocol.MaxSkew left, which whoever makes a time-limited thing leaves
-// (PROTOCOL.md §0).
+// renewTime and protocol.MaxSkew left, the room whoever makes a time-limited
+// thing leaves (PROTOCOL.md §0).
 func RecvWithin(lifetime time.Duration) time.Duration {
-	return lifetime - renewAfter - protocol.MaxSkew
+	return lifetime - renewAfter - renewTime - protocol.MaxSkew
 }
 
 // lifetimeGrammar is what a box's prekey-lifetime file holds: a number of
@@ -479,7 +490,7 @@ func (b *Box) PrekeyLifetime() (time.Duration, error) {
 }
 
 // lifetimeRule is what a prekey lifetime is, as a box's owner is told it.
-var lifetimeRule = fmt.Sprintf("one is a number of seconds, alone on its line, from %d (a day and two hours) to %d (33 days)", int64(MinPrekeyLifetime/time.Second), int64(protocol.PrekeyLifetime/time.Second))
+var lifetimeRule = fmt.Sprintf("one is a number of seconds, alone on its line, from %d (a day and three hours) to %d (33 days)", int64(MinPrekeyLifetime/time.Second), int64(protocol.PrekeyLifetime/time.Second))
 
 // SetPrekeyLifetime writes the box's prekey-lifetime file: each prekey made
 // from now on is valid for d, a whole number of seconds from
@@ -575,15 +586,16 @@ func (b *Box) renewDue() bool {
 }
 
 // dropRetired deletes every retired prekey but the newest, after a drain
-// that emptied the box and began more than retiredGrace after the newest
-// retired prekey was made: every older one was retired by then. A send must
+// that emptied the box and whose list the server took at a reading more than
+// retiredGrace after the newest retired prekey was made: every older one was
+// retired by then. A send must
 // name the recipient's current prekey serial, so mail encrypted to a retired
 // prekey reached the server before the renewal that retired it, or with a
 // send already in progress: such a drain collected all of it. The newest
 // retired prekey is kept regardless. After this, mail encrypted to a deleted
 // prekey is unrecoverable from the box's keys. irongall.sh does not do this;
-// it keeps every retired prekey until Prune's deletion time.
-func (b *Box) dropRetired(began time.Time) error {
+// it keeps every retired prekey until prune's deletion time.
+func (b *Box) dropRetired(at taken) error {
 	cur, err := b.publishedSerial()
 	if err != nil {
 		return err
@@ -603,7 +615,7 @@ func (b *Box) dropRetired(began time.Time) error {
 	}
 	slices.Sort(retired)
 	newest := retired[len(retired)-1]
-	if made, err := b.made(newest); err != nil || began.Sub(made) <= retiredGrace {
+	if made, err := b.made(newest); err != nil || at.at.Sub(made) <= retiredGrace {
 		return nil //nolint:nilerr // a newest retired prekey that cannot be read keeps every key
 	}
 	for _, n := range retired[:len(retired)-1] {
@@ -631,20 +643,15 @@ func (b *Box) removePrekey(n uint64) error {
 	return nil
 }
 
-// Prune deletes every prekey but the newest this box holds whose deletion
-// time has come by this machine's clock: its not_after plus protocol.TTL. All
-// mail encrypted to it arrived by its not_after and has expired by then;
-// after this, that mail is unrecoverable from the box's keys. [Box.Receive]
-// runs it only once its server has answered the drain's list, so has taken a
-// pass dated by that clock, and by the clock as it read then: a clock far
-// ahead deletes nothing there, and neither does one that moves on during the
-// drain.
-func (b *Box) Prune() error {
-	return b.lockedDo(context.Background(), func() error { return b.prune(b.now()) })
-}
-
-// prune deletes by the clock reading at: one a server took.
-func (b *Box) prune(at time.Time) error {
+// prune deletes every prekey but the newest this box holds whose deletion
+// time has come by the reading at, one a server took: its not_after plus
+// protocol.TTL. All mail encrypted to it arrived by its not_after and has
+// expired by then; after this, that mail is unrecoverable from the box's
+// keys. A drain's list taken, and a renewal taken, each run it, by the date
+// of the pass that call carried: a clock far ahead is stopped at that pass,
+// and one that moves while the call is in flight deletes nothing by where it
+// went.
+func (b *Box) prune(at taken) error {
 	keys, err := filepath.Glob(b.path("prekeys", "*.agekey"))
 	if err != nil {
 		return err
@@ -668,7 +675,7 @@ func (b *Box) prune(at time.Time) error {
 		if err != nil {
 			continue
 		}
-		if !at.Before(p.NotAfter.Add(protocol.TTL)) {
+		if !at.at.Before(p.NotAfter.Add(protocol.TTL)) {
 			if err := b.removePrekey(n); err != nil {
 				return err
 			}

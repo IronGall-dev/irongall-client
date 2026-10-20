@@ -154,7 +154,7 @@ func TestAPrekeyWithNoRecordIsRenewedAndItsKeysKept(t *testing.T) {
 // read.
 func TestALifetimeOutOfFormIsNeverTheDefault(t *testing.T) {
 	ctx := context.Background()
-	for _, raw := range []string{"", "\n", "abc\n", "0\n", "89999\n", "90000\n", "93599\n", "2851201\n", "090000\n", " 90000\n", "90000 \n", "90000\n\n", "90000\r\n", "9e4\n", "+90000\n", "1d1h\n", "99999999999\n"} {
+	for _, raw := range []string{"", "\n", "abc\n", "0\n", "89999\n", "90000\n", "93599\n", "93600\n", "97199\n", "2851201\n", "090000\n", " 90000\n", "90000 \n", "90000\n\n", "90000\r\n", "9e4\n", "+90000\n", "1d1h\n", "99999999999\n"} {
 		e := newEnv(t)
 		b := e.box(protocol.Classic)
 		n := numberOf(t, b)
@@ -175,7 +175,7 @@ func TestALifetimeOutOfFormIsNeverTheDefault(t *testing.T) {
 			t.Errorf("%q: status %+v, %v", raw, st, err)
 		}
 	}
-	for raw, want := range map[string]time.Duration{"93600": client.MinPrekeyLifetime, "93600\n": client.MinPrekeyLifetime, "2851200\n": protocol.PrekeyLifetime, "172800\n": 48 * time.Hour} {
+	for raw, want := range map[string]time.Duration{"97200": client.MinPrekeyLifetime, "97200\n": client.MinPrekeyLifetime, "2851200\n": protocol.PrekeyLifetime, "172800\n": 48 * time.Hour} {
 		b := newEnv(t).box(protocol.Classic)
 		if err := os.WriteFile(filepath.Join(b.Dir(), "prekey-lifetime"), []byte(raw), 0o600); err != nil {
 			t.Fatal(err)

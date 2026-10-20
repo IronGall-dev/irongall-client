@@ -1143,7 +1143,7 @@ components:
         received_at:
           $ref: '#/components/schemas/Time'
         expires_at:
-          description: When the server deletes the message, read or not, 33 days less an hour after it was received (`PROTOCOL.md` §7).
+          description: When the server deletes the message, read or not, 33 days less an hour and two minutes after it was received (`PROTOCOL.md` §7).
           $ref: '#/components/schemas/Time'
     MessageList:
       type: object

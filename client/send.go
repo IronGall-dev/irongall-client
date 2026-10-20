@@ -419,11 +419,13 @@ func (b *Box) postSealed(ctx context.Context, to protocol.Address, s *sealed) (*
 // post. Nothing of it is written: the outbox keeps the envelope as written,
 // and a seal is made again for every post.
 //
-// The dating changes the envelope's sent_at and nothing else: a post's
-// sent_at is its sender's clock at that post, as a signed request's time is
-// when it was signed, made anew for each attempt (PROTOCOL.md §4.2, §4.5), so
-// the server keeps a message about as long as its reader takes it
-// (protocol.Retention). The msg_id stays, and the reader drops a retry by it.
+// The dating changes the value of the envelope's sent_at and no other byte of
+// its line as written (protocol.Dated), whichever client wrote it, and comes
+// last, once the recipient's box is read: a post's sent_at is its sender's
+// clock at that post, as a signed request's time is when it was signed, made
+// anew for each attempt (PROTOCOL.md §4.2, §4.5), so the server keeps a
+// message about as long as its reader takes it (protocol.Retention). The
+// msg_id stays, and the reader drops a retry by it.
 //
 // The envelope is read as its recipient will read it, so one the recipient
 // would refuse is never sealed. The padding is made here, for the prekey's
@@ -438,14 +440,6 @@ func (b *Box) seal(ctx context.Context, to protocol.Address, stem string, l *loo
 	env, err := protocol.OpenEnvelopeRecord(written, b.id.Address(), to)
 	if err != nil || !bytes.Equal(env.Identity, b.id.Document()) || !bytes.HasSuffix(written, []byte("\n")) {
 		return nil, refuse("the outbox entry is not an envelope this box made for that address")
-	}
-	env.SentAt = b.now().UTC().Truncate(time.Second)
-	line, err := env.Line()
-	if err != nil {
-		return nil, err
-	}
-	if dated, err := protocol.OpenEnvelopeRecord(line, b.id.Address(), to); err != nil || !sameEnvelope(dated, env) {
-		return nil, refuse("the outbox entry does not read back as itself once dated at this post")
 	}
 	worker, cert, err := b.currentWorker()
 	if err != nil {
@@ -469,6 +463,24 @@ func (b *Box) seal(ctx context.Context, to protocol.Address, stem string, l *loo
 	pk, under, err := b.resolve(ctx, to, l)
 	if err != nil {
 		return nil, err
+	}
+	// Dated last, once the recipient's box is read: the sent_at a server
+	// meets is this clock at the post, less only what the seal and the
+	// request take (protocol.PostTime). And never more than the outbox's TTL
+	// after the entry was written, however long the read took or however
+	// often a seal is made again, so a retry is dated at most a TTL after
+	// its first copy, which a reader's replay set reaches back to.
+	wrote := env.SentAt
+	env.SentAt = b.now().UTC().Truncate(time.Second)
+	if env.SentAt.After(wrote.Add(protocol.TTL)) {
+		return nil, refuse("it was written more than %d days ago, and an outbox posts a message no longer than that", protocol.TTL/(24*time.Hour))
+	}
+	line, err := protocol.Dated(written, env.SentAt)
+	if err != nil {
+		return nil, refuse("the outbox entry does not read back as itself once dated at this post")
+	}
+	if dated, err := protocol.OpenEnvelopeRecord(line, b.id.Address(), to); err != nil || !sameEnvelope(dated, env) {
+		return nil, refuse("the outbox entry does not read back as itself once dated at this post")
 	}
 	r, err := pk.Recipient()
 	if err != nil {

@@ -96,11 +96,11 @@ type Result struct {
 	// was not sent ([Box.SyncACL]). The drain went ahead, and the next
 	// Receive sends it.
 	ACLErr error
-	// listedAt is this machine's clock when the server answered the drain's
-	// first list, and zero until it has: the server took a pass dated by
-	// that reading, so what is deleted by it is deleted by a clock a server
-	// takes, and never by a later reading no server has seen.
-	listedAt time.Time
+	// listedAt is the reading the server took for the drain's first list,
+	// the date of the pass the list carried, and zero until it has answered:
+	// what is deleted by it is deleted by a clock a server took, and never by
+	// a reading no server has seen.
+	listedAt taken
 }
 
 // Receive drains the box: every page, every message. Each message is judged
@@ -117,7 +117,7 @@ type Result struct {
 // then deletes the retired prekeys no mail can still need (see
 // [Box.dropRetired]): all but the newest. And once the server has answered
 // the drain's list, so has taken a pass dated by this machine's clock, the
-// prekeys whose deletion time has come by that clock go too ([Box.Prune]).
+// prekeys whose deletion time has come by that pass's date go too.
 //
 // A box that holds its own revocation receives nothing.
 func (b *Box) Receive(ctx context.Context) (*Result, error) {
@@ -128,7 +128,6 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 	if err := b.finished(); err != nil {
 		return nil, err
 	}
-	began := b.now()
 	// What this command has asked as it went: the renewal's ask for the
 	// box's own revocation, then the drain's about each sender.
 	asked := newLookups()
@@ -139,14 +138,15 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 		res = &Result{}
 	}
 	res.Renewed, res.RenewErr, res.ACLErr = renewed, renewErr, aclErr
-	// Only a drain that emptied the box may delete retired prekeys.
-	if err == nil && !res.More {
-		err = b.dropRetired(began)
-	}
 	// Deleted by this clock only once the server has taken a pass dated by
-	// it: a clock far ahead is stopped at its pass, and the keys that mail
-	// waits for stay (PROTOCOL.md §0).
-	if !res.listedAt.IsZero() {
+	// it, and by that pass's date: a clock far ahead is stopped at its pass,
+	// and the keys that mail waits for stay (PROTOCOL.md §0).
+	if !res.listedAt.at.IsZero() {
+		// Only a drain that emptied the box may delete retired prekeys
+		// early.
+		if err == nil && !res.More {
+			err = b.dropRetired(res.listedAt)
+		}
 		if e := b.prune(res.listedAt); err == nil {
 			err = e
 		}
@@ -199,17 +199,18 @@ func (b *Box) drain(ctx context.Context, asked *lookups) (*Result, error) {
 			}
 		}
 		var list protocol.MessageList
-		resp, err := b.ownerWith(ctx, http.MethodGet, path, hdr, nil, &list)
+		resp, at, err := b.ownerTaken(ctx, http.MethodGet, path, hdr, nil, &list)
 		if err != nil {
 			// A server that says this box is revoked is asked to show it.
 			return res, b.proved(ctx, b.id.Address(), err, asked)
 		}
 		if page == 0 {
-			res.listedAt = b.now()
+			res.listedAt = at
 			// Pruned by this clock only once the server has taken a pass
-			// dated by it: a drain that a clock far off would prune is
-			// stopped at its pass first (PROTOCOL.md §0, §5 check 9).
-			if err := b.pruneSeen(); err != nil {
+			// dated by it, and by that pass's date: a drain that a clock far
+			// off would prune is stopped at its pass first (PROTOCOL.md §0,
+			// §5 check 9).
+			if err := b.pruneSeen(at); err != nil {
 				return nil, err
 			}
 		}
@@ -433,12 +434,15 @@ func (b *Box) judge(ctx context.Context, ct []byte, listedFrom string, asked *lo
 	}
 	from, env := signed.Sender.Address(), signed.Envelope
 	// Freshness has a floor too: a sent_at before the highest cutoff the
-	// seen-set was pruned at may be a message whose line went.
+	// seen-set was pruned at may be a message whose line went, and so may one
+	// up to protocol.TTL above it, a retry of such a message, dated afresh up
+	// to a TTL after its first copy (check 10 knows a retry by that copy's
+	// line).
 	floor, err := b.seenFloor()
 	if err != nil {
 		return nil, false, nil, err
 	}
-	if env.SentAt.Unix() < floor {
+	if floor > 0 && env.SentAt.Unix() < floor+int64(protocol.TTL/time.Second) {
 		return refused(protocol.RefusedStale, "sent_at is before this box's replay set reaches back to, since its clock once read later than it does now")
 	}
 	// The server says who posted it, from the pass the post carried. It is
@@ -613,16 +617,16 @@ func (b *Box) recordSeen(ciphertext []byte, env *protocol.Envelope) error {
 	return syncDir(b.dir)
 }
 
-// pruneSeen drops the lines past protocol.SeenFor by this clock. When it
-// drops one, the floor rises to the cutoff first, so a clock that later reads
-// further back than SeenFor allows for still takes no message whose line went
-// (seenFloor).
-func (b *Box) pruneSeen() error {
+// pruneSeen drops the lines past protocol.SeenFor by the reading at, one a
+// server took. When it drops one, the floor rises to the cutoff first, so a
+// clock that later reads further back than SeenFor allows for still takes no
+// message whose line went (seenFloor).
+func (b *Box) pruneSeen(at taken) error {
 	lines, err := b.seenLines()
 	if err != nil || lines == nil {
 		return err
 	}
-	cutoff := b.now().Add(-protocol.SeenFor).Unix()
+	cutoff := at.at.Add(-protocol.SeenFor).Unix()
 	var out bytes.Buffer
 	dropped := false
 	for _, l := range lines {
@@ -643,10 +647,11 @@ func (b *Box) pruneSeen() error {
 
 // seenFloor is the highest cutoff a prune of the seen-set has dropped a line
 // at, from the box's seen-floor file, or 0 when it has none: a message whose
-// sent_at is before it is stale whatever the clock now reads, since its line
-// may be gone. It is how a Kerberos server that has lost its replay cache
-// refuses until the window has passed (RFC 4120 §3.2.3). A file that names
-// anything but a number of seconds is an error, never the default.
+// sent_at is before it, or less than protocol.TTL above it, is stale whatever
+// the clock now reads, since its line, or its first copy's, may be gone. It
+// is how a Kerberos server that has lost its replay cache refuses until the
+// window has passed (RFC 4120 §3.2.3). A file that names anything but a
+// number of seconds is an error, never the default.
 func (b *Box) seenFloor() (int64, error) {
 	raw, err := os.ReadFile(b.path("seen-floor"))
 	if errors.Is(err, fs.ErrNotExist) {
