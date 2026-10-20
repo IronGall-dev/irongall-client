@@ -216,6 +216,17 @@ func (b *Box) drain(ctx context.Context, asked *lookups) (*Result, error) {
 		}
 		res.PollAfter = int64(min(n, maxWaitSeconds))
 		if resp.StatusCode == http.StatusNotModified {
+			// A 304 carries the tag of the page it is about (RFC 9110
+			// §15.4.5). One about another tag than the one sent says
+			// nothing of the page that tag named (RFC 9111 §4.3.4): it is
+			// no answer, and the tag goes, so the next poll asks for the
+			// page in full.
+			if !sameTag(resp.Header.Get("ETag"), hdr.Get("If-None-Match")) {
+				if err := removeIfExists(b.path("etag")); err != nil {
+					return nil, err
+				}
+				return res, fmt.Errorf("GET %s: a 304 about another tag than the one the poll sent", path)
+			}
 			return res, nil
 		}
 		if page == 0 {
@@ -662,6 +673,13 @@ func (b *Box) raiseFloor(t int64) error {
 // weak or strong, in printable ASCII, and short. A server's tag of any other
 // form is not sent back.
 var entityTag = regexp.MustCompile(`\A(W/)?"[\x21\x23-\x7e]{0,128}"\z`)
+
+// sameTag reports whether two tags, each in the form a box keeps, are the
+// same by the weak comparison (RFC 9110 §8.8.3.2): a proxy on the way may
+// mark a tag weak.
+func sameTag(a, b string) bool {
+	return entityTag.MatchString(a) && entityTag.MatchString(b) && strings.TrimPrefix(a, "W/") == strings.TrimPrefix(b, "W/")
+}
 
 // ifNoneMatch is the header a poll sends: If-None-Match with the tag kept in
 // etag, or none when the box keeps none.

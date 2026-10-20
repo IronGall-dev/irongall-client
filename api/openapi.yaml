@@ -539,7 +539,7 @@ paths:
         - name: If-None-Match
           in: header
           required: false
-          description: The `ETag` of a first page this box was answered; a client keeps only an empty box's (§5.1). Compared weakly (RFC 9110 §13.1.2).
+          description: The `ETag` of a first page this box was answered; a client keeps only an empty box's (§5.1). Read as RFC 9110 §13.1.2 has a server evaluate it, `*` only as the whole value and each listed tag through its closing quote, and compared weakly.
           schema:
             type: string
       responses:
@@ -568,7 +568,7 @@ paths:
             Retry-After:
               $ref: '#/components/headers/PollInterval'
             ETag:
-              description: The page's tag, the one the poll sent back.
+              description: The page's tag, the one the poll sent back; a `304` with another is no answer (§5.1).
               required: true
               schema:
                 type: string

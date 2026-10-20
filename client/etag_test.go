@@ -2,12 +2,15 @@ package client_test
 
 import (
 	"context"
+	"maps"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
 	"github.com/IronGall-dev/irongall-client/protocol"
@@ -151,5 +154,81 @@ func TestAnETagOfAnotherFormIsNotKept(t *testing.T) {
 		if exists(filepath.Join(b.Dir(), "etag")) {
 			t.Errorf("the ETag %q was kept", bad)
 		}
+	}
+}
+
+// A tag a hostile server hands an empty box once, which RFC 9110 §8.8.3
+// allows to hold a comma and a "*", is one tag to an honest server: its polls
+// are answered in full, and the mail sent after is delivered at the next.
+func TestAPlantedTagHidesNoMail(t *testing.T) {
+	for _, plant := range []string{`",*,"`, `"x,*,y"`, `W/"a,W/*,b"`} {
+		e := newEnv(t)
+		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if r.Method != http.MethodGet || !strings.HasSuffix(r.URL.Path, "/messages") || r.URL.RawQuery != "" {
+				next.ServeHTTP(w, r)
+				return
+			}
+			rec := httptest.NewRecorder()
+			next.ServeHTTP(rec, r)
+			maps.Copy(w.Header(), rec.Header())
+			w.Header().Set("ETag", plant)
+			w.WriteHeader(rec.Code)
+			_, _ = w.Write(rec.Body.Bytes())
+		})
+		receive(t, b)
+		if kept, _ := os.ReadFile(filepath.Join(b.Dir(), "etag")); string(kept) != plant {
+			t.Fatalf("the box keeps %q, want the planted %s", kept, plant)
+		}
+		var p polls
+		p.watch(e, b)
+		send(t, a, b, "after")
+		if res := receive(t, b); len(res.Delivered) != 1 || p.status[0] != http.StatusOK {
+			t.Errorf("with %s kept: delivered %d, the poll answered %v; want 1, and 200", plant, len(res.Delivered), p.status)
+		}
+	}
+}
+
+// A 304 is about the page its ETag names (RFC 9110 §15.4.5): one about
+// another tag than the poll sent is no answer (RFC 9111 §4.3.4). The drain
+// fails, so no prekey the mail may be sealed to is deleted, and the kept tag
+// goes, so the next poll asks for the page in full. One whose tag a proxy
+// marked weak is the answer.
+func TestA304AboutAnotherTagIsNoAnswer(t *testing.T) {
+	e := newEnv(t)
+	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	receive(t, b)
+	etag := filepath.Join(b.Dir(), "etag")
+	kept, err := os.ReadFile(etag)
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer := func(tag string) {
+		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/messages") && r.Header.Get("If-None-Match") != "" {
+				w.Header().Set("ETag", tag)
+				w.Header().Set("Retry-After", fakeserver.PollInterval)
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+	answer("W/" + string(kept))
+	if res := receive(t, b); len(res.Delivered) != 0 || !exists(etag) {
+		t.Fatalf("a 304 with the tag sent, marked weak: delivered %d, a tag kept %v; want none, and the tag kept", len(res.Delivered), exists(etag))
+	}
+	send(t, a, b, "sealed to the prekey current now")
+	e.clock.Add(25 * time.Hour) // the next drain renews, and retires that prekey
+	answer(`"another"`)
+	if _, err := b.Receive(context.Background()); err == nil {
+		t.Fatal("a 304 about another tag was taken as an answer")
+	}
+	if exists(etag) {
+		t.Error("a 304 about another tag left the box's tag kept")
+	}
+	e.srv.SetMiddle(nil)
+	if res := receive(t, b); len(res.Delivered) != 1 {
+		t.Errorf("delivered %d, refused %v; want the message the 304 left on the server", len(res.Delivered), res.Refused)
 	}
 }
