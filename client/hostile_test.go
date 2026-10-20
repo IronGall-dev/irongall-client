@@ -167,9 +167,11 @@ func TestMadeUpSendersLeaveNothingInPeers(t *testing.T) {
 	e := newEnv(t)
 	a, b, o := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
 	send(t, a, b, "from a real sender")
+	fake := map[string]bool{}
 	for i := range 20 {
 		var madeUp protocol.Address
 		madeUp[0], madeUp[31] = 0xee, byte(i)
+		fake[madeUp.String()] = true
 		if i%2 == 0 { // nothing this box can decrypt
 			ct := []byte{byte(i)}
 			h := sha256.Sum256(ct)
@@ -185,7 +187,7 @@ func TestMadeUpSendersLeaveNothingInPeers(t *testing.T) {
 		if x, ok := readOf(r); ok {
 			reads[x]++
 		}
-		if strings.HasPrefix(r.URL.Path, "/v1/ee") {
+		if named, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/v1/"), "/"); fake[named] {
 			madeUp++
 		}
 		next.ServeHTTP(w, r)
