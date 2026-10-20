@@ -298,6 +298,10 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if bytes.Equal(b.statement, req.Prekey) && bytes.Equal(b.signature, req.PrekeySignature) {
+			if !b.current() { // nothing under a revoked certificate is taken, an identical retry included
+				problem(w, protocol.CodeCertificateRevoked, "the statement is signed under a certificate this box's identity revoked")
+				return
+			}
 			WriteJSON(w, http.StatusOK, struct{}{})
 			return
 		}

@@ -533,7 +533,7 @@ paths:
         - name: cursor
           in: query
           required: false
-          description: The `next_cursor` of the page before. Any other is answered as a poll (§5.1).
+          description: The `next_cursor` of the page before. Any other the server can read is answered as a poll; one it cannot read is `400` (§5.1).
           schema:
             $ref: '#/components/schemas/Cursor'
         - name: If-None-Match
@@ -953,7 +953,7 @@ components:
                   code:
                     const: revoked
     ContentTooLarge:
-      description: '`too_large`, with the `limit` in bytes, or in entries for an ACL.'
+      description: '`too_large`, with the `limit` in bytes, or in entries for an ACL (bytes at a server that bounds no ACL''s entries).'
       headers:
         Date:
           $ref: '#/components/headers/Date'

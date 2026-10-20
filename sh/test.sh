@@ -120,7 +120,8 @@ srv_forget(){ rm -f $SRV/$1/state $SRV/$1/prekey.txt $SRV/$1/prekey.sig $SRV/$1/
 srv_register(){ local a=$1 f=$2 d=$SRV/$1 tok=$3
   if [ -e $d/state ]; then [ "$(cat $d/state)" = revoked ] && { srv_err 410 revoked "revoked"; return 1; }
     jq -er .identity "$f" | base64 -d > $SRV/tmp/id.doc; jq -er .prekey "$f" | base64 -d > $SRV/tmp/pk.txt; jq -er .prekey_signature "$f" | base64 -d > $SRV/tmp/pk.sig
-    cmp -s $SRV/tmp/id.doc $d/identity.doc && cmp -s $SRV/tmp/pk.txt $d/prekey.txt && cmp -s $SRV/tmp/pk.sig $d/prekey.sig && srv_state "$a" active && { echo '{}'; return; }   # identical to the CURRENT registration
+    cmp -s $SRV/tmp/id.doc $d/identity.doc && cmp -s $SRV/tmp/pk.txt $d/prekey.txt && cmp -s $SRV/tmp/pk.sig $d/prekey.sig && srv_state "$a" active && {   # identical to the CURRENT registration: nothing under a revoked certificate, then its pass
+      srv_current "$a" || return 1; [ -n "$LENIENT" ] || srv_pass "$a" "$tok" $d/identity.doc "$(cat $d/cert-serial)" || return 1; echo '{}'; return; }
     srv_err 409 conflict "this address is registered: to replace its prekey, PUT /v1/$a/prekey"; return 1; fi
   jq -er .identity "$f" | base64 -d > $SRV/tmp/id.doc && jq -er .prekey "$f" | base64 -d > $SRV/tmp/pk.txt && jq -er .prekey_signature "$f" | base64 -d > $SRV/tmp/pk.sig || { srv_err 400 bad_request "identity, prekey, prekey_signature"; return 1; }
   [ "$(sha256sum < $SRV/tmp/id.doc | cut -c1-64)" = "$a" ] || { srv_err 400 identity_mismatch "the identity document must hash to the address"; return 1; }
