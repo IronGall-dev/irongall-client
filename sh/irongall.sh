@@ -102,11 +102,8 @@ ig_owner(){ # <METHOD> <PATH> [body file] [curl args…] → ig_api as this box:
   rm -f "$IG/pass"; p=$(ig_pass) && ig_api "$1" "$2" "${3-}" -H "Authorization: $p" "${@:4}" && return 0
   ig_clock; return 1
 }
-ig_look(){ # <address> → ig_api GET of another box from this box's server (GET /v1/<address>), with this box's pass, so the call is counted against this box and not against the address it comes from (PROTOCOL.md §4.1). About itself, or with no pass to sign, without one: those are asked when the pass may be what is wrong
-  [ "$1" != "$(cat "$IG/address" 2> /dev/null)" ] && ig_pass > /dev/null 2>&1 || { ig_api GET "/v1/$1"; return; }
-  ig_owner GET "/v1/$1" 2> "$IG/look.err" && return 0
-  case $(ig_code) in unauthorized | pass_expired | certificate_not_current | certificate_revoked | unknown_sender | sender_revoked) ig_api GET "/v1/$1" ;;      # what was refused is this box's pass, not the lookup: what is public is asked again without it
-    *) cat "$IG/look.err" >&2; return 1 ;; esac
+ig_look(){ # <address> → ig_api GET of a box from this box's server (GET /v1/<address>), with no pass: the read is public, and a pass would only have the server count it against this box (PROTOCOL.md §4.1)
+  ig_api GET "/v1/$1"
 }
 ig_clock(){ # after a call the server refused: if it refused the pass, or a prekey statement, for its time, says what the server dates its answer and what this machine's clock reads. A new pass does not cure that, so it is nearly always a clock. The date is the server's word: a clock set by a server's lie makes an ended certificate valid again, so this sends its reader to a time source of their own
   local d; case $(ig_code) in pass_expired | prekey_time) ;; *) return 0 ;; esac

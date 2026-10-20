@@ -82,7 +82,8 @@ paths:
         identity (§6.3a). A revoked address is `410 revoked`, with the record
         held in `record`, which a client checks and never believes (§6.3).
         With a pass the call is counted against the box that asks; with none,
-        against the address it comes from (§8). Answered for an active box: a
+        against the address it comes from (§8). Both clients send none.
+        Answered for an active box: a
         deleted one, and an address with no box, are `404`.
       security:
         - {}
@@ -715,8 +716,11 @@ components:
       scheme: irongall-pass
       description: |
         A pass the box signs for itself with its working key, good for ten
-        minutes (`PROTOCOL.md` §6.1b), in exactly this form:
+        minutes (`PROTOCOL.md` §6.1b). A client writes it in exactly this form:
         `Authorization: irongall-pass address="<address>", not_after="<RFC 3339 UTC>", signature="<base64 of the SSHSIG>"`.
+        A server reads it as RFC 9110 §11 lets a recipient: the scheme and
+        the names in any case, the three parameters in any order, whitespace
+        around each comma and `=`, each value a token or a quoted-string.
         The server issues nothing: there is no token. A `401` carries
         `WWW-Authenticate: irongall-pass`; on one, a client signs another pass
         and tries once more.

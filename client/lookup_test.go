@@ -2,7 +2,6 @@ package client_test
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"sync"
 	"testing"
@@ -34,23 +33,22 @@ func lookups(e *env) (seen func() map[string]bool) {
 	}
 }
 
-// A box's lookups of another box carry its pass, so a server counts them
-// against the box and not against the address it calls from (PROTOCOL.md
-// §4.1, §8): the recipient's box before a send, and a sender's in a drain.
-// What a box asks about itself carries none, since its pass may be what is
-// wrong.
-func TestLookupsCarryThePass(t *testing.T) {
+// A box's lookups carry no pass (PROTOCOL.md §4.1, §8): the read is public,
+// and a pass would only have a server count it against the box. Not the
+// recipient's box before a send, not a sender's in a drain, and not a box's
+// read of its own.
+func TestLookupsCarryNoPass(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	seen := lookups(e)
-	send(t, a, b, "asked about with a pass")
+	send(t, a, b, "asked about with no pass")
 	if res := receive(t, b); len(res.Delivered) != 1 {
 		t.Fatalf("delivered %d", len(res.Delivered))
 	}
 	got := seen()
 	for _, p := range []string{boxPath(b), boxPath(a)} {
-		if carried, asked := got[p]; !asked || !carried {
+		if carried, asked := got[p]; !asked || carried {
 			t.Errorf("GET %s: asked %v, with a pass %v", p, asked, carried)
 		}
 	}
@@ -60,38 +58,6 @@ func TestLookupsCarryThePass(t *testing.T) {
 	}
 	if carried, asked := seen()[boxPath(b)]; !asked || carried {
 		t.Errorf("a box's read of its own box: asked %v, with a pass %v", asked, carried)
-	}
-}
-
-// A lookup whose pass the server refuses is asked again without one: what
-// was refused is the asker's pass, and the post after it says what that
-// means.
-func TestALookupWhosePassIsRefusedAsksWithout(t *testing.T) {
-	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
-	var mu sync.Mutex
-	without := 0
-	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		_, lookup := readOf(r)
-		if lookup && r.Header.Get("Authorization") != "" {
-			w.Header().Set("Content-Type", protocol.ProblemContentType)
-			w.Header().Set("WWW-Authenticate", protocol.PassScheme)
-			w.WriteHeader(http.StatusUnauthorized)
-			_ = json.NewEncoder(w).Encode(protocol.Problem{Type: protocol.CodeUnauthorized.TypeURI(), Title: "Unauthorized", Status: http.StatusUnauthorized, Code: protocol.CodeUnauthorized})
-			return
-		}
-		if lookup {
-			mu.Lock()
-			without++
-			mu.Unlock()
-		}
-		next.ServeHTTP(w, r)
-	})
-	send(t, a, b, "asked again without the pass")
-	mu.Lock()
-	defer mu.Unlock()
-	if without != 1 {
-		t.Fatalf("%d lookups asked again without the pass, want the read of the recipient's box", without)
 	}
 }
 

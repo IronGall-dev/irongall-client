@@ -179,6 +179,41 @@ printf 'irongall-pass-v1\n%s\nirongall.example\n2026-10-10T00:10:00Z\n' "$A" > a
 under a-work a/work-cert.pub "irongall-pass-v1:$A" < a/pass.txt > a/pass.sig
 printf 'irongall-pass address="%s", not_after="2026-10-10T00:10:00Z", signature="%s"\n' "$A" "$(b64 < a/pass.sig)" > a/pass.authorization
 
+# That pass in the forms a server reads (PROTOCOL.md §6.1b, as RFC 9110 §11 lets a recipient): each file is an
+# Authorization value with no line feed after it. ok-* is read as the same three values as a/pass.authorization;
+# bad-* is no pass. A sender writes only ok-as-a-sender-writes-it.
+mkdir -p pass
+PT=2026-10-10T00:10:00Z PS=$(b64 < a/pass.sig)
+pv() { local name=$1; shift; printf "$@" > "pass/$name.authorization"; } # <name> <printf format…>: \\ in the format is one backslash
+pv ok-as-a-sender-writes-it 'irongall-pass address="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
+pv ok-the-scheme-in-capitals 'IRONGALL-PASS address="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
+pv ok-the-scheme-in-mixed-case 'IronGall-Pass address="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
+pv ok-the-names-in-capitals 'irongall-pass ADDRESS="%s", Not_After="%s", SIGNATURE="%s"' "$A" "$PT" "$PS"
+pv ok-another-order 'irongall-pass signature="%s", address="%s", not_after="%s"' "$PS" "$A" "$PT"
+pv ok-no-space-after-a-comma 'irongall-pass address="%s",not_after="%s",signature="%s"' "$A" "$PT" "$PS"
+pv ok-spaces-around-commas-and-equals 'irongall-pass address = "%s" , not_after= "%s" ,signature ="%s"' "$A" "$PT" "$PS"
+pv ok-tabs-around-commas-and-equals 'irongall-pass address\t=\t"%s"\t,\tnot_after="%s",\tsignature="%s"' "$A" "$PT" "$PS"
+pv ok-spaces-after-the-scheme 'irongall-pass   address="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
+pv ok-the-address-as-a-token 'irongall-pass address=%s, not_after="%s", signature="%s"' "$A" "$PT" "$PS"
+pv ok-empty-list-elements 'irongall-pass ,address="%s",, not_after="%s" , ,signature="%s",' "$A" "$PT" "$PS"
+pv bad-a-tab-after-the-scheme 'irongall-pass\taddress="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
+pv bad-another-scheme 'irongall-pass-v1 address="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
+pv bad-no-parameters 'irongall-pass'
+pv bad-a-token68 'irongall-pass %s' "$PS"
+pv bad-a-parameter-twice 'irongall-pass address="%s", address="%s", not_after="%s", signature="%s"' "$A" "$A" "$PT" "$PS"
+pv bad-a-parameter-twice-in-another-case 'irongall-pass address="%s", ADDRESS="%s", not_after="%s", signature="%s"' "$A" "$A" "$PT" "$PS"
+pv bad-a-parameter-it-has-not 'irongall-pass address="%s", not_after="%s", signature="%s", server="irongall.example"' "$A" "$PT" "$PS"
+pv bad-a-parameter-missing 'irongall-pass address="%s", not_after="%s"' "$A" "$PT"
+pv bad-a-backslash-in-a-quoted-value 'irongall-pass address="\\%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS" # a quoted-pair, which RFC 9110 reads as the character after it
+pv bad-a-quoted-value-not-closed 'irongall-pass address="%s", not_after="%s", signature="%s' "$A" "$PT" "$PS"
+pv bad-not-after-as-a-token 'irongall-pass address="%s", not_after=%s, signature="%s"' "$A" "$PT" "$PS" # ":" is not a token's
+pv bad-a-space-in-the-signature 'irongall-pass address="%s", not_after="%s", signature="%s %s"' "$A" "$PT" "${PS:0:8}" "${PS:8}"
+pv bad-the-address-in-capitals 'irongall-pass address="%s", not_after="%s", signature="%s"' "$(tr a-f A-F <<< "$A")" "$PT" "$PS"
+pv bad-a-semicolon-between-parameters 'irongall-pass address="%s"; not_after="%s"; signature="%s"' "$A" "$PT" "$PS"
+pv bad-a-line-feed-at-the-end 'irongall-pass address="%s", not_after="%s", signature="%s"\n' "$A" "$PT" "$PS"
+pv bad-a-quoted-name 'irongall-pass "address"="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
+pv bad-no-equals-sign 'irongall-pass address "%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
+
 # Certificates every implementation must refuse for box A at ./now, each with a signature made under
 # it over a/prekey-1.txt in A's prekey namespace: the signature itself is good, the certificate is not.
 badcert() { # <name> <signing key> <certified key> <ssh-keygen options…>

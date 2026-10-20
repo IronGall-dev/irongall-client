@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -270,19 +271,46 @@ func TestParsePass(t *testing.T) {
 	if p.Address.String() != a || !p.NotAfter.Equal(time.Date(2026, 10, 12, 21, 40, 15, 0, time.UTC)) {
 		t.Errorf("parsed %v %v", p.Address, p.NotAfter)
 	}
+	// What RFC 9110 §11 lets a recipient read is read as the same values
+	// (testdata/vectors/pass/ has each form against a real signature).
+	for name, form := range map[string]string{
+		"the scheme in capitals":      strings.Replace(good, "irongall-pass", "IronGall-Pass", 1),
+		"a name in capitals":          strings.Replace(good, "not_after=", "NOT_AFTER=", 1),
+		"no space after a comma":      strings.Replace(good, `", not_after`, `",not_after`, 1),
+		"another order":               `irongall-pass not_after="2026-10-12T21:40:15Z", address="` + a + `", signature="` + sig + `"`,
+		"whitespace around = and ,":   `irongall-pass address =` + "\t" + `"` + a + `" ,not_after= "2026-10-12T21:40:15Z"` + "\t,\t" + `signature ="` + sig + `"`,
+		"spaces after the scheme":     strings.Replace(good, "irongall-pass ", "irongall-pass   ", 1),
+		"the address as a token":      strings.Replace(good, `"`+a+`"`, a, 1),
+		"empty list elements":         `irongall-pass , ,address="` + a + `",,not_after="2026-10-12T21:40:15Z", signature="` + sig + `",`,
+		"whitespace around the value": " " + good + "\t",
+	} {
+		q, err := ParsePass(form)
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+		} else if q.Address != p.Address || !q.NotAfter.Equal(p.NotAfter) || !bytes.Equal(q.signature, p.signature) {
+			t.Errorf("%s: read as other values", name)
+		}
+	}
 	for name, bad := range map[string]string{
 		"empty":                      "",
 		"a bearer token":             "Bearer igt1_" + strings.Repeat("A", 50),
-		"the scheme in capitals":     strings.Replace(good, "irongall-pass", "IronGall-Pass", 1),
-		"no space after a comma":     strings.Replace(good, `", not_after`, `",not_after`, 1),
-		"another order":              `irongall-pass not_after="2026-10-12T21:40:15Z", address="` + a + `", signature="` + sig + `"`,
+		"the scheme alone":           "irongall-pass",
+		"a tab after the scheme":     strings.Replace(good, "irongall-pass ", "irongall-pass\t", 1),
+		"a name twice":               good + `, Address="` + a + `"`,
+		"a backslash":                strings.Replace(good, `address="`, `address="`+"\\", 1),
+		"a control character":        strings.Replace(good, `signature="`, `signature="`+"\x01", 1),
+		"a quote not closed":         strings.TrimSuffix(good, `"`),
+		"no parameter":               "irongall-pass ,",
+		"a parameter missing":        `irongall-pass address="` + a + `", not_after="2026-10-12T21:40:15Z"`,
+		"a space in the signature":   strings.Replace(good, sig, sig[:4]+" "+sig[4:], 1),
+		"a line break in the base64": strings.Replace(good, sig, sig[:4]+"\n"+sig[4:], 1),
 		"an extra parameter":         good + `, extra="1"`,
 		"a trailing newline":         good + "\n",
 		"an address in capitals":     strings.Replace(good, a, strings.ToUpper(a), 1),
 		"a short address":            strings.Replace(good, a, a[:63], 1),
 		"a time with an offset":      strings.Replace(good, "21:40:15Z", "21:40:15+", 1),
 		"a time that is no time":     strings.Replace(good, "2026-10-12T21:40:15Z", "2026-13-12T21:40:15Z", 1),
-		"no quotes":                  strings.ReplaceAll(good, `"`, ""),
+		"no quotes":                  strings.ReplaceAll(good, `"`, ""), // ":" and "=" are not a token's
 		"an empty signature":         strings.Replace(good, sig, "", 1),
 		"base64url in the signature": strings.Replace(good, sig, strings.NewReplacer("+", "-", "/", "_").Replace(sig)+"-", 1),
 		"loose base64 padding":       strings.Replace(good, sig, sig+"=", 1),
@@ -426,4 +454,48 @@ func TestPassAgainstSSHKeygen(t *testing.T) {
 	if _, err := run([]byte(strings.Replace(rebuilt, "irongall.dev", "example.org", 1)), "-Y", "verify", "-f", "signers", "-I", a.String(), "-n", "irongall-pass-v1:"+a.String(), "-s", "ours.sig"); err == nil {
 		t.Error("ssh-keygen verified the pass for another server's name")
 	}
+}
+
+// senderForm is the one form a sender writes a pass in (PROTOCOL.md §6.1b),
+// the only one a server took before it read passes as RFC 9110 lets it.
+var senderForm = regexp.MustCompile(`\A` + PassScheme + ` address="([0-9a-f]{64})", not_after="([0-9TZ:-]{20})", signature="([A-Za-z0-9+/]+={0,2})"\z`)
+
+// Whatever ParsePass takes, in any form, it reads as the values of a pass in
+// the one form a sender writes: those values, written in that form, are
+// taken and read back the same. So a looser read of the header gives no value
+// the sender's form could not, and the statement the signature covers is
+// built from the same values either way.
+func FuzzParsePass(f *testing.F) {
+	header := strings.TrimSuffix(string(read(f, "a/pass.authorization")), "\n")
+	f.Add(header)
+	m, err := filepath.Glob(filepath.Join(vectors, "pass", "*.authorization"))
+	if err != nil || len(m) == 0 {
+		f.Fatalf("no pass/ vectors: %v", err)
+	}
+	for _, name := range m {
+		f.Add(string(read(f, filepath.Join("pass", filepath.Base(name)))))
+	}
+	f.Fuzz(func(t *testing.T, v string) {
+		p, err := ParsePass(v)
+		if err != nil {
+			if !errors.Is(err, ErrPass) {
+				t.Fatalf("refused, but not as ErrPass: %v", err)
+			}
+			return
+		}
+		if len(v) > MaxPassAuthorization {
+			t.Fatalf("took a value of %d bytes", len(v))
+		}
+		canonical := p.Authorization()
+		if !senderForm.MatchString(canonical) {
+			t.Fatalf("its values are not a sender's: %q", canonical)
+		}
+		q, err := ParsePass(canonical)
+		if err != nil {
+			t.Fatalf("its values in a sender's form are refused: %v", err)
+		}
+		if q.Address != p.Address || !q.NotAfter.Equal(p.NotAfter) || !bytes.Equal(q.signature, p.signature) {
+			t.Fatalf("its values in a sender's form read otherwise: %q", canonical)
+		}
+	})
 }

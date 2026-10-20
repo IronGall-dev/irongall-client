@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/IronGall-dev/irongall-client/sshsig"
@@ -82,16 +83,18 @@ type Pass struct {
 }
 
 // MaxPassAuthorization is the longest an Authorization value carrying a pass
-// can be: its fixed parts, an address, a time, and the standard base64 of a
-// signature of MaxSignature bytes. A pass is signed by an Ed25519 working key,
-// under the certificate its identity signed, so its size is its identity's
-// key type's; and ParsePass refuses a longer one before it reads it, so
-// before it knows the box (PROTOCOL.md §6.1b). So the bound is the most any
-// identity key type allows.
+// can be in the one form a sender writes: its fixed parts, an address, a time,
+// and the standard base64 of a signature of MaxSignature bytes. A pass is
+// signed by an Ed25519 working key, under the certificate its identity
+// signed, so its size is its identity's key type's; and ParsePass refuses a
+// longer value, in any form, before it reads it, so before it knows the box
+// (PROTOCOL.md §6.1b). So the bound is the most any identity key type allows,
+// and whitespace a sender adds counts toward it.
 const MaxPassAuthorization = len(PassScheme+` address="", not_after="", signature=""`) + 64 + len(TimeLayout) + (MaxSignature+2)/3*4
 
-// passGrammar is the whole Authorization value, in its one form.
-var passGrammar = regexp.MustCompile(`\A` + PassScheme + ` address="([0-9a-f]{64})", not_after="([0-9TZ:-]{20})", signature="([A-Za-z0-9+/]+={0,2})"\z`)
+// passSignature is the form of a pass's signature value: standard base64,
+// padded, with nothing else in it (Go's decoder would skip a line break).
+var passSignature = regexp.MustCompile(`\A[A-Za-z0-9+/]+={0,2}\z`)
 
 // NewPass makes box a's pass for server, good for PassLifetime from now, and
 // returns it as the Authorization header's value. signer is the working key
@@ -105,38 +108,150 @@ func NewPass(signer ssh.Signer, a Address, server string, now time.Time) (author
 	if err != nil {
 		return "", time.Time{}, err
 	}
-	return PassScheme + ` address="` + a.String() + `", not_after="` + notAfter.Format(TimeLayout) +
-		`", signature="` + base64.StdEncoding.EncodeToString(sig) + `"`, notAfter, nil
+	return (&Pass{Address: a, NotAfter: notAfter, signature: sig}).Authorization(), notAfter, nil
 }
 
-// ParsePass parses an Authorization header's value. It must be exactly
-//
-//	irongall-pass address="<64 hex>", not_after="<time>", signature="<base64>"
-//
-// with the signature the standard base64 of the signature file. Nothing is
-// verified yet.
+// Authorization is the pass in the one form a client writes it (PROTOCOL.md
+// §6.1b), whatever form it was read from: a server that remembers passes
+// remembers each by this, so one pass written two ways is one pass.
+func (p *Pass) Authorization() string {
+	return PassScheme + ` address="` + p.Address.String() + `", not_after="` + p.NotAfter.UTC().Format(TimeLayout) +
+		`", signature="` + base64.StdEncoding.EncodeToString(p.signature) + `"`
+}
+
+// ParsePass parses an Authorization header's value, read as RFC 9110 §11
+// lets a recipient read credentials (PROTOCOL.md §6.1b): the scheme in any
+// case and one space or more, then the three parameters, address, not_after
+// and signature, in any order, each name in any case and given once, with
+// optional whitespace around each comma and each "=", empty list elements
+// skipped (§5.6.1.2), and each value a token or a quoted-string. A
+// quoted-string holding a backslash is refused: no value's alphabet holds a
+// character that needs one. Each value is then held to its own form: 64
+// lowercase hex, a time as TimeLayout writes it, and padded standard base64
+// of the signature file. A sender writes the one form NewPass makes. Nothing
+// is verified yet.
 func ParsePass(authorization string) (*Pass, error) {
 	if len(authorization) > MaxPassAuthorization {
 		return nil, fmt.Errorf("%w: it is longer than a pass can be", ErrPass)
 	}
-	m := passGrammar.FindStringSubmatch(authorization)
-	if m == nil {
-		return nil, fmt.Errorf(`%w: it is %s address="…", not_after="…", signature="…"`, ErrPass, PassScheme)
+	values, err := passParams(strings.Trim(authorization, " \t"))
+	if err != nil {
+		return nil, fmt.Errorf(`%w: %s; a pass is %s address="…", not_after="…", signature="…"`, ErrPass, err, PassScheme)
 	}
-	a, err := ParseAddress(m[1])
+	a, err := ParseAddress(values["address"])
 	if err != nil {
 		return nil, fmt.Errorf("%w: its address is not an address", ErrPass)
 	}
-	notAfter, err := ParseTime(m[2])
+	notAfter, err := ParseTime(values["not_after"])
 	if err != nil {
 		return nil, fmt.Errorf("%w: its not_after is not a time", ErrPass)
 	}
-	sig, err := base64.StdEncoding.Strict().DecodeString(m[3])
+	if !passSignature.MatchString(values["signature"]) {
+		return nil, fmt.Errorf("%w: its signature is not base64", ErrPass)
+	}
+	sig, err := base64.StdEncoding.Strict().DecodeString(values["signature"])
 	if err != nil {
 		return nil, fmt.Errorf("%w: its signature is not base64", ErrPass)
 	}
 	return &Pass{Address: a, NotAfter: notAfter, signature: sig}, nil
 }
+
+// passParams reads credentials = auth-scheme 1*SP #auth-param (RFC 9110
+// §11.4), where the scheme is PassScheme and the list's elements are
+// address, not_after and signature, each once. It returns the three values
+// by their names in lowercase.
+func passParams(v string) (map[string]string, error) {
+	scheme, rest, ok := strings.Cut(v, " ")
+	if !strings.EqualFold(scheme, PassScheme) {
+		return nil, errors.New("its scheme is not " + PassScheme)
+	}
+	if !ok {
+		return nil, errors.New("it has no parameters")
+	}
+	rest = strings.TrimLeft(rest, " ")
+	values := make(map[string]string, 3)
+	// #element is [ element ] *( OWS "," OWS [ element ] ) (§5.6.1.2).
+	for {
+		if rest != "" && rest[0] != ',' {
+			name, value, after, err := authParam(rest)
+			if err != nil {
+				return nil, err
+			}
+			name = strings.ToLower(name)
+			if name != "address" && name != "not_after" && name != "signature" {
+				return nil, errors.New("it has a parameter a pass has not")
+			}
+			if _, twice := values[name]; twice {
+				return nil, errors.New("it names a parameter twice")
+			}
+			values[name] = value
+			rest = after
+		}
+		rest = trimOWS(rest)
+		if rest == "" {
+			break
+		}
+		if rest[0] != ',' {
+			return nil, errors.New("its parameters are not a list")
+		}
+		rest = trimOWS(rest[1:])
+	}
+	if len(values) != 3 {
+		return nil, errors.New("it lacks a parameter")
+	}
+	return values, nil
+}
+
+// authParam reads one auth-param = token BWS "=" BWS ( token / quoted-string )
+// from the start of s, and returns its name, its value and what follows.
+func authParam(s string) (name, value, rest string, err error) {
+	n := tokenLength(s)
+	if n == 0 {
+		return "", "", "", errors.New("a parameter's name is not a token")
+	}
+	name, rest = s[:n], trimOWS(s[n:])
+	if rest == "" || rest[0] != '=' {
+		return "", "", "", errors.New("a parameter has no value")
+	}
+	rest = trimOWS(rest[1:])
+	if rest == "" || rest[0] != '"' {
+		n = tokenLength(rest)
+		if n == 0 {
+			return "", "", "", errors.New("a value is neither a token nor a quoted-string")
+		}
+		return name, rest[:n], rest[n:], nil
+	}
+	for i := 1; i < len(rest); i++ {
+		switch c := rest[i]; {
+		case c == '"':
+			return name, rest[1:i], rest[i+1:], nil
+		case c == '\\':
+			return "", "", "", errors.New("a quoted value holds a backslash")
+		case c != '\t' && (c < ' ' || c == 0x7f):
+			return "", "", "", errors.New("a quoted value holds a control character")
+		}
+	}
+	return "", "", "", errors.New("a quoted value is not closed")
+}
+
+// tokenLength is how many bytes at the start of s are tchar (RFC 9110 §5.6.2).
+func tokenLength(s string) int {
+	for i := 0; i < len(s); i++ {
+		if !tchar(s[i]) {
+			return i
+		}
+	}
+	return len(s)
+}
+
+// tchar reports whether c may be in a token: a letter, a digit, or one of
+// the visible characters RFC 9110 §5.6.2 does not count as delimiters.
+func tchar(c byte) bool {
+	return 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9' || strings.IndexByte("!#$%&'*+-.^_`|~", c) >= 0
+}
+
+// trimOWS drops optional whitespace, spaces and tabs, from the start of s.
+func trimOWS(s string) string { return strings.TrimLeft(s, " \t") }
 
 // Verify checks the pass at now: that it is the pass of the box whose
 // identity is id, made for server, not run out, running out at most

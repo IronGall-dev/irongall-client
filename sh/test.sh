@@ -235,11 +235,11 @@ ig_api(){ # the fake: the same contract as irongall.sh's ig_api (METHOD PATH [bo
   local m=$1 p=$2 f=${3-} tok="" a rest; shift 2; [ $# -gt 0 ] && shift
   rm -f "$IG/error.json" "$IG/error.headers" "$IG/response.headers"; [ "${1-}" = -H ] && tok=${2#Authorization: }
   a=${p#/v1/}; a=${a%%/*}; a=${a%%\?*}; rest=${p#/v1/$a}
-  [ "$IG_BASE" = "$OWN" ] || { [ -z "$tok" ] || bad "a revocation server was shown a pass"; [ "$rest" = /revocations ] || bad "a revocation server was asked for $m $p"; srv_rev "$m" "$a" "$f"; return; }      # any other base is a revocation server
+  [ "$IG_BASE" = "$OWN" ] || { [ -z "$tok" ] || bad "a revocation server was shown a pass" >&2; [ "$rest" = /revocations ] || bad "a revocation server was asked for $m $p" >&2; srv_rev "$m" "$a" "$f"; return; }      # any other base is a revocation server
   echo "$m ${p%%\?*}" >> $SRV/log      # the path, without its query
   case "$m $rest" in
     "PUT ") srv_register "$a" "$f" "$tok" ;;
-    "GET ") srv_box "$a" ;;
+    "GET ") [ -z "$tok" ] || bad "a read of a box was shown a pass" >&2; srv_box "$a" ;;      # a lookup carries none (PROTOCOL.md §4.1); to stderr, since a caller keeps the fake's stdout
     "PUT /prekey") srv_prekey "$a" "$f" "$tok" ;;
     "PUT /revocations") srv_revoke "$a" "$f" ;;
     "GET /revocations") [ -e $SRV/$a/revoke.sig ] || [ -e $SRV/$a/revoked-certs.txt ] || { srv_err 404 not_revoked "no revocation of this address is held here"; return 1; }; srv_record "$a" ;;      # every mailbox server is a revocation server too: what it holds against an address, with a box here or not (PROTOCOL.md §6.3)

@@ -23,7 +23,7 @@ import (
 
 const vectors = "../testdata/vectors"
 
-func read(t *testing.T, name string) []byte {
+func read(t testing.TB, name string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(vectors, name))
 	if err != nil {
@@ -665,6 +665,47 @@ func TestVectorPass(t *testing.T) {
 	}
 	if _, err := p.Verify(a, server, now.Add(PassLifetime)); !errors.Is(err, ErrPassExpired) {
 		t.Errorf("a pass was taken at the moment it runs out: %v", err)
+	}
+}
+
+// Every pass/ vector is read as its name says (PROTOCOL.md §6.1b): ok-* as
+// the same three values as a/pass.authorization, written back as that pass,
+// so it verifies as that pass does, and bad-* as no pass. A sender writes
+// one of them.
+func TestVectorPassForms(t *testing.T) {
+	files := glob(t, "pass/*.authorization")
+	if len(files) != 28 {
+		t.Fatalf("%d pass/ vectors, want 28", len(files))
+	}
+	now, a := vectorNow(t), vectorIdentity(t, "a")
+	header := strings.TrimSuffix(string(read(t, "a/pass.authorization")), "\n")
+	want, err := ParsePass(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		name := strings.TrimSuffix(filepath.Base(f), ".authorization")
+		v := string(read(t, "pass/"+filepath.Base(f)))
+		if (v == header) != (name == "ok-as-a-sender-writes-it") {
+			t.Errorf("%s: written as a sender writes a pass: %v", name, v == header)
+		}
+		p, err := ParsePass(v)
+		switch {
+		case strings.HasPrefix(name, "bad-"):
+			if !errors.Is(err, ErrPass) {
+				t.Errorf("%s: %v, want ErrPass", name, err)
+			}
+		case err != nil:
+			t.Errorf("%s: refused: %v", name, err)
+		case p.Address != want.Address || !p.NotAfter.Equal(want.NotAfter) || !bytes.Equal(p.signature, want.signature):
+			t.Errorf("%s: read as other values than a/pass.authorization", name)
+		case p.Authorization() != header:
+			t.Errorf("%s: written back as %q", name, p.Authorization())
+		default:
+			if _, err := p.Verify(a, "irongall.example", now); err != nil {
+				t.Errorf("%s: %v", name, err)
+			}
+		}
 	}
 }
 
