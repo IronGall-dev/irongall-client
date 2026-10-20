@@ -206,7 +206,7 @@ ig_init(){ # [--no-pq] → creates this box, or finishes a half-done init, and r
   jq -n --arg i "$(ig_b64 "$IG/identity.doc")" --arg p "$(ig_b64 "$p.txt")" --arg s "$(ig_b64 "$p.txt.sig")" --argjson k "$IG_SENDERS" '{identity:$i, prekey:$p, prekey_signature:$s, sender_key_types:$k}' > "$IG/register.json"
   h=$(ig_pass "$n") && { ig_api PUT "/v1/$A" "$IG/register.json" -H "Authorization: $h" > /dev/null || { ig_clock; false; }; } && mv "$IG/pass.new" "$IG/pass" && ig_putline "$IG/serial" "$n" && ig_addr
 }
-ig_addr(){ local a; a=$(cat "$IG/address") && ig_out box --arg address "$a" --arg link "$IG_BASE/to/$a"; }      # the box's address and its link: what to give whoever should write to it
+ig_addr(){ local a; ig_held || { [ -s "$IG/identity" ] && [ -s "$IG/address" ]; } || { ig_lock ig_addr; return; }; a=$(cat "$IG/address") && ig_out box --arg address "$a" --arg link "$IG_BASE/to/$a"; }      # the box's address and its link: what to give whoever should write to it. Read with no lock; with no box, ig_lock's refusal, and a box restored from its identity alone has its files made under the lock first (ig_identity), as the Go client's Open makes them
 ig_dest(){ # <link, address or alias> → the address: 64 hex, or taken from a link to this box's server, $IG_BASE/to/<address>, or the one address $IG/aliases gives the name
   local a=${1#"$IG_BASE/to/"}
   if ig_name "$1"; then a=$(awk -v n="$1" '$1 == n {print $2}' "$IG/aliases" 2> /dev/null | sort -u); [ -n "$a" ] || { ig_refuse "no alias named $1: ig_alias lists them, and names one"; return 1; }; fi
@@ -216,6 +216,7 @@ ig_dest(){ # <link, address or alias> → the address: 64 hex, or taken from a l
 }
 ig_name(){ [[ $1 =~ ^[a-z0-9][a-z0-9._-]{0,31}$ ]]; }   # an alias: never 64 hex, never a link
 ig_alias(){ # [<name> <link or address>] → names a peer for this box only, one "<name> <address>" line in $IG/aliases, and prints an alias line; without arguments, an alias line for each. A name is never moved: to change or drop one, delete its line
+  [ $# -gt 0 ] || ig_held || [ -s "$IG/identity" ] || { ig_lock ig_alias; return; }      # with no box, ig_lock's refusal: a list read with no lock
   [ $# -gt 0 ] || { [ ! -s "$IG/aliases" ] || awk 'NF == 2 { print $1, $2 }' "$IG/aliases" | jq -cR 'split(" ") | {type:"alias", name:.[0], address:.[1]}'; return; }
   ig_held || { ig_lock ig_alias "$@"; return; }
   local a have
@@ -396,6 +397,7 @@ ig_resolve(){ # <address> [the box ig_lookup read] → prints "<serial> <age rec
 }
 ig_put(){ local d; d=$(dirname "$2") && cp "$1" "$2.new" && sync "$2.new" && mv "$2.new" "$2" && sync "$d"; }      # <file> <path> → <path> holds the file's bytes, on disk before this returns: written beside it, synced, moved into place, and its directory synced, as the Go client's writeFile does. A crash leaves the old file or the new one, never an empty one
 ig_putline(){ local d; d=$(dirname "$1") && printf '%s\n' "$2" > "$1.new" && sync "$1.new" && mv "$1.new" "$1" && sync "$d"; }      # <path> <value> → ig_put of the value alone on its line
+ig_putout(){ local d; d=$(dirname "$1") && "${@:2}" > "$1.new" && sync "$1.new" && mv "$1.new" "$1" && sync "$d" || { rm -f "$1.new"; return 1; }; }      # <path> <command> [args] → ig_put of what the command prints: a command that fails or is stopped midway leaves no file cut short
 ig_meet(){ local d="$IG/peers/$1"; mkdir -p "$d" && { [ -e "$d/identity.doc" ] || ig_put "$2" "$d/identity.doc"; }; }      # <address> <its checked identity document> → pinned, unless it is already: called only for an identity that signed something this box verified
 
 # recipe: revocation
@@ -575,14 +577,14 @@ ig_send(){ # [--json] [--subject <text>] [--reply-to <msg_id>] [--supersedes <ms
   for v in "$r" "$x"; do [[ -z $v || $v =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || { ig_refuse "not a msg_id: $v (the 36-character msg_id in a message's envelope, never the 64-character id the server gives it)"; return 1; }; done
   f=${2-}; A=$(cat "$IG/address") && B=$(ig_dest "${1-}") || return 1
   mkdir -p "$IG/outbox" || return 1
-  [ -n "$f" ] || { f="$IG/body.txt"; cat > "$f" || return 1; }
+  { if [ -n "$f" ]; then cat < "$f"; else cat; fi; } > "$IG/body.new" 2> /dev/null && mv "$IG/body.new" "$IG/body.txt" || { rm -f "$IG/body.new"; ig_err "the body${f:+ file $f} could not be read: nothing is sent"; return 1; }; f="$IG/body.txt"      # read ONCE, from the file named or stdin, into a new file moved into place: every check below and the envelope read these bytes, so a body from a pipe is sent, one changed after its check is not, and a body named $IG/body.txt is not emptied before it is read
   iconv -f UTF-8 -t UTF-8 < "$f" > /dev/null 2>&1 && printf %s "$s" | iconv -f UTF-8 -t UTF-8 > /dev/null 2>&1 || ig_refuse "the body or the subject is not UTF-8 text" || return 1
-  if [ -n "$j" ]; then      # held to what its reader holds a body to (PROTOCOL.md §0b): ig_json on it in the body's place. jq keeps the last of a name given twice, so it reads the body (--slurpfile, below) only once ig_json has; and a text such as 1,"x":2, which would make a second member in the body's place, is none jq reads
-    { printf '{"body":'; cat "$f"; printf '}'; } > "$IG/body.json" && ig_json "$IG/body.json" || ig_refuse "the body is not one JSON value its reader takes (PROTOCOL.md §0b): nothing is sent" || return 1
+  if [ -n "$j" ]; then      # held to what its reader holds a body to (PROTOCOL.md §0b): ig_json on it in the body's place, an object of that one member. jq keeps the last of a name given twice, so it reads the body (--slurpfile, below) only once ig_json has; and a text such as 1,"x":2 makes a second member, so the body's place holds no one value
+    { printf '{"body":'; cat "$f"; printf '}'; } > "$IG/body.json" && ig_json "$IG/body.json" && jq -e 'length == 1' "$IG/body.json" > /dev/null 2>&1 || ig_refuse "the body is not one JSON value its reader takes (PROTOCOL.md §0b): nothing is sent" || return 1
   fi
   id=$(ig_uuid) || return 1
   jq -cn --arg from "$A" --arg to "$B" --arg id "$id" --argjson t "$(ig_now)" --arg i "$(ig_b64 "$IG/identity.doc")" "$how" body "$f" --arg j "$j" --arg s "$s" --arg r "$r" --arg x "$x" \
-    '{v:1, from:$from, to:$to, sent_at:($t|todate), msg_id:$id, identity:$i, body:(if $j == "" then $body else $body[0] end)} + ([{subject:$s}, {in_reply_to:$r}, {supersedes:$x}] | map(select(.[] != "")) | add // {})' > "$IG/send.P" || return 1      # ONE line, ending in a line feed: exactly the bytes that are signed. It carries this box's identity document, so its reader need not ask the server who wrote it
+    '{v:1, from:$from, to:$to, sent_at:($t|todate), msg_id:$id, identity:$i, body:(if $j == "" then $body else $body[0] end)} + ([{subject:$s}, {in_reply_to:$r}, {supersedes:$x}] | map(select(.[] != "")) | add // {})' > "$IG/send.P" 2> /dev/null || { rm -f "$IG/send.P"; ig_err "the envelope could not be built: nothing is sent"; return 1; }      # ONE line, ending in a line feed: exactly the bytes that are signed. It carries this box's identity document, so its reader need not ask the server who wrote it
   why=$(ig_envcheck "$IG/send.P" "$A" "$B") || { rm -f "$IG/send.P"; ig_refuse "nothing is written or sent, since its reader would refuse this message: ${why#*: }"; return 1; }      # read back as its reader will, and as ig_seal does, before the outbox keeps it: a noncharacter in the body or the subject, which ig_seal would refuse at every ig_flush
   sync "$IG/send.P" && mv "$IG/send.P" "$IG/outbox/$B.$id.P" && sync "$IG/outbox" || return 1      # on disk before it is posted: a crash after "kept in the outbox" leaves the envelope, never an empty entry
   ig_post "$B" "$IG/outbox/$B.$id"
@@ -656,7 +658,7 @@ ig_receipt(){ # → 0 only for a receipt in $IG/receipt.json that names the ciph
 }
 ig_sent(){ # <outbox stem> → sent/<address>.<msg_id>.json: the envelope as the post that was taken dated and signed it ($IG/seal.P), one line as the recipient's inbox/ keeps it, with the server's receipt. Stored, and only then does the outbox entry go, and a sent line is printed: the server's id, the msg_id and the address. sent/ is yours to prune
   local t="$IG/sent/${1##*/}.json" n=${1##*/}
-  mkdir -p "$IG/sent" && ig_line "$IG/seal.P" "$IG/receipt.json" > "$t" && sync "$t" "$IG/sent" && rm -f "$1.P" || { ig_err "sent, but not recorded in sent/ (still in the outbox: ig_flush posts it again, and its reader drops the copy)"; return 1; }
+  mkdir -p "$IG/sent" && ig_putout "$t" ig_line "$IG/seal.P" "$IG/receipt.json" && rm -f "$1.P" || { ig_err "sent, but not recorded in sent/ (still in the outbox: ig_flush posts it again, and its reader drops the copy)"; return 1; }
   ig_out sent --arg id "$(jq -r .receipt.id "$t")" --arg msg_id "${n#*.}" --arg to "${n%%.*}"
 }
 ig_failed(){ # <outbox stem> → moves its envelope to outbox/failed/, where ig_flush no longer sees it. Delete it there to drop the message
@@ -703,12 +705,12 @@ ig_one(){ # <me> <id> <its list entry> → 0 once the message is judged and its 
   rm -f "$IG/said"; why=$(ig_judge "$B" "$m"); rc=$?; cat "$IG/said" 2> /dev/null; rm -f "$IG/said"      # what the judge met on the way, a revocation server with no answer, is printed here: its stdout is its verdict
   if [ $rc -eq 0 ] || [ $rc -eq 2 ]; then [ "$h" = "$id" ] || { why="bad_id: the server's id for it is not the SHA-256 of its ciphertext"; rc=1; }; fi
   case $rc in
-    0) A=$(jq -r .from "$m.P") && ig_line "$m.P" > "$IG/inbox/$h.json" && sync "$IG/inbox/$h.json" "$IG/inbox" && ig_seen "$A" "$m" "$h" || return 1      # stored, then seen, both on disk before the ack: a crash delivers again, never loses
+    0) A=$(jq -r .from "$m.P") && ig_putout "$IG/inbox/$h.json" ig_line "$m.P" && ig_seen "$A" "$m" "$h" || return 1      # stored, then seen, both on disk before the ack: a crash delivers again, never loses
        printf '{"type":"mail","id":"%s",' "$h" && tail -c +2 "$IG/inbox/$h.json" && echo ;;      # the line inbox/ keeps, as its bytes are: jq would write the line breaks ig_line escaped
     2) ig_out duplicate --arg id "$h" --arg message "a retry of a message already delivered: not delivered again" ;;
     3) ig_err "$why: nothing is judged or acked until this box is fixed"; return 1 ;;
     4) ig_err "$why: the message stays on the server, and the next recv asks again"; return 1 ;;
-    *) ig_kept "$m" > "$IG/quarantine/$h.json" && printf '%s\n' "$why" > "$IG/quarantine/$h.reason" && sync "$IG/quarantine/$h.json" "$IG/quarantine/$h.reason" "$IG/quarantine" || return 1      # the message as served, its strings in base64 but those of their form, and beside it why: "<code>: <words>", this script's own words, never the message's
+    *) ig_putout "$IG/quarantine/$h.json" ig_kept "$m" && ig_putline "$IG/quarantine/$h.reason" "$why" || return 1      # the message as served, its strings in base64 but those of their form, and beside it why: "<code>: <words>", this script's own words, never the message's
        ig_out refused --arg id "$h" --arg code "${why%%: *}" --arg message "${why#*: }" ;;
   esac
 }

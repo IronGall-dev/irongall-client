@@ -366,3 +366,143 @@ func TestAForgottenBoxsRenewalRefusesARevocationsAnswerThatIsNoRecord(t *testing
 		t.Errorf("a record that holds nothing: %v %q", err, out)
 	}
 }
+
+// dyingJQ is a directory holding a jq that, called with each of the words
+// in match among its arguments, writes the first bytes of what jq would and
+// dies, as a recv stopped midway leaves a file; and otherwise is jq.
+func dyingJQ(t *testing.T, match ...string) string {
+	t.Helper()
+	jq, err := exec.LookPath("jq")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := t.TempDir()
+	test := ""
+	for _, m := range match {
+		test += ` && [[ " $* " = *" ` + m + ` "* ]]`
+	}
+	script := "#!/usr/bin/env bash\nif true" + test + "; then " + jq + " \"$@\" | head -c 9; exit 137; fi\nexec " + jq + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "jq"), []byte(script), 0o700); err != nil { //nolint:gosec // a test's own script
+		t.Fatal(err)
+	}
+	return bin
+}
+
+// A file a box keeps of a message, in inbox/, quarantine/ or sent/, is
+// written beside it and moved into place (#273): a jq stopped while it
+// writes one leaves no file cut short for status and show to read, and
+// nothing beside it; the message is delivered, kept or recorded at the next
+// run, whole.
+func TestAKeptMessageFileIsWrittenBesideAndMoved(t *testing.T) {
+	need(t, append(scriptTools, "curl")...)
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	dir := t.TempDir()
+	env := []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}
+	out, err := bash(t, env, "ig_init --no-pq")
+	if err != nil {
+		t.Fatal(err)
+	}
+	me := addressIn(t, srv, out)
+	g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := bash(t, env, "ig_alias g "+g.Address().String()); err != nil {
+		t.Fatal(err)
+	}
+	left := func(what, sub string) {
+		t.Helper()
+		files, _ := filepath.Glob(filepath.Join(dir, sub, "*"))
+		for _, f := range files {
+			if fi, err := os.Stat(f); err == nil && !fi.IsDir() {
+				t.Errorf("%s left %s, %d bytes", what, f, fi.Size())
+			}
+		}
+	}
+	// One message waiting at a time: one that is delivered, through
+	// ig_line's jq, which writes the line inbox/ keeps; then one that is
+	// refused, through ig_kept's, which writes the message quarantine/ keeps.
+	for _, c := range []struct {
+		sub, line string
+		match     []string
+		waiting   func()
+	}{
+		{"inbox", `{"type":"mail",`, []string{"-j", "--slurpfile", "r", "/dev/null"}, func() {
+			if _, err := g.Send(ctx, me, "hello"); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"quarantine", `{"type":"refused",`, []string{"-cj", "--rawfile", "c"}, func() {
+			srv.Inject(me, strings.Repeat("e", 64), g.Address(), []byte("not an age file"))
+		}},
+	} {
+		c.waiting()
+		if _, err := bash(t, append(env, "PATH="+dyingJQ(t, c.match...)+":"+os.Getenv("PATH")), "ig_recv"); err == nil {
+			t.Fatalf("recv with a jq that dies writing %s/ went", c.sub)
+		}
+		left("a recv stopped writing "+c.sub+"/", c.sub)
+		out, err := bash(t, env, "ig_recv")
+		files, _ := filepath.Glob(filepath.Join(dir, c.sub, "*.json"))
+		if err != nil || strings.Count(out, c.line) != 1 || len(files) != 1 || len(mustRead(t, files[0])) < 64 {
+			t.Fatalf("recv after: %v %q, %s/ %v", err, out, c.sub, files)
+		}
+	}
+	// ig_line's jq with the receipt, which writes sent/.
+	if _, err := bash(t, append(env, "PATH="+dyingJQ(t, "-j", "--slurpfile", "r", dir+"/receipt.json")+":"+os.Getenv("PATH")), "printf hi | ig_send g"); err == nil {
+		t.Fatal("send with a jq that dies writing sent/ went")
+	}
+	left("a send stopped writing sent/", "sent")
+	if waiting, _ := filepath.Glob(filepath.Join(dir, "outbox", "*.P")); len(waiting) != 1 {
+		t.Fatalf("the outbox after a send stopped writing sent/: %v", waiting)
+	}
+	if out, err := bash(t, env, "ig_flush"); err != nil || !strings.Contains(out, `{"type":"sent",`) {
+		t.Fatalf("flush: %v %q", err, out)
+	}
+	if files, _ := filepath.Glob(filepath.Join(dir, "sent", "*")); len(files) != 1 || len(mustRead(t, files[0])) < 64 {
+		t.Errorf("sent/ after flush: %v", files)
+	}
+}
+
+// addr and alias list on a directory that holds no box refuse with one
+// error line and exit 1, as every command of the script does (#274); addr
+// on a box restored from its identity alone prints its address, the box's
+// files made from the identity first, as the Go client's Open makes them.
+func TestAddrAndAliasListNeedABox(t *testing.T) {
+	need(t, append(scriptTools, "curl")...)
+	srv := fakeserver.New(t, time.Now)
+	command := func(home string, args ...string) (string, string, int) {
+		t.Helper()
+		cmd := exec.Command("bash", append([]string{abs(t, "irongall.sh")}, args...)...)
+		cmd.Env = append(os.Environ(), "IRONGALL_HOME="+home, "IG_BASE="+srv.URL)
+		var out, errs strings.Builder
+		cmd.Stdout, cmd.Stderr = &out, &errs
+		_ = cmd.Run()
+		return out.String(), errs.String(), cmd.ProcessState.ExitCode()
+	}
+	empty := t.TempDir()
+	for _, args := range [][]string{{"addr"}, {"alias", "list"}} {
+		out, errs, code := command(empty, args...)
+		if code != 1 || out != "" || errs != `{"type":"error","message":"REFUSED: no box in `+empty+`: run init first"}`+"\n" {
+			t.Errorf("%v with no box: exit %d, stdout %q, stderr %q", args, code, out, errs)
+		}
+	}
+	if ls, _ := os.ReadDir(empty); len(ls) != 0 {
+		t.Errorf("addr and alias list with no box wrote %v", ls)
+	}
+	lost := t.TempDir()
+	out, err := bash(t, []string{"IRONGALL_HOME=" + lost, "IG_BASE=" + srv.URL}, "ig_init --no-pq")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "identity"), mustRead(t, filepath.Join(lost, "identity")), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, errs, code := command(dir, "addr"); code != 0 || got != out || errs != "" {
+		t.Errorf("addr on a box restored from its identity alone: exit %d, stdout %q, stderr %q, want %q", code, got, errs, out)
+	}
+	if got, errs, code := command(dir, "alias", "list"); code != 0 || got != "" || errs != "" {
+		t.Errorf("alias list on a box with no aliases: exit %d, stdout %q, stderr %q", code, got, errs)
+	}
+}

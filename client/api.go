@@ -3,9 +3,12 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -30,9 +33,10 @@ const maxWaitSeconds = 24 * 60 * 60
 // A 304 to a request that carried If-None-Match is answered, with nothing
 // read into out; one to a request that did not breaks its form. Any other
 // status outside 2xx is an *APIError, a redirect among them, which no box
-// follows ([followNone]). A server whose URL [checkServerURL] refuses is
-// called not at all. It returns the response, whose body is
-// consumed.
+// follows ([followNone]). A call that got no answer it could read is a
+// [transportError], in this client's words. A server whose URL
+// [checkServerURL] refuses is called not at all. It returns the response,
+// whose body is consumed.
 func (b *Box) call(ctx context.Context, method, path string, in any, hdr http.Header, out any) (*http.Response, error) {
 	return b.callAt(ctx, b.base, method, path, in, hdr, out)
 }
@@ -75,16 +79,21 @@ func (b *Box) callAt(ctx context.Context, base, method, path string, in any, hdr
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
+	// An error names the call by its method and its path, never its query,
+	// which can carry the server's own text: a list's cursor (PROTOCOL.md
+	// §13).
+	name, _, _ := strings.Cut(path, "?")
+	name = method + " " + name
 	resp, err := b.http.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, noAnswer(name, "no answer that is HTTP", err)
 	}
 	defer resp.Body.Close() //nolint:errcheck // read fully below
 	if resp.StatusCode == http.StatusNotModified {
 		// A 304 has no content (RFC 9110 §15.4.5), and answers only the
 		// condition asked: one asked none is no answer.
 		if req.Header.Get("If-None-Match") == "" {
-			return resp, fmt.Errorf("%s %s: a 304 to a request that asked no condition", method, path)
+			return resp, fmt.Errorf("%s: a 304 to a request that asked no condition", name)
 		}
 		return resp, nil
 	}
@@ -95,13 +104,13 @@ func (b *Box) callAt(ctx context.Context, base, method, path string, in any, hdr
 		// A fetch reads no more than its list says the message holds, and a
 		// byte past it to see that the body ends there.
 		if ct.size < 0 || ct.size > maxResponse || resp.ContentLength >= 0 && resp.ContentLength != ct.size {
-			return resp, notListed(method, path, ct.size)
+			return resp, notListed(name, ct.size)
 		}
 		limit = ct.size + 1
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, limit))
 	if err != nil {
-		return nil, err
+		return nil, noAnswer(name, "an answer whose body could not be read", err)
 	}
 	if !answered {
 		e := &APIError{Status: resp.StatusCode}
@@ -124,12 +133,12 @@ func (b *Box) callAt(ctx context.Context, base, method, path string, in any, hdr
 	switch {
 	case raw:
 		if int64(len(data)) != ct.size {
-			return resp, notListed(method, path, ct.size)
+			return resp, notListed(name, ct.size)
 		}
 		ct.bytes = data
 	case out != nil:
 		if err := protocol.Unmarshal(data, out); err != nil {
-			return resp, fmt.Errorf("%s %s: the response is not the JSON expected: %w", method, path, err)
+			return resp, fmt.Errorf("%s: the response is not the JSON expected: %w", name, err)
 		}
 	}
 	return resp, nil
@@ -138,8 +147,47 @@ func (b *Box) callAt(ctx context.Context, base, method, path string, in any, hdr
 // notListed is a fetch whose body is not the size its list gave: an answer
 // that breaks its form, as a list or a JSON answer that breaks one is no
 // answer.
-func notListed(method, path string, size int64) error {
-	return fmt.Errorf("%s %s: the response is not the %d bytes of ciphertext the list gives", method, path, size)
+func notListed(call string, size int64) error {
+	return fmt.Errorf("%s: the response is not the %d bytes of ciphertext the list gives", call, size)
+}
+
+// transportError is a call that got no answer it could read, in this
+// client's own words: the call, and what kind of failure it was. net/http's
+// error quotes what the server sent (a status line, a header or trailer
+// line, a Location, the names in its certificate), and a server's words are
+// never printed (PROTOCOL.md §13), so that error is kept for errors.Is and
+// errors.As and is no part of Error.
+type transportError struct {
+	call, kind string
+	cause      error
+}
+
+func (e *transportError) Error() string { return e.call + ": " + e.kind }
+func (e *transportError) Unwrap() error { return e.cause }
+
+// noAnswer is err, net/http's, as a transportError: the kind its cause
+// shows, or otherwise the kind given.
+func noAnswer(call, otherwise string, err error) error {
+	var timeout net.Error
+	var certificate *tls.CertificateVerificationError
+	var record tls.RecordHeaderError
+	var op *net.OpError
+	kind := otherwise
+	switch {
+	case errors.Is(err, context.Canceled):
+		kind = "stopped before an answer came"
+	case errors.Is(err, context.DeadlineExceeded) || errors.As(err, &timeout) && timeout.Timeout():
+		kind = "no answer within the wait"
+	case errors.As(err, &certificate):
+		kind = "the server's TLS certificate does not verify"
+	case errors.As(err, &record) || errors.As(err, &op) && op.Op == "remote error":
+		// A record that is not TLS, or the server's alert, which crypto/tls
+		// reports as a remote error.
+		kind = "TLS failed"
+	case errors.As(err, &op) && op.Op == "dial":
+		kind = "could not connect"
+	}
+	return &transportError{call: call, kind: kind, cause: err}
 }
 
 // retryAfter is the wait a Retry-After asks for: its delay-seconds, written in

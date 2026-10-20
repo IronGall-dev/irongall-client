@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -114,6 +115,26 @@ func TestReport(t *testing.T) {
 	errs.Reset()
 	if report(&client.RefusedError{Reason: "no code"}, &errs) != 1 || errs.String() != `{"type":"error","message":"REFUSED: no code"}`+"\n" {
 		t.Errorf("a refusal: %q", errs.String())
+	}
+	// A line describes one failure, whatever an error joins (a flush's, one
+	// an entry): a server's answer when it holds one, and each member once.
+	refused := &client.RefusedError{Code: client.RefusedPrekeyType, Reason: "a type it lacks"}
+	for _, c := range []struct {
+		err  error
+		want string
+	}{
+		{errors.Join(refused, &client.APIError{Status: 503, Problem: protocol.Problem{Code: protocol.CodeUnavailable, Status: 503}}),
+			`{"type":"error","status":503,"code":"unavailable","message":"REFUSED: a type it lacks\nERROR 503 unavailable: `},
+		{errors.Join(refused, &client.APIError{Status: 503}),
+			`{"type":"error","status":503,"message":"REFUSED: a type it lacks\nERROR 503: an answer this client does not know"}`},
+		{errors.Join(refused, errors.New("no answer")),
+			`{"type":"error","code":"unsupported_prekey_type","message":"REFUSED: a type it lacks\nno answer"}`},
+	} {
+		errs.Reset()
+		var v map[string]any
+		if report(c.err, &errs) != 1 || !strings.HasPrefix(errs.String(), c.want) || jsonv2.Unmarshal(errs.Bytes(), &v) != nil {
+			t.Errorf("a joined error: %q, want it to start %q", errs.String(), c.want)
+		}
 	}
 }
 

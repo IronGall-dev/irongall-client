@@ -175,12 +175,15 @@ func (b *Box) drain(ctx context.Context, asked *lookups) (*Result, error) {
 	}
 	cursor := ""
 	messages, fetched := 0, 0
+	// What an error names: the list's path, never a cursor, which is the
+	// server's own text (PROTOCOL.md §13).
+	listed := b.boxPath("/messages")
 	for page := 0; ; page++ {
 		if page == maxDrainPages {
 			res.More = true
 			return res, nil
 		}
-		path := b.boxPath("/messages")
+		path := listed
 		if cursor != "" {
 			// A cursor is URL-safe as a list hands it out: one that is not
 			// makes the list no answer (protocol.CheckCursor).
@@ -212,7 +215,7 @@ func (b *Box) drain(ctx context.Context, asked *lookups) (*Result, error) {
 		}
 		n, err := protocol.PollInterval(resp.Header.Get("Retry-After"))
 		if err != nil {
-			return res, fmt.Errorf("GET %s: %w", path, err)
+			return res, fmt.Errorf("GET %s: %w", listed, err)
 		}
 		res.PollAfter = int64(min(n, maxWaitSeconds))
 		if resp.StatusCode == http.StatusNotModified {
@@ -225,7 +228,7 @@ func (b *Box) drain(ctx context.Context, asked *lookups) (*Result, error) {
 				if err := removeIfExists(b.path("etag")); err != nil {
 					return nil, err
 				}
-				return res, fmt.Errorf("GET %s: a 304 about another tag than the one the poll sent", path)
+				return res, fmt.Errorf("GET %s: a 304 about another tag than the one the poll sent", listed)
 			}
 			return res, nil
 		}

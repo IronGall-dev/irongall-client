@@ -262,7 +262,7 @@ type heldMessage struct {
 
 // heldMail reads held/: each message this client kept there, oldest first by
 // sent_at, and in the order they were kept within a second. A file that is
-// not one of this client's lines is skipped.
+// not one of this client's lines ([Box.keptLine]) is skipped.
 func (b *Box) heldMail() ([]heldMessage, error) {
 	names, err := filepath.Glob(b.path("held", "*.json"))
 	if err != nil {
@@ -274,7 +274,7 @@ func (b *Box) heldMail() ([]heldMessage, error) {
 		if !hexID.MatchString(id) {
 			continue
 		}
-		line, err := os.ReadFile(n) //nolint:gosec // a file of this box's held/
+		data, err := os.ReadFile(n) //nolint:gosec // a file of this box's held/
 		if err != nil {
 			return nil, err
 		}
@@ -282,20 +282,8 @@ func (b *Box) heldMail() ([]heldMessage, error) {
 		if err != nil {
 			return nil, err
 		}
-		var f struct {
-			From string `json:"from"`
-		}
-		if protocol.Unmarshal(line, &f) != nil {
-			continue
-		}
-		from, err := protocol.ParseAddress(f.From)
-		if err != nil {
-			continue
-		}
-		// The line was built from fields judge checked: read back as a
-		// record, which reads no clock.
-		env, err := protocol.OpenEnvelopeRecord(line, from, b.id.Address())
-		if err != nil {
+		line, from, env, ok := b.keptLine(data)
+		if !ok {
 			continue
 		}
 		out = append(out, heldMessage{ID: id, From: from, SentAt: env.SentAt.UTC().Format(protocol.TimeLayout), Env: env, Line: line, kept: fi.ModTime()})

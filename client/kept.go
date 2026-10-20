@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -23,17 +24,52 @@ import (
 func IsID(s string) bool { return hexID.MatchString(s) }
 
 // InboxLine returns the line inbox/<id>.json keeps: the message's checked
-// fields, as recv printed them. An id that is not one is refused before any
-// file is read.
+// fields, as recv printed them ([Box.keptLine]). An id that is not one is
+// refused before any file is read.
 func (b *Box) InboxLine(id string) ([]byte, error) {
 	if !IsID(id) {
 		return nil, errors.New("not a message's id: 64 lowercase hex, as recv prints it")
 	}
-	l, err := os.ReadFile(b.path("inbox", id+".json")) //nolint:gosec // a path inside the box's own directory, named by 64 hex
+	data, err := os.ReadFile(b.path("inbox", id+".json")) //nolint:gosec // a path inside the box's own directory, named by 64 hex
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, fmt.Errorf("inbox/ holds no message %s", id)
 	}
-	return l, err
+	if err != nil {
+		return nil, err
+	}
+	l, _, _, ok := b.keptLine(data)
+	if !ok {
+		return nil, fmt.Errorf("inbox/%s.json is not the line recv keeps: it was cut short, or written since by something else", id)
+	}
+	return l, nil
+}
+
+// keptLine reads a file inbox/ or held/ keeps as the line recv wrote: one
+// line, which reads back as the record of a message to this box
+// ([protocol.OpenEnvelopeRecord], which reads no clock), and nothing after
+// it. A file cut short, as a recv stopped midway can leave one, or with more
+// in it, is none. The line comes back with what nobody sees escaped again
+// ([escapeUnseen]): it is printed as it is, and whoever last wrote the file
+// is not known here.
+func (b *Box) keptLine(data []byte) (line []byte, from protocol.Address, env *protocol.Envelope, ok bool) {
+	if len(data) == 0 || data[0] != '{' || bytes.ContainsAny(data, "\r\n") {
+		return nil, from, nil, false
+	}
+	var f struct {
+		From string `json:"from"`
+	}
+	if protocol.Unmarshal(data, &f) != nil {
+		return nil, from, nil, false
+	}
+	from, err := protocol.ParseAddress(f.From)
+	if err != nil {
+		return nil, from, nil, false
+	}
+	env, err = protocol.OpenEnvelopeRecord(data, from, b.id.Address())
+	if err != nil {
+		return nil, from, nil, false
+	}
+	return escapeUnseen(data), from, env, true
 }
 
 // keptRefusal is a refused message as quarantine/<id>.json keeps it: the

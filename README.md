@@ -100,7 +100,7 @@ Forward secrecy, padding, accounts and the rest: `PROTOCOL.md`.
 | `sent` | `send`, `outbox flush` | `id`, `msg_id`, `to` |
 | `box` | `init`, `addr` | `address`, `link` |
 | `quarantined` | `quarantine list` | `id`, `code` (below), `reason`, and `from` and `received_at`, the server's, each when it has its form; then what the checks established when they judged it: `judged_at`, this machine's clock; `signed_by` when its signature verifies, by a working key that identity certified, at that certificate's own start, or else `claims_identity`; and with `signed_by`, `certificate_serial`, `certificate_began`, `certificate_ends`, `sent_at` and `msg_id` |
-| `error` | any, on stderr | `message`; from a server's answer, `status`, its `code` when this client knows it, `retry_after`, and the values the code carries, each checked to its type; from a refusal with a code of its own, that `code` (below) |
+| `error` | any, on stderr | `message`; from a server's answer, `status`, its `code` when this client knows it, `retry_after`, and the values the code carries, each checked to its type; otherwise, from a refusal with a code of its own, that `code` (below). One failure a line: a flush's, of several entries, has its first server answer's, and its `message` names each |
 
 The rest are named for what they report: `status`, `held_sender`, `allowed`, `allowed_rebuilt`, `blocked`, `alias`, `alias_removed`, `removed` (from `quarantine/`), `prekey`, `certificates_revoked`, `no_earlier_certificate`, `account`, `revoked`, `not_revoked`, and `revocation_record`, which is the record itself, exactly the body every server takes: save it where only you can read it (`umask 077; irongall revocation make > <file>`).
 

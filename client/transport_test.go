@@ -2,7 +2,9 @@ package client_test
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -10,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/protocol"
@@ -291,6 +294,65 @@ func TestAServerIsCalledOverHTTPSOrOnThisMachine(t *testing.T) {
 	for _, s := range []string{"https://revocations.example", "http://127.0.0.1:8080", "http://[::1]:8080"} {
 		if got, err := client.ParseRevocationServers(s); err != nil || len(got) != 1 {
 			t.Errorf("%q: %q, %v", s, got, err)
+		}
+	}
+}
+
+// A call that got no answer it could read says which call and what kind of
+// failure, in this client's own words, and keeps net/http's error for
+// errors.Is and errors.As (PROTOCOL.md §13): a server that is not there, one
+// that never answers, a wait the caller ended, and a certificate that does
+// not verify, and a server's TLS alert.
+func TestACallWithNoAnswerSaysWhatKind(t *testing.T) {
+	e := newEnv(t)
+	b := e.box(protocol.Classic)
+	to := e.box(protocol.Classic)
+	read := "GET /v1/" + to.Address().String() + ": "
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := "http://" + l.Addr().String()
+	_ = l.Close()
+	silent := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
+	t.Cleanup(silent.Close)
+	untrusted := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	t.Cleanup(untrusted.Close)
+	// A server the box trusts that ends the handshake with an alert: it asks
+	// for a client certificate, and the box has none.
+	alerting := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	alerting.TLS = &tls.Config{ClientAuth: tls.RequireAnyClientCert, MinVersion: tls.VersionTLS13}
+	alerting.StartTLS()
+	t.Cleanup(alerting.Close)
+	stopped, stop := context.WithCancel(context.Background())
+	stop()
+	waited, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	for _, c := range []struct {
+		name, base, kind string
+		ctx              context.Context
+		is               error
+		http             *http.Client
+	}{
+		{"a server that is not there", closed, "could not connect", context.Background(), nil, nil},
+		{"a server that never answers", silent.URL, "no answer within the wait", waited, context.DeadlineExceeded, nil},
+		{"a call its caller stopped", silent.URL, "stopped before an answer came", stopped, context.Canceled, nil},
+		{"a certificate that does not verify", untrusted.URL, "the server's TLS certificate does not verify", context.Background(), nil, nil},
+		{"a server's TLS alert", alerting.URL, "TLS failed", context.Background(), nil, alerting.Client()},
+	} {
+		opt := e.opts()
+		opt.Base = c.base
+		if c.http != nil {
+			opt.HTTPClient = c.http
+		}
+		at, err := client.Open(b.Dir(), opt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = at.Send(c.ctx, to.Address(), "x")
+		var dial *net.OpError
+		if err == nil || !strings.Contains(err.Error(), read+c.kind) || c.is != nil && !errors.Is(err, c.is) || c.base == closed && !errors.As(err, &dial) {
+			t.Errorf("%s: %v", c.name, err)
 		}
 	}
 }
