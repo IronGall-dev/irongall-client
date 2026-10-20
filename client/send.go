@@ -466,7 +466,7 @@ func (b *Box) seal(ctx context.Context, to protocol.Address, stem string, l *loo
 	}
 	// Dated last, once the recipient's box is read: the sent_at a server
 	// meets is this clock at the post, less only what the seal and the
-	// request take (protocol.PostTime). And never more than the outbox's TTL
+	// second the dating truncates take (protocol.PostTime). And never more than the outbox's TTL
 	// after the entry was written, however long the read took or however
 	// often a seal is made again, so a retry is dated at most a TTL after
 	// its first copy, which a reader's replay set reaches back to.

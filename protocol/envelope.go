@@ -28,9 +28,10 @@ const (
 	// latest a retired prekey can still be needed.
 	TTL = 33 * 24 * time.Hour
 	// PostTime is the room the maker of a time-limited thing leaves for a
-	// post's own time, beside MaxSkew: from the post's dating to the
-	// server's receipt, the post's one request, which each client bounds at
-	// a minute, its seal, and the second the dating truncates.
+	// post's own time, beside MaxSkew: what comes between the post's dating
+	// and the server's receipt that no pass bounds, its seal and the second
+	// the dating truncates. The request itself is bounded by its pass, which
+	// a server takes only from a clock less than PassLifetime behind its own.
 	PostTime = 2 * time.Minute
 	// Retention is how long a server keeps a message after it received it:
 	// the TTL less MaxSkew, the hour whoever makes a time-limited thing
