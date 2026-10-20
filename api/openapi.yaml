@@ -657,10 +657,11 @@ paths:
       operationId: link
       summary: The page a box's link opens
       description: |
-        `PROTOCOL.md` §2: fixed text and the address, never text a box
-        supplied, for a person or an agent handed the link. It reads no store,
-        so it is served while the API still answers `503`. A client takes the
-        address from the path and never fetches the page.
+        `PROTOCOL.md` §2: fixed text, the address and this server's link to
+        it, never text a box supplied, for a person or an agent handed the
+        link. It reads no store, so it is served while the API still answers
+        `503`. A client takes the address from the path and never fetches the
+        page. A query a shared link picked up is ignored.
       security: []
       responses:
         '200':
@@ -681,6 +682,10 @@ paths:
             X-Content-Type-Options:
               schema:
                 const: nosniff
+            Cache-Control:
+              description: How long a cache may keep the page; it is the same for every request.
+              schema:
+                type: string
           content:
             text/html:
               schema:
@@ -761,7 +766,7 @@ components:
       description: '`Accept-Encoding`, on an answer a server may compress, gzip or not (RFC 9110 §12.5.5).'
       required: false
       schema:
-        type: string
+        const: Accept-Encoding
     Retry-After:
       description: How many seconds to wait before trying again, in digits alone (RFC 9110 §10.2.3's delay-seconds; never an HTTP-date, `PROTOCOL.md` §13).
       required: true

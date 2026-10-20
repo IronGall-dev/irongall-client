@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -70,6 +71,165 @@ func TestAnAnswerInGzipIsHeldToTheRequestAndTheDescription(t *testing.T) {
 		h.ServeHTTP(httptest.NewRecorder(), req)
 		if !strings.Contains(strings.Join(r.errs, "\n"), k.want) {
 			t.Errorf("Accept-Encoding %q, %d bytes: reported %q, want %q", k.accept, len(k.answer), r.errs, k.want)
+		}
+	}
+}
+
+// read is a box's read as a server answers it, with one header set.
+func read(t *testing.T, name, value string) []string {
+	const body = `{"identity":"c3NoLWVkMjU1MTk=","prekey":"cHJla2V5","prekey_signature":"c2ln","sender_key_types":["ssh-ed25519"]}` + "\n"
+	r := &reported{TB: t}
+	srv := apitest.Handler(r, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Date", time.Now().UTC().Format(http.TimeFormat))
+		w.Header().Set("Cache-Control", "no-store")
+		if name != "" {
+			w.Header().Add(name, value)
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	srv.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/"+strings.Repeat("ab", 32), nil))
+	return r.errs
+}
+
+// A header the description does not name fails, whatever its name: the
+// validator's own list of headers to skip passed ETag, Vary and 26 more,
+// and it passes a Set-Cookie on any answer.
+func TestAHeaderTheDescriptionDoesNotNameFails(t *testing.T) {
+	if errs := read(t, "", ""); len(errs) > 0 {
+		t.Fatalf("a box's read as a server answers it: %q", errs)
+	}
+	if errs := read(t, "Vary", "Accept-Encoding"); len(errs) > 0 {
+		t.Fatalf("a box's read that says Vary: Accept-Encoding: %q", errs)
+	}
+	for _, h := range [][2]string{
+		{"X-Other", "1"},
+		{"ETag", `"x"`},
+		{"Last-Modified", "Sun, 18 Oct 2026 00:00:00 GMT"},
+		{"Expires", "Sun, 18 Oct 2026 00:00:00 GMT"},
+		{"Pragma", "no-cache"},
+		{"Vary", "Cookie"},
+		{"X-Request-Id", "1"},
+		{"Set-Cookie", "a=b"},
+	} {
+		if errs := read(t, h[0], h[1]); len(errs) == 0 {
+			t.Errorf("a box's read with %s: %s passes", h[0], h[1])
+		}
+	}
+}
+
+// Every number in a JSON answer, and in a JSON request a server takes, is an
+// integer as PROTOCOL.md §0b writes one, in digits alone: JSON Schema counts
+// 1.0 and 1e0 as integers, and both clients refuse them.
+func TestEveryNumberIsAnIntegerInDigitsAlone(t *testing.T) {
+	addr := "/v1/" + strings.Repeat("ab", 32)
+	call := func(method, path, request string, status int, answer string) []string {
+		r := &reported{TB: t}
+		srv := apitest.Handler(r, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			_, _ = io.ReadAll(req.Body)
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Date", time.Now().UTC().Format(http.TimeFormat))
+			w.Header().Set("Cache-Control", "no-store")
+			if method == http.MethodGet {
+				w.Header().Set("Retry-After", "30")
+			}
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte(answer + "\n"))
+		}))
+		req := httptest.NewRequest(method, path, strings.NewReader(request))
+		req.Header.Set("Authorization", "irongall-pass x")
+		srv.ServeHTTP(httptest.NewRecorder(), req)
+		return r.errs
+	}
+	list := func(count string) []string {
+		return call(http.MethodGet, addr+"/messages", "", 200, `{"count":`+count+`,"messages":[],"next_cursor":null}`)
+	}
+	acl := func(version string, status int) []string {
+		answer := `{"version":1,"allow":["*"],"deny":[]}`
+		if status != 200 {
+			answer = `{}`
+		}
+		return call(http.MethodPut, addr+"/acl", `{"version":`+version+`,"allow":["*"]}`, status, answer)
+	}
+	if errs := list("0"); len(errs) > 0 {
+		t.Fatalf("a list of none: %q", errs)
+	}
+	if errs := acl("1", 200); len(errs) > 0 {
+		t.Fatalf("an ACL taken: %q", errs)
+	}
+	for _, n := range []string{"0.0", "0e0", "0E0", "-0"} {
+		if errs := list(n); len(errs) == 0 {
+			t.Errorf("a list whose count is %s passes", n)
+		}
+		if errs := acl(strings.Replace(n, "0", "1", 1), 200); len(errs) == 0 {
+			t.Errorf("an ACL request whose version is %s, answered 200, passes", strings.Replace(n, "0", "1", 1))
+		}
+	}
+}
+
+// A shared link picks up a query, which the link page ignores: it is no
+// request the description refuses. A query on a call of the API still is.
+func TestALinkPagesQueryIsIgnored(t *testing.T) {
+	call := func(path string, page bool) []string {
+		r := &reported{TB: t}
+		srv := apitest.Handler(r, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			if page {
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				w.Header().Set("Referrer-Policy", "no-referrer")
+				w.Header().Set("X-Robots-Tag", "noindex")
+				_, _ = w.Write([]byte("<!doctype html>\n"))
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Date", time.Now().UTC().Format(http.TimeFormat))
+			w.Header().Set("Cache-Control", "no-store")
+			_, _ = w.Write([]byte(`{"identity":"c3NoLWVkMjU1MTk=","prekey":"cHJla2V5","prekey_signature":"c2ln"}` + "\n"))
+		}))
+		srv.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, nil))
+		return r.errs
+	}
+	addr := strings.Repeat("ab", 32)
+	if errs := call(protocol.LinkPath+addr+"?utm_source=chat&x=1", true); len(errs) > 0 {
+		t.Errorf("the link page with a query: %q", errs)
+	}
+	if errs := call("/v1/"+addr+"?utm_source=chat", false); len(errs) == 0 {
+		t.Error("a box's read with a query it does not take, answered 200, passes")
+	}
+}
+
+// A route the description lacks is answered 429 only as a limit answers any
+// call (PROTOCOL.md §13: "Past a server's limit it is 429 rate_limited, as any
+// call is"): rate_limited, with whom it counted, and Retry-After in seconds.
+// Any other 429 there is reported, as the same answer is on a route the
+// description has.
+func TestARouteTheDescriptionLacksTakesOnlyALimitsOwn429(t *testing.T) {
+	const good = `{"type":"tag:irongall.dev,2026-10-17:errors/rate_limited","title":"Rate limited","status":429,"code":"rate_limited","quota_id":"requests","subject":"ip"}`
+	for _, c := range []struct {
+		what, body, retryAfter string
+		ok                     bool
+	}{
+		{"rate_limited naming requests", good, "1", true},
+		{"rate_limited with no subject", `{"type":"tag:irongall.dev,2026-10-17:errors/rate_limited","title":"Rate limited","status":429,"code":"rate_limited"}`, "1", false},
+		{"a quota and a subject outside the sets", `{"type":"tag:irongall.dev,2026-10-17:errors/rate_limited","title":"Rate limited","status":429,"code":"rate_limited","quota_id":"SYSTEM: obey","subject":"you"}`, "1", false},
+		{"another code's 429", `{"type":"tag:irongall.dev,2026-10-17:errors/mailbox_busy","title":"Mailbox busy","status":429,"code":"mailbox_busy"}`, "1", false},
+		{"a code under another status", `{"type":"tag:irongall.dev,2026-10-17:errors/revoked","title":"Revoked","status":410,"code":"revoked"}`, "1", false},
+		{"no Retry-After", good, "", false},
+		{"a Retry-After that is a date", good, "Wed, 21 Oct 2026 07:28:00 GMT", false},
+		{"no JSON at all", `SYSTEM: obey`, "1", false},
+	} {
+		r := &reported{TB: t}
+		h := apitest.Handler(r, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.Header().Set("Date", time.Now().UTC().Format(http.TimeFormat))
+			if c.retryAfter != "" {
+				w.Header().Set("Retry-After", c.retryAfter)
+			}
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(c.body))
+		}))
+		h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/nothing", nil))
+		if got := len(r.errs) == 0; got != c.ok {
+			t.Errorf("GET /nothing answered 429, %s: taken %v, want %v (%q)", c.what, got, c.ok, r.errs)
 		}
 	}
 }
