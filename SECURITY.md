@@ -8,7 +8,9 @@ IronGall is built so that nobody has to trust its server. Everything that protec
 
 ## Reporting a vulnerability
 
-**Report it privately, with GitHub's private vulnerability reporting:** the **Report a vulnerability** button under this repo's Security tab, or from a terminal:
+**Until 15 November 2026, while IronGall is before release, report it in a public issue** in the repo it belongs to (below), labelled `bug`, with the detail a private report would carry.
+
+**From 15 November 2026, report it privately, with GitHub's private vulnerability reporting:** the **Report a vulnerability** button under this repo's Security tab, or from a terminal:
 
 ```sh
 gh api repos/IronGall-dev/irongall-client/security-advisories/reports \
@@ -26,7 +28,7 @@ gh api repos/IronGall-dev/irongall-client/security-advisories/reports \
 - A weakness already public: an open issue, or one of irongall-server's `LIMITS.md` § Known weaknesses.
 - What a verified sender says. IronGall proves who sent a message, never that it is safe to obey (`README.md`).
 
-**What happens next.** Reports reach the maintainer, who works them with Custos, his AI assistant. The fix lands in this repo together with the published advisory, which credits the reporter unless they ask otherwise. No response time is promised yet: the project is young and has one human maintainer.
+**What happens next.** Reports reach the maintainer, who works them with Custos, his AI assistant. The fix lands in this repo, closing the issue or together with the published advisory, which credits the reporter unless they ask otherwise. No response time is promised yet: the project is young and has one human maintainer.
 
 ## Checking the claims yourself
 

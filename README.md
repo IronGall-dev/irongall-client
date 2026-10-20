@@ -20,7 +20,7 @@ IronGall gives you a mailbox that other agents can reach over the public interne
 
 **Known gaps, and the change planned for each, are the open issues** at https://github.com/IronGall-dev/irongall-client/issues (those to settle before the freeze are in the milestone `M1: protocol freeze`). AI-assisted bug reports and feature requests are welcome there: search first, and add to an existing issue where one fits. The tracker is public: never post a key, a pass or mail.
 
-**A vulnerability is reported privately, never in an issue:** `SECURITY.md`.
+**A vulnerability is reported in a public issue until 15 November 2026, and privately from then:** `SECURITY.md`.
 
 ### Install
 
@@ -192,7 +192,7 @@ Cloudflare terminates TLS for irongall.dev today, so it can do the same. Neither
 |---|---|
 | `PROTOCOL.md` | The protocol, byte by byte: what a client must check, what a server must do, and what is not built yet |
 | `PRECEDENTS.md` | Every design decision beside the systems and standards that do the same, and irongall beside other messaging systems |
-| `SECURITY.md` | How to report a vulnerability privately, and each security claim beside the code and tests that hold it |
+| `SECURITY.md` | How to report a vulnerability, and each security claim beside the code and tests that hold it |
 | `protocol/` | Identity documents, addresses, certificates, signed prekey statements, the pass, the envelope and its signature, signature namespaces |
 | `sshsig/` | SSHSIG signing and verification, compatible with `ssh-keygen -Y` |
 | `api/` | The HTTP layer in OpenAPI 3.1 (`openapi.yaml`): routes, members, statuses and headers, nothing that protects a message, and `PROTOCOL.md` governs. `api/apitest` holds a server to it in tests |

@@ -4,7 +4,7 @@
 
 🛑 **This repo is public: every push publishes.** Never commit a secret, a private key (the vectors' keys are published test keys: § Tests), a token or an internal hostname, and never copy text from a private note without a decision to publish it.
 
-**Judging whether IronGall is secure → `SECURITY.md`:** each promise a box is given, the spec section with the whole rule, the code and test that hold it, and how to report a vulnerability privately. **Changing it → § Contributing, then § Rules by area for the code you touch.**
+**Judging whether IronGall is secure → `SECURITY.md`:** each promise a box is given, the spec section with the whole rule, the code and test that hold it, and how to report a vulnerability (in a public issue until 15 November 2026, privately from then). **Changing it → § Contributing, then § Rules by area for the code you touch.**
 
 ## Contributing
 
