@@ -112,11 +112,38 @@ func NewPass(signer ssh.Signer, a Address, server string, now time.Time) (author
 }
 
 // Authorization is the pass in the one form a client writes it (PROTOCOL.md
-// §6.1b), whatever form it was read from: a server that remembers passes
-// remembers each by this, so one pass written two ways is one pass.
+// §6.1b), whatever form it was read from, its signature too (armored): a
+// server that remembers passes remembers each by this, so one pass written
+// two ways is one pass (IronGall-dev/irongall-server#69).
 func (p *Pass) Authorization() string {
 	return PassScheme + ` address="` + p.Address.String() + `", not_after="` + p.NotAfter.UTC().Format(TimeLayout) +
-		`", signature="` + base64.StdEncoding.EncodeToString(p.signature) + `"`
+		`", signature="` + base64.StdEncoding.EncodeToString(p.armored()) + `"`
+}
+
+// armored is the pass's signature as Armor writes it, from the blob a
+// verifier reads (Dearmor), with nothing in the reserved field, which
+// nothing signs (sshsig.Verify): one form for every way of writing one
+// signature that OpenSSH reads as the same (PROTOCOL.md §3). A signature
+// that does not read is as it was sent; such a pass never verifies.
+func (p *Pass) armored() []byte {
+	blob, err := Dearmor(p.signature)
+	if err != nil {
+		return p.signature
+	}
+	r := wireReader(blob[10:]) // after SSHSIG and its version, which Dearmor wrote as 1
+	key, ok1 := r.string()
+	namespace, ok2 := r.string()
+	_, ok3 := r.string() // reserved
+	hash, ok4 := r.string()
+	sig, ok5 := r.string()
+	if !ok1 || !ok2 || !ok3 || !ok4 || !ok5 {
+		return p.signature
+	}
+	out := append([]byte{}, blob[:10]...)
+	for _, s := range [][]byte{key, namespace, nil, hash, sig} {
+		out = appendWireString(out, s)
+	}
+	return Armor(append(out, r...)) // what follows the five fields, for the verifier to refuse
 }
 
 // ParsePass parses an Authorization header's value, read as RFC 9110 §11

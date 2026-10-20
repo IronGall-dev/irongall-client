@@ -494,8 +494,83 @@ func FuzzParsePass(f *testing.F) {
 		if err != nil {
 			t.Fatalf("its values in a sender's form are refused: %v", err)
 		}
-		if q.Address != p.Address || !q.NotAfter.Equal(p.NotAfter) || !bytes.Equal(q.signature, p.signature) {
+		if q.Address != p.Address || !q.NotAfter.Equal(p.NotAfter) || !bytes.Equal(q.signature, p.armored()) || q.Authorization() != canonical {
 			t.Fatalf("its values in a sender's form read otherwise: %q", canonical)
 		}
 	})
+}
+
+// A pass written another way that a verifier reads as the same is written
+// back as one pass, its signature too: the armor's line breaks and
+// whitespace, CRLF after the BEGIN line, a NUL before the END line, text
+// after it, SSHSIG version 0, a NUL ending the namespace and bytes in the
+// reserved field, which nothing signs. A server remembers a pass by its
+// Authorization, so each costs it one check (IronGall-dev/irongall-server#69).
+// A signature that differs in a bit is another pass.
+func TestAPassWrittenAnotherWayIsOnePass(t *testing.T) {
+	header := strings.TrimSuffix(string(read(t, "a/pass.authorization")), "\n")
+	p, err := ParsePass(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := p.Authorization(); got != header {
+		t.Fatalf("the vector's pass is written back otherwise:\n%s\n%s", got, header)
+	}
+	armored := p.signature
+	blob, err := Dearmor(armored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// rewrite is blob with version v, a NUL after its namespace when nul,
+	// and reserved in its reserved field, armored as ssh-keygen does.
+	rewrite := func(v uint32, nul bool, reserved []byte) []byte {
+		r := wireReader(blob[10:])
+		key, _ := r.string()
+		ns, _ := r.string()
+		_, _ = r.string()
+		hash, _ := r.string()
+		sig, _ := r.string()
+		if nul {
+			ns = append(append([]byte{}, ns...), 0)
+		}
+		out := binary.BigEndian.AppendUint32([]byte("SSHSIG"), v)
+		for _, s := range [][]byte{key, ns, reserved, hash, sig} {
+			out = appendWireString(out, s)
+		}
+		return Armor(out)
+	}
+	body := bytes.IndexByte(armored, '\n') + 1
+	forms := map[string][]byte{
+		"CRLF after the BEGIN line":    bytes.Replace(armored, []byte("-----\n"), []byte("-----\r\n"), 1),
+		"text after the END line":      append(append([]byte{}, armored...), "anything"...),
+		"a tab inside the base64":      bytes.Replace(armored, []byte("-----\n"), []byte("-----\n\t"), 1),
+		"a NUL before the END line":    bytes.Replace(armored, []byte("\n-----END"), []byte("\x00\n-----END"), 1),
+		"the base64 on one line":       []byte(armorBegin + base64.StdEncoding.EncodeToString(blob) + "\n" + armorEnd + "\n"),
+		"a space inside the base64":    append(append(append([]byte{}, armored[:body+7]...), ' '), armored[body+7:]...),
+		"SSHSIG version 0":             rewrite(0, false, nil),
+		"a NUL ending the namespace":   rewrite(1, true, nil),
+		"a byte in the reserved field": rewrite(1, false, []byte{'x'}),
+	}
+	for name, sig := range forms {
+		if _, err := Dearmor(sig); err != nil {
+			t.Fatalf("%s: OpenSSH's reading refuses it: %v", name, err)
+		}
+		q, err := ParsePass(strings.Replace(header, base64.StdEncoding.EncodeToString(armored), base64.StdEncoding.EncodeToString(sig), 1))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if got := q.Authorization(); got != header {
+			t.Errorf("%s: written back as another pass", name)
+		}
+	}
+	// Control: one bit of the signature itself, in its last string.
+	flipped := append([]byte{}, blob...)
+	flipped[len(flipped)-1] ^= 1
+	q, err := ParsePass(strings.Replace(header, base64.StdEncoding.EncodeToString(armored), base64.StdEncoding.EncodeToString(Armor(flipped)), 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q.Authorization() == header {
+		t.Error("a signature that differs in a bit is written back as the same pass")
+	}
 }
