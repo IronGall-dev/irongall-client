@@ -394,6 +394,14 @@ bad bad-four-lines 'irongall-prekey-v1\n%s\n1\n%s\n' "$A" "$PQ"
 bad bad-six-lines 'irongall-prekey-v1\n%s\n1\n%s\n%s\n\n' "$A" "$PQ" "$NOT_AFTER"
 bad bad-crlf 'irongall-prekey-v1\r\n%s\r\n1\r\n%s\r\n%s\r\n' "$A" "$PQ" "$NOT_AFTER"
 bad bad-no-final-newline 'irongall-prekey-v1\n%s\n1\n%s\n%s' "$A" "$PQ" "$NOT_AFTER"
+# A NUL in each line, which a reader that takes a line through a shell variable drops; and a serial with a digit that is not
+# ASCII (U+0661), which [0-9] takes in some locales.
+bad bad-nul-in-the-tag 'irongall-prekey-v1\x00\n%s\n1\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
+bad bad-nul-in-the-address 'irongall-prekey-v1\n%s\x00%s\n1\n%s\n%s\n' "${A:0:32}" "${A:32}" "$PQ" "$NOT_AFTER"
+bad bad-nul-in-the-serial 'irongall-prekey-v1\n%s\n1\x002\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
+bad bad-nul-in-the-recipient 'irongall-prekey-v1\n%s\n1\n%s\x00%s\n%s\n' "$A" "${PQ:0:16}" "${PQ:16}" "$NOT_AFTER"
+bad bad-nul-in-not-after 'irongall-prekey-v1\n%s\n1\n%s\n%s\x00%s\n' "$A" "$PQ" "${NOT_AFTER:0:10}" "${NOT_AFTER:10}"
+bad bad-serial-a-digit-not-ascii 'irongall-prekey-v1\n%s\n1\xd9\xa1\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
 bad bad-recipient-uppercase-pq 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$(printf '%s' "$PQ" | tr a-z A-Z)" "$NOT_AFTER"
 bad bad-recipient-uppercase-classic 'irongall-prekey-v1\n%s\n2\n%s\n%s\n' "$A" "$(tr a-z A-Z < input/a-2.classic)" "$NOT_AFTER"
 bad bad-recipient-not-age 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$GOOD" "$NOT_AFTER"
@@ -525,6 +533,9 @@ cat "$GOOD_SIG" message/a-to-b.line > plain/refuse-signature-first.txt
 { cat message/a-to-b.line; grep -v -e '-----END' "$GOOD_SIG"; } > plain/refuse-no-end-line.txt
 { cat message/a-to-b.line; head -c -1 "$GOOD_SIG"; } > plain/refuse-end-line-without-its-line-feed.txt
 { cat message/a-to-b.line; head -c -1 "$GOOD_SIG"; printf '\0\n'; } > plain/refuse-end-line-followed-by-a-nul.txt
+{ cat message/a-to-b.line; printf -- '-----BEGIN SSH SIGNATURE-----\0\n'; tail -n +2 "$GOOD_SIG"; } > plain/refuse-begin-line-followed-by-a-nul.txt      # a reader that takes the line through a shell variable drops the NUL
+{ cat message/a-to-b.line; printf -- '-----BEGIN SSH\0 SIGNATURE-----\n'; tail -n +2 "$GOOD_SIG"; } > plain/refuse-begin-line-holding-a-nul.txt
+{ cat message/a-to-b.line; printf -- '\0'; cat "$GOOD_SIG"; } > plain/refuse-begin-line-preceded-by-a-nul.txt
 { cat message/a-to-b.line; head -c -1 "$GOOD_SIG"; printf '.\n'; tail -n 1 "$GOOD_SIG"; } > plain/refuse-end-line-followed-by-a-byte-and-a-later-one.txt      # the block ends at the first END line, whatever follows later
 sed 's/$/\r/' message/a-to-b.line > "$L"; { cat "$L"; under a-work a/work-cert.pub "irongall-msg-v1:$B" < "$L" | sed 's/$/\r/'; } > plain/refuse-crlf.txt
 printf '{\n"v":1,"from":"%s","to":"%s","sent_at":"%s","msg_id":"%s","identity":"%s","body":"hello"}\n' "$A" "$B" "$NOW" "$MSG_ID" "$ID_A" > "$L"; refuse refuse-envelope-on-two-lines "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"

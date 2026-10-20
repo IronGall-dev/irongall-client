@@ -126,7 +126,7 @@
 | `allowed`, `blocked` | the senders whose mail lands in `inbox/`, and the senders whose mail is dropped: one address to a line, the owner's to edit. A send adds its recipient to `allowed`, as an alias and `allow` do; `block` adds to `blocked` (§5.6) |
 | `policy` | where mail from a sender this box has not allowed lands, `unknown held` (the default) or `unknown inbox`, and whom its server takes mail from, `server all` (the default) or `server allowed`: `<setting> <value>` lines. It never leaves the box (§5.6, §6.2) |
 | `acl.json` | the ACL this box's server last took, as it answered (§6.2) |
-| `revocation-servers` | the revocation servers this box asks beside its own server, and publishes to (§6.3): one to a line, each as `https://host` or `https://host:port` (`http` only on this machine, §0), or the one word `none`. It is its owner's to write, and neither client writes it. Without it, none: the box's own server is one already |
+| `revocation-servers` | the revocation servers this box asks beside its own server, and publishes to (§6.3), with commas, spaces, tabs or line ends between, each as `https://host` or `https://host:port` (`http` only on this machine, §0), or the one word `none`. It is its owner's to write, and neither client writes it. Without it, none: the box's own server is one already |
 | `lock/` | the box's lock: every command that writes the box holds it from start to end, so one runs at a time (§5) |
 
 **The Go client uses the same files: the identity is the plain OpenSSH key, with no seed derivation.** Its commands: `README.md`.

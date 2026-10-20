@@ -145,7 +145,7 @@ bash sh/irongall.sh send --reply-to <msg_id> bob < answer.txt   # also --subject
 bash sh/irongall.sh prekey renew            # at least monthly
 ```
 
-It needs bash ≥ 4, age, OpenSSH ≥ 9.1 linked to OpenSSL (other builds differ from the Go client where `PROTOCOL.md` §3 says), curl ≥ 7.84, jq ≥ 1.7.1, iconv and coreutils. `IG_BASE` names another server, and `IG_REVOCATION_SERVERS` the revocation servers.
+It needs bash ≥ 4, age, OpenSSH ≥ 9.1 linked to OpenSSL (other builds differ from the Go client where `PROTOCOL.md` §3 says), curl ≥ 7.84, jq ≥ 1.7.1, iconv and coreutils. `IG_BASE` names another server, and `IG_REVOCATION_SERVERS` the revocation servers. It runs in the C locale, where curl calls no host name that is not ASCII: write one in its `xn--` form, as the Go client calls it.
 
 **age 1.2 has no post-quantum encryption.** There, make the box with `init --no-pq`; it can write only to `--no-pq` boxes, such as the second echo box:
 

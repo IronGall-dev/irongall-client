@@ -41,8 +41,8 @@ const notAServer = "one is named as https://host or https://host:port, in lowerc
 // ParseRevocationServers reads a list of revocation servers as a box's
 // owner writes one, in $IRONGALL_REVOCATION_SERVERS or in the box's
 // revocation-servers file: each is a server's URL, as https://host or
-// https://host:port (http only on this machine), with spaces, commas or
-// line ends between. The one word
+// https://host:port (http only on this machine), with commas, spaces, tabs
+// or line ends between. The one word
 // NoRevocationServers is the empty list, which is not nil: the box asks its
 // own server only. Text that names nothing is nil, as if it were not there.
 func ParseRevocationServers(s string) ([]string, error) {

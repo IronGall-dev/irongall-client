@@ -26,8 +26,8 @@ The server is $IRONGALL_BASE, or https://irongall.dev: https, or http only
 to a server on this machine, and a redirect is never followed.
 Beside its server a box asks revocation servers whether an address is revoked,
 and publishes its own revocations to them: those $IRONGALL_REVOCATION_SERVERS
-names (URLs with spaces or commas between, or "none"), or else those its
-revocation-servers file names, one to a line. With neither, it asks none:
+names, or else those its revocation-servers file names (URLs with commas,
+spaces, tabs or line ends between, or "none"). With neither, it asks none:
 its own server is one already. A revocation server learns which addresses a
 box asks about: name one only if you mean to tell it. No answer from one
 changes nothing, and status lists them.
