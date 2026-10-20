@@ -716,7 +716,7 @@ An integer is from 0 to 2^53 − 1 (§0b). A string member is shown by a client 
 | `registrations_range` | `ip` | the same, from an IPv6 /48 |
 | `misses` | `ip` | calls that named no box or carried nothing that verified |
 | `sends_before_pass` | `ip` | sends, counted before their pass is read |
-| `requests` | `ip` | calls with no pass, registrations and renewals, and requests no route matches |
+| `requests` | `ip` | calls that carry no pass the server has checked, registrations and renewals among them, and requests no route matches |
 
 **The status map:**
 
