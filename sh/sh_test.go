@@ -7,11 +7,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -2477,6 +2481,327 @@ func TestTheScriptFollowsNoRedirect(t *testing.T) {
 	defer mu.Unlock()
 	if len(reached) != 0 {
 		t.Fatalf("a redirect was followed: %q", reached)
+	}
+}
+
+// A record a server redirects is taken by none: the script says so, keeps
+// no revocation of its own, and exits 1. The publish case of the redirects
+// §11 names, from the box's own server and from a revocation server.
+func TestARedirectedPublishIsNotTaken(t *testing.T) {
+	need(t, append(scriptTools, "curl")...)
+	mode := "--no-pq"
+	if pq() {
+		mode = ""
+	}
+	held := func(base string, a protocol.Address) int {
+		resp, err := http.Get(base + "/v1/" + a.String() + "/revocations")
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	for _, code := range []int{301, 308} {
+		srv := fakeserver.New(t, time.Now)
+		rs := fakeserver.New(t, time.Now)
+		front := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Location", rs.URL+r.URL.RequestURI())
+			w.WriteHeader(code)
+		}))
+		t.Cleanup(front.Close)
+		sh := func(dir, commands string) (string, error) {
+			return bash(t, []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}, commands)
+		}
+		box := func() (string, protocol.Address) {
+			dir := t.TempDir()
+			out, err := sh(dir, "ig_init "+mode)
+			if err != nil {
+				t.Fatal(err)
+			}
+			a, _ := protocol.ParseAddress(strings.TrimPrefix(linkIn(t, out), srv.URL+protocol.LinkPath))
+			return dir, a
+		}
+
+		// A listed revocation server, named by a URL that redirects to it.
+		dir, a := box()
+		_ = os.WriteFile(filepath.Join(dir, "revocation-servers"), []byte(front.URL+"\n"), 0o600)
+		out, err := sh(dir, "ig_revoke "+a.String())
+		t.Logf("%d from the revocation server: %q, err %v; the revocation server holds %d", code, out, err, held(rs.URL, a))
+		if err == nil {
+			t.Errorf("%d: a record the revocation server does not hold is reported published", code)
+		}
+
+		// The box's own server, whose PUT of the record is redirected.
+		srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/revocations") {
+				w.Header().Set("Location", rs.URL+r.URL.RequestURI())
+				w.WriteHeader(code)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+		dir, a = box()
+		out, err = sh(dir, "ig_revoke "+a.String())
+		_, kept := os.Stat(filepath.Join(dir, "revoked.sig"))
+		t.Logf("%d from the own server: %q, err %v; the own server holds %d; revoked.sig kept: %v", code, out, err, held(srv.URL, a), kept == nil)
+		if err == nil {
+			t.Errorf("%d: a record no server holds is reported published, and kept", code)
+		}
+	}
+}
+
+// stderr carries only the script's own JSON lines (AGENTS.md § What a box
+// prints), whatever an error's answer holds, a body or none.
+func TestAnAnswerWithNoBodyPutsOnlyJSONOnStderr(t *testing.T) {
+	need(t, append(scriptTools, "curl")...)
+	for _, status := range []int{http.StatusNotModified, http.StatusNotFound, http.StatusServiceUnavailable} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(status) }))
+		t.Cleanup(srv.Close)
+		cmd := exec.Command("bash", "-c", ". "+abs(t, "irongall.sh")+"\nig_api GET /v1/x")
+		cmd.Env = append(os.Environ(), "IRONGALL_HOME="+t.TempDir(), "IG_BASE="+srv.URL)
+		var errs bytes.Buffer
+		cmd.Stderr = &errs
+		_ = cmd.Run()
+		for l := range strings.Lines(errs.String()) {
+			if !strings.HasPrefix(l, "{") {
+				t.Errorf("%d: stderr has %q", status, l)
+			}
+		}
+		if !strings.Contains(errs.String(), `"status":`+strconv.Itoa(status)+`,`) {
+			t.Errorf("%d: no error line with its status: %q", status, errs.String())
+		}
+	}
+}
+
+// A server that is not there is no answer, with curl's words and no status:
+// curl's -w writes 000 for the status it never read.
+func TestAServerThatIsNotThereIsNoAnswer(t *testing.T) {
+	need(t, append(scriptTools, "curl")...)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := "http://" + l.Addr().String()
+	_ = l.Close()
+	_, err = bash(t, []string{"IRONGALL_HOME=" + t.TempDir(), "IG_BASE=" + base}, "ig_api GET /v1/x")
+	if err == nil || !strings.Contains(err.Error(), `{"type":"error","message":"no answer from `+base+`: curl: `) || strings.Contains(err.Error(), `"status":`) {
+		t.Errorf("a server that is not there: %v", err)
+	}
+}
+
+// A 3xx is no answer, whatever header or trailer line comes with it
+// (PROTOCOL.md §0): its status is the final answer's own status line, as
+// curl read it, never a line of its header block that looks like one.
+func TestA3xxIsNoAnswerWhateverItsLines(t *testing.T) {
+	need(t, append(scriptTools, "curl")...)
+	mode := "--no-pq"
+	if pq() {
+		mode = ""
+	}
+	srv := fakeserver.New(t, time.Now)
+	env := []string{"IRONGALL_HOME=" + t.TempDir(), "IG_BASE=" + srv.URL}
+	if _, err := bash(t, env, "ig_init "+mode); err != nil {
+		t.Fatal(err)
+	}
+	list := `{"messages":[],"count":0}`
+	for _, c := range []struct{ name, status, raw string }{
+		{"a header line", "303", "HTTP/1.1 303 See Other\r\nLocation: /x\r\nRetry-After: 5\r\nHTTP/2 201: x\r\nContent-Length: " + strconv.Itoa(len(list)) + "\r\nConnection: close\r\n\r\n" + list},
+		{"a trailer", "307", "HTTP/1.1 307 Temporary Redirect\r\nLocation: /x\r\nRetry-After: 5\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n" + strconv.FormatInt(int64(len(list)), 16) + "\r\n" + list + "\r\n0\r\nHTTP/1.1 200 OK: x\r\n\r\n"},
+	} {
+		srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if !strings.HasSuffix(r.URL.Path, "/messages") {
+				next.ServeHTTP(w, r)
+				return
+			}
+			conn, bw, _ := w.(http.Hijacker).Hijack()
+			_, _ = bw.WriteString(c.raw)
+			_ = bw.Flush()
+			_ = conn.Close()
+		})
+		if out, err := bash(t, env, "ig_recv"); err == nil || !strings.Contains(err.Error(), `"status":`+c.status+`,`) {
+			t.Errorf("%s: a drain answered %s: %q, %v", c.name, c.status, out, err)
+		}
+	}
+}
+
+// The user's curl config changes nothing the script does (PROTOCOL.md §0):
+// -q comes first, or curl reads .curlrc.
+func TestTheScriptReadsNoCurlrc(t *testing.T) {
+	need(t, append(scriptTools, "curl")...)
+	mode := "--no-pq"
+	if pq() {
+		mode = ""
+	}
+	curlrc := func(line string) string {
+		home := t.TempDir()
+		if err := os.WriteFile(filepath.Join(home, ".curlrc"), []byte(line+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return "CURL_HOME=" + home
+	}
+
+	// location-trusted: the list's 307 is followed, and the pass goes with it.
+	srv := fakeserver.New(t, time.Now)
+	var mu sync.Mutex
+	var got []string
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		got = append(got, r.Method+" "+r.URL.Path+" "+strings.SplitN(r.Header.Get("Authorization"), ",", 2)[0])
+		mu.Unlock()
+		w.Header().Set("Retry-After", "60")
+		_, _ = w.Write([]byte(`{"messages":[]}`))
+	}))
+	t.Cleanup(other.Close)
+	env := []string{"IRONGALL_HOME=" + t.TempDir(), "IG_BASE=" + srv.URL, curlrc("location-trusted")}
+	if _, err := bash(t, env, "ig_init "+mode); err != nil {
+		t.Fatal(err)
+	}
+	srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if strings.HasSuffix(r.URL.Path, "/messages") {
+			http.Redirect(w, r, other.URL+r.URL.RequestURI(), http.StatusTemporaryRedirect)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	_, err := bash(t, env, "ig_recv")
+	mu.Lock()
+	if err == nil || len(got) > 0 {
+		t.Errorf("location-trusted: recv %v; the other server got %q", err, got)
+	}
+	mu.Unlock()
+
+	// insecure: a server whose certificate nobody signed is called, with the pass.
+	u, _ := url.Parse(fakeserver.New(t, time.Now).URL)
+	front := httptest.NewTLSServer(httputil.NewSingleHostReverseProxy(u))
+	t.Cleanup(front.Close)
+	env = []string{"IRONGALL_HOME=" + t.TempDir(), "IG_BASE=" + front.URL, curlrc("insecure")}
+	if out, err := bash(t, env, "ig_init "+mode+" && ig_recv"); err == nil {
+		t.Errorf("insecure: a server whose certificate nobody signed made a box and drained it: %q", out)
+	}
+}
+
+// Both clients take a list's poll interval from the final answer's own first
+// Retry-After, its whitespace trimmed: never from a 1xx before it, and never
+// from a second line (PROTOCOL.md §5.1). An error's wait is read the same way.
+func TestBothClientsReadAListsIntervalAlike(t *testing.T) {
+	need(t, append(scriptTools, "curl")...)
+	ctx := context.Background()
+	kt, mode := protocol.Classic, "--no-pq"
+	if pq() {
+		kt, mode = protocol.PostQuantum, ""
+	}
+	srv := fakeserver.New(t, time.Now)
+	env := []string{"IRONGALL_HOME=" + t.TempDir(), "IG_BASE=" + srv.URL}
+	if _, err := bash(t, env, "ig_init "+mode); err != nil {
+		t.Fatal(err)
+	}
+	g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, kt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const list = `{"messages":[],"count":0}`
+	answer := func(status string, lines ...string) string {
+		lines = append(lines, "Content-Length: "+strconv.Itoa(len(list)), "Connection: close")
+		return status + "\r\n" + strings.Join(lines, "\r\n") + "\r\n\r\n" + list
+	}
+	serve := func(raw string) {
+		srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if !strings.HasSuffix(r.URL.Path, "/messages") {
+				next.ServeHTTP(w, r)
+				return
+			}
+			conn, bw, _ := w.(http.Hijacker).Hijack()
+			_, _ = bw.WriteString(raw)
+			_ = bw.Flush()
+			_ = conn.Close()
+		})
+	}
+	for _, c := range []struct {
+		name, raw string
+		takes     bool
+	}{
+		{"digits", answer("HTTP/1.1 200 OK", "Retry-After: 60"), true},
+		{"a space after them", answer("HTTP/1.1 200 OK", "Retry-After: 60 "), true},
+		{"a tab before them", answer("HTTP/1.1 200 OK", "Retry-After:\t60"), true},
+		{"x, then digits", answer("HTTP/1.1 200 OK", "Retry-After: x", "Retry-After: 60"), false},
+		{"digits, then x", answer("HTTP/1.1 200 OK", "Retry-After: 60", "Retry-After: x"), true},
+		{"a 102's alone", "HTTP/1.1 102 Processing\r\nRetry-After: 7\r\n\r\n" + answer("HTTP/1.1 200 OK"), false},
+		{"a 103's alone", "HTTP/1.1 103 Early Hints\r\nRetry-After: 7\r\n\r\n" + answer("HTTP/1.1 200 OK"), false},
+	} {
+		serve(c.raw)
+		_, shErr := bash(t, env, "ig_recv")
+		_, goErr := g.Receive(ctx)
+		if (shErr == nil) != c.takes || (goErr == nil) != c.takes {
+			t.Errorf("%s: want the list taken %v; the script: %v, the Go client: %v", c.name, c.takes, shErr, goErr)
+		}
+	}
+	serve("HTTP/1.1 103 Early Hints\r\nRetry-After: 30\r\n\r\nHTTP/1.1 429 Too Many Requests\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+	if _, err := bash(t, env, "ig_recv"); err == nil || !strings.Contains(err.Error(), `"status":429`) || strings.Contains(err.Error(), "retry_after") {
+		t.Errorf("a 429 with no Retry-After, after a 103 with one: %v", err)
+	}
+}
+
+// A server on this machine is called directly, never through a proxy the
+// environment names, as the Go client calls it (PROTOCOL.md §0): over http,
+// over https, and by the name localhost. A server elsewhere still goes
+// through it, which shows the proxy is one curl uses.
+func TestTheScriptCallsThisMachineDirectly(t *testing.T) {
+	need(t, append(scriptTools, "curl")...)
+	mode := "--no-pq"
+	if pq() {
+		mode = ""
+	}
+	var mu sync.Mutex
+	var got []string
+	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		got = append(got, r.Method+" "+r.RequestURI+" "+strings.SplitN(r.Header.Get("Authorization"), ",", 2)[0])
+		mu.Unlock()
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	t.Cleanup(proxy.Close)
+	taken := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		g := got
+		got = nil
+		return g
+	}
+	srv := fakeserver.New(t, time.Now)
+	u, _ := url.Parse(srv.URL)
+	front := httptest.NewTLSServer(httputil.NewSingleHostReverseProxy(u))
+	t.Cleanup(front.Close)
+	ca := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: front.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	register := func(base string) (string, error) {
+		env := []string{"IRONGALL_HOME=" + t.TempDir(), "IG_BASE=" + base, "CURL_CA_BUNDLE=" + ca, "no_proxy=", "NO_PROXY="}
+		for _, v := range []string{"http_proxy", "https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"} {
+			env = append(env, v+"="+proxy.URL)
+		}
+		return bash(t, env, "ig_init "+mode)
+	}
+	for _, base := range []string{srv.URL, front.URL} {
+		out, err := register(base)
+		if g := taken(); err != nil || len(g) > 0 {
+			t.Errorf("%s: init %q, %v; the proxy got %q", base, out, err, g)
+		}
+	}
+	_, port, _ := strings.Cut(strings.TrimPrefix(front.URL, "https://"), ":")
+	_, _ = register("https://localhost:" + port) // its certificate names no localhost: only where the call went is asked
+	if g := taken(); len(g) > 0 {
+		t.Errorf("localhost: the proxy got %q", g)
+	}
+	_, err := register("https://irongall.invalid")
+	g := taken()
+	if err == nil || len(g) == 0 {
+		t.Errorf("a server elsewhere: %v; the proxy got %q", err, g)
+	}
+	for _, l := range g {
+		if !strings.HasPrefix(l, "CONNECT irongall.invalid:443 ") {
+			t.Errorf("a server elsewhere: the proxy got %q", l)
+		}
 	}
 }
 

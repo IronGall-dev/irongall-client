@@ -92,7 +92,7 @@ SRV=$W/srv; mkdir -p $SRV/tmp $SRV/op; MODE=honest; OWN=$IG_BASE      # OWN: the
 as(){ IG=$W/box/$1; }                          # switch to box $1's state directory
 # --- the fake server: the API on files, replacing ig_api (curl) only
 HOST=${IG_BASE#*://}; HOST=${HOST%%/*}      # the server's name, as a pass names it
-srv_err(){ jq -n --argjson st "$1" --arg c "$2" --arg h "$3" --slurpfile r "${4:-/dev/null}" '{type:("tag:irongall.dev,2026-10-17:errors/"+$c), title:$c, status:$st, detail:$h, code:$c, hint:$h} + if $r == [] then {} else {record:$r[0]} end' > "$IG/error.json"; printf 'HTTP/1.1 %s x\r\nDate: %s\r\n' "$1" "$(LC_ALL=C date -u '+%a, %d %b %Y %H:%M:%S GMT')" > "$IG/error.headers"; jq -cn --argjson s "$1" --arg c "$2" '{type:"error", status:$s, code:$c, message:"ERROR \($s) \($c)"}' >&2; return 1; }      # <status> <code> <words> [the record it carries, a file]: as ig_api prints one, the status and the code, none of the words. The answer is dated by the server's clock
+srv_err(){ jq -n --argjson st "$1" --arg c "$2" --arg h "$3" --slurpfile r "${4:-/dev/null}" '{type:("tag:irongall.dev,2026-10-17:errors/"+$c), title:$c, status:$st, detail:$h, code:$c, hint:$h} + if $r == [] then {} else {record:$r[0]} end' > "$IG/error.json"; printf '%s\n\n%s\n' "$1" "$(LC_ALL=C date -u '+%a, %d %b %Y %H:%M:%S GMT')" > "$IG/error.meta"; jq -cn --argjson s "$1" --arg c "$2" '{type:"error", status:$s, code:$c, message:"ERROR \($s) \($c)"}' >&2; return 1; }      # <status> <code> <words> [the record it carries, a file]: as ig_api prints one, the status and the code, none of the words. The answer is dated by the server's clock
 srv_state(){ local a=$1 st s; shift; [ -e $SRV/$a/state ] || { srv_err 404 no_such_mailbox "never registered"; return 1; }
   st=$(cat $SRV/$a/state); for s in "$@"; do [ "$st" = "$s" ] && return 0; done
   [ "$st" = revoked ] && { srv_err 410 revoked "revoked"; return 1; }; srv_err 404 no_such_mailbox "the box is $st"; }
@@ -208,7 +208,7 @@ srv_inject(){ # <box> <from> <c.age> [id]: what a malicious operator can do, put
   local d=$SRV/$1 s id=${4:-$(sha256sum < "$3" | cut -c1-64)}; s=$(($(cat $d/seq) + 1)); echo $s > $d/seq
   ig_b64 "$3" > $SRV/tmp/c.b64; jq -n --arg id "$id" --arg from "$2" --rawfile c $SRV/tmp/c.b64 --argjson t "$(date -u +%s)" '{id:$id, from:$from, received_at:($t|todate), expires_at:($t + 33*86400 | todate), ciphertext:$c}' > $d/msgs/$(printf %06d $s)-$id.json; }
 srv_list(){ local d=$SRV/$1 c=${2#\?cursor=} all page last nc=null x; [ -n "$2" ] || c=0
-  printf 'HTTP/1.1 200 OK\r\n' > "$IG/response.headers"; [ "$MODE" = "nointerval $1" ] || printf 'Retry-After: 60\r\n' >> "$IG/response.headers"      # the poll interval, which every list answer carries
+  x=60; [ "$MODE" != "nointerval $1" ] || x=; printf '200\n%s\n\n' "$x" > "$IG/response.meta"      # what curl reads of the answer (ig_status): the poll interval, which every list answer carries
   [ "$MODE" != "endless $1" ] || { echo '{"count":0,"messages":[],"next_cursor":"1"}'; return 0; }      # a server that always has another page
   all=$(ls $d/msgs | sort); page=$(printf '%s\n' "$all" | awk -F- -v c="$c" 'NF && $1 + 0 > c + 0' | head -n "${PAGE:-50}")
   last=$(printf '%s\n' "$page" | tail -n1 | cut -d- -f1)
@@ -233,7 +233,7 @@ srv_rev(){ # <METHOD> <address> [JSON file]: a revocation server, the one at $IG
   esac; }
 ig_api(){ # the fake: the same contract as irongall.sh's ig_api (METHOD PATH [body file] [curl args…]), no network
   local m=$1 p=$2 f=${3-} tok="" a rest; shift 2; [ $# -gt 0 ] && shift
-  rm -f "$IG/error.json" "$IG/error.headers" "$IG/response.headers"; [ "${1-}" = -H ] && tok=${2#Authorization: }
+  rm -f "$IG/error.json" "$IG/error.meta" "$IG/response.meta"; [ "${1-}" = -H ] && tok=${2#Authorization: }
   a=${p#/v1/}; a=${a%%/*}; a=${a%%\?*}; rest=${p#/v1/$a}
   [ "$IG_BASE" = "$OWN" ] || { [ -z "$tok" ] || bad "a revocation server was shown a pass" >&2; [ "$rest" = /revocations ] || bad "a revocation server was asked for $m $p" >&2; srv_rev "$m" "$a" "$f"; return; }      # any other base is a revocation server
   echo "$m ${p%%\?*}" >> $SRV/log      # the path, without its query
@@ -562,14 +562,14 @@ n0=$(grep -c "^GET /v1/$B/messages/" $SRV/log); MODE="nointerval $B"; recv; MODE
 [ $RECV_RC != 0 ] && [ "$(grep -c "^GET /v1/$B/messages/" $SRV/log)" = "$n0" ] && [ "$(box_count "$B")" = 1 ] && printf '%s' "$RECV_ERR" | grep -q "carries no poll interval" && ok "a list with no Retry-After is no answer: nothing is fetched, and the mail stays" || bad "a list with no interval: $RECV_RC / $RECV_ERR"
 recv; printf '%s' "$RECV_OUT" | jq -e '.body == "whole or not at all"' > /dev/null && [ "$(box_count "$B")" = 0 ] && ok "from an honest server, the next drain delivers it" || bad "after the forged fetches: $RECV_OUT / $RECV_ERR"
 # a code counts only beside its own type, and a Retry-After is delay-seconds, digits alone
-printf 'HTTP/1.1 429 x\r\nRetry-After: 0017\r\n' > $IG/error.headers
+printf '429\n0017\n\n' > $IG/error.meta
 printf '{"type":"tag:irongall.dev,2026-10-17:errors/rate_limited","status":429,"code":"rate_limited"}' > $IG/error.json; c1=$(ig_code); w1=$(ig_wait)
 printf '{"type":"https://irongall.dev/errors/rate_limited","status":429,"code":"rate_limited"}' > $IG/error.json; c2=$(ig_code)
 printf '{"type":"tag:irongall.dev,2026-10-17:errors/fetch_paced","status":429,"code":"rate_limited"}' > $IG/error.json; c3=$(ig_code)
-printf 'HTTP/1.1 429 x\r\nRetry-After: Fri, 31 Dec 2027 23:59:59 GMT\r\n' > $IG/error.headers; w2=$(ig_wait)
-printf 'HTTP/1.1 429 x\r\nRetry-After: +17\r\n' > $IG/error.headers; w3=$(ig_wait)
-printf 'HTTP/1.1 429 x\r\nRetry-After: 123456789012345678901234567890\r\n' > $IG/error.headers; w4=$(ig_wait)
-rm -f $IG/error.json $IG/error.headers
+printf '429\nFri, 31 Dec 2027 23:59:59 GMT\n\n' > $IG/error.meta; w2=$(ig_wait)
+printf '429\n+17\n\n' > $IG/error.meta; w3=$(ig_wait)
+printf '429\n123456789012345678901234567890\n\n' > $IG/error.meta; w4=$(ig_wait)
+rm -f $IG/error.json $IG/error.meta
 [ "$c1" = rate_limited ] && [ -z "$c2$c3" ] && ok "a code counts only beside its own type: one beside another code's, or beside a URL, is no code" || bad "a problem's type: $c1 / $c2 / $c3"
 [ "$w1" = 17 ] && [ -z "$w2$w3" ] && [ "$w4" = 86400 ] && ok "a Retry-After is digits alone, at most a day: an HTTP-date or a sign asks for no wait" || bad "Retry-After: $w1 / $w2 / $w3 / $w4"
 # --- 15. padding: every message is a whole number of blocks on the wire, so the server sees its size only to within a block

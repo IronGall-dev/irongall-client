@@ -29,7 +29,7 @@
 #
 # It gives up conveniences the Go client has: recv drains once and never waits for mail, and each step runs several
 # programs. Needs bash >= 4, age >= 1.3 (1.2 makes and reaches --no-pq boxes only), OpenSSH
-# >= 9.1, curl >= 7.76, jq >= 1.7.1 (1.7.0 can abort on a number a sender writes, CVE-2023-50246; Ubuntu 24.04's
+# >= 9.1, curl >= 7.84, jq >= 1.7.1 (1.7.0 can abort on a number a sender writes, CVE-2023-50246; Ubuntu 24.04's
 # fixed jq prints jq-1.7), iconv, and coreutils (sha256sum, base64, od, sync).
 
 # recipe: setup
@@ -48,14 +48,15 @@ ig_time(){ # <timestamp> → its Unix time, only for exactly YYYY-MM-DDTHH:MM:SS
   local s; [[ $1 =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || return 1
   s=$(jq -nr --arg t "$1" '$t | fromdateiso8601 | select(todate == $t)' 2> /dev/null) && [ -n "$s" ] && echo "$s"
 }
-ig_api(){ # <METHOD> <PATH> [body file] [curl args…] → the body on stdout, as curl -o wrote it. The body file is sent as it is: a message's ciphertext, POSTed to …/messages, as application/octet-stream (PROTOCOL.md §4.5), and any other body as JSON. Any non-2xx: an error line with its status, its code (ig_code) and the wait its Retry-After asks for, and nothing the server wrote: its detail, hint and title are for a person reading the body (PROTOCOL.md §13). No answer at all: an error line with curl's words. Keeps the answer in $IG/error.json and its headers in $IG/error.headers, returns 1
-  local m=$1 p=$2 f=${3-} t=application/json s c w; shift 2; [ $# -gt 0 ] && shift
+ig_api(){ # <METHOD> <PATH> [body file] [curl args…] → the body on stdout, as curl -o wrote it. The body file is sent as it is: a message's ciphertext, POSTed to …/messages, as application/octet-stream (PROTOCOL.md §4.5), and any other body as JSON. Any non-2xx: an error line with its status, its code (ig_code) and the wait its Retry-After asks for, and nothing the server wrote: its detail, hint and title are for a person reading the body (PROTOCOL.md §13). No answer at all: an error line with curl's words. Keeps the answer in $IG/error.json and what curl read of it in $IG/error.meta (ig_status), returns 1
+  local m=$1 p=$2 f=${3-} t=application/json s c w; local -a np=(); shift 2; [ $# -gt 0 ] && shift
   [[ "$m $p" == "POST /v1/"*"/messages?"* ]] && t=application/octet-stream
   ig_tls "$IG_BASE" || return 1
-  rm -f "$IG/error.json" "$IG/error.headers" "$IG/response.body"
-  curl -sS --max-time 60 --max-filesize 16777216 --fail-with-body -D "$IG/response.headers" -o "$IG/response.body" -X "$m" ${f:+-H "Content-Type: $t" --data-binary "@$f"} "$@" "$IG_BASE$p" 2> "$IG/curl.err" &&
-    [[ $(LC_ALL=C sed -n 's/^HTTP\/[0-9.]* \([0-9][0-9][0-9]\).*/\1/p' "$IG/response.headers" | tail -n 1) = 2?? ]] && { cat "$IG/response.body"; return 0; }      # only a 2xx is an answer: curl, which follows no redirect without -L, exits 0 on a 3xx too
-  mv "$IG/response.body" "$IG/error.json" 2> /dev/null; mv "$IG/response.headers" "$IG/error.headers" 2> /dev/null
+  ig_here "$IG_BASE" localhost && np=(--noproxy '*')      # a server on this machine is called directly, whatever proxy the environment names, as Go's ProxyFromEnvironment never proxies localhost or a loopback address
+  rm -f "$IG/error.json" "$IG/error.meta" "$IG/response.body" "$IG/response.meta"
+  curl -q -sS "${np[@]}" --max-time 60 --max-filesize 16777216 --fail-with-body -o "$IG/response.body" -w '%{response_code}\n%header{retry-after}\n%header{date}\n' -X "$m" ${f:+-H "Content-Type: $t" --data-binary "@$f"} "$@" "$IG_BASE$p" > "$IG/response.meta" 2> "$IG/curl.err" &&
+    [[ $(sed -n 1p "$IG/response.meta") = 2?? ]] && { cat "$IG/response.body"; return 0; }      # -q first, or curl reads the user's .curlrc, where location, insecure or proxy change what is called. Only a 2xx is an answer: curl, which follows no redirect without -L, exits 0 on a 3xx too. The status and the two headers are the final answer's own, as curl read it: never a 1xx's line or a trailer, which the Go client never reads either
+  mv "$IG/response.body" "$IG/error.json" 2> /dev/null; mv "$IG/response.meta" "$IG/error.meta" 2> /dev/null
   s=$(ig_status); c=$(ig_code); w=$(ig_wait); q=; u=
   [ "$c" = rate_limited ] && q=$(ig_member quota_id "$IG_QUOTAS") && u=$(ig_member subject '["box","ip"]')
   [ -n "$s" ] || { ig_err "no answer from $IG_BASE: $(tr '\n' ' ' < "$IG/curl.err")"; return 1; }
@@ -66,12 +67,13 @@ IG_TYPE='tag:irongall.dev,2026-10-17:errors/'      # an error's type is this and
 IG_CODES='{"bad_request":400,"bad_address":400,"bad_encoding":400,"identity_mismatch":400,"bad_key":400,"prekey_not_new":400,"prekey_time":400,"unsupported_key_type":400,"not_age":400,"wrong_recipient_type":400,"bad_revocation":400,"unauthorized":401,"pass_expired":401,"certificate_not_current":401,"certificate_revoked":401,"unknown_sender":403,"sender_revoked":403,"sender_not_allowed":403,"sender_key_type":403,"adopt_key_refused":403,"no_such_mailbox":404,"no_such_message":404,"not_revoked":404,"conflict":409,"box_changed":409,"stale_prekey":409,"prekey_expired":409,"revoked":410,"too_large":413,"rate_limited":429,"fetch_paced":429,"refetch_spent":429,"pair_full":429,"mailbox_full":429,"mailbox_busy":429,"unavailable":503}'      # every code, and its status (PROTOCOL.md §13)
 IG_QUOTAS='["polls","pages","calls","sends","renewals","certificates","certificate_revocations","registrations","registrations_range","misses","sends_before_pass","requests"]'      # every limit a rate_limited may name in quota_id (PROTOCOL.md §13)
 ig_member(){ jq -r --arg m "$1" --argjson known "$2" '.[$m] | strings | select(. as $v | $known | index([$v])) ' "$IG/error.json" 2> /dev/null; }      # <member> <known values, a JSON array> → the last API error's string member, only when it is one of them: a client shows no value it does not know (PROTOCOL.md §13)
-ig_status(){ LC_ALL=C sed -n 's/^HTTP\/[0-9.]* \([0-9][0-9][0-9]\).*/\1/p' "$IG/error.headers" 2> /dev/null | tail -n 1; }      # the status of the last API error
+ig_status(){ LC_ALL=C sed -n '1{/^[0-9][0-9][0-9]$/p;}' "$IG/error.meta" 2> /dev/null | grep -vx 000; }      # the status of the last API error. error.meta is what curl's -w read of the final answer, a line each: its status (000 for none), then its Retry-After and its Date, each the first given, trimmed, as Go's Header.Get reads one
 ig_code(){ local s; s=$(ig_status) && [ -n "$s" ] && ig_shape "$IG/error.json" problem && jq -r --argjson codes "$IG_CODES" --argjson s "$s" --arg t "$IG_TYPE" '(.code | strings) as $c | select($codes[$c] == $s and .type == $t + $c) | $c' "$IG/error.json" 2> /dev/null; }   # the code of the last API error: one this client knows, under its own status, beside its own type, from an answer the Go client would read the same. Any other is no code
-ig_wait(){ LC_ALL=C sed -n 's/^[Rr][Ee][Tt][Rr][Yy]-[Aa][Ff][Tt][Ee][Rr]: *\([0-9]\{1,\}\)\r\{0,1\}$/\1/p' "$IG/error.headers" 2> /dev/null | tail -n 1 | sed 's/^0*\([0-9]\)/\1/' | awk '$1 > 0 { print ($1 > 86400 ? 86400 : $1) }'; }      # the seconds the last API error's Retry-After asks to wait, as a number of at most a day, or nothing. It is delay-seconds, digits alone (PROTOCOL.md §13): an HTTP-date asks for no wait
-ig_dated(){ local d; d=$(LC_ALL=C sed -n 's/^[Dd][Aa][Tt][Ee]: *\([A-Za-z0-9 ,:]*\)\r\{0,1\}$/\1/p' "$IG/error.headers" 2> /dev/null | tail -n 1) && [ -n "$d" ] && jq -nr --arg d "$d" '$d | strptime("%a, %d %b %Y %H:%M:%S GMT") | mktime | todate' 2> /dev/null; }      # the time the last API error's Date header gives, the server's word
+ig_wait(){ LC_ALL=C sed -n '2{/^[0-9]\{1,\}$/p;}' "$IG/error.meta" 2> /dev/null | sed 's/^0*\([0-9]\)/\1/' | awk '$1 > 0 { print ($1 > 86400 ? 86400 : $1) }'; }      # the seconds the last API error's Retry-After asks to wait, as a number of at most a day, or nothing. It is delay-seconds, digits alone (PROTOCOL.md §13): an HTTP-date asks for no wait
+ig_dated(){ local d; d=$(LC_ALL=C sed -n '3{/^[A-Za-z0-9 ,:]*$/p;}' "$IG/error.meta" 2> /dev/null) && [ -n "$d" ] && jq -nr --arg d "$d" '$d | strptime("%a, %d %b %Y %H:%M:%S GMT") | mktime | todate' 2> /dev/null; }      # the time the last API error's Date header gives, the server's word
 ig_json(){ # <file> → 0 only for a JSON text as PROTOCOL.md §0b reads one: UTF-8 with no byte-order mark; one object; every number in JSON's own grammar; no member named twice in any object; nested at most 32 deep; no Unicode noncharacter in a name or a string; and no number jq reads as infinite, past binary64 (I-JSON, RFC 7493). jq rounds a number to 17 digits before it reads it so, which takes three that the Go client refuses, a known variance (PROTOCOL.md §0b). jq skips a byte-order mark and takes NaN, 01, +1 and .5, which JSON does not, so the numbers are read from the text, its strings taken out
   local n
+  [ -s "$1" ] || return 1      # no file, or nothing in it: no JSON text, and nothing on stderr but this script's own lines
   iconv -f UTF-8 -t UTF-8 < "$1" > /dev/null 2>&1 && ! LC_ALL=C grep -Eq $'[\xf5-\xff]|\xf4[\x90-\xbf]' "$1" && [ "$(od -An -N3 -tx1 "$1" | tr -d ' \n')" != efbbbf ] || return 1      # glibc's iconv takes a code point above U+10FFFF, which UTF-8 has none of
   cmp -s "$1" <(tr -d '\000-\010\013\014\016-\037' < "$1") || return 1      # no control byte but tab, LF and CR, and those only as whitespace (RFC 8259 §2, §7): jq ends a number at a NUL and drops it
   ! LC_ALL=C sed -E 's/\\\\//g; s/\\u[dD][89abAB][0-9a-fA-F]{2}\\u[dD][c-fC-F][0-9a-fA-F]{2}//g' "$1" | LC_ALL=C grep -aqE '\\u[dD][89a-fA-F][0-9a-fA-F]{2}' || return 1      # no escaped surrogate but in a pair: jq reads a lone low one as U+FFFD
@@ -117,10 +119,13 @@ ig_server(){ # <URL> → the server's name, as a pass names it: the URL's host, 
   [ -z "$p" ] || { p=$((10#$p)); case ${s,,}:$p in https:443 | http:80) ;; *) h+=:$p ;; esac; }
   echo "$h"
 }
-ig_tls(){ # <URL> → 0 when it is a server this box may call: https, or http only to a server on this machine, by its address: an IPv4 address in 127.0.0.0/8, or [::1]. A name is not, since localhost is what a resolver says it is (RFC 8252 §8.3), so that a pass, or the address a lookup asks about, never crosses a network in the clear (PROTOCOL.md §0). Otherwise a refusal, and 1
+ig_here(){ # <URL> [localhost] → 0 when the URL's host is this machine by its address, an IPv4 address in 127.0.0.0/8 or [::1], and with localhost, that name too. Other spellings of an IPv6 loopback address are read as no address of this machine
   local h=${1#*://}; h=${h%%[/?#]*}; h=${h##*@}; h=${h,,}
   [[ $h =~ ^(.*):[0-9]*$ ]] && h=${BASH_REMATCH[1]}      # an IPv6 address ends in ], so a colon there begins no port
-  [[ ${1,,} = https://?* ]] || { [[ ${1,,} = http://?* ]] && [[ $h = '[::1]' || $h =~ ^127(\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}$ ]]; } ||
+  [[ $h = '[::1]' || $h =~ ^127(\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}$ || ( ${2-} = localhost && $h = localhost ) ]]
+}
+ig_tls(){ # <URL> → 0 when it is a server this box may call: https, or http only to a server on this machine, by its address: an IPv4 address in 127.0.0.0/8, or [::1]. A name is not, since localhost is what a resolver says it is (RFC 8252 §8.3), so that a pass, or the address a lookup asks about, never crosses a network in the clear (PROTOCOL.md §0). Otherwise a refusal, and 1
+  [[ ${1,,} = https://?* ]] || { [[ ${1,,} = http://?* ]] && ig_here "$1"; } ||
     ig_refuse "$(printf '%.80s' "$1") is not a server this client calls: one is https, or http only to this machine, by its address (127.0.0.0/8, ::1)"
 }
 ig_pass(){ # [serial] → the Authorization value of a call as this box, unless it holds its own revocation (ig_finished). Without a serial: the pass kept in $IG/pass while it has more than 30 seconds left and no more than the ten minutes it was signed for, otherwise a new one, signed by the working key in use and kept. With one: a pass signed by that working key, for the call that publishes its prekey, left in $IG/pass.new until the server has taken it
@@ -662,7 +667,7 @@ ig_drain(){ # stops at a transient error or a fault of this box, leaving the res
     ig_owner GET "/v1/$B/messages${c:+?cursor=$c}" > "$IG/list.json" || { ig_own; return 1; }
     [ "$pages" -gt 1 ] || { IG_LISTED=$(ig_now); ig_forget; } || return 1      # the replay set pruned by this clock only once the server has taken a pass dated by it: a drain that a clock far off would prune is stopped at its pass first. IG_LISTED tells ig_recv the same of the keys, and holds the reading the server took
     ig_shape "$IG/list.json" list && n=$(jq -r '.messages | length' "$IG/list.json") || { ig_err "the server's list of messages is not one this client reads, as PROTOCOL.md §0b reads JSON: the mail stays on the server"; return 1; }
-    LC_ALL=C grep -Eqi $'^retry-after: *[0-9]+\r?$' "$IG/response.headers" || { ig_err "the server's list of messages carries no poll interval, a Retry-After of digits alone (PROTOCOL.md §5.1): the mail stays on the server"; return 1; }      # read and not kept: this script drains once and never waits, so it keeps no ETag either
+    LC_ALL=C sed -n 2p "$IG/response.meta" | LC_ALL=C grep -Eqx '[0-9]+' || { ig_err "the server's list of messages carries no poll interval, a Retry-After of digits alone (PROTOCOL.md §5.1): the mail stays on the server"; return 1; }      # the final answer's first Retry-After, trimmed (ig_status), as the Go client reads it; read and not kept: this script drains once and never waits, so it keeps no ETag either
     for ((i = 0; i < n; i++)); do
       id=$(jq -r --argjson i "$i" '.messages[$i].id | strings | select(test("\\A[0-9a-f]{64}\\z"))' "$IG/list.json") && ig_hex "$id" || continue      # tested in jq: $(…) drops trailing LFs and every NUL
       [ $((k += 1)) -le 1000 ] || { ig_out more --arg message "this run stopped at the most one drain takes: run recv again for the rest, which is still on the server"; return 0; }
