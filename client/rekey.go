@@ -18,8 +18,9 @@ import (
 )
 
 // Rekey publishes a NEW prekey, of type kt, or of the current prekey's type
-// if kt is empty, signed by a NEW working key under a new certificate. The
-// three share one number, which this machine's clock gives
+// if kt is empty (post-quantum, init's default, when there is none to read),
+// signed by a NEW working key under a new certificate. The three share one
+// number, which this machine's clock gives
 // ([protocol.SerialAt]). If an earlier Rekey signed one and the server did
 // not take it, that one is sent again, unchanged, until it expires or the
 // box's lifetime is set lower than it was made for: a key is signed once, so
@@ -112,7 +113,7 @@ type ownRead struct {
 	// used.
 	known uint64
 	// kt is the key type the renewal makes: the one asked for, or the served
-	// prekey's, or the published one's.
+	// prekey's, or the published one's, or else post-quantum.
 	kt protocol.KeyType
 	// unread is why the remedy went on without its server's answer, or nil.
 	unread error
@@ -213,6 +214,13 @@ func (b *Box) readOwn(ctx context.Context, kt protocol.KeyType, unused bool, l *
 	}
 	if out.kt == "" {
 		out.kt = b.publishedType(published)
+	}
+	if out.kt == "" {
+		// Nothing served to read a type from and nothing published: a box
+		// restored from its identity alone, at a server that forgot it, or
+		// in the remedy one whose server's answer it cannot use. It takes
+		// init's default.
+		out.kt = protocol.PostQuantum
 	}
 	return out, nil
 }

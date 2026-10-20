@@ -469,9 +469,9 @@ cp held2.txt $IG/prekeys/$B2.txt
 as PRUNED; ig_init $NOPQ > /dev/null 2> err.txt && p1=$(newest) && ig_rekey $NOPQ > /dev/null 2>> err.txt && [ "$(newest)" -gt "$p1" ] || bad "prune by recv: setup: $(cat err.txt)"
 sed -i "5s/.*/$(jq -nr 'now - 34*86400 | floor | todate')/" $IG/prekeys/$p1.txt; recv
 [ "$RECV_RC" = 0 ] && [ ! -e $IG/prekeys/$p1.agekey ] && [ -e $IG/prekeys/$(newest).agekey ] && ok "ig_recv deletes a retired key past its deletion time, by the reading the server took at the drain's list" || bad "prune by recv: rc $RECV_RC, $RECV_ERR"
-# --- 10. restore from the identity alone: no prekeys, no working key, no pass
-as B; rm -f $W/box/B/prekeys/* $W/box/B/work/* $W/box/B/pass $W/box/B/serial
-ig_rekey $NOPQ && B3=$(num B) && [ "$B3" -gt "$B2" ] && [ "$(sed -n 3p $SRV/$B/prekey.txt)" = "$B3" ] && [ -s $IG/work/$B3 ] && [ -s $IG/pass ] && ok "lost prekeys, working key and pass: ig_rekey with the identity alone publishes a later number under a new certificate, and needs no record of the numbers it used" || bad "restore"
+# --- 10. restore from the identity alone: no prekeys, no working key, no pass, and none of the files made from the identity
+as B; rm -f $W/box/B/prekeys/* $W/box/B/work/* $W/box/B/pass $W/box/B/serial $W/box/B/identity.pub $W/box/B/identity.doc $W/box/B/address
+ig_rekey $NOPQ && B3=$(num B) && [ "$B3" -gt "$B2" ] && [ "$(sed -n 3p $SRV/$B/prekey.txt)" = "$B3" ] && [ -s $IG/work/$B3 ] && [ -s $IG/pass ] && [ "$(cat $IG/address)" = "$B" ] && [ -s $IG/identity.pub ] && ig_idcheck $IG/identity.doc "$B" && ok "lost prekeys, working key, pass and every file made from the identity: ig_rekey with the identity alone makes them again, the same address among them, publishes a later number under a new certificate, and needs no record of the numbers it used" || bad "restore"
 as A; printf 'after restore' > body6; ig_send "$B" body6 && as B && recv && printf '%s' "$RECV_OUT" | jq -e '.body == "after restore"' > /dev/null && ok "mail flows again after the restore" || bad "after restore: $RECV_OUT / $RECV_ERR"
 # A box the server forgot, past its record's expiry (PROTOCOL.md §7): no box is served to number above, so ig_rekey numbers above what it published and registers anew
 as B; srv_forget "$B"; n0=$(num B)

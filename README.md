@@ -160,7 +160,6 @@ What it lacks against the Go client, though it gives the Go client's verdict on 
 - **It never renews the prekey: run `prekey renew` at least monthly,** or within the box's `prekey-lifetime`, which it signs to; it has no `prekey lifetime` command, so write the seconds into that file.
 - **It keeps each retired prekey until 33 days after it expires:** about 66 days of forward secrecy, against about two days for a Go-client box received daily.
 - **The lock is a bare `lock/` directory.** A `kill -9`, or the machine going down, leaves it behind, and every command then waits for it and gives up: remove it by hand.
-- **Restoring a box from its identity alone takes the Go client.**
 - `recv` drains once and never waits, a drain has no limit in bytes, and it keeps no `ETag`, so every poll is answered in full.
 - No `status`, no `account`, no `alias rm`, no `show`, no `quarantine` and no `recv --headers`. A message it refuses is kept without what its checks found (`judged`).
 - It applies a revocation of certificates and makes none: it has no `cert` group, its `revocation keep` takes none from a file, and it has no `revocation ask`. A revocation server that gave no answer is asked again for the next address.

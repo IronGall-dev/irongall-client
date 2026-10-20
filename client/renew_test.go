@@ -89,6 +89,47 @@ func TestAForgottenBoxRegistersAnewAtItsRenewal(t *testing.T) {
 	}
 }
 
+// A box restored from its identity alone (README: "put it alone in an empty
+// box directory and run irongall prekey renew") at a server that forgot it:
+// nothing is served to take a key type from and nothing was published, so it
+// registers with init's default, post-quantum. The same in the remedy, on a
+// restored box whose server does not answer its read. Control: the restore
+// at a server that still serves the box.
+func TestARestoredBoxRegistersWhereItsServerForgotIt(t *testing.T) {
+	ctx := context.Background()
+	for _, forgotten := range []bool{false, true} {
+		e := newEnv(t)
+		a := e.box(protocol.PostQuantum)
+		if forgotten {
+			e.srv.Forget(a.Address())
+		}
+		r := restoreWith(t, e, a, e.clock.Now)
+		e.clock.Add(time.Minute)
+		p, err := r.Rekey(ctx, "")
+		if err != nil {
+			t.Errorf("forgotten %v: prekey renew of a box restored from its identity alone: %v", forgotten, err)
+			continue
+		}
+		if p.Type() != protocol.PostQuantum || servedSerial(t, e, r) != p.Serial {
+			t.Errorf("forgotten %v: the restored box published a %s prekey at %d, and its server serves %d", forgotten, p.Type(), p.Serial, servedSerial(t, e, r))
+		}
+	}
+	e := newEnv(t)
+	a := e.box(protocol.PostQuantum)
+	r := restoreWith(t, e, a, e.clock.Now)
+	e.clock.Add(time.Minute)
+	watch(e, func(w http.ResponseWriter, req *http.Request) bool {
+		if req.Method == http.MethodGet && req.URL.Path == boxPath(a) {
+			http.Error(w, "down", http.StatusServiceUnavailable)
+			return true
+		}
+		return false
+	})
+	if rm, err := r.RenewAndRevoke(ctx, ""); err != nil || rm == nil || rm.Unread == nil || rm.Prekey == nil || rm.Prekey.Type() != protocol.PostQuantum {
+		t.Errorf("the remedy on a restored box whose server does not answer its read: %+v, %v", rm, err)
+	}
+}
+
 // A renewal that fails does not stop the drain, says why, and is tried
 // again an hour later, not at every poll.
 func TestReceiveRetriesAFailedRenewalHourly(t *testing.T) {
