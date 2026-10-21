@@ -42,6 +42,7 @@ type world struct {
 func newWorld(t *testing.T) *world {
 	t.Helper()
 	need(t, append(scriptTools, "curl")...)
+	t.Parallel() // each world is a server and directories of its own
 	// The boxes' directory is made before the checks are registered, so that
 	// it is removed after they run: cleanups run last first.
 	w := &world{t: t, srv: fakeserver.New(t, time.Now), work: t.TempDir(), home: t.TempDir()}

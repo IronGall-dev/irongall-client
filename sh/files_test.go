@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -87,12 +88,15 @@ func TestTheScriptRestoresABoxFromItsIdentityAlone(t *testing.T) {
 			t.Fatalf("forgotten %v: a renewal of the box restored from its identity alone: %v %q", forgotten, err, out)
 		}
 		// It needs no record of the numbers it used: its own is above the lost
-		// machine's, under a new certificate, with a working key and a pass.
-		n := strings.TrimSpace(string(mustRead(t, filepath.Join(dir, "serial"))))
+		// machine's where the server serves that box, and is the clock's where
+		// it serves none, so the two share one only in the same second
+		// (PROTOCOL.md §2b). It has a working key and a pass.
+		n, _ := strconv.ParseUint(strings.TrimSpace(string(mustRead(t, filepath.Join(dir, "serial")))), 10, 64)
+		was, _ := strconv.ParseUint(strings.TrimSpace(string(mustRead(t, filepath.Join(lost, "serial")))), 10, 64)
 		st, _ := srv.Prekey(a)
-		if lost := strings.TrimSpace(string(mustRead(t, filepath.Join(lost, "serial")))); len(n) < len(lost) || n <= lost || strings.Split(string(st), "\n")[2] != n ||
-			!exists(filepath.Join(dir, "work", n)) || !exists(filepath.Join(dir, "pass")) {
-			t.Errorf("forgotten %v: the restored box published %s after the lost machine's %s, served %q", forgotten, n, lost, st)
+		if n < was || !forgotten && n == was || strings.Split(string(st), "\n")[2] != strconv.FormatUint(n, 10) ||
+			!exists(filepath.Join(dir, "work", strconv.FormatUint(n, 10))) || !exists(filepath.Join(dir, "pass")) {
+			t.Errorf("forgotten %v: the restored box published %d after the lost machine's %d, served %q", forgotten, n, was, st)
 		}
 		if _, err := bash(t, env, `ig_idcheck "$IG/identity.doc" `+a.String()); err != nil {
 			t.Errorf("forgotten %v: the restored identity document: %v", forgotten, err)
