@@ -280,7 +280,8 @@ func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*B
 }
 
 func (b *Box) init(ctx context.Context, kt protocol.KeyType) (*Box, error) {
-	if !exists(b.path("identity")) {
+	fresh := !exists(b.path("identity"))
+	if fresh {
 		if err := b.newIdentityKey(); err != nil {
 			return nil, err
 		}
@@ -304,11 +305,23 @@ func (b *Box) init(ctx context.Context, kt protocol.KeyType) (*Box, error) {
 	// The box's first prekey is a renewal as every later one is (Rekey): read
 	// from what its server holds of the box (known), numbered by this
 	// machine's clock above all that shows, and sent as a registration where
-	// the server holds no box for it. So a box new to its server, a box
-	// restored from its identity alone and a registration whose answer was
-	// lost take one path, and what an earlier attempt signed is sent again
-	// only while it can be (PROTOCOL.md §6.4; #87).
-	if _, err := b.rekey(ctx, kt); err != nil {
+	// the server holds no box for it. So a box restored from its identity
+	// alone and a registration whose answer was lost take one path, and what
+	// an earlier attempt signed is sent again only while it can be
+	// (PROTOCOL.md §6.4; #87). An identity made by this call has no history
+	// a server could hold, and nobody else holds its key to have revoked
+	// anything under it: its renewal goes as a registration with no read,
+	// which a server would count as a miss of its address.
+	if !fresh {
+		_, err := b.rekey(ctx, kt)
+		return b, err
+	}
+	if kt == "" {
+		kt = protocol.PostQuantum
+	}
+	if _, at, err := b.renewFrom(ctx, &ownRead{forgotten: true, kt: kt}); err != nil {
+		return nil, err
+	} else if err := b.prune(at); err != nil {
 		return nil, err
 	}
 	return b, nil

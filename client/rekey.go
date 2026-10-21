@@ -69,6 +69,11 @@ func (b *Box) renew(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey,
 	if err != nil {
 		return nil, taken{}, err
 	}
+	return b.renewFrom(ctx, st)
+}
+
+// renewFrom is renew from what the box knows of itself at its server, st.
+func (b *Box) renewFrom(ctx context.Context, st *ownRead) (*protocol.Prekey, taken, error) {
 	next, signed, err := b.nextNumber(st, false)
 	if err != nil {
 		return nil, taken{}, err

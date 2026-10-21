@@ -786,9 +786,9 @@ no box | cert publish-revoked | silent | error: no box here: open <box>/identity
 no box | cert revoke-earlier | answers | error: no box here: open <box>/identity: no such file or directory |  | nothing
 no box | cert revoke-earlier | refuses | error: no box here: open <box>/identity: no such file or directory |  | nothing
 no box | cert revoke-earlier | silent | error: no box here: open <box>/identity: no such file or directory |  | nothing
-no box | init | answers | ok | GET /v1/own, GET /v1/own/revocations, PUT /v1/own +pass | +.gitignore +address +identity +identity.doc +identity.pub +pass +prekeys/T+7200.agekey +prekeys/T+7200.made +prekeys/T+7200.txt +prekeys/T+7200.txt.sig +serial +work/T+7200 +work/T+7200-cert.pub +work/T+7200.pub
-no box | init | refuses | error: ERROR 429 rate_limited: the server takes no more calls of this kind for now; the server asks to wait 3600 seconds | GET /v1/own | +.gitignore +address +identity +identity.doc +identity.pub
-no box | init | silent | error: GET /v1/own: could not connect |  | +.gitignore +address +identity +identity.doc +identity.pub
+no box | init | answers | ok | PUT /v1/own +pass | +.gitignore +address +identity +identity.doc +identity.pub +pass +prekeys/T+7200.agekey +prekeys/T+7200.made +prekeys/T+7200.txt +prekeys/T+7200.txt.sig +serial +work/T+7200 +work/T+7200-cert.pub +work/T+7200.pub
+no box | init | refuses | error: ERROR 429 rate_limited: the server takes no more calls of this kind for now; the server asks to wait 3600 seconds | PUT /v1/own +pass | +.gitignore +address +identity +identity.doc +identity.pub +prekeys/T+7200.agekey +prekeys/T+7200.made +prekeys/T+7200.txt +prekeys/T+7200.txt.sig +renewal +work/T+7200 +work/T+7200-cert.pub +work/T+7200.pub
+no box | init | silent | error: PUT /v1/own: could not connect |  | +.gitignore +address +identity +identity.doc +identity.pub +prekeys/T+7200.agekey +prekeys/T+7200.made +prekeys/T+7200.txt +prekeys/T+7200.txt.sig +renewal +work/T+7200 +work/T+7200-cert.pub +work/T+7200.pub
 no box | prekey renew | answers | error: no box here: open <box>/identity: no such file or directory |  | nothing
 no box | prekey renew | refuses | error: no box here: open <box>/identity: no such file or directory |  | nothing
 no box | prekey renew | silent | error: no box here: open <box>/identity: no such file or directory |  | nothing
