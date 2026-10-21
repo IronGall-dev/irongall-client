@@ -163,15 +163,19 @@ func TestTheRemedyGoesOnPastARollback(t *testing.T) {
 
 // The box's own server holds a revocation through T and leaves it out of its
 // first read of the box, then answers the remedy's record conflict: the
-// remedy asks again, and numbers above T.
+// remedy reads again, keeps T's, which covers more than its own, publishes
+// nothing more, and numbers above T (PROTOCOL.md §6.3a).
 func TestTheRemedyAsksAgainAfterItsServerAnswersConflict(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	a := e.box(protocol.Classic)
 	T := numberOf(t, a) + 7200
 	publishAt(t, e.srv.URL, ownRevocation(t, a, T))
-	reads := 0
+	reads, puts := 0, 0
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/revocations") {
+			puts++
+		}
 		if r.Method == http.MethodGet && r.URL.Path == boxPath(a) && reads == 0 {
 			reads++
 			e.serve(w, r, next, func(b *protocol.BoxResponse) { b.RevokedCertificates, b.RevokedCertificatesSignature = nil, nil })
@@ -180,8 +184,35 @@ func TestTheRemedyAsksAgainAfterItsServerAnswersConflict(t *testing.T) {
 		next.ServeHTTP(w, r)
 	})
 	r, err := a.RenewAndRevoke(ctx, "")
-	if err != nil || r == nil || r.Revoked == nil || r.Revoked.Through != T || r.Below != T+1 || r.Prekey == nil {
-		t.Fatalf("the remedy, T %d hidden from the first read: %+v, %v", T, r, err)
+	if err != nil || r == nil || r.Revoked == nil || r.Revoked.Through != T || r.NotRevoked != nil || r.Below != T+1 || r.Prekey == nil || puts != 1 {
+		t.Fatalf("the remedy, T %d hidden from the first read: %+v, %v, %d publishes", T, r, err, puts)
+	}
+}
+
+// A conflict whose server shows no revocation that verifies, at either read,
+// stops the remedy: nothing is published again and nothing is renewed, since
+// a renewal under a certificate the server holds revoked would be refused.
+func TestTheRemedyStopsAtAConflictThatShowsNothing(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a := e.box(protocol.Classic)
+	publishAt(t, e.srv.URL, ownRevocation(t, a, numberOf(t, a)+7200))
+	var puts, renewals atomic.Int32
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		switch {
+		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/revocations"):
+			puts.Add(1)
+		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/prekey"):
+			renewals.Add(1)
+		case r.Method == http.MethodGet && r.URL.Path == boxPath(a):
+			e.serve(w, r, next, func(b *protocol.BoxResponse) { b.RevokedCertificates, b.RevokedCertificatesSignature = nil, nil })
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	r, err := a.RenewAndRevoke(ctx, "")
+	if err != nil || r == nil || client.Code(r.NotRevoked) != protocol.CodeConflict || r.NotRenewed == nil || r.Prekey != nil || puts.Load() != 1 || renewals.Load() != 0 {
+		t.Fatalf("the remedy at a conflict that shows nothing: %+v, %v; %d publishes, %d renewals", r, err, puts.Load(), renewals.Load())
 	}
 }
 
