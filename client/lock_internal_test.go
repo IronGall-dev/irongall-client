@@ -10,7 +10,10 @@ import (
 // the drop holds a file that is no longer the lock: it must start again and
 // take the real one, or a third consumer makes a new lock and two run.
 func TestLockFileDeletedUnderTheFlock(t *testing.T) {
-	b := newBox(t.TempDir(), Options{})
+	b, err := newBox(t.TempDir(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	dir := b.path("lock")
 	// A crashed client's lock, held by no one, which this consumer takes over.
 	if err := os.Mkdir(dir, 0o700); err != nil {

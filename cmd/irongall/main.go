@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/signal"
 	"strings"
@@ -84,6 +85,9 @@ The README has the rest, with what this client checks and how to test it:
 const readme = "https://github.com/IronGall-dev/irongall-client#readme"
 
 func main() {
+	// net/http logs some of what a server sends after its answer through the
+	// standard logger, raw (#297): stderr has only this client's lines.
+	log.SetOutput(io.Discard)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	err := run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
 	stop()

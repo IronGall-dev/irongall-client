@@ -657,3 +657,27 @@ func TestParseRevocationServers(t *testing.T) {
 		}
 	}
 }
+
+// A record published with a server URL the client refuses goes nowhere:
+// not to that server, and not to a revocation server listed beside it
+// (#172). Every box is made by newBox, which holds the URL first.
+func TestAPublishWithARefusedServerSendsNothing(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	rs := newRevServer(t)
+	a := e.box(protocol.Classic)
+	rec, err := a.Revocation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	opt := client.Options{Base: "http://irongall.example", RevocationServers: []string{rs.URL}}
+	if _, err := client.Publish(ctx, opt, rec); err == nil || !strings.Contains(err.Error(), "is not a server this client calls") {
+		t.Errorf("published with a refused server: %v", err)
+	}
+	if _, err := client.Revoke(ctx, opt, rec); err == nil {
+		t.Error("revoked with a refused server")
+	}
+	if n := rs.count(http.MethodPut, a.Address()); n != 0 {
+		t.Errorf("the revocation server was sent the record %d times", n)
+	}
+}

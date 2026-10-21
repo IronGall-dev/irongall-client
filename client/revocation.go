@@ -69,7 +69,11 @@ func (b *Box) Revocation() (*protocol.Revocations, error) {
 // record is checked here first. It is [Publish], of a record that must
 // carry a revocation of the address.
 func Revoke(ctx context.Context, opt Options, rec *protocol.Revocations) (protocol.Address, error) {
-	return newBox("", opt).Revoke(ctx, rec)
+	b, err := newBox("", opt)
+	if err != nil {
+		return protocol.Address{}, err
+	}
+	return b.Revoke(ctx, rec)
 }
 
 // Revoke is [Revoke] as this box: to its own server and to the revocation

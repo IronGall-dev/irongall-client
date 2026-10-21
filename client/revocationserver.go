@@ -236,7 +236,11 @@ func (e *NotPublishedError) Unwrap() []error {
 // record the error is a [NotPublishedError], unless the box's own server is
 // the only one there is, whose error is returned as it is.
 func Publish(ctx context.Context, opt Options, rec *protocol.Revocations) (protocol.Address, error) {
-	return newBox("", opt).Publish(ctx, rec)
+	b, err := newBox("", opt)
+	if err != nil {
+		return protocol.Address{}, err
+	}
+	return b.Publish(ctx, rec)
 }
 
 // Publish is [Publish] as this box: to its own server and to the revocation

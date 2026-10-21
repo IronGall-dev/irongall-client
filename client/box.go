@@ -115,8 +115,8 @@ type Box struct {
 // the identity, a box restored from its backup, gets the box's other
 // directories; [Box.Rekey] then gives it a working key and a prekey.
 func Open(dir string, opt Options) (*Box, error) {
-	b := newBox(dir, opt)
-	if err := checkServerURL(b.base); err != nil {
+	b, err := newBox(dir, opt)
+	if err != nil {
 		return nil, err
 	}
 	if err := b.loadIdentity(); err != nil {
@@ -128,7 +128,11 @@ func Open(dir string, opt Options) (*Box, error) {
 	return b, nil
 }
 
-func newBox(dir string, opt Options) *Box {
+// newBox is how every box is made, its directory read or not: its server's
+// URL is held to checkServerURL before anything is done, and its HTTP client
+// takes every request through one transport (newTransport) and follows no
+// redirect (followNone).
+func newBox(dir string, opt Options) (*Box, error) {
 	b := &Box{dir: dir, base: strings.TrimRight(opt.Base, "/"), http: opt.HTTPClient, now: opt.Now, identityType: opt.IdentityType, senderKeyTypes: opt.SenderKeyTypes, revocationServers: opt.RevocationServers, noAnswer: opt.NoAnswer, waiting: opt.Waiting}
 	if b.senderKeyTypes == nil {
 		b.senderKeyTypes = protocol.IdentityTypes()
@@ -136,17 +140,55 @@ func newBox(dir string, opt Options) *Box {
 	if b.base == "" {
 		b.base = DefaultBase
 	}
+	if err := checkServerURL(b.base); err != nil {
+		return nil, err
+	}
 	if b.http == nil {
 		b.http = &http.Client{Timeout: requestTimeout}
 	} else {
 		c := *b.http
 		b.http = &c
 	}
+	b.http.Transport = newTransport(b.http.Transport)
 	b.http.CheckRedirect = followNone
 	if b.now == nil {
 		b.now = time.Now
 	}
-	return b
+	return b, nil
+}
+
+// transport is every box's: it holds each request's URL to checkServerURL,
+// whatever made the request, before anything is sent.
+type transport struct{ next http.RoundTripper }
+
+func (t transport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if err := checkServerURL(r.URL.Scheme + "://" + r.URL.Host); err != nil {
+		return nil, err
+	}
+	return t.next.RoundTrip(r)
+}
+
+// newTransport is rt, or net/http's default, held to checkServerURL
+// (transport). A transport of net/http's own type calls a server on this
+// machine, or one named localhost in any case, through no proxy, whatever
+// the environment names (PROTOCOL.md §0): Go's ProxyFromEnvironment
+// exempts only the exact name localhost.
+func newTransport(rt http.RoundTripper) http.RoundTripper {
+	if rt == nil {
+		rt = http.DefaultTransport
+	}
+	if ht, ok := rt.(*http.Transport); ok {
+		c := ht.Clone()
+		proxy := c.Proxy
+		c.Proxy = func(r *http.Request) (*url.URL, error) {
+			if h := strings.ToLower(r.URL.Hostname()); h == "localhost" || onThisMachine(h) || proxy == nil {
+				return nil, nil
+			}
+			return proxy(r)
+		}
+		rt = c
+	}
+	return transport{rt}
 }
 
 // followNone is every box's redirect policy: a 3xx comes back as the answer
@@ -221,8 +263,8 @@ func (b *Box) path(elem ...string) string {
 // registration carries a pass the working key signs, so the box is in use at
 // once. Run again on a finished box, it changes nothing.
 func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*Box, error) {
-	b := newBox(dir, opt)
-	if err := checkServerURL(b.base); err != nil {
+	b, err := newBox(dir, opt)
+	if err != nil {
 		return nil, err
 	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {

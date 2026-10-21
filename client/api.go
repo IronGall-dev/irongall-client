@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -171,7 +172,6 @@ func noAnswer(call, otherwise string, err error) error {
 	var timeout net.Error
 	var certificate *tls.CertificateVerificationError
 	var record tls.RecordHeaderError
-	var op *net.OpError
 	kind := otherwise
 	switch {
 	case errors.Is(err, context.Canceled):
@@ -180,14 +180,33 @@ func noAnswer(call, otherwise string, err error) error {
 		kind = "no answer within the wait"
 	case errors.As(err, &certificate):
 		kind = "the server's TLS certificate does not verify"
-	case errors.As(err, &record) || errors.As(err, &op) && op.Op == "remote error":
-		// A record that is not TLS, or the server's alert, which crypto/tls
-		// reports as a remote error.
+	case errors.As(err, &record) || hasOp(err, "remote error", "local error"):
+		// A record that is not TLS, or an alert, the server's or this
+		// client's own, which crypto/tls reports as a remote or a local
+		// error (#299).
 		kind = "TLS failed"
-	case errors.As(err, &op) && op.Op == "dial":
+	case hasOp(err, "dial"):
+		// Through a proxy too, where net/http wraps the dial's error in a
+		// proxyconnect one (#299).
 		kind = "could not connect"
 	}
 	return &transportError{call: call, kind: kind, cause: err}
+}
+
+// hasOp reports whether a *net.OpError of one of ops is anywhere in err's
+// chain, not only the first one errors.As finds.
+func hasOp(err error, ops ...string) bool {
+	for err != nil {
+		var op *net.OpError
+		if !errors.As(err, &op) {
+			return false
+		}
+		if slices.Contains(ops, op.Op) {
+			return true
+		}
+		err = op.Err
+	}
+	return false
 }
 
 // retryAfter is the wait a Retry-After asks for: its delay-seconds, written in

@@ -27,7 +27,11 @@ func SetDrainLimits(t *testing.T, messages, bytes, pages int) {
 // PutRevocations puts a record to the server as it is, with none of the
 // checks Revoke makes first: what a client that skipped them would send.
 func PutRevocations(ctx context.Context, opt Options, a protocol.Address, rec *protocol.Revocations) (*http.Response, error) {
-	return newBox("", opt).call(ctx, http.MethodPut, "/v1/"+a.String()+"/revocations", rec, nil, nil)
+	b, err := newBox("", opt)
+	if err != nil {
+		return nil, err
+	}
+	return b.call(ctx, http.MethodPut, "/v1/"+a.String()+"/revocations", rec, nil, nil)
 }
 
 // SetRevocationServerWait shortens the wait for a revocation server's

@@ -1,11 +1,14 @@
 package client
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // With no HTTP client given, requests time out: a server that never answers
 // cannot hold the box's lock for ever.
 func TestDefaultClientTimesOut(t *testing.T) {
-	if b := newBox(t.TempDir(), Options{}); b.http.Timeout <= 0 {
+	if b, err := newBox(t.TempDir(), Options{}); err != nil || b.http.Timeout <= 0 {
 		t.Fatal("the default HTTP client has no timeout")
 	}
 }
@@ -27,11 +30,11 @@ func TestAPassNamesTheServerAsAnOrigin(t *testing.T) {
 		"http://[::1]:8080":                 "[::1]:8080",
 		"https://[::1]:443":                 "[::1]",
 	} {
-		if got, err := newBox(t.TempDir(), Options{Base: base}).serverName(); err != nil || got != want {
+		if got, err := (&Box{base: strings.TrimRight(base, "/")}).serverName(); err != nil || got != want {
 			t.Errorf("%s: the pass names %q, %v; want %q", base, got, err, want)
 		}
 	}
-	if got, err := newBox(t.TempDir(), Options{Base: "https://irongall.dev:65536"}).serverName(); err == nil {
+	if got, err := (&Box{base: "https://irongall.dev:65536"}).serverName(); err == nil {
 		t.Errorf("a port that is no port: named %q", got)
 	}
 }
