@@ -169,6 +169,8 @@ paths:
           $ref: '#/components/responses/Conflict'
         '410':
           $ref: '#/components/responses/Gone'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
         '413':
           $ref: '#/components/responses/ContentTooLarge'
         '429':
@@ -234,6 +236,8 @@ paths:
           $ref: '#/components/responses/Conflict'
         '410':
           $ref: '#/components/responses/Gone'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
         '413':
           $ref: '#/components/responses/ContentTooLarge'
         '429':
@@ -307,6 +311,8 @@ paths:
           $ref: '#/components/responses/Conflict'
         '410':
           $ref: '#/components/responses/Gone'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
         '413':
           $ref: '#/components/responses/ContentTooLarge'
         '429':
@@ -344,6 +350,8 @@ paths:
           $ref: '#/components/responses/Conflict'
         '410':
           $ref: '#/components/responses/Gone'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
         '413':
           $ref: '#/components/responses/ContentTooLarge'
         '429':
@@ -411,6 +419,8 @@ paths:
           $ref: '#/components/responses/Conflict'
         '410':
           $ref: '#/components/responses/Gone'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
         '413':
           $ref: '#/components/responses/ContentTooLarge'
         '429':
@@ -511,6 +521,8 @@ paths:
           $ref: '#/components/responses/Conflict'
         '410':
           $ref: '#/components/responses/Gone'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
         '413':
           $ref: '#/components/responses/ContentTooLarge'
         '429':
@@ -957,6 +969,23 @@ components:
                     const: 410
                   code:
                     const: revoked
+    RequestTimeout:
+      description: '`request_timeout`: the body did not arrive in the time the server waits for it (RFC 9110 §15.5.9). Send it again.'
+      headers:
+        Date:
+          $ref: '#/components/headers/Date'
+        Cache-Control:
+          $ref: '#/components/headers/Cache-Control'
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - properties:
+                  status:
+                    const: 408
+                  code:
+                    const: request_timeout
     ContentTooLarge:
       description: '`too_large`, with the `limit` in bytes, or in entries for an ACL (bytes at a server that bounds no ACL''s entries).'
       headers:

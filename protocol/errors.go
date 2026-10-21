@@ -52,6 +52,9 @@ const (
 	CodeStalePrekey   Code = "stale_prekey"   // a newer prekey exists: re-fetch, re-encrypt the same envelope
 	CodePrekeyExpired Code = "prekey_expired" // the box's owner must publish a new prekey
 
+	// 408
+	CodeRequestTimeout Code = "request_timeout" // the body did not arrive in the time the server waits for it: send it again
+
 	// 410
 	CodeRevoked Code = "revoked" // the box you named is revoked, forever
 
@@ -101,7 +104,8 @@ var codes = map[Code]struct {
 	CodeBoxChanged:            {http.StatusConflict, "Box changed"},
 	CodeStalePrekey:           {http.StatusConflict, "Stale prekey"},
 	CodePrekeyExpired:         {http.StatusConflict, "Prekey expired"},
-	CodeRevoked:               {http.StatusGone, "Revoked"},
+	CodeRequestTimeout:        {http.StatusRequestTimeout, "Request timeout"},
+	CodeRevoked:              {http.StatusGone, "Revoked"},
 	CodeTooLarge:              {http.StatusRequestEntityTooLarge, "Too large"},
 	CodeRateLimited:           {http.StatusTooManyRequests, "Rate limited"},
 	CodeFetchPaced:            {http.StatusTooManyRequests, "Fetch paced"},
