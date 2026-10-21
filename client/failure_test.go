@@ -500,7 +500,7 @@ func TestRekeyMakesTheTypeAskedFor(t *testing.T) {
 	}
 	leftAt := begunAt(t, b)
 	left := prekeyFile(b, leftAt, "")
-	signed, _ := os.ReadFile(left + ".txt")
+	signed := statement(t, b, leftAt, ".txt")
 	e.srv.SetMiddle(nil)
 	p, err := b.Rekey(ctx, protocol.PostQuantum)
 	if err != nil {
@@ -511,7 +511,7 @@ func TestRekeyMakesTheTypeAskedFor(t *testing.T) {
 	if p.Type() != protocol.PostQuantum || served.Type() != protocol.PostQuantum || served.Serial <= leftAt {
 		t.Fatalf("published serial %d of type %s", served.Serial, served.Type())
 	}
-	if now, _ := os.ReadFile(left + ".txt"); len(signed) == 0 || !bytes.Equal(now, signed) || !exists(left+".agekey") {
+	if now := statement(t, b, leftAt, ".txt"); len(signed) == 0 || !bytes.Equal(now, signed) || !exists(left+".agekey") {
 		t.Fatal("the statement the failed attempt signed was changed, or its key deleted")
 	}
 }

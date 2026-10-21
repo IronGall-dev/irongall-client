@@ -82,11 +82,12 @@ func TestABoxNumbersByItsClock(t *testing.T) {
 	if first != clock() || servedSerial(t, e, b) != first || servedCertificate(t, e, b) != first {
 		t.Fatalf("a new box's number is %d, its prekey's %d and its certificate's %d, and its clock reads %d", first, servedSerial(t, e, b), servedCertificate(t, e, b), clock())
 	}
-	for _, name := range []string{prekeyFile(b, first, ".agekey"), prekeyFile(b, first, ".txt.sig"), workFile(b, first, ""), workFile(b, first, "-cert.pub")} {
+	for _, name := range []string{prekeyFile(b, first, ".agekey"), workFile(b, first, ""), workFile(b, first, "-cert.pub")} {
 		if !exists(name) {
 			t.Fatalf("a new box does not hold %s", name)
 		}
 	}
+	statement(t, b, first, ".txt.sig")
 
 	// The same second: one above.
 	p, err := b.Rekey(ctx, "")

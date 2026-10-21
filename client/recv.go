@@ -95,6 +95,10 @@ type Result struct {
 	// was not sent ([Box.SyncACL]). The drain went ahead, and the next
 	// Receive sends it.
 	ACLErr error
+	// NotMade is a statement the box's server served in its name, at the
+	// box's last read of itself, that the box did not make, or nil
+	// ([NotMade]).
+	NotMade *NotMade
 	// listedAt is the reading the server took for the drain's first list,
 	// the date of the pass the list carried, and zero until it has answered:
 	// what is deleted by it is deleted by a clock a server took, and never by
@@ -144,6 +148,11 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 		res = &Result{}
 	}
 	res.Renewed, res.RenewErr, res.ACLErr = renewed, renewErr, aclErr
+	if nm, nerr := b.NotMade(); nerr != nil && err == nil {
+		err = nerr
+	} else {
+		res.NotMade = nm
+	}
 	// Deleted by this clock only once the server has taken a pass dated by
 	// it, and by that pass's date: a clock far ahead is stopped at its pass,
 	// and the keys that mail waits for stay (PROTOCOL.md §0).

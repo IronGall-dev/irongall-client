@@ -553,21 +553,26 @@ func (b *Box) renewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy,
 		return r, nil
 	}
 	at, err := b.sendRenewal(ctx, req, r.Below)
-	r.NotRenewed = err
 	var api *APIError
-	if errors.As(r.NotRenewed, &api) && api.Status == http.StatusTooManyRequests && api.RetryAfter > 0 && api.RetryAfter <= remedyWait {
+	if at.at.IsZero() && errors.As(err, &api) && api.Status == http.StatusTooManyRequests && api.RetryAfter > 0 && api.RetryAfter <= remedyWait {
 		select {
 		case <-ctx.Done():
+			r.NotRenewed = err
 			return r, nil
 		case <-time.After(api.RetryAfter):
 		}
-		at, r.NotRenewed = b.sendRenewal(ctx, req, r.Below)
+		at, err = b.sendRenewal(ctx, req, r.Below)
 	}
-	if r.NotRenewed != nil {
-		r.NotRenewed = b.proved(ctx, own, r.NotRenewed, l)
+	if at.at.IsZero() {
+		r.NotRenewed = b.proved(ctx, own, err, l)
 		return r, nil
 	}
+	// Taken: a fault of this box after that is the call's error, and the
+	// renewal stands (#110).
 	r.Prekey = p
+	if err != nil {
+		return r, err
+	}
 	// By the reading the server took the renewal at (PROTOCOL.md §0).
 	return r, b.prune(at)
 }

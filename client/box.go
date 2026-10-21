@@ -8,6 +8,7 @@ import (
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -95,8 +96,6 @@ type Box struct {
 	senderKeyTypes []string
 	// waiting is told when a command waits for the box's lock ([Box.hold]).
 	waiting func()
-	// renewFailed is when Receive last failed to renew the prekey.
-	renewFailed time.Time
 	// db is the box's state file while a command holds it ([Box.hold]), and
 	// tx the transaction of it under way ([Box.view], [Box.update]). A Box
 	// runs one command at a time.
@@ -301,43 +300,14 @@ func (b *Box) init(ctx context.Context, kt protocol.KeyType) (*Box, error) {
 	if published > 0 {
 		return b, nil
 	}
-	// The box's first prekey, working key and certificate take their number
-	// as every later one does, from this machine's clock (protocol.SerialAt):
-	// a second machine handed the same identity then makes no certificate of
-	// a serial the first one used. An attempt that got as far as a key keeps
-	// the number it took, so a registration whose answer was lost is sent
-	// again as it was.
-	first, err := b.highestBegun()
-	if err != nil {
-		return nil, err
-	}
-	if first == 0 {
-		first = protocol.SerialAt(b.now(), 0)
-	}
-	// A first statement an earlier attempt left, under a certificate that
-	// began less than an hour before this machine's clock, was made while
-	// the clock read ahead of what it reads now: a server may have refused it
-	// for that, and a reader whose clock the server takes may not have
-	// reached its start. The working key, its certificate and the statement
-	// are made again, by the clock as it is, for the same prekey.
-	if err := b.dropUnbegun(first); err != nil {
-		return nil, err
-	}
-	if _, err := b.makePrekey(first, kt); err != nil {
-		return nil, err
-	}
-	stem := b.path("prekeys", strconv.FormatUint(first, 10))
-	req := protocol.RegisterRequest{Identity: b.id.Document(), SenderKeyTypes: b.senderKeyTypes}
-	if req.Prekey, err = os.ReadFile(stem + ".txt"); err != nil { //nolint:gosec // a path inside the box's own directory
-		return nil, err
-	}
-	if req.PrekeySignature, err = os.ReadFile(stem + ".txt.sig"); err != nil { //nolint:gosec // a path inside the box's own directory
-		return nil, err
-	}
-	// A registration carries a pass under the certificate of the statement
-	// it brings. A second run of a registration the server took is the same
-	// request, and is answered as the first was.
-	if _, err := b.publish(ctx, b.boxPath(""), req, first); err != nil {
+	// The box's first prekey is a renewal as every later one is (Rekey): read
+	// from what its server holds of the box (known), numbered by this
+	// machine's clock above all that shows, and sent as a registration where
+	// the server holds no box for it. So a box new to its server, a box
+	// restored from its identity alone and a registration whose answer was
+	// lost take one path, and what an earlier attempt signed is sent again
+	// only while it can be (PROTOCOL.md §6.4; #87).
+	if _, err := b.rekey(ctx, kt); err != nil {
 		return nil, err
 	}
 	return b, nil
@@ -348,7 +318,9 @@ func (b *Box) init(ctx context.Context, kt protocol.KeyType) (*Box, error) {
 // certificate of the statement a call brings, which is how a box gets a
 // certificate on record. Once the server has taken it, n is the prekey this
 // box published last, its working key is the one in use, and older working
-// keys go. It returns the reading the server took: the pass's date.
+// keys go. It returns the reading the server took, the pass's date, once the
+// server has answered: an error beside it is a fault of this box after the
+// server took the call (#110).
 func (b *Box) publish(ctx context.Context, path string, req any, n uint64) (taken, error) {
 	work, _, err := b.worker(n)
 	if err != nil {
@@ -365,15 +337,21 @@ func (b *Box) publish(ctx context.Context, path string, req any, n uint64) (take
 	if err != nil {
 		return taken{}, err
 	}
-	// The pass is under the certificate the server now holds this box to:
-	// kept with the serial, in one transaction.
+	// What the server took is recorded first, in one transaction: the serial,
+	// the pass, which is under the certificate the server now holds this box
+	// to, and the renewal under way done, with any that failed before it.
 	if err := b.update(func(s store) error {
 		if err := b.recordPublished(s, n); err != nil {
 			return err
 		}
+		for _, k := range []struct{ bucket, key string }{{bucketIntent, "renewal"}, {bucketBox, "renew-failed"}} {
+			if err := s.del(k.bucket, k.key); err != nil {
+				return err
+			}
+		}
 		return s.put(bucketBox, "pass", []byte(pass))
 	}); err != nil {
-		return taken{}, err
+		return at, err
 	}
 	return at, b.dropWork(n)
 }
@@ -467,24 +445,66 @@ func (b *Box) loadIdentity() error {
 	return nil
 }
 
+// prekeyRecord is a prekey statement this box signed, as the prekeys bucket
+// keeps it by its serial: the statement, its signature, and when it was
+// signed, which is what the box times its renewals and deletions by
+// ([Box.made]), in one value, so the three are never out of line (#192). Its
+// key is prekeys/<serial>.agekey.
+type prekeyRecord struct {
+	Statement protocol.Bytes `json:"statement"`
+	Signature protocol.Bytes `json:"signature"`
+	Made      string         `json:"made"`
+}
+
+// prekeyOf is the statement this box signed at serial n, or nil.
+func (b *Box) prekeyOf(n uint64) (p *prekeyRecord, err error) {
+	err = b.view(func(s store) error {
+		raw := s.get(bucketPrekeys, serialKey(n))
+		if raw == nil {
+			return nil
+		}
+		p = &prekeyRecord{}
+		if err := protocol.Unmarshal(raw, p); err != nil {
+			return fmt.Errorf("the box's state file keeps no statement of prekey %d it can read: %w", n, err)
+		}
+		return nil
+	})
+	return p, err
+}
+
+// prekeys is the serial of every statement this box keeps, lowest first.
+func (b *Box) prekeys() (ns []uint64, err error) {
+	err = b.view(func(s store) error {
+		return s.each(bucketPrekeys, func(k, _ []byte) error {
+			n, err := keySerial(k)
+			ns = append(ns, n)
+			return err
+		})
+	})
+	return ns, err
+}
+
 // makePrekey makes prekey serial, a NEW key of type kt valid for the box's
 // prekey lifetime ([Box.PrekeyLifetime]), and its statement, signed by a NEW
 // working key under a new certificate, unless its statement is already
-// signed. A key an earlier attempt made and never signed is reused. A
-// statement never outlives the certificate it is signed under. When it was
-// signed is kept beside it, in prekeys/<serial>.made, which is what the box
-// times its renewals and deletions by ([Box.made]).
+// signed. The number is recorded as the renewal under way before anything is
+// made, and the statement, with when it was signed, once it is: so a key or a
+// working key that no statement names was never sent, and a key an earlier
+// attempt made and never signed is used, but never a working key, whose
+// certificate began when that attempt ran (#197). A statement never outlives
+// the certificate it is signed under.
 func (b *Box) makePrekey(serial uint64, kt protocol.KeyType) (*protocol.Prekey, error) {
-	stem := b.path("prekeys", fmt.Sprint(serial))
-	if exists(stem + ".txt.sig") {
-		st, err := os.ReadFile(stem + ".txt") //nolint:gosec // a path inside the box's own directory
+	if rec, err := b.prekeyOf(serial); err != nil || rec != nil {
 		if err != nil {
 			return nil, err
 		}
-		return protocol.ParsePrekey(st)
+		return protocol.ParsePrekey(rec.Statement)
 	}
 	lifetime, err := b.PrekeyLifetime()
 	if err != nil {
+		return nil, err
+	}
+	if err := b.begin(serial); err != nil {
 		return nil, err
 	}
 	// The working key and its certificate first: a box that may sign nothing
@@ -493,6 +513,7 @@ func (b *Box) makePrekey(serial uint64, kt protocol.KeyType) (*protocol.Prekey, 
 	if err != nil {
 		return nil, err
 	}
+	stem := b.path("prekeys", fmt.Sprint(serial))
 	if !exists(stem+".agekey") || keyType(stem+".agekey") != kt {
 		if err := newAgeKey(stem+".agekey", kt, b.now()); err != nil {
 			return nil, err
@@ -512,14 +533,42 @@ func (b *Box) makePrekey(serial uint64, kt protocol.KeyType) (*protocol.Prekey, 
 	if err != nil {
 		return nil, err
 	}
-	if err := writeFile(stem+".txt", p.Statement()); err != nil {
+	rec, err := json.Marshal(prekeyRecord{Statement: p.Statement(), Signature: sig, Made: made.Format(protocol.TimeLayout)})
+	if err != nil {
 		return nil, err
 	}
-	// Before the signature: a statement is signed once its record is there.
-	if err := writeFile(stem+".made", []byte(made.Format(protocol.TimeLayout)+"\n")); err != nil {
-		return nil, err
+	return p, b.update(func(s store) error { return s.put(bucketPrekeys, serialKey(serial), rec) })
+}
+
+// begin records serial as the number of the renewal under way. A number an
+// earlier attempt took and left unsigned, which this one passes over, leaves
+// nothing: no statement named its key or its working key, so neither was
+// ever sent.
+func (b *Box) begin(serial uint64) error {
+	var old uint64
+	if err := b.view(func(s store) error {
+		var err error
+		old, err = decimal(s.get(bucketIntent, "renewal"), "renewal")
+		return err
+	}); err != nil {
+		return err
 	}
-	return p, writeFile(stem+".txt.sig", sig)
+	if old != 0 && old != serial {
+		rec, err := b.prekeyOf(old)
+		if err != nil {
+			return err
+		}
+		if rec == nil {
+			for _, name := range []string{b.path("prekeys", strconv.FormatUint(old, 10)+".agekey"), b.workStem(old), b.workStem(old) + ".pub", b.workStem(old) + "-cert.pub"} {
+				if err := removeIfExists(name); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	return b.update(func(s store) error {
+		return s.put(bucketIntent, "renewal", strconv.AppendUint(nil, serial, 10))
+	})
 }
 
 // ageRecipient returns the recipient an age key file's key is encrypted to.

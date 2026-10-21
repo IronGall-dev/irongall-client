@@ -3,7 +3,9 @@ package client
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
+	"fmt"
 	"io/fs"
 	"time"
 
@@ -96,6 +98,18 @@ func (s store) each(bucket string, f func(key, value []byte) error) error {
 		}
 	}
 	return nil
+}
+
+// serialKey is a prekey's serial as the prekeys bucket keys it: eight bytes,
+// big-endian, so the keys' order is the serials'.
+func serialKey(n uint64) string { return string(binary.BigEndian.AppendUint64(nil, n)) }
+
+// keySerial is the serial a prekeys key names.
+func keySerial(k []byte) (uint64, error) {
+	if len(k) != 8 {
+		return 0, fmt.Errorf("the box's state file holds a prekey under a key that is no serial")
+	}
+	return binary.BigEndian.Uint64(k), nil
 }
 
 // errNotHeld is a write to the box's state by code that does not hold its

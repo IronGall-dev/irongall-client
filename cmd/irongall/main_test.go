@@ -673,9 +673,18 @@ func TestRecvSaysARenewalFailed(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &st); err != nil || st.RenewalPendingSince == "" || len(st.Attention) != 1 || !strings.Contains(st.Attention[0], "was never seen published") {
 		t.Fatalf("status printed %q: %v", out.String(), err)
 	}
-	// Once the server takes the renewal, recv and status are quiet again.
+	// Within the hour recv tries no renewal, in any process, and says why
+	// the last one failed (#10); prekey renew sends one at once. Once the
+	// server takes it, recv and status are quiet again.
 	srv.SetMiddle(nil)
 	out.Reset()
+	if err := do(ctx, "recv", nil, nil, &out, io.Discard); !errors.As(err, &look) || !strings.Contains(out.String(), "tries it again from") {
+		t.Fatalf("recv within the hour: %v %q", err, out.String())
+	}
+	out.Reset()
+	if err := do(ctx, "prekey", []string{"renew"}, nil, io.Discard, io.Discard); err != nil {
+		t.Fatalf("prekey renew after the server came back: %v", err)
+	}
 	if err := do(ctx, "recv", nil, nil, io.Discard, io.Discard); err != nil {
 		t.Fatalf("recv after the server came back: %v", err)
 	}

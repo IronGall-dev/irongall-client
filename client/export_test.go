@@ -54,9 +54,12 @@ func PutRevocations(ctx context.Context, opt Options, a protocol.Address, rec *p
 // "seen-floor", "acl.json", "revoked.sig", "revoked-certs.json", "seen" (the
 // replay set's lines, "<hash> <sent_at> <from> <msg_id>", by sent_at),
 // "peers/<address>/<part>" (identity.doc, serial, cert-serial, prekey.txt,
-// prekey.sig, revoke.sig, revoked-certs.json) and "quarantine/<id>.reason"
-// ("<code>: <reason>"), each a record's bytes as that file held them. So a
-// test reads and changes the box's state as it did its files.
+// prekey.sig, revoke.sig, revoked-certs.json), "prekeys/<serial>.<part>"
+// (txt, txt.sig, made) and "quarantine/<id>.reason" ("<code>: <reason>"),
+// each a record's bytes as that file held them; and the records no file held,
+// "renewal" (the number of the renewal under way), "renew-failed" and
+// "not-made". So a test reads and changes the box's state as it did its
+// files.
 func (b *Box) Records() (map[string][]byte, error) {
 	out := map[string][]byte{}
 	err := b.view(func(s store) error {
@@ -109,6 +112,24 @@ func (b *Box) Records() (map[string][]byte, error) {
 		}
 		if seen != nil {
 			out["seen"] = seen
+		}
+		if err := s.each(bucketPrekeys, func(k, v []byte) error {
+			n, err := keySerial(k)
+			if err != nil {
+				return err
+			}
+			var p prekeyRecord
+			if err := protocol.Unmarshal(v, &p); err != nil {
+				return err
+			}
+			stem := "prekeys/" + strconv.FormatUint(n, 10)
+			out[stem+".txt"], out[stem+".txt.sig"], out[stem+".made"] = p.Statement, p.Signature, []byte(p.Made)
+			return nil
+		}); err != nil {
+			return err
+		}
+		if v := s.get(bucketIntent, "renewal"); v != nil {
+			out["renewal"] = v
 		}
 		return s.each(bucketQuarantine, func(k, v []byte) error {
 			var q quarantineRecord
@@ -197,6 +218,40 @@ func (b *Box) SetRecord(t *testing.T, name string, v []byte) {
 					}
 				}
 				return nil
+			}
+			if rest, ok := strings.CutPrefix(name, "prekeys/"); ok {
+				stem, part, _ := strings.Cut(rest, ".")
+				n, err := strconv.ParseUint(stem, 10, 64)
+				if err != nil {
+					return err
+				}
+				var p prekeyRecord
+				if raw := s.get(bucketPrekeys, serialKey(n)); raw != nil {
+					if err := protocol.Unmarshal(raw, &p); err != nil {
+						return err
+					}
+				}
+				switch part {
+				case "txt":
+					p.Statement = v
+				case "txt.sig":
+					p.Signature = v
+				case "made":
+					p.Made = string(v)
+				default:
+					return fmt.Errorf("no record %s", name)
+				}
+				if len(p.Statement) == 0 && len(p.Signature) == 0 {
+					return s.del(bucketPrekeys, serialKey(n))
+				}
+				raw, err := json.Marshal(p)
+				if err != nil {
+					return err
+				}
+				return s.put(bucketPrekeys, serialKey(n), raw)
+			}
+			if name == "renewal" {
+				return put(bucketIntent, "renewal", v)
 			}
 			if rest, ok := strings.CutPrefix(name, "quarantine/"); ok {
 				id, isReason := strings.CutSuffix(rest, ".reason")

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -30,11 +31,7 @@ func lifetimeOf(t *testing.T, b *client.Box, d time.Duration) {
 // madeOf is what b's record says of when prekey n was signed.
 func madeOf(t *testing.T, b *client.Box, n uint64) string {
 	t.Helper()
-	raw, err := os.ReadFile(prekeyFile(b, n, ".made"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(raw)
+	return string(statement(t, b, n, ".made"))
 }
 
 // A prekey is made for the box's lifetime, and its record says when: the
@@ -58,7 +55,7 @@ func TestAPrekeyIsMadeForTheBoxsLifetime(t *testing.T) {
 		if !p.NotAfter.Equal(now.Add(d)) {
 			t.Errorf("a lifetime of %v: the prekey ends at %v, %v after it was made", d, p.NotAfter, p.NotAfter.Sub(now))
 		}
-		if got := madeOf(t, b, p.Serial); got != now.Format(protocol.TimeLayout)+"\n" {
+		if got := madeOf(t, b, p.Serial); got != now.Format(protocol.TimeLayout) {
 			t.Errorf("a lifetime of %v: the record says %q", d, got)
 		}
 		st, err := b.Status()
@@ -130,9 +127,7 @@ func TestAPrekeyWithNoRecordIsRenewedAndItsKeysKept(t *testing.T) {
 	e.clock.Add(25 * time.Hour)
 	receive(t, b)
 	k2 := numberOf(t, b)
-	if err := os.Remove(prekeyFile(b, k2, ".made")); err != nil {
-		t.Fatal(err)
-	}
+	b.SetRecord(t, "prekeys/"+strconv.FormatUint(k2, 10)+".made", nil)
 	st, err := b.Status()
 	if err != nil || st.PrekeyMade != "" {
 		t.Fatalf("status with no record: %+v, %v", st, err)

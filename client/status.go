@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -47,6 +46,9 @@ type Status struct {
 	// Revoked is true when the box holds a revocation of its own address
 	// that verifies: the address is finished.
 	Revoked bool `json:"revoked,omitempty"`
+	// PrekeyNotMade is a statement the box's server served in its name, at
+	// its last read of itself, that it did not make, or nil ([NotMade]).
+	PrekeyNotMade *NotMade `json:"prekey_not_made,omitempty"`
 	// Attention says, in words, each thing that needs a look. It is empty
 	// when nothing does.
 	Attention []string `json:"attention"`
@@ -117,15 +119,15 @@ func (b *Box) status() (*Status, error) {
 	}
 	// A statement signed for a serial above the published one is a renewal
 	// the server did not take, or whose answer never arrived.
-	signed, err := filepath.Glob(b.path("prekeys", "*.txt.sig"))
+	signed, err := b.prekeys()
 	if err != nil {
 		return nil, err
 	}
 	first := uint64(0)
-	for _, name := range signed {
-		n, err := strconv.ParseUint(strings.TrimSuffix(filepath.Base(name), ".txt.sig"), 10, 64)
-		if err == nil && n > serial && (first == 0 || n < first) {
+	for _, n := range signed {
+		if n > serial {
 			first = n
+			break
 		}
 	}
 	if first != 0 {
@@ -135,6 +137,12 @@ func (b *Box) status() (*Status, error) {
 			s.RenewalPendingSince = since
 		}
 		s.Attention = append(s.Attention, fmt.Sprintf("a new prekey signed at %s was never seen published: the server refused it or did not answer; irongall recv sends it again", since))
+	}
+	if s.PrekeyNotMade, err = b.NotMade(); err != nil {
+		return nil, err
+	}
+	if s.PrekeyNotMade != nil {
+		s.Attention = append(s.Attention, s.PrekeyNotMade.Words())
 	}
 	if s.Quarantine > 0 {
 		s.Attention = append(s.Attention, fmt.Sprintf("%d refused in quarantine/ (%s): each failed a check and was never delivered; irongall quarantine list says which, and irongall quarantine rm deletes them", s.Quarantine, b.quarantineCodes()))

@@ -2,13 +2,12 @@ package client
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -40,7 +39,9 @@ import (
 //
 // It holds the box's lock, so two runs never make the same serial's key at
 // once, and it refuses a served serial below the highest this box has
-// published (a rollback), whose next serial's key was already published.
+// published (a rollback), whose next serial's key was already published. A
+// prekey with an error is one the server took, and a fault of this box after
+// that.
 func (b *Box) Rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey, error) {
 	return locked(ctx, b, func() (*protocol.Prekey, error) {
 		p, err := b.rekey(ctx, kt)
@@ -49,16 +50,20 @@ func (b *Box) Rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey,
 }
 
 // rekey is Rekey with the lock held. It returns the prekey once the server
-// took it.
+// took it: an error beside it is a fault of this box after that.
 func (b *Box) rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey, error) {
 	p, at, err := b.renew(ctx, kt)
 	if err != nil {
-		return nil, err
+		return p, err
 	}
 	// By the reading the server took the renewal at (PROTOCOL.md §0).
 	return p, b.prune(at)
 }
 
+// renew reads the box at its server, numbers and makes the renewal, and
+// sends it. It returns the prekey and the reading the server took it at once
+// it is taken, with an error beside them only for a fault of this box after
+// that (#110).
 func (b *Box) renew(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey, taken, error) {
 	st, err := b.readOwn(ctx, kt, false)
 	if err != nil {
@@ -75,10 +80,10 @@ func (b *Box) renew(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey,
 	// From here a statement at next exists, signed, whatever the server
 	// makes of it.
 	at, err := b.sendRenewal(ctx, req, next)
-	if err != nil {
+	if at.at.IsZero() {
 		return nil, taken{}, err
 	}
-	return p, at, nil
+	return p, at, err
 }
 
 // renewal is a renewal made and signed, ready to send.
@@ -95,7 +100,7 @@ type renewal struct {
 // server that forgot the box, as its registration. A box registered anew
 // has no ACL at its server, so what this box kept of the last one the server
 // took goes, and the next send or recv sends it again. It returns the
-// reading the server took.
+// reading the server took, as publish does.
 func (b *Box) sendRenewal(ctx context.Context, r renewal, n uint64) (taken, error) {
 	if !r.forgotten {
 		return b.publish(ctx, b.boxPath("/prekey"), r.req, n)
@@ -103,7 +108,7 @@ func (b *Box) sendRenewal(ctx context.Context, r renewal, n uint64) (taken, erro
 	reg := protocol.RegisterRequest{Identity: b.id.Document(), Prekey: r.req.Prekey, PrekeySignature: r.req.PrekeySignature, SenderKeyTypes: r.req.SenderKeyTypes}
 	at, err := b.publish(ctx, b.boxPath(""), reg, n)
 	if err != nil {
-		return taken{}, err
+		return at, err
 	}
 	return at, b.update(func(s store) error { return s.del(bucketBox, "acl") })
 }
@@ -116,8 +121,9 @@ type ownRead struct {
 	// what it published, and the served certificate's when the read could be
 	// used.
 	known uint64
-	// kt is the key type the renewal makes: the one asked for, or the served
-	// prekey's, or the published one's, or else post-quantum.
+	// kt is the key type the renewal makes: the one asked for, or the one this
+	// box published last, by its own record, never a served statement's
+	// (#61), or else post-quantum.
 	kt protocol.KeyType
 	// unread is why the remedy went on without its server's answer, or nil.
 	unread error
@@ -168,9 +174,6 @@ func (b *Box) readOwn(ctx context.Context, kt protocol.KeyType, unused bool) (*o
 		case o.cert.Serial() < published || (o.cert.Serial() == published && o.statement.Serial < published):
 			err = refuse("rollback: the server serves this box's prekey serial %d under certificate %d, before serial %d, which this box published", o.statement.Serial, o.cert.Serial(), published)
 		default:
-			if out.kt == "" {
-				out.kt = o.statement.Type()
-			}
 			out.known = max(o.cert.Serial(), published)
 		}
 		if err != nil {
@@ -184,10 +187,8 @@ func (b *Box) readOwn(ctx context.Context, kt protocol.KeyType, unused bool) (*o
 		out.kt = b.publishedType(published)
 	}
 	if out.kt == "" {
-		// Nothing served to read a type from and nothing published: a box
-		// restored from its identity alone, at a server that forgot it, or
-		// in the remedy one whose server's answer it cannot use. It takes
-		// init's default.
+		// Nothing published: a new box, or one restored from its identity
+		// alone. It takes init's default, whatever a server serves in its name.
 		out.kt = protocol.PostQuantum
 	}
 	return out, nil
@@ -278,26 +279,21 @@ func (b *Box) makeRenewal(st *ownRead, next uint64, p *protocol.Prekey) (*protoc
 			return nil, out, err
 		}
 	}
-	stem := b.path("prekeys", strconv.FormatUint(next, 10))
-	req.SenderKeyTypes = b.senderKeyTypes
-	var err error
-	if req.Prekey, err = os.ReadFile(stem + ".txt"); err != nil { //nolint:gosec // a path inside the box's own directory
+	rec, err := b.prekeyOf(next)
+	if err != nil {
 		return nil, out, err
 	}
-	if req.PrekeySignature, err = os.ReadFile(stem + ".txt.sig"); err != nil { //nolint:gosec // a path inside the box's own directory
-		return nil, out, err
+	if rec == nil {
+		return nil, out, fmt.Errorf("the box's state file keeps no statement of prekey %d", next)
 	}
+	req.SenderKeyTypes, req.Prekey, req.PrekeySignature = b.senderKeyTypes, rec.Statement, rec.Signature
 	return p, out, nil
 }
 
 // publishedType is the key type of statement n, which this box published, or
 // "", the client's default, when it holds no statement n to read.
 func (b *Box) publishedType(n uint64) protocol.KeyType {
-	st, err := os.ReadFile(b.path("prekeys", strconv.FormatUint(n, 10)+".txt")) //nolint:gosec // a path inside the box's own directory
-	if err != nil {
-		return ""
-	}
-	p, err := protocol.ParsePrekey(st)
+	p, err := b.prekeyStatement(n)
 	if err != nil {
 		return ""
 	}
@@ -309,37 +305,26 @@ func (b *Box) publishedType(n uint64) protocol.KeyType {
 // box's own, for this serial and the key it holds, of type kt, not expired,
 // made for no longer than the box's lifetime now allows, under a certificate
 // that is valid now, began at least protocol.MaxSkew before now (so was not
-// made while the clock read ahead of where it reads now: dropUnbegun), and
-// whose working key the box holds. If it signed one that cannot be, the
-// serial is spent. If it signed nothing, neither: a key it made and never
-// signed is free to use.
+// made while the clock read ahead of where it reads now: a reader whose clock
+// a server takes may not have reached its start), and whose working key the
+// box holds. If it signed one that cannot be, the serial is spent. If it
+// signed nothing, neither: a key it made and never signed is free to use.
 func (b *Box) signedPrekey(serial uint64, kt protocol.KeyType) (p *protocol.Prekey, spent bool, err error) {
-	stem := b.path("prekeys", strconv.FormatUint(serial, 10))
-	if !exists(stem + ".txt.sig") {
-		if err := removeIfExists(stem + ".made"); err != nil {
-			return nil, false, err
-		}
-		return nil, false, removeIfExists(stem + ".txt")
-	}
-	st, err := os.ReadFile(stem + ".txt") //nolint:gosec // a path inside the box's own directory
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+	rec, err := b.prekeyOf(serial)
+	if err != nil || rec == nil {
 		return nil, false, err
 	}
-	sig, err := os.ReadFile(stem + ".txt.sig") //nolint:gosec // a path inside the box's own directory
-	if err != nil {
-		return nil, false, err
-	}
-	p, _, err = protocol.VerifyPrekey(b.id, st, sig, b.now())
+	p, _, err = protocol.VerifyPrekey(b.id, rec.Statement, rec.Signature, b.now())
 	if err != nil || p.Serial != serial || p.Type() != kt || p.Expired(b.now()) {
 		return nil, true, nil //nolint:nilerr // a statement that does not verify is one this box will not send
 	}
-	if began, err := protocol.CertificateBegan(sig); err != nil || began.After(b.now().Add(-protocol.MaxSkew)) {
+	if began, err := protocol.CertificateBegan(rec.Signature); err != nil || began.After(b.now().Add(-protocol.MaxSkew)) {
 		return nil, true, nil //nolint:nilerr // under a certificate made while the clock read ahead
 	}
 	if _, _, err := b.worker(serial); err != nil {
 		return nil, true, nil //nolint:nilerr // a statement whose working key this box cannot sign a pass with
 	}
-	if held, err := ageRecipient(stem + ".agekey"); err != nil || held != p.Key {
+	if held, err := ageRecipient(b.path("prekeys", strconv.FormatUint(serial, 10)+".agekey")); err != nil || held != p.Key {
 		return nil, true, nil //nolint:nilerr // a statement for a key this box does not hold
 	}
 	// Made for longer than the box's lifetime now allows, or with no record
@@ -355,23 +340,23 @@ func (b *Box) signedPrekey(serial uint64, kt protocol.KeyType) (p *protocol.Prek
 	return p, false, nil
 }
 
-// highestBegun returns the highest serial this box has begun a prekey at: one
-// it holds a key or a signed statement for, published or not. It is 0 when
-// the box holds none.
-func (b *Box) highestBegun() (uint64, error) {
-	var top uint64
-	for _, ext := range []string{".agekey", ".txt.sig"} {
-		names, err := filepath.Glob(b.path("prekeys", "*"+ext))
-		if err != nil {
-			return 0, err
-		}
-		for _, name := range names {
-			if n, err := strconv.ParseUint(strings.TrimSuffix(filepath.Base(name), ext), 10, 64); err == nil {
-				top = max(top, n)
-			}
-		}
+// highestBegun returns the highest serial this box has begun a prekey at: the
+// renewal under way, or the highest statement it signed, published or not. It
+// is 0 when the box has begun none.
+func (b *Box) highestBegun() (top uint64, err error) {
+	err = b.view(func(s store) error {
+		n, err := decimal(s.get(bucketIntent, "renewal"), "renewal")
+		top = n
+		return err
+	})
+	if err != nil {
+		return 0, err
 	}
-	return top, nil
+	signed, err := b.prekeys()
+	if len(signed) > 0 {
+		top = max(top, signed[len(signed)-1])
+	}
+	return top, err
 }
 
 // publishedSerial returns the highest prekey serial this box has published,
@@ -491,45 +476,72 @@ func (b *Box) current() (uint64, error) {
 	return n, err
 }
 
-// made returns when prekey n was signed, as the client that signed it kept
-// it, in prekeys/<n>.made: a timestamp alone on its line. Nothing is
-// inferred from the statement, whose lifetime is the box's to set. A
-// prekey with no record has no time: Receive renews it, and dropRetired
-// keeps every retired key while the newest has none.
+// made returns when prekey n was signed, as the box keeps it with the
+// statement. Nothing is inferred from the statement, whose lifetime is the
+// box's to set.
 func (b *Box) made(n uint64) (time.Time, error) {
-	raw, err := os.ReadFile(b.path("prekeys", strconv.FormatUint(n, 10)+".made")) //nolint:gosec // a path inside the box's own directory
+	rec, err := b.prekeyOf(n)
 	if err != nil {
 		return time.Time{}, err
 	}
-	return protocol.ParseTime(strings.TrimSuffix(string(raw), "\n"))
+	if rec == nil {
+		return time.Time{}, fmt.Errorf("this box keeps no statement of prekey %d", n)
+	}
+	return protocol.ParseTime(rec.Made)
 }
 
-// prekeyStatement returns prekey n's statement, as this box wrote it.
+// prekeyStatement returns prekey n's statement, as this box signed it.
 func (b *Box) prekeyStatement(n uint64) (*protocol.Prekey, error) {
-	st, err := os.ReadFile(b.path("prekeys", strconv.FormatUint(n, 10)+".txt")) //nolint:gosec // a path inside the box's own directory
+	rec, err := b.prekeyOf(n)
 	if err != nil {
 		return nil, err
 	}
-	return protocol.ParsePrekey(st)
+	if rec == nil {
+		return nil, fmt.Errorf("this box keeps no statement of prekey %d", n)
+	}
+	return protocol.ParsePrekey(rec.Statement)
+}
+
+// renewFailure is a renewal Receive tried that was not taken, as the box keeps
+// it: when, by this machine's clock, and why, in this client's words.
+type renewFailure struct {
+	At    string `json:"at"`
+	Error string `json:"error"`
 }
 
 // renewIfDue publishes a new prekey, of the current type, when renewDue
-// says so. The caller holds the lock. A failure is retried after
-// renewRetry.
+// says so. The caller holds the lock. A failure is kept, and tried again only
+// renewRetry after it, by whichever process runs then (#10); until then each
+// Receive says why the last one failed, so recv says the box needs a look
+// until a renewal is taken. A failure dated after the clock's reading holds
+// nothing back: the clock has gone back since (#201).
 func (b *Box) renewIfDue(ctx context.Context) (*protocol.Prekey, error) {
 	if !b.renewDue() {
 		return nil, nil
 	}
-	if !b.renewFailed.IsZero() && b.now().Sub(b.renewFailed) < renewRetry {
-		return nil, nil
+	var last renewFailure
+	if err := b.view(func(s store) error {
+		if raw := s.get(bucketBox, "renew-failed"); raw != nil {
+			return protocol.Unmarshal(raw, &last)
+		}
+		return nil
+	}); err != nil {
+		return nil, fmt.Errorf("the box's state file keeps a failed renewal it cannot read: %w", err)
+	}
+	if at, err := protocol.ParseTime(last.At); err == nil {
+		if since := b.now().Sub(at); since >= 0 && since < renewRetry {
+			return nil, fmt.Errorf("the renewal at %s was not taken, and recv tries it again from %s: %s", last.At, at.Add(renewRetry).Format(protocol.TimeLayout), last.Error)
+		}
 	}
 	p, err := b.rekey(ctx, "")
-	if err != nil {
-		b.renewFailed = b.now()
-		return nil, err
+	if p == nil && err != nil {
+		failed, jerr := json.Marshal(renewFailure{At: b.now().UTC().Format(protocol.TimeLayout), Error: err.Error()})
+		if jerr == nil {
+			jerr = b.update(func(s store) error { return s.put(bucketBox, "renew-failed", failed) })
+		}
+		return nil, errors.Join(err, jerr)
 	}
-	b.renewFailed = time.Time{}
-	return p, nil
+	return p, err
 }
 
 // renewDue reports whether the current prekey is to be renewed: once it is
@@ -569,20 +581,19 @@ func (b *Box) dropRetired(at taken) error {
 	if err != nil {
 		return err
 	}
-	keys, err := filepath.Glob(b.path("prekeys", "*.agekey"))
+	signed, err := b.prekeys()
 	if err != nil {
 		return err
 	}
 	var retired []uint64
-	for _, k := range keys {
-		if n, err := strconv.ParseUint(strings.TrimSuffix(filepath.Base(k), ".agekey"), 10, 64); err == nil && n < cur {
+	for _, n := range signed {
+		if n < cur {
 			retired = append(retired, n)
 		}
 	}
 	if len(retired) < 2 {
 		return nil
 	}
-	slices.Sort(retired)
 	newest := retired[len(retired)-1]
 	if made, err := b.made(newest); err != nil || at.at.Sub(made) <= retiredGrace {
 		return nil //nolint:nilerr // a newest retired prekey that cannot be read keeps every key
@@ -596,20 +607,19 @@ func (b *Box) dropRetired(at taken) error {
 }
 
 // removePrekey deletes a prekey's key and its statement, and the working key
-// made with it, if a renewal the server never took left one.
+// made with it, if a renewal the server never took left one: the files
+// first, then the record, so a crash in between leaves a record of a key
+// gone, which the next prune deletes again, and never a key no record names.
 func (b *Box) removePrekey(n uint64) error {
-	stem := b.path("prekeys", strconv.FormatUint(n, 10))
-	for _, ext := range []string{".agekey", ".txt", ".made", ".txt.sig"} {
-		if err := removeIfExists(stem + ext); err != nil {
-			return err
-		}
+	if err := removeIfExists(b.path("prekeys", strconv.FormatUint(n, 10)+".agekey")); err != nil {
+		return err
 	}
 	for _, ext := range []string{"", ".pub", "-cert.pub"} {
 		if err := removeIfExists(b.workStem(n) + ext); err != nil {
 			return err
 		}
 	}
-	return nil
+	return b.update(func(s store) error { return s.del(bucketPrekeys, serialKey(n)) })
 }
 
 // prune deletes every prekey but the newest this box holds whose deletion
@@ -621,26 +631,12 @@ func (b *Box) removePrekey(n uint64) error {
 // and one that moves while the call is in flight deletes nothing by where it
 // went.
 func (b *Box) prune(at taken) error {
-	keys, err := filepath.Glob(b.path("prekeys", "*.agekey"))
-	if err != nil {
+	signed, err := b.prekeys()
+	if err != nil || len(signed) == 0 {
 		return err
 	}
-	var top uint64
-	for _, k := range keys {
-		if n, err := strconv.ParseUint(strings.TrimSuffix(filepath.Base(k), ".agekey"), 10, 64); err == nil && n > top {
-			top = n
-		}
-	}
-	for _, k := range keys {
-		n, err := strconv.ParseUint(strings.TrimSuffix(filepath.Base(k), ".agekey"), 10, 64)
-		if err != nil || n >= top {
-			continue
-		}
-		st, err := os.ReadFile(b.path("prekeys", fmt.Sprintf("%d.txt", n)))
-		if err != nil {
-			continue
-		}
-		p, err := protocol.ParsePrekey(st)
+	for _, n := range signed[:len(signed)-1] {
+		p, err := b.prekeyStatement(n)
 		if err != nil {
 			continue
 		}

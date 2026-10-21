@@ -6,7 +6,6 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -38,13 +37,12 @@ import (
 
 func (b *Box) workStem(n uint64) string { return b.path("work", strconv.FormatUint(n, 10)) }
 
-// makeWork makes working key n and its certificate, unless the box holds
-// them, and returns the key's signer under the certificate.
+// makeWork makes working key n and its certificate, new whatever the box
+// holds of them, and returns the key's signer under the certificate: it is
+// called for a statement not yet signed, which nothing the box holds of n has
+// signed either.
 func (b *Box) makeWork(n uint64) (*sign.Work, *protocol.Certificate, error) {
 	stem := b.workStem(n)
-	if exists(stem) && exists(stem+"-cert.pub") {
-		return b.worker(n)
-	}
 	if err := os.MkdirAll(b.path("work"), 0o700); err != nil {
 		return nil, nil, err
 	}
@@ -178,40 +176,6 @@ func (b *Box) serverName() (string, error) {
 
 // defaultPort is each scheme's own port, which an origin leaves unwritten.
 var defaultPort = map[string]uint64{"https": 443, "http": 80}
-
-// dropUnbegun deletes prekey n's statement and its working key, if the
-// working key's certificate began less than protocol.MaxSkew before this
-// machine's clock, so that both are made again. A client dates a certificate
-// from MaxSkew before it makes it, so such a one was made while the clock
-// read ahead of where it reads now, as a pass or an outbox entry made then is
-// not used either (PROTOCOL.md §0): a reader whose clock a server takes may
-// not have reached its start. The prekey's own key stays, and the new
-// statement is for it: a box cannot know that a statement was never
-// published (a server may have taken a registration whose answer was lost),
-// so mail may be waiting that only this key opens.
-func (b *Box) dropUnbegun(n uint64) error {
-	line, err := os.ReadFile(b.workStem(n) + "-cert.pub")
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-	key, _, _, _, err := ssh.ParseAuthorizedKey(line)
-	if err != nil {
-		return nil // not a certificate: whoever reads it next says so
-	}
-	if _, err := protocol.CheckCertificate(b.id, key, b.now().Add(-protocol.MaxSkew)); !errors.Is(err, protocol.ErrCertificateNotBegun) {
-		return nil
-	}
-	stem := b.path("prekeys", strconv.FormatUint(n, 10))
-	for _, name := range []string{stem + ".txt.sig", stem + ".made", stem + ".txt", b.workStem(n), b.workStem(n) + ".pub", b.workStem(n) + "-cert.pub"} {
-		if err := removeIfExists(name); err != nil {
-			return err
-		}
-	}
-	return nil
-}
 
 // passMargin is how long a kept pass must still have to run to be used
 // again: the time a call may take to reach the server.

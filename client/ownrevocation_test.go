@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -139,15 +138,7 @@ func TestTheRemedyGoesOnPastARollback(t *testing.T) {
 	e := newEnv(t)
 	a := e.box(protocol.Classic)
 	first := numberOf(t, a)
-	stem := filepath.Join(a.Dir(), "prekeys", strconv.FormatUint(first, 10))
-	old, err := os.ReadFile(stem + ".txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	oldSig, err := os.ReadFile(stem + ".txt.sig")
-	if err != nil {
-		t.Fatal(err)
-	}
+	old, oldSig := statement(t, a, first, ".txt"), statement(t, a, first, ".txt.sig")
 	e.clock.Add(2 * time.Second)
 	if _, err := a.Rekey(ctx, ""); err != nil {
 		t.Fatal(err)

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -188,7 +189,7 @@ func TestABoxWhoseClockGoesBackFetchesNothing(t *testing.T) {
 	}
 	// Control: at that clock the mail would be refused, so the stop above is
 	// what kept it. The certificate it is signed under has not begun.
-	began, cerr := protocol.CertificateBegan(mustRead(t, prekeyFile(sender, numberOf(t, sender), ".txt.sig")))
+	began, cerr := protocol.CertificateBegan(statement(t, sender, numberOf(t, sender), ".txt.sig"))
 	if cerr != nil || !began.After(e.clock.Now().Add(off)) {
 		t.Fatalf("the sender's certificate began %v, which is not after the reader's clock: the test does not reach the case", began)
 	}
@@ -256,9 +257,10 @@ func TestAnEnvelopeDatedAheadWaitsInTheOutbox(t *testing.T) {
 // A registration the server took, whose answer was lost: the box does not
 // know it is registered. Mail arrives for its first prekey. Its clock then
 // reads two hours back, where its first certificate has not begun, and init
-// runs again: the working key, certificate and statement are made again, and
-// the prekey's own key is kept, so the mail that waited is still read once
-// the box has renewed.
+// runs again, and is refused at its pass, with the first prekey's key kept.
+// With the clock right, init reads what the server holds and renews above
+// it, as a box restored from its identity does (#87), and the key stays, so
+// the mail that waited is still read.
 func TestInitNeverDropsAKeyMailMayBeWaitingFor(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
@@ -294,22 +296,30 @@ func TestInitNeverDropsAKeyMailMayBeWaitingFor(t *testing.T) {
 		t.Fatal("init replaced the first prekey's key, which mail was waiting for")
 	}
 	off = 0
-	// Registered under another statement: the box renews, as one restored
-	// from its identity does.
-	if _, err := client.Init(ctx, dir, e.skewed(&off), protocol.Classic); client.Code(err) != protocol.CodeConflict {
-		t.Fatalf("init with the clock right: %v, want a conflict with what the server holds", err)
+	if _, err := client.Init(ctx, dir, e.skewed(&off), protocol.Classic); err != nil {
+		t.Fatalf("init with the clock right: %v", err)
 	}
 	b, err := client.Open(dir, e.skewed(&off))
 	if err != nil {
 		t.Fatal(err)
 	}
-	landAll(t, b)
-	if _, err := b.Rekey(ctx, protocol.Classic); err != nil {
-		t.Fatalf("rekey: %v", err)
+	if served, _ := e.srv.Prekey(b.Address()); served == nil || numberOf(t, b) <= first(t, keyFile) {
+		t.Fatalf("init published %d, where the server held the first prekey's", numberOf(t, b))
 	}
+	landAll(t, b)
 	if res := receive(t, b); len(res.Delivered) != 1 || len(res.Refused) != 0 {
 		t.Fatalf("the mail that waited for the first prekey: %+v", res)
 	}
+}
+
+// first is the serial an age key file is for, by its name.
+func first(t *testing.T, keyFile string) uint64 {
+	t.Helper()
+	n, err := strconv.ParseUint(strings.TrimSuffix(filepath.Base(keyFile), ".agekey"), 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
 }
 
 func mustRead(t *testing.T, name string) []byte {
@@ -448,12 +458,9 @@ func TestADrainDeletesARetiredKeyPastItsDeletionTime(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Its not_after 34 days back, so its deletion time, a day back, has come.
-	name := prekeyFile(b, retired, ".txt")
-	lines := strings.Split(string(mustRead(t, name)), "\n")
+	lines := strings.Split(string(statement(t, b, retired, ".txt")), "\n")
 	lines[4] = e.clock.Now().Add(-34 * 24 * time.Hour).UTC().Format(protocol.TimeLayout)
-	if err := os.WriteFile(name, []byte(strings.Join(lines, "\n")), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	b.SetRecord(t, "prekeys/"+strconv.FormatUint(retired, 10)+".txt", []byte(strings.Join(lines, "\n")))
 	receive(t, b)
 	if exists(prekeyFile(b, retired, ".agekey")) || !exists(prekeyFile(b, numberOf(t, b), ".agekey")) {
 		t.Errorf("after a drain: the retired key is kept %v, the current one %v", exists(prekeyFile(b, retired, ".agekey")), exists(prekeyFile(b, numberOf(t, b), ".agekey")))

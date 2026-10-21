@@ -384,4 +384,3 @@ func TestADailyReaderWhoseRenewalsAreRefused(t *testing.T) {
 		})
 	}
 }
-

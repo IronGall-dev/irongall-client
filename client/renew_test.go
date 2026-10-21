@@ -132,7 +132,8 @@ func TestARestoredBoxRegistersWhereItsServerForgotIt(t *testing.T) {
 }
 
 // A renewal that fails does not stop the drain, says why, and is tried
-// again an hour later, not at every poll.
+// again an hour later, not at every poll: by any process of the box, which
+// says within the hour why the last one failed (#10).
 func TestReceiveRetriesAFailedRenewalHourly(t *testing.T) {
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -152,8 +153,15 @@ func TestReceiveRetriesAFailedRenewalHourly(t *testing.T) {
 		t.Fatalf("a failed renewal: %v, delivered %d, %d tries", res.RenewErr, len(res.Delivered), puts.Load())
 	}
 	e.clock.Add(time.Hour - time.Second)
-	if res := receive(t, b); res.RenewErr != nil || puts.Load() != 1 {
-		t.Fatalf("tried again within the hour: %d tries", puts.Load())
+	if res := receive(t, b); res.RenewErr == nil || !strings.Contains(res.RenewErr.Error(), "tries it again from") || puts.Load() != 1 {
+		t.Fatalf("within the hour: %v, %d tries; want the last failure said, and no try", res.RenewErr, puts.Load())
+	}
+	other, err := client.Open(b.Dir(), e.opts()) // another process of the box
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res := receive(t, other); res.RenewErr == nil || puts.Load() != 1 {
+		t.Fatalf("another process within the hour: %v, %d tries", res.RenewErr, puts.Load())
 	}
 	e.clock.Add(time.Second)
 	if res := receive(t, b); res.RenewErr == nil || puts.Load() != 2 {
@@ -164,8 +172,40 @@ func TestReceiveRetriesAFailedRenewalHourly(t *testing.T) {
 		t.Fatal("tried again inside the hour after a failure")
 	}
 	e.clock.Add(time.Hour)
-	if res := receive(t, b); res.Renewed == nil || servedSerial(t, e, b) != res.Renewed.Serial {
-		t.Fatal("not renewed once the server took it")
+	if res := receive(t, b); res.Renewed == nil || servedSerial(t, e, b) != res.Renewed.Serial || has(b, "renew-failed") {
+		t.Fatal("not renewed once the server took it, or the failure still kept")
+	}
+}
+
+// A renewal that failed while the clock read ahead holds back no later one
+// once the clock has gone back (#201): it is dated after the clock's reading,
+// and a box whose clock steps back would otherwise renew nothing until the
+// clock caught up, as its prekey ran out.
+func TestAFailureDatedAheadHoldsBackNoRenewal(t *testing.T) {
+	e := newEnv(t)
+	var off time.Duration
+	b, err := client.Init(context.Background(), t.TempDir(), e.skewed(&off), protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var puts atomic.Int32
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/prekey") {
+			puts.Add(1)
+			http.Error(w, "down", http.StatusServiceUnavailable)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	e.clock.Add(25 * time.Hour)
+	off = 50 * time.Minute
+	if res := receive(t, b); res.RenewErr == nil || puts.Load() != 1 {
+		t.Fatalf("a renewal with the clock ahead: %v, %d tries", res.RenewErr, puts.Load())
+	}
+	e.srv.SetMiddle(nil)
+	off = 0
+	if res := receive(t, b); res.Renewed == nil {
+		t.Fatalf("the clock set back: not renewed, %v", res.RenewErr)
 	}
 }
 
@@ -208,10 +248,8 @@ func TestReceiveKeepsOnePriorPrekey(t *testing.T) {
 		t.Fatal("a drain that did not empty the box deleted a prekey")
 	}
 	receive(t, b)
-	for _, f := range []string{".agekey", ".txt", ".made", ".txt.sig"} {
-		if exists(key(k1) + f) {
-			t.Fatalf("the first prekey's %s was kept", f)
-		}
+	if exists(key(k1)+".agekey") || has(b, "prekeys/"+strconv.FormatUint(k1, 10)+".txt") {
+		t.Fatal("the first prekey's key or statement was kept")
 	}
 	if !exists(key(k2)+".agekey") || !exists(key(k3)+".agekey") {
 		t.Fatal("deleted the newest retired prekey or the current one")
@@ -381,7 +419,7 @@ func TestAServerThatFailsEveryRenewalGetsEachKeyOnce(t *testing.T) {
 	if _, err := b.Rekey(context.Background(), ""); err != nil {
 		t.Fatalf("day 75, the server back: prekey renew: %v", err)
 	}
-	if exists(stem(first)+".agekey") || exists(stem(first)+".txt.sig") {
+	if exists(stem(first)+".agekey") || has(b, "prekeys/"+strconv.FormatUint(first.p.Serial, 10)+".txt.sig") {
 		t.Error("a passed-over key outlived its not_after + 33 days once a server took a pass again")
 	}
 	for _, key := range order[1:] {
@@ -392,7 +430,8 @@ func TestAServerThatFailsEveryRenewalGetsEachKeyOnce(t *testing.T) {
 }
 
 // A key an attempt made and never signed went nowhere: the next attempt uses
-// it, at the same serial.
+// it, at the same serial, with a working key and certificate made then, never
+// the attempt's, whose certificate began when it ran (#197).
 func TestAKeyNeverSignedIsUsed(t *testing.T) {
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
@@ -403,16 +442,18 @@ func TestAKeyNeverSignedIsUsed(t *testing.T) {
 	at := begunAt(t, b)
 	stem := prekeyFile(b, at, "")
 	key, _ := os.ReadFile(stem + ".agekey")
-	for _, signed := range []string{".txt", ".txt.sig"} { // as a crash before the signature would leave it
-		if err := os.Remove(stem + signed); err != nil {
-			t.Fatal(err)
-		}
+	for _, signed := range []string{".txt", ".txt.sig"} { // as a crash before the statement was kept would leave it
+		b.SetRecord(t, "prekeys/"+strconv.FormatUint(at, 10)+signed, nil)
 	}
+	work := mustRead(t, workFile(b, at, ""))
 	p, err := b.Rekey(context.Background(), "")
 	if err != nil || p.Serial != at {
 		t.Fatalf("rekey: %+v, %v", p, err)
 	}
 	if now, _ := os.ReadFile(stem + ".agekey"); len(key) == 0 || !bytes.Equal(now, key) || !strings.Contains(string(key), p.Key) {
 		t.Fatal("the key that was never signed was not the one published")
+	}
+	if bytes.Equal(mustRead(t, workFile(b, at, "")), work) {
+		t.Fatal("the attempt's working key was used again")
 	}
 }

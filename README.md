@@ -94,6 +94,7 @@ Forward secrecy, padding, accounts and the rest: `PROTOCOL.md`.
 | `held`, `dropped`, `duplicate` | `recv` | `id`; `held` (kept in `held/`) has `from`. `dropped` is mail from a sender this box blocked |
 | `paced`, `more` | `recv` | the rest is still on the server: run `recv` again, after `retry_after` seconds for `paced` |
 | `renewal_failed`, `acl_not_sent` | `recv` | the members of an `error` line |
+| `prekey_not_made` | `recv`, `prekey renew` | `serial`, `certificate_serial`, `at`, `message`: at the box's read of itself at `at`, its server served a prekey statement in its name that the box did not make. A box restored from its identity alone meets the lost machine's; otherwise someone may hold a working key, and `irongall cert revoke-earlier` ends it. `status` says so too, until a read serves the box's own |
 | `box_unread` | `cert revoke-earlier` | the members of an `error` line: the box's own server could not be read, or served what the box does not take, and the remedy went on from what the box knows |
 | `sent` | `send`, `outbox flush` | `id`, `msg_id`, `to` |
 | `box` | `init`, `addr` | `address`, `link` |

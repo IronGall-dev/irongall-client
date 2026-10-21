@@ -238,6 +238,17 @@ func stateOf(b *client.Box, name string) ([]byte, bool) {
 	return v, err == nil && ok
 }
 
+// statement is a part of the statement a box signed at serial n, as the
+// state keeps it: part is ".txt", ".txt.sig" or ".made" (client.Box.Records).
+func statement(t *testing.T, b *client.Box, n uint64, part string) []byte {
+	t.Helper()
+	v, ok := stateOf(b, "prekeys/"+strconv.FormatUint(n, 10)+part)
+	if !ok {
+		t.Fatalf("%s keeps no statement %d", b.Dir(), n)
+	}
+	return v
+}
+
 // has reports whether the box's state keeps a record (stateOf).
 func has(b *client.Box, name string) bool { _, ok := stateOf(b, name); return ok }
 

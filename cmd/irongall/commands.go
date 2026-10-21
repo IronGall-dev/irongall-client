@@ -305,8 +305,10 @@ func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration, headers 
 	ctx := c.Context()
 	deadline := time.Now().Add(wait)
 	// renewErr is a renewal that was due and failed, and that no later
-	// Receive of this run made good; aclErr the same for the box's ACL.
+	// Receive of this run made good; aclErr the same for the box's ACL; and
+	// notMade what the box's last read of itself served that it did not make.
 	var renewErr, aclErr error
+	var notMade *client.NotMade
 	for {
 		res, err := b.Receive(ctx)
 		if res != nil {
@@ -347,6 +349,10 @@ func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration, headers 
 				renewErr = res.RenewErr
 				lines = append(lines, line("renewal_failed", failure(fmt.Errorf("the prekey is due for renewal and was not renewed: recv tries again within the hour, and irongall status says whether it went through: %w", res.RenewErr))...))
 			}
+			notMade = res.NotMade
+			if res.NotMade != nil {
+				lines = append(lines, notMadeLine(res.NotMade))
+			}
 			aclErr = res.ACLErr
 			if res.ACLErr != nil {
 				lines = append(lines, line("acl_not_sent", failure(fmt.Errorf("this box's ACL has changed and was not sent to its server: the next recv sends it, and irongall status says whether it went through: %w", res.ACLErr))...))
@@ -370,7 +376,7 @@ func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration, headers 
 			e.say(line("waiting", append([]any{"for", "server"}, failure(err)...)...))
 			pause = ae.RetryAfter
 		} else if err != nil || len(res.Delivered) > 0 || !time.Now().Before(deadline) {
-			if err == nil && (renewErr != nil || aclErr != nil) {
+			if err == nil && (renewErr != nil || aclErr != nil || notMade != nil) {
 				return &needsALook{}
 			}
 			return err
@@ -664,10 +670,23 @@ neither --no-pq nor --pq it keeps the type the box has.`,
 				return err
 			}
 			p, err := b.Rekey(c.Context(), kt)
+			if p != nil {
+				// Published, whatever fault of this box came after.
+				if werr := e.out(prekey(p)); err == nil {
+					err = werr
+				}
+			}
 			if err != nil {
 				return err
 			}
-			return e.out(prekey(p))
+			nm, err := b.NotMade()
+			if err != nil || nm == nil {
+				return err
+			}
+			if err := e.out(notMadeLine(nm)); err != nil {
+				return err
+			}
+			return &needsALook{}
 		})
 	c.Flags().BoolVar(&noPQ, "no-pq", false, "switch to a prekey without post-quantum encryption (X25519 only)")
 	c.Flags().BoolVar(&pq, "pq", false, "switch to a post-quantum prekey")
@@ -1149,6 +1168,12 @@ func prekey(p *protocol.Prekey) []byte {
 // maxRecord bounds a revocation record read from a file: one is under a
 // kilobyte.
 const maxRecord = 64 << 10
+
+// notMadeLine is the line that says the box's server served a statement in
+// its name that it did not make.
+func notMadeLine(nm *client.NotMade) []byte {
+	return line("prekey_not_made", "serial", nm.Serial, "certificate_serial", nm.CertificateSerial, "at", nm.At, "message", nm.Words())
+}
 
 // readRecord reads a revocation record: the JSON irongall revocation make
 // prints. What it holds is checked by whoever uses it.
