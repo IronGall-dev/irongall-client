@@ -83,10 +83,7 @@ func TestAReceiptIsComparedAsBytes(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
-	kt, mode := protocol.Classic, "--no-pq"
-	if pq() {
-		kt, mode = protocol.PostQuantum, ""
-	}
+	kt := protocol.PostQuantum
 	to, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, kt)
 	if err != nil {
 		t.Fatal(err)
@@ -98,7 +95,7 @@ func TestAReceiptIsComparedAsBytes(t *testing.T) {
 	landAll(t, to)
 	dir := t.TempDir()
 	env := []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}
-	if _, err := bash(t, env, "ig_init "+mode); err != nil {
+	if _, err := bash(t, env, "ig_init"); err != nil {
 		t.Fatal(err)
 	}
 	for _, e := range []struct{ member, suffix string }{{"id", ""}, {"id", "\n"}, {"id", "\x00"}, {"received_at", "\n"}, {"expires_at", "\n"}} {

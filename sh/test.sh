@@ -335,7 +335,7 @@ as B; srv_inject "$B" "$A" old.P.age; recv
 # a key twice: jq would take the second from, another reader the first
 printf '{"v":1,"from":"%s","from":"%s","to":"%s","sent_at":"%s","msg_id":"55555555-2222-4333-8444-555555555555","identity":"%s","body":"twice"}\n' "$C" "$A" "$B" "$(jq -nr 'now | floor | todate')" "$(ig_b64 $W/box/A/identity.doc)" > dup.P; seal_as A "$B" dup.P
 as B; srv_inject "$B" "$A" dup.P.age; recv
-[ -z "$RECV_OUT" ] && printf '%s' "$RECV_ERR" | grep -q "no key twice" && ok "an envelope with a key twice: REFUSED" || bad "duplicate key: $RECV_OUT / $RECV_ERR"
+[ -z "$RECV_OUT" ] && printf '%s' "$RECV_ERR" | grep -q "no member named twice" && ok "an envelope with a key twice: REFUSED" || bad "duplicate key: $RECV_OUT / $RECV_ERR"
 # the layout: each part has one place. A second, well-signed envelope after the first one's signature is never read; an envelope over two lines, or a signature that is not on line 2, is no message
 line "$A" "$B" 66666666-2222-4333-8444-555555555551 "real, from A" $W/box/A/identity.doc > real.P; line "$C" "$B" 66666666-2222-4333-8444-555555555552 "hidden, from C" $W/box/C/identity.doc > hidden.P
 seal_as A "$B" real.P; seal_as C "$B" hidden.P; cat real.P real.P.sig hidden.P hidden.P.sig | age -r "$(sed -n 4p $SRV/$B/prekey.txt)" > two.age
@@ -656,10 +656,10 @@ for v in $VEC/revoke/bad-*.sig; do ! ig_revcheck "$VA" $VEC/a/identity.doc "$v" 
 ! ig_revcheck "$(cat $VEC/b/address)" $VEC/a/identity.doc $VEC/a/revoke.sig && ! ig_revcheck "$VA" $VEC/b/identity.doc $VEC/a/revoke.sig &&
   ok "a revocation is the identity's own signature over its fixed statement, in either hash and by either key type: a working key's, another identity's, another namespace's and another box's are not" || bad "revocation vectors"
 for X in RA RB RC RD; do as $X; ig_init $NOPQ > /dev/null || bad "init $X"; eval "$X=\$(cat \$IG/address)"; done
-# a record names its type: one that names another type is no record, and one that names none is read as one
+# a record that names no type is read as one
 as RB; revocation_of RB > $W/rb.json && [ "$(ig_record $W/rb.json)" = "$RB" ] || bad "RB's record"
-jq -c '.type = "revocation"' $W/rb.json > $W/rb-other.json; ig_record $W/rb-other.json > /dev/null && bad "a record of another type was read as one"; jq -c 'del(.type)' $W/rb.json > $W/rb-untyped.json
-[ "$(ig_record $W/rb-untyped.json)" = "$RB" ] && ok "a record that names another type is no record, and one that names none is read as one" || bad "a record without its type"
+jq -c 'del(.type)' $W/rb.json > $W/rb-untyped.json
+[ "$(ig_record $W/rb-untyped.json)" = "$RB" ] && ok "a record that names no type is read as one" || bad "a record without its type"
 # a working key's signature over the same statement: good under its certificate, and not a revocation, to this script or to the server
 printf 'irongall-revoke-v1\n%s\n' "$RB" | ssh-keygen -q -Y sign -n "irongall-revoke-v1:$RB" -f $IG/work/$(cat $IG/serial)-cert.pub > $W/wk.sig
 jq -cn --arg i "$(ig_b64 $IG/identity.doc)" --arg s "$(ig_b64 $W/wk.sig)" '{identity:$i, revocation_signature:$s}' > $W/wk.json
@@ -698,7 +698,7 @@ grep -q "REVOKED: $RD is revoked" err.txt && [ "$(grep -c "$RD" $SRV/log)" = "$n
 as RB; printf 'waits for an answer' | ig_send "$RC" || bad "RB's send"
 as RC; REVMODE="silent $RB"; recv; REVMODE=
 [ $RECV_RC != 0 ] && [ -z "$RECV_OUT" ] && [ "$(box_count "$RC")" = 1 ] && [ -z "$(ls $IG/quarantine)" ] && printf '%s' "$RECV_ERR" | grep -q "could not be asked" || bad "no answer: rc $RECV_RC, $RECV_OUT / $RECV_ERR"
-for v in $VEC/answer/box-bad-*.json; do cp $v $SRV/shown.json; REVMODE="show $RB"; recv; REVMODE=      # nor is a 2xx whose body is no box, as PROTOCOL.md §0b reads one: each vector's members over the box served
+for v in $VEC/answer/box-bad-prekey-a-number.json $VEC/answer/box-bad-revoked-certificates-a-number.json; do cp $v $SRV/shown.json; REVMODE="show $RB"; recv; REVMODE=      # nor is a 2xx whose body is no box this script reads, a byte member that is no string: each vector's members over the box served
   [ $RECV_RC != 0 ] && [ -z "$RECV_OUT" ] && [ "$(box_count "$RC")" = 1 ] && [ -z "$(ls $IG/quarantine)" ] || bad "$(basename $v) served as the answer: rc $RECV_RC, $RECV_OUT / $RECV_ERR"; done
 recv; [ $RECV_RC = 0 ] && [ "$(printf '%s\n' "$RECV_OUT" | awk NF | wc -l)" = 1 ] && ok "no answer on whether a sender is revoked, and a 2xx that is no box, stop the drain with the message still on the server; the next drain asks again and delivers it" || bad "after the answer: $RECV_ERR"
 # --- 18. certificates revoked: the address goes on. A box's statements are ordered by certificate first, a send names its prekey by both

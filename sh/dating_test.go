@@ -132,15 +132,12 @@ func TestTheScriptTakesARetryAboveTheFloor(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			clk := &shifted{}
 			srv := fakeserver.New(t, clk.Now)
-			mode, kt := "--no-pq", protocol.Classic
-			if pq() {
-				mode, kt = "", protocol.PostQuantum
-			}
+			kt := protocol.PostQuantum
 			dir := t.TempDir()
 			sh := func(at time.Duration, cmd string) (string, error) {
 				return bash(t, []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}, igNow(at)+cmd)
 			}
-			if _, err := sh(0, "ig_init "+mode); err != nil {
+			if _, err := sh(0, "ig_init"); err != nil {
 				t.Fatal(err)
 			}
 			to := mustAddress(t, dir)
@@ -175,7 +172,7 @@ func TestTheScriptTakesARetryAboveTheFloor(t *testing.T) {
 				t.Fatalf("the first copy: %q, %v", out, err)
 			}
 			clk.Set(30 * day) // the owner renews by hand, monthly: the script never renews on its own
-			if _, err := sh(30*day, "ig_rekey "+mode); err != nil {
+			if _, err := sh(30*day, "ig_rekey"); err != nil {
 				t.Fatal(err)
 			}
 			clk.Set(33*day - 30*time.Minute)
@@ -188,7 +185,7 @@ func TestTheScriptTakesARetryAboveTheFloor(t *testing.T) {
 			}
 			phase.Store("")
 			clk.Set(60 * day)
-			if _, err := sh(60*day, "ig_rekey "+mode); err != nil {
+			if _, err := sh(60*day, "ig_rekey"); err != nil {
 				t.Fatal(err)
 			}
 			at := 66*day - 31*time.Minute
@@ -226,15 +223,12 @@ func TestTheScriptTakesAStretchedRetryAtHonestClocks(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			clk := &frozen{base: time.Now().UTC().Truncate(time.Second)}
 			srv := fakeserver.New(t, clk.Now)
-			mode, kt := "--no-pq", protocol.Classic
-			if pq() {
-				mode, kt = "", protocol.PostQuantum
-			}
+			kt := protocol.PostQuantum
 			dir := t.TempDir()
 			sh := func(at time.Duration, cmd string) (string, error) {
 				return bash(t, []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}, clk.igNow(at)+cmd)
 			}
-			if _, err := sh(0, "ig_init "+mode); err != nil {
+			if _, err := sh(0, "ig_init"); err != nil {
 				t.Fatal(err)
 			}
 			to := mustAddress(t, dir)
@@ -279,7 +273,7 @@ func TestTheScriptTakesAStretchedRetryAtHonestClocks(t *testing.T) {
 				t.Fatalf("the first copy: %q, %v", out, err)
 			}
 			clk.Set(30 * day)
-			if _, err := sh(30*day, "ig_rekey "+mode); err != nil {
+			if _, err := sh(30*day, "ig_rekey"); err != nil {
 				t.Fatal(err)
 			}
 			clk.Set(protocol.TTL - time.Hour)
@@ -298,7 +292,7 @@ func TestTheScriptTakesAStretchedRetryAtHonestClocks(t *testing.T) {
 				t.Fatalf("the retry at W+TTL: %v", err)
 			}
 			clk.Set(60 * day)
-			if _, err := sh(60*day, "ig_rekey "+mode); err != nil {
+			if _, err := sh(60*day, "ig_rekey"); err != nil {
 				t.Fatal(err)
 			}
 			server := 2*protocol.TTL + 10*time.Minute + time.Second
@@ -329,13 +323,10 @@ func TestScriptAClockThatJumpsDuringADrainPrunesNoLine(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
-	mode, kt := "--no-pq", protocol.Classic
-	if pq() {
-		mode, kt = "", protocol.PostQuantum
-	}
+	kt := protocol.PostQuantum
 	dir := t.TempDir()
 	env := []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}
-	if out, err := bash(t, env, "ig_init "+mode); err != nil {
+	if out, err := bash(t, env, "ig_init"); err != nil {
 		t.Fatalf("init: %q, %v", out, err)
 	}
 	g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, kt)

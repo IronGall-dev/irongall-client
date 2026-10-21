@@ -312,9 +312,10 @@ func TestGitignoreIsMovedIntoPlace(t *testing.T) {
 
 // A box its server has forgotten renews as a registration, once it has read
 // what the server holds of its revocations (PROTOCOL.md §6.4, §7). A 2xx
-// there that is no record stops the renewal with a refusal that says so, as
-// an answer for the box's own read does (#230): the script once exited 1
-// with no line. A record that holds nothing lets the renewal go on.
+// there that is no record, not JSON or not an object, stops the renewal with
+// a refusal that says so, as an answer for the box's own read does (#230): the
+// script once exited 1 with no line. A record that holds nothing lets the
+// renewal go on.
 func TestAForgottenBoxsRenewalRefusesARevocationsAnswerThatIsNoRecord(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
@@ -343,7 +344,7 @@ func TestAForgottenBoxsRenewalRefusesARevocationsAnswerThatIsNoRecord(t *testing
 		answer = body
 		mu.Unlock()
 	}
-	for _, body := range []string{`{"type":"other"}`, "not json"} {
+	for _, body := range []string{"not json", `["a record"]`} {
 		set(body)
 		if _, err := bash(t, env, "ig_rekey --no-pq"); err == nil || !strings.Contains(err.Error(), `"REFUSED: the server's answer for this box's revocations is not one this client reads`) {
 			t.Errorf("%s: %v", body, err)

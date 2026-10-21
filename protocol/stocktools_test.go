@@ -6,10 +6,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
-	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/IronGall-dev/irongall-client/internal/agetool"
 )
 
 // TestVectorsByToolsNotOurs checks the crypto and container vectors with
@@ -82,14 +82,15 @@ func TestVectorsByToolsNotOurs(t *testing.T) {
 	})
 
 	t.Run("age", func(t *testing.T) {
-		tool(t, "age")
+		path, err := agetool.Path()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("PATH", path)
 		v, _ := run(t, nil, "age", "--version")
+		t.Logf("age %s", strings.TrimSpace(string(v)))
 		for _, m := range []struct{ msg, key string }{{"a-to-b", "b-1.pq"}, {"a-to-c", "c-1.classic"}} {
 			out, err := run(t, nil, "age", "-d", "-i", "input/"+m.key+".key", "message/"+m.msg+".age")
-			if err != nil && m.key == "b-1.pq" && !ageAtLeast(string(v), 1, 3) {
-				t.Logf("%s: age %s reads no post-quantum file, which needs 1.3", m.msg, strings.TrimSpace(string(v)))
-				continue
-			}
 			if err != nil {
 				t.Errorf("%s: age -d: %v", m.msg, err)
 				continue
@@ -202,15 +203,4 @@ func globIn(t *testing.T, dir, pattern string) []string {
 		m[i], _ = filepath.Rel(dir, m[i])
 	}
 	return m
-}
-
-// ageAtLeast reports whether age --version's output names at least major.minor.
-func ageAtLeast(version string, major, minor int) bool {
-	m := regexp.MustCompile(`v?(\d+)\.(\d+)`).FindStringSubmatch(version)
-	if m == nil {
-		return false
-	}
-	x, _ := strconv.Atoi(m[1])
-	y, _ := strconv.Atoi(m[2])
-	return x > major || x == major && y >= minor
 }

@@ -134,7 +134,7 @@ A server's error is an `error` line with its `status`, its `code`, the `retry_af
 
 ## Stock tools instead of Go
 
-**`sh/irongall.sh` is the proof, not the client to run.** It is the protocol in stock tools, age, ssh-keygen, curl and jq, on a box of its own: a box it makes exchanges mail with a Go box, and it gives every test vector the Go client's verdict, so everything the Go client encrypts or signs is something `age` and `ssh-keygen` read. Outside the vectors it is held to the Go client only where a difference would let through a forgery, a replay, a message its keys did not decrypt, a signature it should not make, or a pass sent where a network can read it (`AGENTS.md` § The shell client). Use the Go client. Read or run the script to check it. Take it from this repo at a commit you have read, never from the server.
+**`sh/irongall.sh` is the proof, not the client to run.** It is the protocol in stock tools, age, ssh-keygen, curl and jq, on a box of its own: a box it makes exchanges mail with a Go box, and it gives every crypto and container vector the Go client's verdict, so everything the Go client encrypts or signs is something `age` and `ssh-keygen` read. Outside the vectors it is held to the Go client only where a difference would let through a forgery, a replay, a message its keys did not decrypt, a signature it should not make, or a pass sent where a network can read it (`AGENTS.md` § The shell client). Use the Go client. Read or run the script to check it. Take it from this repo at a commit you have read, never from the server.
 
 ```sh
 bash sh/irongall.sh init                    # prints this box's link (init --no-pq: a box age 1.2 can reach)
@@ -195,7 +195,7 @@ go test ./client -run TestForgeries -v          # the forgeries, one by one
 go test ./sh -v                                 # the stock-tools client (sh/test.sh <empty dir> runs without Go)
 ```
 
-**An `ok` for `./sh` does not say the script was tested.** Its tests need bash, age, ssh-keygen, jq, iconv and coreutils, and skip naming the one missing; on an age older than 1.3 they test `--no-pq` boxes only. `go test ./sh -v` says which: a `SKIP` line, or `mode: KEYTYPE=pq`.
+**An `ok` for `./sh` does not say the script was tested.** Its tests need bash, ssh-keygen, jq, iconv and coreutils, and skip naming the one missing: `go test ./sh -v` shows a `SKIP` line. Where the local age is older than 1.3, they build the one `go.mod` names (`go tool age`).
 
 **What each test holds, claim by claim, is `SECURITY.md` § Checking the claims yourself.**
 

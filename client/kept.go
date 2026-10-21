@@ -80,7 +80,7 @@ func (b *Box) keptLine(data []byte) (line []byte, from protocol.Address, env *pr
 // protocol.ParseTime reads), and is otherwise kept as <name>_b64, the string
 // as served in base64. So nothing the server chose is readable at a glance,
 // and nothing is lost. Its size is the ciphertext's, which the fetch was
-// held to. irongall.sh's ig_kept keeps the same.
+// held to.
 type keptRefusal struct {
 	ID            string         `json:"id,omitempty"`
 	IDB64         string         `json:"id_b64,omitempty"`

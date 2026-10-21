@@ -507,8 +507,7 @@ func (b *Box) judge(ctx context.Context, ct []byte, listedFrom string, asked *lo
 // variation selectors. A model reads each of these as text, and a person sees
 // none, so a body could carry an instruction past whoever looks. Escaped, it
 // is in plain sight, and a JSON reader still gets every character
-// (PRECEDENTS.md, Part 2). irongall.sh's ig_line escapes the same, in the
-// same form.
+// (PRECEDENTS.md, Part 2). irongall.sh's ig_line escapes the same list.
 func escapeUnseen(line []byte) []byte {
 	var b strings.Builder
 	for _, r := range string(line) {
@@ -541,8 +540,7 @@ func escaped(r rune) bool {
 
 // defaultIgnorable is Unicode 18.0's Default_Ignorable_Code_Point, range for
 // range (DerivedCoreProperties-18.0.0.txt). irongall.sh's ig_line holds the
-// same list: TestWhatABoxKeepsIsOneInBothClients, in sh/, holds the two to
-// a third copy.
+// same list.
 var defaultIgnorable = [][2]rune{
 	{0x00AD, 0x00AD}, {0x034F, 0x034F}, {0x061C, 0x061C}, {0x115F, 0x1160}, {0x17B4, 0x17B5},
 	{0x180B, 0x180F}, {0x200B, 0x200F}, {0x202A, 0x202E}, {0x2060, 0x206F}, {0x3164, 0x3164},
