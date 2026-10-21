@@ -308,7 +308,7 @@ func (b *Box) receiveOne(ctx context.Context, m protocol.MessageInfo, res *Resul
 		_, err := b.owner(ctx, http.MethodGet, b.boxPath("/messages/"+id), nil, ct)
 		var api *APIError
 		switch {
-		case Code(err) == protocol.CodeNoSuchMessage:
+		case code(err) == protocol.CodeNoSuchMessage:
 			return 0, nil // already gone
 		case errors.As(err, &api) && (api.Problem.Code == protocol.CodeFetchPaced || api.Problem.Code == protocol.CodeRefetchSpent) && api.RetryAfter > 0:
 			return 0, &pacedError{wait: api.RetryAfter, err: err}
@@ -378,7 +378,7 @@ func (b *Box) receiveOne(ctx context.Context, m protocol.MessageInfo, res *Resul
 		}
 	}
 	_, err = b.owner(ctx, http.MethodDelete, b.boxPath("/messages/"+id), nil, nil)
-	if Code(err) == protocol.CodeNoSuchMessage {
+	if code(err) == protocol.CodeNoSuchMessage {
 		return fetched, nil
 	}
 	return fetched, err

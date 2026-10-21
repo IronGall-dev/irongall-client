@@ -9,6 +9,10 @@ import (
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
+// Code is the error's code, if err is an [APIError], for a test that knows
+// which call answered.
+func Code(err error) protocol.Code { return code(err) }
+
 // SetLockPatience shortens how long a command waits for the box's lock, for
 // one test.
 func SetLockPatience(t *testing.T, d time.Duration) {

@@ -62,7 +62,7 @@ func (b *Box) resolve(ctx context.Context, peer protocol.Address, l *lookups) (*
 	switch {
 	case gone:
 		return nil, nil, &RevokedError{Address: peer, Own: peer == b.id.Address()}
-	case Code(err) == protocol.CodeRevoked:
+	case code(err) == protocol.CodeRevoked:
 		return nil, nil, &lookupError{fmt.Errorf("%w; it showed no revocation of %s that verifies, so this box does not take that address as revoked", err, peer)}
 	case err != nil:
 		return nil, nil, &lookupError{err}

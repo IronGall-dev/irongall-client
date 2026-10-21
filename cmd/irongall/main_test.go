@@ -38,6 +38,14 @@ func do(ctx context.Context, command string, args []string, stdin io.Reader, std
 
 // printed is what a command printed, read back: every line must be one JSON
 // object whose first member is its type.
+// codeOf is the code of the API error a test's one call met.
+func codeOf(err error) protocol.Code {
+	if e, ok := errors.AsType[*client.APIError](err); ok {
+		return e.Problem.Code
+	}
+	return ""
+}
+
 func printed(t *testing.T, s string) []map[string]any {
 	t.Helper()
 	var ls []map[string]any
@@ -372,7 +380,7 @@ func TestAdopt(t *testing.T) {
 	if err := do(ctx, "account adopt", nil, strings.NewReader(key+"\n"), &out, &errs); err != nil || out.String() != `{"type":"account","account":"acme"}`+"\n" || srv.Account(b.Address()) != "acme" {
 		t.Fatalf("adopt: %v %q %q", err, out.String(), errs.String())
 	}
-	if err := do(ctx, "account adopt", nil, strings.NewReader(key), &out, &errs); client.Code(err) != protocol.CodeAdoptKeyRefused || strings.Contains(err.Error(), key) {
+	if err := do(ctx, "account adopt", nil, strings.NewReader(key), &out, &errs); codeOf(err) != protocol.CodeAdoptKeyRefused || strings.Contains(err.Error(), key) {
 		t.Fatalf("a spent key: %v", err)
 	}
 	for _, args := range [][]string{{key}, {"--leave"}, {key, key}} {
@@ -1613,7 +1621,7 @@ func TestCertRevokeEarlierSaysWhatHappenedToEach(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "NOT published") || !strings.Contains(err.Error(), "nothing is revoked") || !strings.Contains(err.Error(), "irongall cert revoke-earlier tries both again") || out.Len() != 0 {
 		t.Fatalf("taken nowhere: %v, stdout %q", err, out.String())
 	}
-	if client.Code(err) != protocol.CodeRateLimited {
+	if codeOf(err) != protocol.CodeRateLimited {
 		t.Fatalf("the error's code is not the renewal's: %v", err)
 	}
 

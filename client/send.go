@@ -261,7 +261,7 @@ func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked 
 		// final, and without one it is a call that failed.
 		err = b.proved(ctx, to, err, asked)
 		var gone *RevokedError
-		if !errors.As(err, &gone) && !slices.Contains(undeliverable, Code(err)) {
+		if !errors.As(err, &gone) && !slices.Contains(undeliverable, code(err)) {
 			return nil, fmt.Errorf("%w (kept in the outbox: retry with irongall outbox flush)", err)
 		}
 		return nil, b.undelivered(stem, err)
@@ -342,7 +342,7 @@ func (b *Box) trySend(ctx context.Context, to protocol.Address, stem string, l *
 		return nil, nil, err
 	}
 	r, err := b.postSealed(ctx, to, req)
-	if Code(err) == protocol.CodeStalePrekey {
+	if code(err) == protocol.CodeStalePrekey {
 		if req, err = b.seal(ctx, to, stem, l); err != nil {
 			return nil, nil, err
 		}

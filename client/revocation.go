@@ -279,9 +279,9 @@ func (b *Box) readBox(ctx context.Context, a protocol.Address, l *lookups) (*pro
 	rec := br.Record()
 	switch {
 	case err == nil:
-	case Code(err) == protocol.CodeRevoked:
+	case code(err) == protocol.CodeRevoked:
 		rec = recordOf(err)
-	case Code(err) != protocol.CodeNoSuchMailbox:
+	case code(err) != protocol.CodeNoSuchMailbox:
 		return nil, false, err
 	}
 	if rec != nil {
@@ -324,7 +324,7 @@ func (b *Box) lookupRevocation(ctx context.Context, a protocol.Address, l *looku
 		return held, err
 	}
 	_, gone, err := b.readBox(ctx, a, l)
-	switch Code(err) {
+	switch code(err) {
 	case protocol.CodeRevoked, protocol.CodeNoSuchMailbox:
 		err = nil
 	}
@@ -654,7 +654,7 @@ func (b *Box) revokeBelow(ctx context.Context, serial uint64, l *lookups) (*prot
 		if try == 0 && conflicted(perr) {
 			if part != nil {
 				for _, f := range part.Failed {
-					if Code(f.Err) == protocol.CodeConflict {
+					if code(f.Err) == protocol.CodeConflict {
 						delete(l.silent, f.Server) // it answered: it is asked again
 					}
 				}
@@ -674,13 +674,13 @@ func (b *Box) revokeBelow(ctx context.Context, serial uint64, l *lookups) (*prot
 // conflicted reports whether a server refused a record as no newer than the
 // one it holds: a revocation of certificates through a lower serial.
 func conflicted(err error) bool {
-	if Code(err) == protocol.CodeConflict {
+	if code(err) == protocol.CodeConflict {
 		return true
 	}
 	var part *NotPublishedError
 	if errors.As(err, &part) {
 		for _, f := range part.Failed {
-			if Code(f.Err) == protocol.CodeConflict {
+			if code(f.Err) == protocol.CodeConflict {
 				return true
 			}
 		}
@@ -694,7 +694,7 @@ func conflicted(err error) bool {
 // makes it a [RevokedError], which is final. With none, the error says so and
 // stays what it was, a call that failed: a server's word revokes nothing.
 func (b *Box) proved(ctx context.Context, who protocol.Address, err error, l *lookups) error {
-	switch Code(err) {
+	switch code(err) {
 	case protocol.CodeRevoked:
 	case protocol.CodeSenderRevoked:
 		who = b.id.Address()

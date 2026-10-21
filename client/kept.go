@@ -184,7 +184,8 @@ type Quarantined struct {
 }
 
 // Quarantined lists quarantine/, by id. A file is read whichever form it was
-// kept in, and each value is held to its form again as it is read.
+// kept in, as every JSON text is (protocol.Unmarshal), and each value is held
+// to its form again as it is read.
 func (b *Box) Quarantined() ([]Quarantined, error) {
 	names, err := filepath.Glob(b.path("quarantine", "*.json"))
 	if err != nil {
@@ -212,7 +213,7 @@ func (b *Box) Quarantined() ([]Quarantined, error) {
 				MsgID             any `json:"msg_id"`
 			} `json:"judged"`
 		}
-		if data, err := os.ReadFile(name); err == nil && json.Unmarshal(data, &kept) == nil { //nolint:gosec // a path inside the box's own directory
+		if data, err := os.ReadFile(name); err == nil && protocol.Unmarshal(data, &kept) == nil { //nolint:gosec // a path inside the box's own directory
 			j := kept.Judged
 			for _, v := range []struct {
 				kept any

@@ -291,8 +291,10 @@ func (e *APIError) clock() string {
 // file starts with one.
 var codeGrammar = regexp.MustCompile(`\A[a-z0-9_]{1,40}\z`)
 
-// Code returns the error's code, if err is an [APIError].
-func Code(err error) protocol.Code {
+// code is the error's code, if err is an [APIError]: read where the call
+// that answered is made, never from an error whose calls are not known, so
+// it stays in this package.
+func code(err error) protocol.Code {
 	var e *APIError
 	if errors.As(err, &e) {
 		return e.Problem.Code

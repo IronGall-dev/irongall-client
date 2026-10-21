@@ -145,11 +145,9 @@ func start(ctx context.Context, dir, identity string, opt client.Options, kt pro
 	if err != nil {
 		return nil, err
 	}
-	_, err = b.Rekey(ctx, kt)
-	if client.Code(err) == protocol.CodeNoSuchMailbox {
-		b, err = client.Init(ctx, dir, opt, kt)
-	}
-	if err != nil {
+	// A renewal reads the box at its server first, and goes as its
+	// registration when the server holds none: so the first start too.
+	if _, err := b.Rekey(ctx, kt); err != nil {
 		return nil, err
 	}
 	// An echo box answers whoever writes: every sender's mail lands in

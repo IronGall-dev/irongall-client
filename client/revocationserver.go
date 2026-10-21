@@ -153,7 +153,7 @@ func (b *Box) askRevocationServers(ctx context.Context, a protocol.Address, l *l
 		}
 		var rec protocol.Revocations
 		err := b.revocationServer(ctx, s, http.MethodGet, a, nil, &rec)
-		switch Code(err) {
+		switch code(err) {
 		case protocol.CodeNotRevoked, protocol.CodeNoSuchMailbox:
 			continue
 		}
@@ -272,7 +272,7 @@ func (b *Box) publishRecord(ctx context.Context, a protocol.Address, rec *protoc
 	}
 	e := &NotPublishedError{Address: a}
 	_, own := b.call(ctx, http.MethodPut, "/v1/"+a.String()+"/revocations", rec, nil, nil)
-	if Code(own) == protocol.CodeRevoked && b.servesRevocation(ctx, a) {
+	if code(own) == protocol.CodeRevoked && b.servesRevocation(ctx, a) {
 		own = nil // the address is ended there already, which covers whatever the record revokes
 	}
 	if own != nil {
@@ -285,7 +285,7 @@ func (b *Box) publishRecord(ctx context.Context, a protocol.Address, rec *protoc
 	}
 	for _, s := range servers {
 		err := b.revocationServer(ctx, s, http.MethodPut, a, rec, nil)
-		if Code(err) == protocol.CodeRevoked && b.servesRevocationAt(ctx, s, a) {
+		if code(err) == protocol.CodeRevoked && b.servesRevocationAt(ctx, s, a) {
 			err = nil // as at the box's own server: the address is ended there already
 		}
 		if err != nil {

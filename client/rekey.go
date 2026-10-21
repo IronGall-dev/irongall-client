@@ -148,7 +148,7 @@ func (b *Box) readOwn(ctx context.Context, kt protocol.KeyType, unused bool, l *
 	own := b.id.Address()
 	var ir protocol.BoxResponse
 	_, rerr := b.call(ctx, http.MethodGet, b.boxPath(""), nil, nil, &ir)
-	out.forgotten = Code(rerr) == protocol.CodeNoSuchMailbox
+	out.forgotten = code(rerr) == protocol.CodeNoSuchMailbox
 	rec := ir.Record()
 	switch {
 	case rerr == nil:
@@ -159,7 +159,7 @@ func (b *Box) readOwn(ctx context.Context, kt protocol.KeyType, unused bool, l *
 		switch {
 		case err == nil:
 			rec = &held
-		case Code(err) == protocol.CodeNotRevoked, Code(err) == protocol.CodeNoSuchMailbox:
+		case code(err) == protocol.CodeNotRevoked, code(err) == protocol.CodeNoSuchMailbox:
 		case unused && ctx.Err() == nil:
 			out.unread = err
 		default:

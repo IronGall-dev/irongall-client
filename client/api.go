@@ -263,7 +263,7 @@ func (b *Box) ownerTaken(ctx context.Context, method, path string, hdr http.Head
 		}
 		h.Set("Authorization", pass)
 		resp, err := b.call(ctx, method, path, in, h, out)
-		if attempt > 0 || !passRefused(Code(err)) {
+		if attempt > 0 || !passRefused(code(err)) {
 			if err != nil {
 				return resp, taken{}, err
 			}

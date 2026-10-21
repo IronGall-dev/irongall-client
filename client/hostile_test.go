@@ -389,6 +389,22 @@ func TestQuarantineKeepsNoServerTextInTheClear(t *testing.T) {
 	if qs, err := b.Quarantined(); err != nil || len(qs) != 3 || !slices.Contains(qs, client.Quarantined{ID: old, Code: "unknown"}) {
 		t.Fatalf("Quarantined with a file of the old form: %+v, %v", qs, err)
 	}
+	// A file is read as every JSON text is (PROTOCOL.md §0b): a name in
+	// another case is not that member, and one given twice is no record, so
+	// neither lists a value encoding/json would have taken.
+	other := strings.Repeat("d", 64)
+	for _, rec := range []string{`{"FROM":"` + a.Address().String() + `"}`, `{"from":"` + a.Address().String() + `","from":"` + a.Address().String() + `"}`} {
+		f := filepath.Join(b.Dir(), "quarantine", other+".json")
+		if err := os.WriteFile(f, []byte(rec), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if qs, err := b.Quarantined(); err != nil || len(qs) != 4 || !slices.Contains(qs, client.Quarantined{ID: other, Code: "unknown"}) {
+			t.Errorf("Quarantined with %s: %+v, %v", rec, qs, err)
+		}
+		if err := os.Remove(f); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := os.WriteFile(filepath.Join(b.Dir(), "quarantine", old+".reason"), []byte("bad_signature: \x1b[2J"+injected+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
