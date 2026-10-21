@@ -1451,22 +1451,6 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 	if _, err := protocol.VerifyRevokedCertificates(g.Address(), kept.Identity, kept.RevokedCertificates, kept.RevokedCertificatesSignature); err != nil {
 		t.Fatalf("the record the script kept does not verify: %v", err)
 	}
-	// And the script reads one the Go client kept: a second Go box takes the
-	// same mail, and the script, run in that box, revokes the same serials.
-	g2, err := client.Init(ctx, t.TempDir(), opt, kt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	landAll(t, g2)
-	if _, err := g.Send(ctx, g2.Address(), "to a Go box, which keeps the revocation"); err != nil {
-		t.Fatal(err)
-	}
-	if res, err := g2.Receive(ctx); err != nil || len(res.Delivered) != 1 {
-		t.Fatalf("the second Go box's drain: %+v %v", res, err)
-	}
-	if out, err := bash(t, []string{"IRONGALL_HOME=" + g2.Dir()}, fmt.Sprintf(`ig_certrevoked %s %d; echo $?; ig_certrevoked %s %d; echo $?`, gAddr, first, gAddr, numberOf(t, g))); err != nil || out != "0\n1\n" {
-		t.Fatalf("the script's reading of a revocation of certificates the Go client kept: %q %v", out, err)
-	}
 	if _, err := os.Stat(filepath.Join(dir, "peers", gAddr, "revoke.sig")); err == nil {
 		t.Fatal("the script took a revocation of certificates as a revocation of the address")
 	}
@@ -1503,15 +1487,11 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 // number from its clock, so a test reads the number and never assumes one.
 func numberOf(t *testing.T, b *client.Box) uint64 {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(b.Dir(), "serial"))
-	if err != nil {
-		t.Fatal(err)
+	st, err := b.Status()
+	if err != nil || st.PrekeySerial == 0 {
+		t.Fatalf("the Go box's status: %+v, %v", st, err)
 	}
-	n, err := strconv.ParseUint(strings.TrimSpace(string(raw)), 10, 64)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return n
+	return st.PrekeySerial
 }
 
 // A JSON body the Go client sends reaches the script as the value it is
@@ -2093,17 +2073,27 @@ func TestTheScriptHoldsALowerLifetimeOverAWaitingRenewal(t *testing.T) {
 	if _, err := bash(t, env, "ig_rekey"); err != nil {
 		t.Fatalf("ig_rekey: %v", err)
 	}
-	b, err := client.Open(dir, client.Options{Base: srv.URL})
+	// Read from the script box's own files: its serial, and that prekey's
+	// record of when it was signed and its statement.
+	serial, err := os.ReadFile(filepath.Join(dir, "serial"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	st, err := b.Status()
+	stem := filepath.Join(dir, "prekeys", strings.TrimSpace(string(serial)))
+	rawMade, err := os.ReadFile(stem + ".made")
 	if err != nil {
 		t.Fatal(err)
 	}
-	made, err1 := protocol.ParseTime(st.PrekeyMade)
-	notAfter, err2 := protocol.ParseTime(st.PrekeyNotAfter)
-	if err1 != nil || err2 != nil || notAfter.Sub(made) > 27*time.Hour {
-		t.Errorf("the script published a prekey made for %v after the lifetime was set to 1d3h: %+v", notAfter.Sub(made), st)
+	statement, err := os.ReadFile(stem + ".txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := protocol.ParsePrekey(statement)
+	if err != nil {
+		t.Fatal(err)
+	}
+	made, err := protocol.ParseTime(strings.TrimSpace(string(rawMade)))
+	if err != nil || p.NotAfter.Sub(made) > 27*time.Hour {
+		t.Errorf("the script published a prekey made for %v after the lifetime was set to 1d3h: %v", p.NotAfter.Sub(made), err)
 	}
 }

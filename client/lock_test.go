@@ -177,3 +177,49 @@ func TestTwoProcessesKeepTheHigherSerial(t *testing.T) {
 		}
 	}
 }
+
+// A reading of the box, status, opens its state file read-only: it waits
+// while a command holds it, says so once, and reads once it is free; one
+// that waits past the box's patience is refused, never read half written.
+// Readings at once share it.
+func TestStatusWaitsForACommandThatWrites(t *testing.T) {
+	e := newEnv(t)
+	b := e.box(protocol.Classic)
+	release := holdState(t, b)
+	told := make(chan struct{}, 1)
+	opt := e.opts()
+	opt.Waiting = func() { told <- struct{}{} }
+	x, err := client.Open(b.Dir(), opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := x.Status(); done <- err }()
+	select {
+	case <-told:
+	case err := <-done:
+		t.Fatalf("status read the box while a command held it: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("status neither waited nor read")
+	}
+	release()
+	if err := <-done; err != nil {
+		t.Fatalf("status once the box was free: %v", err)
+	}
+
+	client.SetLockPatience(t, 300*time.Millisecond)
+	release = holdState(t, b)
+	if _, err := x.Status(); err == nil || !strings.Contains(err.Error(), "held its lock") {
+		t.Fatalf("status past the box's patience: %v", err)
+	}
+	release()
+
+	ro, err := bolt.Open(filepath.Join(b.Dir(), "state"), 0o600, &bolt.Options{ReadOnly: true, Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ro.Close() //nolint:errcheck // read only
+	if _, err := x.Status(); err != nil {
+		t.Fatalf("status beside another reading: %v", err)
+	}
+}
