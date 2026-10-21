@@ -59,7 +59,7 @@ Each row is a claim the code makes, the section of `PROTOCOL.md` with the whole 
 
 - **The threat model, the security properties and where each stops, the operator's power, the residual risks, and the questions where an outside cryptographer's view would change the design most:** irongall-server's [`CRYPTO-ANALYSIS.md`](https://github.com/IronGall-dev/irongall-server/blob/main/CRYPTO-ANALYSIS.md).
 - **What a server sees and can do, as the specification states it:** `PROTOCOL.md` §9. For whoever runs a box, in short: `README.md` § No Server Trust.
-- **What is tested, and what is not:** `PROTOCOL.md` §11. **What is specified and not built:** §12.
+- **What is not tested:** `PROTOCOL.md` §11. **What is specified and not built:** §12.
 - **Every design decision beside the standard or system that does the same:** `PRECEDENTS.md`.
 - **The server's limits, and where each is weak:** irongall-server's [`LIMITS.md`](https://github.com/IronGall-dev/irongall-server/blob/main/LIMITS.md).
 - **Shipped code that no one but its author has read:** the issues labelled `needs-audit`. Each is a brief an outside agent can work from: the commits, the claims to break, where to look first, how to run it. Auditing one is the most useful review this project can get.
