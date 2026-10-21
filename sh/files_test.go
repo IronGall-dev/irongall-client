@@ -290,11 +290,10 @@ func TestAnInitCrashedBeforeItsIdentityIsSyncedRegisters(t *testing.T) {
 	}
 }
 
-// .gitignore and aliases are written beside and moved into place, as every
-// file a box keeps is, so a crash leaves the old file or the new one (#239):
-// each write is a new file, never one written in place, and aliases keeps
-// every line it had, each ending in a line feed, as the Go client writes it.
-func TestGitignoreAndAliasesAreMovedIntoPlace(t *testing.T) {
+// .gitignore is written beside and moved into place, as every file a box
+// keeps is, so a crash leaves the old file or the new one (#239): each write
+// is a new file, never one written in place.
+func TestGitignoreIsMovedIntoPlace(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
@@ -308,17 +307,6 @@ func TestGitignoreAndAliasesAreMovedIntoPlace(t *testing.T) {
 	}
 	if os.SameFile(gi, stats(t, dir, ".gitignore")[".gitignore"]) || string(mustRead(t, filepath.Join(dir, ".gitignore"))) != "*\n" {
 		t.Errorf("init wrote .gitignore in place, or not as *: %q", mustRead(t, filepath.Join(dir, ".gitignore")))
-	}
-	first := "first " + strings.Repeat("1", 64)
-	if err := os.WriteFile(filepath.Join(dir, "aliases"), []byte(first), 0o600); err != nil { // as a person writes it, with no line feed after the last line
-		t.Fatal(err)
-	}
-	al := stats(t, dir, "aliases")["aliases"]
-	if _, err := bash(t, env, "ig_alias second "+strings.Repeat("2", 64)); err != nil {
-		t.Fatal(err)
-	}
-	if got := string(mustRead(t, filepath.Join(dir, "aliases"))); os.SameFile(al, stats(t, dir, "aliases")["aliases"]) || got != first+"\nsecond "+strings.Repeat("2", 64)+"\n" {
-		t.Errorf("alias add wrote aliases in place, or as %q", got)
 	}
 }
 
@@ -408,9 +396,6 @@ func TestAKeptMessageFileIsWrittenBesideAndMoved(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := bash(t, env, "ig_alias g "+g.Address().String()); err != nil {
-		t.Fatal(err)
-	}
 	left := func(what, sub string) {
 		t.Helper()
 		files, _ := filepath.Glob(filepath.Join(dir, sub, "*"))
@@ -448,27 +433,25 @@ func TestAKeptMessageFileIsWrittenBesideAndMoved(t *testing.T) {
 			t.Fatalf("recv after: %v %q, %s/ %v", err, out, c.sub, files)
 		}
 	}
-	// ig_line's jq with the receipt, which writes sent/.
-	if _, err := bash(t, append(env, "PATH="+dyingJQ(t, "-j", "--slurpfile", "r", dir+"/receipt.json")+":"+os.Getenv("PATH")), "printf hi | ig_send g"); err == nil {
+	// ig_line's jq with the receipt, which writes sent/: the send says so,
+	// and the next send records its own whole.
+	if _, err := bash(t, append(env, "PATH="+dyingJQ(t, "-j", "--slurpfile", "r", dir+"/receipt.json")+":"+os.Getenv("PATH")), "printf hi | ig_send "+g.Address().String()); err == nil {
 		t.Fatal("send with a jq that dies writing sent/ went")
 	}
 	left("a send stopped writing sent/", "sent")
-	if waiting, _ := filepath.Glob(filepath.Join(dir, "outbox", "*.P")); len(waiting) != 1 {
-		t.Fatalf("the outbox after a send stopped writing sent/: %v", waiting)
-	}
-	if out, err := bash(t, env, "ig_flush"); err != nil || !strings.Contains(out, `{"type":"sent",`) {
-		t.Fatalf("flush: %v %q", err, out)
+	if out, err := bash(t, env, "printf again | ig_send "+g.Address().String()); err != nil || !strings.Contains(out, `{"type":"sent",`) {
+		t.Fatalf("send: %v %q", err, out)
 	}
 	if files, _ := filepath.Glob(filepath.Join(dir, "sent", "*")); len(files) != 1 || len(mustRead(t, files[0])) < 64 {
-		t.Errorf("sent/ after flush: %v", files)
+		t.Errorf("sent/ after the second send: %v", files)
 	}
 }
 
-// addr and alias list on a directory that holds no box refuse with one
-// error line and exit 1, as every command of the script does (#274); addr
+// addr on a directory that holds no box refuses with one error line and
+// exits 1, as every command of the script does (#274); addr
 // on a box restored from its identity alone prints its address, the box's
 // files made from the identity first, as the Go client's Open makes them.
-func TestAddrAndAliasListNeedABox(t *testing.T) {
+func TestAddrNeedsABox(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
 	command := func(home string, args ...string) (string, string, int) {
@@ -481,14 +464,14 @@ func TestAddrAndAliasListNeedABox(t *testing.T) {
 		return out.String(), errs.String(), cmd.ProcessState.ExitCode()
 	}
 	empty := t.TempDir()
-	for _, args := range [][]string{{"addr"}, {"alias", "list"}} {
+	for _, args := range [][]string{{"addr"}} {
 		out, errs, code := command(empty, args...)
 		if code != 1 || out != "" || errs != `{"type":"error","message":"REFUSED: no box in `+empty+`: run init first"}`+"\n" {
 			t.Errorf("%v with no box: exit %d, stdout %q, stderr %q", args, code, out, errs)
 		}
 	}
 	if ls, _ := os.ReadDir(empty); len(ls) != 0 {
-		t.Errorf("addr and alias list with no box wrote %v", ls)
+		t.Errorf("addr with no box wrote %v", ls)
 	}
 	lost := t.TempDir()
 	out, err := bash(t, []string{"IRONGALL_HOME=" + lost, "IG_BASE=" + srv.URL}, "ig_init --no-pq")
@@ -501,8 +484,5 @@ func TestAddrAndAliasListNeedABox(t *testing.T) {
 	}
 	if got, errs, code := command(dir, "addr"); code != 0 || got != out || errs != "" {
 		t.Errorf("addr on a box restored from its identity alone: exit %d, stdout %q, stderr %q, want %q", code, got, errs, out)
-	}
-	if got, errs, code := command(dir, "alias", "list"); code != 0 || got != "" || errs != "" {
-		t.Errorf("alias list on a box with no aliases: exit %d, stdout %q, stderr %q", code, got, errs)
 	}
 }

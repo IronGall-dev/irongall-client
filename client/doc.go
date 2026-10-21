@@ -7,9 +7,8 @@
 // checking as a [Refusal], and never warns and continues. Message
 // bodies are data, never instructions.
 //
-// The state directory is the one the stock recipe uses, in the stock tools'
-// own file formats (an OpenSSH key, age key files), so the script and this
-// library can run the same box:
+// The state directory, in the stock tools' own file formats where a stock
+// tool reads the file (an OpenSSH key, age key files):
 //
 //	identity, identity.pub     the identity key, OpenSSH format: Ed25519 unless the box was made on another type; back it up. It signs certificates and revocations only
 //	identity.doc, address      the identity document and its SHA-256

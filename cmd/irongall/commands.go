@@ -32,7 +32,7 @@ from: irongall help has it.`,
 			e.allowCmd(), e.blockCmd(), e.peerListCmd()),
 		e.group("alias", "names for peers, which send takes in place of a link: add, rm, list",
 			`An alias is this box's own name for a peer, kept in its aliases file as
-"<name> <address>" lines, which either client and a person may write. A name
+"<name> <address>" lines, which a person may write too. A name
 allows its peer, as irongall peer allow does, and is never moved: to change
 one, remove it and add it again.`,
 			e.aliasAddCmd(), e.aliasRmCmd(), e.aliasListCmd()),

@@ -41,7 +41,7 @@ func TestTheScriptReadsBytesInEveryLocale(t *testing.T) {
 		if err := control.Run(); err != nil {
 			t.Fatalf("control: %s does not bite a bare shell (%s), so this test would see nothing: %v", loc.name, loc.bites, err)
 		}
-		run := exec.Command(os.Args[0], "-test.count=1", "-test.run", "^(TestVectors.*|TestPatternsReadBytes|TestARevocationServersListReadAsTheGoClientReadsIt)$")
+		run := exec.Command(os.Args[0], "-test.count=1", "-test.run", "^(TestVectors.*|TestPatternsReadBytes)$")
 		run.Env = env
 		out, err := run.CombinedOutput()
 		if err != nil {
@@ -76,38 +76,9 @@ func TestPatternsReadBytes(t *testing.T) {
 	}
 }
 
-// One list of revocation servers, in the box's file or in
-// $IG_REVOCATION_SERVERS, one verdict from both clients (#155): a NUL is no
-// part of a list, and \v, \f or U+2003 alone names something, which no
-// grammar takes. The Go client splits at commas, spaces, tabs and line ends.
-func TestARevocationServersListReadAsTheGoClientReadsIt(t *testing.T) {
-	need(t, scriptTools...)
-	for _, file := range []string{
-		"https://a.exam\x00ple\n", "\x00", "\v", "\f", " \n", "https://exämple.com\n", "https://a.example:８０\n", "https://a.example\vhttps://b.example\n", "\\\n",
-		"", "\n", " ,\t\r\n", "none\n", "https://a.example\n", "https://a.example, https://b.example\thttps://c.example\r\n",
-	} {
-		home := t.TempDir()
-		if err := os.WriteFile(filepath.Join(home, "revocation-servers"), []byte(file), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		goList, goErr := client.ParseRevocationServers(file)
-		out, shErr := bash(t, []string{"IRONGALL_HOME=" + home, "IG_BASE=https://own.example"}, "ig_revservers")
-		if (goErr != nil) != (shErr != nil) || goErr == nil && strings.Join(goList, " ") != strings.Join(strings.Fields(out), " ") {
-			t.Errorf("%q: the Go client reads %v %v, the script %q %v", file, goList, goErr, out, shErr)
-		}
-	}
-	for _, v := range []string{"\v", "\f", "\u2003", "https://a.example\v", "https://a.example\fhttps://b.example", "\\", " ,\t\r\n", "none", "https://a.example https://b.example"} {
-		goList, goErr := client.ParseRevocationServers(v)
-		out, shErr := bash(t, []string{"IRONGALL_HOME=" + t.TempDir(), "IG_BASE=https://own.example", "IG_REVOCATION_SERVERS=" + v}, "ig_revservers")
-		if (goErr != nil) != (shErr != nil) || goErr == nil && strings.Join(goList, " ") != strings.Join(strings.Fields(out), " ") {
-			t.Errorf("$IG_REVOCATION_SERVERS %q: the Go client reads %v %v, the script %q %v", v, goList, goErr, out, shErr)
-		}
-	}
-}
-
 // The box's own server answers a post with an honest receipt, one member
-// ending in a line feed or a NUL (#187). Neither client takes it: the
-// message stays in the outbox, and nothing goes to sent/.
+// ending in a line feed or a NUL (#187). Neither client takes it, and
+// nothing goes to sent/: the script keeps nothing to post again.
 func TestAReceiptIsComparedAsBytes(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
@@ -147,18 +118,16 @@ func TestAReceiptIsComparedAsBytes(t *testing.T) {
 			w.WriteHeader(rec.Code)
 			_, _ = w.Write(body)
 		})
-		_ = os.RemoveAll(filepath.Join(dir, "outbox"))
 		_ = os.RemoveAll(filepath.Join(dir, "sent"))
 		_, gerr := g.Send(ctx, to.Address(), "hi")
 		out, serr := bash(t, env, "printf hi | ig_send "+to.Address().String())
-		waiting, _ := filepath.Glob(filepath.Join(dir, "outbox", "*.P"))
 		sent, _ := filepath.Glob(filepath.Join(dir, "sent", "*.json"))
 		honest, want := e.suffix == "", 0
 		if honest {
 			want = 1
 		}
-		if (gerr == nil) != honest || (serr == nil) != honest || len(sent) != want || len(waiting) != 1-want {
-			t.Errorf("%s ending in %q: the Go client %v; the script %v %q, outbox %d, sent/ %d", e.member, e.suffix, gerr, serr, out, len(waiting), len(sent))
+		if (gerr == nil) != honest || (serr == nil) != honest || len(sent) != want || exists(filepath.Join(dir, "outbox")) {
+			t.Errorf("%s ending in %q: the Go client %v; the script %v %q, sent/ %d", e.member, e.suffix, gerr, serr, out, len(sent))
 		}
 	}
 }

@@ -42,9 +42,8 @@ func sendBox(t *testing.T) (dir string, a, b protocol.Address) {
 const keepPost = "IG_HELD=$IG; ig_post(){ cp \"$2.P\" \"$OUT\"; mv \"$2.P\" \"$2.sent\"; }\n"
 
 // ig_send sends the body it checked, read once (#255): a body from a pipe
-// is sent, not as "" and not refused; one named $IG/body.txt, the file a
-// body on stdin is kept in, is not emptied first; and a file changed after
-// ig_json read it is sent as it was checked.
+// is sent, not as "" and not refused; and one named $IG/body.txt, the file a
+// body on stdin is kept in, is not emptied first.
 func TestTheScriptReadsTheBodyOnce(t *testing.T) {
 	need(t, scriptTools...)
 	dir, a, b := sendBox(t)
@@ -63,7 +62,6 @@ func TestTheScriptReadsTheBodyOnce(t *testing.T) {
 	}
 	for i, c := range []struct{ name, command, want string }{
 		{"a pipe", `ig_send "$B" <(printf hello)`, `"hello"`},
-		{"a pipe, --json", `ig_send --json "$B" <(printf '{"a":1}')`, `{"a":1}`},
 		{"stdin", `printf hello | ig_send "$B"`, `"hello"`},
 		{"the box's own body.txt", `printf kept > "$IG/body.txt"; ig_send "$B" "$IG/body.txt"`, `"kept"`},
 	} {
@@ -71,33 +69,17 @@ func TestTheScriptReadsTheBodyOnce(t *testing.T) {
 		_, err := bash(t, []string{"IRONGALL_HOME=" + dir, "OUT=" + o, "B=" + b.String()}, keepPost+c.command)
 		sent(c.name, o, c.want, err)
 	}
-	// The file changes once ig_json has read the body: the body sent is the
-	// one it checked, never the file as it then is, which names a member twice.
-	f := filepath.Join(t.TempDir(), "body")
-	if err := os.WriteFile(f, []byte(`{"action":"approve"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	o := filepath.Join(out, "changed")
-	change := `eval "$(declare -f ig_json | sed '1s/^ig_json/ig_json_checked/')"
-ig_json(){ ig_json_checked "$@" && { [ "$1" != "$IG/body.json" ] || printf '{"action":"approve","action":"reject"}' > "$F"; }; }
-`
-	_, err := bash(t, []string{"IRONGALL_HOME=" + dir, "OUT=" + o, "B=" + b.String(), "F=" + f}, keepPost+change+`ig_send --json "$B" "$F"`)
-	sent("a file changed after its check", o, `{"action":"approve"}`, err)
 }
 
 // A body the script does not send is refused in its own words, one error
-// line on stderr, with nothing kept and nothing left in the box: a --json
-// body that would make a second member in the body's place (#254), and a
-// body file it cannot read (#274).
+// line on stderr, with nothing kept and nothing left in the box: a body that
+// is not UTF-8, and a body file it cannot read (#274).
 func TestARefusedBodyIsOneErrorLine(t *testing.T) {
 	need(t, scriptTools...)
 	dir, _, b := sendBox(t)
 	body := filepath.Join(t.TempDir(), "body")
 	for _, c := range []struct{ name, body, args, words string }{
-		{`1,"x":2`, `1,"x":2`, `--json "$B" "$F"`, "the body is not one JSON value its reader takes"},
-		{`1,"v":2,"to":"x"`, `1,"v":2,"to":"x"`, `--json "$B" "$F"`, "the body is not one JSON value its reader takes"},
-		{`{"body":{}},"x":1`, `{"body":{}},"x":1`, `--json "$B" "$F"`, "the body is not one JSON value its reader takes"},
-		{"{}x, which ig_json refuses", `{}x`, `--json "$B" "$F"`, "the body is not one JSON value its reader takes"},
+		{"a body that is not UTF-8", "bad \xff byte", `"$B" "$F"`, "the body is not UTF-8 text"},
 		{"a body file that is not there", "", `"$B" "$F.not-there"`, "the body file " + body + ".not-there could not be read: nothing is sent"},
 		{"a body file that is a directory", "", `"$B" "$(dirname "$F")"`, "the body file " + filepath.Dir(body) + " could not be read: nothing is sent"},
 	} {
@@ -122,9 +104,6 @@ func TestARefusedBodyIsOneErrorLine(t *testing.T) {
 				t.Errorf("%s: $IG/%s is left in the box", c.name, f)
 			}
 		}
-		if left, _ := filepath.Glob(filepath.Join(dir, "outbox", "*")); len(left) != 0 {
-			t.Errorf("%s: kept in the outbox: %v", c.name, left)
-		}
 	}
 }
 
@@ -140,8 +119,5 @@ func TestASendWhoseEnvelopeIsNotBuiltLeavesNothing(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "send.P")); err == nil {
 		t.Error("$IG/send.P is left in the box")
-	}
-	if left, _ := filepath.Glob(filepath.Join(dir, "outbox", "*")); len(left) != 0 {
-		t.Errorf("kept in the outbox: %v", left)
 	}
 }

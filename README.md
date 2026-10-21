@@ -134,18 +134,16 @@ A server's error is an `error` line with its `status`, its `code`, the `retry_af
 
 ## Stock tools instead of Go
 
-**`sh/irongall.sh` is the proof, not the client to run.** It is the same protocol in stock tools: age, ssh-keygen, curl and jq. The two clients run each other's boxes and agree on every test vector, so everything the Go client encrypts or signs is something `age` and `ssh-keygen` read. Use the Go client. Read or run the script to check it. Take it from this repo at a commit you have read, never from the server.
+**`sh/irongall.sh` is the proof, not the client to run.** It is the protocol in stock tools, age, ssh-keygen, curl and jq, on a box of its own: a box it makes exchanges mail with a Go box, and it gives every test vector the Go client's verdict, so everything the Go client encrypts or signs is something `age` and `ssh-keygen` read. Outside the vectors it is held to the Go client only where a difference would let through a forgery, a replay, a message its keys did not decrypt, a signature it should not make, or a pass sent where a network can read it (`AGENTS.md` § The shell client). Use the Go client. Read or run the script to check it. Take it from this repo at a commit you have read, never from the server.
 
 ```sh
 bash sh/irongall.sh init                    # prints this box's link (init --no-pq: a box age 1.2 can reach)
 echo hello | bash sh/irongall.sh send <link>
 bash sh/irongall.sh recv                    # a JSON line for each message, as the Go client prints
-bash sh/irongall.sh alias add bob <link>    # then: send bob
-bash sh/irongall.sh send --reply-to <msg_id> bob < answer.txt   # also --subject, --supersedes, --json
 bash sh/irongall.sh prekey renew            # at least monthly
 ```
 
-It needs bash ≥ 4, age, OpenSSH ≥ 9.1 linked to OpenSSL (other builds differ from the Go client where `PROTOCOL.md` §3 says), curl ≥ 7.84, jq ≥ 1.7.1, iconv and coreutils. `IG_BASE` names another server, and `IG_REVOCATION_SERVERS` the revocation servers. It runs in the C locale, where curl calls no host name that is not ASCII: write one in its `xn--` form, as the Go client calls it.
+It needs bash ≥ 4, age, OpenSSH ≥ 9.1 linked to OpenSSL, curl ≥ 7.84, jq ≥ 1.7.1, iconv, and the GNU coreutils, sed, grep and awk; it is held to the test vectors on those, and on no other platform's tools. `IG_BASE` names another server.
 
 **age 1.2 has no post-quantum encryption.** There, make the box with `init --no-pq`; it can write only to `--no-pq` boxes, such as the second echo box:
 
@@ -155,21 +153,7 @@ echo hello | bash sh/irongall.sh send https://irongall.dev/to/7f87929a91aa19bd2c
 bash sh/irongall.sh recv                    # a minute or two later: recv does not wait
 ```
 
-What it lacks against the Go client, though it gives the Go client's verdict on every test vector on such a build:
-
-- **It never renews the prekey: run `prekey renew` at least monthly,** or within the box's `prekey-lifetime`, which it signs to; it has no `prekey lifetime` command, so write the seconds into that file.
-- **It keeps each retired prekey until 33 days after it expires:** about 66 days of forward secrecy, against about two days for a Go-client box received daily.
-- **The lock is a bare `lock/` directory.** A `kill -9`, or the machine going down, leaves it behind, and every command then waits for it and gives up: remove it by hand.
-- `recv` drains once and never waits, a drain has no limit in bytes, and it keeps no `ETag`, so every poll is answered in full.
-- No `status`, no `account`, no `alias rm`, no `show`, no `quarantine` and no `recv --headers`. A message it refuses is kept without what its checks found (`judged`).
-- It applies a revocation of certificates and makes none: it has no `cert` group, its `revocation keep` takes none from a file, and it has no `revocation ask`. A revocation server that gave no answer is asked again for the next address.
-- `prekey renew` makes a post-quantum prekey unless told `--no-pq`; the Go client keeps the box's type, but for #61.
-- It checks that an Ed25519 identity key is canonical and not of small order, but not that it is on the curve. No signature verifies under such a key.
-- It makes an Ed25519 identity only: for a P-256 one, make the key with `ssh-keygen -t ecdsa -b 256 -N '' -C '' -f <box>/identity` before `init`. It leaves a send from such a box to a box that does not verify the type for the server to refuse.
-- It pads by the sizes of the files age writes, and refuses to send one that is another size.
-- It reads JSON as jq does (`PROTOCOL.md` §0b): an integer member written with an exponent that cancels (`1e0`, `0.5e1`), in a server's answer or in an envelope's `v`, reads to it as digits, and three numbers just past binary64 are taken, where the Go client refuses each; and it delivers a body, and sends one, in jq's spelling (`1e5` as `1E+5`, `\u00e9` as `é`), the same value.
-- An API error's line has its status, its code and the wait, without the Go client's sentence for the code or the values the code carries, and a command that fails may print more than one `error` line. Its `usage_error` lines name `bash irongall.sh help`, and a bad option is an `error`, exit `1`.
-- It holds no mail: every sender's lands in `inbox/`, and it has no `held`, `allow`, `block` or policy, and sends no ACL (`PROTOCOL.md` §5.6, §6.2). A send that a box's ACL refuses moves to `outbox/failed/`, as in the Go client.
+What it does not do: renew on its own (run `prekey renew` at least monthly, or within the box's `prekey-lifetime`), keep a send to post again (a send that fails says so and keeps nothing), aliases, revocations of its own, revocation servers (a box that lists one is refused), held mail and ACLs, and every command the Go client has beyond the five above.
 
 ## No Server Trust
 
