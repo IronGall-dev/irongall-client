@@ -22,10 +22,15 @@ import (
 // signed by a NEW working key under a new certificate. The three share one
 // number, which this machine's clock gives
 // ([protocol.SerialAt]). If an earlier Rekey signed one and the server did
-// not take it, that one is sent again, unchanged, until it expires or the
-// box's lifetime is set lower than it was made for: a key is signed once, so
-// no key is encrypted to for longer than its lifetime, at most 33 days or
-// the box's shorter one, whatever the server does with what it was sent. It needs only the identity, so it also
+// not take it, that one is sent again, unchanged, until it can no longer be
+// sent (PROTOCOL.md §6.4): it has expired or does not verify by this clock,
+// its certificate began less than an hour before the clock or is at or below
+// a serial the identity revoked, it was made for longer than the box's
+// lifetime now allows or has no record of when it was made, this box no
+// longer holds its key or its working key, or another type is asked for. A
+// key is signed once, so no key is encrypted to for longer than its
+// lifetime, at most 33 days or the box's shorter one, whatever the server
+// does with what it was sent. It needs only the identity, so it also
 // recovers a box that lost its prekeys or its working key, and such a box
 // needs no record of the numbers the lost machine used. The upload carries a
 // pass under the new certificate, and the server then takes no pass under an

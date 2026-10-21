@@ -625,7 +625,7 @@ eval "$real_now"; rm -f $IG/pass
 # sent_at more than an hour ahead of the reader's clock
 line "$P" "$Q" 00000000-0000-4000-8000-0000000000f1 "dated ahead" $W/box/P/identity.doc -3700 > ahead.P; seal_as P "$Q" ahead.P
 as Q; srv_inject "$Q" "$P" ahead.P.age; recv; [ -z "$RECV_OUT" ] && printf '%s' "$RECV_ERR" | grep -q "future: sent_at is more than 60 minutes ahead" && ok "sent_at more than an hour ahead of this machine's clock: REFUSED as future" || bad "future: $RECV_OUT / $RECV_ERR"
-# the replay set: pruned by this clock only once the server has taken a pass dated by it, a line kept 33 days and an hour from its sent_at, and a floor below which mail is stale whatever the clock reads
+# the replay set: pruned by this clock only once the server has taken a pass dated by it, a line kept 66 days and an hour from its sent_at, and a floor below which mail is stale whatever the clock reads
 line "$P" "$Q" 00000000-0000-4000-8000-0000000000f2 "pay invoice 7 once" $W/box/P/identity.doc $((33*86400 - 49*60)) > old.P; seal_as P "$Q" old.P; oid=$(sha256sum < old.P.age | cut -c1-64)
 as Q; srv_inject "$Q" "$P" old.P.age; recv; [ "$RECV_RC" = 0 ] && printf '%s' "$RECV_OUT" | grep -q "pay invoice 7 once" || bad "replay set: the first delivery: $RECV_OUT / $RECV_ERR"
 off=3000; ig_now(){ echo $(($(date -u +%s) + off)); }; recv; [ "$RECV_RC" = 0 ] || bad "replay set: a drain 50 minutes fast: $RECV_ERR"      # 33 days and a minute old by this clock, which a server takes

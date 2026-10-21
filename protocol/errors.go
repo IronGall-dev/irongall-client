@@ -238,7 +238,7 @@ const (
 	QuotaRegistrationsRange Quota = "registrations_range" // registrations from an IPv6 /48
 	QuotaMisses             Quota = "misses"              // calls from an IP address that named no box or carried nothing that verified
 	QuotaSendsBeforePass    Quota = "sends_before_pass"   // sends from an IP address, counted before their pass is read
-	QuotaRequests           Quota = "requests"            // calls from an IP address with no pass, registrations and renewals, and requests no route matches
+	QuotaRequests           Quota = "requests"            // calls from an IP address that carry no pass the server has checked, registrations and renewals among them, and requests no route matches
 )
 
 // Subject is whom a rate_limited was counted against (subject).

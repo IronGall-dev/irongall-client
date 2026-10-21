@@ -152,8 +152,8 @@ func newBox(dir string, opt Options) *Box {
 // it is, an [*APIError]. The API redirects nowhere (PROTOCOL.md §0), so a
 // redirect is a server's mistake or its attack, and what one can do is send
 // the pass, or the address a lookup asks about, somewhere else: Go's own
-// policy keeps Authorization on a redirect to the same host name, whatever
-// its scheme or port. The script's curl follows none either.
+// policy keeps Authorization on a redirect to the same host name or a
+// subdomain of it, whatever its scheme or port. The script's curl follows none either.
 func followNone(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
 // checkServerURL holds the URL of a server a box calls, its own or a

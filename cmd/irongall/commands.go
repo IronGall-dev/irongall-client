@@ -49,8 +49,8 @@ with each of its strings in base64 that is not of its form.`,
 		e.group("prekey", "the key senders encrypt to: renew, lifetime",
 			`A prekey is valid for 33 days, or the shorter lifetime this box is set to,
 under a working key and a certificate made with it. irongall recv renews it
-once it is a day old, so run recv at least monthly, or within the lifetime
-less a day, and the box never lapses.`,
+once it is a day old, so run recv at least monthly, and the box never lapses;
+irongall prekey lifetime --help says how often for a shorter lifetime.`,
 			e.renewCmd(), e.lifetimeCmd()),
 		e.group("cert", "this box's certificates: revoke-earlier, publish-revoked",
 			`This box's identity certifies a working key with each prekey, and the working
@@ -479,7 +479,9 @@ allowed file that was lost.`,
 func (e *cli) blockCmd() *cobra.Command {
 	return command("block <link, address or alias>", "drop a sender's mail, here and at the server",
 		`Drop a sender's mail, here and at the server, and delete what held/ keeps
-from it, then print a "blocked" line. Blocking wins over allowing.`,
+from it, then print a "blocked" line. Blocking wins over allowing. The server
+then refuses that sender's next send as sender_not_allowed, which is final,
+so the sender learns that it is refused.`,
 		nargs(1, 1), func(c *cobra.Command, args []string) error {
 			b, err := e.box()
 			if err != nil {
@@ -1124,7 +1126,7 @@ func readRecord(name string) (*protocol.Revocations, error) {
 	}
 	var rec protocol.Revocations
 	if len(data) > maxRecord || protocol.Unmarshal(data, &rec) != nil || len(rec.Identity) == 0 || (len(rec.Revocation) == 0 && len(rec.RevokedCertificates) == 0) {
-		return nil, errors.New("the file is not a revocation record: one is a line of JSON with \"identity\" and \"revocation\", as irongall revocation make prints, or with a revocation of its certificates")
+		return nil, errors.New("the file is not a revocation record: one is a line of JSON with \"identity\" and \"revocation_signature\", as irongall revocation make prints, or with a revocation of its certificates")
 	}
 	return &rec, nil
 }
