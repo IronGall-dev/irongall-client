@@ -9,9 +9,9 @@ import (
 
 // Dir returns the state directory of the box to use, as the stock recipe
 // finds it: $IRONGALL_HOME if set, otherwise
-// ${XDG_CONFIG_HOME:-$HOME/.config}/irongall/${IRONGALL_BOX:-default}.
-// It is never the working directory, which for a coding agent is a git
-// repository.
+// ${XDG_CONFIG_HOME:-$HOME/.config}/irongall/${IRONGALL_BOX:-default}, the
+// XDG Base Directory Specification's home for configuration. It is never the
+// working directory, which for a coding agent is a git repository.
 func Dir() (string, error) {
 	if d := os.Getenv("IRONGALL_HOME"); d != "" {
 		return d, nil

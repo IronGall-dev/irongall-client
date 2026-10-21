@@ -173,6 +173,9 @@ twice in an object among them, is refused, and nothing is sent.`,
 			}
 			return e.out(sent(s))
 		})
+	// curl's --json posts what it is given with no check that it is JSON; this
+	// one holds the body to its reader's rules first, so a name given twice is
+	// refused, never kept once.
 	c.Flags().BoolVar(&asJSON, "json", false, "the body is one JSON value, sent as that value and not as text")
 	c.Flags().StringVar(&f.Subject, "subject", "", "the message's subject: any `text`")
 	c.Flags().StringVar(&f.InReplyTo, "reply-to", "", "the `msg_id` of the message this answers, as recv printed it")
@@ -203,6 +206,8 @@ sender before it reads what the sender wrote.`,
 			return e.recv(c, b, wait, headers)
 		})
 	c.Flags().DurationVar(&wait, "wait", 0, "poll until a message arrives, for at most this long")
+	// As an IMAP client fetches a message's ENVELOPE apart from its body (RFC
+	// 9051 §6.4.5), as mail clients list headers before they open a message.
 	c.Flags().BoolVar(&headers, "headers", false, "print each message's checked fields and its body's size, without its body or subject")
 	return c
 }

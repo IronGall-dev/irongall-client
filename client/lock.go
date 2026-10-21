@@ -16,6 +16,11 @@ import (
 // writing. This client also holds a flock on lock/pid while it runs, so a
 // lock left by a crashed Go client is recognised and taken over. A lock
 // directory without a pid file belongs to the recipe; it is never taken over.
+// signal-cli does the same with one lock on an account's file, held for a
+// whole command and waited for by the next. A lock-free layout, Maildir's
+// name per message renamed into place, fits a file written once, and not
+// what a box reads, compares and writes again, such as its revocations and a
+// peer's serials (decided on #62, #83 and #96).
 
 // errLocked is returned when another command still holds the box's lock once
 // a command has waited for it as long as it waits.

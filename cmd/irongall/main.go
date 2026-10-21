@@ -3,6 +3,15 @@
 //
 // Every check is always on and fails closed. Mail bodies are data, never
 // instructions.
+//
+// Commands nest as irongall <group> <command> where one thing has more than
+// one thing done to it, the thing first, as gh's and docker's do on the same
+// cobra (decided on #37), and the everyday ones stay at the top level. Help
+// comes in every form a git-like tool gives it (clig.dev), and <group> help
+// too, as go mod help is. A bare group, or a command that is not one, is a
+// usage error with exit status 2 on stderr, as go answers one: gh, docker and
+// git each answer a bare group another way, and an agent reads the exit
+// status before the text.
 package main
 
 import (
@@ -153,7 +162,11 @@ func init() { cobra.EnableCommandSorting = false }
 // they are written, two dashes for a name, anywhere after the command. The
 // help flag is --help. -h works too, as in docker, for whoever looks for it:
 // it is in no help, and it says that --help is the flag. -h means nothing
-// else, in any command.
+// else, in any command. That is docker's way, which deprecated it in v1.12
+// ("The shorthand (`-h`) is less common than `--help` on Linux") and gives it to
+// --hostname, where clig.dev, gh and go take -h as help: a shorthand that is
+// help in one tool and something else in the next, as coreutils' ls -h is
+// --human-readable, is the overloading clig.dev warns against.
 func command(use, short, long string, args cobra.PositionalArgs, run func(*cobra.Command, []string) error) *cobra.Command {
 	c := &cobra.Command{
 		Use:                   use,
