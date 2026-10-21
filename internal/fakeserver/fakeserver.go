@@ -68,6 +68,10 @@ type box struct {
 	acl      *protocol.ACL // its sender ACL; nil: none, which admits everyone
 	messages map[string]*message
 	seq      int // the number of the last message stored, which orders them
+	// deleted is set once its owner deleted it: it is answered as if never
+	// registered, and a registration held to its record undoes it
+	// (PROTOCOL.md §3a).
+	deleted bool
 }
 
 // revocations are what an address's identity signed about it that the server
@@ -100,6 +104,7 @@ func New(t testing.TB, now func() time.Time) *Server {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/{addr}", s.getBox)
 	mux.HandleFunc("PUT /v1/{addr}", s.register)
+	mux.HandleFunc("DELETE /v1/{addr}", s.owner(s.deleteBox))
 	mux.HandleFunc("POST /v1/{addr}/messages", s.send)
 	mux.HandleFunc("PUT /v1/{addr}/prekey", s.newPrekey)
 	mux.HandleFunc("PUT /v1/{addr}/revocations", s.revoke)
@@ -329,6 +334,19 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 			problem(w, protocol.CodeRevoked, "this box is revoked")
 			return
 		}
+		if b.deleted {
+			// Held to its record as a renewal is, with a key it never published.
+			if refused := order(w, b, p, cert); refused {
+				return
+			}
+			if p.Key == b.prekey.Key {
+				problem(w, protocol.CodePrekeyNotNew, "the box published this key before")
+				return
+			}
+			b.statement, b.signature, b.prekey, b.cert, b.senders, b.deleted = req.Prekey, req.PrekeySignature, p, cert, req.SenderKeyTypes, false
+			WriteJSON(w, http.StatusCreated, struct{}{})
+			return
+		}
 		if bytes.Equal(b.statement, req.Prekey) && bytes.Equal(b.signature, req.PrekeySignature) {
 			if !b.current() { // nothing under a revoked certificate is taken, an identical retry included
 				problem(w, protocol.CodeCertificateRevoked, "the statement is signed under a certificate this box's identity revoked")
@@ -378,13 +396,13 @@ func (s *Server) getBox(w http.ResponseWriter, r *http.Request) {
 		problem(w, protocol.CodeRevoked, "this address is revoked", func(p *protocol.Problem) { p.Record = rec })
 		return
 	}
-	if b == nil {
-		problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
-		return
-	}
-	if b.revoked != nil {
+	if b != nil && b.revoked != nil {
 		rec := &protocol.Revocations{Identity: b.identity, Revocation: b.revoked, RevokedCertificates: b.certList, RevokedCertificatesSignature: b.certListSig}
 		problem(w, protocol.CodeRevoked, "this box is revoked", func(p *protocol.Problem) { p.Record = rec })
+		return
+	}
+	if b == nil || b.deleted {
+		problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
 		return
 	}
 	WriteJSON(w, http.StatusOK, protocol.BoxResponse{
@@ -497,12 +515,12 @@ func (s *Server) newPrekey(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	b := s.boxes[a]
-	if b == nil {
-		problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
+	if b != nil && b.revoked != nil {
+		problem(w, protocol.CodeRevoked, "this box is revoked")
 		return
 	}
-	if b.revoked != nil {
-		problem(w, protocol.CodeRevoked, "this box is revoked")
+	if b == nil || b.deleted {
+		problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
 		return
 	}
 	p, cert, err := s.verifyPrekey(b.identity, req.Prekey, req.PrekeySignature)
@@ -510,17 +528,7 @@ func (s *Server) newPrekey(w http.ResponseWriter, r *http.Request) {
 		problem(w, protocol.CodeBadKey, err.Error())
 		return
 	}
-	// Ordered by certificate first: a later one at any serial, or the
-	// current one at a higher serial.
-	switch {
-	case cert.Serial() < b.cert.Serial(), cert.Serial() == b.cert.Serial() && !bytes.Equal(cert.Marshal(), b.cert.Marshal()):
-		problem(w, protocol.CodeCertificateNotCurrent, "the certificate is older than the box's current one")
-		return
-	case cert.Serial() == b.cert.Serial() && p.Serial <= b.prekey.Serial:
-		problem(w, protocol.CodeConflict, "the serial must be higher")
-		return
-	case b.listed != nil && b.listed.Revokes(cert.Serial()):
-		problem(w, protocol.CodeCertificateRevoked, "the certificate is one the identity revoked")
+	if refused := order(w, b, p, cert); refused {
 		return
 	}
 	// A prekey upload carries a pass under the certificate of the statement
@@ -530,6 +538,33 @@ func (s *Server) newPrekey(w http.ResponseWriter, r *http.Request) {
 	}
 	b.statement, b.signature, b.prekey, b.cert, b.senders = req.Prekey, req.PrekeySignature, p, cert, req.SenderKeyTypes
 	WriteJSON(w, http.StatusOK, struct{}{})
+}
+
+// order holds a statement to box b's record, as a renewal is held: ordered by
+// certificate first, a later one at any serial or the current one at a higher
+// serial, and under no certificate the identity revoked. It writes the
+// refusal and reports true if not.
+func order(w http.ResponseWriter, b *box, p *protocol.Prekey, cert *protocol.Certificate) bool {
+	switch {
+	case cert.Serial() < b.cert.Serial(), cert.Serial() == b.cert.Serial() && !bytes.Equal(cert.Marshal(), b.cert.Marshal()):
+		problem(w, protocol.CodeCertificateNotCurrent, "the certificate is older than the box's current one")
+		return true
+	case cert.Serial() == b.cert.Serial() && p.Serial <= b.prekey.Serial:
+		problem(w, protocol.CodeConflict, "the serial must be higher")
+		return true
+	case b.listed != nil && b.listed.Revokes(cert.Serial()):
+		problem(w, protocol.CodeCertificateRevoked, "the certificate is one the identity revoked")
+		return true
+	}
+	return false
+}
+
+// deleteBox deletes a box at its owner's call: it is answered as if never
+// registered, its unacked mail goes at once, and the record stays, so a
+// registration held to it undoes the delete (PROTOCOL.md §3a, §6.2).
+func (s *Server) deleteBox(w http.ResponseWriter, _ *http.Request, b *box) {
+	b.deleted, b.messages = true, map[string]*message{}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // maxCiphertext is the most of a send's body the fake reads: the body is the
@@ -578,7 +613,7 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rcpt, sender := s.boxes[to], s.boxes[from]
-	if sender == nil {
+	if sender == nil || sender.deleted && sender.revoked == nil {
 		problem(w, protocol.CodeUnknownSender, "the sender is not registered")
 		return
 	}
@@ -594,7 +629,7 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch {
-	case rcpt == nil:
+	case rcpt == nil, rcpt.deleted && rcpt.revoked == nil:
 		problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
 		return
 	case rcpt.revoked != nil:
@@ -664,12 +699,12 @@ func (s *Server) owner(h func(http.ResponseWriter, *http.Request, *box)) http.Ha
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		b := s.boxes[a]
-		if b == nil {
-			problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
+		if b != nil && b.revoked != nil {
+			problem(w, protocol.CodeRevoked, "this box is revoked")
 			return
 		}
-		if b.revoked != nil {
-			problem(w, protocol.CodeRevoked, "this box is revoked")
+		if b == nil || b.deleted {
+			problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
 			return
 		}
 		if !b.current() {
