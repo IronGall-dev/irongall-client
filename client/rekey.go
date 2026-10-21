@@ -519,6 +519,11 @@ func (b *Box) renewIfDue(ctx context.Context) (*protocol.Prekey, error) {
 	if !b.renewDue() {
 		return nil, nil
 	}
+	return b.renewNow(ctx)
+}
+
+// renewNow is renewIfDue's renewal, held to the same hour after a failure.
+func (b *Box) renewNow(ctx context.Context) (*protocol.Prekey, error) {
 	var last renewFailure
 	if err := b.view(func(s store) error {
 		if raw := s.get(bucketBox, "renew-failed"); raw != nil {

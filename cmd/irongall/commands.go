@@ -934,7 +934,17 @@ that one, with the address in full.`,
 			if _, err := b.Publish(c.Context(), rec); err != nil {
 				return err
 			}
-			if err := e.out(line("certificates_revoked", "address", a, "through", certs.Through, "message", "published to the server")); err != nil {
+			through, said := certs.Through, "published to the server"
+			if a == b.Address() {
+				// A server that held a higher one showed it, and the box keeps
+				// that one.
+				if held, err := b.CertificatesRecord(); err == nil && held != nil {
+					if h, err := protocol.ParseRevokedCertificates(held.RevokedCertificates); err == nil && h.Through > through {
+						through, said = h.Through, "the server holds a revocation of this box's certificates through a higher serial, which covers this one: this box keeps that one"
+					}
+				}
+			}
+			if err := e.out(line("certificates_revoked", "address", a, "through", through, "message", said)); err != nil {
 				return err
 			}
 			// A server that holds the address revoked took the record as done

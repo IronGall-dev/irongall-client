@@ -257,8 +257,11 @@ func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked 
 	}
 	if err != nil {
 		// A server's "revoked" is checked: with the revocation in hand it is
-		// final, and without one it is a call that failed.
-		err = b.proved(ctx, to, err, asked)
+		// final, and without one it is a call that failed. So is its word
+		// that this box's certificate is revoked: the entry then waits for
+		// the renewal, as a seal under a certificate the box holds revoked
+		// does.
+		err = b.ownCertRevoked(ctx, b.proved(ctx, to, err, asked))
 		var gone *RevokedError
 		if !errors.As(err, &gone) && !slices.Contains(undeliverable, code(err)) {
 			return nil, fmt.Errorf("%w (kept in the outbox: retry with irongall outbox flush)", err)

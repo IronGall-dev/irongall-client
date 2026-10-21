@@ -675,6 +675,29 @@ func (b *Box) proved(ctx context.Context, who protocol.Address, err error, l *lo
 	return &RevokedError{Address: who, Own: who == b.id.Address()}
 }
 
+// ownCertRevoked turns a server's 401 certificate_revoked to a call carrying
+// this box's pass into something the box has checked: it reads itself
+// (known), which keeps the revocation of its certificates once it verifies.
+// One that covers the certificate in use is a refusal in this client's
+// words, which a renewal mends; without one the error stays what it was, a
+// call that failed. Any other error is returned as it is.
+func (b *Box) ownCertRevoked(ctx context.Context, err error) error {
+	if code(err) != protocol.CodeCertificateRevoked {
+		return err
+	}
+	o, kerr := b.known(ctx)
+	if kerr == nil {
+		kerr = o.err
+	}
+	if kerr != nil {
+		return fmt.Errorf("%w; reading this box's revocations failed: %w", err, kerr)
+	}
+	if n, perr := b.publishedSerial(); perr != nil || !b.ownRevokes(n) {
+		return fmt.Errorf("%w; it showed no revocation of this box's certificates that verifies and covers the one it uses", err)
+	}
+	return refuse("this box's identity has revoked the certificate it signs under, as its server shows, so it is taken nowhere it is held: irongall recv or irongall prekey renew publishes a new one")
+}
+
 // lookups is what one command has asked as it went: one send, one flush,
 // one drain, or one question.
 type lookups struct {
@@ -719,7 +742,9 @@ func Publish(ctx context.Context, opt Options, rec *protocol.Revocations) (proto
 }
 
 // Publish is [Publish] as this box: to its own server, under its lock. It
-// keeps nothing of the record: see [Box.KeepRevocation].
+// keeps nothing of the record (see [Box.KeepRevocation]), but of its own
+// address what the server shows when it answers that it holds as much
+// already.
 func (b *Box) Publish(ctx context.Context, rec *protocol.Revocations) (protocol.Address, error) {
 	a := protocol.Address(sha256.Sum256(rec.Identity))
 	if len(rec.Revocation) == 0 && len(rec.RevokedCertificates) == 0 {
@@ -739,8 +764,27 @@ func (b *Box) Publish(ctx context.Context, rec *protocol.Revocations) (protocol.
 		return a, b.publishRecord(ctx, a, rec)
 	}
 	// As this box, under its lock: of its own address, what the server then
-	// serves is kept (servesRevocation).
-	return a, b.lockedFinishedDo(ctx, func() error { return b.publishRecord(ctx, a, rec) })
+	// serves is kept (servesRevocation). A revocation of its certificates
+	// below the one the server holds is answered conflict: the box reads
+	// itself and keeps that one once it verifies, which covers this one, and
+	// the record has nothing left to do.
+	return a, b.lockedFinishedDo(ctx, func() error {
+		err := b.publishRecord(ctx, a, rec)
+		if code(err) != protocol.CodeConflict || a != b.id.Address() || len(rec.RevokedCertificates) == 0 {
+			return err
+		}
+		mine, perr := protocol.ParseRevokedCertificates(rec.RevokedCertificates)
+		if perr != nil {
+			return err
+		}
+		if _, kerr := b.known(ctx); kerr != nil {
+			return kerr
+		}
+		if held, herr := b.revokedCerts(a); herr != nil || held == nil || held.Through < mine.Through {
+			return errors.Join(err, herr)
+		}
+		return nil
+	})
 }
 
 // publishRecord sends a checked record to this box's server.

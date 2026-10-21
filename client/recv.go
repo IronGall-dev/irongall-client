@@ -144,6 +144,17 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 	renewed, renewErr := b.renewIfDue(ctx)
 	aclErr := b.syncACL(ctx)
 	res, err := b.drain(ctx, asked)
+	// A drain refused for what a renewal mends renews, and drains again, once:
+	// a server that holds no box at this address, deleted or forgotten, which
+	// the renewal's registration brings back (PROTOCOL.md §3, §6.4), or one
+	// that holds the certificate in use revoked, which the refusal had this
+	// box read and keep (ownCertRevoked).
+	if err != nil && renewed == nil && renewErr == nil && b.mendable(err) {
+		if renewed, renewErr = b.renewNow(ctx); renewed != nil {
+			aclErr = b.syncACL(ctx)
+			res, err = b.drain(ctx, asked)
+		}
+	}
 	if res == nil {
 		res = &Result{}
 	}
@@ -167,6 +178,17 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 		}
 	}
 	return res, err
+}
+
+// mendable reports whether a drain's error is one a renewal mends: the
+// server holds no box at this address, or this box holds a revocation of the
+// certificate it uses.
+func (b *Box) mendable(err error) bool {
+	if code(err) == protocol.CodeNoSuchMailbox {
+		return true
+	}
+	n, perr := b.publishedSerial()
+	return perr == nil && b.ownRevokes(n)
 }
 
 // A drain is bounded, so that a server which lists mail without end, or
@@ -216,8 +238,9 @@ func (b *Box) drain(ctx context.Context, asked *lookups) (*Result, error) {
 		var list protocol.MessageList
 		resp, at, err := b.ownerTaken(ctx, http.MethodGet, path, hdr, nil, &list)
 		if err != nil {
-			// A server that says this box is revoked is asked to show it.
-			return res, b.proved(ctx, b.id.Address(), err, asked)
+			// A server that says this box is revoked, or its certificate, is
+			// asked to show it.
+			return res, b.ownCertRevoked(ctx, b.proved(ctx, b.id.Address(), err, asked))
 		}
 		if page == 0 {
 			res.listedAt = at
