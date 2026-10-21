@@ -328,8 +328,8 @@ func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration, headers 
 			}
 			switch {
 			case res.Paced > 0:
-				lines = append(lines, line("paced", "retry_after", seconds(res.Paced), "message",
-					fmt.Sprintf("the server paces how much mail this box takes out: the rest is still on the server; run recv again in %d seconds or later", seconds(res.Paced))))
+				lines = append(lines, line("paced", "retry_after", seconds(res.Again()), "message",
+					fmt.Sprintf("the server paces how much mail this box takes out: the rest is still on the server; run recv again in %d seconds or later", seconds(res.Again()))))
 			case res.More:
 				lines = append(lines, line("more", "message", "this run stopped at the most one drain takes: run recv again for the rest, which is still on the server"))
 			}
@@ -350,13 +350,8 @@ func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration, headers 
 			}
 		}
 		pause := time.Minute
-		if res != nil && res.PollAfter > 0 {
-			pause = time.Duration(res.PollAfter) * time.Second
-		}
-		// A paced drain goes on once the server's wait is over, and not
-		// before: what is left is on the server, whatever the poll interval.
-		if res != nil && res.Paced > 0 {
-			pause = res.Paced
+		if res != nil && res.Again() > 0 {
+			pause = res.Again()
 		}
 		// A rate limit or a restarting server says how long to wait:
 		// --wait waits it out when there is time to poll again after.

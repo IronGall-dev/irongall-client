@@ -58,11 +58,7 @@ func (b *Box) resolve(ctx context.Context, peer protocol.Address, l *lookups) (*
 	} else if held {
 		return nil, nil, &RevokedError{Address: peer, Own: peer == b.id.Address()}
 	}
-	asked := l
-	if l != nil && l.answered[peer] {
-		asked = nil
-	}
-	ir, gone, err := b.readBox(ctx, peer, asked)
+	ir, gone, err := b.readBox(ctx, peer, l)
 	switch {
 	case gone:
 		return nil, nil, &RevokedError{Address: peer, Own: peer == b.id.Address()}
@@ -70,8 +66,6 @@ func (b *Box) resolve(ctx context.Context, peer protocol.Address, l *lookups) (*
 		return nil, nil, &lookupError{fmt.Errorf("%w; it showed no revocation of %s that verifies, so this box does not take that address as revoked", err, peer)}
 	case err != nil:
 		return nil, nil, &lookupError{err}
-	case asked != nil:
-		l.answered[peer] = true
 	}
 	id, err := b.identityOf(peer, ir.Identity)
 	if err != nil {

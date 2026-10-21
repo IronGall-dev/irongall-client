@@ -285,10 +285,14 @@ func (b *Box) readBox(ctx context.Context, a protocol.Address, l *lookups) (*pro
 			return nil, gone, err
 		}
 	}
-	if l != nil {
+	// The box's own server has answered: the revocation servers are asked
+	// once in the command, whatever it served and whoever reads the box, a
+	// send at each post, a drain, a post's refusal checked (#156).
+	if l != nil && !l.answered[a] {
 		if gone, err := b.askRevocationServers(ctx, a, l); gone || err != nil {
 			return nil, gone, err
 		}
+		l.answered[a] = true
 	}
 	if err != nil {
 		return nil, false, err

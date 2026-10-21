@@ -293,8 +293,9 @@ func must(t *testing.T, name string) []byte {
 	return b
 }
 
-// recv --wait after a paced drain goes on once the server's wait is over,
-// not after the poll interval, which may be far longer (#116).
+// recv --wait after a paced drain goes on once the later of the server's
+// two waits is over, the pace and the poll interval, since its next run
+// begins with a poll (#116, #117); recv alone advises the same wait.
 func TestRecvWaitResumesAPacedDrain(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -325,7 +326,7 @@ func TestRecvWaitResumesAPacedDrain(t *testing.T) {
 				w.Header()[k] = v
 			}
 			if rec.Code == http.StatusOK || rec.Code == http.StatusNotModified {
-				w.Header().Set("Retry-After", "3600") // a poll interval longer than the test's wait
+				w.Header().Set("Retry-After", "3") // a poll interval longer than the pace
 			}
 			w.WriteHeader(rec.Code)
 			_, _ = w.Write(rec.Body.Bytes())
@@ -336,12 +337,20 @@ func TestRecvWaitResumesAPacedDrain(t *testing.T) {
 	t.Setenv("IRONGALL_HOME", b.Dir())
 	t.Setenv("IRONGALL_BASE", srv.URL)
 	var out, errs bytes.Buffer
+	if err := do(ctx, "recv", nil, strings.NewReader(""), &out, &errs); err != nil {
+		t.Fatalf("recv: %v %s", err, errs.String())
+	}
+	if !strings.Contains(out.String(), `"type":"paced","retry_after":3,`) {
+		t.Fatalf("recv after a paced drain advises: %q, want the poll interval, the later wait", out.String())
+	}
+	paced.Store(0)
+	out.Reset()
 	start := time.Now()
 	if err := do(ctx, "recv", []string{"--wait", "20s"}, strings.NewReader(""), &out, &errs); err != nil {
 		t.Fatalf("recv --wait: %v %s", err, errs.String())
 	}
-	if !strings.Contains(out.String(), `"body":"after the pace"`) || time.Since(start) > 15*time.Second {
-		t.Fatalf("recv --wait after a paced drain: %q after %s, %s", out.String(), time.Since(start), errs.String())
+	if took := time.Since(start); !strings.Contains(out.String(), `"body":"after the pace"`) || took < 3*time.Second || took > 15*time.Second {
+		t.Fatalf("recv --wait after a paced drain: %q after %s, %s", out.String(), took, errs.String())
 	}
 }
 

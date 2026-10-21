@@ -228,6 +228,23 @@ func problemBad(t *testing.T) []string {
 	return bad
 }
 
+// outOfForm are answers that are none: a 304 to a request that sent no
+// If-None-Match, and a code under a status that is not its own (#98).
+var outOfForm = []struct {
+	name  string
+	write func(http.ResponseWriter)
+}{
+	{"a bare 304", func(w http.ResponseWriter) { w.WriteHeader(http.StatusNotModified) }},
+	{"500 not_revoked", func(w http.ResponseWriter) { misstatused(w, http.StatusInternalServerError, protocol.CodeNotRevoked) }},
+	{"429 no_such_mailbox", func(w http.ResponseWriter) { misstatused(w, http.StatusTooManyRequests, protocol.CodeNoSuchMailbox) }},
+	{"429 revoked", func(w http.ResponseWriter) { misstatused(w, http.StatusTooManyRequests, protocol.CodeRevoked) }},
+}
+
+// misstatused writes a problem of code under status, which is not its own.
+func misstatused(w http.ResponseWriter, status int, code protocol.Code) {
+	fakeserver.WriteJSON(w, status, protocol.Problem{Type: code.TypeURI(), Code: code, Status: int64(status)})
+}
+
 // A server that gives no answer about a sender has not said the sender is
 // fine. The drain stops, the message stays where it is, and the next drain
 // asks again.
@@ -288,6 +305,21 @@ func TestNoAnswerAboutASenderStopsTheDrain(t *testing.T) {
 		res, err := b.Receive(context.Background())
 		if err == nil || len(res.Delivered) != 0 || len(res.Refused) != 0 || e.srv.Count(b.Address()) != 1 {
 			t.Errorf("404 %s on the read: %v, %+v, %d left on the server", filepath.Base(f), err, res, e.srv.Count(b.Address()))
+		}
+	}
+	// Nor has an answer out of its form: a bare 304, or a code under
+	// another status.
+	for _, o := range outOfForm {
+		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if x, ok := readOf(r); ok && x == a.Address() {
+				o.write(w)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+		res, err := b.Receive(context.Background())
+		if err == nil || len(res.Delivered) != 0 || len(res.Refused) != 0 || e.srv.Count(b.Address()) != 1 {
+			t.Errorf("%s on the read: %v, %+v, %d left on the server", o.name, err, res, e.srv.Count(b.Address()))
 		}
 	}
 	e.srv.SetMiddle(nil)

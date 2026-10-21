@@ -103,6 +103,16 @@ type Result struct {
 	listedAt taken
 }
 
+// Again is how long the box waits before its next Receive: the server's
+// poll interval, or a paced drain's wait when that is the later, since the
+// next Receive begins with a list, which is a poll (PROTOCOL.md §5.1, §8).
+// Sooner would spend the box's polls, and be refused once they are spent,
+// where the poll interval lets the server's pace of new mail refill
+// meanwhile (#117).
+func (r *Result) Again() time.Duration {
+	return max(r.Paced, time.Duration(r.PollAfter)*time.Second)
+}
+
 // Receive drains the box: every page, every message. Each message is judged
 // by one gate (see [Box.judge]); only one that passes every check lands,
 // where the box's say over its sender puts it: inbox/ for a sender it
@@ -308,13 +318,16 @@ func (b *Box) receiveOne(ctx context.Context, m protocol.MessageInfo, res *Resul
 		fetched = len(ct.bytes)
 		h := sha256.Sum256(ct.bytes)
 		local := hex.EncodeToString(h[:])
-		d, dup, why, err := b.judge(ctx, ct.bytes, m.From, asked)
+		v, err := b.judge(ctx, ct.bytes, m.From, asked)
 		if err != nil {
 			return fetched, err
 		}
-		if why == nil && local != id {
-			d, dup, why = nil, false, &Refusal{Code: RefusedID, Reason: "the server's id for it is not the SHA-256 of its ciphertext", Findings: d.findings}
+		// The server's id is held to the hash whatever the verdict, a
+		// duplicate's included, with what the checks found (#264).
+		if v.refusal == nil && local != id {
+			v = verdict{refusal: &Refusal{Code: RefusedID, Reason: "the server's id for it is not the SHA-256 of its ciphertext", Findings: v.found}, found: v.found}
 		}
+		d, why := v.delivery, v.refusal
 		switch {
 		case why != nil:
 			raw, err := keepRefused(&m, ct.bytes, why.Findings)
@@ -333,7 +346,7 @@ func (b *Box) receiveOne(ctx context.Context, m protocol.MessageInfo, res *Resul
 			}
 			why.ID = local
 			res.Refused = append(res.Refused, *why)
-		case dup:
+		case v.dup:
 			res.Duplicates = append(res.Duplicates, local)
 		default:
 			// Stored before it is recorded as seen, and both, on disk,
@@ -371,6 +384,16 @@ func (b *Box) receiveOne(ctx context.Context, m protocol.MessageInfo, res *Resul
 	return fetched, err
 }
 
+// verdict is what judge found of one message: delivered, a duplicate of one
+// delivered before, or refused, and in each case what its checks
+// established (found).
+type verdict struct {
+	delivery *Delivery
+	dup      bool
+	refusal  *Refusal
+	found    *protocol.Findings
+}
+
 // judge runs every check on one message, its ciphertext and the sender its
 // list names (from), in this order, and returns the delivery only if all of
 // them pass; otherwise why says which failed, in a code and in this client's
@@ -403,15 +426,15 @@ func (b *Box) receiveOne(ctx context.Context, m protocol.MessageInfo, res *Resul
 // of the server: the message carries what proves it. The one thing asked is
 // whether a revocation of that sender exists, and the answer proves itself.
 // The sender's identity is pinned only once all of that has passed.
-func (b *Box) judge(ctx context.Context, ct []byte, listedFrom string, asked *lookups) (d *Delivery, dup bool, why *Refusal, err error) {
+func (b *Box) judge(ctx context.Context, ct []byte, listedFrom string, asked *lookups) (verdict, error) {
 	now := b.now()
 	found := &protocol.Findings{At: now}
-	refused := func(code, reason string) (*Delivery, bool, *Refusal, error) {
-		return nil, false, &Refusal{Code: code, Reason: reason, Findings: found}, nil
+	refused := func(code, reason string) (verdict, error) {
+		return verdict{refusal: &Refusal{Code: code, Reason: reason, Findings: found}, found: found}, nil
 	}
 	ids, err := b.prekeyIdentities()
 	if err != nil {
-		return nil, false, nil, err
+		return verdict{}, err
 	}
 	r, err := age.Decrypt(bytes.NewReader(ct), ids...)
 	if err != nil {
@@ -427,7 +450,7 @@ func (b *Box) judge(ctx context.Context, ct []byte, listedFrom string, asked *lo
 		if errors.As(err, &e) {
 			return refused(e.Code, e.Why)
 		}
-		return nil, false, nil, err
+		return verdict{}, err
 	}
 	from, env := signed.Sender.Address(), signed.Envelope
 	// Freshness has a floor too: a sent_at before the highest cutoff the
@@ -437,7 +460,7 @@ func (b *Box) judge(ctx context.Context, ct []byte, listedFrom string, asked *lo
 	// line).
 	floor, err := b.seenFloor()
 	if err != nil {
-		return nil, false, nil, err
+		return verdict{}, err
 	}
 	if floor > 0 && env.SentAt.Unix() < floor+int64(protocol.TTL/time.Second) {
 		return refused(protocol.RefusedStale, "sent_at is before this box's replay set reaches back to, since its clock once read later than it does now")
@@ -449,20 +472,19 @@ func (b *Box) judge(ctx context.Context, ct []byte, listedFrom string, asked *lo
 	}
 	gone, err := b.revoked(from)
 	if err != nil {
-		return nil, false, nil, fmt.Errorf("a fault of this box, so the message stays on the server: %w", err)
+		return verdict{}, fmt.Errorf("a fault of this box, so the message stays on the server: %w", err)
 	}
 	if !gone && !asked.answered[from] {
 		if gone, err = b.lookupRevocation(ctx, from, asked); err != nil {
-			return nil, false, nil, fmt.Errorf("whether its sender is revoked could not be asked, so the message stays on the server: %w", err)
+			return verdict{}, fmt.Errorf("whether its sender is revoked could not be asked, so the message stays on the server: %w", err)
 		}
-		asked.answered[from] = true
 	}
 	if gone {
 		return refused(RefusedRevoked, "its sender's address is revoked, and the revocation verifies: nothing signed for that address is taken, whenever it was signed")
 	}
 	certs, err := b.revokedCerts(from)
 	if err != nil {
-		return nil, false, nil, err
+		return verdict{}, err
 	}
 	if certs != nil && certs.Revokes(signed.Certificate.Serial()) {
 		return refused(RefusedCertificate, "it is signed under a certificate its sender's identity has revoked: nothing signed under it is taken, whenever it was signed")
@@ -470,28 +492,28 @@ func (b *Box) judge(ctx context.Context, ct []byte, listedFrom string, asked *lo
 	h := sha256.Sum256(ct)
 	seen, err := b.seenHash(hex.EncodeToString(h[:]))
 	if err != nil {
-		return nil, false, nil, err
+		return verdict{}, err
 	}
 	if seen {
 		return refused(RefusedReplay, "replay: this ciphertext was already received")
 	}
 	if err := b.pin(signed.Sender); err != nil {
-		return nil, false, nil, err
+		return verdict{}, err
 	}
 	again, err := b.seenMsgID(from, env.MsgID)
 	if err != nil {
-		return nil, false, nil, err
+		return verdict{}, err
 	}
 	if again {
-		return nil, true, nil, nil
+		return verdict{dup: true, found: found}, nil
 	}
 	shown := *env
 	shown.Identity = nil
 	line, err := shown.Marshal()
 	if err != nil {
-		return nil, false, nil, err
+		return verdict{}, err
 	}
-	return &Delivery{Envelope: env, Line: escapeUnseen(line), Plaintext: signed.Line, Signature: signed.Signature, findings: found}, false, nil, nil
+	return verdict{delivery: &Delivery{Envelope: env, Line: escapeUnseen(line), Plaintext: signed.Line, Signature: signed.Signature, findings: found}, found: found}, nil
 }
 
 // escapeUnseen escapes, in a line a reader is shown or a box keeps, the

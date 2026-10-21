@@ -215,8 +215,9 @@ func TestNoAnswerAboutARecipientPostsNothing(t *testing.T) {
 		t.Fatalf("the outbox: %d entries, %d files beside them", n, beside)
 	}
 
-	// A code that would end a message, had the post been answered with it.
-	for _, code := range []protocol.Code{protocol.CodeBadAddress, protocol.CodeTooLarge, protocol.CodeConflict, protocol.CodeRevoked} {
+	// A code that would end a message, had the post been answered with it:
+	// each that undeliverable names, and revoked.
+	for _, code := range []protocol.Code{protocol.CodeBadAddress, protocol.CodeTooLarge, protocol.CodeConflict, protocol.CodeSenderNotAllowed, protocol.CodeRevoked} {
 		op = watch(e, func(w http.ResponseWriter, r *http.Request) bool {
 			return r.Method == http.MethodGet && r.URL.Path == boxPath(a) && answer(w, code)
 		})
@@ -254,6 +255,63 @@ func TestNoAnswerAboutARecipientPostsNothing(t *testing.T) {
 	}
 	if res := receive(t, a); len(res.Delivered) != 1 {
 		t.Fatalf("delivered: %+v", res)
+	}
+	// Nor an answer out of its form, on the read or on the post, to a
+	// message that waits.
+	watch(e, func(w http.ResponseWriter, r *http.Request) bool {
+		return r.Method == http.MethodPost && r.URL.Path == postTo(a) && answer(w, protocol.CodeUnavailable)
+	})
+	if _, err := b.Send(ctx, a.Address(), "waits again"); err == nil {
+		t.Fatal("the post was meant to fail")
+	}
+	for _, o := range outOfForm {
+		op = watch(e, func(w http.ResponseWriter, r *http.Request) bool {
+			if r.Method == http.MethodGet && r.URL.Path == boxPath(a) {
+				o.write(w)
+				return true
+			}
+			return false
+		})
+		if _, err := b.Flush(ctx); err == nil || !strings.Contains(err.Error(), "kept in the outbox") {
+			t.Fatalf("a lookup answered %s: %v", o.name, err)
+		}
+		if n, _ := waiting(b, a.Address()); n != 1 || failed(b, a.Address()) != 0 || op.count(http.MethodPost, postTo(a)) != 0 {
+			t.Fatalf("a lookup answered %s moved the message or posted it: %q", o.name, op.seen)
+		}
+	}
+	op = watch(e, func(w http.ResponseWriter, r *http.Request) bool {
+		if r.Method == http.MethodPost && r.URL.Path == postTo(a) {
+			w.WriteHeader(http.StatusNotModified)
+			return true
+		}
+		return false
+	})
+	if _, err := b.Flush(ctx); err == nil {
+		t.Fatal("a post answered a bare 304 was taken as sent")
+	}
+	if n, _ := waiting(b, a.Address()); n != 1 || failed(b, a.Address()) != 0 {
+		t.Fatal("a post answered a bare 304 moved the message")
+	}
+	// The read after a 409 stale_prekey is a read like the first (#115):
+	// whatever code it carries, the entry stays and nothing more is posted.
+	for _, code := range []protocol.Code{protocol.CodeBadAddress, protocol.CodeTooLarge, protocol.CodeConflict, protocol.CodeSenderNotAllowed} {
+		reads := 0
+		op = watch(e, func(w http.ResponseWriter, r *http.Request) bool {
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == boxPath(a):
+				reads++
+				return reads > 1 && answer(w, code)
+			case r.Method == http.MethodPost && r.URL.Path == postTo(a):
+				return answer(w, protocol.CodeStalePrekey)
+			}
+			return false
+		})
+		if _, err := b.Flush(ctx); err == nil || !strings.Contains(err.Error(), "kept in the outbox") {
+			t.Fatalf("the read after a stale_prekey answered %s: %v", code, err)
+		}
+		if n, _ := waiting(b, a.Address()); n != 1 || failed(b, a.Address()) != 0 || op.count(http.MethodPost, postTo(a)) != 1 {
+			t.Fatalf("the read after a stale_prekey answered %s moved the message or posted again: %q", code, op.seen)
+		}
 	}
 }
 
@@ -494,6 +552,116 @@ func TestAFlushAsksOnceForEachRecipient(t *testing.T) {
 	}
 	if ra, rc := rs.count(http.MethodGet, a.Address())-before, rs.count(http.MethodGet, c.Address())-beforeC; ra != 1 || rc != 1 {
 		t.Fatalf("a flush asked the revocation server %d and %d times", ra, rc)
+	}
+}
+
+// The revocation servers are asked about a recipient once in a command,
+// whatever its own server served: a flush to a box its server holds no box
+// of asks once however many messages wait, and a post the server answers
+// 410 with nothing that verifies reads the box again and asks no
+// revocation server again (#156).
+func TestARecipientIsAskedOnceWhateverItsReadServed(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	rs := newRevServer(t)
+	b := e.boxWith(e.listing(rs.URL))
+	a := e.box(protocol.Classic)
+	says(e, protocol.CodeUnavailable, http.MethodPost, "/messages")
+	for range 3 {
+		if _, err := b.Send(ctx, a.Address(), "waits"); err == nil {
+			t.Fatal("the post was meant to fail")
+		}
+	}
+	says(e, protocol.CodeNoSuchMailbox, http.MethodGet, boxPath(a))
+	before := rs.count(http.MethodGet, a.Address())
+	if _, err := b.Flush(ctx); err == nil {
+		t.Fatal("a flush to a box its server does not serve posted")
+	}
+	if n := rs.count(http.MethodGet, a.Address()) - before; n != 1 {
+		t.Errorf("a flush of three to a box not served asked the revocation server %d times, want 1", n)
+	}
+	says(e, protocol.CodeRevoked, http.MethodPost, "/messages")
+	before = rs.count(http.MethodGet, a.Address())
+	if _, err := b.Send(ctx, a.Address(), "answered 410"); err == nil {
+		t.Fatal("a post answered 410 succeeded")
+	}
+	if n := rs.count(http.MethodGet, a.Address()) - before; n != 1 {
+		t.Errorf("a send answered 410 with nothing that verifies asked the revocation server %d times, want 1", n)
+	}
+}
+
+// A sender's retry after a lost answer is a second ciphertext with the same
+// msg_id, which its reader drops as a duplicate. A server that lists that
+// copy under an id that is not the SHA-256 of its ciphertext gets it refused
+// bad_id, as any message under a wrong id is, and the drain goes on: the
+// verdict a duplicate gets carries what its checks found, and Receive never
+// panics on it (#264).
+func TestADuplicateUnderAWrongIDIsRefusedNotAPanic(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	lost := true
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.Method == http.MethodPost && r.URL.Path == postTo(a) && lost {
+			lost = false
+			next.ServeHTTP(httptest.NewRecorder(), r) // stored, and the answer never comes
+			http.Error(w, "the answer was lost", http.StatusBadGateway)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	if _, err := b.Send(ctx, a.Address(), "posted once, answered never"); err == nil {
+		t.Fatal("the answer was meant to be lost")
+	}
+	if got, err := b.Flush(ctx); err != nil || len(got) != 1 {
+		t.Fatalf("flush: %v, %v", got, err)
+	}
+	if e.srv.Count(a.Address()) != 2 {
+		t.Fatalf("the server holds %d", e.srv.Count(a.Address()))
+	}
+	// The operator lists the second copy under another id, and answers that
+	// id with the second copy.
+	const wrong = "0000000000000000000000000000000000000000000000000000000000000000"
+	second := ""
+	box := boxPath(a)
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == box+"/messages":
+			rec := httptest.NewRecorder()
+			next.ServeHTTP(rec, r)
+			var l protocol.MessageList
+			if err := protocol.Unmarshal(rec.Body.Bytes(), &l); err != nil {
+				t.Errorf("the list: %v", err)
+				return
+			}
+			if second == "" && len(l.Messages) == 2 {
+				second = l.Messages[1].ID
+			}
+			for i := range l.Messages {
+				if l.Messages[i].ID == second {
+					l.Messages[i].ID = wrong
+				}
+			}
+			fakeserver.WriteList(w, l)
+		case strings.HasSuffix(r.URL.Path, "/messages/"+wrong):
+			r.URL.Path = box + "/messages/" + second
+			next.ServeHTTP(w, r)
+		default:
+			next.ServeHTTP(w, r)
+		}
+	})
+	var res *client.Result
+	var err error
+	func() {
+		defer func() {
+			if p := recover(); p != nil {
+				t.Fatalf("Receive panicked: %v", p)
+			}
+		}()
+		res, err = a.Receive(ctx)
+	}()
+	if err != nil || len(res.Delivered) != 1 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedID {
+		t.Errorf("a drain with a duplicate under a wrong id: %+v, %v", res, err)
 	}
 }
 
