@@ -1783,8 +1783,8 @@ func TestPrekeyLifetime(t *testing.T) {
 		}
 	}
 	for arg, why := range map[string]string{
-		"1d": "is from", "1d59m59s": "is from", "1d1h": "is from", "1d2h": "is from", "1d2h59m59s": "is from", "93600": "is from", "33d1s": "is from", "34d": "is from", "10000000000s": "no time", "9999999999w": "longer than any",
-		"0": "no time", "0s": "no time", "": "no time", "-1h": "flag", "+1h": "no time", "1.5h": "no time", "1x": "no time", "90000x": "no time", "2d1hx": "no time",
+		"1d": "is from", "1d59m59s": "is from", "1d1h": "is from", "1d2h": "is from", "1d2h59m59s": "is from", "93600": "is from", "33d1s": "is from", "34d": "is from", "10000000000s": "longer than any", "9999999999w": "longer than any",
+		"0": "is from", "0s": "is from", "": "no time", "-1h": "flag", "+1h": "no time", "1.5h": "no time", "1x": "no time", "90000x": "no time", "2d1hx": "no time",
 		"h": "no time", "1h ": "no time", " 1h": "no time", "1dd": "no time",
 	} {
 		var wrong *usageError
@@ -1838,5 +1838,49 @@ func TestCertRevokeEarlierWhenOnlyARevocationServerTookIt(t *testing.T) {
 	srv.SetMiddle(nil)
 	if res, err := b.Receive(ctx); err != nil || len(res.Delivered) != 1 {
 		t.Errorf("the box's drain: %v", err)
+	}
+}
+
+// parseTime reads a time as OpenSSH's convtime does in 10.3p1 to 10.6p1
+// (misc.c, convtime_double; #193): each value here is what that code gives,
+// -1 for a time it refuses.
+func TestParseTimeReadsAsOpenSSH(t *testing.T) {
+	for _, c := range []struct {
+		in   string
+		sshd int64
+	}{
+		{"90000", 90000},
+		{"1d1h", 90000},
+		{"25h", 90000},
+		{"1d1d", 172800},
+		{"1W1D", 691200},
+		{"90000s1", -1},  // seconds twice: a bare number is seconds
+		{"1d0s3600", -1}, // the same
+		{"90000.5", 90000},
+		{"1.5s", 1},
+		{".5", 0},
+		{"5.", -1},    // a point with no digit after it
+		{"1.2.3", -1}, // what follows the number is no unit
+		{"0000000090000", 90000},
+		{"00000000001d1h", 90000},
+		{"1.5h", -1}, // a fraction only on seconds
+		{"1e5", -1},  // decimal forms only
+		{"0x10", -1},
+		{"+5", -1},
+		{"", -1},
+		{".", -1},
+		{"0", 0},
+		{"2147483647", 2147483647},
+		{"2147483648", -1},
+		{"1h ", -1},
+		{"5x", -1},
+	} {
+		got := int64(-1)
+		if d, err := parseTime(c.in); err == nil {
+			got = int64(d / time.Second)
+		}
+		if got != c.sshd {
+			t.Errorf("%q: parseTime %d, OpenSSH 10.3p1 to 10.6p1 %d", c.in, got, c.sshd)
+		}
 	}
 }

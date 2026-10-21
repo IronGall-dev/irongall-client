@@ -3,6 +3,7 @@ package protocol
 import (
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -202,6 +203,29 @@ func TestMaxDepth(t *testing.T) {
 		}
 		if err := Unmarshal(nest(MaxDepth, c.open, c.inner, c.closeWith), &struct{}{}); !errors.Is(err, ErrJSON) {
 			t.Errorf("%s nested to %d: %v, want ErrJSON", c.open, MaxDepth+1, err)
+		}
+	}
+}
+
+// A request member holding a value its call does not take, of another JSON
+// type or a number that is no integer of its range, is named in the error,
+// as §13's bad_request names it in member (#272): every member of every
+// request a server reads, given a value of each JSON type.
+func TestATypeErrorNamesItsMember(t *testing.T) {
+	for _, v := range []any{&AdoptRequest{}, &ACLDocument{}, &RegisterRequest{}, &PrekeyRequest{}, &Revocations{}} {
+		typ := reflect.TypeOf(v).Elem()
+		for i := range typ.NumField() {
+			name, _, _ := strings.Cut(typ.Field(i).Tag.Get("json"), ",")
+			if name == "" || name == "-" {
+				continue
+			}
+			for _, value := range []string{`5`, `1.5`, `-1`, `true`, `[]`, `{}`, `"x"`, `[5]`} {
+				body := `{"` + name + `":` + value + `}`
+				err := UnmarshalRequest([]byte(body), reflect.New(typ).Interface())
+				if errors.Is(err, ErrJSON) && !errors.Is(err, ErrUnknownMember) && Member(err) != name {
+					t.Errorf("%s %s: %v names %q", typ.Name(), body, err, Member(err))
+				}
+			}
 		}
 	}
 }

@@ -45,12 +45,13 @@ func (b *Box) InboxLine(id string) ([]byte, error) {
 }
 
 // keptLine reads a file inbox/ or held/ keeps as the line recv wrote: one
-// line, which reads back as the record of a message to this box
-// ([protocol.OpenEnvelopeRecord], which reads no clock), and nothing after
-// it. A file cut short, as a recv stopped midway can leave one, or with more
-// in it, is none. The line comes back with what nobody sees escaped again
-// ([escapeUnseen]): it is printed as it is, and whoever last wrote the file
-// is not known here.
+// that reads back as the record of a message to this box
+// ([protocol.OpenEnvelopeRecord], which reads no clock) and is, byte for
+// byte, the line recv writes of that record (keptLineOf). A file cut short,
+// as a recv stopped midway can leave one, with more in it, members recv
+// never writes, or the same members written another way, is none: whoever
+// last wrote the file is not known here, and only recv's own line is
+// printed (#298).
 func (b *Box) keptLine(data []byte) (line []byte, from protocol.Address, env *protocol.Envelope, ok bool) {
 	if len(data) == 0 || data[0] != '{' || bytes.ContainsAny(data, "\r\n") {
 		return nil, from, nil, false
@@ -69,7 +70,10 @@ func (b *Box) keptLine(data []byte) (line []byte, from protocol.Address, env *pr
 	if err != nil {
 		return nil, from, nil, false
 	}
-	return escapeUnseen(data), from, env, true
+	if want, err := keptLineOf(env); err != nil || !bytes.Equal(want, data) {
+		return nil, from, nil, false
+	}
+	return data, from, env, true
 }
 
 // keptRefusal is a refused message as quarantine/<id>.json keeps it: the

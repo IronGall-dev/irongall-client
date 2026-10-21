@@ -507,13 +507,25 @@ func (b *Box) judge(ctx context.Context, ct []byte, listedFrom string, asked *lo
 	if again {
 		return verdict{dup: true, found: found}, nil
 	}
+	line, err := keptLineOf(env)
+	if err != nil {
+		return verdict{}, err
+	}
+	return verdict{delivery: &Delivery{Envelope: env, Line: line, Plaintext: signed.Line, Signature: signed.Signature, findings: found}, found: found}, nil
+}
+
+// keptLineOf is the line inbox/ and held/ keep of a delivered envelope, and
+// recv prints: the envelope without its identity document, what nobody sees
+// escaped (escapeUnseen). keptLine takes a kept file only when it is this
+// line, byte for byte.
+func keptLineOf(env *protocol.Envelope) ([]byte, error) {
 	shown := *env
 	shown.Identity = nil
 	line, err := shown.Marshal()
 	if err != nil {
-		return verdict{}, err
+		return nil, err
 	}
-	return verdict{delivery: &Delivery{Envelope: env, Line: escapeUnseen(line), Plaintext: signed.Line, Signature: signed.Signature, findings: found}, found: found}, nil
+	return escapeUnseen(line), nil
 }
 
 // escapeUnseen escapes, in a line a reader is shown or a box keeps, the

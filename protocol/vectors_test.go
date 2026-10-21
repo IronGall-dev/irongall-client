@@ -675,8 +675,8 @@ func TestVectorPass(t *testing.T) {
 // one of them.
 func TestVectorPassForms(t *testing.T) {
 	files := glob(t, "pass/*.authorization")
-	if len(files) != 28 {
-		t.Fatalf("%d pass/ vectors, want 28", len(files))
+	if len(files) != 30 {
+		t.Fatalf("%d pass/ vectors, want 30", len(files))
 	}
 	now, a := vectorNow(t), vectorIdentity(t, "a")
 	header := strings.TrimSuffix(string(read(t, "a/pass.authorization")), "\n")

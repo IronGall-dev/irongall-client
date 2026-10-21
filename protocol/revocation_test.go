@@ -137,7 +137,7 @@ func TestARecordNamesItsType(t *testing.T) {
 			var rec Revocations
 			if err := read([]byte(body), &rec); !errors.Is(err, want) || (want == nil) != (err == nil) {
 				t.Errorf("%s: %v, want %v", body, err, want)
-			} else if want == ErrMemberValue && Member(err) != "type" {
+			} else if want != nil && Member(err) != "type" {
 				t.Errorf("%s: the error names %q, not the member type", body, Member(err))
 			}
 		}

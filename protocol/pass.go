@@ -189,13 +189,16 @@ func ParsePass(authorization string) (*Pass, error) {
 // by their names in lowercase.
 func passParams(v string) (map[string]string, error) {
 	scheme, rest, ok := strings.Cut(v, " ")
-	if !strings.EqualFold(scheme, PassScheme) {
+	if len(scheme) != len(PassScheme) || asciiLower(scheme) != PassScheme { // a token, so ASCII: no Unicode case folding (RFC 9110 §5.6.2, §11.1; #268)
 		return nil, errors.New("its scheme is not " + PassScheme)
 	}
 	if !ok {
 		return nil, errors.New("it has no parameters")
 	}
 	rest = strings.TrimLeft(rest, " ")
+	if r := trimOWS(rest); r != "" && r[0] == ',' { // an empty first element: OWS "," (§5.6.1.2; #268)
+		rest = r
+	}
 	values := make(map[string]string, 3)
 	// #element is [ element ] *( OWS "," OWS [ element ] ) (§5.6.1.2).
 	for {
@@ -275,6 +278,17 @@ func tokenLength(s string) int {
 // the visible characters RFC 9110 §5.6.2 does not count as delimiters.
 func tchar(c byte) bool {
 	return 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9' || strings.IndexByte("!#$%&'*+-.^_`|~", c) >= 0
+}
+
+// asciiLower is s with A to Z made lowercase, and nothing else changed.
+func asciiLower(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + 'a' - 'A'
+		}
+	}
+	return string(b)
 }
 
 // trimOWS drops optional whitespace, spaces and tabs, from the start of s.

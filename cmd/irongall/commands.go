@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -730,42 +731,64 @@ lower holds from the next recv, which renews a prekey made for longer.`,
 // FORMATS), in either case.
 var timeUnits = map[byte]time.Duration{'s': time.Second, 'm': time.Minute, 'h': time.Hour, 'd': 24 * time.Hour, 'w': 7 * 24 * time.Hour}
 
-// maxTime bounds what parseTime adds up, far above any lifetime, so that
-// no sum overflows.
-const maxTime = 100 * 365 * 24 * time.Hour
-
-// parseTime reads a time as sshd does: a sequence of numbers, each with a
-// unit or none for seconds, added together, as in 600, 10m or 2d1h.
+// parseTime reads a time as sshd does (sshd_config(5), TIME FORMATS): a
+// sequence of numbers, each with a unit or none for seconds, added together,
+// as in 600, 10m or 2d1h. It is OpenSSH's convtime, as 10.3p1 to 10.6p1 have
+// it (misc.c, convtime_double; #193): each number in decimal digits alone,
+// any number of them, a fraction only on seconds and only with a digit after
+// its point, seconds named once, and the sum truncated to whole seconds, at
+// most INT_MAX of them.
 func parseTime(s string) (time.Duration, error) {
-	var total time.Duration
-	rest := s
-	for rest != "" {
-		i := 0
-		for i < len(rest) && i < 10 && rest[i] >= '0' && rest[i] <= '9' {
+	no := fmt.Errorf("%.40q is no time: one is numbers, each with its unit (s, m, h, d or w), as in 2d1h", s)
+	if s == "" {
+		return 0, no
+	}
+	total, seconds := 0.0, false
+	for p := 0; p < len(s); {
+		i := p
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
 			i++
 		}
-		if i == 0 || i < len(rest) && rest[i] >= '0' && rest[i] <= '9' {
-			return 0, fmt.Errorf("%.40q is no time: one is numbers, each with its unit (s, m, h, d or w), as in 2d1h", s)
-		}
-		n, _ := strconv.ParseInt(rest[:i], 10, 64)
-		unit := time.Second
-		if i < len(rest) {
-			u, ok := timeUnits[rest[i]|0x20]
-			if !ok {
-				return 0, fmt.Errorf("%.40q is no time: one is numbers, each with its unit (s, m, h, d or w), as in 2d1h", s)
+		if i < len(s) && s[i] == '.' {
+			i++
+			for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+				i++
 			}
-			unit, i = u, i+1
 		}
-		if time.Duration(n) > maxTime/unit || total+time.Duration(n)*unit > maxTime {
-			return 0, fmt.Errorf("%.40q is longer than any prekey lifetime", s)
+		num := s[p:i]
+		if strings.Trim(num, ".") == "" { // no digit: what strtod reads none of
+			return 0, no
 		}
-		total += time.Duration(n) * unit
-		rest = rest[i:]
+		v, err := strconv.ParseFloat(num, 64)
+		if err != nil {
+			return 0, no
+		}
+		unit := 1.0
+		switch {
+		case i == len(s) || s[i] == 's' || s[i] == 'S':
+			if seconds {
+				return 0, no
+			}
+			seconds = true
+		default:
+			u, ok := timeUnits[s[i]|0x20]
+			if !ok || u == time.Second {
+				return 0, no
+			}
+			unit = u.Seconds()
+		}
+		if strings.Contains(num, ".") && (unit > 1 || num[len(num)-1] == '.') {
+			return 0, no
+		}
+		total += v * unit
+		if p = i; p < len(s) {
+			p++
+		}
 	}
-	if total == 0 {
-		return 0, fmt.Errorf("%.40q is no time: it is empty, or zero", s)
+	if total > math.MaxInt32 {
+		return 0, fmt.Errorf("%.40q is longer than any prekey lifetime", s)
 	}
-	return total, nil
+	return time.Duration(int64(total)) * time.Second, nil
 }
 
 // formatTime writes d as parseTime reads it, in days, hours, minutes and

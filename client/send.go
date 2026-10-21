@@ -147,11 +147,7 @@ func (b *Box) sendWith(ctx context.Context, to protocol.Address, env *protocol.E
 	if err := b.syncACL(ctx); err != nil {
 		return nil, fmt.Errorf("%w: nothing is posted, so that no reply is refused; kept in the outbox, irongall outbox flush sends it", err)
 	}
-	r, err := b.post(ctx, to, stem, newLookups())
-	if err != nil {
-		return nil, err
-	}
-	return &Sent{To: to, MsgID: env.MsgID, Receipt: *r}, nil
+	return b.post(ctx, to, stem, newLookups())
 }
 
 // Flush posts again every message still in the outbox, each sealed afresh
@@ -205,12 +201,12 @@ func (b *Box) flush(ctx context.Context) ([]*Sent, error) {
 			errs = append(errs, fmt.Errorf("%s: not an outbox entry", filepath.Base(n)))
 			continue
 		}
-		r, err := b.post(ctx, peer, stem, asked)
+		s, err := b.post(ctx, peer, stem, asked)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", filepath.Base(stem), err))
 			continue
 		}
-		sent = append(sent, &Sent{To: peer, MsgID: msgID, Receipt: *r})
+		sent = append(sent, s)
 	}
 	return sent, errors.Join(errs...)
 }
@@ -241,7 +237,7 @@ var undeliverable = []protocol.Code{
 // statement under a certificate since revoked, or ordered before one the box
 // has recorded, is refused. A read that serves no box is not "none held":
 // nothing is sealed or posted, and the entry stays.
-func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked *lookups) (*protocol.Receipt, error) {
+func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked *lookups) (*Sent, error) {
 	if b.expired(stem) {
 		return nil, b.undelivered(stem, refuse("it was written more than %d days ago, and an outbox posts a message no longer than that", protocol.TTL/(24*time.Hour)))
 	}
@@ -272,54 +268,58 @@ func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked 
 	}
 	// Recorded before the outbox entry goes: a crash in between seals and
 	// posts it again, and its reader drops the copy by its msg_id.
-	if err := b.recordSent(stem, posted, r); err != nil {
-		return r, fmt.Errorf("sent, but not recorded in sent/ (still in the outbox: irongall outbox flush posts it again, and its reader drops the copy): %w", err)
+	sent, err := b.recordSent(stem, posted, r)
+	if err != nil {
+		return nil, fmt.Errorf("sent, but not recorded in sent/ (still in the outbox: irongall outbox flush posts it again, and its reader drops the copy): %w", err)
 	}
 	if err := removeIfExists(stem + ".P"); err != nil {
-		return r, err
+		return sent, err
 	}
-	return r, nil
+	return sent, nil
 }
 
-// recordSent keeps a sent message in sent/, under its outbox name,
-// <address>.<msg_id>: its envelope as that post signed it (signed), one line
+// recordSent keeps a sent message in sent/, named <address>.<msg_id> by the
+// envelope posted: its envelope as that post signed it (signed), one line
 // of JSON as the recipient's recv delivers it, with one more member,
 // "receipt", the server's answer to that post. The client never deletes
 // from sent/.
-func (b *Box) recordSent(stem string, signed []byte, r *protocol.Receipt) error {
+func (b *Box) recordSent(stem string, signed []byte, r *protocol.Receipt) (*Sent, error) {
 	to, _, _ := strings.Cut(filepath.Base(stem), ".")
 	peer, err := protocol.ParseAddress(to)
 	if err != nil {
-		return errors.New("not an outbox entry")
+		return nil, errors.New("not an outbox entry")
 	}
 	// Read as its recipient reads it, but for its age, and written as its
 	// recipient's recv writes it: the checked fields, without the identity
 	// document.
 	env, err := protocol.OpenEnvelopeRecord(signed, b.id.Address(), peer)
 	if err != nil {
-		return errors.New("the posted envelope is not one this box made for that address")
+		return nil, errors.New("the posted envelope is not one this box made for that address")
 	}
 	env.Identity = nil
 	p, err := env.Marshal()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	receipt, err := json.Marshal(r)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// The receipt goes in as the last member.
 	if !json.Valid(p) || !bytes.HasSuffix(p, []byte("}")) {
-		return errors.New("the outbox entry's envelope is not a JSON object")
+		return nil, errors.New("the outbox entry's envelope is not a JSON object")
 	}
 	line := slices.Concat(p[:len(p)-1], []byte(`,"receipt":`), receipt, []byte("}"))
 	if !json.Valid(line) {
-		return errors.New("the outbox entry's envelope is not a JSON object")
+		return nil, errors.New("the outbox entry's envelope is not a JSON object")
 	}
 	if err := os.MkdirAll(b.path("sent"), 0o700); err != nil {
-		return err
+		return nil, err
 	}
-	return writeFile(b.path("sent", filepath.Base(stem)+".json"), escapeUnseen(line))
+	// Named, and said, by the envelope posted, never by the outbox entry's
+	// name, which nothing holds to it (#270).
+	sent := &Sent{To: peer, MsgID: env.MsgID, Receipt: *r}
+	return sent, writeFile(b.path("sent", peer.String()+"."+env.MsgID+".json"), escapeUnseen(line))
 }
 
 // undelivered moves an entry that can never be delivered to outbox/failed/,

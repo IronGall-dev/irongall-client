@@ -665,6 +665,40 @@ func TestADuplicateUnderAWrongIDIsRefusedNotAPanic(t *testing.T) {
 	}
 }
 
+// What a flush says it sent, and the name sent/ keeps, is the msg_id of the
+// envelope it posted, which its recipient gets, never the outbox entry's
+// file name, which nothing holds to the envelope (#270): an entry renamed to
+// another msg_id is sent, said and kept under its own.
+func TestASentMsgIDIsTheEnvelopes(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	says(e, protocol.CodeUnavailable, http.MethodPost, "/messages")
+	if _, err := a.Send(ctx, b.Address(), "renamed in the outbox"); err == nil {
+		t.Fatal("the post was meant to fail")
+	}
+	e.srv.SetMiddle(nil)
+	entries, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "*.P"))
+	if len(entries) != 1 {
+		t.Fatalf("%d outbox entries", len(entries))
+	}
+	own := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(entries[0]), b.Address().String()+"."), ".P")
+	other := "00000000-0000-4000-8000-000000000000"
+	if err := os.Rename(entries[0], filepath.Join(a.Dir(), "outbox", b.Address().String()+"."+other+".P")); err != nil {
+		t.Fatal(err)
+	}
+	sent, err := a.Flush(ctx)
+	if err != nil || len(sent) != 1 || sent[0].MsgID != own {
+		t.Fatalf("flush of an entry renamed: %+v, %v; want the envelope's msg_id %s", sent, err, own)
+	}
+	if !exists(filepath.Join(a.Dir(), "sent", b.Address().String()+"."+own+".json")) || exists(filepath.Join(a.Dir(), "sent", b.Address().String()+"."+other+".json")) {
+		t.Error("sent/ keeps the message under the entry's name, not its envelope's msg_id")
+	}
+	if res := receive(t, b); len(res.Delivered) != 1 || res.Delivered[0].Envelope.MsgID != own {
+		t.Errorf("its recipient got %+v", res.Delivered)
+	}
+}
+
 // throughOf is the serial a record's revocation of certificates runs
 // through, read from its statement.
 func throughOf(t *testing.T, rec *protocol.Revocations) uint64 {

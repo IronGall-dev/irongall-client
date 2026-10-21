@@ -109,11 +109,27 @@ func unmarshal(data []byte, v any, request bool) error {
 		return ErrNotBase64
 	case ok && serr.Err == jsonv2.ErrUnknownName:
 		return newUnknownMember(serr.JSONPointer.LastToken())
-	case errors.Is(err, errNotInteger):
-		return fmt.Errorf("%w: %w", ErrJSON, errNotInteger)
 	}
-	return fmt.Errorf("%w: a member is not of the type the protocol gives it", ErrJSON)
+	// A member the protocol knows that holds a value it does not take, of
+	// another JSON type or a number that is no integer of its range, is named
+	// by its name in the body: the first token of the error's JSON pointer,
+	// always a name the Go type declares, never one a sender chose
+	// (PROTOCOL.md §13; #272).
+	why := errNotOfItsType
+	if errors.Is(err, errNotInteger) {
+		why = errNotInteger
+	}
+	if serr, ok := errors.AsType[*jsonv2.SemanticError](err); ok {
+		for name := range serr.JSONPointer.Tokens() {
+			return fmt.Errorf("%w: %w: %w", ErrJSON, why, &memberError{name: name, known: true})
+		}
+	}
+	return fmt.Errorf("%w: %w", ErrJSON, why)
 }
+
+// errNotOfItsType is a member holding a value of another JSON type than the
+// one the protocol gives it.
+var errNotOfItsType = errors.New("a member is not of the type the protocol gives it")
 
 // checkJSON holds data to the rules encoding/json/v2's parser does not make
 // by itself: one object, nested at most MaxDepth deep, with no surrogate or
