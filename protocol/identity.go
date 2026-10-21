@@ -213,7 +213,7 @@ func checkEd25519(k ed25519.PublicKey) error {
 // (sshkey_ec_validate_public): each coordinate is longer than half the bits
 // of the group's order n, and below n-1. The library has already refused a
 // point that is off the curve, compressed, or written with a coordinate of
-// the field's size or more. No key made from a private key fails this.
+// the field's size or more.
 // OpenSSH dropped the two checks in 10.3p1 as not needed; they stay here,
 // and a script on a later OpenSSH takes such a key, a known variance
 // (PROTOCOL.md §3).

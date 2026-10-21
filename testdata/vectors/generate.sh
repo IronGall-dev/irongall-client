@@ -344,8 +344,8 @@ identity_doc c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a > 
 identity_doc c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa > identity/small-order-8d.doc
 identity_doc eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f > identity/small-order-non-canonical.doc # y = p + 1
 # The same for the P-256 type. With p the field's size and n the group's order: a point is 04, x, y, and the protocol
-# refuses a coordinate of 128 bits or fewer, or of n - 1 or more, which no key made from a private key has. OpenSSH
-# refused those up to 10.2p1 and takes them from 10.3p1.
+# refuses a coordinate of 128 bits or fewer, or of n - 1 or more. OpenSSH refused those up to 10.2p1 and takes them
+# from 10.3p1.
 GOOD_C=$(sed -n 2p c/identity.doc); X=${POINT:0:64}; Y=${POINT:64}
 Y5=459243b9aa581806fe913bce99817ade11ca503c64d9a3c533415c083248fbcc # a square root of 5^3 - 3*5 + b mod p: (5, Y5) is on the curve
 printf 'irongall-v1\n%s comment\n' "$GOOD_C" > identity/p256-comment.doc

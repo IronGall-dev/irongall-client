@@ -1831,7 +1831,7 @@ func TestTheScriptFollowsNoRedirect(t *testing.T) {
 }
 
 // Every other call the script makes is held to it too, for each status a
-// redirect has (PROTOCOL.md §11): the read of a recipient before a send and
+// redirect has (PROTOCOL.md §0, Transport): the read of a recipient before a send and
 // the post itself, which post nothing anywhere and keep nothing.
 func TestNoCallOfTheScriptFollowsARedirect(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)

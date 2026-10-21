@@ -21,9 +21,11 @@
 # shell, so all state lives in files in the box's directory, never in variables.
 #
 # It gives up conveniences the Go client has: recv drains once and never waits for mail, and each step runs several
-# programs. Needs bash >= 4, age >= 1.3 (1.2 makes and reaches --no-pq boxes only), OpenSSH
-# >= 9.1, curl >= 7.84, jq >= 1.7.1 (1.7.0 can abort on a number a sender writes, CVE-2023-50246; Ubuntu 24.04's
-# fixed jq prints jq-1.7), iconv, and coreutils (sha256sum, base64, od, sync).
+# programs. Needs bash >= 4, age >= 1.3 (1.2 makes and reaches --no-pq boxes only; Ubuntu to 26.04 and Debian 13
+# ship older, and go install filippo.io/age/cmd/...@v1.3.2 is current), OpenSSH >= 9.1 (the first to take a
+# certificate's validity and a time to verify at in UTC), curl >= 7.84 (--fail-with-body, and -w with %header),
+# jq >= 1.7.1 (1.7.0 can abort on a number a sender writes, CVE-2023-50246; Ubuntu 24.04's fixed jq prints jq-1.7),
+# iconv, and coreutils (sha256sum, base64, od, sync). Dates go through jq, never date -d, and base64 is never -w0.
 
 # recipe: setup
 set -o pipefail; umask 077

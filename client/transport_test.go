@@ -71,7 +71,7 @@ func isRedirect(err error, status int) bool {
 }
 
 // redirects are the statuses of a redirect, each of which a client is held
-// to, from every call it makes (PROTOCOL.md §11).
+// to, from every call it makes (PROTOCOL.md §0, Transport).
 var redirects = []int{http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect}
 
 // A redirect from a box's list, to another port of the same host, which Go's
