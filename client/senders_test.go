@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -334,5 +335,91 @@ func TestRebuildAllowed(t *testing.T) {
 	}
 	if n, err := b.RebuildAllowed(); err != nil || n != 0 {
 		t.Fatalf("a second rebuild: %d, %v", n, err)
+	}
+}
+
+// A sender the box blocks is never allowed: allow is refused, naming the
+// block, and its held mail stays where it is (#179).
+func TestAllowingABlockedSenderDoesNothing(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a, b := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+	send(t, a, b, "held, then its sender blocked by hand")
+	if res := receive(t, b); len(res.Held) != 1 {
+		t.Fatalf("held %d", len(res.Held))
+	}
+	if err := os.WriteFile(filepath.Join(b.Dir(), "blocked"), []byte(a.Address().String()+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	moved, err := b.Allow(ctx, a.Address())
+	inbox, _ := filepath.Glob(filepath.Join(b.Dir(), "inbox", "*.json"))
+	held, _ := filepath.Glob(filepath.Join(b.Dir(), "held", "*.json"))
+	allowed, _ := b.Allowed()
+	if err == nil || !strings.Contains(err.Error(), "is blocked") || len(moved) != 0 || len(inbox) != 0 || len(held) != 1 || slices.Contains(allowed, a.Address()) {
+		t.Fatalf("allow of a blocked sender: %v, moved %d, inbox %d, held %d, allowed %v", err, len(moved), len(inbox), len(held), allowed)
+	}
+}
+
+// A send waits for the box's ACL only when the one its server last took would
+// refuse the reply (#180): with none taken the server refuses no sender, so
+// the send posts and says the ACL was not taken; with one taken under server
+// allowed, a send to a peer it does not allow waits.
+func TestASendWaitsOnTheACLOnlyWhenTheReplyWouldBeRefused(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a, b, c, d := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+	refuseACL := func() {
+		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/acl") {
+				code := protocol.CodeTooLarge
+				fakeserver.WriteJSON(w, code.Status(), protocol.Problem{Type: code.TypeURI(), Code: code, Status: int64(code.Status())})
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+	refuseACL()
+	if _, err := b.Block(ctx, c.Address()); err == nil {
+		t.Fatal("the server took the ACL it refuses")
+	}
+	s, err := b.Send(ctx, a.Address(), "to a peer, with no ACL taken")
+	if err != nil || s.ACLErr == nil || e.srv.Count(a.Address()) != 1 {
+		t.Fatalf("a send with the ACL refused and none taken: %+v, %v; posted %d", s, err, e.srv.Count(a.Address()))
+	}
+	e.srv.SetMiddle(nil)
+	if err := b.SetPolicy(client.Policy{Unknown: client.LandHeld, Server: client.AdmitAllowed}); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.SyncACL(ctx); err != nil || !e.srv.ACL(b.Address()).Allow.Has(a.Address()) {
+		t.Fatalf("the ACL under server allowed: %v", err)
+	}
+	refuseACL()
+	if _, err := b.Send(ctx, d.Address(), "to a peer the ACL taken does not allow"); err == nil || e.srv.Count(d.Address()) != 0 {
+		t.Fatalf("a send whose reply the ACL taken would refuse: %v; posted %d", err, e.srv.Count(d.Address()))
+	}
+}
+
+// A line of the box's address lists that starts with "#" is a comment, as in
+// its policy file: it stops no drain and no send (#181). One after an address
+// on its line is still no address.
+func TestACommentInTheAddressListsStopsNothing(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a, b := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+	send(t, a, b, "waiting")
+	if err := os.WriteFile(filepath.Join(b.Dir(), "blocked"), []byte("# senders of spam, 2026-10\n\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Receive(ctx); err != nil {
+		t.Fatalf("recv with a comment in blocked: %v", err)
+	}
+	if _, err := b.Send(ctx, a.Address(), "an answer"); err != nil {
+		t.Fatalf("send with a comment in blocked: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(b.Dir(), "blocked"), []byte(a.Address().String()+" # spam\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Blocked(); err == nil {
+		t.Fatal("an address with a comment after it was read as an address")
 	}
 }

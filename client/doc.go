@@ -18,7 +18,7 @@
 //	outbox/, outbox/failed/    envelopes awaiting a receipt, sealed afresh at every post and never kept sealed; ones that can never be delivered
 //	inbox/, quarantine/        accepted mail; refused mail, never delivered, as served, each of the server's strings in base64 that is not of its form (keepRefused): why it was refused, and what the checks established when they judged it, are in state
 //	held/                      accepted mail from senders this box has not allowed, as inbox/ keeps it: allow moves a sender's to inbox/, block deletes it
-//	allowed, blocked           the senders whose mail lands in inbox/, and those whose mail is dropped: one address to a line. send, alias and allow add to allowed, block to blocked; both are yours to edit
+//	allowed, blocked           the senders whose mail lands in inbox/, and those whose mail is dropped: one address to a line, blank lines and lines starting with # skipped. send, alias and allow add to allowed, block to blocked; both are yours to edit
 //	policy                     where mail from a sender not allowed lands ("unknown held", the default, or "unknown inbox"), and whom the server takes mail from ("server all", the default, or "server allowed"). Yours to write
 //	sent/                      sent mail the server took: each envelope with the server's receipt
 //	aliases                    this box's own names for peers: "<name> <address>" lines

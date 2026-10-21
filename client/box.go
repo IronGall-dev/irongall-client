@@ -359,8 +359,19 @@ func (b *Box) publish(ctx context.Context, path string, req any, n uint64) (take
 // makeDirs makes the box's directories that are missing, its .gitignore and
 // its state file.
 func (b *Box) makeDirs() error {
+	made := false
 	for _, d := range []string{"work", "prekeys", "inbox", "held", "quarantine", "outbox", "sent"} {
+		if _, err := os.Stat(b.path(d)); err == nil {
+			continue
+		}
 		if err := os.MkdirAll(b.path(d), 0o700); err != nil {
+			return err
+		}
+		made = true
+	}
+	// A new directory is there after a crash only once its parent is synced.
+	if made {
+		if err := syncDir(b.dir); err != nil {
 			return err
 		}
 	}

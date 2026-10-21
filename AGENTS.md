@@ -171,7 +171,8 @@ The client holds; the server's ACL refuses (`protocol/acl.go`, `client/senders.g
 - **`held/` is not `quarantine/`:** quarantine holds mail that failed a check, held holds mail that passed from a sender the box has not allowed. Keep the two words and directories apart.
 - **A policy, `allowed` or `blocked` file that cannot be read stops a drain and a send** (`readSenders`), and is never read as the default.
 - 🛑 **An ACL always says whom it lets in:** `Document` writes both lists, an empty one as `[]`, and `CheckACL` refuses one with no `allow`. Never let a writer drop an empty `allow`: under the form first proposed, that read as everyone.
-- **Under `server allowed`, the ACL goes before the post** (`SendWith`, `Flush`): a reply the server refuses for it is final. `sender_not_allowed` is in `undeliverable` and in the script's list.
+- **The ACL goes before the post when it changed, and a post waits for it only when the ACL the server last took does not admit the reply** (`SendWith`, `Flush`, `replyWaits`; decided on #180): a reply the server refuses for it is final, and one it takes is posted, with `acl_not_sent` said, as `recv` says it. `sender_not_allowed` is in `undeliverable` and in the script's list.
+- **The owner's lists are read by one reader** (`addresses`): blank lines and lines starting with `#` are skipped, as in `policy` (#181), and blocking wins: `peer allow` of a sender `blocked` names does nothing (#179).
 - **Tests:** `env.box` lands every sender's mail, since most tests are of what comes before landing; a test of where mail lands makes its boxes with `heldBox`. `sh/sh_test.go` (`landAll`), the server's tests and its `test/interop.sh` (`gocli`) do the same.
 
 ### What a box prints

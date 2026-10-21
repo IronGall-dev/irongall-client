@@ -110,7 +110,9 @@ func (b *Box) SetPolicy(p Policy) error {
 }
 
 // addresses reads one of the box's address lists, allowed or blocked: an
-// address to a line, blank lines skipped. Any other line is an error.
+// address to a line, with blank lines and lines starting with "#" skipped,
+// as the policy file's are and OpenSSH's list files' (#181). Any other line
+// is an error, a "#" after an address on its line among them.
 func (b *Box) addresses(name string) ([]protocol.Address, error) {
 	data, err := os.ReadFile(b.path(name))
 	if errors.Is(err, fs.ErrNotExist) {
@@ -122,7 +124,7 @@ func (b *Box) addresses(name string) ([]protocol.Address, error) {
 	var out []protocol.Address
 	for i, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" {
+		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
 		a, err := protocol.ParseAddress(line)
@@ -135,8 +137,10 @@ func (b *Box) addresses(name string) ([]protocol.Address, error) {
 }
 
 // addTo adds an address to one of the box's address lists, unless it is
-// there, and reports whether it added it. It appends a line, so two
-// commands adding at once each keep theirs.
+// there, and reports whether it added it: a line after what the file holds,
+// the whole file written beside it and moved into place (writeFile), so a
+// crash leaves the list as it was or with the line, never a line cut short,
+// which would stop every drain and send until it was put right.
 func (b *Box) addTo(name string, a protocol.Address) (bool, error) {
 	have, err := b.addresses(name)
 	if err != nil || slices.Contains(have, a) {
@@ -146,29 +150,10 @@ func (b *Box) addTo(name string, a protocol.Address) (bool, error) {
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return false, err
 	}
-	line := a.String() + "\n"
 	if len(data) > 0 && data[len(data)-1] != '\n' {
-		line = "\n" + line // a line someone wrote without its end
+		data = append(data, '\n') // a line someone wrote without its end
 	}
-	f, err := os.OpenFile(b.path(name), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
-	if err != nil {
-		return false, err
-	}
-	if _, err := f.WriteString(line); err != nil {
-		f.Close() //nolint:errcheck,gosec // the write error wins
-		return false, err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close() //nolint:errcheck,gosec // the sync error wins
-		return false, err
-	}
-	if err := f.Close(); err != nil {
-		return false, err
-	}
-	if data == nil {
-		return true, syncDir(b.dir) // a new file is durable only once its directory entry is
-	}
-	return true, nil
+	return true, writeFile(b.path(name), append(data, a.String()+"\n"...))
 }
 
 // Allowed returns the senders whose mail lands in inbox/ whatever the
@@ -320,7 +305,8 @@ func (b *Box) HeldMail() ([]HeldSender, error) {
 }
 
 // Allow allows a sender: its mail lands in inbox/ from now on, whatever the
-// policy says, and what held/ keeps from it moves there. The moved messages
+// policy says, and what held/ keeps from it moves there. A sender the box
+// blocks is refused, with nothing done: blocking wins. The moved messages
 // are returned as Receive delivers them, oldest first, but for Plaintext and
 // Signature, which the box never kept. Then the server is
 // sent the box's ACL, if the change is one it holds ([Box.SyncACL]): an
@@ -336,6 +322,15 @@ func (b *Box) Allow(ctx context.Context, a protocol.Address) ([]Delivery, error)
 }
 
 func (b *Box) allow(a protocol.Address) ([]Delivery, error) {
+	// Blocking wins: allowing a sender the box blocks would move its mail to
+	// inbox/ while its later mail is dropped, so nothing is done (#179).
+	blocked, err := b.Blocked()
+	if err != nil {
+		return nil, err
+	}
+	if slices.Contains(blocked, a) {
+		return nil, refuse("%s is blocked, and blocking wins, so nothing is allowed or moved: delete its line in %s first", a, b.path("blocked"))
+	}
 	if _, err := b.addTo("allowed", a); err != nil {
 		return nil, err
 	}

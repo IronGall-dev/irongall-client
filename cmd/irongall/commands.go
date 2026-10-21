@@ -177,7 +177,10 @@ twice in an object among them, is refused, and nothing is sent.`,
 			if err != nil {
 				return err
 			}
-			return e.out(sent(s))
+			if err := e.out(sent(s)); err != nil {
+				return err
+			}
+			return e.aclNotSent(s.ACLErr)
 		})
 	// curl's --json posts what it is given with no check that it is JSON; this
 	// one holds the body to its reader's rules first, so a name given twice is
@@ -630,13 +633,30 @@ does. One that can never be delivered moves to outbox/failed/.`,
 				return err
 			}
 			ss, err := b.Flush(c.Context())
+			var aclErr error
 			for _, s := range ss {
 				if werr := e.out(sent(s)); werr != nil && err == nil {
 					err = werr
 				}
+				aclErr = s.ACLErr
 			}
-			return err
+			if err != nil {
+				return err
+			}
+			return e.aclNotSent(aclErr)
 		})
+}
+
+// aclNotSent says that a post went ahead though the box's ACL was not taken,
+// since the one its server last took admits the reply: the box needs a look.
+func (e *cli) aclNotSent(err error) error {
+	if err == nil {
+		return nil
+	}
+	if werr := e.out(line("acl_not_sent", failure(fmt.Errorf("this box's ACL has changed and was not sent to its server, which still takes the reply under the one it last took: the next send or recv sends it, and irongall status says whether it went through: %w", err))...)); werr != nil {
+		return werr
+	}
+	return &needsALook{}
 }
 
 // keyType is the prekey type --no-pq or --pq asks for, and none for neither:

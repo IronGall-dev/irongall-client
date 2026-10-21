@@ -54,6 +54,11 @@ type Sent struct {
 	To    protocol.Address
 	MsgID string
 	protocol.Receipt
+	// ACLErr is why the box's ACL, changed since its server last took one,
+	// was not sent ([Box.SyncACL]): the post went ahead, since the ACL the
+	// server last took admits the recipient's reply. The next send or recv
+	// sends it.
+	ACLErr error
 }
 
 // Send sends one logical message with none of the optional fields: see
@@ -71,9 +76,12 @@ func (b *Box) Send(ctx context.Context, to protocol.Address, body string) (*Sent
 // Once the server has it, the envelope and the server's receipt are kept in
 // sent/.
 //
-// Writing to a peer allows it: its replies land in inbox/, and under
-// "server allowed" the box's server is sent the box's ACL with it before
-// anything is posted ([Box.SyncACL]), so that the reply is not refused.
+// Writing to a peer allows it: its replies land in inbox/, and the box's
+// server is sent the box's ACL, when it changed, before anything is posted
+// ([Box.SyncACL]). One the server does not take holds the message in the
+// outbox only when the ACL it last took does not admit the peer's reply,
+// which it would refuse for good; otherwise the message is posted, and
+// Sent.ACLErr says why the ACL was not taken (#180).
 //
 // Before anything is posted the server is asked what it holds about the
 // peer: a revocation of its address, or of its certificates.
@@ -144,10 +152,37 @@ func (b *Box) sendWith(ctx context.Context, to protocol.Address, env *protocol.E
 	if err := writeFile(stem+".P", p); err != nil {
 		return nil, err
 	}
-	if err := b.syncACL(ctx); err != nil {
+	aclErr := b.syncACL(ctx)
+	if err := b.replyWaits(to, aclErr); err != nil {
 		return nil, fmt.Errorf("%w: nothing is posted, so that no reply is refused; kept in the outbox, irongall outbox flush sends it", err)
 	}
-	return b.post(ctx, to, stem, newLookups())
+	s, err := b.post(ctx, to, stem, newLookups())
+	if s != nil {
+		s.ACLErr = aclErr
+	}
+	return s, err
+}
+
+// replyWaits is why a message to peer waits in the outbox when the box's ACL
+// was not taken (aclErr): the box's own lists cannot be read, which stops a
+// post as it stops a drain, or the ACL the server last took, or the none it
+// holds before one, does not admit the peer's reply, which it would refuse.
+// It is nil when the reply is admitted, or the ACL was taken.
+func (b *Box) replyWaits(peer protocol.Address, aclErr error) error {
+	if aclErr == nil {
+		return nil
+	}
+	if _, err := b.readSenders(); err != nil {
+		return err
+	}
+	took, err := b.tookACL()
+	if err != nil {
+		return errors.Join(aclErr, err)
+	}
+	if !took.Admits(peer) {
+		return aclErr
+	}
+	return nil
 }
 
 // Flush posts again every message still in the outbox, each sealed afresh
@@ -181,10 +216,9 @@ func (b *Box) flush(ctx context.Context) ([]*Sent, error) {
 		}
 		return nil, errors.Join(errs...)
 	}
+	var aclErr error
 	if len(names) > 0 {
-		if err := b.syncACL(ctx); err != nil {
-			return nil, fmt.Errorf("%w: nothing is posted, so that no reply is refused", err)
-		}
+		aclErr = b.syncACL(ctx)
 	}
 	var sent []*Sent
 	var errs []error
@@ -201,11 +235,16 @@ func (b *Box) flush(ctx context.Context) ([]*Sent, error) {
 			errs = append(errs, fmt.Errorf("%s: not an outbox entry", filepath.Base(n)))
 			continue
 		}
+		if err := b.replyWaits(peer, aclErr); err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w: nothing is posted, so that no reply is refused", filepath.Base(stem), err))
+			continue
+		}
 		s, err := b.post(ctx, peer, stem, asked)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", filepath.Base(stem), err))
 			continue
 		}
+		s.ACLErr = aclErr
 		sent = append(sent, s)
 	}
 	return sent, errors.Join(errs...)
@@ -378,7 +417,8 @@ func (b *Box) sentAt(stem string) (time.Time, bool) {
 }
 
 // moveToFailed moves an outbox entry's files to outbox/failed/, where flush
-// no longer sees them. Delete them there to drop the message.
+// no longer sees them, and syncs both directories, the one it left and the
+// one it is in. Delete them there to drop the message.
 func (b *Box) moveToFailed(stem string) error {
 	failed := b.path("outbox", "failed")
 	if err := os.MkdirAll(failed, 0o700); err != nil {
@@ -388,7 +428,10 @@ func (b *Box) moveToFailed(stem string) error {
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	return syncDir(failed)
+	if err := syncDir(failed); err != nil {
+		return err
+	}
+	return syncDir(filepath.Dir(stem))
 }
 
 // sealed is a seal made for one post: the ciphertext, the whole body of the
