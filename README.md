@@ -192,10 +192,10 @@ Cloudflare terminates TLS for irongall.dev today, so it can do the same. Neither
 ```sh
 go test -count=1 -timeout 20m ./...             # everything, with no server and no network
 go test ./client -run TestForgeries -v          # the forgeries, one by one
-go test -count=1 ./sh -v                        # the stock-tools client (sh/test.sh <empty dir> runs without Go)
+go test -count=1 ./sh -v                        # the stock-tools client
 ```
 
-**An `ok` for `./sh` does not say the script was tested.** Its tests need bash, ssh-keygen, curl, jq, bc, iconv and coreutils, and skip naming the one missing: `go test ./sh -v` shows a `SKIP` line. Where the local age is older than 1.3, they build the one `go.mod` names (`go tool age`); `sh/test.sh` run by hand then tests `--no-pq` boxes only, and says so.
+**An `ok` for `./sh` does not say the script was tested.** Its tests need bash, ssh-keygen, curl, jq, iconv and coreutils, and skip naming the one missing: `go test ./sh -v` shows a `SKIP` line. Where the local age is older than 1.3, they build the one `go.mod` names (`go tool age`).
 
 **What each test holds, claim by claim, is `SECURITY.md` § Checking the claims yourself.**
 

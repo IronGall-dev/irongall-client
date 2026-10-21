@@ -1,6 +1,7 @@
-// Package sh_test runs irongall.sh, the stock-tools client, from go test: its
-// forging-server test (test.sh), its verdicts on the test vectors against the
-// Go client's, and the two clients exchanging mail.
+// Package sh_test runs irongall.sh, the stock-tools client, from go test:
+// against the fake server, which a test makes forge, a shell per command
+// (world_test.go); its verdicts on the test vectors against the Go client's;
+// and the two clients exchanging mail.
 package sh_test
 
 import (
@@ -135,24 +136,6 @@ func bash(t *testing.T, env []string, commands string) (string, error) {
 		err = fmt.Errorf("%w: %s", err, strings.TrimSpace(errs.String()))
 	}
 	return out.String(), err
-}
-
-// The forging-server test: irongall.sh against test.sh's in-shell fake.
-func TestScript(t *testing.T) {
-	need(t, append(scriptTools, "bc")...) // test.sh sums with bc
-	cmd := exec.Command("bash", "test.sh", t.TempDir())
-	cmd.Env = append(os.Environ(), "KEYTYPE=pq")
-	out, err := cmd.CombinedOutput()
-	if err != nil || !bytes.Contains(out, []byte(" PASS, 0 FAIL")) {
-		t.Fatalf("test.sh: %v\n%s", err, out)
-	}
-	// What ran, for go test -v: test.sh's mode line, then its count.
-	for l := range strings.Lines(string(out)) {
-		if strings.HasPrefix(l, "mode: ") {
-			t.Log(strings.TrimSpace(l))
-		}
-	}
-	t.Logf("%s", out[bytes.LastIndex(out, []byte("--- ")):])
 }
 
 // vectorNow is the vectors' now, as ig_now gives it.
