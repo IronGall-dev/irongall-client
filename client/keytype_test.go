@@ -106,7 +106,7 @@ func TestMailFromAnIdentityOfAnUnknownType(t *testing.T) {
 			t.Errorf("%s: %s: %s, want %s", r.ID, r.Code, r.Reason, want[r.ID])
 		}
 	}
-	if exists(filepath.Join(b.Dir(), "peers", addr.String())) {
+	if pinnedPeer(b, addr) {
 		t.Error("an identity nothing was verified under was pinned")
 	}
 }
@@ -138,7 +138,7 @@ func TestSendToAnIdentityOfAnUnknownType(t *testing.T) {
 	if strings.Contains(refused.Reason, "IGNORE") || strings.Contains(refused.Reason, "no-such") {
 		t.Errorf("the refusal quotes the document: %s", refused.Reason)
 	}
-	if posted || exists(filepath.Join(a.Dir(), "peers", addr.String())) {
+	if posted || pinnedPeer(a, addr) {
 		t.Error("something was posted, or the identity was pinned")
 	}
 }
@@ -180,8 +180,20 @@ func TestSendToAPrekeyOfATypeThisClientLacks(t *testing.T) {
 	if !errors.As(err, &refused) || refused.Code != client.RefusedPrekeyType || !strings.Contains(refused.Reason, "a type this client cannot encrypt to") {
 		t.Fatalf("send: %v", err)
 	}
-	if strings.Contains(refused.Reason, "nosuchtype") || posted || exists(filepath.Join(a.Dir(), "peers", b.Address().String())) {
+	if strings.Contains(refused.Reason, "nosuchtype") || posted || pinnedPeer(a, b.Address()) {
 		t.Errorf("the refusal quotes the key, something was posted, or the peer was pinned: %s", refused.Reason)
+	}
+	// The type is the last thing a statement is held to (#167): one that has
+	// expired is refused for that, whatever its key's type.
+	lines[4] = e.clock.Now().Add(-time.Hour).UTC().Format(protocol.TimeLayout)
+	expired := []byte(strings.Join(lines, "\n"))
+	statement, sig = expired, nil
+	if sig, err = protocol.Sign(worker(t, b), expired, protocol.PrekeyNamespace(b.Address())); err != nil {
+		t.Fatal(err)
+	}
+	_, err = a.Send(context.Background(), b.Address(), "hello")
+	if !errors.As(err, &refused) || refused.Code != "" || !strings.Contains(refused.Reason, "has expired") {
+		t.Fatalf("an expired statement of a type this client lacks: %v", err)
 	}
 	// The same statement, signed by another box, does not verify: that is
 	// what it is refused as.

@@ -73,11 +73,10 @@ func (b *Box) resolve(ctx context.Context, peer protocol.Address, l *lookups) (*
 		return nil, nil, refuse("%s's prekey: %v, by this machine's clock: a certificate starts an hour before it is made, so check the clock", peer, err)
 	}
 	// A well-formed recipient of a type this client lacks is a statement good
-	// in every other way: its own code, never one that does not verify.
-	if errors.Is(err, protocol.ErrPrekeyType) {
-		return nil, nil, &RefusedError{Code: RefusedPrekeyType, Reason: fmt.Sprintf("%s's prekey is an age recipient of a type this client cannot encrypt to, so nothing is sent", peer)}
-	}
-	if err != nil {
+	// in every other way, and is held to every other rule here before it is
+	// refused with its own code, never as one that does not verify (#167).
+	typeErr := errors.Is(err, protocol.ErrPrekeyType)
+	if err != nil && !typeErr {
 		return nil, nil, refuse("%s's prekey: %v", peer, err)
 	}
 	var seen, seenCert uint64
@@ -106,6 +105,9 @@ func (b *Box) resolve(ctx context.Context, peer protocol.Address, l *lookups) (*
 	}
 	if p.Expired(b.now()) {
 		return nil, nil, refuse("%s's prekey has expired: its owner must publish a new one", peer)
+	}
+	if typeErr {
+		return nil, nil, &RefusedError{Code: RefusedPrekeyType, Reason: fmt.Sprintf("%s's prekey is an age recipient of a type this client cannot encrypt to, so nothing is sent", peer)}
 	}
 	// Whether the peer can verify this box is the one thing here that
 	// nothing signs: the server says what the peer declared. A server that

@@ -249,6 +249,12 @@ func statement(t *testing.T, b *client.Box, n uint64, part string) []byte {
 	return v
 }
 
+// pinnedPeer reports whether box b keeps a record of peer: it pinned the
+// peer's identity, as it does once something the peer signed verified.
+func pinnedPeer(b *client.Box, peer protocol.Address) bool {
+	return has(b, "peers/"+peer.String()+"/identity.doc")
+}
+
 // has reports whether the box's state keeps a record (stateOf).
 func has(b *client.Box, name string) bool { _, ok := stateOf(b, name); return ok }
 

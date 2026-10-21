@@ -150,7 +150,7 @@ func TestAnETagOfAnotherFormIsNotKept(t *testing.T) {
 			next.ServeHTTP(w, r)
 		})
 		receive(t, b)
-		if exists(filepath.Join(b.Dir(), "etag")) {
+		if has(b, "etag") {
 			t.Errorf("the ETag %q was kept", bad)
 		}
 	}

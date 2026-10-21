@@ -249,7 +249,9 @@ func bech32HRP(s string) (string, bool) {
 // statement must name id's own address; and it must not outlive the
 // certificate it is signed under. It returns the certificate too: whoever
 // keeps the highest serial it has seen for the box compares. The key's type
-// is checked last, so ErrPrekeyType is a statement good in every other way.
+// is checked last, so ErrPrekeyType is a statement good in every other way,
+// and comes with the statement and its certificate, for a caller to hold to
+// its own rules first (#167).
 func VerifyPrekey(id *Identity, statement, signature []byte, now time.Time) (*Prekey, *Certificate, error) {
 	cert, err := VerifyCertified(id, statement, signature, PrekeyNamespace(id.Address()), now)
 	switch {
@@ -273,7 +275,9 @@ func VerifyPrekey(id *Identity, statement, signature []byte, now time.Time) (*Pr
 	if p.NotAfter.After(cert.NotAfter()) {
 		return nil, nil, errors.New("the prekey statement outlives the certificate it is signed under")
 	}
-	if err := checkRecipient(p); err != nil {
+	if err := checkRecipient(p); errors.Is(err, ErrPrekeyType) {
+		return p, cert, err
+	} else if err != nil {
 		return nil, nil, err
 	}
 	return p, cert, nil

@@ -79,7 +79,7 @@ func TestForgeries(t *testing.T) {
 		if e.srv.Count(b.Address()) != 0 {
 			t.Fatal("refused mail was not acked")
 		}
-		if exists(filepath.Join(b.Dir(), "peers", c.Address().String())) {
+		if pinnedPeer(b, c.Address()) {
 			t.Fatal("the box the server named was pinned")
 		}
 	})
@@ -90,8 +90,11 @@ func TestForgeries(t *testing.T) {
 		send(t, a, b, "hi")
 		relabel(e, a.Address().String(), "../../"+strings.Repeat("x", 58))
 		refusedFor(t, receive(t, b), protocol.RefusedAttribution, "another box than the one that signed")
-		if names, _ := filepath.Glob(filepath.Join(b.Dir(), "peers", "*")); len(names) != 0 {
-			t.Fatalf("something was kept under peers/: %v", names)
+		all, _ := client.RecordsAt(b.Dir())
+		for name := range all {
+			if strings.HasPrefix(name, "peers/") {
+				t.Fatalf("a peer was kept: %s", name)
+			}
 		}
 	})
 
@@ -112,7 +115,7 @@ func TestForgeries(t *testing.T) {
 		line := e.line(a.Identity().Document(), a.Address(), b.Address(), "from A, says the forger")
 		e.seal(b, a.Address(), line, forge.Sign(t, worker(t, o), line, b.Address()))
 		refusedFor(t, receive(t, b), protocol.RefusedSignature, "not signed under a certificate of the sender's identity")
-		if exists(filepath.Join(b.Dir(), "peers", a.Address().String())) {
+		if pinnedPeer(b, a.Address()) {
 			t.Fatal("a sender whose signature did not verify was pinned")
 		}
 	})
@@ -137,7 +140,7 @@ func TestForgeries(t *testing.T) {
 		if in, _ := os.ReadFile(filepath.Join(b.Dir(), "inbox", d.ID+".json")); !bytes.Equal(in, d.Line) {
 			t.Fatal("inbox/ does not hold the checked line")
 		}
-		if exists(filepath.Join(b.Dir(), "peers", c.Address().String())) {
+		if pinnedPeer(b, c.Address()) {
 			t.Fatal("the sender hidden after the signature was pinned")
 		}
 	})
@@ -156,7 +159,7 @@ func TestForgeries(t *testing.T) {
 		if _, err := a.Send(ctx, b.Address(), "secret"); err == nil || !strings.Contains(err.Error(), "does not hash") {
 			t.Fatalf("send: %v, want a refusal of the identity", err)
 		}
-		if exists(filepath.Join(a.Dir(), "peers", b.Address().String())) {
+		if pinnedPeer(a, b.Address()) {
 			t.Fatal("a forged identity was pinned")
 		}
 	})
@@ -179,7 +182,7 @@ func TestForgeries(t *testing.T) {
 		if e.srv.Count(b.Address()) != 0 {
 			t.Fatal("something was sent")
 		}
-		if exists(filepath.Join(a.Dir(), "peers", b.Address().String())) {
+		if pinnedPeer(a, b.Address()) {
 			t.Fatal("a peer whose prekey did not verify was pinned")
 		}
 	})
