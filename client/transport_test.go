@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -133,81 +132,21 @@ func TestNoCallOfABoxFollowsARedirect(t *testing.T) {
 	}
 }
 
-// A revocation server that redirects is a revocation server that gave no
-// answer: the lookup, which names the address asked about, goes nowhere
-// else, and the send goes on.
-func TestARevocationServersRedirectIsNoAnswer(t *testing.T) {
-	ctx := context.Background()
-	for _, status := range redirects {
-		e := newEnv(t)
-		rs := newRevServer(t)
-		x := newElsewhere(t)
-		rs.set(func(w http.ResponseWriter, r *http.Request) bool {
-			http.Redirect(w, r, x.URL+r.URL.RequestURI(), status)
-			return true
-		})
-		opt := e.opts()
-		opt.RevocationServers = []string{rs.URL}
-		var silent []error
-		opt.NoAnswer = func(_ string, err error) { silent = append(silent, err) }
-		a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
-		if err != nil {
-			t.Fatal(err)
-		}
-		landAll(t, a)
-		r := e.box(protocol.Classic)
-		if _, err := a.Send(ctx, r.Address(), "posted"); err != nil {
-			t.Fatalf("a send whose revocation server answers %d: %v", status, err)
-		}
-		if len(silent) == 0 || !isRedirect(silent[0], status) {
-			t.Fatalf("what the box was told of the revocation server's %d: %v", status, silent)
-		}
-		if got := x.reached(); len(got) != 0 {
-			t.Fatalf("the revocation server's %d was followed: %q", status, got)
-		}
-	}
-}
-
-// A record a server redirects is not taken there, from the box's own server
-// and from a revocation server: the owner is told which did not take it, and
-// the record goes nowhere else.
+// A record the box's server redirects is not taken there: the owner is told,
+// and the record goes nowhere else.
 func TestARedirectedPublishIsNotTaken(t *testing.T) {
 	ctx := context.Background()
 	for _, status := range redirects {
 		e := newEnv(t)
-		rs := newRevServer(t)
 		x := newElsewhere(t)
-		toX := func(w http.ResponseWriter, r *http.Request) bool {
-			if r.Method != http.MethodPut {
-				return false
-			}
-			http.Redirect(w, r, x.URL+r.URL.RequestURI(), status)
-			return true
-		}
-
-		// The revocation server redirects; the box's own server takes it.
-		b := e.boxWith(e.listing(rs.URL))
+		b := e.box(protocol.Classic)
 		rec, err := b.Revocation()
 		if err != nil {
 			t.Fatal(err)
 		}
-		rs.set(toX)
-		_, err = b.Revoke(ctx, rec)
-		var part *client.NotPublishedError
-		if !errors.As(err, &part) || !slices.Equal(part.Took, []string{e.srv.URL}) || len(part.Failed) != 1 || part.Failed[0].Server != rs.URL || !isRedirect(err, status) {
-			t.Fatalf("%d from the revocation server: %v", status, err)
-		}
-
-		// The box's own server redirects; the revocation server takes it.
-		rs.set(nil)
-		b = e.boxWith(e.listing(rs.URL))
-		if rec, err = b.Revocation(); err != nil {
-			t.Fatal(err)
-		}
 		redirect(e, status, x.URL, http.MethodPut, func(p string) bool { return strings.HasSuffix(p, "/revocations") })
-		_, err = b.Revoke(ctx, rec)
-		if !errors.As(err, &part) || !slices.Equal(part.Took, []string{rs.URL}) || len(part.Failed) != 1 || part.Failed[0].Server != e.srv.URL || !isRedirect(err, status) {
-			t.Fatalf("%d from the box's own server: %v", status, err)
+		if _, err := b.Revoke(ctx, rec); !isRedirect(err, status) {
+			t.Fatalf("%d from the box's server: %v", status, err)
 		}
 		if got := x.reached(); len(got) != 0 {
 			t.Fatalf("a publish's %d was followed: %q", status, got)
@@ -231,8 +170,7 @@ func (rt *recorder) RoundTrip(*http.Request) (*http.Response, error) {
 
 // A server's URL is https, or http only on this machine. Any other is
 // refused before anything is sent or made: no request, and no box
-// directory. The box's own server and a revocation server are held to the
-// one rule.
+// directory.
 func TestAServerIsCalledOverHTTPSOrOnThisMachine(t *testing.T) {
 	ctx := context.Background()
 	const refusal = "is not a server this client calls"
@@ -276,24 +214,6 @@ func TestAServerIsCalledOverHTTPSOrOnThisMachine(t *testing.T) {
 		_, err := client.Init(ctx, t.TempDir(), client.Options{Base: u, HTTPClient: &http.Client{Transport: rt}}, protocol.Classic)
 		if err == nil || strings.Contains(err.Error(), refusal) || rt.n == 0 {
 			t.Errorf("%q: Init made %d requests: %v", u, rt.n, err)
-		}
-	}
-	// The revocation servers, whether Options or a list names them.
-	for _, s := range []string{"http://example.com", "http://irongall:8080", "http://localhost:8080"} {
-		if _, err := client.ParseRevocationServers(s); err == nil {
-			t.Errorf("%q was taken as a revocation server", s)
-		}
-		b, err := client.Open(newEnv(t).box(protocol.Classic).Dir(), client.Options{RevocationServers: []string{s}})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got, err := b.RevocationServers(); err == nil {
-			t.Errorf("%q was listed: %q", s, got)
-		}
-	}
-	for _, s := range []string{"https://revocations.example", "http://127.0.0.1:8080", "http://[::1]:8080"} {
-		if got, err := client.ParseRevocationServers(s); err != nil || len(got) != 1 {
-			t.Errorf("%q: %q, %v", s, got, err)
 		}
 	}
 }

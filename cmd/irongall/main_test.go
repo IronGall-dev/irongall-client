@@ -702,7 +702,7 @@ func TestRefusedMailDoesNotFailRecv(t *testing.T) {
 	t.Setenv("IRONGALL_HOME", b.Dir())
 	t.Setenv("IRONGALL_BASE", srv.URL)
 	var out bytes.Buffer
-	if err := do(ctx, "status", nil, nil, &out, io.Discard); err != nil || !strings.Contains(out.String(), `"quarantine":0,"held":0,"policy":{"unknown":"held","server":"all"},"revocation_servers":[],"attention":[]`) {
+	if err := do(ctx, "status", nil, nil, &out, io.Discard); err != nil || !strings.Contains(out.String(), `"quarantine":0,"held":0,"policy":{"unknown":"held","server":"all"},"attention":[]`) {
 		t.Fatalf("status of a new box: %v %q", err, out.String())
 	}
 	forged := []byte("not a ciphertext its claimed sender ever signed")
@@ -1233,8 +1233,8 @@ func TestHelpIsReadAsAnyFlag(t *testing.T) {
 }
 
 // Help and a wrong line are answered before the environment or the box is
-// read (#223). With no $HOME, or with $IRONGALL_REVOCATION_SERVERS that
-// cannot be read, every command in the tree gives its help to --help, and is
+// read (#223). With no $HOME, or with a box directory that holds no box,
+// every command in the tree gives its help to --help, and is
 // a usage error for a flag it does not take; the values a command refuses
 // are usage errors too, with nothing written in the box's directory; and a
 // command that runs still meets the environment's error.
@@ -1256,7 +1256,7 @@ func TestHelpAndAWrongLineComeBeforeTheEnvironment(t *testing.T) {
 	dir := t.TempDir()
 	for _, env := range []map[string]string{
 		{"HOME": "", "IRONGALL_HOME": "", "XDG_CONFIG_HOME": ""},
-		{"IRONGALL_HOME": dir, "IRONGALL_REVOCATION_SERVERS": "not a list of servers"},
+		{"IRONGALL_HOME": dir},
 	} {
 		for k, v := range env {
 			t.Setenv(k, v)
@@ -1277,7 +1277,7 @@ func TestHelpAndAWrongLineComeBeforeTheEnvironment(t *testing.T) {
 			}
 		}
 		if err := do(ctx, "addr", nil, nil, io.Discard, io.Discard); err == nil || errors.As(err, &u) {
-			t.Errorf("%v: addr, which runs: %v, want the environment's error", env, err)
+			t.Errorf("%v: addr, which runs: %v, want the environment's or the box's error", env, err)
 		}
 	}
 	if es, _ := os.ReadDir(dir); len(es) != 0 {
@@ -1371,7 +1371,7 @@ func TestRevocationCommands(t *testing.T) {
 	}
 
 	// The record alone revokes, from a directory that holds no box.
-	published := `","message":"published to the server and to each revocation server"}` + "\n"
+	published := `","message":"published to the server"}` + "\n"
 	if out, _, err := cmd(nil, "revocation publish", "--record", record, a.Address().String()); err != nil || out != `{"type":"revoked","address":"`+a.Address().String()+published {
 		t.Fatalf("revocation publish --record: %v %q", err, out)
 	}
@@ -1421,7 +1421,7 @@ func TestRevokedAsk(t *testing.T) {
 	addr := a.Address().String()
 
 	out, warn, err := cmd(b, "revocation ask", addr)
-	if ls := printed(t, out); err != nil || typesOf(ls) != "not_revoked" || ls[0]["address"] != addr || !strings.Contains(ls[0]["message"].(string), "the word of whoever was asked") || warn != "" {
+	if ls := printed(t, out); err != nil || typesOf(ls) != "not_revoked" || ls[0]["address"] != addr || !strings.Contains(ls[0]["message"].(string), "the server's word") || warn != "" {
 		t.Fatalf("ask about a box with nothing revoked: %v %q %q", err, out, warn)
 	}
 	if _, err := a.Rekey(ctx, ""); err != nil {
@@ -1583,15 +1583,13 @@ func refusing(code protocol.Code, method, suffix string) func(http.ResponseWrite
 	}
 }
 
-// What cert revoke-earlier says when the revocation is not everywhere, or
-// nowhere, beside a renewal the server refused, and when the box's own
+// What cert revoke-earlier says when the revocation is taken, or not, beside
+// a renewal the server refused, and when the box's own
 // address is revoked (#109): what became of the new prekey first, then of the
 // revocation, and the command to run.
 func TestCertRevokeEarlierSaysWhatHappenedToEach(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
-	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "down", http.StatusServiceUnavailable) }))
-	t.Cleanup(down.Close)
 	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
 	if err != nil {
 		t.Fatal(err)
@@ -1599,17 +1597,15 @@ func TestCertRevokeEarlierSaysWhatHappenedToEach(t *testing.T) {
 	t.Setenv("IRONGALL_HOME", b.Dir())
 	t.Setenv("IRONGALL_BASE", srv.URL)
 
-	// The revocation taken by the box's server and not by a revocation server.
-	t.Setenv("IRONGALL_REVOCATION_SERVERS", down.URL)
+	// The revocation taken, the renewal refused.
 	srv.SetMiddle(refusing(protocol.CodeRateLimited, http.MethodPut, "/prekey"))
 	var out, errs bytes.Buffer
 	err = do(ctx, "cert revoke-earlier", nil, strings.NewReader(""), &out, &errs)
-	if err == nil || !strings.Contains(err.Error(), "NOT published") || !strings.Contains(err.Error(), "sends no mail, and its server takes none") || !strings.Contains(err.Error(), "not everywhere") || !strings.Contains(err.Error(), "irongall cert publish-revoked") || !strings.HasSuffix(typesOf(printed(t, out.String())), "certificates_revoked") {
-		t.Fatalf("taken by the box's server alone: %v, stdout %q", err, out.String())
+	if err == nil || !strings.Contains(err.Error(), "NOT published") || !strings.Contains(err.Error(), "sends no mail, and its server takes none") || !strings.HasSuffix(typesOf(printed(t, out.String())), "certificates_revoked") {
+		t.Fatalf("the revocation taken, the renewal refused: %v, stdout %q", err, out.String())
 	}
 
 	// Taken nowhere: why, and the command that tries both again.
-	t.Setenv("IRONGALL_REVOCATION_SERVERS", "none")
 	prekey := refusing(protocol.CodeRateLimited, http.MethodPut, "/prekey")
 	srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		prekey(w, r, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1802,50 +1798,6 @@ func TestPrekeyLifetime(t *testing.T) {
 		if got, err := os.ReadFile(file); err != nil || string(got) != "2851200\n" {
 			t.Errorf("%q changed the file to %q, %v", arg, got, err)
 		}
-	}
-}
-
-// The box's own server refuses every PUT and a revocation server it lists
-// takes the remedy's revocation: the command says the box's own server did
-// not take it, so the box still takes mail there, and a sender that lists no
-// revocation server sends to it.
-func TestCertRevokeEarlierWhenOnlyARevocationServerTookIt(t *testing.T) {
-	ctx := context.Background()
-	srv := fakeserver.New(t, time.Now)
-	rs := fakeserver.New(t, time.Now)
-	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, RevocationServers: []string{rs.URL}}, protocol.Classic)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sender, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := b.SetPolicy(client.Policy{Unknown: client.LandInbox, Server: client.AdmitAll}); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("IRONGALL_HOME", b.Dir())
-	t.Setenv("IRONGALL_BASE", srv.URL)
-	t.Setenv("IRONGALL_REVOCATION_SERVERS", rs.URL)
-	srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if r.Method == http.MethodPut {
-			c := protocol.CodeUnavailable
-			fakeserver.WriteJSON(w, c.Status(), protocol.Problem{Type: c.TypeURI(), Code: c, Status: int64(c.Status())})
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-	var out, errs bytes.Buffer
-	err = do(ctx, "cert revoke-earlier", nil, strings.NewReader(""), &out, &errs)
-	if err == nil || !strings.Contains(err.Error(), "own server did not take the revocation") || strings.Contains(err.Error(), "its server takes none") {
-		t.Fatalf("the command: %v", err)
-	}
-	if _, err := sender.Send(ctx, b.Address(), "to a box whose own server missed the revocation"); err != nil {
-		t.Fatal(err)
-	}
-	srv.SetMiddle(nil)
-	if res, err := b.Receive(ctx); err != nil || len(res.Delivered) != 1 {
-		t.Errorf("the box's drain: %v", err)
 	}
 }
 

@@ -11,7 +11,7 @@ import (
 )
 
 // Every JSON text the protocol carries is read by one set of rules
-// (PROTOCOL.md §0b), by the server, the revocation server and both clients:
+// (PROTOCOL.md §0b), by the server and both clients:
 // it is I-JSON (RFC 7493), its names match exactly, it is one value, and it
 // nests at most MaxDepth deep. The parsing is encoding/json/v2's, whose
 // defaults already refuse invalid UTF-8, a byte-order mark, a name twice and

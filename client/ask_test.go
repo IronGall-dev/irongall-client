@@ -516,19 +516,18 @@ func TestALostAnswerCostsASendAndDeliversOnce(t *testing.T) {
 }
 
 // A send reads its recipient's box once for each post, which carries what
-// the server holds of its revocations, and a flush asks a revocation server
-// once for each recipient, however many messages wait for it.
-func TestAFlushAsksOnceForEachRecipient(t *testing.T) {
+// the server holds of its revocations, and so does a flush, for each message
+// that waits.
+func TestASendReadsTheBoxOnceForEachPost(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
-	rs := newRevServer(t)
-	b := e.boxWith(e.listing(rs.URL))
+	b := e.box(protocol.Classic)
 	a, c := e.box(protocol.Classic), e.box(protocol.Classic)
 
 	op := watch(e, nil)
 	send(t, b, a, "one send")
-	if n, m := op.count(http.MethodGet, boxPath(a)), rs.count(http.MethodGet, a.Address()); n != 1 || m != 1 || len(op.seen) != 2 {
-		t.Fatalf("a send read the box %d times and asked the revocation server %d: %q", n, m, op.seen)
+	if n := op.count(http.MethodGet, boxPath(a)); n != 1 || len(op.seen) != 2 {
+		t.Fatalf("a send read the box %d times: %q", n, op.seen)
 	}
 
 	watch(e, func(w http.ResponseWriter, r *http.Request) bool {
@@ -544,50 +543,11 @@ func TestAFlushAsksOnceForEachRecipient(t *testing.T) {
 		}
 	}
 	op = watch(e, nil)
-	before, beforeC := rs.count(http.MethodGet, a.Address()), rs.count(http.MethodGet, c.Address())
 	if got, err := b.Flush(ctx); err != nil || len(got) != 4 {
 		t.Fatalf("flush: %v, %v", got, err)
 	}
 	if na, nc := op.count(http.MethodGet, boxPath(a)), op.count(http.MethodGet, boxPath(c)); na != 3 || nc != 1 {
 		t.Fatalf("a flush of three messages to one box and one to another read them %d and %d times", na, nc)
-	}
-	if ra, rc := rs.count(http.MethodGet, a.Address())-before, rs.count(http.MethodGet, c.Address())-beforeC; ra != 1 || rc != 1 {
-		t.Fatalf("a flush asked the revocation server %d and %d times", ra, rc)
-	}
-}
-
-// The revocation servers are asked about a recipient once in a command,
-// whatever its own server served: a flush to a box its server holds no box
-// of asks once however many messages wait, and a post the server answers
-// 410 with nothing that verifies reads the box again and asks no
-// revocation server again (#156).
-func TestARecipientIsAskedOnceWhateverItsReadServed(t *testing.T) {
-	ctx := context.Background()
-	e := newEnv(t)
-	rs := newRevServer(t)
-	b := e.boxWith(e.listing(rs.URL))
-	a := e.box(protocol.Classic)
-	says(e, protocol.CodeUnavailable, http.MethodPost, "/messages")
-	for range 3 {
-		if _, err := b.Send(ctx, a.Address(), "waits"); err == nil {
-			t.Fatal("the post was meant to fail")
-		}
-	}
-	says(e, protocol.CodeNoSuchMailbox, http.MethodGet, boxPath(a))
-	before := rs.count(http.MethodGet, a.Address())
-	if _, err := b.Flush(ctx); err == nil {
-		t.Fatal("a flush to a box its server does not serve posted")
-	}
-	if n := rs.count(http.MethodGet, a.Address()) - before; n != 1 {
-		t.Errorf("a flush of three to a box not served asked the revocation server %d times, want 1", n)
-	}
-	says(e, protocol.CodeRevoked, http.MethodPost, "/messages")
-	before = rs.count(http.MethodGet, a.Address())
-	if _, err := b.Send(ctx, a.Address(), "answered 410"); err == nil {
-		t.Fatal("a post answered 410 succeeded")
-	}
-	if n := rs.count(http.MethodGet, a.Address()) - before; n != 1 {
-		t.Errorf("a send answered 410 with nothing that verifies asked the revocation server %d times, want 1", n)
 	}
 }
 

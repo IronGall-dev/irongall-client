@@ -2,9 +2,8 @@
 // honest, and just enough of the API for a client to register, renew its
 // prekey, send, list page by page, fetch and ack, each call carrying its
 // box's pass. It is NOT the irongall.dev server, and checks little of what
-// that server checks. Like every mailbox server it is
-// also a revocation server (PROTOCOL.md §6.3), for addresses it has no box
-// for as well, so a second one stands in for a revocation server a box lists.
+// that server checks. Like every server it keeps and serves a revocation of
+// any address, with a box here or none (PROTOCOL.md §6.3).
 //
 // A test plays the hostile operator two ways: with SetMiddle, a function that
 // sees every request and can rewrite it, answer it or forge the reply; and
@@ -461,8 +460,8 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusCreated, struct{}{})
 }
 
-// getRevocations is the revocation server's read: what the server keeps of
-// the address, with or without a box here, or not_revoked.
+// getRevocations is what the server keeps of the address, with or without a
+// box here, or not_revoked.
 func (s *Server) getRevocations(w http.ResponseWriter, r *http.Request) {
 	a, ok := pathAddr(w, r)
 	if !ok {

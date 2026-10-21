@@ -855,11 +855,7 @@ revocation it takes none there either.`,
 				}
 			}
 			// What became of the new prekey first, then of the revocation.
-			const again = "This box keeps it, and this publishes it again: irongall cert publish-revoked"
 			dark := fmt.Sprintf("Every certificate before %d is revoked, the one this box was using among them, so it sends no mail, and its server takes none for it, until the new prekey is taken: irongall prekey renew sends it again, and so does irongall recv", r.Below)
-			if !r.OwnTook {
-				dark = fmt.Sprintf("Every certificate before %d is revoked where the revocation was taken, the one this box was using among them, so it sends no mail until the new prekey is taken: irongall prekey renew sends it again, and so does irongall recv. This box's own server did not take the revocation, so until it does it still takes mail for this box, and the pass of the certificate it was using", r.Below)
-			}
 			switch {
 			case r.NotRenewed == nil && r.NotRevoked == nil && r.Revoked == nil:
 				if err != nil {
@@ -868,14 +864,10 @@ revocation it takes none there either.`,
 				return e.out(line("no_earlier_certificate", "message", "no earlier certificate to revoke"))
 			case r.NotRenewed == nil && r.NotRevoked == nil:
 				return err
-			case r.NotRenewed == nil && r.Revoked != nil:
-				return fmt.Errorf("the new prekey is published, and the revocation of the certificates through %d is not everywhere: %w. %s", r.Revoked.Through, r.NotRevoked, again)
 			case r.NotRenewed == nil:
 				return fmt.Errorf("the new prekey is published, and the earlier certificates are NOT revoked: %w. irongall cert revoke-earlier revokes them", r.NotRevoked)
 			case r.NotRevoked == nil:
 				return fmt.Errorf("the new prekey is NOT published: %w. %s", r.NotRenewed, dark)
-			case r.Revoked != nil:
-				return fmt.Errorf("the new prekey is NOT published: %w. %s. And the revocation is not everywhere: %v. %s", r.NotRenewed, dark, r.NotRevoked, again)
 			}
 			return fmt.Errorf("the new prekey is NOT published: %w, and nothing is revoked: %v. irongall cert revoke-earlier tries both again", r.NotRenewed, r.NotRevoked)
 		})
@@ -885,9 +877,9 @@ revocation it takes none there either.`,
 }
 
 func (e *cli) publishRevokedCmd() *cobra.Command {
-	return command("publish-revoked [<file>]", "send a revocation of certificates to every server again",
+	return command("publish-revoked [<file>]", "send a revocation of certificates to the server again",
 		`Send a record that carries a revocation of certificates, and none of an
-address, to the server and to each revocation server, and keep it: the file
+address, to the server, and keep it: the file
 named, or with none this box's own revoked-certs.json, when a server did not
 take it. A record that ends an address is refused: irongall revocation publish
 takes that one, with the address in full.`,
@@ -922,7 +914,7 @@ takes that one, with the address in full.`,
 			if _, err := b.Publish(c.Context(), rec); err != nil {
 				return err
 			}
-			return e.out(line("certificates_revoked", "address", a, "through", certs.Through, "message", "published to the server and to each revocation server"))
+			return e.out(line("certificates_revoked", "address", a, "through", certs.Through, "message", "published to the server"))
 		})
 }
 
@@ -1020,8 +1012,7 @@ func (e *cli) publishCmd() *cobra.Command {
 		`Revoke this box's address, FOR GOOD: nothing undoes it. The address written
 out in full is the confirmation. --record <file> publishes a record made
 earlier by irongall revocation make, and needs no box here. It goes to the
-server and to each revocation server, and the command fails, saying which,
-unless every one took it: run it again.`,
+server, and the command fails unless the server took it: run it again.`,
 		func(c *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return wrong(c, "%s", how)
@@ -1032,8 +1023,8 @@ unless every one took it: run it again.`,
 			if err != nil {
 				return errors.New(how)
 			}
-			// The box here, if there is one: a record is published to the
-			// revocation servers it lists. With --record none is needed.
+			// The box here, if there is one, keeps the record once the server
+			// took it. With --record none is needed.
 			b, openErr := e.box()
 			var rec *protocol.Revocations
 			if record != "" {
@@ -1054,31 +1045,23 @@ unless every one took it: run it again.`,
 					return err
 				}
 			}
-			// To the server and to each revocation server, every one whatever
-			// the others answer.
 			var perr error
 			if openErr == nil {
 				_, perr = b.Revoke(c.Context(), rec)
 			} else {
 				_, perr = client.Revoke(c.Context(), e.opt, rec)
 			}
-			var part *client.NotPublishedError
-			if perr != nil && (!errors.As(perr, &part) || len(part.Took) == 0) {
+			if perr != nil {
 				return perr
 			}
-			// Once any server has taken it, it is out. If the box it is about is
+			// Once the server has taken it, it is out. If the box it is about is
 			// the one here, it keeps it too.
 			if openErr == nil && b.Address() == a {
 				if _, _, err := b.KeepRevocation(rec); err != nil {
 					return err
 				}
 			}
-			// Not everywhere is a failure, and says who took it and who did not:
-			// the same command again is the cure.
-			if perr != nil {
-				return perr
-			}
-			return e.out(line("revoked", "address", a, "message", "published to the server and to each revocation server"))
+			return e.out(line("revoked", "address", a, "message", "published to the server"))
 		})
 	c.Flags().StringVar(&record, "record", "", "publish the record in this `file`, made earlier by irongall revocation make, in place of signing one with this box's identity")
 	return c
@@ -1108,9 +1091,8 @@ revocation of the box's certificates, which is kept the same way.`,
 }
 
 func (e *cli) askCmd() *cobra.Command {
-	return command("ask <link, address or alias>", "ask the servers what they hold about a box, and keep what verifies",
-		`Ask the server, and each revocation server this box lists, what it holds
-about a box, and keep what verifies. send does that by itself, before it
+	return command("ask <link, address or alias>", "ask the server what it holds about a box, and keep what verifies",
+		`Ask the server what it holds about a box, and keep what verifies. send does that by itself, before it
 posts.`,
 		nargs(1, 1), func(c *cobra.Command, args []string) error {
 			b, err := e.box()
@@ -1138,7 +1120,7 @@ func (e *cli) sayHeld(a protocol.Address, held *client.Held) error {
 	case held.Certificates != nil:
 		return e.out(line("certificates_revoked", "address", a, "through", held.Certificates.Through))
 	}
-	return e.out(line("not_revoked", "address", a, "message", "no revocation shown. That is the word of whoever was asked, this box's server and the revocation servers it lists, and any of them can keep a record back: a record from the box's owner settles it (irongall revocation keep <file>)."))
+	return e.out(line("not_revoked", "address", a, "message", "no revocation shown. That is the server's word, and it can keep a record back: a record from the box's owner settles it (irongall revocation keep <file>)."))
 }
 
 // sent is the line for a message the server took.

@@ -47,8 +47,8 @@ func (b *Box) Resolve(ctx context.Context, peer protocol.Address) (*protocol.Pre
 // resolve is Resolve with the lock held. It also returns the certificate the
 // prekey statement verified under. It reads the peer's box once (readBox),
 // and keeps what verifies of the revocations it carries before it checks the
-// statement against them. With l, a send's lookups, the revocation servers
-// are asked about the peer too, once in the command.
+// statement against them. With l, a send's lookups, the read is marked as
+// answered in the command.
 //
 // A read that serves no box is a [lookupError]: there is nothing to seal to,
 // and what the server answered is never an answer about a message.

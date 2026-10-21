@@ -17,9 +17,9 @@ info:
     built never to need. Use the Go client in this repository, or build to
     `PROTOCOL.md`.
 
-    It describes a mailbox server, which is also a revocation server
-    (§6.3): it answers both `PUT` and `GET /v1/<addr>/revocations`. A server
-    that is only a revocation server answers those two routes alone.
+    It describes a mailbox server, which keeps and serves a revocation of
+    any address, with a box there or none (§6.3): it answers both `PUT` and
+    `GET /v1/<addr>/revocations`.
 
     No server publishes this file at a URL. It is for reading the API in one
     place, and for the tests that hold the reference server and this
@@ -253,12 +253,11 @@ paths:
       operationId: revocations
       summary: Read the revocations held
       description: |
-        `PROTOCOL.md` §6.3, a revocation server's read, which every mailbox
-        server answers too: the record held of the address, whether or not it
-        has a box there, or `404 not_revoked`. It takes no pass, and is
-        counted against the address it comes from (§8). A box's own clients
-        learn the same from the read of the box; this is for a client that
-        lists the server among its revocation servers.
+        `PROTOCOL.md` §6.3: the record held of the address, whether or not
+        the server has a box there, or `404 not_revoked`. It takes no pass,
+        and is counted against the address it comes from (§8). A box learns
+        the same from the read of a box; this is for its own, where the
+        server holds no box for it.
       security: []
       responses:
         '200':

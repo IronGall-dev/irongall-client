@@ -118,10 +118,6 @@ ig_tls(){ # <URL> → 0 when it is a server this box may call: https, or http on
   [[ ${1,,} = https://?* ]] || { [[ ${1,,} = http://?* ]] && ig_here "$1"; } ||
     ig_refuse "$(printf '%.80s' "$1") is not a server this client calls: one is https, or http only to this machine, by its address (127.0.0.0/8, ::1)"
 }
-ig_norev(){ # → 0 for a box that lists no revocation server. This script asks none, so a box whose owner named one, in $IG_REVOCATION_SERVERS or a revocation-servers file of any kind, is one it does not run: refused before anything is made or sent. The Go client asks them
-  [ -z "${IG_REVOCATION_SERVERS-}" ] && [ ! -e "$IG/revocation-servers" ] && [ ! -L "$IG/revocation-servers" ] ||
-    ig_refuse "this box lists revocation servers, which this script does not ask: run it with the Go client"
-}
 ig_pass(){ # [serial] → the Authorization value of a call as this box, unless it holds its own revocation (ig_finished). Without a serial: the pass kept in $IG/pass while it has more than 30 seconds left and no more than the ten minutes it was signed for, otherwise a new one, signed by the working key in use and kept. With one: a pass signed by that working key, for the call that publishes its prekey, left in $IG/pass.new until the server has taken it
   local A n=${1-} na h; A=$(cat "$IG/address") || return 1
   ig_finished || { ig_done $?; return 1; }
@@ -139,7 +135,6 @@ ig_pass(){ # [serial] → the Authorization value of a call as this box, unless 
 ig_lock(){ # <command> [args] → runs that ig_ command with $IG/lock, the box's lock, held, once the box's directories and identity files are made (ig_dirs, ig_identity), as the Go client's Open makes them: so a box restored from its identity alone runs. Every command that writes the box runs so, from start to end, so one runs at a time and none reads a file another is writing. While another holds it, says so once and waits up to $IG_LOCK_WAIT seconds. If the command dies, the shell's EXIT trap removes it; a kill -9 leaves it behind
   local end=$((SECONDS + IG_LOCK_WAIT)) said= me=$IG outer=${IG_HELD-} trap rc
   [ -s "$IG/identity" ] || { ig_refuse "no box in $IG: run init first"; return 1; }
-  ig_norev || return 1
   until mkdir "$me/lock" 2> /dev/null; do
     [ -n "$said" ] || { jq -cn '{type:"waiting", for:"lock", message:"waiting for this box'"'"'s lock: another command of this box is running, and a box'"'"'s commands write its files one at a time"}' >&2; said=1; }
     [ "$SECONDS" -lt "$end" ] || { ig_refuse "another command of this box held its lock, $me/lock, for as long as a command waits for it. If none is running, one that crashed left it behind: remove it"; return 1; }
@@ -187,7 +182,7 @@ ig_prekey(){ # <serial> [--no-pq] → prekeys/<serial>.agekey and its statement,
   sync "$IG/work/$1" "$IG/work/$1.pub" "$IG/work/$1-cert.pub" "$IG/work" && sync "$p.agekey" "$p.txt" "$p.made" "$p.txt.sig" "$IG/prekeys"      # the working key first, each file in turn: a signed statement is never on disk without the key its pass needs      # on disk before any upload publishes the statement: a key lost to a crash after that is mail nobody can read
 }
 ig_init(){ # [--no-pq] → creates this box, or finishes a half-done init, and registers it; prints its address and link. The registration carries a pass the new working key signs, so the box is in use at once
-  ig_opt "${1-}" && ig_norev || return 1
+  ig_opt "${1-}" || return 1
   ig_dirs && ig_putline "$IG/.gitignore" '*' || return 1      # the box ignores itself, wherever it is
   [ -s "$IG/identity" ] || { rm -f "$IG/identity" "$IG/identity.pub"; ssh-keygen -q -t ed25519 -N '' -C '' -f "$IG/identity" < /dev/null; } || return 1      # an empty identity, as a crash before the sync below leaves one, is no key, and nothing was registered with it, so it is made again, as the Go client does
   if ig_held; then ig_identity; else ig_lock true; fi && sync "$IG/identity" "$IG/identity.pub" "$IG" || return 1      # identity.doc and address made under the box's lock, as every command that writes the box makes them (ig_lock): a command beside init reads them. The identity on disk before it is registered
@@ -452,7 +447,7 @@ ig_take(){ # <address> → keeps what verifies of $IG/rev.json, a server's answe
   [ "$(ig_record "$IG/rev.json")" = "$1" ] || return 1
   ig_keep "$1" "$IG/rev.doc" "$IG/rev.sig" || return 3
 }
-ig_lookup(){ # <address> → reads the address's box from this box's server (GET /v1/<address>, ig_look), and keeps what verifies of the revocations it carries. A box served carries the revocation of its certificates the server holds, and a revoked address is answered 410 revoked with its record. The box served is left in $IG/box.json, for the seal that follows. 0: this box holds a revocation of the address, and that is final. 1: none: the server served the box, or holds no such box, or said revoked and showed nothing that verifies, which comes to the same: only the identity's own signature revokes. 2: no answer from the box's own server, which is not "none". 3: a fault of this box: what it keeps for the address does not verify, or cannot be written. This script asks no revocation server (ig_norev)
+ig_lookup(){ # <address> → reads the address's box from this box's server (GET /v1/<address>, ig_look), and keeps what verifies of the revocations it carries. A box served carries the revocation of its certificates the server holds, and a revoked address is answered 410 revoked with its record. The box served is left in $IG/box.json, for the seal that follows. 0: this box holds a revocation of the address, and that is final. 1: none: the server served the box, or holds no such box, or said revoked and showed nothing that verifies, which comes to the same: only the identity's own signature revokes. 2: no answer from the box's own server, which is not "none". 3: a fault of this box: what it keeps for the address does not verify, or cannot be written
   local r
   rm -f "$IG/box.json"
   ig_gone "$1"; case $? in 0) return 0 ;; 3) return 3 ;; esac

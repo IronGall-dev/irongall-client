@@ -6,7 +6,6 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -19,8 +18,8 @@ import (
 )
 
 // Revocation in the script: of an address and of its certificates, what a
-// sender asks before it posts, a box that lists revocation servers, and a
-// box's own revocations (test.sh's §17 to §21 until 2026-10-21).
+// sender asks before it posts, and a box's own revocations (test.sh's §17 to
+// §19 and §21 until 2026-10-21).
 
 // top is the highest serial there is, 2^53 - 1.
 const top = 9007199254740991
@@ -519,44 +518,6 @@ func TestScriptAsksBeforeItPosts(t *testing.T) {
 	w.honest()
 	if d := sb.recv(); !slices.Equal(d.bodies(), []string{"never sealed to the old prekey"}) {
 		t.Errorf("SB's mail: %v", d)
-	}
-}
-
-// The script asks no revocation server, so a box that lists one, by the
-// variable, a file, a file that says none, or a link that goes nowhere, is
-// refused before anything is made, asked or sent; without the list it sends.
-func TestScriptRefusesABoxThatListsRevocationServers(t *testing.T) {
-	w := newWorld(t)
-	ta, tb := w.box(), w.box()
-	other := fakeserver.New(t, time.Now)
-	n := len(w.srv.Requests())
-	for _, how := range []string{
-		"export IG_REVOCATION_SERVERS=" + other.URL,
-		`echo ` + other.URL + ` > "$IG/revocation-servers"`,
-		`echo none > "$IG/revocation-servers"`,
-		`ln -s "$W/nowhere" "$IG/revocation-servers"`,
-	} {
-		out := ta.must(how + `
-printf 'never posted' | ig_send ` + tb.addr.String() + ` 2> "$W/err" && echo sent; grep -q "lists revocation servers, which this script does not ask" "$W/err" || echo "$(cat "$W/err")"
-ig_recv > /dev/null 2>&1 && echo drained; ig_rekey > /dev/null 2>&1 && echo renewed; rm -f "$IG/revocation-servers"`)
-		if out != "" {
-			t.Errorf("%s: %q", how, out)
-		}
-	}
-	tc := w.empty()
-	if err := os.MkdirAll(tc.dir, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	writeFile(t, tc.file("revocation-servers"), []byte(other.URL+"\n"))
-	if r := tc.sh("ig_init"); r.rc == 0 || tc.has("identity") {
-		t.Errorf("a box that lists a revocation server was made: %v", r)
-	}
-	if len(w.srv.Requests()) != n || len(other.Requests()) != 0 {
-		t.Errorf("a box that lists revocation servers called its server, %q, or the one it lists, %d calls", w.calls(n), len(other.Requests()))
-	}
-	ta.mustSend(tb, "posted")
-	if d := tb.recv(); !slices.Equal(d.bodies(), []string{"posted"}) {
-		t.Errorf("without the list: %v", d)
 	}
 }
 

@@ -47,10 +47,6 @@ type Status struct {
 	// Revoked is true when the box holds a revocation of its own address
 	// that verifies: the address is finished.
 	Revoked bool `json:"revoked,omitempty"`
-	// RevocationServers are the revocation servers the box asks beside its
-	// own server, and publishes to: each learns which addresses this box
-	// asks about. Empty: it asks its own server only.
-	RevocationServers []string `json:"revocation_servers"`
 	// Attention says, in words, each thing that needs a look. It is empty
 	// when nothing does.
 	Attention []string `json:"attention"`
@@ -66,11 +62,7 @@ func (b *Box) Status() (*Status, error) {
 		s.Revoked = true
 		s.Attention = append(s.Attention, "this box's address is revoked, for good, and the revocation verifies: it sends and receives nothing more. Make a new box and give its address to those who wrote to this one")
 	}
-	servers, err := b.RevocationServers()
-	if err != nil {
-		s.Attention = append(s.Attention, fmt.Sprintf("the revocation servers this box is to ask cannot be read, so it asks about nobody, and neither sends nor receives, until that is put right: %v", err))
-	}
-	s.RevocationServers = append([]string{}, servers...)
+	var err error
 	if s.Policy, err = b.Policy(); err != nil {
 		s.Attention = append(s.Attention, fmt.Sprintf("the box's policy cannot be read, so it neither sends nor receives until that is put right: %v", err))
 	}

@@ -34,13 +34,6 @@ Its inbox/ keeps each message received and its sent/ each message sent, with
 the server's receipt: both are yours to prune.
 The server is $IRONGALL_BASE, or https://irongall.dev: https, or http only
 to a server on this machine, and a redirect is never followed.
-Beside its server a box asks revocation servers whether an address is revoked,
-and publishes its own revocations to them: those $IRONGALL_REVOCATION_SERVERS
-names, or else those its revocation-servers file names (URLs with commas,
-spaces, tabs or line ends between, or "none"). With neither, it asks none:
-its own server is one already. A revocation server learns which addresses a
-box asks about: name one only if you mean to tell it. No answer from one
-changes nothing, and status lists them.
 The box's policy file says where mail from a sender it has not allowed
 lands, "unknown held" (the default) or "unknown inbox", and whom its server
 takes mail from, "server all" (the default: everyone it has not blocked) or
@@ -135,11 +128,6 @@ func (e *cli) environment() error {
 	if v := os.Getenv("IRONGALL_SENDER_KEY_TYPES"); v != "" {
 		e.opt.SenderKeyTypes = strings.Split(v, ",")
 	}
-	if v := os.Getenv("IRONGALL_REVOCATION_SERVERS"); v != "" {
-		if e.opt.RevocationServers, err = client.ParseRevocationServers(v); err != nil {
-			return fmt.Errorf("$IRONGALL_REVOCATION_SERVERS: %w", err)
-		}
-	}
 	return nil
 }
 
@@ -161,11 +149,6 @@ func checked(args cobra.PositionalArgs, check cobra.PositionalArgs) cobra.Positi
 // checks the values it takes in its own argument check.
 func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	var opt client.Options
-	// Said, and nothing more: a box does not wait on a revocation server.
-	opt.NoAnswer = func(server string, err error) {
-		_, _ = fmt.Fprintf(stdout, "%s\n", line("no_answer", "server", server, "message",
-			fmt.Sprintf("the revocation server %s gave no answer, which changes nothing here: %v", server, err)))
-	}
 	// Said once, so that a wait is not read as a hang.
 	opt.Waiting = func() {
 		_, _ = fmt.Fprintf(stderr, "%s\n", line("waiting", "for", "lock", "message",

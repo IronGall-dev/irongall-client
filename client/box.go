@@ -72,16 +72,6 @@ type Options struct {
 	// for it from a sender of any type, and this client refuses what it
 	// cannot verify.
 	SenderKeyTypes []string
-	// RevocationServers are the revocation servers the box asks beside its
-	// own server, and publishes to: each a server's URL, as https://host or
-	// https://host:port. Nil: the ones the box's revocation-servers file
-	// names, or else none ([Box.RevocationServers]). An empty list that is
-	// not nil: none as well, whatever the file names.
-	RevocationServers []string
-	// NoAnswer, if not nil, is told of each revocation server that gave no
-	// answer, with why, once in a command. Nothing changes for it: a box
-	// does not wait on a revocation server as it waits on its own.
-	NoAnswer func(server string, err error)
 	// Waiting, if not nil, is told when a command finds the box's lock held
 	// by another command of the box, once, before it waits for it: a box's
 	// commands write its files one at a time.
@@ -102,10 +92,6 @@ type Box struct {
 	identityType string
 	// senderKeyTypes is what the box declares with each prekey it publishes.
 	senderKeyTypes []string
-	// revocationServers is what Options named, or nil; noAnswer is told of
-	// one that gave no answer.
-	revocationServers []string
-	noAnswer          func(server string, err error)
 	// waiting is told when a command waits for the box's lock ([Box.hold]).
 	waiting func()
 	// renewFailed is when Receive last failed to renew the prekey.
@@ -136,7 +122,7 @@ func Open(dir string, opt Options) (*Box, error) {
 // takes every request through one transport (newTransport) and follows no
 // redirect (followNone).
 func newBox(dir string, opt Options) (*Box, error) {
-	b := &Box{dir: dir, base: strings.TrimRight(opt.Base, "/"), http: opt.HTTPClient, now: opt.Now, identityType: opt.IdentityType, senderKeyTypes: opt.SenderKeyTypes, revocationServers: opt.RevocationServers, noAnswer: opt.NoAnswer, waiting: opt.Waiting}
+	b := &Box{dir: dir, base: strings.TrimRight(opt.Base, "/"), http: opt.HTTPClient, now: opt.Now, identityType: opt.IdentityType, senderKeyTypes: opt.SenderKeyTypes, waiting: opt.Waiting}
 	if b.senderKeyTypes == nil {
 		b.senderKeyTypes = protocol.IdentityTypes()
 	}
@@ -205,8 +191,7 @@ func newTransport(rt http.RoundTripper) http.RoundTripper {
 // subdomain of it, whatever its scheme or port. The script's curl follows none either.
 func followNone(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
-// checkServerURL holds the URL of a server a box calls, its own or a
-// revocation server, to https, or to http only for a server on this
+// checkServerURL holds the URL of the server a box calls to https, or to http only for a server on this
 // machine (onThisMachine). A pass is a bearer credential for the minutes it
 // has left, and a lookup names the address it asks about, so neither
 // crosses a network in the clear (RFC 6750 §5.3). Nothing allows more.

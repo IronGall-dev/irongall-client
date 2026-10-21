@@ -231,8 +231,7 @@ var undeliverable = []protocol.Code{
 // delivered is dropped by its msg_id however late it comes.
 //
 // Each seal reads the recipient's box first, with what the server holds of
-// its revocations, and asks the revocation servers about it once in the
-// command ([Box.resolve]). The seal is made to what this box then holds:
+// its revocations ([Box.resolve]). The seal is made to what this box then holds:
 // nothing goes to an address it holds a revocation of, and a prekey
 // statement under a certificate since revoked, or ordered before one the box
 // has recorded, is refused. A read that serves no box is not "none held":

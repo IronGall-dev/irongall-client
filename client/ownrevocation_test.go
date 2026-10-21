@@ -107,31 +107,8 @@ func TestARestoredBoxRenewsAboveAFastRemedy(t *testing.T) {
 	}
 }
 
-// The remedy with its own server down for the read of the box, or for
-// everything: the revocation still goes to the revocation server it lists
-// (PROTOCOL.md §6.3).
-func TestTheRemedyReachesTheRevocationServersWithItsOwnServerDown(t *testing.T) {
-	ctx := context.Background()
-	e := newEnv(t)
-	rs := newRevServer(t)
-	o := e.listing(rs.URL)
-	a := e.boxWith(o)
-	o.Base = "http://127.0.0.1:1" // nothing listens
-	down, err := client.Open(a.Dir(), o)
-	if err != nil {
-		t.Fatal(err)
-	}
-	r, err := down.RenewAndRevoke(ctx, "")
-	if r == nil || r.Revoked == nil || r.Unread == nil || r.OwnTook || r.NotRenewed == nil || err != nil {
-		t.Fatalf("the remedy with its own server down: %+v, %v", r, err)
-	}
-	if rs.holds(t, a.Address()) == nil {
-		t.Error("the revocation server holds nothing")
-	}
-}
-
-// With no revocation server listed, and its own server failing only the read
-// of the box: the remedy revokes and renews there all the same.
+// Its own server failing only the read of the box: the remedy revokes and
+// renews there all the same.
 func TestTheRemedyGoesOnWhenItsServerDoesNotAnswerTheRead(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
@@ -147,7 +124,7 @@ func TestTheRemedyGoesOnWhenItsServerDoesNotAnswerTheRead(t *testing.T) {
 		return false
 	})
 	r, err := a.RenewAndRevoke(ctx, "")
-	if err != nil || r == nil || r.Unread == nil || r.Prekey == nil || r.Revoked == nil || !r.Revoked.Revokes(inUse) || !r.OwnTook {
+	if err != nil || r == nil || r.Unread == nil || r.Prekey == nil || r.Revoked == nil || !r.Revoked.Revokes(inUse) {
 		t.Fatalf("the remedy past an unanswered read: %+v, %v", r, err)
 	}
 	if !heldCertsOf(t, e, a).Revokes(inUse) || numberOf(t, a) != r.Below {
@@ -193,37 +170,6 @@ func TestTheRemedyGoesOnPastARollback(t *testing.T) {
 	}
 }
 
-// A revocation server the box lists holds a revocation through T, two hours
-// past the box's clock, and gives no answer within the wait to the remedy's
-// ask. Its server took the lower one, and the revocation server answers the
-// remedy's record conflict: the remedy asks again, signs through T, and
-// numbers its certificate above it.
-func TestTheRemedyNumbersAboveARevocationShownLate(t *testing.T) {
-	ctx := context.Background()
-	client.SetRevocationServerWait(t, 300*time.Millisecond)
-	e := newEnv(t)
-	rs := newRevServer(t)
-	a := e.boxWith(e.listing(rs.URL))
-	T := numberOf(t, a) + 7200
-	publishAt(t, rs.URL, ownRevocation(t, a, T))
-	var gets atomic.Int32
-	rs.set(func(w http.ResponseWriter, r *http.Request) bool {
-		if r.Method == http.MethodGet && gets.Add(1) == 1 {
-			<-r.Context().Done() // no answer within the wait
-			return true
-		}
-		return false
-	})
-	r, err := a.RenewAndRevoke(ctx, "")
-	if err != nil || r == nil || r.Revoked == nil || r.Revoked.Through != T || r.Below != T+1 || r.Prekey == nil || r.NotRevoked != nil {
-		t.Fatalf("the remedy shown T %d late: %+v, %v", T, r, err)
-	}
-	s := e.boxWith(e.listing(rs.URL))
-	if _, err := s.Send(ctx, a.Address(), "to the remedied box"); err != nil {
-		t.Errorf("a sender that lists the revocation server: %v", err)
-	}
-}
-
 // The box's own server holds a revocation through T and leaves it out of its
 // first read of the box, then answers the remedy's record conflict: the
 // remedy asks again, and numbers above T.
@@ -248,25 +194,12 @@ func TestTheRemedyAsksAgainAfterItsServerAnswersConflict(t *testing.T) {
 	}
 }
 
-// One remedy asks a revocation server that gives no answer once, and its own
-// server's box once: the read of the box carries both the statement it
-// serves and what it holds of the box's revocations.
-func TestTheRemedyAsksEachServerOnce(t *testing.T) {
+// One remedy reads its server's box once: the read carries both the
+// statement it serves and what it holds of the box's revocations.
+func TestTheRemedyReadsItsBoxOnce(t *testing.T) {
 	ctx := context.Background()
-	client.SetRevocationServerWait(t, 300*time.Millisecond)
 	e := newEnv(t)
-	rs := newRevServer(t)
-	o := e.listing(rs.URL)
-	var told silences
-	o.NoAnswer = told.note
-	a := e.boxWith(o)
-	rs.set(func(w http.ResponseWriter, r *http.Request) bool {
-		if r.Method == http.MethodGet {
-			<-r.Context().Done()
-			return true
-		}
-		return false
-	})
+	a := e.box(protocol.Classic)
 	var reads atomic.Int32
 	watch(e, func(w http.ResponseWriter, r *http.Request) bool {
 		if r.Method == http.MethodGet && r.URL.Path == boxPath(a) {
@@ -278,8 +211,8 @@ func TestTheRemedyAsksEachServerOnce(t *testing.T) {
 	if err != nil || r == nil || r.Revoked == nil || r.Prekey == nil {
 		t.Fatalf("the remedy: %+v, %v", r, err)
 	}
-	if n := rs.count(http.MethodGet, a.Address()); n != 1 || told.n() != 1 || reads.Load() != 1 {
-		t.Errorf("the silent revocation server asked %d times and told %d times; the box's own read %d times", n, told.n(), reads.Load())
+	if reads.Load() != 1 {
+		t.Errorf("the box's own read %d times", reads.Load())
 	}
 }
 
@@ -359,9 +292,7 @@ func signed(t *testing.T, a *client.Box) []string {
 func TestABoxThatKeepsItsOwnRevocationSignsNothingMore(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
-	rs := newRevServer(t)
-	a := e.boxWith(e.listing(rs.URL))
-	b := e.box(protocol.Classic)
+	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	send(t, b, a, "to a box about to be finished")
 	says(e, protocol.CodeUnavailable, http.MethodPost, "/messages")
 	if _, err := a.Send(ctx, b.Address(), "waits in the outbox"); err == nil {
@@ -501,21 +432,20 @@ func takesTheLock(body *ast.BlockStmt) bool {
 	return takes
 }
 
-// The renewal's own ask is what shows the box its address revoked: a
-// revocation server it lists holds the revocation, its own server does not.
-// The box keeps the revocation and signs nothing more, this renewal
+// The renewal's own read is what shows the box its address revoked: its
+// server holds the revocation, published from elsewhere, and the box does
+// not. The box keeps the revocation and signs nothing more, this renewal
 // included, the revocation learned inside the command: no certificate and no
 // prekey statement, and no key made for one (#227).
 func TestARenewalThatMeetsItsOwnRevocationSignsNothing(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
-	rs := newRevServer(t)
-	a := e.boxWith(e.listing(rs.URL))
+	a := e.box(protocol.Classic)
 	rec, err := a.Revocation()
 	if err != nil {
 		t.Fatal(err)
 	}
-	publishAt(t, rs.URL, rec) // at the revocation server only
+	publishAt(t, e.srv.URL, rec) // as another machine of the box's owner would
 	before, number, begun := signed(t, a), numberOf(t, a), begunAt(t, a)
 	e.clock.Add(2 * time.Second)
 	_, err = a.Rekey(ctx, "")
@@ -606,23 +536,28 @@ func TestABoxRevokedAtItsServerSignsNothingAtAnother(t *testing.T) {
 
 // After the remedy, while its renewal waits, the box holds the certificate it
 // signs under revoked: it signs no mail under it, the entry waits, and goes
-// once the renewal is taken. Here the box's own server was down for both of
-// the remedy's PUTs, and a revocation server took the revocation.
+// once the renewal is taken, whatever its server took. Here the server
+// answered the revocation as taken and kept nothing, so it would take the
+// box's pass and mail under that certificate still, and was down for the
+// renewal: only the box's own hold keeps the mail back.
 func TestASendInTheRemedysWindowWaitsForTheRenewal(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
-	rs := newRevServer(t)
-	a, reader := e.boxWith(e.listing(rs.URL)), e.boxWith(e.listing(rs.URL))
+	a, reader := e.box(protocol.Classic), e.box(protocol.Classic)
 	inUse := numberOf(t, a)
 	watch(e, func(w http.ResponseWriter, r *http.Request) bool {
-		if r.Method == http.MethodPut && (r.URL.Path == boxPath(a)+"/revocations" || r.URL.Path == boxPath(a)+"/prekey") {
+		switch {
+		case r.Method == http.MethodPut && r.URL.Path == boxPath(a)+"/revocations":
+			fakeserver.WriteJSON(w, http.StatusOK, struct{}{})
+			return true
+		case r.Method == http.MethodPut && r.URL.Path == boxPath(a)+"/prekey":
 			http.Error(w, "down", http.StatusServiceUnavailable)
 			return true
 		}
 		return false
 	})
 	r, err := a.RenewAndRevoke(ctx, "")
-	if r == nil || r.Revoked == nil || !r.Revoked.Revokes(inUse) || r.NotRenewed == nil || r.OwnTook {
+	if r == nil || r.Revoked == nil || !r.Revoked.Revokes(inUse) || r.NotRenewed == nil {
 		t.Fatalf("remedy: %+v %v", r, err)
 	}
 	e.srv.SetMiddle(nil)

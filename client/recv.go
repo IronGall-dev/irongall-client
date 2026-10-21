@@ -138,7 +138,7 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 	// What this command has asked as it went: the renewal's ask for the
 	// box's own revocation, then the drain's about each sender.
 	asked := newLookups()
-	renewed, renewErr := b.renewIfDue(ctx, asked)
+	renewed, renewErr := b.renewIfDue(ctx)
 	aclErr := b.syncACL(ctx)
 	res, err := b.drain(ctx, asked)
 	if res == nil {
@@ -416,9 +416,7 @@ type verdict struct {
 //     error: the message stays on the server for the next drain. The same
 //     answer carries the sender's revocation of its certificates, if it has
 //     one: mail signed under a revoked certificate is refused the same way,
-//     and the address goes on. Each revocation server the box lists is
-//     asked after its own, and can only add: a record it shows is kept, and
-//     no answer from it changes nothing.
+//     and the address goes on.
 //  9. Replay: the locally computed ciphertext hash is not in the seen-set.
 //  10. Retry: (from, msg_id) is not in the seen-set. A match is a duplicate.
 //

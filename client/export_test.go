@@ -37,11 +37,3 @@ func PutRevocations(ctx context.Context, opt Options, a protocol.Address, rec *p
 	}
 	return b.call(ctx, http.MethodPut, "/v1/"+a.String()+"/revocations", rec, nil, nil)
 }
-
-// SetRevocationServerWait shortens the wait for a revocation server's
-// answer, for one test.
-func SetRevocationServerWait(t *testing.T, d time.Duration) {
-	old := revocationServerWait
-	revocationServerWait = d
-	t.Cleanup(func() { revocationServerWait = old })
-}

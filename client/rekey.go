@@ -44,16 +44,15 @@ import (
 // published (a rollback), whose next serial's key was already published.
 func (b *Box) Rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey, error) {
 	return locked(ctx, b, func() (*protocol.Prekey, error) {
-		l := newLookups()
-		p, err := b.rekey(ctx, kt, l)
-		return p, b.proved(ctx, b.id.Address(), err, l)
+		p, err := b.rekey(ctx, kt)
+		return p, b.proved(ctx, b.id.Address(), err, newLookups())
 	})
 }
 
 // rekey is Rekey with the lock held. It returns the prekey once the server
-// took it. l is what the command has asked as it went.
-func (b *Box) rekey(ctx context.Context, kt protocol.KeyType, l *lookups) (*protocol.Prekey, error) {
-	p, at, err := b.renew(ctx, kt, l)
+// took it.
+func (b *Box) rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey, error) {
+	p, at, err := b.renew(ctx, kt)
 	if err != nil {
 		return nil, err
 	}
@@ -61,8 +60,8 @@ func (b *Box) rekey(ctx context.Context, kt protocol.KeyType, l *lookups) (*prot
 	return p, b.prune(at)
 }
 
-func (b *Box) renew(ctx context.Context, kt protocol.KeyType, l *lookups) (*protocol.Prekey, taken, error) {
-	st, err := b.readOwn(ctx, kt, false, l)
+func (b *Box) renew(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey, taken, error) {
+	st, err := b.readOwn(ctx, kt, false)
 	if err != nil {
 		return nil, taken{}, err
 	}
@@ -127,8 +126,7 @@ type ownRead struct {
 
 // readOwn reads this box at its server (GET /v1/<own>), as a renewal does
 // before it numbers anything, and keeps what verifies of the box's own
-// revocations: what that answer carries, then what each revocation server
-// it lists holds, asked once in the command (l). Every renewal asks, so the
+// revocations: what that answer carries. Every renewal asks, so the
 // certificate it makes next is numbered above the highest serial it has been
 // shown revoked, and is never revoked as it is made (PROTOCOL.md §2b), on a
 // box restored from its identity too. A server that holds no box here
@@ -143,7 +141,7 @@ type ownRead struct {
 // what this box published. The renewal is numbered from what the box knows,
 // and the revocation still goes to whoever takes it (PROTOCOL.md §6.3). A
 // plain renewal stops there: the refusal is the check.
-func (b *Box) readOwn(ctx context.Context, kt protocol.KeyType, unused bool, l *lookups) (*ownRead, error) {
+func (b *Box) readOwn(ctx context.Context, kt protocol.KeyType, unused bool) (*ownRead, error) {
 	out := &ownRead{kt: kt}
 	own := b.id.Address()
 	var ir protocol.BoxResponse
@@ -182,9 +180,6 @@ func (b *Box) readOwn(ctx context.Context, kt protocol.KeyType, unused bool, l *
 		if _, err := b.take(own, rec); err != nil {
 			return nil, err
 		}
-	}
-	if _, err := b.askRevocationServers(ctx, own, l); err != nil {
-		return nil, err
 	}
 	published, err := b.publishedSerial()
 	if err != nil {
@@ -549,14 +544,14 @@ func (b *Box) prekeyStatement(n uint64) (*protocol.Prekey, error) {
 // renewIfDue publishes a new prekey, of the current type, when renewDue
 // says so. The caller holds the lock. A failure is retried after
 // renewRetry.
-func (b *Box) renewIfDue(ctx context.Context, l *lookups) (*protocol.Prekey, error) {
+func (b *Box) renewIfDue(ctx context.Context) (*protocol.Prekey, error) {
 	if !b.renewDue() {
 		return nil, nil
 	}
 	if !b.renewFailed.IsZero() && b.now().Sub(b.renewFailed) < renewRetry {
 		return nil, nil
 	}
-	p, err := b.rekey(ctx, "", l)
+	p, err := b.rekey(ctx, "")
 	if err != nil {
 		b.renewFailed = b.now()
 		return nil, err

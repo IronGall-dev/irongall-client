@@ -78,7 +78,6 @@ A box is the directory `~/.config/irongall/default`: `$IRONGALL_BOX` names anoth
 - **The box keeps mail in plaintext and never prunes it:** `inbox/`, `held/`, `sent/`, `quarantine/`. Delete a file to forget a message. Read `quarantine/` through `irongall quarantine list`, which says why each was refused, and empty it with `irongall quarantine rm`: its files keep what the server sent.
 - **A stolen identity is ended with `irongall revocation publish <address>`, for good,** and the box then signs nothing more, whatever a server answers. Nothing undoes it, and the address written out in full is the confirmation. `irongall revocation make` prints a record that does the same later with no box and no key (`irongall revocation publish --record <file> <address>`): keep it somewhere other than the box. `irongall revocation keep <file>` takes a record of another box that someone handed you, and `irongall revocation ask <link>` asks for one, as `send` does by itself before it posts (`PROTOCOL.md` §6.3).
 - **A stolen working key (`work/`) is ended with `irongall cert revoke-earlier`, and the address goes on:** a new working key and prekey, and every certificate before the new one revoked. Mail this box sent under those, and that is not yet read, is refused too: send it again. The old certificates are revoked before the new prekey is sent, so a thief holding the old key cannot hold the remedy back (`PROTOCOL.md` §6.3a).
-- **A revocation belongs to the identity, not to one server, so a box can ask other revocation servers too, and publish its own revocations to them** (`PROTOCOL.md` §6.3). Every mailbox server is one, and a box asks no other unless told: `$IRONGALL_REVOCATION_SERVERS`, or a `revocation-servers` file in the box, names them, and each one learns which addresses the box asks about. No answer from one changes nothing, and a publish fails until every one has the record.
 - **Limits are the server's.** Its `llms.txt` states them, and a refusal names the limit and the seconds to wait.
 
 Forward secrecy, padding, accounts and the rest: `PROTOCOL.md`.
@@ -96,7 +95,6 @@ Forward secrecy, padding, accounts and the rest: `PROTOCOL.md`.
 | `paced`, `more` | `recv` | the rest is still on the server: run `recv` again, after `retry_after` seconds for `paced` |
 | `renewal_failed`, `acl_not_sent` | `recv` | the members of an `error` line |
 | `box_unread` | `cert revoke-earlier` | the members of an `error` line: the box's own server could not be read, or served what the box does not take, and the remedy went on from what the box knows |
-| `no_answer` | any command that asks revocation servers | `server`: one gave no answer, which changes nothing |
 | `sent` | `send`, `outbox flush` | `id`, `msg_id`, `to` |
 | `box` | `init`, `addr` | `address`, `link` |
 | `quarantined` | `quarantine list` | `id`, `code` (below), `reason`, and `from` and `received_at`, the server's, each when it has its form; then what the checks established when they judged it: `judged_at`, this machine's clock; `signed_by` when its signature verifies, by a working key that identity certified, at that certificate's own start, or else `claims_identity`; and with `signed_by`, `certificate_serial`, `certificate_began`, `certificate_ends`, `sent_at` and `msg_id` |
@@ -153,7 +151,7 @@ echo hello | bash sh/irongall.sh send https://irongall.dev/to/7f87929a91aa19bd2c
 bash sh/irongall.sh recv                    # a minute or two later: recv does not wait
 ```
 
-What it does not do: renew on its own (run `prekey renew` at least monthly, or within the box's `prekey-lifetime`), keep a send to post again (a send that fails says so and keeps nothing), aliases, revocations of its own, revocation servers (a box that lists one is refused), held mail and ACLs, and every command the Go client has beyond the five above.
+What it does not do: renew on its own (run `prekey renew` at least monthly, or within the box's `prekey-lifetime`), keep a send to post again (a send that fails says so and keeps nothing), aliases, revocations of its own, held mail and ACLs, and every command the Go client has beyond the five above.
 
 ## No Server Trust
 
@@ -166,7 +164,7 @@ What it does not do: renew on its own (run `prekey renew` at least monthly, or w
 - keep serving a box's previous prekey until it expires, 33 days after it was signed;
 - list mail from senders it made up, which costs a box one bounded run;
 - refuse a box's renewals, which `recv` reports with exit `3`;
-- keep a box's revocation, or its revocation of certificates, from a peer that has never seen it. It cannot make either: a client checks every one itself, and takes "revoked" on no server's word. A revocation server that someone else runs is a witness against it, if a box lists one (`PROTOCOL.md` §6.3).
+- keep a box's revocation, or its revocation of certificates, from a peer that has never seen it. It cannot make either: a client checks every one itself, and takes "revoked" on no server's word. What its owner hands over out of band settles it (`irongall revocation keep`, `PROTOCOL.md` §6.3).
 
 Cloudflare terminates TLS for irongall.dev today, so it can do the same. Neither can read or forge mail. In full: `PROTOCOL.md` §9.
 

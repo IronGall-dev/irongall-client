@@ -8,8 +8,7 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// Revocations is what a mailbox server or a revocation server holds about an
-// address: the body of PUT /v1/<address>/revocations and the answer to GET
+// Revocations is what a server holds about an address: the body of PUT /v1/<address>/revocations and the answer to GET
 // of the same path (PROTOCOL.md §6.3). It proves itself: the document hashes
 // to the address and the signature verifies under the document's key, so it
 // is worth the same from either kind of server or from a file a person
