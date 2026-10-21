@@ -104,7 +104,7 @@ func (b *Box) SetPolicy(p Policy) error {
 	if err := p.check(); err != nil {
 		return err
 	}
-	return b.lockedDo(context.Background(), func() error {
+	return b.lockedFinishedDo(context.Background(), func() error {
 		return writeFile(b.path("policy"), []byte("unknown "+p.Unknown+"\nserver "+p.Server+"\n"))
 	})
 }
@@ -406,7 +406,7 @@ func (b *Box) block(a protocol.Address) (int, error) {
 // many it added. What the file lists stays. It is for a box whose allowed
 // file was lost: send, alias and allow keep it otherwise.
 func (b *Box) RebuildAllowed() (int, error) {
-	return locked(context.Background(), b, b.rebuildAllowed)
+	return lockedFinished(context.Background(), b, b.rebuildAllowed)
 }
 
 func (b *Box) rebuildAllowed() (int, error) {

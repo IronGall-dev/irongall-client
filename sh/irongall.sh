@@ -176,6 +176,7 @@ ig_lifetime(){ # → the seconds each new prekey of this box is valid for: what 
 ig_prekey(){ # <serial> [--no-pq] → prekeys/<serial>.agekey and its statement, signed by a NEW working key (ig_work): a NEW key, valid for the box's prekey lifetime (ig_lifetime), and prekeys/<serial>.made, when it was signed, which the Go client times its renewals by. A re-run reuses the key a failed attempt left, whatever its type, unless it is empty
   local A p="$IG/prekeys/$1" l t k; A=$(cat "$IG/address") || return 1
   [ -s "$p.txt.sig" ] && return 0
+  ig_finished || { ig_done $?; return 1; }      # the one path to this box's certificates and statements: a box that holds its own revocation makes neither, init and prekey renew alike
   l=$(ig_lifetime) || return 1
   [ -s "$p.agekey" ] || { rm -f "$p.agekey"; if [ "${2-}" = --no-pq ]; then age-keygen -o "$p.agekey"; else age-keygen -pq -o "$p.agekey"; fi 2> /dev/null; } || ig_refuse "age-keygen failed: post-quantum needs age >= 1.3 (or make a box with --no-pq)" || return 1      # an empty key file, as a crash before the sync below leaves one, is no key, and no statement names it, so it is made again, as the Go client does
   k=$(age-keygen -y "$p.agekey" 2> /dev/null) || ig_refuse "age-keygen cannot read $p.agekey, the key this box began prekey $1 with (a post-quantum one needs age >= 1.3)" || return 1      # never a statement with no key in it, which a server refuses at every try

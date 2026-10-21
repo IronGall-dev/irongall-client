@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"github.com/IronGall-dev/irongall-client/client/internal/sign"
 	"github.com/IronGall-dev/irongall-client/protocol"
 	"golang.org/x/crypto/ssh"
 )
@@ -92,10 +93,10 @@ type Box struct {
 	base string
 	http *http.Client
 	now  func() time.Time
-	// signer is the identity key. It signs certificates and revocations, and
-	// nothing else.
-	signer ssh.Signer
-	id     *protocol.Identity
+	// identity is the identity key, which signs certificates and revocations
+	// and nothing else, and none once the box is finished (sign).
+	identity *sign.Identity
+	id       *protocol.Identity
 	// identityType is the type of key Init makes when the box has none.
 	identityType string
 	// senderKeyTypes is what the box declares with each prekey it publishes.
@@ -305,11 +306,11 @@ func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*B
 // box published last, its working key is the one in use, and older working
 // keys go. It returns the reading the server took: the pass's date.
 func (b *Box) publish(ctx context.Context, path string, req any, n uint64) (taken, error) {
-	signer, _, err := b.worker(n)
+	work, _, err := b.worker(n)
 	if err != nil {
 		return taken{}, err
 	}
-	pass, err := b.signPass(signer)
+	pass, err := b.signPass(work)
 	if err != nil {
 		return taken{}, err
 	}
@@ -397,7 +398,7 @@ func (b *Box) loadIdentity() error {
 	if err != nil {
 		return err
 	}
-	b.signer, b.id = signer, id
+	b.identity, b.id = sign.NewIdentity(signer, b.finished), id
 	if doc, err := os.ReadFile(b.path("identity.doc")); err != nil || !bytes.Equal(doc, id.Document()) {
 		if err := writeFile(b.path("identity.doc"), id.Document()); err != nil {
 			return err
@@ -430,6 +431,12 @@ func (b *Box) makePrekey(serial uint64, kt protocol.KeyType) (*protocol.Prekey, 
 	if err != nil {
 		return nil, err
 	}
+	// The working key and its certificate first: a box that may sign nothing
+	// more is stopped at the certificate, before any key is written.
+	worker, cert, err := b.makeWork(serial)
+	if err != nil {
+		return nil, err
+	}
 	if !exists(stem+".agekey") || keyType(stem+".agekey") != kt {
 		if err := newAgeKey(stem+".agekey", kt, b.now()); err != nil {
 			return nil, err
@@ -439,17 +446,13 @@ func (b *Box) makePrekey(serial uint64, kt protocol.KeyType) (*protocol.Prekey, 
 	if err != nil {
 		return nil, err
 	}
-	worker, cert, err := b.makeWork(serial)
-	if err != nil {
-		return nil, err
-	}
 	made := b.now().UTC().Truncate(time.Second)
 	notAfter := made.Add(lifetime)
 	if cert.NotAfter().Before(notAfter) {
 		notAfter = cert.NotAfter()
 	}
 	p := &protocol.Prekey{Address: b.id.Address(), Serial: serial, Key: recipient, NotAfter: notAfter}
-	sig, err := protocol.Sign(worker, p.Statement(), protocol.PrekeyNamespace(b.id.Address()))
+	sig, err := worker.Signature(p.Statement(), protocol.PrekeyNamespace(b.id.Address()))
 	if err != nil {
 		return nil, err
 	}

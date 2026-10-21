@@ -365,7 +365,7 @@ func TestABoxLearnsItIsRevoked(t *testing.T) {
 	if err != nil || !st.Revoked || len(st.Attention) == 0 || !strings.Contains(st.Attention[0], "revoked") {
 		t.Fatalf("status of a revoked box: %+v, %v", st, err)
 	}
-	if _, err := a.Send(ctx, b.Address(), "from a revoked box"); !isRevoked(err, a.Address(), true) || failed(a, b.Address()) != 1 {
+	if _, err := a.Send(ctx, b.Address(), "from a revoked box"); !isRevoked(err, a.Address(), true) || failed(a, b.Address()) != 0 {
 		t.Fatalf("a revoked box's send: %v", err)
 	}
 }

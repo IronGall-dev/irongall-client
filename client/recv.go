@@ -125,9 +125,6 @@ func (b *Box) Receive(ctx context.Context) (*Result, error) {
 }
 
 func (b *Box) receive(ctx context.Context) (*Result, error) {
-	if err := b.finished(); err != nil {
-		return nil, err
-	}
 	// What this command has asked as it went: the renewal's ask for the
 	// box's own revocation, then the drain's about each sender.
 	asked := newLookups()

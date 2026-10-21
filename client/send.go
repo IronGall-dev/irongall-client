@@ -163,13 +163,27 @@ func (b *Box) sendWith(ctx context.Context, to protocol.Address, env *protocol.E
 // failed. The server is asked about each recipient once, as a send asks
 // ([Box.SendWith]).
 func (b *Box) Flush(ctx context.Context) ([]*Sent, error) {
-	return locked(ctx, b, func() ([]*Sent, error) { return b.flush(ctx) })
+	return lockedFinished(ctx, b, func() ([]*Sent, error) { return b.flush(ctx) })
 }
 
 func (b *Box) flush(ctx context.Context) ([]*Sent, error) {
 	names, err := filepath.Glob(b.path("outbox", "*.P"))
 	if err != nil {
 		return nil, err
+	}
+	// A box that holds its own revocation can never deliver what waits:
+	// every reader that holds the revocation refuses its mail, whenever it was
+	// signed. Each entry goes to outbox/failed/, with nothing asked or sent.
+	if err := b.finished(); err != nil {
+		var gone *RevokedError
+		if !errors.As(err, &gone) {
+			return nil, err
+		}
+		errs := []error{err}
+		for _, n := range names {
+			errs = append(errs, fmt.Errorf("%s: %w", filepath.Base(n), b.undelivered(strings.TrimSuffix(n, ".P"), err)))
+		}
+		return nil, errors.Join(errs...)
 	}
 	if len(names) > 0 {
 		if err := b.syncACL(ctx); err != nil {
@@ -228,15 +242,6 @@ var undeliverable = []protocol.Code{
 // has recorded, is refused. A read that serves no box is not "none held":
 // nothing is sealed or posted, and the entry stays.
 func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked *lookups) (*protocol.Receipt, error) {
-	// A box that holds its own revocation can never deliver it: every reader
-	// that holds the revocation refuses its mail, whenever it was signed.
-	if err := b.finished(); err != nil {
-		var gone *RevokedError
-		if errors.As(err, &gone) {
-			return nil, b.undelivered(stem, err)
-		}
-		return nil, err
-	}
 	if b.expired(stem) {
 		return nil, b.undelivered(stem, refuse("it was written more than %d days ago, and an outbox posts a message no longer than that", protocol.TTL/(24*time.Hour)))
 	}
@@ -486,7 +491,7 @@ func (b *Box) seal(ctx context.Context, to protocol.Address, stem string, l *loo
 	if err != nil {
 		return nil, err
 	}
-	sig, err := protocol.Sign(worker, line, protocol.MessageNamespace(to))
+	sig, err := worker.Signature(line, protocol.MessageNamespace(to))
 	if err != nil {
 		return nil, err
 	}

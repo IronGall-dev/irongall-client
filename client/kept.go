@@ -264,7 +264,7 @@ func (b *Box) quarantineReason(id string) (code, reason string) {
 // It holds the box's lock from start to end ([Box.hold]), as every command
 // that writes the box does.
 func (b *Box) RemoveQuarantined(ctx context.Context, ids []string) ([]string, error) {
-	return locked(ctx, b, func() ([]string, error) {
+	return lockedFinished(ctx, b, func() ([]string, error) {
 		if len(ids) == 0 {
 			qs, err := b.Quarantined()
 			if err != nil {

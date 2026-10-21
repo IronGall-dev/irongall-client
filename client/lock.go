@@ -77,8 +77,25 @@ func (b *Box) hold(ctx context.Context) (*lock, error) {
 }
 
 // locked runs f with the box's lock held ([Box.hold]), and lets go of it
-// after, on every way out of f, a panic among them.
+// after, on every way out of f, a panic among them. It is the one entry of
+// every command that writes the box, so a box that holds its own revocation
+// is refused here, before anything is asked or written (PROTOCOL.md §6.3):
+// only what §6.3 lets it still do runs on one, through lockedFinished.
 func locked[T any](ctx context.Context, b *Box, f func() (T, error)) (v T, err error) {
+	return lockedFinished(ctx, b, func() (T, error) {
+		if err := b.finished(); err != nil {
+			return v, err
+		}
+		return f()
+	})
+}
+
+// lockedFinished is locked for a command a box that holds its own
+// revocation still runs, since it neither carries a pass nor asks for
+// anything §6.3 refuses: asking about a revocation and keeping one, a flush,
+// which moves what waits to outbox/failed/, and a change to the box's own
+// files alone. Each signs nothing (sign).
+func lockedFinished[T any](ctx context.Context, b *Box, f func() (T, error)) (v T, err error) {
 	l, err := b.hold(ctx)
 	if err != nil {
 		return v, err
@@ -94,6 +111,12 @@ func locked[T any](ctx context.Context, b *Box, f func() (T, error)) (v T, err e
 // lockedDo is locked, for an f that returns only an error.
 func (b *Box) lockedDo(ctx context.Context, f func() error) error {
 	_, err := locked(ctx, b, func() (struct{}, error) { return struct{}{}, f() })
+	return err
+}
+
+// lockedFinishedDo is lockedFinished, for an f that returns only an error.
+func (b *Box) lockedFinishedDo(ctx context.Context, f func() error) error {
+	_, err := lockedFinished(ctx, b, func() (struct{}, error) { return struct{}{}, f() })
 	return err
 }
 

@@ -43,9 +43,19 @@ func (e *RevokedError) Error() string {
 // Revocation returns this box's revocation: its identity document and the
 // identity's signature over the fixed statement. It publishes nothing. The
 // record is what [Revoke] sends, and it can be made long before it is needed
-// and kept somewhere other than the box.
+// and kept somewhere other than the box. A box that holds its own
+// revocation returns the one it holds, and signs nothing (sign).
 func (b *Box) Revocation() (*protocol.Revocations, error) {
-	sig, err := protocol.SignRevocation(b.signer, b.id.Address())
+	if gone, err := b.revoked(b.id.Address()); err != nil {
+		return nil, err
+	} else if gone {
+		sig, err := os.ReadFile(b.revocationFile(b.id.Address()))
+		if err != nil {
+			return nil, err
+		}
+		return &protocol.Revocations{Identity: b.id.Document(), Revocation: sig}, nil
+	}
+	sig, err := b.identity.Revocation(b.id.Address())
 	if err != nil {
 		return nil, err
 	}
@@ -110,7 +120,7 @@ func (b *Box) held(a protocol.Address) (*Held, error) {
 // of certificates through no higher a serial than the one held changes
 // nothing.
 func (b *Box) KeepRevocation(rec *protocol.Revocations) (a protocol.Address, h *Held, err error) {
-	_, err = locked(context.Background(), b, func() (struct{}, error) {
+	_, err = lockedFinished(context.Background(), b, func() (struct{}, error) {
 		a, h, err = b.keepRevocationRecord(rec)
 		return struct{}{}, err
 	})
@@ -168,7 +178,7 @@ func (b *Box) keepRevocationRecord(rec *protocol.Revocations) (protocol.Address,
 // holds already stands whatever a server answers. No answer from the box's
 // own server is an error; none from a revocation server changes nothing.
 func (b *Box) Ask(ctx context.Context, a protocol.Address) (*Held, error) {
-	return locked(ctx, b, func() (*Held, error) {
+	return lockedFinished(ctx, b, func() (*Held, error) {
 		if _, err := b.lookupRevocation(ctx, a, newLookups()); err != nil {
 			return nil, err
 		}
@@ -194,7 +204,12 @@ func (b *Box) keepRevocation(id *protocol.Identity, sig []byte) error {
 			return err
 		}
 	}
-	return writeFile(b.revocationFile(a), sig)
+	if err := writeFile(b.revocationFile(a), sig); err != nil || a != b.id.Address() {
+		return err
+	}
+	// The box's own: the pass it kept is a signature already made, which
+	// nothing may use now.
+	return removeIfExists(b.path("pass"))
 }
 
 // finished is this box's own revocation of its address, as an error. A box
@@ -491,7 +506,8 @@ func (b *Box) renewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy,
 	if err != nil {
 		return nil, err
 	}
-	// A box whose address is revoked has nothing to remedy.
+	// A box whose read showed it its own revocation has nothing to remedy:
+	// the remedy's answer, not its guard, which is sign's.
 	if err := b.finished(); err != nil {
 		return nil, err
 	}
@@ -611,7 +627,7 @@ func (b *Box) revokeBelow(ctx context.Context, serial uint64, l *lookups) (*prot
 		if err != nil {
 			return took, err
 		}
-		sig, err := protocol.SignRevokedCertificates(b.signer, certs)
+		sig, err := b.identity.RevokedCertificates(certs)
 		if err != nil {
 			return took, err
 		}

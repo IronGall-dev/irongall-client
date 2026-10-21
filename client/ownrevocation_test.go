@@ -1,11 +1,16 @@
 package client_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -278,9 +283,79 @@ func TestTheRemedyAsksEachServerOnce(t *testing.T) {
 	}
 }
 
-// A box that keeps its own revocation of its address is finished, whatever
-// its own server still serves (PROTOCOL.md §6.3): here its server was down
-// when it was published, and a revocation server took it.
+// command is one of a box's commands, by its method's name.
+type command struct {
+	name string
+	f    func() error
+}
+
+// finishedCommands are every exported command that takes the box's lock,
+// as a box that holds its own revocation runs them: those that would ask a
+// server or carry a pass, which are refused, and those that still run.
+// TestEveryLockingCommandIsTriedFinished holds the two lists to the code.
+func finishedCommands(ctx context.Context, a, b *client.Box, rec *protocol.Revocations) (refused, run []command) {
+	refused = []command{
+		{"Adopt", func() error { _, err := a.Adopt(ctx, "key"); return err }},
+		{"Leave", func() error { return a.Leave(ctx) }},
+		{"Resolve", func() error { _, err := a.Resolve(ctx, b.Address()); return err }},
+		{"Receive", func() error { _, err := a.Receive(ctx); return err }},
+		{"Rekey", func() error { _, err := a.Rekey(ctx, ""); return err }},
+		{"RevokeEarlier", func() error { _, err := a.RevokeEarlier(ctx); return err }},
+		{"RenewAndRevoke", func() error { _, err := a.RenewAndRevoke(ctx, ""); return err }},
+		{"SendWith", func() error {
+			_, err := a.SendWith(ctx, b.Address(), "from a finished box", client.Fields{})
+			return err
+		}},
+		{"SendJSON", func() error {
+			_, err := a.SendJSON(ctx, b.Address(), []byte(`{"from":"a finished box"}`), client.Fields{})
+			return err
+		}},
+		{"Allow", func() error { _, err := a.Allow(ctx, b.Address()); return err }},
+		{"Block", func() error { _, err := a.Block(ctx, b.Address()); return err }},
+		{"SyncACL", func() error { return a.SyncACL(ctx) }},
+	}
+	run = []command{
+		{"Ask", func() error { _, err := a.Ask(ctx, a.Address()); return err }},
+		{"KeepRevocation", func() error { _, _, err := a.KeepRevocation(rec); return err }},
+		{"Flush", func() error { _, err := a.Flush(ctx); return err }},
+		{"SetAlias", func() error { return a.SetAlias("peer", b.Address()) }},
+		{"RemoveAlias", func() error { return a.RemoveAlias("peer") }},
+		{"RemoveQuarantined", func() error { _, err := a.RemoveQuarantined(ctx, nil); return err }},
+		{"SetPolicy", func() error { return a.SetPolicy(client.Policy{Unknown: client.LandInbox, Server: client.AdmitAll}) }},
+		{"RebuildAllowed", func() error { _, err := a.RebuildAllowed(); return err }},
+		{"SetPrekeyLifetime", func() error { return a.SetPrekeyLifetime(ctx, protocol.PrekeyLifetime) }},
+	}
+	return refused, run
+}
+
+// signed is what the box's keys have signed: its working keys, certificates
+// and prekey statements, and the pass it keeps.
+func signed(t *testing.T, a *client.Box) []string {
+	t.Helper()
+	var names []string
+	for _, d := range []string{"work", "prekeys"} {
+		es, err := os.ReadDir(filepath.Join(a.Dir(), d))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range es {
+			names = append(names, d+"/"+e.Name())
+		}
+	}
+	if _, err := os.Stat(filepath.Join(a.Dir(), "pass")); err == nil {
+		names = append(names, "pass")
+	}
+	return names
+}
+
+// A box that holds its own revocation is finished (PROTOCOL.md §6.3). Every
+// command that would ask a server or carry a pass is refused, with the box's
+// own RevokedError, before anything is asked. None of them signs anything,
+// by any path, and the pass the box kept is gone. A send writes nothing, and
+// a flush moves what waits to outbox/failed/. What carries no pass still
+// goes: asking about and keeping a revocation, the record (the one the box
+// holds) published again, and a change to the box's own files alone. No
+// call in all of it carries a pass.
 func TestABoxThatKeepsItsOwnRevocationSignsNothingMore(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
@@ -288,6 +363,10 @@ func TestABoxThatKeepsItsOwnRevocationSignsNothingMore(t *testing.T) {
 	a := e.boxWith(e.listing(rs.URL))
 	b := e.box(protocol.Classic)
 	send(t, b, a, "to a box about to be finished")
+	says(e, protocol.CodeUnavailable, http.MethodPost, "/messages")
+	if _, err := a.Send(ctx, b.Address(), "waits in the outbox"); err == nil {
+		t.Fatal("a send was taken by a server that is down")
+	}
 	rec, err := a.Revocation()
 	if err != nil {
 		t.Fatal(err)
@@ -303,37 +382,189 @@ func TestABoxThatKeepsItsOwnRevocationSignsNothingMore(t *testing.T) {
 	if st, err := a.Status(); err != nil || !st.Revoked {
 		t.Fatalf("status: %+v, %v", st, err)
 	}
-	// Refused before anything is asked: no call reaches the server.
-	var calls atomic.Int32
-	watch(e, func(w http.ResponseWriter, r *http.Request) bool {
+	before := signed(t, a)
+	if slices.Contains(before, "pass") {
+		t.Error("the pass the box kept outlives its own revocation")
+	}
+	var calls, passes atomic.Int32
+	watch(e, func(_ http.ResponseWriter, r *http.Request) bool {
 		calls.Add(1)
+		if r.Header.Get("Authorization") != "" {
+			passes.Add(1)
+		}
 		return false
 	})
+	refused, run := finishedCommands(ctx, a, b, rec)
 	var gone *client.RevokedError
-	if _, err := a.Send(ctx, b.Address(), "from a finished box"); !errors.As(err, &gone) || !gone.Own || calls.Load() != 0 {
-		t.Errorf("a send: %v, with %d calls to the server", err, calls.Load())
+	for _, c := range refused {
+		name, f := c.name, c.f
+		calls.Store(0)
+		e.clock.Add(2 * time.Second)
+		if err := f(); !errors.As(err, &gone) || !gone.Own || calls.Load() != 0 {
+			t.Errorf("%s: %v, with %d calls to the server", name, err, calls.Load())
+		}
+	}
+	if waiting, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "*.P")); len(waiting) != 1 {
+		t.Errorf("%d entries in the outbox, want the one that waited: a send writes nothing", len(waiting))
+	}
+	for _, c := range run {
+		name, f := c.name, c.f
+		calls.Store(0)
+		err := f()
+		if name == "Flush" {
+			if !errors.As(err, &gone) || !gone.Own || calls.Load() != 0 {
+				t.Errorf("a flush: %v, with %d calls to the server", err, calls.Load())
+			}
+			continue
+		}
+		if err != nil || name != "Ask" && calls.Load() != 0 {
+			t.Errorf("%s: %v, with %d calls to the server", name, err, calls.Load())
+		}
+	}
+	if waiting, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "*.P")); len(waiting) != 0 {
+		t.Errorf("%d entries left in the outbox", len(waiting))
 	}
 	if failed, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "failed", "*.P")); len(failed) != 1 {
 		t.Errorf("%d entries in outbox/failed/, want the one it can never deliver", len(failed))
 	}
+	if again, err := a.Revocation(); err != nil || !bytes.Equal(again.Revocation, rec.Revocation) {
+		t.Errorf("the record of a finished box: %v, not the one it holds", err)
+	}
+	if _, err := a.Revoke(ctx, rec); err != nil { // published again: its server takes it
+		t.Errorf("published again: %v", err)
+	}
+	if after := signed(t, a); !slices.Equal(after, before) {
+		t.Errorf("signed while finished: %v, then %v", before, after)
+	}
+	if passes.Load() != 0 {
+		t.Errorf("%d calls of a finished box carried a pass", passes.Load())
+	}
 	if res := receive(t, b); len(res.Delivered) != 0 {
 		t.Errorf("its reader delivered %d", len(res.Delivered))
 	}
-	calls.Store(0)
-	if _, err := a.Receive(ctx); !errors.As(err, &gone) || calls.Load() != 0 {
-		t.Errorf("a drain: %v, with %d calls to the server", err, calls.Load())
+}
+
+// Every exported command that takes the box's lock is one of
+// finishedCommands', so a new one is tried on a finished box too.
+func TestEveryLockingCommandIsTriedFinished(t *testing.T) {
+	names, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
 	}
-	before, begun := numberOf(t, a), begunAt(t, a)
+	refused, run := finishedCommands(context.Background(), nil, nil, nil)
+	tried := func(name string) bool {
+		return slices.ContainsFunc(append(refused, run...), func(c command) bool { return c.name == name })
+	}
+	for _, name := range names {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range f.Decls {
+			fn, ok := d.(*ast.FuncDecl)
+			if !ok || fn.Recv == nil || !fn.Name.IsExported() || fn.Body == nil {
+				continue
+			}
+			if takesTheLock(fn.Body) && !tried(fn.Name.Name) {
+				t.Errorf("%s takes the box's lock and is not tried on a finished box: add it to finishedCommands", fn.Name.Name)
+			}
+		}
+	}
+}
+
+// takesTheLock reports whether body calls one of the functions that take
+// the box's lock.
+func takesTheLock(body *ast.BlockStmt) bool {
+	takes := false
+	ast.Inspect(body, func(n ast.Node) bool {
+		c, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		name := ""
+		switch x := c.Fun.(type) {
+		case *ast.Ident:
+			name = x.Name
+		case *ast.SelectorExpr:
+			name = x.Sel.Name
+		case *ast.IndexExpr:
+			if id, ok := x.X.(*ast.Ident); ok {
+				name = id.Name
+			}
+		}
+		takes = takes || slices.Contains([]string{"locked", "lockedFinished", "lockedDo", "lockedFinishedDo"}, name)
+		return true
+	})
+	return takes
+}
+
+// The renewal's own ask is what shows the box its address revoked: a
+// revocation server it lists holds the revocation, its own server does not.
+// The box keeps the revocation and signs nothing more, this renewal
+// included, the revocation learned inside the command: no certificate and no
+// prekey statement, and no key made for one (#227).
+func TestARenewalThatMeetsItsOwnRevocationSignsNothing(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	rs := newRevServer(t)
+	a := e.boxWith(e.listing(rs.URL))
+	rec, err := a.Revocation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	publishAt(t, rs.URL, rec) // at the revocation server only
+	before, number, begun := signed(t, a), numberOf(t, a), begunAt(t, a)
 	e.clock.Add(2 * time.Second)
-	if _, err := a.Rekey(ctx, ""); !errors.As(err, &gone) || numberOf(t, a) != before || begunAt(t, a) != begun {
-		t.Errorf("a renewal: %v, serial %d -> %d, a prekey begun at %d -> %d", err, before, numberOf(t, a), begun, begunAt(t, a))
+	_, err = a.Rekey(ctx, "")
+	if st, serr := a.Status(); serr != nil || !st.Revoked {
+		t.Fatalf("the box did not keep its own revocation: %+v, %v", st, serr)
 	}
-	if err := a.Leave(ctx); !errors.As(err, &gone) {
-		t.Errorf("an owner call: %v", err)
+	var gone *client.RevokedError
+	if !errors.As(err, &gone) || !gone.Own || numberOf(t, a) != number || begunAt(t, a) != begun || !slices.Equal(signed(t, a), slices.DeleteFunc(before, func(n string) bool { return n == "pass" })) {
+		t.Errorf("a renewal that met its own revocation: %v; serial %d -> %d; a prekey begun at %d -> %d; signed %v -> %v", err, number, numberOf(t, a), begun, begunAt(t, a), before, signed(t, a))
 	}
-	// What carries no pass still goes: published again, its server takes it.
-	if _, err := a.Revoke(ctx, rec); err != nil {
-		t.Errorf("published again: %v", err)
+}
+
+// A box restored from its identity alone, whose owner kept its revocation
+// record, runs init: it signs nothing, no certificate and no prekey
+// statement, and calls no server (#256).
+func TestInitOfABoxThatHoldsItsOwnRevocationSignsNothing(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a := e.box(protocol.Classic)
+	rec, err := a.Revocation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	key, err := os.ReadFile(filepath.Join(a.Dir(), "identity"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "identity"), key, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r, err := client.Open(dir, e.opts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.KeepRevocation(rec); err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	watch(e, func(http.ResponseWriter, *http.Request) bool {
+		calls.Add(1)
+		return false
+	})
+	_, err = client.Init(ctx, dir, e.opts(), protocol.Classic)
+	made, _ := filepath.Glob(filepath.Join(dir, "work", "*"))
+	stmts, _ := filepath.Glob(filepath.Join(dir, "prekeys", "*"))
+	var gone *client.RevokedError
+	if !errors.As(err, &gone) || !gone.Own || calls.Load() != 0 || len(made) != 0 || len(stmts) != 0 {
+		t.Errorf("init of a box that holds its own revocation: %v; %d requests; it made %v and %v", err, calls.Load(), made, stmts)
 	}
 }
 

@@ -16,7 +16,7 @@
 //	prekeys/<serial>.agekey    age keys, each with its signed statement (.txt, .txt.sig) and when it was signed (.made); never backed up
 //	prekey-lifetime            how long each new prekey is valid for: a number of seconds, from 97200 (a day and three hours) to 2851200 (33 days), the default. Yours to write, or irongall prekey lifetime's
 //	serial                     the number of the prekey this box published last, which is its certificate's serial too: the box's clock gave it
-//	pass                       the pass this box last signed for its server, used until it runs out
+//	pass                       the pass this box last signed for its server, used until it runs out; gone once the box is finished
 //	etag                       the ETag of the last poll that found the box empty, sent back in If-None-Match; gone once a poll finds mail
 //	peers/<address>/           the pinned identity document, the highest prekey serial and certificate serial seen, revoke.sig, its revocation, once one has verified, and revoked-certs.json, the highest revocation of its certificates that has verified
 //	revoked.sig                this box's own revocation, once it has met one that verifies: the box is finished

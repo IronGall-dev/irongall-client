@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/IronGall-dev/irongall-client/client/internal/sign"
 	"github.com/IronGall-dev/irongall-client/protocol"
 	"golang.org/x/crypto/ssh"
 )
@@ -39,7 +40,7 @@ func (b *Box) workStem(n uint64) string { return b.path("work", strconv.FormatUi
 
 // makeWork makes working key n and its certificate, unless the box holds
 // them, and returns the key's signer under the certificate.
-func (b *Box) makeWork(n uint64) (ssh.Signer, *protocol.Certificate, error) {
+func (b *Box) makeWork(n uint64) (*sign.Work, *protocol.Certificate, error) {
 	stem := b.workStem(n)
 	if exists(stem) && exists(stem+"-cert.pub") {
 		return b.worker(n)
@@ -59,7 +60,7 @@ func (b *Box) makeWork(n uint64) (ssh.Signer, *protocol.Certificate, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	cert, err := protocol.NewCertificate(b.id, b.signer, sshPub, n, b.now())
+	cert, err := b.identity.Certify(b.id, sshPub, n, b.now())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -80,7 +81,7 @@ func (b *Box) makeWork(n uint64) (ssh.Signer, *protocol.Certificate, error) {
 // worker returns working key n's signer under its certificate, checked
 // against the box's identity at the box's clock: a certificate that has
 // ended signs nothing.
-func (b *Box) worker(n uint64) (ssh.Signer, *protocol.Certificate, error) {
+func (b *Box) worker(n uint64) (*sign.Work, *protocol.Certificate, error) {
 	stem := b.workStem(n)
 	pemBytes, err := os.ReadFile(stem) //nolint:gosec // a path inside the box's own directory
 	if err != nil {
@@ -116,12 +117,12 @@ func (b *Box) worker(n uint64) (ssh.Signer, *protocol.Certificate, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("working key %d does not match its certificate: %w", n, err)
 	}
-	return signer, cert, nil
+	return sign.NewWork(signer, b.finished), cert, nil
 }
 
 // currentWorker returns the working key in use: the one made with the prekey
 // this box published last.
-func (b *Box) currentWorker() (ssh.Signer, *protocol.Certificate, error) {
+func (b *Box) currentWorker() (*sign.Work, *protocol.Certificate, error) {
 	n, err := b.publishedSerial()
 	if err != nil {
 		return nil, nil, err
@@ -227,7 +228,9 @@ const passMargin = 30 * time.Second
 // refuses it if the clock is too far behind: a box whose clock is wrong is
 // stopped at its pass, before it fetches mail it would judge by that clock.
 //
-// A box that holds its own revocation uses no pass, the kept one included.
+// A box that holds its own revocation uses no pass, the kept one included:
+// this is the one place a call gets its pass, so the check is here, and a
+// new pass is the working key's signature, which sign refuses too.
 func (b *Box) pass() (string, error) {
 	if err := b.finished(); err != nil {
 		return "", err
@@ -240,28 +243,24 @@ func (b *Box) pass() (string, error) {
 			}
 		}
 	}
-	signer, _, err := b.currentWorker()
+	work, _, err := b.currentWorker()
 	if err != nil {
 		return "", err
 	}
-	h, err := b.signPass(signer)
+	h, err := b.signPass(work)
 	if err != nil {
 		return "", err
 	}
 	return h, b.keepPass(h)
 }
 
-// signPass signs a pass with signer, a working key under its certificate.
-// A box that holds its own revocation signs none.
-func (b *Box) signPass(signer ssh.Signer) (string, error) {
-	if err := b.finished(); err != nil {
-		return "", err
-	}
+// signPass signs a pass with work, a working key under its certificate.
+func (b *Box) signPass(work *sign.Work) (string, error) {
 	server, err := b.serverName()
 	if err != nil {
 		return "", err
 	}
-	h, _, err := protocol.NewPass(signer, b.id.Address(), server, b.now())
+	h, _, err := work.Pass(b.id.Address(), server, b.now())
 	return h, err
 }
 

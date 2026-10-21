@@ -53,9 +53,6 @@ func (b *Box) Rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey,
 // rekey is Rekey with the lock held. It returns the prekey once the server
 // took it. l is what the command has asked as it went.
 func (b *Box) rekey(ctx context.Context, kt protocol.KeyType, l *lookups) (*protocol.Prekey, error) {
-	if err := b.finished(); err != nil {
-		return nil, err
-	}
 	p, at, err := b.renew(ctx, kt, l)
 	if err != nil {
 		return nil, err
@@ -505,7 +502,7 @@ func (b *Box) SetPrekeyLifetime(ctx context.Context, d time.Duration) error {
 	if d < MinPrekeyLifetime || d > protocol.PrekeyLifetime || d%time.Second != 0 {
 		return fmt.Errorf("%v is no prekey lifetime: %s", d, lifetimeRule)
 	}
-	return b.lockedDo(ctx, func() error {
+	return b.lockedFinishedDo(ctx, func() error {
 		return writeFile(b.path("prekey-lifetime"), []byte(strconv.FormatInt(int64(d/time.Second), 10)+"\n"))
 	})
 }
