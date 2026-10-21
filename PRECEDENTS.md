@@ -3,7 +3,7 @@
 **Why each choice in irongall is the usual one, or where it is not, and why.** Part 1 sets irongall beside whole systems. Part 2 takes each decision and names the established system or published standard that does the same, with its numbers, where irongall differs, and what was not chosen. `§` is a section of `PROTOCOL.md`; an issue number is this repo's.
 
 **Rules for this file:**
-- **A row is added the day a big decision is made,** with the decision, not after.
+- **A row is added the day a big decision on the wire or in the security model is made,** with the decision, not after. A client's own behaviour (its command line, its files, its lock) carries its precedent beside the code that does it.
 - **Every claim about another system says how it is known**, in one of three ways: `read <date>`, with the source, when it was read at its source that day · `review 2026-10-10`, when it comes from the design reviews of that day and the sources they cited (§ Sources), and has not been read again since · `from memory`, when it has not been looked up. A number is never quoted from memory as if it were read. If a row is wrong, an issue is welcome.
 - **A precedent is industry practice:** a major public API, a published standard, a widely deployed protocol.
 - **This is the one place a comparison is kept.** `PROTOCOL.md` keeps a mention where it helps a reader at that step, and points here.
