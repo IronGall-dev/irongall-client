@@ -31,6 +31,6 @@
 //	acl.json                   the ACL this box's server last took, as it answered: made from the three files above, and sent when they change
 //	sent/                      sent mail the server took: each envelope with the server's receipt
 //	aliases                    this box's own names for peers: "<name> <address>" lines
-//	lock/                      the box's lock, held by each command that writes the box: a directory, with this client's flocked lock/pid inside
+//	state                      the box's lock, a bbolt database each command that writes the box holds open from its start to its end: a second process waits for it, and one killed leaves nothing. A box directory on NFS is not supported
 //	.gitignore                 "*": the box ignores itself in any repository it lands in
 package client

@@ -8,7 +8,8 @@ require (
 	github.com/pb33f/libopenapi v0.41.6
 	github.com/pb33f/libopenapi-validator v0.16.1
 	github.com/spf13/cobra v1.10.2
-	github.com/spf13/pflag v1.0.9
+	github.com/spf13/pflag v1.0.10
+	go.etcd.io/bbolt v1.5.0
 	golang.org/x/crypto v0.58.0
 )
 

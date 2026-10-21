@@ -11,8 +11,24 @@ import (
 
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/protocol"
+	bolt "go.etcd.io/bbolt"
 	"golang.org/x/crypto/ssh"
 )
+
+// holdState holds box b's lock as another command of it would: its state
+// file, open in bbolt. The function it returns lets go.
+func holdState(t *testing.T, b *client.Box) func() {
+	t.Helper()
+	db, err := bolt.Open(filepath.Join(b.Dir(), "state"), 0o600, &bolt.Options{Timeout: time.Second})
+	if err != nil {
+		t.Fatalf("the box's lock is not free: %v", err)
+	}
+	return func() {
+		if err := db.Close(); err != nil {
+			t.Error(err)
+		}
+	}
+}
 
 // Every command that writes the box holds its lock from start to end, and
 // one that finds it held waits, says so once, and runs once it is free:
@@ -36,6 +52,7 @@ func TestEveryCommandWaitsForTheLock(t *testing.T) {
 			_, _, err = x.KeepRevocation(rec)
 			return err
 		}},
+		// A monthly run that gave up on one collision would let the prekey expire.
 		{"rekey", func(x, _ *client.Box) error { _, err := x.Rekey(ctx, ""); return err }},
 		{"allow", func(x, p *client.Box) error { _, err := x.Allow(ctx, p.Address()); return err }},
 		{"alias", func(x, p *client.Box) error { return x.SetAlias("peer", p.Address()) }},
@@ -51,10 +68,7 @@ func TestEveryCommandWaitsForTheLock(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			lock := filepath.Join(a.Dir(), "lock")
-			if err := os.Mkdir(lock, 0o700); err != nil { // another command's
-				t.Fatal(err)
-			}
+			release := holdState(t, a) // another command's
 			done := make(chan error, 1)
 			go func() { done <- c.run(x, peer) }()
 			select {
@@ -62,18 +76,14 @@ func TestEveryCommandWaitsForTheLock(t *testing.T) {
 				t.Fatalf("ran while another command held the lock: %v", err)
 			case <-time.After(300 * time.Millisecond):
 			}
-			if err := os.Remove(lock); err != nil {
-				t.Fatal(err)
-			}
+			release()
 			if err := <-done; err != nil {
 				t.Fatalf("once the lock was free: %v", err)
 			}
 			if n := waited.Load(); n != 1 {
 				t.Errorf("Waiting was told %d times, want once", n)
 			}
-			if exists(lock) {
-				t.Error("the lock was not released")
-			}
+			holdState(t, a)() // released: free at once
 		})
 	}
 }

@@ -1,11 +1,14 @@
 package client_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -15,6 +18,7 @@ import (
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/internal/forge"
 	"github.com/IronGall-dev/irongall-client/protocol"
+	bolt "go.etcd.io/bbolt"
 )
 
 // When things fail, mail is never lost and never delivered twice: a
@@ -142,7 +146,8 @@ func TestStalePrekeyReencryptsSameEnvelope(t *testing.T) {
 
 // A box restored from its identity alone, its backup, gets a new working key,
 // certificate and prekey from Rekey and receives again: the address is the
-// identity, and nothing else needs keeping.
+// identity, and nothing else needs keeping. Open makes what every box has,
+// its .gitignore among it (#292).
 func TestRestoreFromIdentity(t *testing.T) {
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -160,6 +165,9 @@ func TestRestoreFromIdentity(t *testing.T) {
 	}
 	if r.Address() != b.Address() {
 		t.Fatal("the restored box has another address")
+	}
+	if got, err := os.ReadFile(filepath.Join(dir, ".gitignore")); err != nil || string(got) != "*\n" {
+		t.Errorf("the restored box's .gitignore: %q, %v", got, err)
 	}
 	landAll(t, r)
 	if _, err := r.Rekey(context.Background(), ""); err != nil {
@@ -279,75 +287,60 @@ func TestAPassTheServerSaysHasRunOut(t *testing.T) {
 	}
 }
 
-// One command of a box at a time. The recipe's lock (an empty lock/) is
-// never taken over or written into: a command waits for it, and gives up
-// once it has waited as long as it waits. A lock a crashed Go client left
-// (lock/pid, held by no one) is taken over.
+// One command of a box at a time: one that finds the lock held waits for
+// it, and gives up once it has waited as long as it waits.
 func TestLock(t *testing.T) {
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
-	lock := filepath.Join(b.Dir(), "lock")
-	if err := os.Mkdir(lock, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	release := holdState(t, b)
 	client.SetLockPatience(t, 200*time.Millisecond)
 	if _, err := b.Receive(context.Background()); err == nil || !strings.Contains(err.Error(), "lock") {
-		t.Fatalf("receive under the recipe's lock: %v", err)
+		t.Fatalf("receive while another command holds the lock: %v", err)
 	}
 	if _, err := b.Rekey(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "lock") {
-		t.Fatalf("rekey under the recipe's lock: %v", err)
+		t.Fatalf("rekey while another command holds the lock: %v", err)
 	}
-	if entries, _ := os.ReadDir(lock); len(entries) != 0 {
-		t.Fatal("a file was left in the recipe's lock")
-	}
-	if err := os.WriteFile(filepath.Join(lock, "pid"), []byte("12345\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	release()
 	receive(t, b)
-	if exists(lock) {
-		t.Fatal("the lock was not released")
-	}
 }
 
-// A rekey waits for a drain holding the lock rather than failing at once, as
-// every command does: a monthly run that gives up on one collision lets the
-// prekey expire.
-func TestRekeyWaitsForTheLock(t *testing.T) {
+// A lock whose holder was killed is free at once: the kernel lets go of its
+// flock, and nothing is left to take over or remove (#235).
+func TestAKilledHolderLeavesNoLock(t *testing.T) {
+	if dir := os.Getenv("IRONGALL_TEST_HOLD_STATE"); dir != "" {
+		db, err := bolt.Open(filepath.Join(dir, "state"), 0o600, &bolt.Options{Timeout: time.Second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = db
+		fmt.Println("held")
+		time.Sleep(time.Minute)
+		return
+	}
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
-	lock := filepath.Join(b.Dir(), "lock")
-	if err := os.Mkdir(lock, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	go func() {
-		time.Sleep(300 * time.Millisecond)
-		_ = os.Remove(lock)
-	}()
-	if _, err := b.Rekey(context.Background(), ""); err != nil {
-		t.Fatalf("rekey after the lock was released: %v", err)
-	}
-}
-
-func TestLiveLockExcludes(t *testing.T) {
-	e := newEnv(t)
-	b := e.box(protocol.Classic)
-	client.SetLockPatience(t, 200*time.Millisecond)
-	lock := filepath.Join(b.Dir(), "lock")
-	if err := os.Mkdir(lock, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	f, err := os.OpenFile(filepath.Join(lock, "pid"), os.O_RDWR|os.O_CREATE, 0o600)
+	cmd := exec.Command(os.Args[0], "-test.run=^TestAKilledHolderLeavesNoLock$") //nolint:gosec // this test binary, again
+	cmd.Env = append(os.Environ(), "IRONGALL_TEST_HOLD_STATE="+b.Dir())
+	out, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = f.Close() }()
-	_, _ = f.WriteString("1\n")
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil { //nolint:gosec // a file descriptor fits an int
+	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Receive(context.Background()); err == nil || !strings.Contains(err.Error(), "lock") {
-		t.Fatalf("receive while another consumer holds the lock: %v", err)
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }) // a test that failed first
+	if line, err := bufio.NewReader(out).ReadString('\n'); err != nil || line != "held\n" {
+		t.Fatalf("the holder: %q, %v", line, err)
 	}
+	client.SetLockPatience(t, 200*time.Millisecond)
+	if _, err := b.Receive(context.Background()); err == nil || !strings.Contains(err.Error(), "lock") {
+		t.Fatalf("receive while the holder lives: %v", err)
+	}
+	if err := cmd.Process.Signal(syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	_ = cmd.Wait()
+	receive(t, b)
 }
 
 // A retired prekey decrypts mail until its deletion time, not_after + 33

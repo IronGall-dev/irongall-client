@@ -268,10 +268,6 @@ func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*B
 	if err := b.makeDirs(); err != nil {
 		return nil, err
 	}
-	// The directory ignores itself, wherever it is.
-	if err := writeFile(b.path(".gitignore"), []byte("*\n")); err != nil {
-		return nil, err
-	}
 	if !exists(b.path("identity")) {
 		if err := b.newIdentityKey(); err != nil {
 			return nil, err
@@ -364,14 +360,21 @@ func (b *Box) publish(ctx context.Context, path string, req any, n uint64) (take
 	return at, b.dropWork(n)
 }
 
-// makeDirs makes the box's directories that are missing.
+// makeDirs makes the box's directories that are missing, and its
+// .gitignore.
 func (b *Box) makeDirs() error {
 	for _, d := range []string{"work", "prekeys", "peers", "inbox", "held", "quarantine", "outbox", "sent"} {
 		if err := os.MkdirAll(b.path(d), 0o700); err != nil {
 			return err
 		}
 	}
-	return nil
+	// The directory ignores itself, wherever it is and whatever made it: a
+	// box restored from its identity alone too (#292). Written only where its
+	// bytes differ, since every command opens the box.
+	if got, err := os.ReadFile(b.path(".gitignore")); err == nil && string(got) == "*\n" {
+		return nil
+	}
+	return writeFile(b.path(".gitignore"), []byte("*\n"))
 }
 
 // newIdentityKey makes a new identity key, written as ssh-keygen writes one
