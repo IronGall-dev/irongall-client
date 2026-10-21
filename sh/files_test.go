@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -81,8 +82,23 @@ func TestTheScriptRestoresABoxFromItsIdentityAlone(t *testing.T) {
 			t.Fatal(err)
 		}
 		env := []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}
-		if out, err := bash(t, env, "ig_rekey --no-pq"); err != nil || !strings.HasPrefix(out, `{"type":"prekey",`) {
+		n0 := len(srv.Requests())
+		if out, err := bash(t, env, "ig_rekey --no-pq 2> \"$IG/../rekey.err\""); err != nil || !strings.HasPrefix(out, `{"type":"prekey",`) || exists(filepath.Join(dir, "..", "rekey.err")) {
 			t.Fatalf("forgotten %v: a renewal of the box restored from its identity alone: %v %q", forgotten, err, out)
+		}
+		// It needs no record of the numbers it used: its own is above the lost
+		// machine's, under a new certificate, with a working key and a pass.
+		n := strings.TrimSpace(string(mustRead(t, filepath.Join(dir, "serial"))))
+		st, _ := srv.Prekey(a)
+		if lost := strings.TrimSpace(string(mustRead(t, filepath.Join(lost, "serial")))); len(n) < len(lost) || n <= lost || strings.Split(string(st), "\n")[2] != n ||
+			!exists(filepath.Join(dir, "work", n)) || !exists(filepath.Join(dir, "pass")) {
+			t.Errorf("forgotten %v: the restored box published %s after the lost machine's %s, served %q", forgotten, n, lost, st)
+		}
+		if _, err := bash(t, env, `ig_idcheck "$IG/identity.doc" `+a.String()); err != nil {
+			t.Errorf("forgotten %v: the restored identity document: %v", forgotten, err)
+		}
+		if forgotten && !slices.ContainsFunc(srv.Requests()[n0:], func(r fakeserver.Request) bool { return r.Method == http.MethodPut && r.Path == "/v1/"+a.String() }) {
+			t.Errorf("forgotten %v: the box was not registered anew", forgotten)
 		}
 		for _, f := range []string{"identity.doc", "address"} {
 			if string(mustRead(t, filepath.Join(dir, f))) != string(mustRead(t, filepath.Join(lost, f))) {

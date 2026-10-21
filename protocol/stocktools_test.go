@@ -16,7 +16,7 @@ import (
 // tools this project did not write, so that each is the standard's format and
 // not this code's reading of it (testdata/vectors/README.md, PROTOCOL.md §11):
 // age decrypts each message with its prekey's published test identity to
-// exactly its plaintext; head and sed split that plaintext into the line and
+// exactly its plaintext, and with the other box's not at all; head and sed split that plaintext into the line and
 // its signature; ssh-keygen reads each certificate and verifies each signature
 // under it, at the vectors' time; and sha256sum gives each address. Nothing
 // from this package reads a vector here: the namespaces are the spec's.
@@ -89,7 +89,10 @@ func TestVectorsByToolsNotOurs(t *testing.T) {
 		t.Setenv("PATH", path)
 		v, _ := run(t, nil, "age", "--version")
 		t.Logf("age %s", strings.TrimSpace(string(v)))
-		for _, m := range []struct{ msg, key string }{{"a-to-b", "b-1.pq"}, {"a-to-c", "c-1.classic"}} {
+		for _, m := range []struct{ msg, key, other string }{{"a-to-b", "b-1.pq", "c-1.classic"}, {"a-to-c", "c-1.classic", "b-1.pq"}} {
+			if _, err := run(t, nil, "age", "-d", "-i", "input/"+m.other+".key", "message/"+m.msg+".age"); err == nil {
+				t.Errorf("%s: age decrypts it with %s, another box's prekey", m.msg, m.other)
+			}
 			out, err := run(t, nil, "age", "-d", "-i", "input/"+m.key+".key", "message/"+m.msg+".age")
 			if err != nil {
 				t.Errorf("%s: age -d: %v", m.msg, err)
