@@ -3,6 +3,9 @@ package client
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io/fs"
+	"os"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
@@ -41,6 +44,9 @@ type lock struct{ db *bolt.DB }
 // another command holds it. The first time it finds the lock held it tells
 // Options.Waiting, if set, so that a wait is not read as a hang.
 func (b *Box) hold(ctx context.Context) (*lock, error) {
+	if err := b.makeState(); err != nil {
+		return nil, fmt.Errorf("the box's state file: %w", err)
+	}
 	deadline := time.Now().Add(lockPatience)
 	told := false
 	for {
@@ -49,7 +55,7 @@ func (b *Box) hold(ctx context.Context) (*lock, error) {
 			return &lock{db: db}, nil
 		}
 		if !errors.Is(err, berrors.ErrTimeout) {
-			return nil, err
+			return nil, fmt.Errorf("the box's state file: %w", err)
 		}
 		if !time.Now().Before(deadline) {
 			return nil, errLocked
@@ -62,6 +68,38 @@ func (b *Box) hold(ctx context.Context) (*lock, error) {
 			return nil, err
 		}
 	}
+}
+
+// makeState makes the box's state file where it has none, as writeFile makes
+// every file a box keeps: bbolt makes the database beside it and syncs it,
+// and only then is it linked into place, where a link replaces nothing
+// another command made first. bbolt writes a new database where it is
+// opened, and one that a crash or a full disk cut off there can fault every
+// process that opens it after (bbolt's README, of a database's first
+// initialization; etcd-io/etcd#16596).
+func (b *Box) makeState() error {
+	if _, err := os.Lstat(b.path("state")); !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	tmp, err := os.CreateTemp(b.dir, ".tmp-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name()) //nolint:errcheck // gone once linked
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	db, err := bolt.Open(tmp.Name(), 0o600, nil)
+	if err != nil {
+		return err
+	}
+	if err := db.Close(); err != nil {
+		return err
+	}
+	if err := os.Link(tmp.Name(), b.path("state")); err != nil && !errors.Is(err, fs.ErrExist) {
+		return err
+	}
+	return syncDir(b.dir)
 }
 
 func (l *lock) release() error { return l.db.Close() }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -85,6 +86,47 @@ func TestEveryCommandWaitsForTheLock(t *testing.T) {
 			}
 			holdState(t, a)() // released: free at once
 		})
+	}
+}
+
+// A box with no state file, restored or made before there was one, makes it
+// at its first command, beside its place and linked in, and commands that
+// make it at once all run: a link replaces nothing another made first.
+func TestTheStateFileIsMadeAtTheFirstCommand(t *testing.T) {
+	e := newEnv(t)
+	b := e.box(protocol.Classic)
+	for i := range 20 {
+		if err := os.Remove(filepath.Join(b.Dir(), "state")); err != nil {
+			t.Fatal(err)
+		}
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		errs := make(chan error, 8)
+		for range 8 {
+			x, err := client.Open(b.Dir(), e.opts())
+			if err != nil {
+				t.Fatal(err)
+			}
+			wg.Go(func() { <-start; _, err := x.Receive(context.Background()); errs <- err })
+		}
+		close(start)
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			if err != nil {
+				t.Fatalf("run %d: a command that made the state file with others: %v", i, err)
+			}
+		}
+		holdState(t, b)()
+		entries, err := os.ReadDir(b.Dir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range entries {
+			if strings.HasPrefix(f.Name(), ".tmp-") {
+				t.Fatalf("run %d: left %s", i, f.Name())
+			}
+		}
 	}
 }
 
