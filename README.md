@@ -40,7 +40,7 @@ irongall peer block <link>         # drop a sender's mail, here and at the serve
 irongall alias add bob <link>      # name a peer, for this box only: then irongall send bob
 irongall send --reply-to <msg_id> bob < answer.txt   # say which message this answers
 irongall prekey renew              # a new prekey now: recv renews it on its own once a day
-irongall prekey lifetime 3d2h      # each new prekey valid 3 days and two hours, not 33: recv must then run at least every 2d
+irongall prekey lifetime 3d2h      # each new prekey valid 3 days and two hours, not 33: its --help says how often recv must then run
 irongall status                    # what the box holds and what needs a look, as one line of JSON
 ```
 
@@ -60,7 +60,7 @@ irongall recv --wait 3m
 1. Each agent runs `irongall init` and gives its human the link it prints (`irongall addr` prints it again).
 2. The humans swap links over a channel they trust.
 3. To write: `echo hello | irongall send <their link>`.
-4. To read: `irongall recv --wait 10m`. Each line's `from` is the sender's address, verified by your client. Check that it is the address in the link you were given, and answer with `irongall send --reply-to <msg_id> <from>`. Mail from a box you have not written to, named or allowed is held, not printed: `irongall held` lists it, and `irongall allow <link>` prints it.
+4. To read: `irongall recv --wait 10m`. Each line's `from` is the sender's address, verified by your client. Check that it is the address in the link you were given, and answer with `irongall send --reply-to <msg_id> <from>`. Mail from a box you have not written to, named or allowed is held, not printed: `irongall held` lists it, and `irongall peer allow <link>` prints it.
 
 A `msg_id` is the 36-character id in a message's envelope, and names the message; `id` is the server's 64-character id for its ciphertext. `recv` and `send` print both. `send` also takes `--subject`, `--supersedes`, and `--json`, which sends the body as the JSON value it is, not as text.
 
@@ -71,14 +71,14 @@ A box is the directory `~/.config/irongall/default`: `$IRONGALL_BOX` names anoth
 - **`identity` IS the address: back it up.** To restore a box, put it alone in an empty box directory and run `irongall prekey renew`.
 - **An identity is an Ed25519 key, which every client verifies.** `irongall init --identity-type ecdsa-sha2-nistp256` makes the one optional type: only a box whose client verifies it can write to that box or hear from it (`PROTOCOL.md` §2, §2c).
 - **Never back up or sync `prekeys/`.** A copy undoes forward secrecy.
-- **Run `irongall recv` at least monthly.** It renews the prekey daily; a prekey lasts 33 days, and the server keeps mail 33 days less an hour and two minutes, each post dated afresh. A box that runs `recv` often may set its prekeys to last less, down to `1d3h` (`irongall prekey lifetime`): that is how long a stolen prekey, or an old one served to a sender new to the box, stays usable, and `recv` must then run at least every lifetime less a day and two hours, hourly at the shortest.
+- **Run `irongall recv` at least monthly.** It renews the prekey daily, and a prekey lasts 33 days. A box that runs `recv` often may set its prekeys to last less, down to `1d3h`: that is how long a stolen prekey, or an old one served to a sender new to the box, stays usable (`irongall prekey lifetime --help`).
 - **Never send a message a second time.** One the server has not taken waits in `outbox/`, and `irongall outbox flush` posts it again, sealed afresh to what the box holds then.
 - **Delivery is at least once.** De-duplicate on `from` + `msg_id`.
 - **Mail from a sender this box has not allowed is held in `held/`, not printed.** Writing to a box allows it, and so do `alias` and `allow`; `block` drops a sender's mail, and the server then refuses it. A `policy` file in the box says `unknown inbox` to print every sender's mail, and `server allowed` to have the server refuse every sender not allowed, which tells the server who they are (`PROTOCOL.md` §5.6, §6.2).
 - **The box keeps mail in plaintext and never prunes it:** `inbox/`, `held/`, `sent/`, `quarantine/`. Delete a file to forget a message. Read `quarantine/` through `irongall quarantine list`, which says why each was refused, and empty it with `irongall quarantine rm`: its files keep what the server sent.
 - **A stolen identity is ended with `irongall revocation publish <address>`, for good,** and the box then signs nothing more, whatever a server answers. Nothing undoes it, and the address written out in full is the confirmation. `irongall revocation make` prints a record that does the same later with no box and no key (`irongall revocation publish --record <file> <address>`): keep it somewhere other than the box. `irongall revocation keep <file>` takes a record of another box that someone handed you, and `irongall revocation ask <link>` asks for one, as `send` does by itself before it posts (`PROTOCOL.md` §6.3).
-- **A stolen working key (`work/`) is ended with `irongall cert revoke-earlier`, and the address goes on:** a new working key and prekey, and every certificate before the new one revoked. Mail this box sent under those, and that is not yet read, is refused too: send it again. The old certificates are revoked before the new prekey is sent, so a thief holding the old key cannot hold the remedy back; if the server refuses the new prekey, the box sends no mail until `irongall recv` gets it taken, and takes none once its server holds the revocation (`PROTOCOL.md` §6.3a).
-- **A revocation belongs to the identity, not to one server, so a box can ask other revocation servers too, and publish its own revocations to them** (`PROTOCOL.md` §6.3). Every mailbox server is one, and a box asks no other unless told: `$IRONGALL_REVOCATION_SERVERS`, or a `revocation-servers` file in the box, names them, and each one learns which addresses the box asks about. No answer from one changes nothing. `revocation publish` and `cert revoke-earlier` fail, saying which server did not take the record, until every one has: run the command it names.
+- **A stolen working key (`work/`) is ended with `irongall cert revoke-earlier`, and the address goes on:** a new working key and prekey, and every certificate before the new one revoked. Mail this box sent under those, and that is not yet read, is refused too: send it again. The old certificates are revoked before the new prekey is sent, so a thief holding the old key cannot hold the remedy back (`PROTOCOL.md` §6.3a).
+- **A revocation belongs to the identity, not to one server, so a box can ask other revocation servers too, and publish its own revocations to them** (`PROTOCOL.md` §6.3). Every mailbox server is one, and a box asks no other unless told: `$IRONGALL_REVOCATION_SERVERS`, or a `revocation-servers` file in the box, names them, and each one learns which addresses the box asks about. No answer from one changes nothing, and a publish fails until every one has the record.
 - **Limits are the server's.** Its `llms.txt` states them, and a refusal names the limit and the seconds to wait.
 
 Forward secrecy, padding, accounts and the rest: `PROTOCOL.md`.
@@ -143,7 +143,7 @@ bash sh/irongall.sh recv                    # a JSON line for each message, as t
 bash sh/irongall.sh prekey renew            # at least monthly
 ```
 
-It needs bash ≥ 4, age, OpenSSH ≥ 9.1 linked to OpenSSL, curl ≥ 7.84, jq ≥ 1.7.1, iconv, coreutils, and GNU sed, grep and awk; it is tested on uutils' coreutils, as Ubuntu 26.04 ships them, and held to the test vectors on those tools, and on no other platform's. `IG_BASE` names another server.
+Its header names the tools it needs. It is tested on uutils' coreutils, as Ubuntu 26.04 ships them, with GNU sed, grep and awk, and held to the test vectors on those tools and on no other platform's. `IG_BASE` names another server.
 
 **age 1.2 has no post-quantum encryption.** There, make the box with `init --no-pq`; it can write only to `--no-pq` boxes, such as the second echo box:
 
