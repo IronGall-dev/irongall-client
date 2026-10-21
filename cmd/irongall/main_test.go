@@ -1542,6 +1542,64 @@ func TestCertRevokeEarlier(t *testing.T) {
 	}
 }
 
+// cert publish-revoked at a server that holds the box's address revoked:
+// the server takes the record as done once what it serves verifies, and the
+// box keeps that revocation of its own address, says so, and is finished
+// (#153).
+func TestCertPublishRevokedKeepsTheRevocationItMeets(t *testing.T) {
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	opt := client.Options{Base: srv.URL}
+	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Its address revoked from elsewhere, with a record made in advance.
+	rec, err := b.Revocation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Publish(ctx, opt, rec); err != nil {
+		t.Fatal(err)
+	}
+	key, err := os.ReadFile(filepath.Join(b.Dir(), "identity"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := ssh.ParsePrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	certs, err := protocol.NewRevokedCertificates(b.Address(), number(t, inUse(t, b)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig, err := protocol.SignRevokedCertificates(id, certs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line, err := json.Marshal(protocol.Revocations{Identity: b.Identity().Document(), RevokedCertificates: certs.Statement(), RevokedCertificatesSignature: sig})
+	if err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(t.TempDir(), "certs.json")
+	if err := os.WriteFile(file, line, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("IRONGALL_HOME", b.Dir())
+	t.Setenv("IRONGALL_BASE", srv.URL)
+	var out, errs bytes.Buffer
+	if err := do(ctx, "cert publish-revoked", []string{file}, strings.NewReader(""), &out, &errs); err != nil {
+		t.Fatalf("cert publish-revoked: %v %q", err, errs.String())
+	}
+	if lines := printed(t, out.String()); typesOf(lines) != "certificates_revoked revoked" || lines[1]["address"] != b.Address().String() {
+		t.Fatalf("its output: %q", out.String())
+	}
+	if st, err := b.Status(); err != nil || !st.Revoked {
+		t.Fatalf("the box's status after: %+v, %v", st, err)
+	}
+}
+
 // cert revoke-earlier when the server refuses the new prekey: the revocation
 // went out first, whatever the refusal, and the command says the new prekey
 // is NOT published, the box sends none and its server takes none until it is,

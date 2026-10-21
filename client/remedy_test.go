@@ -11,6 +11,7 @@ import (
 
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
+	"github.com/IronGall-dev/irongall-client/internal/forge"
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
@@ -264,4 +265,36 @@ func heldCertsOf(t *testing.T, e *env, a *client.Box) *protocol.RevokedCertifica
 		t.Fatalf("the revocation of certificates the server holds: %v", err)
 	}
 	return certs
+}
+
+// A box its server forgot reads its revocations at GET …/revocations, and
+// the remedy's ask after a conflict does too (#258): the server holds a
+// revocation of the box's certificates through T, two hours above the
+// certificate in use, made on another machine, and gives no answer to the
+// remedy's first read of it, so the remedy's record conflicts. The box asks
+// again, signs the higher one, and numbers its new certificate above it
+// (PROTOCOL.md §6.3a).
+func TestTheRemedyOfAForgottenBoxAsksItsRevocationsAgainAfterItsConflict(t *testing.T) {
+	e := newEnv(t)
+	a := e.box(protocol.Classic)
+	T := numberOf(t, a) + 7200
+	publish(t, e, certsRecord(t, a.Dir(), T))
+	e.srv.Forget(a.Address())
+	revocations := "/v1/" + a.Address().String() + "/revocations"
+	first := true
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.Method == http.MethodGet && r.URL.Path == revocations && first {
+			first = false
+			forge.Refuse(w, protocol.CodeUnavailable)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	r, err := a.RenewAndRevoke(context.Background(), "")
+	if err != nil || r == nil {
+		t.Fatalf("the remedy: %v", err)
+	}
+	if r.Revoked == nil || r.Revoked.Through < T || r.Below <= T || r.Prekey == nil {
+		t.Errorf("the remedy of a forgotten box after its server's conflict: below %d, revoked %v, not revoked %v, not renewed %v; the server holds through %d", r.Below, r.Revoked, r.NotRevoked, r.NotRenewed, T)
+	}
 }

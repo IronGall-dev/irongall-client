@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -124,13 +123,11 @@ type ownRead struct {
 	unread error
 }
 
-// readOwn reads this box at its server (GET /v1/<own>), as a renewal does
-// before it numbers anything, and keeps what verifies of the box's own
-// revocations: what that answer carries. Every renewal asks, so the
-// certificate it makes next is numbered above the highest serial it has been
-// shown revoked, and is never revoked as it is made (PROTOCOL.md §2b), on a
-// box restored from its identity too. A server that holds no box here
-// carries no revocations in its answer, so they are read on their own.
+// readOwn reads this box at its server (known), as a renewal does before
+// it numbers anything, keeping what verifies of the box's own revocations.
+// Every renewal asks, so the certificate it makes next is numbered above the
+// highest serial it has been shown revoked, and is never revoked as it is
+// made (PROTOCOL.md §2b), on a box restored from its identity too.
 //
 // A server that holds no box at this address shows nothing to number above
 // or to hold to its order: the renewal is numbered above what this box knows
@@ -143,68 +140,38 @@ type ownRead struct {
 // plain renewal stops there: the refusal is the check.
 func (b *Box) readOwn(ctx context.Context, kt protocol.KeyType, unused bool) (*ownRead, error) {
 	out := &ownRead{kt: kt}
-	own := b.id.Address()
-	var ir protocol.BoxResponse
-	_, rerr := b.call(ctx, http.MethodGet, b.boxPath(""), nil, nil, &ir)
-	out.forgotten = code(rerr) == protocol.CodeNoSuchMailbox
-	rec := ir.Record()
-	switch {
-	case rerr == nil:
-	case out.forgotten:
-		// What its identity revoked outlives the box, and is read on its own.
-		var held protocol.Revocations
-		_, err := b.call(ctx, http.MethodGet, b.boxPath("/revocations"), nil, nil, &held)
-		switch {
-		case err == nil:
-			rec = &held
-		case code(err) == protocol.CodeNotRevoked, code(err) == protocol.CodeNoSuchMailbox:
-		case unused && ctx.Err() == nil:
-			out.unread = err
-		default:
-			return nil, err
-		}
-	default:
-		// A revoked address is answered with its record, which proves itself.
-		rec = recordOf(rerr)
-		if !unused || ctx.Err() != nil {
-			if rec != nil {
-				if _, err := b.take(own, rec); err != nil {
-					return nil, err
-				}
-			}
-			return nil, rerr
-		}
-		out.unread = rerr
+	o, err := b.known(ctx)
+	if err != nil {
+		return nil, err
 	}
-	if rec != nil {
-		if _, err := b.take(own, rec); err != nil {
-			return nil, err
+	out.forgotten = o.at == atNone
+	if o.err != nil {
+		if !unused || ctx.Err() != nil {
+			return nil, o.err
 		}
+		out.unread = o.err
 	}
 	published, err := b.publishedSerial()
 	if err != nil {
 		return nil, err
 	}
 	out.known = published
-	if rerr == nil {
-		// Its own record, so judged as one: whether this identity ever
-		// certified the key that signed it, even if that certificate has
-		// since ended.
-		cur, curCert, err := protocol.VerifyPrekeyRecord(b.id, ir.Prekey, ir.PrekeySignature)
+	if o.at == atServed {
+		var err error
 		switch {
-		case err != nil:
-			err = refuse("this box's current prekey, as served: %v", err)
+		case o.bad != nil:
+			err = refuse("this box's current prekey, as served: %v", o.bad)
 		// A box's statements are ordered by certificate first, then by
 		// serial, and this box gives a renewal's certificate and prekey one
 		// number. So what it published is (published, published), and the
 		// server may serve nothing ordered before it.
-		case curCert.Serial() < published || (curCert.Serial() == published && cur.Serial < published):
-			err = refuse("rollback: the server serves this box's prekey serial %d under certificate %d, before serial %d, which this box published", cur.Serial, curCert.Serial(), published)
+		case o.cert.Serial() < published || (o.cert.Serial() == published && o.statement.Serial < published):
+			err = refuse("rollback: the server serves this box's prekey serial %d under certificate %d, before serial %d, which this box published", o.statement.Serial, o.cert.Serial(), published)
 		default:
 			if out.kt == "" {
-				out.kt = cur.Type()
+				out.kt = o.statement.Type()
 			}
-			out.known = max(curCert.Serial(), published)
+			out.known = max(o.cert.Serial(), published)
 		}
 		if err != nil {
 			if !unused {
@@ -440,8 +407,7 @@ const renewAfter = 24 * time.Hour
 
 // renewTime is the room a renewal leaves for its own calls, beside
 // protocol.MaxSkew: from the start of the Receive that renews to the server
-// taking the new prekey, the read of the box's own box, the revocation
-// servers it asks and the upload.
+// taking the new prekey, the read of the box's own box and the upload.
 const renewTime = time.Hour
 
 // MinPrekeyLifetime is the shortest a box's prekeys may be valid for: the

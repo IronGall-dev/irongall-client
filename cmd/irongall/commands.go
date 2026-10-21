@@ -914,7 +914,19 @@ takes that one, with the address in full.`,
 			if _, err := b.Publish(c.Context(), rec); err != nil {
 				return err
 			}
-			return e.out(line("certificates_revoked", "address", a, "through", certs.Through, "message", "published to the server"))
+			if err := e.out(line("certificates_revoked", "address", a, "through", certs.Through, "message", "published to the server")); err != nil {
+				return err
+			}
+			// A server that holds the address revoked took the record as done
+			// once its revocation verified, and the box keeps that one.
+			if a != b.Address() {
+				return nil
+			}
+			st, err := b.Status()
+			if err != nil || !st.Revoked {
+				return err
+			}
+			return e.out(line("revoked", "address", a, "message", "the server holds this address revoked, and the revocation verifies: this box signs nothing more"))
 		})
 }
 
