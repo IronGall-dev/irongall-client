@@ -84,7 +84,8 @@ func (b *Box) keptLine(data []byte) (line []byte, from protocol.Address, env *pr
 // protocol.ParseTime reads), and is otherwise kept as <name>_b64, the string
 // as served in base64. So nothing the server chose is readable at a glance,
 // and nothing is lost. Its size is the ciphertext's, which the fetch was
-// held to.
+// held to. Why it was refused, and what the checks found, are the box's
+// state's (quarantineRecord), which only this client writes (#280).
 type keptRefusal struct {
 	ID            string         `json:"id,omitempty"`
 	IDB64         string         `json:"id_b64,omitempty"`
@@ -95,7 +96,16 @@ type keptRefusal struct {
 	ExpiresAt     string         `json:"expires_at,omitempty"`
 	ExpiresAtB64  string         `json:"expires_at_b64,omitempty"`
 	Ciphertext    protocol.Bytes `json:"ciphertext"`
-	Judged        *keptFindings  `json:"judged,omitempty"`
+}
+
+// quarantineRecord is what the box's state keeps of a refused message, by
+// its id, beside the message quarantine/ keeps: the code it was refused for,
+// why, in this client's words, and what the checks established when they
+// judged it.
+type quarantineRecord struct {
+	Code   string        `json:"code"`
+	Reason string        `json:"reason"`
+	Judged *keptFindings `json:"judged,omitempty"`
 }
 
 // keptFindings is what this client's checks established about a refused
@@ -137,8 +147,26 @@ func newKeptFindings(f *protocol.Findings) *keptFindings {
 	return k
 }
 
-func keepRefused(m *protocol.MessageInfo, ct []byte, f *protocol.Findings) ([]byte, error) {
-	k := keptRefusal{Ciphertext: ct, Judged: newKeptFindings(f)}
+// keepRefused keeps a refused message: quarantine/<id>.json, the message as
+// served (keptRefusal), written and synced first, then why it was refused and
+// what its checks found, in the box's state.
+func (b *Box) keepRefused(id string, m *protocol.MessageInfo, ct []byte, why *Refusal) error {
+	raw, err := servedRefusal(m, ct)
+	if err != nil {
+		return err
+	}
+	if err := writeFile(b.path("quarantine", id+".json"), raw); err != nil {
+		return err
+	}
+	rec, err := json.Marshal(quarantineRecord{Code: why.Code, Reason: why.Reason, Judged: newKeptFindings(why.Findings)})
+	if err != nil {
+		return err
+	}
+	return b.update(func(s store) error { return s.put(bucketQuarantine, id, rec) })
+}
+
+func servedRefusal(m *protocol.MessageInfo, ct []byte) ([]byte, error) {
+	k := keptRefusal{Ciphertext: ct}
 	for _, f := range []struct {
 		served       string
 		plain, coded *string
@@ -183,86 +211,87 @@ type Quarantined struct {
 	MsgID             string `json:"msg_id,omitempty"`
 }
 
-// Quarantined lists quarantine/, by id. A file is read whichever form it was
-// kept in, as every JSON text is (protocol.Unmarshal), and each value is held
-// to its form again as it is read.
+// Quarantined lists quarantine/, by id: each message it keeps, with what the
+// box's state keeps of why it was refused. A message with no record there,
+// or one this client did not write, has the code "unknown" and nothing from
+// it. Each value is held to its form again as it is read.
 func (b *Box) Quarantined() ([]Quarantined, error) {
 	names, err := filepath.Glob(b.path("quarantine", "*.json"))
 	if err != nil {
 		return nil, err
 	}
 	var qs []Quarantined
-	for _, name := range names {
-		id := strings.TrimSuffix(filepath.Base(name), ".json")
-		if !IsID(id) {
-			continue
-		}
-		q := Quarantined{ID: id}
-		q.Code, q.Reason = b.quarantineReason(id)
-		var kept struct {
-			From       any `json:"from"`
-			ReceivedAt any `json:"received_at"`
-			Judged     struct {
-				At                any `json:"at"`
-				SignedBy          any `json:"signed_by"`
-				ClaimsIdentity    any `json:"claims_identity"`
-				CertificateSerial any `json:"certificate_serial"`
-				CertificateBegan  any `json:"certificate_began"`
-				CertificateEnds   any `json:"certificate_ends"`
-				SentAt            any `json:"sent_at"`
-				MsgID             any `json:"msg_id"`
-			} `json:"judged"`
-		}
-		if data, err := os.ReadFile(name); err == nil && protocol.Unmarshal(data, &kept) == nil { //nolint:gosec // a path inside the box's own directory
-			j := kept.Judged
-			for _, v := range []struct {
-				kept any
-				dst  *string
-				ok   func(string) bool
-			}{
-				{kept.From, &q.From, IsID},
-				{kept.ReceivedAt, &q.ReceivedAt, isTime},
-				{j.At, &q.JudgedAt, isTime},
-				{j.SignedBy, &q.SignedBy, IsID},
-				{j.ClaimsIdentity, &q.ClaimsIdentity, IsID},
-				{j.CertificateBegan, &q.CertificateBegan, isTime},
-				{j.CertificateEnds, &q.CertificateEnds, isTime},
-				{j.SentAt, &q.SentAt, isTime},
-				{j.MsgID, &q.MsgID, protocol.IsMsgID},
-			} {
-				if s, ok := v.kept.(string); ok && v.ok(s) {
-					*v.dst = s
+	err = b.view(func(s store) error {
+		for _, name := range names {
+			id := strings.TrimSuffix(filepath.Base(name), ".json")
+			if !IsID(id) {
+				continue
+			}
+			q := Quarantined{ID: id}
+			var kept struct {
+				From       any `json:"from"`
+				ReceivedAt any `json:"received_at"`
+			}
+			if data, err := os.ReadFile(name); err == nil && protocol.Unmarshal(data, &kept) == nil { //nolint:gosec // a path inside the box's own directory
+				for _, v := range []struct {
+					kept any
+					dst  *string
+					ok   func(string) bool
+				}{{kept.From, &q.From, IsID}, {kept.ReceivedAt, &q.ReceivedAt, isTime}} {
+					if str, ok := v.kept.(string); ok && v.ok(str) {
+						*v.dst = str
+					}
 				}
 			}
-			if n, ok := j.CertificateSerial.(float64); ok && n >= 1 && n <= protocol.MaxSerial && n == float64(uint64(n)) {
-				q.CertificateSerial = uint64(n)
+			rec := quarantineOf(s, id)
+			q.Code, q.Reason = rec.Code, rec.Reason
+			if j := rec.Judged; j != nil {
+				for _, v := range []struct {
+					kept string
+					dst  *string
+					ok   func(string) bool
+				}{
+					{j.At, &q.JudgedAt, isTime},
+					{j.SignedBy, &q.SignedBy, IsID},
+					{j.ClaimsIdentity, &q.ClaimsIdentity, IsID},
+					{j.CertificateBegan, &q.CertificateBegan, isTime},
+					{j.CertificateEnds, &q.CertificateEnds, isTime},
+					{j.SentAt, &q.SentAt, isTime},
+					{j.MsgID, &q.MsgID, protocol.IsMsgID},
+				} {
+					if v.ok(v.kept) {
+						*v.dst = v.kept
+					}
+				}
+				if n := j.CertificateSerial; n >= 1 && n <= protocol.MaxSerial {
+					q.CertificateSerial = n
+				}
 			}
+			qs = append(qs, q)
 		}
-		qs = append(qs, q)
-	}
-	return qs, nil
+		return nil
+	})
+	return qs, err
 }
 
-// quarantineReason is the code a refused message's .reason file starts
-// with, "unknown" when it does not start with one, and the words after it,
-// which a client wrote: given only as one line of printable text.
-func (b *Box) quarantineReason(id string) (code, reason string) {
-	data, err := os.ReadFile(b.path("quarantine", id+".reason")) //nolint:gosec // a path inside the box's own directory
-	if err != nil {
-		return "unknown", ""
+// quarantineOf is what the box's state keeps of refused message id: its
+// code, "unknown" when it keeps none or one not of a code's form, and the
+// words after it, which this client wrote, given only as one line of
+// printable text.
+func quarantineOf(s store, id string) quarantineRecord {
+	var rec quarantineRecord
+	if raw := s.get(bucketQuarantine, id); raw == nil || protocol.Unmarshal(raw, &rec) != nil || !codeGrammar.MatchString(rec.Code) {
+		return quarantineRecord{Code: "unknown"}
 	}
-	c, words, ok := strings.Cut(strings.TrimSuffix(string(data), "\n"), ": ")
-	if !ok || !codeGrammar.MatchString(c) {
-		return "unknown", ""
+	if w := rec.Reason; len(w) > 500 || !utf8.ValidString(w) || strings.ContainsFunc(w, func(r rune) bool { return r < 0x20 || r == 0x7f || escaped(r) }) {
+		rec.Reason = ""
 	}
-	if len(words) > 500 || !utf8.ValidString(words) || strings.ContainsFunc(words, func(r rune) bool { return r < 0x20 || r == 0x7f || escaped(r) }) {
-		words = ""
-	}
-	return c, words
+	return rec
 }
 
-// RemoveQuarantined deletes refused messages from quarantine/, each with its
-// .reason, and returns the ids it deleted; with no ids it deletes them all.
+// RemoveQuarantined deletes refused messages from quarantine/, each with what
+// the box's state keeps of it, and returns the ids it deleted; with no ids it
+// deletes them all.
 // An id that is not one, or that quarantine/ does not hold, is refused
 // before anything is deleted.
 //
@@ -292,7 +321,7 @@ func (b *Box) RemoveQuarantined(ctx context.Context, ids []string) ([]string, er
 			if err := os.Remove(b.path("quarantine", id+".json")); err != nil {
 				return gone, err
 			}
-			if err := os.Remove(b.path("quarantine", id+".reason")); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			if err := b.update(func(s store) error { return s.del(bucketQuarantine, id) }); err != nil {
 				return gone, err
 			}
 			gone = append(gone, id)

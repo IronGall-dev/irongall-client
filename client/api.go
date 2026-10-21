@@ -270,7 +270,7 @@ func (b *Box) ownerTaken(ctx context.Context, method, path string, hdr http.Head
 			at, err := takenBy(pass)
 			return resp, at, err
 		}
-		if err := removeIfExists(b.path("pass")); err != nil {
+		if err := b.dropPass(); err != nil {
 			return nil, taken{}, err
 		}
 	}

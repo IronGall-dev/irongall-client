@@ -235,12 +235,13 @@ func (b *Box) pass() (string, error) {
 	if err := b.finished(); err != nil {
 		return "", err
 	}
-	if kept, err := os.ReadFile(b.path("pass")); err == nil {
-		h := strings.TrimSuffix(string(kept), "\n")
-		if p, err := protocol.ParsePass(h); err == nil && p.Address == b.id.Address() {
-			if left := p.NotAfter.Sub(b.now()); left > passMargin && left <= protocol.PassLifetime {
-				return h, nil
-			}
+	var kept []byte
+	if err := b.view(func(s store) error { kept = s.get(bucketBox, "pass"); return nil }); err != nil {
+		return "", err
+	}
+	if p, err := protocol.ParsePass(string(kept)); err == nil && p.Address == b.id.Address() {
+		if left := p.NotAfter.Sub(b.now()); left > passMargin && left <= protocol.PassLifetime {
+			return string(kept), nil
 		}
 	}
 	work, _, err := b.currentWorker()
@@ -265,4 +266,11 @@ func (b *Box) signPass(work *sign.Work) (string, error) {
 }
 
 // keepPass keeps a pass in the box, for the calls that follow.
-func (b *Box) keepPass(h string) error { return writeFile(b.path("pass"), []byte(h+"\n")) }
+func (b *Box) keepPass(h string) error {
+	return b.update(func(s store) error { return s.put(bucketBox, "pass", []byte(h)) })
+}
+
+// dropPass drops the pass the box keeps, so the next call signs another.
+func (b *Box) dropPass() error {
+	return b.update(func(s store) error { return s.del(bucketBox, "pass") })
+}

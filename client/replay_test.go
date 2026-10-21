@@ -7,8 +7,6 @@ import (
 	"encoding/hex"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -113,27 +111,26 @@ func TestARefusedDrainPrunesNothing(t *testing.T) {
 	landAll(t, r)
 	send(t, e.box(protocol.Classic), r, "hello")
 	receive(t, r)
-	before, err := os.ReadFile(filepath.Join(r.Dir(), "seen"))
-	if err != nil || len(before) == 0 {
-		t.Fatalf("no seen-set after a delivery: %v", err)
+	before, ok := stateOf(r, "seen")
+	if !ok || len(before) == 0 {
+		t.Fatal("no replay set after a delivery")
 	}
 	// Far enough ahead that a prune by this clock would drop the line.
 	off = protocol.SeenFor + 4*24*time.Hour
 	if _, err := r.Receive(ctx); err == nil {
 		t.Fatalf("a drain %v ahead was taken", off)
 	}
-	after, err := os.ReadFile(filepath.Join(r.Dir(), "seen"))
-	if err != nil || !bytes.Equal(before, after) {
-		t.Errorf("a refused drain changed the seen-set: %q, then %q (%v)", before, after, err)
+	if after, _ := stateOf(r, "seen"); !bytes.Equal(before, after) {
+		t.Errorf("a refused drain changed the replay set: %q, then %q", before, after)
 	}
-	if _, err := os.Stat(filepath.Join(r.Dir(), "seen-floor")); err == nil {
+	if has(r, "seen-floor") {
 		t.Error("a refused drain raised the floor")
 	}
 }
 
 // The floor rises only when a prune drops a line, to the cutoff it dropped
 // it at; a mail sent before it is refused as stale, and one after is taken.
-// A floor file that names no time stops the drain, with the mail left on the
+// A floor that names no time stops the drain, with the mail left on the
 // server.
 func TestTheSeenFloor(t *testing.T) {
 	ctx := context.Background()
@@ -142,15 +139,14 @@ func TestTheSeenFloor(t *testing.T) {
 	s := e.box(protocol.Classic)
 	send(t, s, r, "first")
 	receive(t, r)
-	floor := filepath.Join(r.Dir(), "seen-floor")
-	if _, err := os.Stat(floor); err == nil {
+	if has(r, "seen-floor") {
 		t.Fatal("a floor before any line was dropped")
 	}
 	e.clock.Add(protocol.SeenFor + time.Second)
 	receive(t, r) // prunes the line, and renews the prekey that ran out
-	raw, err := os.ReadFile(floor)
-	if want := strconv.FormatInt(e.clock.Now().Add(-protocol.SeenFor).Unix(), 10) + "\n"; err != nil || string(raw) != want {
-		t.Fatalf("the floor after a prune dropped a line: %q, %v; want the cutoff it dropped it at, %q", raw, err, want)
+	raw, _ := stateOf(r, "seen-floor")
+	if want := strconv.FormatInt(e.clock.Now().Add(-protocol.SeenFor).Unix(), 10); string(raw) != want {
+		t.Fatalf("the floor after a prune dropped a line: %q; want the cutoff it dropped it at, %q", raw, want)
 	}
 
 	s = e.box(protocol.Classic) // a sender whose certificate is valid now
@@ -160,9 +156,7 @@ func TestTheSeenFloor(t *testing.T) {
 	}
 
 	// Mail sent before the floor is stale, whatever the clock reads.
-	if err := os.WriteFile(floor, []byte("9999999999\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	r.SetRecord(t, "seen-floor", []byte("9999999999"))
 	send(t, s, r, "third")
 	res := receive(t, r)
 	if len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != protocol.RefusedStale {
@@ -170,16 +164,12 @@ func TestTheSeenFloor(t *testing.T) {
 	}
 
 	// A floor that names no time is an error, and the mail stays.
-	if err := os.WriteFile(floor, []byte("soon\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	r.SetRecord(t, "seen-floor", []byte("soon"))
 	send(t, s, r, "fourth")
 	if _, err := r.Receive(ctx); err == nil || !strings.Contains(err.Error(), "seen-floor") {
-		t.Errorf("a drain with a floor that names no time: %v, want an error naming the file", err)
+		t.Errorf("a drain with a floor that names no time: %v, want an error naming it", err)
 	}
-	if err := os.Remove(floor); err != nil {
-		t.Fatal(err)
-	}
+	r.SetRecord(t, "seen-floor", nil)
 	if res := receive(t, r); len(res.Delivered) != 1 {
 		t.Errorf("the mail left on the server: delivered %d once the floor was removed, want 1", len(res.Delivered))
 	}

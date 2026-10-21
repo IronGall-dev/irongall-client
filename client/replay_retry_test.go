@@ -91,7 +91,7 @@ func TestARetryAboveTheFloorIsDeliveredAgain(t *testing.T) {
 				e.clock.Add(-c.ahead)
 				mode = ""
 			}
-			floor, _ := readFile(r.Dir(), "seen-floor")
+			floor, _ := stateOf(r, "seen-floor")
 			id := sha256.Sum256(retry)
 			e.srv.Inject(r.Address(), hex.EncodeToString(id[:]), s.Address(), retry)
 			res, err := r.Receive(ctx)
@@ -279,7 +279,7 @@ func TestAStretchedRetryAtClocksAnHonestServerTakes(t *testing.T) {
 			}
 			e.clock.Add(-c.hostile)
 			mode = ""
-			floor, _ := readFile(r.Dir(), "seen-floor")
+			floor, _ := stateOf(r, "seen-floor")
 			e.clock.Add(time.Second)
 			off = c.slow
 			id := sha256.Sum256(retry)
@@ -385,11 +385,3 @@ func TestADailyReaderWhoseRenewalsAreRefused(t *testing.T) {
 	}
 }
 
-func readFile(dir, name string) ([]byte, error) {
-	f, err := http.Dir(dir).Open(name)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-	return io.ReadAll(f)
-}

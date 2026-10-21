@@ -3,12 +3,9 @@ package client
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
-	"os"
-	"strconv"
-	"strings"
 
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
@@ -83,12 +80,14 @@ func (b *Box) resolve(ctx context.Context, peer protocol.Address, l *lookups) (*
 	if err != nil {
 		return nil, nil, refuse("%s's prekey: %v", peer, err)
 	}
-	seen, err := b.peerSerial(peer, "serial")
-	if err != nil {
-		return nil, nil, err
-	}
-	seenCert, err := b.peerSerial(peer, "cert-serial")
-	if err != nil {
+	var seen, seenCert uint64
+	if err := b.view(func(s store) error {
+		kept, err := b.peerOf(s, peer)
+		if kept != nil {
+			seen, seenCert = kept.Serial, kept.CertificateSerial
+		}
+		return err
+	}); err != nil {
 		return nil, nil, err
 	}
 	// Ordered by certificate first, then by the prekey's own serial.
@@ -114,34 +113,31 @@ func (b *Box) resolve(ctx context.Context, peer protocol.Address, l *lookups) (*
 	if !protocol.AcceptsSender(ir.SenderKeyTypes, b.id.Type()) {
 		return nil, nil, refuse("%s's client does not verify identities of this box's key type, %s, so it would refuse this box's mail: nothing is sent", peer, b.id.Type())
 	}
-	if err := b.pin(id); err != nil {
-		return nil, nil, err
-	}
-	d := b.path("peers", peer.String())
-	if err := writeFile(d+"/serial", []byte(strconv.FormatUint(p.Serial, 10)+"\n")); err != nil {
-		return nil, nil, err
-	}
-	if err := writeFile(d+"/cert-serial", []byte(strconv.FormatUint(cert.Serial(), 10)+"\n")); err != nil {
-		return nil, nil, err
-	}
-	if err := writeFile(d+"/prekey.txt", ir.Prekey); err != nil {
-		return nil, nil, err
-	}
-	return p, cert, writeFile(d+"/prekey.sig", ir.PrekeySignature)
+	// The pin, the pair of serials and the statement they came from, in one
+	// value, written together (#68).
+	return p, cert, b.update(func(s store) error {
+		kept, err := b.pinned(s, id)
+		if err != nil {
+			return err
+		}
+		kept.Serial, kept.CertificateSerial, kept.Prekey, kept.PrekeySignature = p.Serial, cert.Serial(), ir.Prekey, ir.PrekeySignature
+		return b.keepPeer(s, peer, kept)
+	})
 }
 
 // identityOf returns the peer's identity: the pinned one, or, for a peer not
 // met before, the one served, held in memory. A served document must hash to
-// the address before anything else is read from it. Nothing is written:
+// the address before anything else is read from it. Nothing is kept:
 // [Box.pin] does that, once something the identity signed has verified.
 func (b *Box) identityOf(peer protocol.Address, served []byte) (*protocol.Identity, error) {
-	doc, err := os.ReadFile(b.path("peers", peer.String(), "identity.doc"))
-	switch {
-	case err == nil:
-		// A pin always wins.
-	case errors.Is(err, fs.ErrNotExist):
-		doc = served
-	default:
+	doc := served
+	if err := b.view(func(s store) error {
+		kept, err := b.peerOf(s, peer)
+		if kept != nil {
+			doc = kept.Identity // a pin always wins
+		}
+		return err
+	}); err != nil {
 		return nil, err
 	}
 	if len(doc) == 0 {
@@ -160,36 +156,67 @@ func (b *Box) identityOf(peer protocol.Address, served []byte) (*protocol.Identi
 	return id, nil
 }
 
+// peerRecord is what this box keeps of a peer, one value of the peers
+// bucket by its address: the identity document it pinned, the highest prekey
+// serial and certificate serial it has seen, with the statement they came
+// from, and the revocation of the address and of its certificates, once
+// either has verified. One value, so what goes together is never left half
+// written (#68).
+type peerRecord struct {
+	Identity                     protocol.Bytes `json:"identity"`
+	Serial                       uint64         `json:"serial,omitempty"`
+	CertificateSerial            uint64         `json:"certificate_serial,omitempty"`
+	Prekey                       protocol.Bytes `json:"prekey,omitempty"`
+	PrekeySignature              protocol.Bytes `json:"prekey_signature,omitempty"`
+	Revocation                   protocol.Bytes `json:"revocation_signature,omitempty"`
+	RevokedCertificates          protocol.Bytes `json:"revoked_certificates,omitempty"`
+	RevokedCertificatesSignature protocol.Bytes `json:"revoked_certificates_signature,omitempty"`
+}
+
+// peerOf is what this box keeps of peer a, or nil for a peer it has pinned
+// nothing of.
+func (b *Box) peerOf(s store, a protocol.Address) (*peerRecord, error) {
+	raw := s.get(bucketPeers, a.String())
+	if raw == nil {
+		return nil, nil
+	}
+	var p peerRecord
+	if err := protocol.Unmarshal(raw, &p); err != nil || protocol.Address(sha256.Sum256(p.Identity)) != a {
+		return nil, fmt.Errorf("what the box's state file keeps of %s is not a peer's record", a)
+	}
+	return &p, nil
+}
+
+// keepPeer keeps p as what this box holds of peer a.
+func (b *Box) keepPeer(s store, a protocol.Address, p *peerRecord) error {
+	raw, err := json.Marshal(p)
+	if err != nil {
+		return err
+	}
+	return s.put(bucketPeers, a.String(), raw)
+}
+
 // pin keeps a peer's identity document, unless it is kept already. It is
 // called only for an identity that has signed something this box verified: a
 // prekey statement it will encrypt to, mail it delivers, a revocation of its
-// address or of its certificates. So peers/<a>/ exists only
-// for a peer that has signed something.
+// address or of its certificates. So the box keeps a record only of a peer
+// that has signed something.
 func (b *Box) pin(id *protocol.Identity) error {
-	d := b.path("peers", id.Address().String())
-	if exists(d + "/identity.doc") {
-		return nil
-	}
-	if err := os.MkdirAll(d, 0o700); err != nil {
-		return err
-	}
-	return writeFile(d+"/identity.doc", id.Document())
+	return b.update(func(s store) error {
+		p, err := b.pinned(s, id)
+		if err != nil {
+			return err
+		}
+		return b.keepPeer(s, id.Address(), p)
+	})
 }
 
-// peerSerial returns the highest serial seen for peer and kept in file:
-// "serial" for its prekey's, "cert-serial" for its certificate's. It is 0
-// when none is kept.
-func (b *Box) peerSerial(peer protocol.Address, file string) (uint64, error) {
-	s, err := os.ReadFile(b.path("peers", peer.String(), file))
-	if errors.Is(err, fs.ErrNotExist) {
-		return 0, nil
+// pinned is what this box keeps of the peer whose identity id is, with id
+// pinned if nothing was: a record to add to and keep.
+func (b *Box) pinned(s store, id *protocol.Identity) (*peerRecord, error) {
+	p, err := b.peerOf(s, id.Address())
+	if err != nil || p != nil {
+		return p, err
 	}
-	if err != nil {
-		return 0, err
-	}
-	n, err := strconv.ParseUint(strings.TrimSpace(string(s)), 10, 64)
-	if err != nil {
-		return 0, refuse("the serial recorded for %s is unreadable", peer)
-	}
-	return n, nil
+	return &peerRecord{Identity: id.Document()}, nil
 }

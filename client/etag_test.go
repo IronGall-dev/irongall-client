@@ -59,9 +59,9 @@ func TestAnEmptyBoxPollsWithItsETag(t *testing.T) {
 	var p polls
 	p.watch(e, b)
 	receive(t, b)
-	tag, err := os.ReadFile(filepath.Join(b.Dir(), "etag"))
-	if err != nil || !strings.HasPrefix(string(tag), `"`) {
-		t.Fatalf("an empty box keeps %q (%v), want its ETag", tag, err)
+	tag, ok := stateOf(b, "etag")
+	if !ok || !strings.HasPrefix(string(tag), `"`) {
+		t.Fatalf("an empty box keeps %q, want its ETag", tag)
 	}
 	res := receive(t, b)
 	if len(p.asked) != 2 || p.asked[0] != "" || p.asked[1] != string(tag) || p.status[1] != http.StatusNotModified {
@@ -78,8 +78,7 @@ func TestMailDropsTheETag(t *testing.T) {
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	receive(t, b)
-	tag := filepath.Join(b.Dir(), "etag")
-	if !exists(tag) {
+	if !has(b, "etag") {
 		t.Fatal("an empty box kept no ETag")
 	}
 	send(t, a, b, "after the empty poll")
@@ -91,12 +90,12 @@ func TestMailDropsTheETag(t *testing.T) {
 	if p.status[0] != http.StatusOK {
 		t.Fatalf("the poll after mail came was answered %d, want 200", p.status[0])
 	}
-	if exists(tag) {
+	if has(b, "etag") {
 		t.Error("a page with mail left the ETag kept")
 	}
 	receive(t, b)
-	if p.asked[len(p.asked)-1] != "" || !exists(tag) {
-		t.Errorf("the next poll sent %q, and the box keeps a tag: %v; want none sent, and the empty box's tag kept", p.asked[len(p.asked)-1], exists(tag))
+	if p.asked[len(p.asked)-1] != "" || !has(b, "etag") {
+		t.Errorf("the next poll sent %q, and the box keeps a tag: %v; want none sent, and the empty box's tag kept", p.asked[len(p.asked)-1], has(b, "etag"))
 	}
 }
 
@@ -177,7 +176,7 @@ func TestAPlantedTagHidesNoMail(t *testing.T) {
 			_, _ = w.Write(rec.Body.Bytes())
 		})
 		receive(t, b)
-		if kept, _ := os.ReadFile(filepath.Join(b.Dir(), "etag")); string(kept) != plant {
+		if kept, _ := stateOf(b, "etag"); string(kept) != plant {
 			t.Fatalf("the box keeps %q, want the planted %s", kept, plant)
 		}
 		var p polls
@@ -198,10 +197,9 @@ func TestA304AboutAnotherTagIsNoAnswer(t *testing.T) {
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	receive(t, b)
-	etag := filepath.Join(b.Dir(), "etag")
-	kept, err := os.ReadFile(etag)
-	if err != nil {
-		t.Fatal(err)
+	kept, ok := stateOf(b, "etag")
+	if !ok {
+		t.Fatal("an empty box kept no ETag")
 	}
 	answer := func(tag string) {
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -215,8 +213,8 @@ func TestA304AboutAnotherTagIsNoAnswer(t *testing.T) {
 		})
 	}
 	answer("W/" + string(kept))
-	if res := receive(t, b); len(res.Delivered) != 0 || !exists(etag) {
-		t.Fatalf("a 304 with the tag sent, marked weak: delivered %d, a tag kept %v; want none, and the tag kept", len(res.Delivered), exists(etag))
+	if res := receive(t, b); len(res.Delivered) != 0 || !has(b, "etag") {
+		t.Fatalf("a 304 with the tag sent, marked weak: delivered %d, a tag kept %v; want none, and the tag kept", len(res.Delivered), has(b, "etag"))
 	}
 	send(t, a, b, "sealed to the prekey current now")
 	e.clock.Add(25 * time.Hour) // the next drain renews, and retires that prekey
@@ -224,7 +222,7 @@ func TestA304AboutAnotherTagIsNoAnswer(t *testing.T) {
 	if _, err := b.Receive(context.Background()); err == nil {
 		t.Fatal("a 304 about another tag was taken as an answer")
 	}
-	if exists(etag) {
+	if has(b, "etag") {
 		t.Error("a 304 about another tag left the box's tag kept")
 	}
 	e.srv.SetMiddle(nil)

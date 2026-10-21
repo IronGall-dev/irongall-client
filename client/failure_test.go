@@ -233,28 +233,26 @@ func TestAPassUnderAnOlderCertificateIsReplaced(t *testing.T) {
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	receive(t, b)
-	old, err := os.ReadFile(filepath.Join(b.Dir(), "pass"))
-	if err != nil {
-		t.Fatal(err)
+	old, ok := stateOf(b, "pass")
+	if !ok {
+		t.Fatal("no pass kept")
 	}
 	first := numberOf(t, b)
 	if _, err := b.Rekey(context.Background(), ""); err != nil {
 		t.Fatal(err)
 	}
-	if cur, _ := os.ReadFile(filepath.Join(b.Dir(), "pass")); bytes.Equal(old, cur) {
+	if cur, _ := stateOf(b, "pass"); bytes.Equal(old, cur) {
 		t.Fatal("a new certificate did not bring a new pass")
 	}
 	if exists(workFile(b, first, "")) || !exists(workFile(b, numberOf(t, b), "-cert.pub")) {
 		t.Fatal("the older working key was kept, or the new one is missing")
 	}
-	if err := os.WriteFile(filepath.Join(b.Dir(), "pass"), old, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	b.SetRecord(t, "pass", old)
 	send(t, a, b, "after the rekey")
 	if res := receive(t, b); len(res.Delivered) != 1 {
 		t.Fatal("no delivery after the pass was replaced")
 	}
-	if now, _ := os.ReadFile(filepath.Join(b.Dir(), "pass")); bytes.Equal(now, old) {
+	if now, _ := stateOf(b, "pass"); bytes.Equal(now, old) {
 		t.Fatal("the refused pass is still the one kept")
 	}
 }
@@ -384,13 +382,9 @@ func TestLocalFaultLeavesMail(t *testing.T) {
 		name     string
 		breakBox func(t *testing.T, b *client.Box, a protocol.Address) (fix func())
 	}{
-		{"the seen-set unreadable", func(t *testing.T, b *client.Box, _ protocol.Address) func() {
-			seen := filepath.Join(b.Dir(), "seen")
-			_ = os.Remove(seen)
-			if err := os.Mkdir(seen, 0o700); err != nil {
-				t.Fatal(err)
-			}
-			return func() { _ = os.Remove(seen) }
+		{"the replay set's floor unreadable", func(t *testing.T, b *client.Box, _ protocol.Address) func() {
+			b.SetRecord(t, "seen-floor", []byte("soon"))
+			return func() { b.SetRecord(t, "seen-floor", nil) }
 		}},
 		{"a prekey file unreadable", func(t *testing.T, b *client.Box, _ protocol.Address) func() {
 			k := filepath.Join(b.Dir(), "prekeys", "9.agekey")

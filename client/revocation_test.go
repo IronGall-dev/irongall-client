@@ -48,7 +48,8 @@ func says(e *env, code protocol.Code, method, suffix string) {
 }
 
 func keptRevocation(a *client.Box, of protocol.Address) bool {
-	return exists(filepath.Join(a.Dir(), "peers", of.String(), "revoke.sig"))
+	_, ok := stateOf(a, "peers/"+of.String()+"/revoke.sig")
+	return ok
 }
 
 func failed(a *client.Box, to protocol.Address) int {

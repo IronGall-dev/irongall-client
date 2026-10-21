@@ -1,0 +1,182 @@
+package client
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"io/fs"
+	"time"
+
+	bolt "go.etcd.io/bbolt"
+	berrors "go.etcd.io/bbolt/errors"
+)
+
+// The box's state file, the bbolt database "state", holds what this client
+// writes about the box itself, each change made in one transaction: so no
+// two records that go together are ever left one new and one old, and no
+// file's existence stands for a step having finished. Keys, mail and the
+// owner's own files stay files (client/doc.go): a key deleted inside a
+// database stays in its free pages and in every copy of it, and mail and the
+// owner's files are for a person to read, move and delete. A command that
+// writes the box holds the state file open from its start to its end, which
+// is the box's lock ([Box.hold]); a reading with no command under way opens
+// it read-only ([Box.view]).
+//
+// Its buckets:
+//
+//	box          the box's own records, each by its name: serial, pass, etag, seen-floor, acl, revoked, revoked-certs, renew-failed, not-made
+//	prekeys      each prekey statement this box signed, by its serial: the statement, its signature and when it was signed, in one value
+//	intent       the renewal under way, under "renewal": the number it took and how far it got
+//	peers        what this box pinned of each peer, by its address, in one value
+//	seen         the replay set, by ciphertext hash; seen-sender by sender and msg_id, and seen-time by sent_at, its two indexes
+//	quarantine   what this client's checks found of each message it refused, by its id: quarantine/ keeps the message as served
+const (
+	bucketBox        = "box"
+	bucketPrekeys    = "prekeys"
+	bucketIntent     = "intent"
+	bucketPeers      = "peers"
+	bucketSeen       = "seen"
+	bucketSeenSender = "seen-sender"
+	bucketSeenTime   = "seen-time"
+	bucketQuarantine = "quarantine"
+)
+
+// store is one transaction of the box's state. A store with no transaction
+// is the state of a box that has none yet, and holds nothing.
+type store struct{ tx *bolt.Tx }
+
+// get returns a copy of what bucket holds under key, or nil.
+func (s store) get(bucket, key string) []byte {
+	if s.tx == nil {
+		return nil
+	}
+	bk := s.tx.Bucket([]byte(bucket))
+	if bk == nil {
+		return nil
+	}
+	return bytes.Clone(bk.Get([]byte(key)))
+}
+
+// put keeps value under key in bucket.
+func (s store) put(bucket, key string, value []byte) error {
+	bk, err := s.tx.CreateBucketIfNotExists([]byte(bucket))
+	if err != nil {
+		return err
+	}
+	return bk.Put([]byte(key), value)
+}
+
+// del deletes what bucket holds under key; a key it does not hold is not an
+// error.
+func (s store) del(bucket, key string) error {
+	if bk := s.tx.Bucket([]byte(bucket)); bk != nil {
+		return bk.Delete([]byte(key))
+	}
+	return nil
+}
+
+// each calls f with every key and value bucket holds, in the keys' byte
+// order, each a copy, until f returns an error.
+func (s store) each(bucket string, f func(key, value []byte) error) error {
+	if s.tx == nil {
+		return nil
+	}
+	bk := s.tx.Bucket([]byte(bucket))
+	if bk == nil {
+		return nil
+	}
+	var keys, values [][]byte
+	_ = bk.ForEach(func(k, v []byte) error { //nolint:errcheck // the function returns none
+		keys, values = append(keys, bytes.Clone(k)), append(values, bytes.Clone(v))
+		return nil
+	})
+	for i := range keys {
+		if err := f(keys[i], values[i]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// errNotHeld is a write to the box's state by code that does not hold its
+// lock: a bug in this client, never a state of the box.
+var errNotHeld = errors.New("this client wrote the box's state without its lock")
+
+// view runs f with the box's state to read: the transaction under way, if f
+// runs inside one; the state the command holds, if one does; otherwise the
+// state file opened read-only for f alone, waiting as [Box.hold] waits while
+// another command of the box holds it. A box with no state file yet holds
+// nothing.
+func (b *Box) view(f func(store) error) error {
+	if b.tx != nil {
+		return f(store{b.tx})
+	}
+	db := b.db
+	if db == nil {
+		ro, err := b.openState(context.Background(), true)
+		if errors.Is(err, fs.ErrNotExist) {
+			return f(store{})
+		}
+		if err != nil {
+			return err
+		}
+		defer ro.Close() //nolint:errcheck // read only
+		db = ro
+	}
+	return db.View(func(tx *bolt.Tx) error {
+		b.tx = tx
+		defer func() { b.tx = nil }()
+		return f(store{tx})
+	})
+}
+
+// update runs f in one transaction of the box's state, the command's, which
+// holds the lock: what f writes is kept only if it returns nil, and all of
+// it together. Inside a transaction already under way, f is part of it, so
+// what goes together is written together. No server call is made inside
+// one.
+func (b *Box) update(f func(store) error) error {
+	if b.tx != nil {
+		if !b.tx.Writable() {
+			return errNotHeld
+		}
+		return f(store{b.tx})
+	}
+	if b.db == nil {
+		return errNotHeld
+	}
+	return b.db.Update(func(tx *bolt.Tx) error {
+		b.tx = tx
+		defer func() { b.tx = nil }()
+		return f(store{tx})
+	})
+}
+
+// openState opens the box's state file, waiting up to lockPatience while
+// another command holds it: for writing, which only one command at a time
+// may, or read-only, which any number of readings may at once, while no
+// command writes. The first time it finds the file held it tells
+// Options.Waiting, if set, so that a wait is not read as a hang.
+func (b *Box) openState(ctx context.Context, readOnly bool) (*bolt.DB, error) {
+	deadline := time.Now().Add(lockPatience)
+	told := false
+	for {
+		db, err := bolt.Open(b.path("state"), 0o600, &bolt.Options{Timeout: lockTry, ReadOnly: readOnly})
+		if err == nil {
+			return db, nil
+		}
+		if !errors.Is(err, berrors.ErrTimeout) {
+			return nil, err
+		}
+		if !time.Now().Before(deadline) {
+			return nil, errLocked
+		}
+		if !told && b.waiting != nil {
+			b.waiting()
+			told = true
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
+}

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -27,7 +26,8 @@ import (
 // whose working key was taken, and an operator that helps the thief.
 
 func keptList(b *client.Box, of protocol.Address) bool {
-	return exists(filepath.Join(b.Dir(), "peers", of.String(), "revoked-certs.json"))
+	_, ok := stateOf(b, "peers/"+of.String()+"/revoked-certs.json")
+	return ok
 }
 
 // mailAs injects mail that signer signed as box from, to box to, as an

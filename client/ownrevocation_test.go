@@ -250,6 +250,7 @@ func finishedCommands(ctx context.Context, a, b *client.Box, rec *protocol.Revoc
 	run = []command{
 		{"Ask", func() error { _, err := a.Ask(ctx, a.Address()); return err }},
 		{"KeepRevocation", func() error { _, _, err := a.KeepRevocation(rec); return err }},
+		{"Publish", func() error { _, err := a.Publish(ctx, rec); return err }},
 		{"Flush", func() error { _, err := a.Flush(ctx); return err }},
 		{"SetAlias", func() error { return a.SetAlias("peer", b.Address()) }},
 		{"RemoveAlias", func() error { return a.RemoveAlias("peer") }},
@@ -275,7 +276,7 @@ func signed(t *testing.T, a *client.Box) []string {
 			names = append(names, d+"/"+e.Name())
 		}
 	}
-	if _, err := os.Stat(filepath.Join(a.Dir(), "pass")); err == nil {
+	if has(a, "pass") {
 		names = append(names, "pass")
 	}
 	return names
@@ -348,7 +349,7 @@ func TestABoxThatKeepsItsOwnRevocationSignsNothingMore(t *testing.T) {
 			}
 			continue
 		}
-		if err != nil || name != "Ask" && calls.Load() != 0 {
+		if err != nil || name != "Ask" && name != "Publish" && calls.Load() != 0 {
 			t.Errorf("%s: %v, with %d calls to the server", name, err, calls.Load())
 		}
 	}

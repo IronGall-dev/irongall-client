@@ -244,9 +244,7 @@ func TestAnACLGoesAboveTheVersionTheServerHolds(t *testing.T) {
 	if _, err := b.Block(ctx, a.Address()); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Remove(filepath.Join(b.Dir(), "acl.json")); err != nil { // as on a second machine
-		t.Fatal(err)
-	}
+	b.SetRecord(t, "acl.json", nil) // as on a second machine
 	c := e.heldBox(protocol.Classic)
 	if _, err := b.Block(ctx, c.Address()); err != nil {
 		t.Fatal(err)
@@ -256,9 +254,9 @@ func TestAnACLGoesAboveTheVersionTheServerHolds(t *testing.T) {
 		t.Fatalf("the server holds %+v", acl)
 	}
 	var took protocol.ACLDocument
-	data, _ := os.ReadFile(filepath.Join(b.Dir(), "acl.json"))
+	data, _ := stateOf(b, "acl.json")
 	if err := protocol.Unmarshal(data, &took); err != nil || *took.Version != 2 {
-		t.Fatalf("acl.json: %s, %v", data, err)
+		t.Fatalf("the ACL kept: %s, %v", data, err)
 	}
 }
 

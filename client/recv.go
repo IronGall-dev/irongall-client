@@ -1,17 +1,16 @@
 package client
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
+	"math"
 	"net/http"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -233,7 +232,7 @@ func (b *Box) drain(ctx context.Context, asked *lookups) (*Result, error) {
 			// no answer, and the tag goes, so the next poll asks for the
 			// page in full.
 			if !sameTag(resp.Header.Get("ETag"), hdr.Get("If-None-Match")) {
-				if err := removeIfExists(b.path("etag")); err != nil {
+				if err := b.update(func(s store) error { return s.del(bucketBox, "etag") }); err != nil {
 					return nil, err
 				}
 				return res, fmt.Errorf("GET %s: a 304 about another tag than the one the poll sent", listed)
@@ -330,18 +329,11 @@ func (b *Box) receiveOne(ctx context.Context, m protocol.MessageInfo, res *Resul
 		d, why := v.delivery, v.refusal
 		switch {
 		case why != nil:
-			raw, err := keepRefused(&m, ct.bytes, why.Findings)
-			if err != nil {
-				return fetched, err
-			}
 			// The message as served, with none of the server's strings in
-			// the clear but those of their form, what the checks established
-			// about it (keptRefusal), and beside it why it was refused, in
-			// this client's words.
-			if err := writeFile(b.path("quarantine", local+".json"), raw); err != nil {
-				return fetched, err
-			}
-			if err := writeFile(b.path("quarantine", local+".reason"), []byte(why.Code+": "+why.Reason+"\n")); err != nil {
+			// the clear but those of their form (keptRefusal), and beside it
+			// why it was refused, in this client's words, and what the checks
+			// established about it.
+			if err := b.keepRefused(local, &m, ct.bytes, why); err != nil {
 				return fetched, err
 			}
 			why.ID = local
@@ -364,7 +356,18 @@ func (b *Box) receiveOne(ctx context.Context, m protocol.MessageInfo, res *Resul
 			if err != nil {
 				return fetched, err
 			}
-			if err := b.recordSeen(ct.bytes, d.Envelope); err != nil {
+			// A message refused once, whose ack was lost, and delivered
+			// now, keeps nothing in quarantine/ (#211): its file goes first,
+			// then what the box's state keeps of it, with the line.
+			if err := removeIfExists(b.path("quarantine", local+".json")); err != nil {
+				return fetched, err
+			}
+			if err := b.update(func(s store) error {
+				if err := recordSeen(s, ct.bytes, d.Envelope); err != nil {
+					return err
+				}
+				return s.del(bucketQuarantine, local)
+			}); err != nil {
 				return fetched, err
 			}
 			switch where {
@@ -577,131 +580,110 @@ var defaultIgnorable = [][2]rune{
 	{0x1D173, 0x1D17A}, {0xE0000, 0xE0FFF},
 }
 
-// The seen-set: one line per accepted message, "<ciphertext hash> <sent_at,
-// unix seconds> <from> <msg_id>", kept until sent_at + protocol.SeenFor, so
-// the replay check covers the window the freshness check takes a message in,
-// and the floor (seenFloor) covers a clock that steps back further.
+// The replay set: each accepted message, by the hash of its ciphertext, with
+// its sent_at, its sender and its msg_id, kept until sent_at +
+// protocol.SeenFor, so the replay check covers the window the freshness check
+// takes a message in, and the floor (seenFloor) covers a clock that steps
+// back further. Two indexes beside it, in the same transactions: by sender
+// and msg_id, which a retry is known by, and by sent_at, which a prune walks
+// (#11).
 
-func (b *Box) seenLines() ([][]string, error) {
-	f, err := os.Open(b.path("seen"))
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close() //nolint:errcheck // read only
-	var lines [][]string
-	s := bufio.NewScanner(f)
-	for s.Scan() {
-		if fields := strings.Fields(s.Text()); len(fields) == 4 {
-			lines = append(lines, fields)
-		}
-	}
-	return lines, s.Err()
+// seenTimeKey is a line's key in seen-time: its sent_at, eight bytes
+// big-endian, so the keys' order is the times', then its hash.
+func seenTimeKey(sentAt int64, h string) string {
+	return string(binary.BigEndian.AppendUint64(nil, uint64(max(sentAt, 0)))) + h
 }
 
-func (b *Box) seenHash(h string) (bool, error) {
-	lines, err := b.seenLines()
-	for _, l := range lines {
-		if l[0] == h {
-			return true, err
-		}
-	}
-	return false, err
+func (b *Box) seenHash(h string) (seen bool, err error) {
+	err = b.view(func(s store) error { seen = s.get(bucketSeen, h) != nil; return nil })
+	return seen, err
 }
 
-func (b *Box) seenMsgID(from protocol.Address, msgID string) (bool, error) {
-	lines, err := b.seenLines()
-	for _, l := range lines {
-		if l[2] == from.String() && l[3] == msgID {
-			return true, err
-		}
-	}
-	return false, err
+func (b *Box) seenMsgID(from protocol.Address, msgID string) (seen bool, err error) {
+	err = b.view(func(s store) error { seen = s.get(bucketSeenSender, from.String()+" "+msgID) != nil; return nil })
+	return seen, err
 }
 
-func (b *Box) recordSeen(ciphertext []byte, env *protocol.Envelope) error {
-	h := sha256.Sum256(ciphertext)
-	_, err := os.Stat(b.path("seen"))
-	created := errors.Is(err, fs.ErrNotExist)
-	f, err := os.OpenFile(b.path("seen"), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600)
-	if err != nil {
+// recordSeen adds a delivered message to the replay set and its indexes.
+func recordSeen(s store, ciphertext []byte, env *protocol.Envelope) error {
+	sum := sha256.Sum256(ciphertext)
+	h := hex.EncodeToString(sum[:])
+	if err := s.put(bucketSeen, h, fmt.Appendf(nil, "%d %s %s", env.SentAt.Unix(), env.From, env.MsgID)); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(f, "%x %d %s %s\n", h, env.SentAt.Unix(), env.From, env.MsgID); err != nil {
-		f.Close() //nolint:errcheck,gosec // the write error wins
+	if err := s.put(bucketSeenSender, env.From.String()+" "+env.MsgID, []byte(h)); err != nil {
 		return err
 	}
-	if err := f.Sync(); err != nil {
-		f.Close() //nolint:errcheck,gosec // the sync error wins
-		return err
-	}
-	if err := f.Close(); err != nil || !created {
-		return err
-	}
-	// A new file is durable only once its directory entry is.
-	return syncDir(b.dir)
+	return s.put(bucketSeenTime, seenTimeKey(env.SentAt.Unix(), h), nil)
 }
 
 // pruneSeen drops the lines past protocol.SeenFor by the reading at, one a
-// server took. When it drops one, the floor rises to the cutoff first, so a
-// clock that later reads further back than SeenFor allows for still takes no
-// message whose line went (seenFloor).
+// server took. When it drops one, the floor rises to the cutoff in the same
+// transaction, so a clock that later reads further back than SeenFor allows
+// for still takes no message whose line went (seenFloor).
 func (b *Box) pruneSeen(at taken) error {
-	lines, err := b.seenLines()
-	if err != nil || lines == nil {
-		return err
-	}
 	cutoff := at.at.Add(-protocol.SeenFor).Unix()
-	var out bytes.Buffer
-	dropped := false
-	for _, l := range lines {
-		if sa, err := strconv.ParseInt(l[1], 10, 64); err == nil && sa >= cutoff {
-			out.WriteString(strings.Join(l, " ") + "\n")
-		} else {
-			dropped = true
+	return b.update(func(s store) error {
+		var old [][]byte
+		if err := s.each(bucketSeenTime, func(k, _ []byte) error {
+			if len(k) < 8 || int64(binary.BigEndian.Uint64(k)) >= cutoff { //nolint:gosec // a time in seconds, kept from an int64
+				return errDone
+			}
+			old = append(old, k)
+			return nil
+		}); err != nil && !errors.Is(err, errDone) {
+			return err
 		}
-	}
-	if !dropped {
+		if len(old) == 0 {
+			return nil
+		}
+		if err := b.raiseFloor(s, cutoff); err != nil {
+			return err
+		}
+		for _, k := range old {
+			h := string(k[8:])
+			line := strings.Fields(string(s.get(bucketSeen, h)))
+			if len(line) == 3 {
+				if err := s.del(bucketSeenSender, line[1]+" "+line[2]); err != nil {
+					return err
+				}
+			}
+			if err := s.del(bucketSeen, h); err != nil {
+				return err
+			}
+			if err := s.del(bucketSeenTime, string(k)); err != nil {
+				return err
+			}
+		}
 		return nil
-	}
-	if err := b.raiseFloor(cutoff); err != nil {
-		return err
-	}
-	return writeFile(b.path("seen"), out.Bytes())
+	})
 }
 
-// seenFloor is the highest cutoff a prune of the seen-set has dropped a line
-// at, from the box's seen-floor file, or 0 when it has none: a message whose
-// sent_at is before it, or less than protocol.TTL above it, is stale whatever
-// the clock now reads, since its line, or its first copy's, may be gone. It
-// is how a Kerberos server that has lost its replay cache refuses until the
-// window has passed (RFC 4120 §3.2.3). A file that names anything but a
-// number of seconds is an error, never the default.
-func (b *Box) seenFloor() (int64, error) {
-	raw, err := os.ReadFile(b.path("seen-floor"))
-	if errors.Is(err, fs.ErrNotExist) {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, err
-	}
-	s, ok := bytes.CutSuffix(raw, []byte("\n"))
-	n, perr := strconv.ParseInt(string(s), 10, 64)
-	if !ok || perr != nil || n < 0 || strconv.FormatInt(n, 10) != string(s) {
-		return 0, fmt.Errorf("%s names no time: it is a number of seconds and a line feed, written by recv", b.path("seen-floor"))
-	}
-	return n, nil
+// errDone stops a walk of a bucket where it has found what it walked for.
+var errDone = errors.New("done")
+
+// seenFloor is the highest cutoff a prune of the replay set has dropped a
+// line at, or 0 when it has dropped none: a message whose sent_at is before
+// it, or less than protocol.TTL above it, is stale whatever the clock now
+// reads, since its line, or its first copy's, may be gone. It is how a
+// Kerberos server that has lost its replay cache refuses until the window
+// has passed (RFC 4120 §3.2.3).
+func (b *Box) seenFloor() (floor int64, err error) {
+	err = b.view(func(s store) error {
+		n, err := decimal(s.get(bucketBox, "seen-floor"), "seen-floor")
+		floor = int64(min(n, uint64(math.MaxInt64))) //nolint:gosec // bounded above
+		return err
+	})
+	return floor, err
 }
 
 // raiseFloor sets the floor to t, unless it is already that high.
-func (b *Box) raiseFloor(t int64) error {
+func (b *Box) raiseFloor(s store, t int64) error {
 	floor, err := b.seenFloor()
 	if err != nil || floor >= t {
 		return err
 	}
-	return writeFile(b.path("seen-floor"), []byte(strconv.FormatInt(t, 10)+"\n"))
+	return s.put(bucketBox, "seen-floor", strconv.AppendInt(nil, t, 10))
 }
 
 // entityTag is an ETag as a box keeps one: an entity-tag of RFC 9110 §8.8.3,
@@ -716,18 +698,15 @@ func sameTag(a, b string) bool {
 	return entityTag.MatchString(a) && entityTag.MatchString(b) && strings.TrimPrefix(a, "W/") == strings.TrimPrefix(b, "W/")
 }
 
-// ifNoneMatch is the header a poll sends: If-None-Match with the tag kept in
-// etag, or none when the box keeps none.
+// ifNoneMatch is the header a poll sends: If-None-Match with the tag the box
+// keeps, or none when it keeps none, or one of another form.
 func (b *Box) ifNoneMatch() (http.Header, error) {
-	t, err := os.ReadFile(b.path("etag"))
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
+	var t []byte
+	if err := b.view(func(s store) error { t = s.get(bucketBox, "etag"); return nil }); err != nil {
 		return nil, err
 	}
 	if !entityTag.Match(t) {
-		return nil, removeIfExists(b.path("etag"))
+		return nil, nil
 	}
 	return http.Header{"If-None-Match": {string(t)}}, nil
 }
@@ -737,8 +716,10 @@ func (b *Box) ifNoneMatch() (http.Header, error) {
 // then says only that the box is still empty, and never hides mail
 // (PROTOCOL.md §5.1).
 func (b *Box) keepETag(list *protocol.MessageList, tag string) error {
-	if list.Count == 0 && len(list.Messages) == 0 && entityTag.MatchString(tag) {
-		return writeFile(b.path("etag"), []byte(tag))
-	}
-	return removeIfExists(b.path("etag"))
+	return b.update(func(s store) error {
+		if list.Count == 0 && len(list.Messages) == 0 && entityTag.MatchString(tag) {
+			return s.put(bucketBox, "etag", []byte(tag))
+		}
+		return s.del(bucketBox, "etag")
+	})
 }

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	bolt "go.etcd.io/bbolt"
-	berrors "go.etcd.io/bbolt/errors"
 )
 
 // The box's lock is its state file, the bbolt database "state", held open by
@@ -37,37 +36,25 @@ var lockPatience = 2 * time.Minute
 // attempts, a command that waits checks its context and its patience.
 const lockTry = 100 * time.Millisecond
 
-// lock is the box's state file, open: the lock, until it is closed.
-type lock struct{ db *bolt.DB }
-
 // hold takes the box's lock for a command, waiting up to lockPatience while
-// another command holds it. The first time it finds the lock held it tells
-// Options.Waiting, if set, so that a wait is not read as a hang.
-func (b *Box) hold(ctx context.Context) (*lock, error) {
+// another command holds it (openState), and keeps the state file it opened on
+// the box for the command's transactions until release.
+func (b *Box) hold(ctx context.Context) (func() error, error) {
 	if err := b.makeState(); err != nil {
 		return nil, fmt.Errorf("the box's state file: %w", err)
 	}
-	deadline := time.Now().Add(lockPatience)
-	told := false
-	for {
-		db, err := bolt.Open(b.path("state"), 0o600, &bolt.Options{Timeout: lockTry})
-		if err == nil {
-			return &lock{db: db}, nil
-		}
-		if !errors.Is(err, berrors.ErrTimeout) {
-			return nil, fmt.Errorf("the box's state file: %w", err)
-		}
-		if !time.Now().Before(deadline) {
-			return nil, errLocked
-		}
-		if !told && b.waiting != nil {
-			b.waiting()
-			told = true
-		}
-		if err := ctx.Err(); err != nil {
+	db, err := b.openState(ctx, false)
+	if err != nil {
+		if errors.Is(err, errLocked) || ctx.Err() != nil {
 			return nil, err
 		}
+		return nil, fmt.Errorf("the box's state file: %w", err)
 	}
+	b.db = db
+	return func() error {
+		b.db = nil
+		return db.Close()
+	}, nil
 }
 
 // makeState makes the box's state file where it has none, as writeFile makes
@@ -102,8 +89,6 @@ func (b *Box) makeState() error {
 	return syncDir(b.dir)
 }
 
-func (l *lock) release() error { return l.db.Close() }
-
 // locked runs f with the box's lock held ([Box.hold]), and lets go of it
 // after, on every way out of f, a panic among them. It is the one entry of
 // every command that writes the box, so a box that holds its own revocation
@@ -124,12 +109,12 @@ func locked[T any](ctx context.Context, b *Box, f func() (T, error)) (v T, err e
 // which moves what waits to outbox/failed/, and a change to the box's own
 // files alone. Each signs nothing (sign).
 func lockedFinished[T any](ctx context.Context, b *Box, f func() (T, error)) (v T, err error) {
-	l, err := b.hold(ctx)
+	release, err := b.hold(ctx)
 	if err != nil {
 		return v, err
 	}
 	defer func() {
-		if e := l.release(); err == nil {
+		if e := release(); err == nil {
 			err = e
 		}
 	}()

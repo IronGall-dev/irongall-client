@@ -52,8 +52,14 @@ type Status struct {
 	Attention []string `json:"attention"`
 }
 
-// Status reads the box's own files. It takes no lock and changes nothing.
-func (b *Box) Status() (*Status, error) {
+// Status reads the box's own files and its state, read-only: it waits while a
+// command writes the box, and changes nothing.
+func (b *Box) Status() (st *Status, err error) {
+	err = b.view(func(store) error { st, err = b.status(); return err })
+	return st, err
+}
+
+func (b *Box) status() (*Status, error) {
 	s := &Status{Address: b.id.Address(), Attention: []string{}}
 	// A revoked box is finished, and that comes before anything else it holds.
 	if gone, err := b.revoked(b.id.Address()); err != nil {
@@ -146,15 +152,14 @@ func (b *Box) Status() (*Status, error) {
 }
 
 // quarantineCodes lists the distinct codes of the mail in quarantine/, from
-// the .reason files this client wrote. A file that does not start with a
-// code counts as "unknown": nothing else is taken from it.
+// what the box's state keeps of each: a message it keeps no code for counts
+// as "unknown".
 func (b *Box) quarantineCodes() string {
-	names, _ := filepath.Glob(b.path("quarantine", "*.json"))
+	qs, _ := b.Quarantined()
 	var codes []string
-	for _, name := range names {
-		code, _ := b.quarantineReason(strings.TrimSuffix(filepath.Base(name), ".json"))
-		if !slices.Contains(codes, code) {
-			codes = append(codes, code)
+	for _, q := range qs {
+		if !slices.Contains(codes, q.Code) {
+			codes = append(codes, q.Code)
 		}
 	}
 	slices.Sort(codes)

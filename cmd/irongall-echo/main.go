@@ -182,12 +182,16 @@ func (e *echo) once(ctx context.Context) time.Duration {
 		for _, id := range res.Duplicates {
 			e.log.Printf("%s: a retry of a message already answered", id)
 		}
+		var refused []string
 		for _, r := range res.Refused {
 			// Never answered: a refusal does not say whether its sender
 			// was verified, and an unverified one can name anyone.
 			e.log.Printf("%s: refused: %s: %s", r.ID, r.Code, r.Reason)
-			for _, kept := range []string{".json", ".reason"} {
-				e.remove(filepath.Join(e.b.Dir(), "quarantine", r.ID+kept))
+			refused = append(refused, r.ID)
+		}
+		if len(refused) > 0 {
+			if _, err := e.b.RemoveQuarantined(ctx, refused); err != nil {
+				e.log.Printf("the refused mail was not deleted from quarantine/: %v", err)
 			}
 		}
 	}

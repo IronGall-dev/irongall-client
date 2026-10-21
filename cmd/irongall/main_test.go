@@ -1204,8 +1204,8 @@ func TestHelpRunsNothing(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("the server holds the box revoked: %d", resp.StatusCode)
 	}
-	if _, err := os.Stat(filepath.Join(b.Dir(), "revoked.sig")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("the box keeps a revocation of itself: %v", err)
+	if st, err := b.Status(); err != nil || st.Revoked {
+		t.Fatalf("the box keeps a revocation of itself: %+v, %v", st, err)
 	}
 }
 
@@ -1701,11 +1701,15 @@ func TestCertRevokeEarlierSaysWhatHappenedToEach(t *testing.T) {
 }
 
 // inUse is the number of the prekey a box published last, which is its
-// working key's and its certificate's too, as its serial file has it. A box
-// takes each number from its clock, so a test reads it and never assumes one.
+// working key's and its certificate's too, as its status has it. A box takes
+// each number from its clock, so a test reads it and never assumes one.
 func inUse(t *testing.T, b *client.Box) string {
 	t.Helper()
-	return strings.TrimSpace(string(must(t, filepath.Join(b.Dir(), "serial"))))
+	st, err := b.Status()
+	if err != nil || st.PrekeySerial == 0 {
+		t.Fatalf("the box's status: %+v, %v", st, err)
+	}
+	return strconv.FormatUint(st.PrekeySerial, 10)
 }
 
 // number reads a serial's digits.

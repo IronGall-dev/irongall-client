@@ -105,7 +105,7 @@ func (b *Box) sendRenewal(ctx context.Context, r renewal, n uint64) (taken, erro
 	if err != nil {
 		return taken{}, err
 	}
-	return at, removeIfExists(b.path("acl.json"))
+	return at, b.update(func(s store) error { return s.del(bucketBox, "acl") })
 }
 
 // ownRead is what a renewal learned from its read of its own box.
@@ -376,28 +376,34 @@ func (b *Box) highestBegun() (uint64, error) {
 
 // publishedSerial returns the highest prekey serial this box has published,
 // or 0 if none is recorded.
-func (b *Box) publishedSerial() (uint64, error) {
-	s, err := os.ReadFile(b.path("serial"))
-	if errors.Is(err, fs.ErrNotExist) {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, err
-	}
-	n, err := strconv.ParseUint(strings.TrimSpace(string(s)), 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("%s is not a serial", b.path("serial"))
-	}
-	return n, nil
+func (b *Box) publishedSerial() (n uint64, err error) {
+	err = b.view(func(s store) error {
+		n, err = decimal(s.get(bucketBox, "serial"), "serial")
+		return err
+	})
+	return n, err
 }
 
 // recordPublished records serial as published, unless a higher one is.
-func (b *Box) recordPublished(serial uint64) error {
-	cur, err := b.publishedSerial()
+func (b *Box) recordPublished(s store, serial uint64) error {
+	cur, err := decimal(s.get(bucketBox, "serial"), "serial")
 	if err != nil || serial <= cur {
 		return err
 	}
-	return writeFile(b.path("serial"), []byte(strconv.FormatUint(serial, 10)+"\n"))
+	return s.put(bucketBox, "serial", strconv.AppendUint(nil, serial, 10))
+}
+
+// decimal is a number the box's state keeps in decimal digits, or 0 when it
+// keeps none: one of anything else is an error, never 0.
+func decimal(v []byte, name string) (uint64, error) {
+	if v == nil {
+		return 0, nil
+	}
+	n, err := strconv.ParseUint(string(v), 10, 64)
+	if err != nil || strconv.FormatUint(n, 10) != string(v) {
+		return 0, fmt.Errorf("the box's state file holds a %s that is no number", name)
+	}
+	return n, nil
 }
 
 // renewAfter is how old the current prekey may get before Receive renews

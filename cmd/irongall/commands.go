@@ -8,7 +8,6 @@ import (
 	"io"
 	"math"
 	"os"
-	"path/filepath"
 	"regexp"
 	"slices"
 	"strconv"
@@ -879,22 +878,24 @@ revocation it takes none there either.`,
 func (e *cli) publishRevokedCmd() *cobra.Command {
 	return command("publish-revoked [<file>]", "send a revocation of certificates to the server again",
 		`Send a record that carries a revocation of certificates, and none of an
-address, to the server, and keep it: the file
-named, or with none this box's own revoked-certs.json, when a server did not
-take it. A record that ends an address is refused: irongall revocation publish
-takes that one, with the address in full.`,
+address, to the server, and keep it: the file named, or with none the one
+this box keeps of its own certificates, when a server did not take it. A
+record that ends an address is refused: irongall revocation publish takes
+that one, with the address in full.`,
 		nargs(0, 1), func(c *cobra.Command, args []string) error {
 			b, err := e.box()
 			if err != nil {
 				return err
 			}
-			name := filepath.Join(e.dir, "revoked-certs.json")
+			var rec *protocol.Revocations
 			if len(args) == 1 {
-				name = args[0]
-			} else if _, err := os.Stat(name); errors.Is(err, os.ErrNotExist) {
-				return errors.New("this box holds no revocation of its certificates: irongall cert revoke-earlier makes one")
+				rec, err = readRecord(args[0])
+			} else {
+				rec, err = b.CertificatesRecord()
+				if err == nil && rec == nil {
+					err = errors.New("this box holds no revocation of its certificates: irongall cert revoke-earlier makes one")
+				}
 			}
-			rec, err := readRecord(name)
 			if err != nil {
 				return err
 			}

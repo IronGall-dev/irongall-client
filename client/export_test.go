@@ -2,7 +2,11 @@ package client
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,3 +48,180 @@ func PutRevocations(ctx context.Context, opt Options, a protocol.Address, rec *p
 	}
 	return b.call(ctx, http.MethodPut, "/v1/"+a.String()+"/revocations", rec, nil, nil)
 }
+
+// Records is what the box's state keeps, each record by the name of the file
+// that held it before the state file did: "serial", "pass", "etag",
+// "seen-floor", "acl.json", "revoked.sig", "revoked-certs.json", "seen" (the
+// replay set's lines, "<hash> <sent_at> <from> <msg_id>", by sent_at),
+// "peers/<address>/<part>" (identity.doc, serial, cert-serial, prekey.txt,
+// prekey.sig, revoke.sig, revoked-certs.json) and "quarantine/<id>.reason"
+// ("<code>: <reason>"), each a record's bytes as that file held them. So a
+// test reads and changes the box's state as it did its files.
+func (b *Box) Records() (map[string][]byte, error) {
+	out := map[string][]byte{}
+	err := b.view(func(s store) error {
+		for _, r := range []struct{ key, name string }{
+			{"serial", "serial"}, {"pass", "pass"}, {"etag", "etag"}, {"seen-floor", "seen-floor"},
+			{"acl", "acl.json"}, {"revoked", "revoked.sig"}, {"revoked-certs", "revoked-certs.json"},
+			{"renew-failed", "renew-failed"}, {"not-made", "not-made"},
+		} {
+			if v := s.get(bucketBox, r.key); v != nil {
+				out[r.name] = v
+			}
+		}
+		if err := s.each(bucketPeers, func(k, v []byte) error {
+			var p peerRecord
+			if err := protocol.Unmarshal(v, &p); err != nil {
+				return err
+			}
+			d := "peers/" + string(k) + "/"
+			out[d+"identity.doc"] = p.Identity
+			for _, part := range []struct {
+				name string
+				v    []byte
+			}{{"prekey.txt", p.Prekey}, {"prekey.sig", p.PrekeySignature}, {"revoke.sig", p.Revocation}} {
+				if part.v != nil {
+					out[d+part.name] = part.v
+				}
+			}
+			if p.Serial != 0 {
+				out[d+"serial"] = strconv.AppendUint(nil, p.Serial, 10)
+				out[d+"cert-serial"] = strconv.AppendUint(nil, p.CertificateSerial, 10)
+			}
+			if p.RevokedCertificates != nil {
+				line, err := json.Marshal(protocol.Revocations{Identity: p.Identity, RevokedCertificates: p.RevokedCertificates, RevokedCertificatesSignature: p.RevokedCertificatesSignature})
+				if err != nil {
+					return err
+				}
+				out[d+"revoked-certs.json"] = line
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		var seen []byte
+		if err := s.each(bucketSeenTime, func(k, _ []byte) error {
+			h := string(k[8:])
+			seen = fmt.Appendf(seen, "%s %s\n", h, s.get(bucketSeen, h))
+			return nil
+		}); err != nil {
+			return err
+		}
+		if seen != nil {
+			out["seen"] = seen
+		}
+		return s.each(bucketQuarantine, func(k, v []byte) error {
+			var q quarantineRecord
+			if err := protocol.Unmarshal(v, &q); err != nil {
+				return err
+			}
+			out["quarantine/"+string(k)+".reason"] = []byte(q.Code + ": " + q.Reason)
+			return nil
+		})
+	})
+	return out, err
+}
+
+// Record is one of what [Box.Records] gives, and whether the box keeps it.
+func (b *Box) Record(t *testing.T, name string) ([]byte, bool) {
+	t.Helper()
+	all, err := b.Records()
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, ok := all[name]
+	return v, ok
+}
+
+// SetRecord writes a record by its name in [Box.Records], or with v nil
+// deletes it, as a test that wrote or removed the file did: as another
+// machine of the box, a fault or an earlier state would leave it. It
+// holds the box's lock to.
+func (b *Box) SetRecord(t *testing.T, name string, v []byte) {
+	t.Helper()
+	err := b.lockedFinishedDo(context.Background(), func() error {
+		return b.update(func(s store) error {
+			put := func(bucket, key string, v []byte) error {
+				if v == nil {
+					return s.del(bucket, key)
+				}
+				return s.put(bucket, key, v)
+			}
+			for key, file := range map[string]string{"serial": "serial", "pass": "pass", "etag": "etag", "seen-floor": "seen-floor", "acl": "acl.json", "revoked": "revoked.sig", "revoked-certs": "revoked-certs.json", "renew-failed": "renew-failed", "not-made": "not-made"} {
+				if name == file {
+					return put(bucketBox, key, v)
+				}
+			}
+			if rest, ok := strings.CutPrefix(name, "peers/"); ok {
+				addr, part, _ := strings.Cut(rest, "/")
+				a, err := protocol.ParseAddress(addr)
+				if err != nil {
+					return err
+				}
+				p, err := b.peerOf(s, a)
+				if err != nil {
+					return err
+				}
+				if p == nil {
+					p = &peerRecord{}
+				}
+				switch part {
+				case "identity.doc":
+					p.Identity = v
+				case "revoke.sig":
+					p.Revocation = v
+				case "revoked-certs.json":
+					var rec protocol.Revocations
+					if v != nil {
+						if err := protocol.Unmarshal(v, &rec); err != nil {
+							return err
+						}
+					}
+					p.RevokedCertificates, p.RevokedCertificatesSignature = rec.RevokedCertificates, rec.RevokedCertificatesSignature
+				default:
+					return fmt.Errorf("no record %s", name)
+				}
+				if p.Identity == nil {
+					return s.del(bucketPeers, a.String())
+				}
+				raw, err := json.Marshal(p)
+				if err != nil {
+					return err
+				}
+				return s.put(bucketPeers, a.String(), raw)
+			}
+			if name == "seen" && v == nil {
+				for _, bk := range []string{bucketSeen, bucketSeenSender, bucketSeenTime} {
+					if err := s.tx.DeleteBucket([]byte(bk)); err != nil && s.tx.Bucket([]byte(bk)) != nil {
+						return err
+					}
+				}
+				return nil
+			}
+			if rest, ok := strings.CutPrefix(name, "quarantine/"); ok {
+				id, isReason := strings.CutSuffix(rest, ".reason")
+				if !isReason {
+					return fmt.Errorf("no record %s", name)
+				}
+				if v == nil {
+					return s.del(bucketQuarantine, id)
+				}
+				code, reason, _ := strings.Cut(string(v), ": ")
+				raw, err := json.Marshal(quarantineRecord{Code: code, Reason: reason})
+				if err != nil {
+					return err
+				}
+				return s.put(bucketQuarantine, id, raw)
+			}
+			return fmt.Errorf("no record %s", name)
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+// RecordsAt is [Box.Records] of the box in dir, read without opening the box,
+// which would make what a box has: for a test that looks at a directory as a
+// command left it.
+func RecordsAt(dir string) (map[string][]byte, error) { return (&Box{dir: dir}).Records() }

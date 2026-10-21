@@ -302,7 +302,7 @@ func TestAClockThatJumpsDuringADrainPrunesNoLine(t *testing.T) {
 	if res := receive(t, b); len(res.Delivered) != 1 {
 		t.Fatalf("delivered %d", len(res.Delivered))
 	}
-	before := mustRead(t, filepath.Join(b.Dir(), "seen"))
+	before, _ := stateOf(b, "seen")
 	var off time.Duration
 	o := e.skewed(&off)
 	o.HTTPClient = &http.Client{Transport: jumpAtList{&off, 70 * 24 * time.Hour}}
@@ -311,9 +311,9 @@ func TestAClockThatJumpsDuringADrainPrunesNoLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, rerr := jumpy.Receive(ctx)
-	after := mustRead(t, filepath.Join(b.Dir(), "seen"))
+	after, _ := stateOf(b, "seen")
 	t.Logf("the drain whose clock jumped once its list was answered: %v", rerr)
-	if !bytes.Equal(before, after) || exists(filepath.Join(b.Dir(), "seen-floor")) {
+	if !bytes.Equal(before, after) || has(b, "seen-floor") {
 		t.Errorf("a clock that jumped after the server took the list pruned the replay set by where it went: %q, then %q", before, after)
 	}
 }

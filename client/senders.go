@@ -457,22 +457,19 @@ func (b *Box) wantACL() (*protocol.ACL, error) {
 }
 
 // tookACL is the ACL the box's server last took, as it answered, which the
-// box keeps in acl.json; nil if it has taken none.
+// box keeps; nil if it has taken none.
 func (b *Box) tookACL() (*protocol.ACL, error) {
-	data, err := os.ReadFile(b.path("acl.json"))
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
+	var data []byte
+	if err := b.view(func(s store) error { data = s.get(bucketBox, "acl"); return nil }); err != nil || data == nil {
 		return nil, err
 	}
 	var d protocol.ACLDocument
 	if err := protocol.Unmarshal(data, &d); err != nil {
-		return nil, fmt.Errorf("%s: %w", b.path("acl.json"), err)
+		return nil, fmt.Errorf("the ACL the box's state file keeps: %w", err)
 	}
 	acl, err := protocol.CheckACL(&d, 0)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", b.path("acl.json"), err)
+		return nil, fmt.Errorf("the ACL the box's state file keeps: %w", err)
 	}
 	return acl, nil
 }
@@ -533,7 +530,7 @@ func (b *Box) syncACL(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return writeFile(b.path("acl.json"), append(data, '\n'))
+	return b.update(func(s store) error { return s.put(bucketBox, "acl", data) })
 }
 
 // heldVersion asks the box's server the version of the ACL it holds: 0 for

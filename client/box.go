@@ -24,6 +24,7 @@ import (
 	"filippo.io/age"
 	"github.com/IronGall-dev/irongall-client/client/internal/sign"
 	"github.com/IronGall-dev/irongall-client/protocol"
+	bolt "go.etcd.io/bbolt"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -96,6 +97,11 @@ type Box struct {
 	waiting func()
 	// renewFailed is when Receive last failed to renew the prekey.
 	renewFailed time.Time
+	// db is the box's state file while a command holds it ([Box.hold]), and
+	// tx the transaction of it under way ([Box.view], [Box.update]). A Box
+	// runs one command at a time.
+	db *bolt.DB
+	tx *bolt.Tx
 }
 
 // Open opens an existing box's state directory. A directory holding only
@@ -268,6 +274,12 @@ func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*B
 	if err := b.makeDirs(); err != nil {
 		return nil, err
 	}
+	// Under the box's lock from its identity on, as every command that writes
+	// the box.
+	return lockedFinished(ctx, b, func() (*Box, error) { return b.init(ctx, kt) })
+}
+
+func (b *Box) init(ctx context.Context, kt protocol.KeyType) (*Box, error) {
 	if !exists(b.path("identity")) {
 		if err := b.newIdentityKey(); err != nil {
 			return nil, err
@@ -278,6 +290,9 @@ func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*B
 	}
 	if t := b.identityType; t != "" && t != b.id.Type() {
 		return nil, fmt.Errorf("this box's identity is already a key of the type %s: its address is that key's, so its type cannot change", b.id.Type())
+	}
+	if err := b.finished(); err != nil {
+		return nil, err
 	}
 	published, err := b.publishedSerial()
 	if err != nil {
@@ -350,20 +365,23 @@ func (b *Box) publish(ctx context.Context, path string, req any, n uint64) (take
 	if err != nil {
 		return taken{}, err
 	}
-	if err := b.recordPublished(n); err != nil {
-		return taken{}, err
-	}
-	// The pass is under the certificate the server now holds this box to.
-	if err := b.keepPass(pass); err != nil {
+	// The pass is under the certificate the server now holds this box to:
+	// kept with the serial, in one transaction.
+	if err := b.update(func(s store) error {
+		if err := b.recordPublished(s, n); err != nil {
+			return err
+		}
+		return s.put(bucketBox, "pass", []byte(pass))
+	}); err != nil {
 		return taken{}, err
 	}
 	return at, b.dropWork(n)
 }
 
-// makeDirs makes the box's directories that are missing, and its
-// .gitignore.
+// makeDirs makes the box's directories that are missing, its .gitignore and
+// its state file.
 func (b *Box) makeDirs() error {
-	for _, d := range []string{"work", "prekeys", "peers", "inbox", "held", "quarantine", "outbox", "sent"} {
+	for _, d := range []string{"work", "prekeys", "inbox", "held", "quarantine", "outbox", "sent"} {
 		if err := os.MkdirAll(b.path(d), 0o700); err != nil {
 			return err
 		}
@@ -371,10 +389,12 @@ func (b *Box) makeDirs() error {
 	// The directory ignores itself, wherever it is and whatever made it: a
 	// box restored from its identity alone too (#292). Written only where its
 	// bytes differ, since every command opens the box.
-	if got, err := os.ReadFile(b.path(".gitignore")); err == nil && string(got) == "*\n" {
-		return nil
+	if got, err := os.ReadFile(b.path(".gitignore")); err != nil || string(got) != "*\n" {
+		if err := writeFile(b.path(".gitignore"), []byte("*\n")); err != nil {
+			return err
+		}
 	}
-	return writeFile(b.path(".gitignore"), []byte("*\n"))
+	return b.makeState()
 }
 
 // newIdentityKey makes a new identity key, written as ssh-keygen writes one

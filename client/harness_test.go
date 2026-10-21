@@ -119,14 +119,14 @@ func bodyOf(t *testing.T, d client.Delivery) string {
 }
 
 // numberOf is the number of the prekey a box published last, which is its
-// working key's and its certificate's too: its serial file. A box takes each
+// working key's and its certificate's too: its serial record. A box takes each
 // number from its clock (protocol.SerialAt), so a test reads the number and
 // never assumes one.
 func numberOf(t *testing.T, b *client.Box) uint64 {
 	t.Helper()
-	s, err := os.ReadFile(filepath.Join(b.Dir(), "serial"))
-	if err != nil {
-		t.Fatal(err)
+	s, ok := b.Record(t, "serial")
+	if !ok {
+		t.Fatalf("%s has published no prekey", b.Dir())
 	}
 	n, err := strconv.ParseUint(strings.TrimSpace(string(s)), 10, 64)
 	if err != nil {
@@ -229,6 +229,17 @@ func (e *env) seal(to *client.Box, from protocol.Address, plaintext ...[]byte) s
 func (e *env) serve(w http.ResponseWriter, r *http.Request, next http.Handler, edit func(*protocol.BoxResponse)) {
 	forge.Serve(e.t, e.srv, w, r, next, edit)
 }
+
+// stateOf is a record the box's state keeps, by the name of the file that held
+// it before the state file did (client.Box.Records), and whether it keeps it.
+func stateOf(b *client.Box, name string) ([]byte, bool) {
+	all, err := client.RecordsAt(b.Dir())
+	v, ok := all[name]
+	return v, err == nil && ok
+}
+
+// has reports whether the box's state keeps a record (stateOf).
+func has(b *client.Box, name string) bool { _, ok := stateOf(b, name); return ok }
 
 func exists(name string) bool {
 	_, err := os.Stat(name)

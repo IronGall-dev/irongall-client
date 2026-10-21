@@ -6,9 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/IronGall-dev/irongall-client/protocol"
@@ -48,8 +46,8 @@ func (b *Box) Revocation() (*protocol.Revocations, error) {
 	if gone, err := b.revoked(b.id.Address()); err != nil {
 		return nil, err
 	} else if gone {
-		sig, err := os.ReadFile(b.revocationFile(b.id.Address()))
-		if err != nil {
+		var sig []byte
+		if err := b.view(func(s store) error { sig = s.get(bucketBox, "revoked"); return nil }); err != nil {
 			return nil, err
 		}
 		return &protocol.Revocations{Identity: b.id.Document(), Revocation: sig}, nil
@@ -185,30 +183,28 @@ func (b *Box) Ask(ctx context.Context, a protocol.Address) (*Held, error) {
 	})
 }
 
-// revocationFile is where a verified revocation of a is kept: for a peer,
-// beside its pinned identity; for this box, at its root.
-func (b *Box) revocationFile(a protocol.Address) string {
-	if a == b.id.Address() {
-		return b.path("revoked.sig")
-	}
-	return b.path("peers", a.String(), "revoke.sig")
-}
-
 // keepRevocation records a revocation that has verified under id. It is never
 // removed: a revoked address stays revoked.
 func (b *Box) keepRevocation(id *protocol.Identity, sig []byte) error {
 	a := id.Address()
 	if a != b.id.Address() {
-		if err := b.pin(id); err != nil {
-			return err
-		}
-	}
-	if err := writeFile(b.revocationFile(a), sig); err != nil || a != b.id.Address() {
-		return err
+		return b.update(func(s store) error {
+			p, err := b.pinned(s, id)
+			if err != nil {
+				return err
+			}
+			p.Revocation = sig
+			return b.keepPeer(s, a, p)
+		})
 	}
 	// The box's own: the pass it kept is a signature already made, which
 	// nothing may use now.
-	return removeIfExists(b.path("pass"))
+	return b.update(func(s store) error {
+		if err := s.put(bucketBox, "revoked", sig); err != nil {
+			return err
+		}
+		return s.del(bucketBox, "pass")
+	})
 }
 
 // finished is this box's own revocation of its address, as an error. A box
@@ -230,25 +226,43 @@ func (b *Box) finished() error {
 
 // revoked reports whether this box holds a revocation of a. The kept
 // signature is checked again each time, against the identity kept with it: a
-// file that no longer verifies is an error, never a quiet "not revoked".
+// record that no longer verifies is an error, never a quiet "not revoked".
 func (b *Box) revoked(a protocol.Address) (bool, error) {
-	sig, err := os.ReadFile(b.revocationFile(a))
-	if errors.Is(err, fs.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
+	doc, sig, _, _, err := b.heldRecord(a)
+	if err != nil || sig == nil {
 		return false, err
 	}
-	doc := b.id.Document()
-	if a != b.id.Address() {
-		if doc, err = os.ReadFile(b.path("peers", a.String(), "identity.doc")); err != nil {
-			return false, err
-		}
-	}
 	if _, err := protocol.VerifyRevocation(a, doc, sig); err != nil {
-		return false, fmt.Errorf("the revocation this box keeps for %s, in %s, no longer verifies: %w", a, b.revocationFile(a), err)
+		return false, fmt.Errorf("the revocation this box keeps for %s no longer verifies: %w", a, err)
 	}
 	return true, nil
+}
+
+// heldRecord is what this box keeps that a's identity signed about a: the
+// identity document it holds for a (its own, or the one pinned), the
+// revocation of the address, and the revocation of its certificates with
+// its signature, each nil when the box keeps none.
+func (b *Box) heldRecord(a protocol.Address) (doc, revocation, certs, certsSig []byte, err error) {
+	err = b.view(func(s store) error {
+		if a == b.id.Address() {
+			doc, revocation = b.id.Document(), s.get(bucketBox, "revoked")
+			if raw := s.get(bucketBox, "revoked-certs"); raw != nil {
+				var rec protocol.Revocations
+				if err := protocol.Unmarshal(raw, &rec); err != nil {
+					return fmt.Errorf("the revocation of certificates this box keeps for itself is not a record: %w", err)
+				}
+				certs, certsSig = rec.RevokedCertificates, rec.RevokedCertificatesSignature
+			}
+			return nil
+		}
+		p, err := b.peerOf(s, a)
+		if err != nil || p == nil {
+			return err
+		}
+		doc, revocation, certs, certsSig = p.Identity, p.Revocation, p.RevokedCertificates, p.RevokedCertificatesSignature
+		return nil
+	})
+	return doc, revocation, certs, certsSig, err
 }
 
 // readBox reads box a from this box's server (GET /v1/<a>, PROTOCOL.md
@@ -341,54 +355,38 @@ func (b *Box) lookupRevocation(ctx context.Context, a protocol.Address, l *looku
 	return gone, err
 }
 
-// revokedCertsFile is where the revocation of a's certificates is kept: for
-// a peer, beside its pinned identity; for this box, at its root. It is one
-// file, the record that carries it (PROTOCOL.md §6.3): the identity
-// document, the statement and its signature, as one line of JSON. A
-// statement and its signature in two files could be left one new and one
-// old, a pair that verifies never again.
-func (b *Box) revokedCertsFile(a protocol.Address) string {
-	if a == b.id.Address() {
-		return b.path("revoked-certs.json")
-	}
-	return b.path("peers", a.String(), "revoked-certs.json")
-}
-
 // revokedCerts returns the revocation of a's certificates this box holds, or
 // nil. Like a kept revocation of an address it is checked again each time it
-// is read: a file that no longer verifies is an error, never a quiet
-// "nothing revoked".
+// is read, under the identity this box holds for the address: one that no
+// longer verifies is an error, never a quiet "nothing revoked".
 func (b *Box) revokedCerts(a protocol.Address) (*protocol.RevokedCertificates, error) {
-	raw, err := os.ReadFile(b.revokedCertsFile(a)) //nolint:gosec // a path inside the box's own directory
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
+	doc, _, statement, sig, err := b.heldRecord(a)
+	if err != nil || statement == nil {
 		return nil, err
 	}
-	var rec protocol.Revocations
-	if err := protocol.Unmarshal(raw, &rec); err != nil {
-		return nil, fmt.Errorf("the revocation of certificates this box keeps for %s, in %s, is not a record: %w", a, b.revokedCertsFile(a), err)
-	}
-	// Checked under the identity this box holds for the address, whatever
-	// document the file carries.
-	doc := b.id.Document()
-	if a != b.id.Address() {
-		if doc, err = os.ReadFile(b.path("peers", a.String(), "identity.doc")); err != nil {
-			return nil, err
-		}
-	}
-	certs, err := protocol.VerifyRevokedCertificates(a, doc, rec.RevokedCertificates, rec.RevokedCertificatesSignature)
+	certs, err := protocol.VerifyRevokedCertificates(a, doc, statement, sig)
 	if err != nil {
-		return nil, fmt.Errorf("the revocation of certificates this box keeps for %s, in %s, no longer verifies: %w", a, b.revokedCertsFile(a), err)
+		return nil, fmt.Errorf("the revocation of certificates this box keeps for %s no longer verifies: %w", a, err)
 	}
 	return certs, nil
+}
+
+// CertificatesRecord is the record of this box's own revocation of its
+// certificates that it keeps, the one it published or was shown, or nil: what
+// irongall cert publish-revoked sends again.
+func (b *Box) CertificatesRecord() (*protocol.Revocations, error) {
+	_, _, statement, sig, err := b.heldRecord(b.id.Address())
+	if err != nil || statement == nil {
+		return nil, err
+	}
+	return &protocol.Revocations{Identity: b.id.Document(), RevokedCertificates: statement, RevokedCertificatesSignature: sig}, nil
 }
 
 // keepRevokedCerts keeps a revocation of a's certificates if it verifies and
 // runs through a higher serial than the one this box holds. One that does not
 // verify, or runs no higher, changes nothing: only the identity's own
 // signature revokes a certificate, and a certificate once revoked stays so.
+// The statement is kept in one value with its signature, never without it.
 func (b *Box) keepRevokedCerts(a protocol.Address, doc, statement, sig []byte) error {
 	if len(statement) == 0 {
 		return nil
@@ -401,22 +399,25 @@ func (b *Box) keepRevokedCerts(a protocol.Address, doc, statement, sig []byte) e
 	if err != nil || (held != nil && held.Through >= certs.Through) {
 		return err
 	}
-	if a != b.id.Address() {
-		id, err := protocol.ParseIdentity(doc)
+	if a == b.id.Address() {
+		line, err := json.Marshal(protocol.Revocations{Identity: doc, RevokedCertificates: statement, RevokedCertificatesSignature: sig})
 		if err != nil {
-			return nil //nolint:nilerr // VerifyRevokedCertificates parsed it
-		}
-		if err := b.pin(id); err != nil {
 			return err
 		}
+		return b.update(func(s store) error { return s.put(bucketBox, "revoked-certs", line) })
 	}
-	// One file, moved into place whole: the statement is never kept without
-	// the signature that goes with it.
-	line, err := json.Marshal(protocol.Revocations{Identity: doc, RevokedCertificates: statement, RevokedCertificatesSignature: sig})
+	id, err := protocol.ParseIdentity(doc)
 	if err != nil {
-		return err
+		return nil //nolint:nilerr // VerifyRevokedCertificates parsed it
 	}
-	return writeFile(b.revokedCertsFile(a), append(line, '\n'))
+	return b.update(func(s store) error {
+		p, err := b.pinned(s, id)
+		if err != nil {
+			return err
+		}
+		p.RevokedCertificates, p.RevokedCertificatesSignature = statement, sig
+		return b.keepPeer(s, a, p)
+	})
 }
 
 // RevokeEarlier revokes every certificate this box's identity made before
@@ -702,8 +703,8 @@ func Publish(ctx context.Context, opt Options, rec *protocol.Revocations) (proto
 	return b.Publish(ctx, rec)
 }
 
-// Publish is [Publish] as this box: to its own server. It keeps nothing: see
-// [Box.KeepRevocation].
+// Publish is [Publish] as this box: to its own server, under its lock. It
+// keeps nothing of the record: see [Box.KeepRevocation].
 func (b *Box) Publish(ctx context.Context, rec *protocol.Revocations) (protocol.Address, error) {
 	a := protocol.Address(sha256.Sum256(rec.Identity))
 	if len(rec.Revocation) == 0 && len(rec.RevokedCertificates) == 0 {
@@ -719,7 +720,12 @@ func (b *Box) Publish(ctx context.Context, rec *protocol.Revocations) (protocol.
 			return a, refuse("the record's revocation of certificates: %v", err)
 		}
 	}
-	return a, b.publishRecord(ctx, a, rec)
+	if b.id == nil {
+		return a, b.publishRecord(ctx, a, rec)
+	}
+	// As this box, under its lock: of its own address, what the server then
+	// serves is kept (servesRevocation).
+	return a, b.lockedFinishedDo(ctx, func() error { return b.publishRecord(ctx, a, rec) })
 }
 
 // publishRecord sends a checked record to this box's server.

@@ -120,3 +120,27 @@ func workKey(t *testing.T, b *client.Box) ssh.Signer {
 	}
 	return s
 }
+
+// A message refused whose ack was lost is listed again, and judged again: one
+// that passes then is delivered, and nothing of its refusal is kept, neither
+// the message in quarantine/ nor why it was refused (#211).
+func TestADeliveryLeavesNothingOfAnEarlierRefusal(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	line := forge.Line(t, a.Identity().Document(), a.Address(), b.Address(), "dated ahead of the reader", e.clock.Now().Add(2*time.Hour))
+	id := e.seal(b, a.Address(), line, forge.Sign(t, worker(t, a), line, b.Address()))
+	says(e, protocol.CodeUnavailable, "DELETE", "/messages/"+id)
+	res, err := b.Receive(ctx)
+	if err == nil || len(res.Refused) != 1 || res.Refused[0].Code != protocol.RefusedFuture || !exists(filepath.Join(b.Dir(), "quarantine", id+".json")) || !has(b, "quarantine/"+id+".reason") {
+		t.Fatalf("a message dated ahead, whose ack fails: %+v, %v", res, err)
+	}
+	e.srv.SetMiddle(nil)
+	e.clock.Add(2 * time.Hour)
+	if res := receive(t, b); len(res.Delivered) != 1 || res.Delivered[0].ID != id {
+		t.Fatalf("the same message once the clock reached it: %+v", res)
+	}
+	if qs, err := b.Quarantined(); err != nil || len(qs) != 0 || exists(filepath.Join(b.Dir(), "quarantine", id+".json")) || has(b, "quarantine/"+id+".reason") {
+		t.Errorf("after its delivery the box keeps %+v, %v of its refusal", qs, err)
+	}
+}

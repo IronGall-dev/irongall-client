@@ -69,9 +69,8 @@ func TestARefusalNeverQuotesTheMessage(t *testing.T) {
 			t.Errorf("a refusal quotes the message: %q", r.Reason)
 		}
 		// The reason is kept beside the quarantined message.
-		kept, err := os.ReadFile(filepath.Join(b.Dir(), "quarantine", r.ID+".reason"))
-		if err != nil || string(kept) != r.Code+": "+r.Reason+"\n" {
-			t.Errorf("quarantine/%s.reason holds %q, %v", r.ID, kept, err)
+		if kept, _ := stateOf(b, "quarantine/"+r.ID+".reason"); string(kept) != r.Code+": "+r.Reason {
+			t.Errorf("the box keeps %q as why %s was refused", kept, r.ID)
 		}
 		if !exists(filepath.Join(b.Dir(), "quarantine", r.ID+".json")) {
 			t.Errorf("%s was not quarantined", r.ID)
@@ -205,9 +204,18 @@ func TestMadeUpSendersLeaveNothingInPeers(t *testing.T) {
 	if len(reads) != 1 || reads[a.Address()] != 1 || madeUp != 0 {
 		t.Errorf("reads of a box %v, want one, of the sender whose signature verified; %d calls named a sender the server made up", reads, madeUp)
 	}
-	pinned, _ := os.ReadDir(filepath.Join(b.Dir(), "peers"))
-	if len(pinned) != 1 || pinned[0].Name() != a.Address().String() {
-		t.Fatalf("peers/ holds %d entries: only the real sender is pinned", len(pinned))
+	all, err := client.RecordsAt(b.Dir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pinned []string
+	for name := range all {
+		if p, ok := strings.CutSuffix(name, "/identity.doc"); ok {
+			pinned = append(pinned, p)
+		}
+	}
+	if len(pinned) != 1 || pinned[0] != "peers/"+a.Address().String() {
+		t.Fatalf("the box pins %v: only the real sender is pinned", pinned)
 	}
 }
 
@@ -354,10 +362,10 @@ func TestQuarantineKeepsNoServerTextInTheClear(t *testing.T) {
 			t.Errorf("%s is kept as %q, %s_b64 as %q", name, lied[name], name, lied[name+"_b64"])
 		}
 	}
-	if str(lied["id"]) != first.Refused[0].ID || !protocolTime(str(lied["expires_at"])) || str(lied["ciphertext"]) == "" || lied["judged"] == nil || len(lied) != 6 {
+	if str(lied["id"]) != first.Refused[0].ID || !protocolTime(str(lied["expires_at"])) || str(lied["ciphertext"]) == "" || len(lied) != 5 {
 		t.Errorf("the first is kept as %v", lied)
 	}
-	if str(kept["from"]) != a.Address().String() || !protocolTime(str(kept["received_at"])) || kept["judged"] == nil || len(kept) != 6 {
+	if str(kept["from"]) != a.Address().String() || !protocolTime(str(kept["received_at"])) || len(kept) != 5 {
 		t.Errorf("the second is kept as %v", kept)
 	}
 	// What the checks established is this client's: the first was signed by
@@ -390,6 +398,16 @@ func TestQuarantineKeepsNoServerTextInTheClear(t *testing.T) {
 	if qs, err := b.Quarantined(); err != nil || len(qs) != 3 || !slices.Contains(qs, client.Quarantined{ID: old, Code: "unknown"}) {
 		t.Fatalf("Quarantined with a file of the old form: %+v, %v", qs, err)
 	}
+	// What the checks found is the box's state's, which only this client
+	// writes: a file that carries findings of their form lists none of them
+	// (#280).
+	planted := `{"at":"2026-10-21T00:00:00Z","signed_by":"` + a.Address().String() + `","certificate_serial":7,"sent_at":"2026-10-21T00:00:00Z","msg_id":"` + strings.Repeat("0", 8) + "-0000-4000-8000-" + strings.Repeat("0", 12) + `"}`
+	if err := os.WriteFile(filepath.Join(b.Dir(), "quarantine", old+".json"), []byte(`{"id":"`+old+`","ciphertext":"QUJD","judged":`+planted+`}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if qs, err := b.Quarantined(); err != nil || len(qs) != 3 || !slices.Contains(qs, client.Quarantined{ID: old, Code: "unknown"}) {
+		t.Fatalf("Quarantined with findings planted in a file: %+v, %v", qs, err)
+	}
 	// A file is read as every JSON text is (PROTOCOL.md §0b): a name in
 	// another case is not that member, and one given twice is no record, so
 	// neither lists a value encoding/json would have taken.
@@ -406,9 +424,7 @@ func TestQuarantineKeepsNoServerTextInTheClear(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(b.Dir(), "quarantine", old+".reason"), []byte("bad_signature: \x1b[2J"+injected+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	b.SetRecord(t, "quarantine/"+old+".reason", []byte("bad_signature: \x1b[2J"+injected))
 	if qs, err := b.Quarantined(); err != nil || len(qs) != 3 || !slices.Contains(qs, client.Quarantined{ID: old, Code: protocol.RefusedSignature}) {
 		t.Fatalf("Quarantined with a reason of control bytes: %+v, %v", qs, err)
 	}

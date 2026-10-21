@@ -486,8 +486,9 @@ func runCell(t *testing.T, r stateRow, c stateCommand, m string) string {
 	return normalize(line, e, dir, peer)
 }
 
-// snapshot is every file under dir, by its path, with a hash of what it
-// holds.
+// snapshot is every file under dir but the state file, and every record the
+// state file keeps, by its path or a record's name (client.RecordsAt), with a
+// hash of what it holds.
 func snapshot(dir string) map[string][32]byte {
 	files := map[string][32]byte{}
 	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
@@ -499,9 +500,15 @@ func snapshot(dir string) map[string][32]byte {
 			return nil //nolint:nilerr // a file gone as it was read is not one
 		}
 		rel, _ := filepath.Rel(dir, p)
-		files[rel] = sha256.Sum256(raw)
+		if rel != "state" {
+			files[rel] = sha256.Sum256(raw)
+		}
 		return nil
 	})
+	records, _ := client.RecordsAt(dir)
+	for name, v := range records {
+		files[name] = sha256.Sum256(v)
+	}
 	return files
 }
 
