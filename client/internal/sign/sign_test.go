@@ -25,7 +25,9 @@ import (
 // one of their signing functions, or a method that signs (an ssh.Signer's
 // Sign or SignWithAlgorithm, a certificate's SignCert). So a box's keys sign
 // only through Identity and Work, and every signature is refused once the
-// box is finished, however a new path reaches one.
+// box is finished, however a new path reaches one. internal/forge signs as a
+// test's operator does, as a _test.go file may, so it is read as one: no
+// file but a test imports it.
 func TestOnlySignSigns(t *testing.T) {
 	root := filepath.Join("..", "..", "..")
 	signing := map[string][]string{
@@ -40,7 +42,7 @@ func TestOnlySignSigns(t *testing.T) {
 		}
 		rel, _ := filepath.Rel(root, path)
 		if d.IsDir() {
-			if slices.Contains([]string{".git", "testdata", "protocol", "sshsig", filepath.Join("client", "internal", "sign")}, rel) {
+			if slices.Contains([]string{".git", "testdata", "protocol", "sshsig", filepath.Join("client", "internal", "sign"), filepath.Join("internal", "forge")}, rel) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -52,6 +54,11 @@ func TestOnlySignSigns(t *testing.T) {
 		f, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
 		if err != nil {
 			return err
+		}
+		for _, im := range f.Imports {
+			if im.Path.Value == `"github.com/IronGall-dev/irongall-client/internal/forge"` {
+				t.Errorf("%s: imports internal/forge, which only a test may", rel)
+			}
 		}
 		ast.Inspect(f, func(n ast.Node) bool {
 			c, ok := n.(*ast.CallExpr)

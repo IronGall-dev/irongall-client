@@ -10,6 +10,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/IronGall-dev/irongall-client/client"
+	"github.com/IronGall-dev/irongall-client/internal/forge"
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
@@ -57,9 +58,9 @@ func quarantinedFindings(t *testing.T, kind string) {
 		t.Fatal(err)
 	}
 	line := e.line(a.Identity().Document(), a.Address(), b.Address(), "under a certificate that has not begun")
-	notBegun := e.seal(b, a.Address(), line, sign(t, early, line, b.Address()))
+	notBegun := e.seal(b, a.Address(), line, forge.Sign(t, early, line, b.Address()))
 	forged := e.line(a.Identity().Document(), a.Address(), b.Address(), "from A, says the forger")
-	forgery := e.seal(b, a.Address(), forged, sign(t, worker(t, c), forged, b.Address()))
+	forgery := e.seal(b, a.Address(), forged, forge.Sign(t, worker(t, c), forged, b.Address()))
 
 	res, err := b.Receive(ctx)
 	if err != nil || len(res.Refused) != 2 || len(res.Delivered) != 0 {

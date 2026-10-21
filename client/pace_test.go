@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/IronGall-dev/irongall-client/client"
+	"github.com/IronGall-dev/irongall-client/internal/forge"
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
@@ -62,7 +63,7 @@ func TestOnlyAPacedFetchEndsADrainQuietly(t *testing.T) {
 	fetch := func(r *http.Request) bool {
 		return r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/messages/")
 	}
-	lookup := func(r *http.Request) bool { _, ok := readOf(r); return ok }
+	lookup := func(r *http.Request) bool { _, ok := forge.ReadOf(r); return ok }
 	for _, c := range []struct {
 		name   string
 		match  func(*http.Request) bool

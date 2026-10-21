@@ -12,6 +12,7 @@ import (
 
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
+	"github.com/IronGall-dev/irongall-client/internal/forge"
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
@@ -193,7 +194,7 @@ func TestMailFromARevokedSenderIsRefused(t *testing.T) {
 
 	var lookups atomic.Int32
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if _, ok := readOf(r); ok {
+		if _, ok := forge.ReadOf(r); ok {
 			lookups.Add(1)
 		}
 		next.ServeHTTP(w, r)
@@ -208,9 +209,9 @@ func TestMailFromARevokedSenderIsRefused(t *testing.T) {
 
 	// The operator hides the revocation and delivers mail A's working key
 	// signed, which its certificate still covers.
-	hides(e)
+	forge.Hides(e.t, e.srv)
 	line := e.line(a.Identity().Document(), a.Address(), b.Address(), "signed with a key that still verifies")
-	e.seal(b, a.Address(), line, sign(t, worker(t, a), line, b.Address()))
+	e.seal(b, a.Address(), line, forge.Sign(t, worker(t, a), line, b.Address()))
 	res = receive(t, b)
 	if len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedRevoked {
 		t.Fatalf("after the server hid the revocation: %+v", res)
@@ -253,7 +254,7 @@ func TestNoAnswerAboutASenderStopsTheDrain(t *testing.T) {
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	send(t, a, b, "waits for an answer")
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if x, ok := readOf(r); ok && x == a.Address() {
+		if x, ok := forge.ReadOf(r); ok && x == a.Address() {
 			http.Error(w, "down", http.StatusServiceUnavailable)
 			return
 		}
@@ -277,7 +278,7 @@ func TestNoAnswerAboutASenderStopsTheDrain(t *testing.T) {
 			t.Fatal(err)
 		}
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-			if x, ok := readOf(r); ok && x == a.Address() {
+			if x, ok := forge.ReadOf(r); ok && x == a.Address() {
 				w.Header().Set("Content-Type", "application/json")
 				_, _ = w.Write(body)
 				return
@@ -294,7 +295,7 @@ func TestNoAnswerAboutASenderStopsTheDrain(t *testing.T) {
 	for _, f := range problemBad(t) {
 		body, _ := os.ReadFile(f) //nolint:gosec // a test vector
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-			if x, ok := readOf(r); ok && x == a.Address() {
+			if x, ok := forge.ReadOf(r); ok && x == a.Address() {
 				w.Header().Set("Content-Type", "application/problem+json")
 				w.WriteHeader(http.StatusNotFound)
 				_, _ = w.Write(body)
@@ -311,7 +312,7 @@ func TestNoAnswerAboutASenderStopsTheDrain(t *testing.T) {
 	// another status.
 	for _, o := range outOfForm {
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-			if x, ok := readOf(r); ok && x == a.Address() {
+			if x, ok := forge.ReadOf(r); ok && x == a.Address() {
 				o.write(w)
 				return
 			}

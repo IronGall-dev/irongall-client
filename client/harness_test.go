@@ -1,14 +1,9 @@
 package client_test
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
-	"io"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -17,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"filippo.io/age"
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
+	"github.com/IronGall-dev/irongall-client/internal/forge"
 	"github.com/IronGall-dev/irongall-client/protocol"
 	"golang.org/x/crypto/ssh"
 )
@@ -27,7 +22,8 @@ import (
 // The client's tests run real boxes against internal/fakeserver, an honest
 // in-memory server, with no network and nothing to set up: go test ./...
 // A test that plays the hostile operator puts a middleware in front of it
-// (env.srv.SetMiddle) or uses the operator's powers over storage.
+// (env.srv.SetMiddle, internal/forge) or uses the operator's powers over
+// storage.
 
 // clock is a settable clock shared by the server and the clients.
 type clock struct {
@@ -218,142 +214,20 @@ func workerAt(t *testing.T, b *client.Box, serial uint64) ssh.Signer {
 // line is an envelope's line as a sender writes it: from the box whose
 // identity document it carries, to a box, sent at the test's clock.
 func (e *env) line(doc []byte, from, to protocol.Address, body string) []byte {
-	e.t.Helper()
-	env, err := protocol.NewEnvelope(from, to, body, e.clock.Now())
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	env.Identity = doc
-	l, err := env.Line()
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	return l
+	return forge.Line(e.t, doc, from, to, body, e.clock.Now())
 }
 
-// seal encrypts what a sender encrypts, an envelope's line and then whatever
-// follows it, to a box's current prekey as the server holds it, and stores it
-// in that box as mail from a sender, as only the operator can. It returns the
-// id it is stored under: the hash of the ciphertext.
+// seal stores in box to, as mail from a sender, what a sender encrypts to its
+// prekey as the server holds it, as only the operator can (forge.Seal), and
+// returns its id.
 func (e *env) seal(to *client.Box, from protocol.Address, plaintext ...[]byte) string {
-	e.t.Helper()
-	ct := e.encrypt(to, plaintext...)
-	h := sha256.Sum256(ct)
-	id := hex.EncodeToString(h[:])
-	e.srv.Inject(to.Address(), id, from, ct)
-	return id
-}
-
-// encrypt encrypts the parts, one after the other, to a box's current prekey.
-func (e *env) encrypt(to *client.Box, parts ...[]byte) []byte {
-	e.t.Helper()
-	st, _ := e.srv.Prekey(to.Address())
-	p, err := protocol.ParsePrekey(st)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	r, err := p.Recipient()
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	var ct bytes.Buffer
-	w, err := age.Encrypt(&ct, r)
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	for _, part := range parts {
-		if _, err := w.Write(part); err != nil {
-			e.t.Fatal(err)
-		}
-	}
-	if err := w.Close(); err != nil {
-		e.t.Fatal(err)
-	}
-	return ct.Bytes()
-}
-
-// sign signs an envelope's line for a recipient, as the stock tools do.
-func sign(t *testing.T, s ssh.Signer, line []byte, to protocol.Address) []byte {
-	t.Helper()
-	sig, err := protocol.Sign(s, line, protocol.MessageNamespace(to))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return sig
-}
-
-// readOf reports whether r is a read of a box, GET /v1/<address>, and of
-// which box.
-func readOf(r *http.Request) (protocol.Address, bool) {
-	rest, ok := strings.CutPrefix(r.URL.Path, "/v1/")
-	if !ok || r.Method != http.MethodGet || strings.Contains(rest, "/") {
-		return protocol.Address{}, false
-	}
-	a, err := protocol.ParseAddress(rest)
-	return a, err == nil
+	return forge.Seal(e.t, e.srv, to.Address(), from, plaintext...)
 }
 
 // serve answers r, a read of a box, with the box the server holds, edited
-// first: an operator that serves a box otherwise than it holds it. A revoked
-// box is served as it was before, from its last prekey, with none of what
-// its identity signed about it, so edit can make it look like any box.
+// first (forge.Serve).
 func (e *env) serve(w http.ResponseWriter, r *http.Request, next http.Handler, edit func(*protocol.BoxResponse)) {
-	a, _ := readOf(r)
-	rec := httptest.NewRecorder()
-	next.ServeHTTP(rec, r)
-	var br protocol.BoxResponse
-	var p protocol.Problem
-	switch {
-	case rec.Code == http.StatusOK && protocol.Unmarshal(rec.Body.Bytes(), &br) == nil:
-	case rec.Code == http.StatusGone && protocol.Unmarshal(rec.Body.Bytes(), &p) == nil && p.Record != nil:
-		br.Identity = p.Record.Identity
-		br.Prekey, br.PrekeySignature = e.srv.Prekey(a)
-	default:
-		e.t.Fatalf("an operator edits the read of a box, and the server answered %d", rec.Code)
-	}
-	edit(&br)
-	fakeserver.WriteJSON(w, http.StatusOK, br)
-}
-
-// hides puts an operator in front of the server that serves every box
-// without what its identity signed about it: a revoked box as if it were
-// not, and no revocation of a box's certificates.
-func hides(e *env) {
-	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if _, ok := readOf(r); !ok {
-			next.ServeHTTP(w, r)
-			return
-		}
-		e.serve(w, r, next, func(br *protocol.BoxResponse) { br.RevokedCertificates, br.RevokedCertificatesSignature = nil, nil })
-	})
-}
-
-// capture records the body of the next request matching method and path
-// suffix: JSON, or a send's ciphertext.
-func capture(e *env, method, suffix string) *[]byte {
-	var got []byte
-	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if r.Method == method && strings.HasSuffix(r.URL.Path, suffix) && got == nil {
-			got, _ = io.ReadAll(r.Body)
-			r.Body = io.NopCloser(bytes.NewReader(got))
-		}
-		next.ServeHTTP(w, r)
-	})
-	return &got
-}
-
-// failOnce answers the first request matching method and path suffix with a
-// 503, as a server that is down would.
-func failOnce(e *env, method, suffix string) {
-	failed := false
-	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if r.Method == method && strings.HasSuffix(r.URL.Path, suffix) && !failed {
-			failed = true
-			http.Error(w, "down", http.StatusServiceUnavailable)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+	forge.Serve(e.t, e.srv, w, r, next, edit)
 }
 
 func exists(name string) bool {

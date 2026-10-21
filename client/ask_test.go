@@ -14,6 +14,7 @@ import (
 
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
+	"github.com/IronGall-dev/irongall-client/internal/forge"
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
@@ -748,7 +749,7 @@ func TestAskingAtAnyTimeAndARevocationHandedOver(t *testing.T) {
 
 	// C never asks: the record reaches it as a file, and the server may say
 	// what it likes.
-	hides(e)
+	forge.Hides(e.t, e.srv)
 	got, held, err := c.KeepRevocation(first)
 	if err != nil || got != a.Address() || held.Revoked || held.Certificates == nil || held.Certificates.Through != firstThrough || !keptList(c, a.Address()) {
 		t.Fatalf("a revocation of certificates handed over: %+v, %v", held, err)

@@ -1,15 +1,17 @@
 // Package fakeserver is an in-memory irongall server for the client's tests:
 // honest, and just enough of the API for a client to register, renew its
-// prekey, send, list, fetch and ack, each call carrying its box's pass. It is NOT the irongall.dev server, and
-// checks little of what that server checks. Like every mailbox server it is
+// prekey, send, list page by page, fetch and ack, each call carrying its
+// box's pass. It is NOT the irongall.dev server, and checks little of what
+// that server checks. Like every mailbox server it is
 // also a revocation server (PROTOCOL.md §6.3), for addresses it has no box
 // for as well, so a second one stands in for a revocation server a box lists.
 //
 // A test plays the hostile operator two ways: with SetMiddle, a function that
 // sees every request and can rewrite it, answer it or forge the reply; and
-// with the operator's own powers over storage (Inject, Count, Prekey).
-// Nothing the client is told to trust comes from here: every forgery a test
-// makes is one a real operator could make.
+// with the operator's own powers over storage (Inject, Count, Prekey). It
+// logs every call it is sent, as the client sent it (Requests). Nothing the
+// client is told to trust comes from here: every forgery a test makes is one
+// a real operator could make (internal/forge has the common ones).
 package fakeserver
 
 import (
@@ -22,6 +24,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"slices"
 	"strconv"
 	"sync"
 	"testing"
@@ -42,6 +46,15 @@ type Server struct {
 	held   map[protocol.Address]*held // the revocations of addresses with no box here
 	keys   map[string]string          // adopt key → account, each good once
 	middle func(w http.ResponseWriter, r *http.Request, next http.Handler)
+	page   int       // the most messages a list's page holds
+	log    []Request // every call, oldest first
+}
+
+// Request is one call the server was sent, as the client sent it, before
+// any middleware saw it.
+type Request struct {
+	Method, Path, Query string // the path and the raw query apart
+	Pass                bool   // it carried an Authorization header
 }
 
 type box struct {
@@ -55,7 +68,7 @@ type box struct {
 	revocations
 	acl      *protocol.ACL // its sender ACL; nil: none, which admits everyone
 	messages map[string]*message
-	order    []string // ids, oldest first
+	seq      int // the number of the last message stored, which orders them
 }
 
 // revocations are what an address's identity signed about it that the server
@@ -79,11 +92,12 @@ type message struct {
 	from       protocol.Address
 	ciphertext []byte
 	receivedAt time.Time
+	seq        int // its place in the box: a list's cursor is the last one it gave
 }
 
 // New starts a server on the clock now, stopped when the test ends.
 func New(t testing.TB, now func() time.Time) *Server {
-	s := &Server{now: now, boxes: map[protocol.Address]*box{}, held: map[protocol.Address]*held{}, keys: map[string]string{}}
+	s := &Server{now: now, boxes: map[protocol.Address]*box{}, held: map[protocol.Address]*held{}, keys: map[string]string{}, page: MaxPage}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/{addr}", s.getBox)
 	mux.HandleFunc("PUT /v1/{addr}", s.register)
@@ -110,6 +124,7 @@ func New(t testing.TB, now func() time.Time) *Server {
 		// compares an answer's Date with its clock when a pass is refused.
 		w.Header().Set("Date", s.now().UTC().Format(http.TimeFormat))
 		s.mu.Lock()
+		s.log = append(s.log, Request{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Pass: r.Header.Get("Authorization") != ""})
 		m := s.middle
 		s.mu.Unlock()
 		if m != nil {
@@ -132,6 +147,24 @@ func (s *Server) Close() { s.srv.Close() }
 func (s *Server) SetMiddle(m func(w http.ResponseWriter, r *http.Request, next http.Handler)) {
 	s.mu.Lock()
 	s.middle = m
+	s.mu.Unlock()
+}
+
+// Requests returns every call the server has been sent, oldest first.
+func (s *Server) Requests() []Request {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.log)
+}
+
+// MaxPage is the most messages a list's page holds (PROTOCOL.md §5.1).
+const MaxPage = 50
+
+// SetPage sets the most messages a list's page holds, MaxPage until a test
+// sets another.
+func (s *Server) SetPage(n int) {
+	s.mu.Lock()
+	s.page = n
 	s.mu.Unlock()
 }
 
@@ -176,8 +209,8 @@ func (s *Server) Inject(to protocol.Address, id string, from protocol.Address, c
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	b := s.boxes[to]
-	b.messages[id] = &message{from: from, ciphertext: ciphertext, receivedAt: s.now()}
-	b.order = append(b.order, id)
+	b.seq++
+	b.messages[id] = &message{from: from, ciphertext: ciphertext, receivedAt: s.now(), seq: b.seq}
 }
 
 // WriteJSON writes v as a JSON response, as the server does: a middleware
@@ -421,7 +454,7 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 	}
 	kept.revoked = req.Revocation
 	if b != nil {
-		b.messages, b.order = map[string]*message{}, nil
+		b.messages = map[string]*message{}
 	} else {
 		s.held[a] = h
 	}
@@ -588,9 +621,9 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		problem(w, protocol.CodeSenderNotAllowed, "the box's ACL does not admit the sender")
 		return
 	}
-	m := &message{from: from, ciphertext: ct, receivedAt: s.now()}
+	rcpt.seq++
+	m := &message{from: from, ciphertext: ct, receivedAt: s.now(), seq: rcpt.seq}
 	rcpt.messages[key] = m
-	rcpt.order = append(rcpt.order, key)
 	w.Header().Set("Location", r.URL.Path+"/"+key)
 	WriteJSON(w, http.StatusCreated, receipt(key, m))
 }
@@ -650,19 +683,70 @@ func (s *Server) owner(h func(http.ResponseWriter, *http.Request, *box)) http.Ha
 	}
 }
 
-// list answers with every message, on one page, as a first page is
-// answered (PROTOCOL.md §5.1): with an ETag, the SHA-256 of its JSON, 412 to
-// an If-Match that is false, and 304 to an If-None-Match that names it, each
-// read as a server reads one (protocol.IfMatch, protocol.IfNoneMatch).
-func (s *Server) list(w http.ResponseWriter, r *http.Request, b *box) {
-	l := protocol.MessageList{Messages: []protocol.MessageInfo{}}
-	for _, id := range b.order {
-		if m := b.messages[id]; m != nil {
-			l.Messages = append(l.Messages, protocol.MessageInfo{ID: id, From: m.from.String(), Size: int64(len(m.ciphertext)),
-				ReceivedAt: formatTime(m.receivedAt), ExpiresAt: formatTime(m.receivedAt.Add(protocol.Retention))})
+// listQuery reads a list's query: none, or a cursor this server made, once.
+// It writes the refusal, naming the parameter, and reports false if not.
+func listQuery(w http.ResponseWriter, r *http.Request) (after int, ok bool) {
+	if r.URL.RawQuery == "" {
+		return 0, true
+	}
+	q, err := url.ParseQuery(r.URL.RawQuery)
+	for name := range q {
+		if name != "cursor" {
+			problem(w, protocol.CodeBadRequest, "a list takes a cursor alone", func(p *protocol.Problem) { p.Member = name })
+			return 0, false
 		}
 	}
-	l.Count = int64(len(l.Messages))
+	c := q["cursor"]
+	if err != nil || len(c) != 1 || protocol.CheckCursor(c[0]) != nil {
+		problem(w, protocol.CodeBadRequest, "not a cursor", func(p *protocol.Problem) { p.Member = "cursor" })
+		return 0, false
+	}
+	after, err = strconv.Atoi(c[0])
+	if err != nil || after < 1 || strconv.Itoa(after) != c[0] {
+		problem(w, protocol.CodeBadRequest, "not a cursor this server made", func(p *protocol.Problem) { p.Member = "cursor" })
+		return 0, false
+	}
+	return after, true
+}
+
+// list answers with a page of the messages after the cursor, oldest first
+// (PROTOCOL.md §5.1). A first page has an ETag, the SHA-256 of its JSON, and
+// is 412 to an If-Match that is false and 304 to an If-None-Match that names
+// it, each read as a server reads one (protocol.IfMatch,
+// protocol.IfNoneMatch); a page after it carries none, so only an If-Match
+// of * is true of it, and it is never 304.
+func (s *Server) list(w http.ResponseWriter, r *http.Request, b *box) {
+	after, ok := listQuery(w, r)
+	if !ok {
+		return
+	}
+	var ms []*message
+	ids := map[*message]string{}
+	for id, m := range b.messages {
+		if m.seq > after {
+			ms = append(ms, m)
+			ids[m] = id
+		}
+	}
+	slices.SortFunc(ms, func(x, y *message) int { return x.seq - y.seq })
+	l := protocol.MessageList{Count: int64(len(b.messages)), Messages: []protocol.MessageInfo{}}
+	for i, m := range ms {
+		if i == s.page {
+			c := strconv.Itoa(ms[i-1].seq)
+			l.NextCursor = &c
+			break
+		}
+		l.Messages = append(l.Messages, protocol.MessageInfo{ID: ids[m], From: m.from.String(), Size: int64(len(m.ciphertext)),
+			ReceivedAt: formatTime(m.receivedAt), ExpiresAt: formatTime(m.receivedAt.Add(protocol.Retention))})
+	}
+	if after > 0 {
+		if !protocol.IfMatch(r.Header.Values("If-Match"), "") {
+			problem(w, protocol.CodePreconditionFailed, "the If-Match is false")
+			return
+		}
+		WriteList(w, l)
+		return
+	}
 	body, _ := json.Marshal(l)
 	sum := sha256.Sum256(body)
 	tag := `"` + hex.EncodeToString(sum[:16]) + `"`

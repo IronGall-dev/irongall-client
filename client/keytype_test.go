@@ -16,6 +16,7 @@ import (
 
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
+	"github.com/IronGall-dev/irongall-client/internal/forge"
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
@@ -94,7 +95,7 @@ func TestMailFromAnIdentityOfAnUnknownType(t *testing.T) {
 	want := map[string]string{}
 	for from, code := range map[protocol.Address]string{addr: protocol.RefusedKeyType, a.Address(): protocol.RefusedAttribution} {
 		line := e.line(doc, from, b.Address(), "hello")
-		want[e.seal(b, from, line, sign(t, worker(t, a), line, b.Address()))] = code
+		want[e.seal(b, from, line, forge.Sign(t, worker(t, a), line, b.Address()))] = code
 	}
 	res := receive(t, b)
 	if len(res.Delivered) != 0 || len(res.Refused) != 2 {
@@ -199,13 +200,13 @@ func TestSendToAPrekeyOfATypeThisClientLacks(t *testing.T) {
 // never what it says by itself.
 func TestABoxDeclaresTheSenderKeyTypesItVerifies(t *testing.T) {
 	e := newEnv(t)
-	body := capture(e, http.MethodPut, "")
+	body := forge.Capture(e.srv, http.MethodPut, "")
 	b := e.box(protocol.Classic)
 	var reg protocol.RegisterRequest
 	if err := json.Unmarshal(*body, &reg); err != nil || !slices.Equal(reg.SenderKeyTypes, protocol.IdentityTypes()) {
 		t.Fatalf("a registration declares %v, %v", reg.SenderKeyTypes, err)
 	}
-	body = capture(e, http.MethodPut, "/prekey")
+	body = forge.Capture(e.srv, http.MethodPut, "/prekey")
 	e.clock.Add(48 * time.Hour)
 	if _, err := b.Rekey(context.Background(), protocol.Classic); err != nil {
 		t.Fatal(err)
@@ -220,7 +221,7 @@ func TestABoxDeclaresTheSenderKeyTypesItVerifies(t *testing.T) {
 	// A box told to say "any" says that and nothing else.
 	o := e.opts()
 	o.SenderKeyTypes = []string{protocol.AnySender}
-	body = capture(e, http.MethodPut, "")
+	body = forge.Capture(e.srv, http.MethodPut, "")
 	if _, err := client.Init(context.Background(), t.TempDir(), o, protocol.Classic); err != nil {
 		t.Fatal(err)
 	}

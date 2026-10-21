@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/IronGall-dev/irongall-client/client"
+	"github.com/IronGall-dev/irongall-client/internal/forge"
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
@@ -46,7 +47,7 @@ func TestTransientFailureLeavesMail(t *testing.T) {
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	r := send(t, a, b, "survives a failed fetch")
-	failOnce(e, http.MethodGet, "/messages/"+r.ID)
+	forge.FailOnce(e.srv, http.MethodGet, "/messages/"+r.ID)
 	if _, err := b.Receive(context.Background()); err == nil {
 		t.Fatal("the failed fetch was not reported")
 	}
@@ -61,7 +62,7 @@ func TestFailedAckIsRetriedQuietly(t *testing.T) {
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	r := send(t, a, b, "delivered, ack lost")
-	failOnce(e, http.MethodDelete, "/messages/"+r.ID)
+	forge.FailOnce(e.srv, http.MethodDelete, "/messages/"+r.ID)
 	res, err := b.Receive(context.Background())
 	if err == nil || res == nil || len(res.Delivered) != 1 {
 		t.Fatalf("first drain: %v", err)
@@ -109,7 +110,7 @@ func TestDuplicateRetryIsAckedNotDelivered(t *testing.T) {
 func TestStalePrekeyReencryptsSameEnvelope(t *testing.T) {
 	e := newEnv(t)
 	a, b := e.box(protocol.PostQuantum), e.box(protocol.PostQuantum)
-	failOnce(e, http.MethodPost, "/v1/"+b.Address().String()+"/messages")
+	forge.FailOnce(e.srv, http.MethodPost, "/v1/"+b.Address().String()+"/messages")
 	if _, err := a.Send(context.Background(), b.Address(), "kept"); err == nil {
 		t.Fatal("the send should have failed")
 	}
@@ -439,7 +440,7 @@ func TestFlushNeverStopsAtABadEntry(t *testing.T) {
 	if _, err := a.Send(ctx, nobody, "to an address no box has"); err == nil || !strings.Contains(err.Error(), "kept in the outbox") {
 		t.Fatalf("send to nobody: %v", err)
 	}
-	failOnce(e, http.MethodPost, "/v1/"+b.Address().String()+"/messages")
+	forge.FailOnce(e.srv, http.MethodPost, "/v1/"+b.Address().String()+"/messages")
 	if _, err := a.Send(ctx, b.Address(), "fails once"); err == nil {
 		t.Fatal("the send should have failed")
 	}
@@ -482,7 +483,7 @@ func TestStaleOutboxEntryIsNotPosted(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
-	failOnce(e, http.MethodPost, "/v1/"+b.Address().String()+"/messages")
+	forge.FailOnce(e.srv, http.MethodPost, "/v1/"+b.Address().String()+"/messages")
 	if _, err := a.Send(ctx, b.Address(), "stuck"); err == nil {
 		t.Fatal("the send should have failed")
 	}
@@ -506,7 +507,7 @@ func TestRekeyMakesTheTypeAskedFor(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
-	failOnce(e, http.MethodPut, "/prekey")
+	forge.FailOnce(e.srv, http.MethodPut, "/prekey")
 	if _, err := b.Rekey(ctx, ""); err == nil {
 		t.Fatal("the rekey should have failed")
 	}

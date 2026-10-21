@@ -17,6 +17,7 @@ import (
 
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
+	"github.com/IronGall-dev/irongall-client/internal/forge"
 	"github.com/IronGall-dev/irongall-client/protocol"
 	"golang.org/x/crypto/ssh"
 )
@@ -34,7 +35,7 @@ func keptList(b *client.Box, of protocol.Address) bool {
 func mailAs(t *testing.T, e *env, from, to *client.Box, signer ssh.Signer, body string) {
 	t.Helper()
 	line := e.line(from.Identity().Document(), from.Address(), to.Address(), body)
-	e.seal(to, from.Address(), line, sign(t, signer, line, to.Address()))
+	e.seal(to, from.Address(), line, forge.Sign(t, signer, line, to.Address()))
 }
 
 // A box renews under a new certificate and revokes every one before it. Mail
@@ -68,7 +69,7 @@ func TestRevokeEarlierEndsWhatAnOldWorkingKeySigns(t *testing.T) {
 
 	// The operator now hides the revocation and delivers what the thief
 	// signs.
-	hides(e)
+	forge.Hides(e.t, e.srv)
 	mailAs(t, e, a, b, stolen, "signed by the key that was taken")
 	if res := receive(t, b); len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedCertificate {
 		t.Fatalf("a thief's mail under the revoked certificate, the revocation hidden: %+v", res)
@@ -105,7 +106,7 @@ func TestOnlyTheIdentitysHighestRevocationCounts(t *testing.T) {
 	show := func(rec protocol.Revocations) {
 		shown.Store(0)
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-			if x, ok := readOf(r); ok && x == a.Address() {
+			if x, ok := forge.ReadOf(r); ok && x == a.Address() {
 				shown.Add(1)
 				e.serve(w, r, next, func(br *protocol.BoxResponse) {
 					br.RevokedCertificates, br.RevokedCertificatesSignature = rec.RevokedCertificates, rec.RevokedCertificatesSignature

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/IronGall-dev/irongall-client/client"
+	"github.com/IronGall-dev/irongall-client/internal/forge"
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
@@ -221,7 +222,7 @@ func TestAnEnvelopeDatedAheadWaitsInTheOutbox(t *testing.T) {
 		b := e.box(protocol.Classic)
 		off = c.off
 		if c.unsealed {
-			failOnce(e, http.MethodGet, boxPath(b)) // the entry is written and cannot be sealed
+			forge.FailOnce(e.srv, http.MethodGet, boxPath(b)) // the entry is written and cannot be sealed
 		}
 		if _, err := a.Send(ctx, b.Address(), "dated ahead"); err == nil {
 			t.Fatalf("%s: sent", c.name)

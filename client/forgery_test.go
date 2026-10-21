@@ -17,6 +17,7 @@ import (
 
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
+	"github.com/IronGall-dev/irongall-client/internal/forge"
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
@@ -109,7 +110,7 @@ func TestForgeries(t *testing.T) {
 		// carries A's identity document and says it is from A. The signature
 		// is good. The certificate is the forger's.
 		line := e.line(a.Identity().Document(), a.Address(), b.Address(), "from A, says the forger")
-		e.seal(b, a.Address(), line, sign(t, worker(t, o), line, b.Address()))
+		e.seal(b, a.Address(), line, forge.Sign(t, worker(t, o), line, b.Address()))
 		refusedFor(t, receive(t, b), protocol.RefusedSignature, "not signed under a certificate of the sender's identity")
 		if exists(filepath.Join(b.Dir(), "peers", a.Address().String())) {
 			t.Fatal("a sender whose signature did not verify was pinned")
@@ -121,7 +122,7 @@ func TestForgeries(t *testing.T) {
 		a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
 		genuine := e.line(a.Identity().Document(), a.Address(), b.Address(), "real, from A")
 		hidden := e.line(c.Identity().Document(), c.Address(), b.Address(), "hidden, from C")
-		id := e.seal(b, a.Address(), genuine, sign(t, worker(t, a), genuine, b.Address()), hidden, sign(t, worker(t, c), hidden, b.Address()))
+		id := e.seal(b, a.Address(), genuine, forge.Sign(t, worker(t, a), genuine, b.Address()), hidden, forge.Sign(t, worker(t, c), hidden, b.Address()))
 		res := receive(t, b)
 		if len(res.Delivered) != 1 {
 			t.Fatalf("delivered %d, refused %v", len(res.Delivered), res.Refused)
@@ -280,7 +281,7 @@ func TestForgeries(t *testing.T) {
 	t.Run("replay under a new id", func(t *testing.T) {
 		e := newEnv(t)
 		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
-		sent := capture(e, http.MethodPost, "/v1/"+b.Address().String()+"/messages")
+		sent := forge.Capture(e.srv, http.MethodPost, "/v1/"+b.Address().String()+"/messages")
 		send(t, a, b, "once")
 		e.srv.SetMiddle(nil)
 		receive(t, b)
@@ -309,7 +310,7 @@ func TestForgeries(t *testing.T) {
 		e := newEnv(t)
 		a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
 		// A's message to C, stored in B's box as it is.
-		sent := capture(e, http.MethodPost, "/v1/"+c.Address().String()+"/messages")
+		sent := forge.Capture(e.srv, http.MethodPost, "/v1/"+c.Address().String()+"/messages")
 		send(t, a, c, "for C's key")
 		e.srv.SetMiddle(nil)
 		id := sha256.Sum256(*sent)

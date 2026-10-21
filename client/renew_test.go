@@ -17,6 +17,7 @@ import (
 
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
+	"github.com/IronGall-dev/irongall-client/internal/forge"
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
@@ -199,7 +200,7 @@ func TestReceiveKeepsOnePriorPrekey(t *testing.T) {
 	// Deleted by the date of the pass the list carried: the kept pass is
 	// used until its last seconds, so the next is dated a pass's life on.
 	e.clock.Add(protocol.PassLifetime)
-	failOnce(e, http.MethodGet, "/messages")
+	forge.FailOnce(e.srv, http.MethodGet, "/messages")
 	if _, err := b.Receive(ctx); err == nil {
 		t.Fatal("the failed drain succeeded")
 	}
@@ -395,7 +396,7 @@ func TestAServerThatFailsEveryRenewalGetsEachKeyOnce(t *testing.T) {
 func TestAKeyNeverSignedIsUsed(t *testing.T) {
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
-	failOnce(e, http.MethodPut, "/prekey")
+	forge.FailOnce(e.srv, http.MethodPut, "/prekey")
 	if _, err := b.Rekey(context.Background(), ""); err == nil {
 		t.Fatal("the rekey should have failed")
 	}

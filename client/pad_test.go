@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
+	"github.com/IronGall-dev/irongall-client/internal/forge"
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
@@ -155,7 +156,7 @@ func TestSealRefusesAnEntryItsRecipientWould(t *testing.T) {
 	e := newEnv(t)
 	a, b, other := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
 	ctx := context.Background()
-	failOnce(e, http.MethodGet, "/v1/"+b.Address().String())
+	forge.FailOnce(e.srv, http.MethodGet, "/v1/"+b.Address().String())
 	if _, err := a.Send(ctx, b.Address(), "to b"); err == nil {
 		t.Fatal("the send should have failed")
 	}

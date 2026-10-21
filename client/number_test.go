@@ -11,6 +11,7 @@ import (
 
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
+	"github.com/IronGall-dev/irongall-client/internal/forge"
 	"github.com/IronGall-dev/irongall-client/protocol"
 	"golang.org/x/crypto/ssh"
 )
@@ -158,7 +159,7 @@ func TestARestoredBoxRevokesWhatTheLostMachineNeverPublished(t *testing.T) {
 	// The control: the taken key is good under its certificate, so the
 	// revocation is what refuses it. A reader shown none delivers what it signs.
 	control := e.box(protocol.Classic)
-	hides(e)
+	forge.Hides(e.t, e.srv)
 	mailAs(t, e, r, control, taken, "signed with the key the lost machine never published")
 	if res := receive(t, control); len(res.Delivered) != 1 {
 		t.Fatalf("the control: mail under the lost machine's certificate, no revocation shown: %+v", res)

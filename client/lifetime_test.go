@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/IronGall-dev/irongall-client/client"
+	"github.com/IronGall-dev/irongall-client/internal/forge"
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
@@ -290,7 +291,7 @@ func TestALowerLifetimeHoldsOverAWaitingRenewal(t *testing.T) {
 			e := newEnv(t)
 			b := e.box(protocol.Classic)
 			e.clock.Add(25 * time.Hour)
-			failOnce(e, http.MethodPut, "/prekey") // the server is down: it never sees the upload
+			forge.FailOnce(e.srv, http.MethodPut, "/prekey") // the server is down: it never sees the upload
 			if res := receive(t, b); res.RenewErr == nil {
 				t.Fatal("the renewal did not fail")
 			}

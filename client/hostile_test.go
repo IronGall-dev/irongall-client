@@ -19,6 +19,7 @@ import (
 
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
+	"github.com/IronGall-dev/irongall-client/internal/forge"
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
@@ -29,7 +30,7 @@ import (
 func mail(t *testing.T, e *env, from, to *client.Box, envelope string) string {
 	t.Helper()
 	line := []byte(envelope + "\n")
-	return e.seal(to, from.Address(), line, sign(t, worker(t, from), line, to.Address()))
+	return e.seal(to, from.Address(), line, forge.Sign(t, worker(t, from), line, to.Address()))
 }
 
 // A refusal says which check failed by a code from a closed set and in this
@@ -180,11 +181,11 @@ func TestMadeUpSendersLeaveNothingInPeers(t *testing.T) {
 		}
 		// An envelope that names A, signed by another box's working key.
 		line := e.line(a.Identity().Document(), a.Address(), b.Address(), strconv.Itoa(i))
-		e.seal(b, madeUp, line, sign(t, worker(t, o), line, b.Address()))
+		e.seal(b, madeUp, line, forge.Sign(t, worker(t, o), line, b.Address()))
 	}
 	reads, madeUp := map[protocol.Address]int{}, 0
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if x, ok := readOf(r); ok {
+		if x, ok := forge.ReadOf(r); ok {
 			reads[x]++
 		}
 		if named, _, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/v1/"), "/"); fake[named] {
@@ -537,6 +538,7 @@ func TestAListsCursorIsURLSafe(t *testing.T) {
 					fakeserver.WriteList(w, protocol.MessageList{Count: 1, Messages: []protocol.MessageInfo{}, NextCursor: &c.cursor})
 					return
 				}
+				r.URL.RawQuery = "" // the operator answers its own cursor with the box's mail
 			}
 			fetched = fetched || r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, boxPath(b)+"/messages/")
 			next.ServeHTTP(w, r)

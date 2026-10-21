@@ -11,6 +11,7 @@ import (
 
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
+	"github.com/IronGall-dev/irongall-client/internal/forge"
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
@@ -216,7 +217,7 @@ func TestSentHoldsOnlyWhatTheServerTook(t *testing.T) {
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	ctx := context.Background()
-	failOnce(e, http.MethodPost, "/v1/"+b.Address().String()+"/messages")
+	forge.FailOnce(e.srv, http.MethodPost, "/v1/"+b.Address().String()+"/messages")
 	if _, err := a.Send(ctx, b.Address(), "fails once"); err == nil {
 		t.Fatal("the send did not fail")
 	}

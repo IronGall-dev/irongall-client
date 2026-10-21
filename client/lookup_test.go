@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/IronGall-dev/irongall-client/client"
+	"github.com/IronGall-dev/irongall-client/internal/forge"
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
@@ -15,7 +16,7 @@ func lookups(e *env) (seen func() map[string]bool) {
 	var mu sync.Mutex
 	got := map[string]bool{}
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if _, ok := readOf(r); ok {
+		if _, ok := forge.ReadOf(r); ok {
 			mu.Lock()
 			got[r.URL.Path] = r.Header.Get("Authorization") != ""
 			mu.Unlock()
