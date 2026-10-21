@@ -323,7 +323,7 @@ func TestARenewalIsNumberedAboveTheBoxsOwnRevocation(t *testing.T) {
 	}
 
 	revokeThrough(protocol.MaxSerial)
-	if _, err := a.Rekey(ctx, ""); err == nil || !strings.Contains(err.Error(), "revoked its certificates through the highest serial there is") {
+	if _, err := a.Rekey(ctx, ""); err == nil || !strings.Contains(err.Error(), "run through the highest serial there is, its own or revoked by its identity") {
 		t.Fatalf("a renewal after a revocation through the highest serial: %v", err)
 	}
 }

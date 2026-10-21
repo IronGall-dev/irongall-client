@@ -658,3 +658,24 @@ func TestAnAddressRevocationBesideALowerRevocationOfCertificates(t *testing.T) {
 		t.Errorf("a send to it: %v", err)
 	}
 }
+
+// A server that holds no box for this address answers a read of its
+// revocations 200 or 404 not_revoked, and nothing else (api/openapi.yaml):
+// any other answer, no_such_mailbox among them, is no answer, and the box's
+// question about itself fails rather than taking it as none held.
+func TestARevocationsReadAnsweredOutOfFormIsNoAnswer(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a := e.box(protocol.Classic)
+	if err := a.DeleteAtServer(ctx); err != nil {
+		t.Fatal(err)
+	}
+	says(e, protocol.CodeNoSuchMailbox, http.MethodGet, "/revocations")
+	if held, err := a.Ask(ctx, a.Address()); err == nil {
+		t.Fatalf("a revocations read answered no_such_mailbox was taken as an answer: %+v", held)
+	}
+	e.srv.SetMiddle(nil)
+	if held, err := a.Ask(ctx, a.Address()); err != nil || held.Revoked || held.Certificates != nil {
+		t.Fatalf("the same read answered as the server answers: %+v, %v", held, err)
+	}
+}

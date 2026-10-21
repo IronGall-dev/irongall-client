@@ -167,7 +167,7 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 	// Deleted by this clock only once the server has taken a pass dated by
 	// it, and by that pass's date: a clock far ahead is stopped at its pass,
 	// and the keys that mail waits for stay (PROTOCOL.md §0).
-	if !res.listedAt.at.IsZero() {
+	if !res.listedAt.None() {
 		// Only a drain that emptied the box may delete retired prekeys
 		// early.
 		if err == nil && !res.More {
@@ -654,7 +654,7 @@ func recordSeen(s store, ciphertext []byte, env *protocol.Envelope) error {
 // transaction, so a clock that later reads further back than SeenFor allows
 // for still takes no message whose line went (seenFloor).
 func (b *Box) pruneSeen(at taken) error {
-	cutoff := at.at.Add(-protocol.SeenFor).Unix()
+	cutoff := at.At().Add(-protocol.SeenFor).Unix()
 	return b.update(func(s store) error {
 		var old [][]byte
 		if err := s.each(bucketSeenTime, func(k, _ []byte) error {

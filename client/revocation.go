@@ -551,8 +551,7 @@ func (b *Box) renewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy,
 		return r, nil
 	}
 	if held != nil && held.Through >= r.Below {
-		if held.Through >= protocol.MaxSerial {
-			r.NotRenewed = refuse("this box's identity has revoked its certificates through the highest serial there is, so no later certificate can be made: the address cannot renew")
+		if r.NotRenewed = noneAbove(held.Through); r.NotRenewed != nil {
 			return r, nil
 		}
 		r.Below = held.Through + 1
@@ -564,7 +563,7 @@ func (b *Box) renewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy,
 	}
 	at, err := b.sendRenewal(ctx, req, r.Below)
 	var api *APIError
-	if at.at.IsZero() && errors.As(err, &api) && api.Status == http.StatusTooManyRequests && api.RetryAfter > 0 && api.RetryAfter <= remedyWait {
+	if at.None() && errors.As(err, &api) && api.Status == http.StatusTooManyRequests && api.RetryAfter > 0 && api.RetryAfter <= remedyWait {
 		select {
 		case <-ctx.Done():
 			r.NotRenewed = err
@@ -573,7 +572,7 @@ func (b *Box) renewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy,
 		}
 		at, err = b.sendRenewal(ctx, req, r.Below)
 	}
-	if at.at.IsZero() {
+	if at.None() {
 		r.NotRenewed = b.proved(ctx, own, err, l)
 		return r, nil
 	}
@@ -667,7 +666,9 @@ func (b *Box) proved(ctx context.Context, who protocol.Address, err error, l *lo
 	}
 	held, lerr := b.lookupRevocation(ctx, who, l)
 	if lerr != nil {
-		return fmt.Errorf("%w; asking for the revocation failed: %w", err, lerr)
+		// The call's error alone is wrapped: its code is what a caller reads,
+		// whichever comes first.
+		return fmt.Errorf("%w; asking for the revocation failed: %v", err, lerr)
 	}
 	if !held {
 		return fmt.Errorf("%w; it showed no revocation of %s that verifies, so this box does not take that address as revoked", err, who)
@@ -690,7 +691,7 @@ func (b *Box) ownCertRevoked(ctx context.Context, err error) error {
 		kerr = o.err
 	}
 	if kerr != nil {
-		return fmt.Errorf("%w; reading this box's revocations failed: %w", err, kerr)
+		return fmt.Errorf("%w; reading this box's revocations failed: %v", err, kerr)
 	}
 	if n, perr := b.publishedSerial(); perr != nil || !b.ownRevokes(n) {
 		return fmt.Errorf("%w; it showed no revocation of this box's certificates that verifies and covers the one it uses", err)

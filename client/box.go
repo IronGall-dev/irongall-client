@@ -24,6 +24,7 @@ import (
 
 	"filippo.io/age"
 	"github.com/IronGall-dev/irongall-client/client/internal/sign"
+	tk "github.com/IronGall-dev/irongall-client/client/internal/taken"
 	"github.com/IronGall-dev/irongall-client/protocol"
 	bolt "go.etcd.io/bbolt"
 	"golang.org/x/crypto/ssh"
@@ -333,7 +334,7 @@ func (b *Box) publish(ctx context.Context, path string, req any, n uint64) (take
 	if _, err := b.call(ctx, http.MethodPut, path, req, http.Header{"Authorization": {pass}}, nil); err != nil {
 		return taken{}, err
 	}
-	at, err := takenBy(pass)
+	at, err := tk.By(pass)
 	if err != nil {
 		return taken{}, err
 	}

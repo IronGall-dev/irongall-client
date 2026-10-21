@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	tk "github.com/IronGall-dev/irongall-client/client/internal/taken"
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
@@ -267,7 +268,7 @@ func (b *Box) ownerTaken(ctx context.Context, method, path string, hdr http.Head
 			if err != nil {
 				return resp, taken{}, err
 			}
-			at, err := takenBy(pass)
+			at, err := tk.By(pass)
 			return resp, at, err
 		}
 		if err := b.dropPass(); err != nil {
@@ -276,22 +277,10 @@ func (b *Box) ownerTaken(ctx context.Context, method, path string, hdr http.Head
 	}
 }
 
-// taken is a reading of this box's clock that a server took: the date of a
-// pass it checked, on a call it answered, the pass's not_after less
-// protocol.PassLifetime. Every deletion by the clock is by one, and never by
-// a reading of the clock (PROTOCOL.md §0): a box whose clock is far off is
-// stopped at its pass, and one whose clock jumps or steps back while a call
-// is in flight deletes nothing by where it went.
-type taken struct{ at time.Time }
-
-// takenBy is the reading pass is dated by, for a call the server answered.
-func takenBy(pass string) (taken, error) {
-	p, err := protocol.ParsePass(pass)
-	if err != nil {
-		return taken{}, err
-	}
-	return taken{p.NotAfter.Add(-protocol.PassLifetime)}, nil
-}
+// taken is a reading of this box's clock that a server took, which every
+// deletion by the clock is by: a pass is the only way to one
+// (client/internal/taken).
+type taken = tk.Reading
 
 // lookup GETs box a from this box's server (GET /v1/<a>), with no pass: the
 // read is public, and a pass would only have the server count it against

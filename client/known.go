@@ -65,7 +65,9 @@ func (b *Box) known(ctx context.Context) (*own, error) {
 		switch {
 		case err == nil:
 			rec = &held
-		case code(err) == protocol.CodeNotRevoked, code(err) == protocol.CodeNoSuchMailbox:
+		case code(err) == protocol.CodeNotRevoked:
+			// The one answer of none held (api/openapi.yaml): any other is no
+			// answer.
 		default:
 			o.err = err
 		}

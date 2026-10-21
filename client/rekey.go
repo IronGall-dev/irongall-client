@@ -80,7 +80,7 @@ func (b *Box) renew(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey,
 	// From here a statement at next exists, signed, whatever the server
 	// makes of it.
 	at, err := b.sendRenewal(ctx, req, next)
-	if at.at.IsZero() {
+	if at.None() {
 		return nil, taken{}, err
 	}
 	return p, at, err
@@ -171,7 +171,7 @@ func (b *Box) readOwn(ctx context.Context, kt protocol.KeyType, unused bool) (*o
 		// serial, and this box gives a renewal's certificate and prekey one
 		// number. So what it published is (published, published), and the
 		// server may serve nothing ordered before it.
-		case o.cert.Serial() < published || (o.cert.Serial() == published && o.statement.Serial < published):
+		case before(o.cert.Serial(), o.statement.Serial, published, published):
 			err = refuse("rollback: the server serves this box's prekey serial %d under certificate %d, before serial %d, which this box published", o.statement.Serial, o.cert.Serial(), published)
 		default:
 			out.known = max(o.cert.Serial(), published)
@@ -228,14 +228,8 @@ func (b *Box) nextNumber(st *ownRead, unused bool) (uint64, *protocol.Prekey, er
 	if err != nil {
 		return 0, nil, err
 	}
-	if own != nil && own.Through >= protocol.MaxSerial {
-		return 0, nil, refuse("this box's identity has revoked its certificates through the highest serial there is, so no later certificate can be made: the address cannot renew")
-	}
 	if own != nil {
 		known = max(known, own.Through)
-	}
-	if known >= protocol.MaxSerial {
-		return 0, nil, refuse("this box's certificate serial is the highest there is, so no later certificate can be made: the address cannot renew")
 	}
 	// A number an earlier attempt took, and that nothing has passed since,
 	// is kept: its statement is the one sent again, and a key made for it
@@ -262,10 +256,28 @@ func (b *Box) nextNumber(st *ownRead, unused bool) (uint64, *protocol.Prekey, er
 		}
 		known = begun // the new number is above the spent one too
 	}
-	if known >= protocol.MaxSerial {
-		return 0, nil, refuse("this box's certificate serial is the highest there is, so no later certificate can be made: the address cannot renew")
+	if err := noneAbove(known); err != nil {
+		return 0, nil, err
 	}
 	return protocol.SerialAt(b.now(), known), nil, nil
+}
+
+// noneAbove is the refusal of a renewal numbered above n, the highest serial
+// this box knows of its own or holds revoked, when n is the highest serial
+// there is (protocol.MaxSerial): no later certificate can be made.
+func noneAbove(n uint64) error {
+	if n < protocol.MaxSerial {
+		return nil
+	}
+	return refuse("this box's certificates run through the highest serial there is, its own or revoked by its identity, so no later certificate can be made: the address cannot renew")
+}
+
+// before reports whether a statement at prekey serial n under certificate
+// cert stands before one at (seenN, seenCert) in its box's order: by
+// certificate first, then by the prekey's own serial (PROTOCOL.md §2b;
+// decided on #48). A later certificate passes any serial under an earlier one.
+func before(cert, n, seenCert, seenN uint64) bool {
+	return cert < seenCert || cert == seenCert && n < seenN
 }
 
 // makeRenewal makes and signs renewal next, of st's key type, or takes p,
@@ -600,7 +612,7 @@ func (b *Box) dropRetired(at taken) error {
 		return nil
 	}
 	newest := retired[len(retired)-1]
-	if made, err := b.made(newest); err != nil || at.at.Sub(made) <= retiredGrace {
+	if made, err := b.made(newest); err != nil || at.At().Sub(made) <= retiredGrace {
 		return nil //nolint:nilerr // a newest retired prekey that cannot be read keeps every key
 	}
 	for _, n := range retired[:len(retired)-1] {
@@ -645,7 +657,7 @@ func (b *Box) prune(at taken) error {
 		if err != nil {
 			continue
 		}
-		if !at.at.Before(p.NotAfter.Add(protocol.TTL)) {
+		if !at.At().Before(p.NotAfter.Add(protocol.TTL)) {
 			if err := b.removePrekey(n); err != nil {
 				return err
 			}

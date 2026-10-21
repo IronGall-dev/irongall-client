@@ -56,12 +56,13 @@ func (b *Box) resolve(ctx context.Context, peer protocol.Address, l *lookups) (*
 		return nil, nil, &RevokedError{Address: peer, Own: peer == b.id.Address()}
 	}
 	ir, gone, err := b.readBox(ctx, peer, l)
-	switch {
-	case gone:
+	if gone {
 		return nil, nil, &RevokedError{Address: peer, Own: peer == b.id.Address()}
-	case code(err) == protocol.CodeRevoked:
-		return nil, nil, &lookupError{fmt.Errorf("%w; it showed no revocation of %s that verifies, so this box does not take that address as revoked", err, peer)}
-	case err != nil:
+	}
+	if err != nil {
+		if code(err) == protocol.CodeRevoked {
+			err = fmt.Errorf("%w; it showed no revocation of %s that verifies, so this box does not take that address as revoked", err, peer)
+		}
 		return nil, nil, &lookupError{err}
 	}
 	id, err := b.identityOf(peer, ir.Identity)
@@ -90,10 +91,10 @@ func (b *Box) resolve(ctx context.Context, peer protocol.Address, l *lookups) (*
 		return nil, nil, err
 	}
 	// Ordered by certificate first, then by the prekey's own serial.
-	if cert.Serial() < seenCert {
-		return nil, nil, refuse("rollback: %s's prekey is signed under certificate %d, below %d, already seen", peer, cert.Serial(), seenCert)
-	}
-	if cert.Serial() == seenCert && p.Serial < seen {
+	if before(cert.Serial(), p.Serial, seenCert, seen) {
+		if cert.Serial() < seenCert {
+			return nil, nil, refuse("rollback: %s's prekey is signed under certificate %d, below %d, already seen", peer, cert.Serial(), seenCert)
+		}
 		return nil, nil, refuse("rollback: %s's prekey serial %d is below %d, already seen", peer, p.Serial, seen)
 	}
 	certs, err := b.revokedCerts(peer)
