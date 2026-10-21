@@ -148,7 +148,7 @@ func TestVectorBadIdentities(t *testing.T) {
 		p256Refuses := name == "p256-short-coordinate.doc" || name == "p256-coordinate-over-order.doc"
 		want := ErrIdentityFormat
 		switch {
-		case keyCase, p256Refuses, name == "p256-off-curve.doc", name == "p256-coordinate-not-reduced.doc":
+		case keyCase, p256Refuses:
 			want = ErrIdentityKey
 		case strings.HasPrefix(name, "unsupported-"):
 			want = ErrIdentityType
@@ -168,12 +168,12 @@ func TestVectorBadIdentities(t *testing.T) {
 		// is what refused them, and edwards25519 itself decodes the point,
 		// so the check has to be ours.
 		if keyCase {
-			m := identityGrammar.FindSubmatch(doc)
+			m := identityForm.FindSubmatch(doc)
 			if m == nil {
 				t.Errorf("%s: control: not a well-formed document", name)
 				continue
 			}
-			key, err := ssh.ParsePublicKey(mustB64(t, m[1]))
+			key, err := ssh.ParsePublicKey(mustB64(t, m[2]))
 			if err != nil {
 				t.Fatal(err)
 			}

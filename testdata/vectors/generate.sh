@@ -345,6 +345,7 @@ identity_doc 26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85 > 
 identity_doc c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a > identity/small-order-8c.doc
 identity_doc c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa > identity/small-order-8d.doc
 identity_doc eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f > identity/small-order-non-canonical.doc # y = p + 1
+printf 'irongall-v1\nssh-ed25519 %s\n' "$(bin "$(str "$(asc ssh-ed25519)00")$(str "$(printf %s "${GOOD#* }" | base64 -d | tail -c 32 | od -An -v -tx1 | tr -d ' \n')")" | b64)" > identity/type-name-ending-in-nul.doc # A's key, its type name ending in a NUL: ssh-keygen reads it as A's key and writes it back without the NUL
 # The same for the P-256 type. With p the field's size and n the group's order: a point is 04, x, y, and the protocol
 # refuses a coordinate of 128 bits or fewer, or of n - 1 or more. OpenSSH refused those up to 10.2p1 and takes them
 # from 10.3p1.
@@ -358,6 +359,7 @@ p256_doc "04$X${Y:0:63}$(printf '%x' $((0x${Y: -1} ^ 1)))" > identity/p256-off-c
 p256_doc "04ffffffff00000001000000000000000000000001000000000000000000000004$Y5" > identity/p256-coordinate-not-reduced.doc # x = p + 5: the point (5, Y5), x not reduced
 p256_doc "040000000000000000000000000000000000000000000000000000000000000005$Y5" > identity/p256-short-coordinate.doc # x = 5: on the curve; the Go library takes it and OpenSSH does not
 p256_doc "04ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632554484f0c0fda434ef0a808458914f328715d7a545e198ac7eee31dffe861b5d23f" > identity/p256-coordinate-over-order.doc # x = n + 3, the first from n - 1 up that is on the curve; likewise
+printf 'irongall-v1\necdsa-sha2-nistp256 %s\n' "$(bin "$(str "$(asc ecdsa-sha2-nistp256)")$(str "$(asc nistp256)00")$(str "04$POINT")" | b64)" > identity/p256-curve-name-ending-in-nul.doc # C's key, its curve name ending in a NUL: ssh-keygen reads it as C's key and writes it back without the NUL
 # A well-formed document of a key type no client verifies: a name, and a wire key that begins with that name.
 NOTYPE=no-such-key-type@irongall.invalid
 printf 'irongall-v1\n%s %s\n' "$NOTYPE" "$(bin "$(str "$(asc "$NOTYPE")")$(str "$(asc 'not a key')")" | b64)" > identity/unsupported-type.doc

@@ -220,20 +220,20 @@ ig_keycheck(){ # <32 bytes in hex> → 0 only for an Ed25519 key that is canonic
     c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a | c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa) return 1 ;;
   esac
 }
-ig_idcheck(){ # <identity document> [address] → 0 only for a two-line document in the one exact form of its key type, its key passing that type's checks (and hashing to the address, given one). 2 for a well-formed document of a key type this script does not verify: nothing is wrong with it, and nothing it signed can be checked here. 1 for anything else
-  local f=$1 l t n
-  l=$(sed -n 2p "$f"); t=${l%% *}; n=$(wc -c < "$f")
+ig_idcheck(){ # <identity document> [address] → 0 only for a two-line document whose key is in its one encoding and passes its type's checks (and hashing to the address, given one). 2 for a well-formed document of a key type this script does not verify: nothing is wrong with it, and nothing it signed can be checked here. 1 for anything else
+  local f=$1 l t fp
+  l=$(sed -n 2p "$f"); t=${l%% *}
   [ "$(printf 'irongall-v1\n%s\n' "$l" | sha256sum)" = "$(sha256sum < "$f")" ] || return 1      # exactly the tag line and one more, each ending in LF, and not a byte else: the file against itself rebuilt from its second line. A shell variable drops a NUL, so a test of the variable alone would pass a file that holds one
   [ -z "${2-}" ] || [ "$(sha256sum < "$f" | cut -c1-64)" = "$2" ] || return 1
-  case $t in
-    ssh-ed25519)      # 93 bytes: the key's length 32, whose low two bits are the 26th character's first, so it is one of A to P; then a canonical point that is not of small order
-      [ "$n" -eq 93 ] && grep -Eqx 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI[A-P][A-Za-z0-9+/]{42}' <<< "$l" && ig_keycheck "$(printf %s "${l#* }" | base64 -d | tail -c 32 | od -An -v -tx1 | tr -d ' \n')" ;;
-    ecdsa-sha2-nistp256)      # 173 bytes: an uncompressed point. ssh-keygen refuses one that is off the curve, and up to 10.2p1 one with a coordinate of 128 bits or fewer, or of the group's order less one or more; from 10.3p1 it takes those, a known variance (PROTOCOL.md §3)
-      [ "$n" -eq 173 ] && grep -Eqx 'ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBB[A-P][A-Za-z0-9+/]{84}[AEIMQUYcgkosw048]=' <<< "$l" && ssh-keygen -l -f - <<< "$l" > /dev/null 2>&1 || return 1 ;;
-    *)      # a type this script does not verify. A document all the same, if line 2 is a key type's name (printable ASCII with no comma, at most 64 characters), one space, and the base64, in its one encoding, of a wire key that begins with that name
-      [ "$n" -eq $((13 + ${#l})) ] && grep -Eqx '[!-+.-~-]{1,64} [A-Za-z0-9+/]+={0,2}' <<< "$l" && [ "$(printf %s "${l#* }" | base64 -d 2> /dev/null | base64 | tr -d '\n')" = "${l#* }" ] &&
-        [ "$(printf %s "${l#* }" | base64 -d | head -c $((4 + ${#t})) | od -An -v -tx1 | tr -d ' \n')" = "$(printf %08x "${#t}")$(ig_asc "$t")" ] && return 2
-      return 1 ;;
+  # the form every type shares: a key type's name (printable ASCII with no comma, at most 64 characters), one space, and the base64, in its one encoding, of a wire key that begins with that name
+  grep -Eqx '[!-+.-~-]{1,64} [A-Za-z0-9+/]+={0,2}' <<< "$l" && [ "$(printf %s "${l#* }" | base64 -d 2> /dev/null | base64 | tr -d '\n')" = "${l#* }" ] &&
+    [ "$(printf %s "${l#* }" | base64 -d | head -c $((4 + ${#t})) | od -An -v -tx1 | tr -d ' \n')" = "$(printf %08x "${#t}")$(ig_asc "$t")" ] || return 1
+  case $t in ssh-ed25519 | ecdsa-sha2-nistp256) ;; *) return 2 ;; esac
+  # the key in its one encoding: ssh-keygen reads it, and its fingerprint, the SHA-256 of the key as OpenSSH writes it back, is the SHA-256 of these bytes. ssh-keygen refuses a P-256 point off the curve, and up to 10.2p1 one with a coordinate of 128 bits or fewer, or of the group's order less one or more; from 10.3p1 it takes those, a known variance (PROTOCOL.md §3)
+  fp=$(ssh-keygen -l -E sha256 -f - <<< "$l" 2> /dev/null | awk '{print $2}') && fp=${fp#SHA256:} && [ -n "$fp" ] &&
+    [ "$(printf '%s=' "$fp" | base64 -d | od -An -v -tx1 | tr -d ' \n')" = "$(printf %s "${l#* }" | base64 -d | sha256sum | cut -c1-64)" ] || return 1
+  case $t in      # then the type's own checks: an Ed25519 key canonical and not of small order
+    ssh-ed25519) ig_keycheck "$(printf %s "${l#* }" | base64 -d | tail -c 32 | od -An -v -tx1 | tr -d ' \n')" ;;
   esac
 }
 ig_sigmax(){ case $(sed -n 2p "$1" | cut -d' ' -f1) in ssh-ed25519 | ecdsa-sha2-nistp256) echo 4096 ;; *) return 1 ;; esac; }      # <identity document> → the most bytes a signature by a box of its key type may be, every byte of the file (PROTOCOL.md §3): each type states its own. Nothing for a type this script does not verify
