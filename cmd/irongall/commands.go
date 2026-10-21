@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -97,7 +98,12 @@ func (e *cli) initCmd() *cobra.Command {
 	c := command("init [flags]", "create this box and register it; prints its link",
 		`Create this box and register it, and print its address and its link,
 <server>/to/<address>, as addr does.`,
-		nargs(0, 0), func(c *cobra.Command, _ []string) error {
+		checked(nargs(0, 0), func(c *cobra.Command, _ []string) error {
+			if idType != "" && !slices.Contains(protocol.IdentityTypes(), idType) {
+				return wrong(c, "%s makes an identity of the key type %s, and %q is not one", c.CommandPath(), strings.Join(protocol.IdentityTypes(), " or "), idType)
+			}
+			return nil
+		}), func(c *cobra.Command, _ []string) error {
 			kt := protocol.PostQuantum
 			if noPQ {
 				kt = protocol.Classic
@@ -217,10 +223,12 @@ func (e *cli) showCmd() *cobra.Command {
 		`Print the "mail" line of a message inbox/ keeps, by the id recv printed: what
 recv prints without --headers. An id that is not 64 lowercase hex is refused
 before any file is read.`,
-		nargs(1, 1), func(c *cobra.Command, args []string) error {
+		checked(nargs(1, 1), func(c *cobra.Command, args []string) error {
 			if !client.IsID(args[0]) {
 				return wrong(c, "%s takes a message's id, 64 lowercase hex, as recv prints it", c.CommandPath())
 			}
+			return nil
+		}), func(_ *cobra.Command, args []string) error {
 			b, err := e.box()
 			if err != nil {
 				return err
@@ -263,7 +271,7 @@ func (e *cli) quarantineRmCmd() *cobra.Command {
 		`Delete each message named, by the id irongall quarantine list prints, or with
 --all every one, and print a "removed" line for each. Nothing is deleted when
 an id is not one, or names no message quarantine/ keeps.`,
-		cobra.ArbitraryArgs, func(c *cobra.Command, args []string) error {
+		func(c *cobra.Command, args []string) error {
 			switch {
 			case all && len(args) > 0:
 				return wrong(c, "%s takes ids or --all, not both", c.CommandPath())
@@ -275,6 +283,8 @@ an id is not one, or names no message quarantine/ keeps.`,
 					return wrong(c, "%s takes messages' ids, 64 lowercase hex, as irongall quarantine list prints them", c.CommandPath())
 				}
 			}
+			return nil
+		}, func(c *cobra.Command, args []string) error {
 			b, err := e.box()
 			if err != nil {
 				return err
@@ -642,11 +652,13 @@ func (e *cli) renewCmd() *cobra.Command {
 	c := command("renew [flags]", "publish a new prekey now, or change its type",
 		`Publish a new prekey now, under a new working key and certificate. With
 neither --no-pq nor --pq it keeps the type the box has.`,
-		nargs(0, 0), func(c *cobra.Command, _ []string) error {
-			kt, err := keyType(noPQ, pq)
-			if err != nil {
+		checked(nargs(0, 0), func(c *cobra.Command, _ []string) error {
+			if _, err := keyType(noPQ, pq); err != nil {
 				return wrong(c, "%v", err)
 			}
+			return nil
+		}), func(c *cobra.Command, _ []string) error {
+			kt, _ := keyType(noPQ, pq)
 			b, err := e.box()
 			if err != nil {
 				return err
@@ -679,19 +691,25 @@ a lifetime L it must run at least every L less a day and two hours, or the
 prekey runs out, or comes so near it that a sender whose clock is ahead
 refuses it, and senders are refused until the box renews. A lifetime set
 lower holds from the next recv, which renews a prekey made for longer.`,
-		nargs(0, 1), func(c *cobra.Command, args []string) error {
+		checked(nargs(0, 1), func(c *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return nil
+			}
+			d, err := parseTime(args[0])
+			if err != nil {
+				return wrong(c, "%v", err)
+			}
+			if d < client.MinPrekeyLifetime || d > protocol.PrekeyLifetime {
+				return wrong(c, "a prekey lifetime is from %s to %s, and %s is not", formatTime(client.MinPrekeyLifetime), formatTime(protocol.PrekeyLifetime), formatTime(d))
+			}
+			return nil
+		}), func(c *cobra.Command, args []string) error {
 			b, err := e.box()
 			if err != nil {
 				return err
 			}
 			if len(args) == 1 {
-				d, err := parseTime(args[0])
-				if err != nil {
-					return wrong(c, "%v", err)
-				}
-				if d < client.MinPrekeyLifetime || d > protocol.PrekeyLifetime {
-					return wrong(c, "a prekey lifetime is from %s to %s, and %s is not", formatTime(client.MinPrekeyLifetime), formatTime(protocol.PrekeyLifetime), formatTime(d))
-				}
+				d, _ := parseTime(args[0])
 				if err := b.SetPrekeyLifetime(c.Context(), d); err != nil {
 					return err
 				}
@@ -778,11 +796,13 @@ then publish the new prekey. The address goes on, and mail this box sent that
 is still unread is refused with the rest, so send it again. Until the server
 takes the new prekey, the box sends no mail, and once its server holds the
 revocation it takes none there either.`,
-		nargs(0, 0), func(c *cobra.Command, _ []string) error {
-			kt, err := keyType(noPQ, pq)
-			if err != nil {
+		checked(nargs(0, 0), func(c *cobra.Command, _ []string) error {
+			if _, err := keyType(noPQ, pq); err != nil {
 				return wrong(c, "%v", err)
 			}
+			return nil
+		}), func(c *cobra.Command, _ []string) error {
+			kt, _ := keyType(noPQ, pq)
 			b, err := e.box()
 			if err != nil {
 				return err

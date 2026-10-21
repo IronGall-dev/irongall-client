@@ -1201,6 +1201,82 @@ func TestHelpRunsNothing(t *testing.T) {
 	}
 }
 
+// --help is read as pflag and getopt(3) read any flag, as gh and docker read
+// it (#222): after a flag that takes a value it is that value, and a later
+// --help=false turns help off, so the command runs.
+func TestHelpIsReadAsAnyFlag(t *testing.T) {
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("IRONGALL_HOME", b.Dir())
+	t.Setenv("IRONGALL_BASE", srv.URL)
+	var out bytes.Buffer
+	if err := do(ctx, "addr", []string{"--help", "--help=false"}, nil, &out, io.Discard); err != nil || !strings.HasPrefix(out.String(), `{"type":"box"`) {
+		t.Errorf("addr --help --help=false: %v %q, want the box's line", err, out.String())
+	}
+	out.Reset()
+	var u *usageError
+	if err := do(ctx, "init", []string{"--identity-type", "--help"}, nil, &out, io.Discard); !errors.As(err, &u) || !strings.Contains(err.Error(), `"--help" is not one`) {
+		t.Errorf("init --identity-type --help: %v %q, want --help taken as the type", err, out.String())
+	}
+}
+
+// Help and a wrong line are answered before the environment or the box is
+// read (#223). With no $HOME, or with $IRONGALL_REVOCATION_SERVERS that
+// cannot be read, every command in the tree gives its help to --help, and is
+// a usage error for a flag it does not take; the values a command refuses
+// are usage errors too, with nothing written in the box's directory; and a
+// command that runs still meets the environment's error.
+func TestHelpAndAWrongLineComeBeforeTheEnvironment(t *testing.T) {
+	ctx := context.Background()
+	var paths []string
+	var walk func(*cobra.Command)
+	walk = func(c *cobra.Command) {
+		for _, s := range c.Commands() {
+			switch {
+			case s.HasSubCommands():
+				walk(s)
+			case s.Name() != "help":
+				paths = append(paths, strings.TrimPrefix(s.CommandPath(), "irongall "))
+			}
+		}
+	}
+	walk((&cli{}).tree())
+	dir := t.TempDir()
+	for _, env := range []map[string]string{
+		{"HOME": "", "IRONGALL_HOME": "", "XDG_CONFIG_HOME": ""},
+		{"IRONGALL_HOME": dir, "IRONGALL_REVOCATION_SERVERS": "not a list of servers"},
+	} {
+		for k, v := range env {
+			t.Setenv(k, v)
+		}
+		var u *usageError
+		for _, p := range append(paths, "") {
+			var out bytes.Buffer
+			if err := do(ctx, p, []string{"--help"}, nil, &out, io.Discard); err != nil || !strings.HasPrefix(out.String(), strings.TrimSpace("usage: irongall "+p)) {
+				t.Errorf("%v: %s --help: %v %.60q", env, p, err, out.String())
+			}
+			if err := do(ctx, p, []string{"--no-such-flag"}, nil, io.Discard, io.Discard); p != "" && !errors.As(err, &u) {
+				t.Errorf("%v: %s --no-such-flag: %v, want a usage error", env, p, err)
+			}
+		}
+		for _, line := range []string{"prekey lifetime soon", "show not-an-id", "init --identity-type x", "quarantine rm", "prekey renew --pq --no-pq"} {
+			if err := do(ctx, line, nil, nil, io.Discard, io.Discard); !errors.As(err, &u) {
+				t.Errorf("%v: %s: %v, want a usage error", env, line, err)
+			}
+		}
+		if err := do(ctx, "addr", nil, nil, io.Discard, io.Discard); err == nil || errors.As(err, &u) {
+			t.Errorf("%v: addr, which runs: %v, want the environment's error", env, err)
+		}
+	}
+	if es, _ := os.ReadDir(dir); len(es) != 0 {
+		t.Errorf("a wrong line wrote %d entries in the box's directory", len(es))
+	}
+}
+
 // revocation make prints a record and publishes nothing; revocation publish
 // publishes one, for this box only when its address is written out in full,
 // or from a record with no box at all; revocation keep keeps a record someone

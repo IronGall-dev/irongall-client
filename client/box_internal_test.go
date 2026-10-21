@@ -1,8 +1,14 @@
 package client
 
 import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
 // With no HTTP client given, requests time out: a server that never answers
@@ -36,5 +42,17 @@ func TestAPassNamesTheServerAsAnOrigin(t *testing.T) {
 	}
 	if got, err := (&Box{base: "https://irongall.dev:65536"}).serverName(); err == nil {
 		t.Errorf("a port that is no port: named %q", got)
+	}
+}
+
+// Init with an identity type this client does not make writes nothing: the
+// type is held where every box is made, before any directory is (#223).
+func TestAnIdentityTypeIsHeldBeforeAnythingIsWritten(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "box")
+	if _, err := Init(context.Background(), dir, Options{Base: "https://irongall.dev", IdentityType: "ssh-rsa"}, protocol.Classic); err == nil {
+		t.Fatal("a box was made with an identity type this client does not make")
+	}
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the box's directory was made: %v", err)
 	}
 }

@@ -50,8 +50,9 @@ and so whose mail it takes: every type this client verifies, unless
 $IRONGALL_SENDER_KEY_TYPES says otherwise ("any": do not say).
 
 irongall help <command> and irongall <command> --help print a command's help,
-and irongall <group> help a group's. --help anywhere after a command prints
-its help and runs nothing.
+and irongall <group> help a group's. --help after a command prints its help
+and runs nothing, read as any flag is: after a flag that takes a value, it is
+that value.
 
 Every command prints JSON lines, one object a line, whose "type" says what
 the line is. What it did and what it met on the way go to stdout, mail and
@@ -122,21 +123,44 @@ type cli struct {
 
 func (e *cli) box() (*client.Box, error) { return client.Open(e.dir, e.opt) }
 
-// run runs the command line args, the program's name left out.
-func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+// environment reads where the box is and how to reach its server, once the
+// command line is known to be one that runs.
+func (e *cli) environment() error {
 	dir, err := client.Dir()
 	if err != nil {
 		return err
 	}
-	opt := client.Options{Base: os.Getenv("IRONGALL_BASE")}
+	e.dir = dir
+	e.opt.Base = os.Getenv("IRONGALL_BASE")
 	if v := os.Getenv("IRONGALL_SENDER_KEY_TYPES"); v != "" {
-		opt.SenderKeyTypes = strings.Split(v, ",")
+		e.opt.SenderKeyTypes = strings.Split(v, ",")
 	}
 	if v := os.Getenv("IRONGALL_REVOCATION_SERVERS"); v != "" {
-		if opt.RevocationServers, err = client.ParseRevocationServers(v); err != nil {
+		if e.opt.RevocationServers, err = client.ParseRevocationServers(v); err != nil {
 			return fmt.Errorf("$IRONGALL_REVOCATION_SERVERS: %w", err)
 		}
 	}
+	return nil
+}
+
+// checked is args, then check: the values a command takes are a usage
+// error before anything is read, the environment and the box included.
+func checked(args cobra.PositionalArgs, check cobra.PositionalArgs) cobra.PositionalArgs {
+	return func(c *cobra.Command, a []string) error {
+		if err := args(c, a); err != nil {
+			return err
+		}
+		return check(c, a)
+	}
+}
+
+// run runs the command line args, the program's name left out. The line is
+// read first: help and a wrong line are answered before anything else, the
+// environment and the box included (#223), since cobra decides both before
+// the hook that reads the environment (environment), and each command
+// checks the values it takes in its own argument check.
+func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	var opt client.Options
 	// Said, and nothing more: a box does not wait on a revocation server.
 	opt.NoAnswer = func(server string, err error) {
 		_, _ = fmt.Fprintf(stdout, "%s\n", line("no_answer", "server", server, "message",
@@ -147,8 +171,15 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		_, _ = fmt.Fprintf(stderr, "%s\n", line("waiting", "for", "lock", "message",
 			"waiting for this box's lock: another command of this box is running, and a box's commands write its files one at a time"))
 	}
-	e := &cli{dir: dir, opt: opt, stdin: stdin, stdout: stdout, stderr: stderr}
+	e := &cli{opt: opt, stdin: stdin, stdout: stdout, stderr: stderr}
 	root := e.tree()
+	root.PersistentPreRunE = func(c *cobra.Command, _ []string) error {
+		// A group runs nothing of its own, and help reads nothing.
+		if c.HasSubCommands() || c.Name() == "help" {
+			return nil
+		}
+		return e.environment()
+	}
 	// Cobra reads the process's own arguments when it is given none.
 	root.SetArgs(append([]string{}, args...))
 	root.SetIn(stdin)

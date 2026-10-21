@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -129,7 +130,9 @@ func Open(dir string, opt Options) (*Box, error) {
 }
 
 // newBox is how every box is made, its directory read or not: its server's
-// URL is held to checkServerURL before anything is done, and its HTTP client
+// URL is held to checkServerURL, and an identity type to the ones this client
+// makes, before anything is done, so Init writes nothing for either, and its
+// HTTP client
 // takes every request through one transport (newTransport) and follows no
 // redirect (followNone).
 func newBox(dir string, opt Options) (*Box, error) {
@@ -142,6 +145,9 @@ func newBox(dir string, opt Options) (*Box, error) {
 	}
 	if err := checkServerURL(b.base); err != nil {
 		return nil, err
+	}
+	if b.identityType != "" && !slices.Contains(protocol.IdentityTypes(), b.identityType) {
+		return nil, fmt.Errorf("this client makes no identity key of type %q: %s", b.identityType, strings.Join(protocol.IdentityTypes(), " or "))
 	}
 	if b.http == nil {
 		b.http = &http.Client{Timeout: requestTimeout}
