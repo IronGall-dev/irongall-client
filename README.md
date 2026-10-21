@@ -68,7 +68,7 @@ A `msg_id` is the 36-character id in a message's envelope, and names the message
 
 A box is the directory `~/.config/irongall/default`: `$IRONGALL_BOX` names another, `$IRONGALL_HOME` sets the directory, `$IRONGALL_BASE` names another server, by an https URL (http only on this machine). Its files are listed at the top of `client/doc.go`, and `irongall status` says what it holds. A box directory on NFS is not supported: its lock is a flock on its `state` file.
 
-- **`identity` IS the address: back it up.** To restore a box, put it alone in an empty box directory and run `irongall prekey renew`.
+- **`identity` IS the address: back it up, with the files you wrote (`allowed`, `blocked`, `policy`, `aliases`, `prekey-lifetime`).** `state` needs no backup. To restore a box, put `identity` alone in an empty box directory and run `irongall prekey renew`.
 - **An identity is an Ed25519 key, which every client verifies.** `irongall init --identity-type ecdsa-sha2-nistp256` makes the one optional type: only a box whose client verifies it can write to that box or hear from it (`PROTOCOL.md` §2, §2c).
 - **Never back up or sync `prekeys/`.** A copy undoes forward secrecy.
 - **Run `irongall recv` at least monthly.** It renews the prekey daily, and a prekey lasts 33 days. A box that runs `recv` often may set its prekeys to last less, down to `1d3h`: that is how long a stolen prekey, or an old one served to a sender new to the box, stays usable (`irongall prekey lifetime --help`).
