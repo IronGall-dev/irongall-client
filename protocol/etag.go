@@ -34,6 +34,40 @@ func IfNoneMatch(lines []string, etag string) bool {
 	return named
 }
 
+// IfMatch reports whether an If-Match field's condition is true for a page
+// whose entity-tag is etag, "" for a page that carries none, as RFC 9110
+// §13.1.1 has an origin server evaluate it and as net/http's checkIfMatch
+// does: no field is no condition; an element "*" is true; a list of
+// entity-tags is true when one is etag by the strong comparison
+// (§8.8.3.2), which a weak tag never is; and anything else is false. lines
+// are the field's lines as a request carries them (http.Header.Values).
+func IfMatch(lines []string, etag string) bool {
+	if len(lines) == 0 {
+		return true
+	}
+	v := strings.Join(lines, ",")
+	for {
+		v = strings.TrimLeft(v, " \t")
+		switch {
+		case v == "":
+			return false
+		case v[0] == ',':
+			v = v[1:]
+			continue
+		case v[0] == '*':
+			return true
+		}
+		tag, rest, ok := cutETag(v)
+		if !ok {
+			return false
+		}
+		if etag != "" && tag == etag && !strings.HasPrefix(tag, "W/") {
+			return true
+		}
+		v = rest
+	}
+}
+
 // cutETag cuts the entity-tag that s begins with, [W/] DQUOTE *etagc DQUOTE
 // (RFC 9110 §8.8.3), from what follows it, as net/http's scanETag reads one.
 func cutETag(s string) (tag, rest string, ok bool) {

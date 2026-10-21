@@ -236,7 +236,7 @@ func TestCodes(t *testing.T) {
 		CodeUnknownSender, CodeSenderRevoked, CodeSenderNotAllowed, CodeSenderKeyType, CodeAdoptKeyRefused,
 		CodeNoSuchMailbox, CodeNoSuchMessage, CodeNotRevoked,
 		CodeConflict, CodeBoxChanged, CodeStalePrekey, CodePrekeyExpired,
-		CodeRequestTimeout, CodeRevoked, CodeTooLarge,
+		CodeRequestTimeout, CodeRevoked, CodePreconditionFailed, CodeTooLarge,
 		CodeRateLimited, CodeFetchPaced, CodeRefetchSpent, CodePairFull, CodeMailboxFull, CodeMailboxBusy,
 		CodeUnavailable,
 	}

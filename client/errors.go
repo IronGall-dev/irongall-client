@@ -168,6 +168,8 @@ func (e *APIError) words() string {
 		return "the server stopped waiting for the request's body, which arrived too slowly for it: send it again"
 	case protocol.CodeRevoked:
 		return "the server answers that that box is revoked: this client takes that only from a revocation that verifies"
+	case protocol.CodePreconditionFailed:
+		return "the server's page no longer has the tag the request's If-Match named"
 	case protocol.CodeTooLarge:
 		return "too large for the server" + limit(p, ": its limit is %d")
 	case protocol.CodeRateLimited:

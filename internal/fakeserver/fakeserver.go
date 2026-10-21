@@ -651,9 +651,9 @@ func (s *Server) owner(h func(http.ResponseWriter, *http.Request, *box)) http.Ha
 }
 
 // list answers with every message, on one page, as a first page is
-// answered (PROTOCOL.md §5.1): with an ETag, the SHA-256 of its JSON, and 304
-// to an If-None-Match that names it, read as a server reads one
-// (protocol.IfNoneMatch).
+// answered (PROTOCOL.md §5.1): with an ETag, the SHA-256 of its JSON, 412 to
+// an If-Match that is false, and 304 to an If-None-Match that names it, each
+// read as a server reads one (protocol.IfMatch, protocol.IfNoneMatch).
 func (s *Server) list(w http.ResponseWriter, r *http.Request, b *box) {
 	l := protocol.MessageList{Messages: []protocol.MessageInfo{}}
 	for _, id := range b.order {
@@ -666,6 +666,10 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request, b *box) {
 	body, _ := json.Marshal(l)
 	sum := sha256.Sum256(body)
 	tag := `"` + hex.EncodeToString(sum[:16]) + `"`
+	if !protocol.IfMatch(r.Header.Values("If-Match"), tag) {
+		problem(w, protocol.CodePreconditionFailed, "the If-Match is false")
+		return
+	}
 	w.Header().Set("ETag", tag)
 	if protocol.IfNoneMatch(r.Header.Values("If-None-Match"), tag) {
 		w.Header().Set("Retry-After", PollInterval)

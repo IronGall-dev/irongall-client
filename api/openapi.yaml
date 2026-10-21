@@ -165,12 +165,12 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
         '409':
           $ref: '#/components/responses/Conflict'
         '410':
           $ref: '#/components/responses/Gone'
-        '408':
-          $ref: '#/components/responses/RequestTimeout'
         '413':
           $ref: '#/components/responses/ContentTooLarge'
         '429':
@@ -232,12 +232,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
         '409':
           $ref: '#/components/responses/Conflict'
         '410':
           $ref: '#/components/responses/Gone'
-        '408':
-          $ref: '#/components/responses/RequestTimeout'
         '413':
           $ref: '#/components/responses/ContentTooLarge'
         '429':
@@ -307,12 +307,12 @@ paths:
           $ref: '#/components/responses/Done'
         '400':
           $ref: '#/components/responses/BadRequest'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
         '409':
           $ref: '#/components/responses/Conflict'
         '410':
           $ref: '#/components/responses/Gone'
-        '408':
-          $ref: '#/components/responses/RequestTimeout'
         '413':
           $ref: '#/components/responses/ContentTooLarge'
         '429':
@@ -346,12 +346,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '404':
           $ref: '#/components/responses/NotFound'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
         '409':
           $ref: '#/components/responses/Conflict'
         '410':
           $ref: '#/components/responses/Gone'
-        '408':
-          $ref: '#/components/responses/RequestTimeout'
         '413':
           $ref: '#/components/responses/ContentTooLarge'
         '429':
@@ -415,12 +415,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
         '409':
           $ref: '#/components/responses/Conflict'
         '410':
           $ref: '#/components/responses/Gone'
-        '408':
-          $ref: '#/components/responses/RequestTimeout'
         '413':
           $ref: '#/components/responses/ContentTooLarge'
         '429':
@@ -517,12 +517,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '408':
+          $ref: '#/components/responses/RequestTimeout'
         '409':
           $ref: '#/components/responses/Conflict'
         '410':
           $ref: '#/components/responses/Gone'
-        '408':
-          $ref: '#/components/responses/RequestTimeout'
         '413':
           $ref: '#/components/responses/ContentTooLarge'
         '429':
@@ -548,6 +548,12 @@ paths:
           description: The `next_cursor` of the page before. Any other the server can read is answered as a poll; one it cannot read is `400` (§5.1).
           schema:
             $ref: '#/components/schemas/Cursor'
+        - name: If-Match
+          in: header
+          required: false
+          description: Evaluated first, as RFC 9110 §13.1.1 has an origin server evaluate it, and compared strongly; a false one is `412` (§5.1). No client needs it.
+          schema:
+            type: string
         - name: If-None-Match
           in: header
           required: false
@@ -592,6 +598,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '410':
           $ref: '#/components/responses/Gone'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -986,6 +994,23 @@ components:
                     const: 408
                   code:
                     const: request_timeout
+    PreconditionFailed:
+      description: '`precondition_failed`: the list''s `If-Match` evaluated false (RFC 9110 §13.1.1).'
+      headers:
+        Date:
+          $ref: '#/components/headers/Date'
+        Cache-Control:
+          $ref: '#/components/headers/Cache-Control'
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - properties:
+                  status:
+                    const: 412
+                  code:
+                    const: precondition_failed
     ContentTooLarge:
       description: '`too_large`, with the `limit` in bytes, or in entries for an ACL (bytes at a server that bounds no ACL''s entries).'
       headers:

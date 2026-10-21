@@ -58,6 +58,9 @@ const (
 	// 410
 	CodeRevoked Code = "revoked" // the box you named is revoked, forever
 
+	// 412
+	CodePreconditionFailed Code = "precondition_failed" // an If-Match the server evaluated false (RFC 9110 §13.1.1)
+
 	// 413
 	CodeTooLarge Code = "too_large"
 
@@ -105,7 +108,8 @@ var codes = map[Code]struct {
 	CodeStalePrekey:           {http.StatusConflict, "Stale prekey"},
 	CodePrekeyExpired:         {http.StatusConflict, "Prekey expired"},
 	CodeRequestTimeout:        {http.StatusRequestTimeout, "Request timeout"},
-	CodeRevoked:              {http.StatusGone, "Revoked"},
+	CodeRevoked:               {http.StatusGone, "Revoked"},
+	CodePreconditionFailed:    {http.StatusPreconditionFailed, "Precondition failed"},
 	CodeTooLarge:              {http.StatusRequestEntityTooLarge, "Too large"},
 	CodeRateLimited:           {http.StatusTooManyRequests, "Rate limited"},
 	CodeFetchPaced:            {http.StatusTooManyRequests, "Fetch paced"},
