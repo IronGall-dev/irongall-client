@@ -1,13 +1,15 @@
 #!/usr/bin/env bash
 # Regenerates the irongall v1 test vectors with stock tools only: bash, od, base64, fold,
-# sha256sum and ssh-keygen, plus age >= 1.3 for the one ciphertext.
+# sha256sum and ssh-keygen, plus age >= 1.3 for the two ciphertexts.
 # Everything is deterministic (Ed25519 signatures are), except what is made once and kept:
 # each certificate (ssh-keygen puts a random nonce in one, and an ECDSA signature differs each
-# time it is made) and message/a-to-b.age.
+# time it is made) and each message/*.age.
 # Inputs are in input/: every Ed25519 key is a PUBLISHED test key of RFC 8032 (§7.1: the
 # identities of A and B are TEST 1 and TEST 2, their working keys TEST 3, TEST 1024 and
 # TEST SHA(abc); §7.2: C's working key is the first Ed25519ctx test's key), C's P-256 identity
-# is the PUBLISHED test key of RFC 6979 §A.2.5, and the age recipients' secret keys were
+# is the PUBLISHED test key of RFC 6979 §A.2.5. B's and C's prekeys are the PUBLISHED test identities of the
+# C2SP age testkit (CCTV age/internal/testkit: TestHybridIdentity, TestX25519Identity), in input/b-1.pq.key and
+# input/c-1.classic.key, so the two messages decrypt with any age; the other age recipients' secret keys were
 # discarded. Every vector is judged at the time in ./now.
 set -euo pipefail
 umask 077
@@ -118,6 +120,7 @@ cert b/work-cert.pub b b-work $(good "$B")
 cert c/work-cert.pub c c-work $(good "$C")
 
 # The two boxes, their prekeys and A's revocation.
+for k in b-1.pq c-1.classic; do [ "$(age-keygen -y "input/$k.key")" = "$(cat "input/$k")" ] || { echo "input/$k is not the recipient of input/$k.key" >&2; exit 1; }; done
 statement "$A" 1 "$(cat input/a-1.pq)" "$NOT_AFTER" > a/prekey-1.txt
 statement "$A" 2 "$(cat input/a-2.classic)" "$NOT_AFTER" > a/prekey-2.txt
 statement "$B" 1 "$(cat input/b-1.pq)" "$NOT_AFTER" > b/prekey-1.txt
@@ -485,6 +488,18 @@ SEALED=$(( (1659 + n + 1023) / 1024 * 1024 ))
 { cat message/a-to-b.line message/a-to-b.sig; head -c $((SEALED - 1659 - n)) /dev/zero | tr '\0' .; } > message/a-to-b.plain
 [ -e message/a-to-b.age ] || age -r "$(cat input/b-1.pq)" -o message/a-to-b.age < message/a-to-b.plain
 [ "$(wc -c < message/a-to-b.age)" -eq "$SEALED" ] || { echo "message/a-to-b.age is not the $SEALED bytes its padding was made for" >&2; exit 1; }
+# The same from A to C, to C's X25519 prekey: to an X25519 key a file of one chunk is its plaintext and 200 bytes more.
+line "$A" "$C" "$ID_A" > message/a-to-c.line
+under a-work a/work-cert.pub "irongall-msg-v1:$C" < message/a-to-c.line > message/a-to-c.sig
+n=$(( $(wc -c < message/a-to-c.line) + $(wc -c < message/a-to-c.sig) ))
+SEALED_C=$(( (200 + n + 1023) / 1024 * 1024 ))
+{ cat message/a-to-c.line message/a-to-c.sig; head -c $((SEALED_C - 200 - n)) /dev/zero | tr '\0' .; } > message/a-to-c.plain
+[ -e message/a-to-c.age ] || age -r "$(cat input/c-1.classic)" -o message/a-to-c.age < message/a-to-c.plain
+[ "$(wc -c < message/a-to-c.age)" -eq "$SEALED_C" ] || { echo "message/a-to-c.age is not the $SEALED_C bytes its padding was made for" >&2; exit 1; }
+# Each decrypts with the published identity of its prekey to exactly what was encrypted.
+for m in a-to-b:b-1.pq a-to-c:c-1.classic; do
+  age -d -i "input/${m#*:}.key" "message/${m%:*}.age" | cmp -s - "message/${m%:*}.plain" || { echo "message/${m%:*}.age does not decrypt to its .plain with input/${m#*:}.key" >&2; exit 1; }
+done
 
 # What box B decrypts, judged at ./now: accept-* are delivered, refuse-* are not.
 GOOD_SIG=message/a-to-b.sig

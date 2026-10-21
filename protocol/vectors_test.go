@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"filippo.io/age"
 	"filippo.io/edwards25519"
 	"github.com/IronGall-dev/irongall-client/sshsig"
 	"golang.org/x/crypto/ssh"
@@ -799,27 +800,51 @@ func TestVectorPlaintexts(t *testing.T) {
 
 func TestVectorMessage(t *testing.T) {
 	now := vectorNow(t)
-	a, b := vectorIdentity(t, "a"), vectorIdentity(t, "b")
-	// Go builds the same plaintext as the stock tools did: the line, the
-	// signature under the kept certificate, and the padding for B's prekey.
-	env := &Envelope{From: a.Address(), To: b.Address(), SentAt: now, MsgID: "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b", Identity: a.Document(), Body: []byte(`"hello"`)}
-	line, sig, err := SignEnvelope(env, vectorWorker(t, "a"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !bytes.Equal(line, read(t, "message/a-to-b.line")) || !bytes.Equal(sig, read(t, "message/a-to-b.sig")) {
-		t.Errorf("SignEnvelope differs from message/a-to-b.line and .sig:\n%s%s", line, sig)
-	}
-	pt, sealed := Plaintext(line, sig, PostQuantum)
-	m := read(t, "message/a-to-b.age")
-	if !bytes.Equal(pt, read(t, "message/a-to-b.plain")) || sealed != len(m) {
-		t.Errorf("Plaintext differs from message/a-to-b.plain: %d bytes for a file of %d, want %d", len(pt), sealed, len(m))
-	}
-	if !bytes.HasPrefix(m, []byte("age-encryption.org/v1\n-> mlkem768x25519 ")) {
-		t.Error("the message is not a post-quantum age file")
-	}
-	if len(m) != PaddedSize(len(m)) {
-		t.Errorf("the message is %d bytes, not a whole number of blocks", len(m))
+	a := vectorIdentity(t, "a")
+	for _, c := range []struct {
+		to, name, key, stanza string
+		t                     KeyType
+	}{
+		{"b", "a-to-b", "b-1.pq", "mlkem768x25519", PostQuantum},
+		{"c", "a-to-c", "c-1.classic", "X25519", Classic},
+	} {
+		to := vectorIdentity(t, c.to)
+		// Go builds the same plaintext as the stock tools did: the line, the
+		// signature under the kept certificate, and the padding for the
+		// recipient's prekey.
+		env := &Envelope{From: a.Address(), To: to.Address(), SentAt: now, MsgID: "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b", Identity: a.Document(), Body: []byte(`"hello"`)}
+		line, sig, err := SignEnvelope(env, vectorWorker(t, "a"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(line, read(t, "message/"+c.name+".line")) || !bytes.Equal(sig, read(t, "message/"+c.name+".sig")) {
+			t.Errorf("%s: SignEnvelope differs from its .line and .sig:\n%s%s", c.name, line, sig)
+		}
+		pt, sealed := Plaintext(line, sig, c.t)
+		m := read(t, "message/"+c.name+".age")
+		if !bytes.Equal(pt, read(t, "message/"+c.name+".plain")) || sealed != len(m) {
+			t.Errorf("%s: Plaintext differs from its .plain: %d bytes for a file of %d, want %d", c.name, len(pt), sealed, len(m))
+		}
+		if !bytes.HasPrefix(m, []byte("age-encryption.org/v1\n-> "+c.stanza+" ")) {
+			t.Errorf("%s: the message is not an age file to one %s recipient", c.name, c.stanza)
+		}
+		if len(m) != PaddedSize(len(m)) {
+			t.Errorf("%s: the message is %d bytes, not a whole number of blocks", c.name, len(m))
+		}
+		// And it decrypts, with the published test identity of its prekey
+		// (C2SP's age testkit), to exactly that plaintext.
+		ids, err := age.ParseIdentities(bytes.NewReader(read(t, "input/"+c.key+".key")))
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := age.Decrypt(bytes.NewReader(m), ids...)
+		if err != nil {
+			t.Errorf("%s: %v", c.name, err)
+			continue
+		}
+		if got, err := io.ReadAll(r); err != nil || !bytes.Equal(got, pt) {
+			t.Errorf("%s: decrypts to other bytes than its .plain (%v)", c.name, err)
+		}
 	}
 }
 
