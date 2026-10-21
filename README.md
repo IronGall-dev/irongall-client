@@ -143,7 +143,7 @@ bash sh/irongall.sh recv                    # a JSON line for each message, as t
 bash sh/irongall.sh prekey renew            # at least monthly
 ```
 
-It needs bash ≥ 4, age, OpenSSH ≥ 9.1 linked to OpenSSL, curl ≥ 7.84, jq ≥ 1.7.1, iconv, and the GNU coreutils, sed, grep and awk; it is held to the test vectors on those, and on no other platform's tools. `IG_BASE` names another server.
+It needs bash ≥ 4, age, OpenSSH ≥ 9.1 linked to OpenSSL, curl ≥ 7.84, jq ≥ 1.7.1, iconv, coreutils, and GNU sed, grep and awk; it is tested on uutils' coreutils, as Ubuntu 26.04 ships them, and held to the test vectors on those tools, and on no other platform's. `IG_BASE` names another server.
 
 **age 1.2 has no post-quantum encryption.** There, make the box with `init --no-pq`; it can write only to `--no-pq` boxes, such as the second echo box:
 
@@ -190,12 +190,12 @@ Cloudflare terminates TLS for irongall.dev today, so it can do the same. Neither
 ## Tests
 
 ```sh
-go test ./...                                   # everything, with no server and no network
+go test -count=1 -timeout 20m ./...             # everything, with no server and no network
 go test ./client -run TestForgeries -v          # the forgeries, one by one
-go test ./sh -v                                 # the stock-tools client (sh/test.sh <empty dir> runs without Go)
+go test -count=1 ./sh -v                        # the stock-tools client (sh/test.sh <empty dir> runs without Go)
 ```
 
-**An `ok` for `./sh` does not say the script was tested.** Its tests need bash, ssh-keygen, jq, iconv and coreutils, and skip naming the one missing: `go test ./sh -v` shows a `SKIP` line. Where the local age is older than 1.3, they build the one `go.mod` names (`go tool age`).
+**An `ok` for `./sh` does not say the script was tested.** Its tests need bash, ssh-keygen, curl, jq, bc, iconv and coreutils, and skip naming the one missing: `go test ./sh -v` shows a `SKIP` line. Where the local age is older than 1.3, they build the one `go.mod` names (`go tool age`); `sh/test.sh` run by hand then tests `--no-pq` boxes only, and says so.
 
 **What each test holds, claim by claim, is `SECURITY.md` § Checking the claims yourself.**
 

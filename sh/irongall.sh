@@ -547,7 +547,7 @@ ig_post(){ # <address> <envelope stem> → seals it and POSTs it; on 409 stale_p
   esac
   return 1
 }
-ig_receipt(){ # → 0 only for a receipt in $IG/receipt.json that names the ciphertext this box posted, $IG/seal.age (its id the SHA-256 of it, PROTOCOL.md §4.5), and whose times are times. Anything else is no receipt: the entry stays in the outbox
+ig_receipt(){ # → 0 only for a receipt in $IG/receipt.json that names the ciphertext this box posted, $IG/seal.age (its id the SHA-256 of it, PROTOCOL.md §4.5), and whose times are times. Anything else is no receipt, and nothing is recorded as sent
   ig_shape "$IG/receipt.json" receipt && jq -e --arg h "$(sha256sum < "$IG/seal.age" | cut -c1-64)" '.id == $h and all(.received_at, .expires_at; test("\\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z\\z"))' "$IG/receipt.json" > /dev/null 2>&1 &&      # compared in jq: $(…) drops trailing LFs and every NUL, so a time is held to its form there before ig_time reads it
     ig_time "$(jq -r '.received_at | strings' "$IG/receipt.json")" > /dev/null && ig_time "$(jq -r '.expires_at | strings' "$IG/receipt.json")" > /dev/null && return 0
   ig_refuse "the server's receipt does not name the ciphertext this box posted, or its times are not times: it is not recorded as sent"
