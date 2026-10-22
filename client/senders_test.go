@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
@@ -270,6 +271,61 @@ func TestAnACLReplacesWhatTheServerHolds(t *testing.T) {
 	data, _ := stateOf(b, "acl.json")
 	if err := protocol.Unmarshal(data, &took); err != nil || len(took.Deny) != 2 {
 		t.Fatalf("the ACL kept: %s, %v", data, err)
+	}
+}
+
+// An ACL another writer put at the server, another machine of the box or
+// whoever holds its pass, is read at the box's next renewal and replaced by
+// the box's own, which Receive reports; until then nothing asks the server
+// about it, neither a drain nor a send. A renewal that finds the box's own
+// reads it and sends nothing (IronGall-dev/irongall-client#360).
+func TestARenewalReplacesAnACLAnotherWriterPut(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a, b := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+	if _, err := b.Block(ctx, a.Address()); err != nil {
+		t.Fatal(err)
+	}
+	own := e.srv.ACL(b.Address())
+	var calls []string
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.URL.Path == "/v1/"+b.Address().String()+"/acl" {
+			calls = append(calls, r.Method)
+		}
+		next.ServeHTTP(w, r)
+	})
+	took := func() string {
+		t.Helper()
+		data, _ := stateOf(b, "acl.json")
+		return string(data)
+	}
+	kept := took()
+
+	e.clock.Add(25 * time.Hour)
+	if res := receive(t, b); res.Renewed == nil || res.ACLReplaced || res.ACLErr != nil || strings.Join(calls, " ") != "GET" {
+		t.Fatalf("a renewal that finds the box's own ACL: %+v, calls %v", res, calls)
+	}
+
+	// Another writer pauses the box. A drain and a send ask nothing of it.
+	pause := &protocol.ACL{Deny: protocol.ACLList{Any: true}}
+	e.srv.PutACL(b.Address(), pause)
+	calls = nil
+	if res := receive(t, b); res.Renewed != nil || res.ACLReplaced {
+		t.Fatalf("a drain with no renewal due: %+v", res)
+	}
+	send(t, b, a, "a send while paused")
+	if len(calls) != 0 || !e.srv.ACL(b.Address()).SameLists(pause) {
+		t.Fatalf("a drain and a send called %v, and the server holds %+v", calls, e.srv.ACL(b.Address()))
+	}
+
+	// The next renewal reads it, and puts the box's own in its place.
+	e.clock.Add(25 * time.Hour)
+	res := receive(t, b)
+	if res.Renewed == nil || !res.ACLReplaced || res.ACLErr != nil || strings.Join(calls, " ") != "GET PUT" {
+		t.Fatalf("the renewal after another writer's ACL: %+v, calls %v", res, calls)
+	}
+	if !e.srv.ACL(b.Address()).SameLists(own) || took() != kept {
+		t.Fatalf("the server holds %+v, the box keeps %s; want %+v, %s", e.srv.ACL(b.Address()), took(), own, kept)
 	}
 }
 

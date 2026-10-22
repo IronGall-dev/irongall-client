@@ -308,10 +308,13 @@ func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration, headers 
 	ctx := c.Context()
 	deadline := time.Now().Add(wait)
 	// renewErr is a renewal that was due and failed, and that no later
-	// Receive of this run made good; aclErr the same for the box's ACL; and
-	// notMade what the box's last read of itself served that it did not make.
+	// Receive of this run made good; aclErr the same for the box's ACL;
+	// notMade what the box's last read of itself served that it did not make;
+	// and replaced that a renewal of this run found an ACL at the server that
+	// the box had not sent, and replaced it.
 	var renewErr, aclErr error
 	var notMade *client.NotMade
+	replaced := false
 	for {
 		res, err := b.Receive(ctx)
 		if res != nil {
@@ -360,6 +363,10 @@ func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration, headers 
 			if res.ACLErr != nil {
 				lines = append(lines, line("acl_not_sent", failure(fmt.Errorf("this box's ACL has changed and was not sent to its server: the next recv sends it, and irongall status says whether it went through: %w", res.ACLErr))...))
 			}
+			if res.ACLReplaced {
+				replaced = true
+				lines = append(lines, line("acl_replaced", "message", "this box's server held an ACL other than the one this box last sent it, which another machine of this box, someone holding its pass or the server itself wrote: this box sent its own in its place"))
+			}
 			// Every delivery is also kept in inbox/, and every refusal in
 			// quarantine/, so a failed write to stdout loses nothing.
 			for _, l := range lines {
@@ -379,7 +386,7 @@ func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration, headers 
 			e.say(line("waiting", append([]any{"for", "server"}, failure(err)...)...))
 			pause = ae.RetryAfter
 		} else if err != nil || len(res.Delivered) > 0 || !time.Now().Before(deadline) {
-			if err == nil && (renewErr != nil || aclErr != nil || notMade != nil) {
+			if err == nil && (renewErr != nil || aclErr != nil || notMade != nil || replaced) {
 				return &needsALook{}
 			}
 			return err

@@ -98,6 +98,11 @@ type Result struct {
 	// was not sent ([Box.SyncACL]). The drain went ahead, and the next
 	// Receive sends it.
 	ACLErr error
+	// ACLReplaced reports that, at this Receive's renewal, the box's server
+	// held an ACL other than the one this box last sent it, which another
+	// machine of the box, whoever holds its pass or the server itself wrote,
+	// and that the box sent its own in its place (checkACL).
+	ACLReplaced bool
 	// NotMade is a statement the box's server served in its name, at the
 	// box's last read of itself, that the box did not make, or nil
 	// ([NotMade]).
@@ -129,7 +134,8 @@ func (r *Result) Again() time.Duration {
 // Receive, or any other command that writes the box, waits for it.
 //
 // First it renews the prekey if the current one is more than a day old, so
-// a box received at least monthly never lapses. A drain that empties the box
+// a box received at least monthly never lapses, and after a renewal it reads
+// the ACL its server holds, and replaces one it did not send (checkACL). A drain that empties the box
 // then deletes the retired prekeys no mail can still need (see
 // [Box.dropRetired]): all but the newest. And once the server has answered
 // the drain's list, so has taken a pass dated by this machine's clock, the
@@ -151,7 +157,11 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 	if err := b.finished(); err != nil {
 		return &Result{}, err
 	}
-	aclErr := b.syncACL(ctx)
+	// After a renewal the ACL the server holds is read too, about once a
+	// day, so one that another writer put there lasts until the box's next
+	// renewal at most; at any other Receive only a change of the box's own
+	// is sent, with no read.
+	replaced, aclErr := b.aclAt(ctx, renewed)
 	// One Result for the command, which a second drain adds to: what the first
 	// landed and acked is said, whatever stopped it (#332).
 	res := &Result{}
@@ -163,7 +173,9 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 	// box read and keep (ownCertRevoked).
 	if err != nil && renewed == nil && renewErr == nil && b.mendable(err) {
 		if renewed, renewErr = b.renewNow(ctx); renewed != nil {
-			aclErr = b.syncACL(ctx)
+			var again bool
+			again, aclErr = b.aclAt(ctx, renewed)
+			replaced = replaced || again
 			err = b.drain(ctx, asked, res)
 			// A server that answers the drain the same after the renewal it
 			// took was not mended by it: the next such renewal waits
@@ -177,7 +189,7 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 			}
 		}
 	}
-	res.Renewed, res.RenewErr, res.ACLErr = renewed, renewErr, aclErr
+	res.Renewed, res.RenewErr, res.ACLErr, res.ACLReplaced = renewed, renewErr, aclErr, replaced
 	if nm, nerr := b.notMade(); nerr != nil && err == nil {
 		err = nerr
 	} else {
@@ -197,6 +209,16 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 		}
 	}
 	return res, err
+}
+
+// aclAt sends the box's ACL as a Receive does: checked against what the
+// server holds when the Receive renewed (checkACL), and otherwise sent only
+// when the box's own changed (syncACL).
+func (b *Box) aclAt(ctx context.Context, renewed *protocol.Prekey) (bool, error) {
+	if renewed == nil {
+		return false, b.syncACL(ctx)
+	}
+	return b.checkACL(ctx)
 }
 
 // mendable reports whether a drain's error is one a renewal mends: the

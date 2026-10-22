@@ -865,6 +865,17 @@ func aclTag(acl *protocol.ACL) string {
 	return `"` + hex.EncodeToString(sum[:16]) + `"`
 }
 
+// PutACL replaces a box's ACL as another writer of it does, another
+// machine of the box or whoever holds its pass, with nothing deleted: a
+// test's way to change what the box last sent.
+func (s *Server) PutACL(a protocol.Address, acl *protocol.ACL) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if b := s.boxes[a]; b != nil {
+		b.acl = acl
+	}
+}
+
 // ACL returns a box's sender ACL, nil if it has none.
 func (s *Server) ACL(a protocol.Address) *protocol.ACL {
 	s.mu.Lock()

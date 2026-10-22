@@ -57,8 +57,9 @@ server's. Help is the one thing printed as text.
 Exit status: 0, done. 1, the command failed. 2, the command line was wrong
 and nothing ran. 3, the command did its work and the box needs a look: from
 recv, mail was received as printed and the prekey, due for renewal, was not
-renewed ("renewal_failed"), or the box's ACL was not sent to its server
-("acl_not_sent"); from status, its "attention" list is not empty. recv prints
+renewed ("renewal_failed"), the box's ACL was not sent to its server
+("acl_not_sent"), or its server held an ACL the box had not sent, which it
+replaced ("acl_replaced"); from status, its "attention" list is not empty. recv prints
 a "refused" line for each message it refused, keeping it in quarantine/, a
 "held" line for each it held in held/, and a "dropped" line for each from a
 sender this box blocked: none of them changes its exit status, since any

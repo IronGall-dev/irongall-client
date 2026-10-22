@@ -497,7 +497,9 @@ func (b *Box) aclPending() (bool, error) {
 // replaced, not merged, and a precondition would only add a read and a 412
 // to end the same way. One the server answers box_changed (the box changed
 // while it handled the request) is sent again as it is, once. The server's
-// answer must be the ACL sent, and is kept in acl.json.
+// answer must be the ACL sent, and is kept in acl.json. It reads nothing of
+// the server first, so it does not see an ACL another writer put there since:
+// [Box.Receive] reads that at each renewal (checkACL).
 func (b *Box) SyncACL(ctx context.Context) error {
 	return b.lockedDo(ctx, func() error { return b.syncACL(ctx) })
 }
@@ -514,6 +516,62 @@ func (b *Box) syncACL(ctx context.Context) error {
 	if want.SameLists(took) {
 		return nil
 	}
+	return b.sendACL(ctx, want)
+}
+
+// checkACL is syncACL with the ACL the box's server holds read first, as
+// Receive does after each renewal it makes, about once a day: another
+// writer may have put one since this box last sent its own, another machine
+// of the box, whoever holds its pass (PROTOCOL.md §6.1b) or the server
+// itself, and syncACL,
+// which compares the box's files with what it last sent, would never see
+// it. It reads GET …/acl and compares the lists with those the box's files
+// make, never a tag, whose making is the server's own; where they differ it
+// sends the box's own, as syncACL does, with no If-Match. It reports whether
+// the server held an ACL other than the one this box last sent, which this
+// box has now replaced with its own. A read that fails is no answer: the box
+// sends what syncACL would, and the next renewal reads again. The read is the
+// one call it adds, to a renewal and to nothing else.
+func (b *Box) checkACL(ctx context.Context) (bool, error) {
+	want, err := b.wantACL()
+	if err != nil {
+		return false, err
+	}
+	took, err := b.tookACL()
+	if err != nil {
+		return false, err
+	}
+	held, err := b.heldACL(ctx)
+	if err != nil {
+		return false, b.syncACL(ctx)
+	}
+	switch {
+	case !want.SameLists(held):
+		if err := b.sendACL(ctx, want); err != nil {
+			return false, err
+		}
+		return !held.SameLists(took), nil
+	case !want.SameLists(took):
+		// The server already holds what the box's files say: it is kept as
+		// taken, and nothing is sent.
+		return false, b.keepTook(held)
+	}
+	return false, nil
+}
+
+// heldACL reads the ACL the box's server holds: one allowing everyone and
+// denying nothing for a box that has put none.
+func (b *Box) heldACL(ctx context.Context) (*protocol.ACL, error) {
+	var d protocol.ACLDocument
+	if _, err := b.owner(ctx, http.MethodGet, b.boxPath("/acl"), nil, &d); err != nil {
+		return nil, err
+	}
+	return protocol.CheckACL(&d, 0)
+}
+
+// sendACL sends the box's ACL, want, and keeps the server's answer as the
+// ACL it took: once more after a box_changed, as it is.
+func (b *Box) sendACL(ctx context.Context, want *protocol.ACL) error {
 	got, err := b.putACL(ctx, want)
 	if code(err) == protocol.CodeBoxChanged {
 		got, err = b.putACL(ctx, want)
@@ -521,7 +579,12 @@ func (b *Box) syncACL(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("the server did not take this box's ACL: %w", err)
 	}
-	data, err := json.Marshal(got.Document())
+	return b.keepTook(got)
+}
+
+// keepTook keeps acl as the ACL the box's server last took.
+func (b *Box) keepTook(acl *protocol.ACL) error {
+	data, err := json.Marshal(acl.Document())
 	if err != nil {
 		return err
 	}

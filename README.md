@@ -94,6 +94,7 @@ Forward secrecy, padding, accounts and the rest: `PROTOCOL.md`.
 | `held`, `dropped`, `duplicate` | `recv` | `id`; `held` (kept in `held/`) has `from`. `dropped` is mail from a sender this box blocked |
 | `paced`, `more` | `recv` | the rest is still on the server: run `recv` again, after `retry_after` seconds for `paced` |
 | `renewal_failed`, `acl_not_sent` | `recv`; `acl_not_sent` also `send` and `outbox flush`, which post when the ACL the server last took admits the reply | the members of an `error` line |
+| `acl_replaced` | `recv` | `message`: the server held an ACL this box had not sent, written by another machine of it, someone holding its pass or the server, and the box's own replaced it |
 | `prekey_not_made` | `recv`, `prekey renew` | `serial`, `certificate_serial`, `at`, `message`: at the box's read of itself at `at`, its server served a prekey statement in its name that the box did not make. A box restored from its identity alone meets the lost machine's; otherwise someone may hold a working key, and `irongall cert revoke-earlier` ends it. `status` says so too, until a read serves the box's own |
 | `box_unread` | `cert revoke-earlier` | the members of an `error` line: the box's own server could not be read, or served what the box does not take, and the remedy went on from what the box knows |
 | `sent` | `send`, `outbox flush` | `id`, `msg_id`, `to` |
@@ -108,7 +109,7 @@ The rest are named for what they report: `status`, `held_sender`, `allowed`, `al
 | `0` | Done. Refused and held mail do not change this, because any sender can cause either |
 | `1` | It failed |
 | `2` | The command line was wrong, so nothing ran. Help that was asked for exits `0` |
-| `3` | Done, and the box needs a look: from `recv`, mail was received, and the prekey was not renewed or the box's ACL was not sent to its server. Later runs retry; if `irongall status` still reports it a day later, the server is refusing the change or cannot be reached. From `status`, its `attention` list is not empty |
+| `3` | Done, and the box needs a look: from `recv`, mail was received, and the prekey was not renewed, the box's ACL was not sent to its server, or the server held an ACL the box had not sent. Later runs retry; if `irongall status` still reports it a day later, the server is refusing the change or cannot be reached. From `status`, its `attention` list is not empty |
 
 A refusal's words are this client's own, never text from the message, its sender or the server.
 

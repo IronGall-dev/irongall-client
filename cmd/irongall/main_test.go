@@ -623,6 +623,44 @@ func TestTheLink(t *testing.T) {
 	}
 }
 
+// recv says when its renewal found at the server an ACL the box had not sent,
+// which it replaced with its own, in a line and by its exit status.
+func TestRecvSaysItReplacedAnACL(t *testing.T) {
+	ctx := context.Background()
+	// The box is made 25 hours ago, by a clock the server shares, so its
+	// prekey is due for renewal at the recv.
+	var ago atomic.Int64
+	ago.Store(int64(25 * time.Hour))
+	clock := func() time.Time { return time.Now().Add(-time.Duration(ago.Load())) }
+	srv := fakeserver.New(t, clock)
+	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, Now: clock}, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ago.Store(0)
+	a, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Block(ctx, a.Address()); err != nil {
+		t.Fatal(err)
+	}
+	srv.PutACL(b.Address(), &protocol.ACL{Deny: protocol.ACLList{Any: true}}) // another writer's pause
+	t.Setenv("IRONGALL_HOME", b.Dir())
+	t.Setenv("IRONGALL_BASE", srv.URL)
+	var out, errs bytes.Buffer
+	var look *needsALook
+	if err := do(ctx, "recv", nil, nil, &out, &errs); !errors.As(err, &look) {
+		t.Fatalf("an ACL replaced must give exit status 3, not %v", err)
+	}
+	if ls := printed(t, out.String()); typesOf(ls) != "acl_replaced" || !strings.Contains(ls[0]["message"].(string), "this box sent its own in its place") || errs.Len() != 0 {
+		t.Fatalf("stdout %q, stderr %q", out.String(), errs.String())
+	}
+	if acl := srv.ACL(b.Address()); !acl.Allow.Any || !acl.Deny.Has(a.Address()) || acl.Deny.Any {
+		t.Fatalf("the server holds %+v", acl)
+	}
+}
+
 // recv says when the prekey was due for renewal and the renewal failed, in a
 // line and by its exit status, and still prints the mail it received.
 func TestRecvSaysARenewalFailed(t *testing.T) {
