@@ -218,6 +218,17 @@ pv bad-a-semicolon-between-parameters 'irongall-pass address="%s"; not_after="%s
 pv bad-a-line-feed-at-the-end 'irongall-pass address="%s", not_after="%s", signature="%s"\n' "$A" "$PT" "$PS"
 pv bad-a-quoted-name 'irongall-pass "address"="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
 pv bad-no-equals-sign 'irongall-pass address "%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
+pv bad-a-value-neither-a-token-nor-quoted 'irongall-pass address=@%s, not_after="%s", signature="%s"' "$A" "$PT" "$PS"
+pv bad-a-control-character-in-a-quoted-value 'irongall-pass address="\001%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
+pv bad-an-address-of-63-hex 'irongall-pass address="%s", not_after="%s", signature="%s"' "${A:0:63}" "$PT" "$PS"
+pv bad-not-after-not-a-time 'irongall-pass address="%s", not_after="%s", signature="%s"' "$A" 2026-13-10T00:10:00Z "$PS" # month 13, quoted, so it is read to its form
+pv bad-the-signature-with-padding-bits-set 'irongall-pass address="%s", not_after="%s", signature="%sLR=="' "$A" "$PT" "${PS:0:${#PS}-4}" # the pattern's, and no writer's: "LQ==" is that byte (RFC 4648 §3.5)
+# The longest a value may be (§6.1b: the form a client writes with a signature of the most any identity key type
+# allows, 4,096 bytes), made so with empty list elements, one for each byte that signature's base64 is longer than
+# A's, and a byte longer.
+printf -v PC '%*s' $(( (4096 + 2) / 3 * 4 - ${#PS} )) ''
+pv ok-as-long-as-a-pass-can-be 'irongall-pass address="%s", not_after="%s", signature="%s"%s' "$A" "$PT" "$PS" "${PC// /,}"
+pv bad-a-byte-longer-than-a-pass-can-be 'irongall-pass address="%s", not_after="%s", signature="%s"%s,' "$A" "$PT" "$PS" "${PC// /,}"
 
 # Certificates every implementation must refuse for box A at ./now, each with a signature made under
 # it over a/prekey-1.txt in A's prekey namespace: the signature itself is good, the certificate is not.
