@@ -142,7 +142,10 @@ func NewEnvelope(from, to Address, body string, now time.Time) (*Envelope, error
 // nested at most MaxDepth − 1 deep, no noncharacter, and no number past
 // binary64. It is sent compact,
 // its members in the order given and its strings and numbers as written, but
-// that the line escapes U+2028 and U+2029, as in every string it carries.
+// that the line escapes U+2028 and U+2029, as encoding/json does in every
+// string for JavaScript (RFC 8259 §12), which an envelope never is: the same
+// value, and a reader verifies the line as it decrypted it (PROTOCOL.md
+// §4.4). The script's jq writes them raw.
 func NewJSONEnvelope(from, to Address, body []byte, now time.Time) (*Envelope, error) {
 	if why := checkText(body, false, MaxDepth-1); why != "" {
 		return nil, fmt.Errorf("the body is not a JSON value its reader takes (PROTOCOL.md §0b): %s", why)

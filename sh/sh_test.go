@@ -435,8 +435,8 @@ var envelopeFive = map[string]bool{
 // sameLine holds the script's delivered line to the Go client's, byte for
 // byte, or, where jq spells a number or a string otherwise, to the Go
 // client's line in jq's spelling, which ig_line writes from it: the one
-// difference the two may have, a known variance (PROTOCOL.md §0b). It reports
-// whether the spelling differed.
+// difference the two may have, which guards none of the five (AGENTS.md § The
+// shell client). It reports whether the spelling differed.
 func sameLine(t *testing.T, goLine []byte, shLine string) (respelled bool, ok bool) {
 	t.Helper()
 	if string(goLine) == shLine {
@@ -454,7 +454,7 @@ func sameLine(t *testing.T, goLine []byte, shLine string) (respelled bool, ok bo
 // the same members in the same order (a sender sends them in the order
 // given, PROTOCOL.md §4.2, and jq keeps it), each string the same once
 // unescaped, and each number the same decimal value, a zero's sign included.
-// That allows jq's spelling and nothing else (§0b). sameLine's reference is
+// That allows jq's spelling and nothing else. sameLine's reference is
 // the script's own ig_line, so this is the check that holds the script to
 // the Go client where ig_line itself went wrong for both: read as binary64,
 // 9007199254740993 and 9007199254740992 would be one value.
@@ -524,9 +524,9 @@ func TestVectorsEnvelope(t *testing.T) {
 			case !ok || !sameValue(want, line):
 				t.Errorf("%s: the script delivers %s, the Go client %s", name, line, want)
 			case respelled:
-				t.Logf("%s: a known variance: the script delivers it in jq's spelling, %s, where the Go client delivers %s", name, line, want)
+				t.Logf("%s: the script delivers it in jq's spelling, %s, where the Go client delivers %s: a difference that guards none of the five", name, line, want)
 			case name == "accept-body-jq-spells-otherwise":
-				t.Errorf("%s: control: the script delivers it as the Go client does, so no run meets the variance", name)
+				t.Errorf("%s: control: the script delivers it as the Go client does, so no run meets the difference", name)
 			}
 		case envelopeFive[name]:
 			if err == nil {
@@ -668,7 +668,7 @@ func TestVectorsPlain(t *testing.T) {
 		if sender != signed.Sender.Address().String() || !ok || !sameValue(want, line) {
 			t.Errorf("%s: the script delivers %s from %s, the Go client %s from %s", name, line, sender, want, signed.Sender.Address())
 		} else if respelled {
-			t.Logf("%s: a known variance: the script delivers it in jq's spelling, %s, where the Go client delivers %s", name, line, want)
+			t.Logf("%s: the script delivers it in jq's spelling, %s, where the Go client delivers %s: a difference that guards none of the five", name, line, want)
 		}
 		codes["delivered"]++
 	}

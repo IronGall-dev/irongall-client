@@ -17,8 +17,9 @@ import (
 
 // A box's prekeys are valid for 33 days, or for the shorter lifetime its
 // owner sets, down to a day and an hour (PROTOCOL.md §6.4). Each client
-// records when it signed a prekey, and the box times its renewals and its
-// deletions by that record, never by the statement's not_after.
+// records when it signed a prekey, and the box times its renewals and the
+// early deletion of its retired prekeys by that record, never by the
+// statement's not_after, which times a retired prekey's latest deletion.
 
 // lifetimeOf sets b's prekey lifetime.
 func lifetimeOf(t *testing.T, b *client.Box, d time.Duration) {

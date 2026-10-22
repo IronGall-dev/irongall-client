@@ -33,6 +33,15 @@ const maxResponse = 16 << 20
 // it becomes.
 const maxWaitSeconds = 24 * 60 * 60
 
+// ciphertext is a message's ciphertext as the whole body of a send or of a
+// fetch: the age file's exact bytes, never JSON (PROTOCOL.md §4.5, §5.2). As
+// what a fetch reads into, size is the length its list gives, and a body of
+// any other length is no answer.
+type ciphertext struct {
+	bytes []byte
+	size  int64
+}
+
 // call makes one API request of this box's server. A request body is sent as
 // JSON, or as it is when it is a message's ciphertext; a 2xx response body is
 // read into out when out is not nil: as JSON, or as the ciphertext's bytes.
@@ -44,22 +53,7 @@ const maxWaitSeconds = 24 * 60 * 60
 // [checkServerURL] refuses is called not at all. It returns the response,
 // whose body is consumed.
 func (b *Box) call(ctx context.Context, method, path string, in any, hdr http.Header, out any) (*http.Response, error) {
-	return b.callAt(ctx, b.base, method, path, in, hdr, out)
-}
-
-// ciphertext is a message's ciphertext as the whole body of a send or of a
-// fetch: the age file's exact bytes, never JSON (PROTOCOL.md §4.5, §5.2). As
-// what a fetch reads into, size is the length its list gives, and a body of
-// any other length is no answer.
-type ciphertext struct {
-	bytes []byte
-	size  int64
-}
-
-// callAt is call, of the server at base: this box's own, or a revocation
-// server, which is sent no pass.
-func (b *Box) callAt(ctx context.Context, base, method, path string, in any, hdr http.Header, out any) (*http.Response, error) {
-	if err := checkServerURL(base); err != nil {
+	if err := checkServerURL(b.base); err != nil {
 		return nil, err
 	}
 	var body io.Reader
@@ -75,7 +69,7 @@ func (b *Box) callAt(ctx context.Context, base, method, path string, in any, hdr
 		}
 		body, contentType = bytes.NewReader(j), "application/json"
 	}
-	req, err := http.NewRequestWithContext(ctx, method, base+path, body)
+	req, err := http.NewRequestWithContext(ctx, method, b.base+path, body)
 	if err != nil {
 		return nil, err
 	}

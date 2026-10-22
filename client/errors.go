@@ -285,8 +285,8 @@ func (e *APIError) clock() string {
 		e.Dated.Format(protocol.TimeLayout), e.Read.Format(protocol.TimeLayout), how, slow/time.Minute, fast/time.Minute, fast/time.Minute)
 }
 
-// codeGrammar is the grammar of a code, as a quarantined message's .reason
-// file starts with one.
+// codeGrammar is the grammar of a code, as the box's state keeps one for
+// each message quarantine/ holds (quarantineRecord).
 var codeGrammar = regexp.MustCompile(`\A[a-z0-9_]{1,40}\z`)
 
 // code is the error's code, if err is an [APIError]: read where the call

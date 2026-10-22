@@ -467,7 +467,7 @@ case_env accept-case-variant-key "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\
 case_env refuse-version-string "{\"v\":\"1\",\"from\":\"%s\",\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
 case_env refuse-to-uppercase "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$(printf '%s' "$B" | tr a-f A-F)"
 case_env refuse-from-null "{\"v\":1,\"from\":null,\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$B" # null is a member left out: it names no sender
-# v is an integer member, written in digits alone (PROTOCOL.md §0b). jq gives back 1e0 as 1, so the script takes that one: a known variance.
+# v is an integer member, written in digits alone (PROTOCOL.md §0b). jq gives back 1e0 as 1, so the script takes that one: how jq reads a number, a difference that guards none of the five (AGENTS.md § The shell client).
 case_env refuse-version-written-with-a-fraction "{\"v\":1.0,\"from\":\"%s\",\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
 case_env refuse-version-written-with-an-exponent "{\"v\":1e0,\"from\":\"%s\",\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
 case_env refuse-version-a-decimal-just-above-1 "{\"v\":1.00000000000000001,\"from\":\"%s\",\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
@@ -485,7 +485,7 @@ case_env refuse-key-twice-in-the-body "$E{\"x\":1,\"x\":2}}" "$A" "$B"
 case_env refuse-nan-in-the-body "${E}NaN}" "$A" "$B"
 case_env refuse-leading-zero-in-the-body "$E[01]}" "$A" "$B"
 case_env refuse-number-past-binary64-in-the-body "$E{\"n\":1e400}}" "$A" "$B"
-case_env accept-body-jq-spells-otherwise "$E{\"n\":1e5,\"s\":\"a\\\\/b \\\\u00e9\"}}" "$A" "$B" # the same value in another spelling from the script: a known variance (PROTOCOL.md §0b)
+case_env accept-body-jq-spells-otherwise "$E{\"n\":1e5,\"s\":\"a\\\\/b \\\\u00e9\"}}" "$A" "$B" # the same value, which the script delivers in jq's spelling: a difference that guards none of the five (AGENTS.md § The shell client)
 case_env accept-body-more-precise-than-binary64 "$E{\"b\":{\"z\":1,\"a\":2},\"n\":9007199254740993,\"m\":-0}}" "$A" "$B" # delivered as it is: a number binary64 does not hold exactly, a zero's sign, members in the order given
 case_env refuse-noncharacter-in-the-body "$E\"\\\\uffff\"}" "$A" "$B"
 case_env refuse-above-u10ffff-in-the-body "$E\"\xf4\x90\x80\x80\"}" "$A" "$B"
@@ -590,7 +590,7 @@ jt ok-numbers '{"a":[0,-0,1.5,-1e10,1E+2,0.5e-3,9007199254740993]}' # outside a 
 jt ok-number-the-largest-binary64 '{"a":[1.7976931348623157e308,-1.7976931348623157e308]}'
 jt ok-number-too-small-for-binary64 '{"a":[1e-400,2e-324]}' # a binary64 reader reads each as zero
 jt bad-number-past-binary64 '{"a":1e400}' # RFC 7493 §2.2's own example
-jt bad-number-just-past-binary64 '{"a":1.797693134862315808e308}' # jq reads it through 17 digits, as the largest binary64: a known variance
+jt bad-number-just-past-binary64 '{"a":1.797693134862315808e308}' # jq reads it through 17 digits, as the largest binary64: how jq reads a number, a difference that guards none of the five (AGENTS.md § The shell client)
 jt bad-number-just-past-binary64-in-18-digits '{"a":1.79769313486231581e308}' # the same
 jt bad-number-just-past-binary64-negative '{"a":-1.797693134862315808e308}' # the same
 jt ok-escapes '{"a":"\\u0000\\\\\\"\\/\\b\\f\\n\\r\\t\\u00e9"}'
@@ -678,7 +678,7 @@ at list-bad-count-negative '{"count":-1,"messages":[],"next_cursor":null}'
 at list-bad-count-above-2-53 '{"count":9007199254740992,"messages":[],"next_cursor":null}'
 at list-bad-count-a-fraction '{"count":0.5,"messages":[],"next_cursor":null}'
 at list-bad-count-written-with-a-fraction '{"count":1.0,"messages":[],"next_cursor":null}' # an integer member is written as one
-at list-bad-count-written-with-an-exponent '{"count":1e0,"messages":[],"next_cursor":null}' # jq gives it back as 1, so the script takes it: a known variance
+at list-bad-count-written-with-an-exponent '{"count":1e0,"messages":[],"next_cursor":null}' # jq gives it back as 1, so the script takes it: how jq reads a number, a difference that guards none of the five (AGENTS.md § The shell client)
 at list-bad-size-a-string '{"count":1,"messages":[{"id":"%s","from":"%s","size":"2048"}],"next_cursor":null}' "$HASH" "$A"
 at list-bad-messages-an-object '{"count":0,"messages":{},"next_cursor":null}'
 at list-bad-cursor-a-number '{"count":0,"messages":[],"next_cursor":7}'

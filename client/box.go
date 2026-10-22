@@ -496,9 +496,9 @@ func (b *Box) loadIdentity() error {
 
 // prekeyRecord is a prekey statement this box signed, as the prekeys bucket
 // keeps it by its serial: the statement, its signature, and when it was
-// signed, which is what the box times its renewals and deletions by
-// ([Box.made]), in one value, so the three are never out of line (#192). Its
-// key is prekeys/<serial>.agekey.
+// signed, which is what the box times its renewals and the early deletion of
+// its retired prekeys by ([Box.made]; PROTOCOL.md §6.4), in one value, so the
+// three are never out of line (#192). Its key is prekeys/<serial>.agekey.
 type prekeyRecord struct {
 	Statement protocol.Bytes `json:"statement"`
 	Signature protocol.Bytes `json:"signature"`

@@ -518,9 +518,10 @@ func (b *Box) aclPending() (bool, error) {
 // replaced, not merged, and a precondition would only add a read and a 412
 // to end the same way. One the server answers box_changed (the box changed
 // while it handled the request) is sent again as it is, once. The server's
-// answer must be the ACL sent, and is kept in acl.json. It reads nothing of
-// the server first, so it does not see an ACL another writer put there since:
-// [Box.Receive] reads that at each renewal (checkACL).
+// answer must be the ACL sent, and is kept in the box's state. It reads
+// nothing of the server first, but for a restore's adoption of its server's
+// ACL (adoptPending), so it does not see an ACL another writer put there
+// since: [Box.Receive] reads that at each renewal (checkACL).
 func (b *Box) SyncACL(ctx context.Context) error {
 	return b.lockedDo(ctx, func() error { return b.syncACL(ctx) })
 }
