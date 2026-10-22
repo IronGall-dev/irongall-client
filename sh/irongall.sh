@@ -31,7 +31,7 @@
 set -o pipefail; umask 077
 export LC_ALL=C   # every pattern and tool reads bytes, as the Go client does: under another locale [0-9] can take a digit that is not ASCII, and [A-Z] can miss I
 IG_BASE=${IG_BASE:-https://irongall.dev}
-IG=${IRONGALL_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/irongall/${IRONGALL_BOX:-default}}   # one box per directory; never the working directory
+IG=${IG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/irongall-sh/${IG_BOX:-default}}   # one box per directory, of this script's own: never the Go client's (its IRONGALL_HOME and ~/.config/irongall/, ig_ownbox), and never the working directory
 IG_LOCK_WAIT=${IG_LOCK_WAIT:-120}   # how many seconds a command waits for the box's lock while another command of the box holds it: what apt waits for its own lock when no one is at a terminal
 IG_SENDERS='["ssh-ed25519","ecdsa-sha2-nistp256"]'   # the identity key types ig_idcheck verifies. A box declares them with each prekey it publishes, and the server then refuses it mail from a box whose identity is of any other type
 ig_out(){ jq -cn --arg type "$1" "${@:2}" '$ARGS.named'; }      # <type> [--arg <name> <text> | --argjson <name> <JSON>]… → one line of JSON on stdout, its type first and then each member in turn, as the Go client prints one: what a command did or met on the way
@@ -135,6 +135,7 @@ ig_pass(){ # [serial] → the Authorization value of a call as this box, unless 
 ig_lock(){ # <command> [args] → runs that ig_ command with $IG/lock, the box's lock, held, once the box's directories and identity files are made (ig_dirs, ig_identity), as the Go client's Open makes them: so a box restored from its identity alone runs. Every command that writes the box runs so, from start to end, so one runs at a time and none reads a file another is writing. While another holds it, says so once and waits up to $IG_LOCK_WAIT seconds. If the command dies, the shell's EXIT trap removes it; a kill -9 leaves it behind
   local end=$((SECONDS + IG_LOCK_WAIT)) said= me=$IG outer=${IG_HELD-} trap rc
   [ -s "$IG/identity" ] || { ig_refuse "no box in $IG: run init first"; return 1; }
+  ig_ownbox || return 1
   until mkdir "$me/lock" 2> /dev/null; do
     [ -n "$said" ] || { jq -cn '{type:"waiting", for:"lock", message:"waiting for this box'"'"'s lock: another command of this box is running, and a box'"'"'s commands write its files one at a time"}' >&2; said=1; }
     [ "$SECONDS" -lt "$end" ] || { ig_refuse "another command of this box held its lock, $me/lock, for as long as a command waits for it. If none is running, one that crashed left it behind: remove it"; return 1; }
@@ -144,6 +145,7 @@ ig_lock(){ # <command> [args] → runs that ig_ command with $IG/lock, the box's
   ig_dirs && ig_identity && "$@"; rc=$?
   rmdir "$me/lock"; IG_HELD=$outer; eval "${trap:-trap - EXIT}"; return $rc      # and the caller's own EXIT trap back
 }
+ig_ownbox(){ [ ! -e "$IG/state" ] || ig_refuse "$IG holds a state file: it is a box of the Go client, which this script never runs, since the two keep their records apart and would undo each other's: set IG_HOME to a directory of this script's own"; }      # whether $IG is a box of this script's, by the one file only the Go client makes
 ig_held(){ [ "${IG_HELD-}" = "$IG" ]; }      # whether this shell holds this box's lock: a command another command runs works under its caller's
 ig_dirs(){ mkdir -p "$IG/work" "$IG/prekeys" "$IG/peers" "$IG/inbox" "$IG/quarantine" "$IG/sent"; }      # the box's directories, made where they are missing, as the Go client's Open makes them: by init, and by every command that writes the box (ig_lock)
 ig_identity(){ # → identity.pub, identity.doc and address, the identity as the box's other files name it: identity.pub made again from the identity where it is missing or empty, then the document and its SHA-256, each written beside and moved into place only where its bytes differ (ig_put), as the Go client's Open writes them. So a box restored from its identity alone gets all three, init run again rewrites nothing a command beside it reads, and a crash leaves no file empty
@@ -183,6 +185,7 @@ ig_prekey(){ # <serial> [--no-pq] → prekeys/<serial>.agekey and its statement,
 }
 ig_init(){ # [--no-pq] → creates this box, or finishes a half-done init, and registers it; prints its address and link. The registration carries a pass the new working key signs, so the box is in use at once
   ig_opt "${1-}" || return 1
+  ig_ownbox || return 1
   ig_dirs && ig_putline "$IG/.gitignore" '*' || return 1      # the box ignores itself, wherever it is
   [ -s "$IG/identity" ] || { rm -f "$IG/identity" "$IG/identity.pub"; ssh-keygen -q -t ed25519 -N '' -C '' -f "$IG/identity" < /dev/null; } || return 1      # an empty identity, as a crash before the sync below leaves one, is no key, and nothing was registered with it, so it is made again, as the Go client does
   if ig_held; then ig_identity; else ig_lock true; fi && sync "$IG/identity" "$IG/identity.pub" "$IG" || return 1      # identity.doc and address made under the box's lock, as every command that writes the box makes them (ig_lock): a command beside init reads them. The identity on disk before it is registered
@@ -194,7 +197,7 @@ ig_init(){ # [--no-pq] → creates this box, or finishes a half-done init, and r
   fi
   ig_prekey "$n" "${1-}" || return 1
   jq -n --arg i "$(ig_b64 "$IG/identity.doc")" --arg p "$(ig_b64 "$p.txt")" --arg s "$(ig_b64 "$p.txt.sig")" --argjson k "$IG_SENDERS" '{identity:$i, prekey:$p, prekey_signature:$s, sender_key_types:$k}' > "$IG/register.json"
-  h=$(ig_pass "$n") && { ig_api PUT "/v1/$A" "$IG/register.json" -H "Authorization: $h" > /dev/null || { ig_clock; false; }; } && mv "$IG/pass.new" "$IG/pass" && ig_putline "$IG/serial" "$n" && ig_addr
+  h=$(ig_pass "$n") && { ig_api PUT "/v1/$A" "$IG/register.json" -H "Authorization: $h" > /dev/null || { ig_clock; ig_own; false; }; } && mv "$IG/pass.new" "$IG/pass" && ig_putline "$IG/serial" "$n" && ig_addr
 }
 ig_addr(){ local a; ig_held || { [ -s "$IG/identity" ] && [ -s "$IG/address" ]; } || { ig_lock ig_addr; return; }; a=$(cat "$IG/address") && ig_out box --arg address "$a" --arg link "$IG_BASE/to/$a"; }      # the box's address and its link: what to give whoever should write to it. Read with no lock; with no box, ig_lock's refusal, and a box restored from its identity alone has its files made under the lock first (ig_identity), as the Go client's Open makes them
 ig_dest(){ # <link or address> → the address: 64 hex, or taken from a link to this box's server, $IG_BASE/to/<address>
@@ -454,10 +457,14 @@ ig_lookup(){ # <address> → reads the address's box from this box's server (GET
   if ig_look "$1" > "$IG/look.json" 2> "$IG/read.err"; then ig_isbox "$IG/look.json" || return 2; mv "$IG/look.json" "$IG/box.json"      # a 2xx that is no box is no answer, as one that is no JSON is
     jq -c '{identity, revoked_certificates, revoked_certificates_signature}' "$IG/box.json" > "$IG/rev.json" && ig_take "$1"; r=$?; [ $r = 1 ] || return $r
   else case $(ig_code) in
-    revoked) if jq -ce '.record | objects' "$IG/error.json" > "$IG/rev.json" 2> /dev/null && ig_isrecord "$IG/rev.json"; then ig_take "$1"; r=$?; [ $r = 1 ] || return $r; fi ;;      # the record it carries proves itself, or counts as nothing shown
+    revoked) ig_takerecord "$1"; r=$?; [ $r = 1 ] || return $r ;;      # the record it carries proves itself, or counts as nothing shown
     no_such_mailbox) ;;
     *) cat "$IG/read.err" >&2; return 2 ;; esac; fi      # no answer: its error line, the status, the code and the wait, and none of the server's words
   return 1
+}
+ig_takerecord(){ # <address> → keeps what verifies of the record a 410 revoked carries, in $IG/error.json: ig_take's answer, or 1 where it carries no record
+  jq -ce '.record | objects' "$IG/error.json" > "$IG/rev.json" 2> /dev/null && ig_isrecord "$IG/rev.json" || return 1
+  ig_take "$1"
 }
 ig_finished(){ # → 0 while this box may act as its address. 1: it holds its own revocation, which verifies, and signs nothing more as that address, no pass, no mail and no certificate, whatever any server answers: a server that never saw the revocation would take it all (PROTOCOL.md §6.3). It still asks, keeps and publishes the record, which carry no pass. 3: the one it keeps does not verify, a fault of this box, which stops the same
   ig_gone "$(cat "$IG/address" 2> /dev/null)"; case $? in 1) return 0 ;; 0) return 1 ;; *) return 3 ;; esac
@@ -704,7 +711,11 @@ ig_rekey(){ # [--no-pq] → publishes a new prekey, signed by a new working key 
 ig_renew(){ # [--no-pq] → what ig_rekey does, the lock held. A serial is signed ONCE
   local A r s t na h c f cs p new x gone u w at; A=$(cat "$IG/address") || return 1; mkdir -p "$IG/prekeys"
   ig_finished || { ig_done $?; return 1; }
-  ig_api GET "/v1/$A" > "$IG/self.json" 2> "$IG/self.err" || { [ "$(ig_code)" = no_such_mailbox ] || { cat "$IG/self.err" >&2; return 1; }; gone=1; }      # 404: the server holds no box here any more, past its record's expiry or deleted (PROTOCOL.md §7), so nothing is served to number above or to hold to its order, and the renewal goes as a registration
+  ig_api GET "/v1/$A" > "$IG/self.json" 2> "$IG/self.err" || case $(ig_code) in
+    no_such_mailbox) gone=1 ;;      # 404: the server holds no box here any more, past its record's expiry or deleted (PROTOCOL.md §7), so nothing is served to number above or to hold to its order, and the renewal goes as a registration
+    revoked) ig_takerecord "$A"; [ $? != 3 ] || return 1; ig_finished || { ig_done $?; return 1; }; cat "$IG/self.err" >&2; return 1 ;;      # 410: the address's record, kept once it verifies, so the box signs nothing more here or at any server it is pointed at (PROTOCOL.md §6.3; #343)
+    *) cat "$IG/self.err" >&2; return 1 ;;
+  esac
   p=$(cat "$IG/serial" 2> /dev/null || echo 0)
   if [ -n "$gone" ]; then s=$p; else
     ig_shape "$IG/self.json" box && ig_bytes "$IG/self.json" identity "$IG/self.doc" && ig_bytes "$IG/self.json" prekey "$IG/self.txt" && ig_bytes "$IG/self.json" prekey_signature "$IG/self.sig" ||
@@ -731,7 +742,7 @@ ig_renew(){ # [--no-pq] → what ig_rekey does, the lock held. A serial is signe
   [ -s "$IG/prekeys/$s.txt.sig" ] || rm -f "$IG/prekeys/$s.txt" "$IG/prekeys/$s.made"; ig_prekey "$s" "${1-}" || return 1
   if [ -n "$gone" ]; then u="/v1/$A"; w='{identity:$i}'; else u="/v1/$A/prekey"; w='{}'; fi      # a registration is the identity document, then what a new prekey carries
   jq -n --arg i "$(ig_b64 "$IG/identity.doc")" --arg p "$(ig_b64 "$IG/prekeys/$s.txt")" --arg g "$(ig_b64 "$IG/prekeys/$s.txt.sig")" --argjson k "$IG_SENDERS" "$w"' + {prekey:$p, prekey_signature:$g, sender_key_types:$k}' > "$IG/rekey.json"
-  h=$(ig_pass "$s") && ig_api PUT "$u" "$IG/rekey.json" -H "Authorization: $h" > /dev/null || { ig_clock; return 1; }      # a pass under the NEW certificate: that is how a box moves to one, and the server then takes no pass under an older
+  h=$(ig_pass "$s") && ig_api PUT "$u" "$IG/rekey.json" -H "Authorization: $h" > /dev/null || { ig_clock; ig_own; return 1; }      # a pass under the NEW certificate: that is how a box moves to one, and the server then takes no pass under an older
   [ "$s" -le "$(cat "$IG/serial" 2> /dev/null || echo 0)" ] || ig_putline "$IG/serial" "$s" || return 1
   mv "$IG/pass.new" "$IG/pass" || return 1
   for f in "$IG"/work/*-cert.pub; do t=$(basename "$f" -cert.pub); [[ $t =~ ^[0-9]+$ ]] && [ "$t" -lt "$s" ] && rm -f "$IG/work/$t" "$IG/work/$t.pub" "$f"; done      # older working keys: what they signed is signed, and the server takes no pass under them

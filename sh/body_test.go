@@ -66,7 +66,7 @@ func TestTheScriptReadsTheBodyOnce(t *testing.T) {
 		{"the box's own body.txt", `printf kept > "$IG/body.txt"; ig_send "$B" "$IG/body.txt"`, `"kept"`},
 	} {
 		o := filepath.Join(out, fmt.Sprint(i))
-		_, err := bash(t, []string{"IRONGALL_HOME=" + dir, "OUT=" + o, "B=" + b.String()}, keepPost+c.command)
+		_, err := bash(t, []string{"IG_HOME=" + dir, "OUT=" + o, "B=" + b.String()}, keepPost+c.command)
 		sent(c.name, o, c.want, err)
 	}
 }
@@ -87,7 +87,7 @@ func TestARefusedBodyIsOneErrorLine(t *testing.T) {
 			t.Fatal(err)
 		}
 		o := filepath.Join(t.TempDir(), "sent")
-		_, err := bash(t, []string{"IRONGALL_HOME=" + dir, "OUT=" + o, "B=" + b.String(), "F=" + body}, keepPost+"ig_send "+c.args)
+		_, err := bash(t, []string{"IG_HOME=" + dir, "OUT=" + o, "B=" + b.String(), "F=" + body}, keepPost+"ig_send "+c.args)
 		errs := ""
 		if err != nil {
 			_, errs, _ = strings.Cut(err.Error(), ": ")
@@ -113,7 +113,7 @@ func TestASendWhoseEnvelopeIsNotBuiltLeavesNothing(t *testing.T) {
 	need(t, scriptTools...)
 	dir, _, b := sendBox(t)
 	o := filepath.Join(t.TempDir(), "sent")
-	_, err := bash(t, []string{"IRONGALL_HOME=" + dir, "OUT=" + o, "B=" + b.String(), "PATH=" + dyingJQ(t, "-cn", "--rawfile", "body") + ":" + os.Getenv("PATH")}, keepPost+`printf hi | ig_send "$B"`)
+	_, err := bash(t, []string{"IG_HOME=" + dir, "OUT=" + o, "B=" + b.String(), "PATH=" + dyingJQ(t, "-cn", "--rawfile", "body") + ":" + os.Getenv("PATH")}, keepPost+`printf hi | ig_send "$B"`)
 	if err == nil || exists(o) || !strings.HasSuffix(err.Error(), `: {"type":"error","message":"the envelope could not be built: nothing is sent"}`) {
 		t.Errorf("a send whose envelope jq died: %v", err)
 	}

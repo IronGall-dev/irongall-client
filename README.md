@@ -142,7 +142,7 @@ bash sh/irongall.sh recv                    # a JSON line for each message, as t
 bash sh/irongall.sh prekey renew            # at least monthly
 ```
 
-Its header names the tools it needs. It is tested on uutils' coreutils, as Ubuntu 26.04 ships them, with GNU sed, grep and awk, and held to the test vectors on those tools and on no other platform's. `IG_BASE` names another server.
+Its header names the tools it needs. It is tested on uutils' coreutils, as Ubuntu 26.04 ships them, with GNU sed, grep and awk, and held to the test vectors on those tools and on no other platform's. `IG_BASE` names another server. Its box is `~/.config/irongall-sh/default`, never the Go client's: `IG_BOX` names another, `IG_HOME` sets the directory, and it refuses one that holds the Go client's `state`.
 
 **age 1.2 has no post-quantum encryption.** There, make the box with `init --no-pq`; it can write only to `--no-pq` boxes, such as the second echo box:
 

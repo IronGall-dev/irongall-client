@@ -61,14 +61,14 @@ func TestPatternsReadBytes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, "seen-floor"), []byte("1١\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := bash(t, []string{"IRONGALL_HOME=" + home}, "ig_floor"); err == nil {
+	if out, err := bash(t, []string{"IG_HOME=" + home}, "ig_floor"); err == nil {
 		t.Errorf("ig_floor takes a floor of 1١: %q", out)
 	}
 	_, setNow := vectorNow(t)
 	a, aDoc := identity(t, "a")
 	st := filepath.Join(vectors, "prekey", "bad-serial-a-digit-not-ascii.txt")
 	cmd := exec.Command("bash", "-c", ". "+abs(t, "irongall.sh")+"\n"+setNow+"ig_prekeycheck "+abs(t, st)+" "+abs(t, st+".sig")+" "+a+" "+aDoc)
-	cmd.Env = append(os.Environ(), "IRONGALL_HOME="+t.TempDir())
+	cmd.Env = append(os.Environ(), "IG_HOME="+t.TempDir())
 	var errs strings.Builder
 	cmd.Stderr = &errs
 	if out, err := cmd.Output(); err == nil || !strings.Contains(string(out), "prekey serial is malformed") || errs.Len() != 0 {
@@ -94,7 +94,7 @@ func TestAReceiptIsComparedAsBytes(t *testing.T) {
 	}
 	landAll(t, to)
 	dir := t.TempDir()
-	env := []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}
+	env := []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}
 	if _, err := bash(t, env, "ig_init"); err != nil {
 		t.Fatal(err)
 	}

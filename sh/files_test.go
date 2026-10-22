@@ -70,7 +70,7 @@ func TestTheScriptRestoresABoxFromItsIdentityAlone(t *testing.T) {
 	for _, forgotten := range []bool{false, true} {
 		srv := fakeserver.New(t, time.Now)
 		lost := t.TempDir()
-		out, err := bash(t, []string{"IRONGALL_HOME=" + lost, "IG_BASE=" + srv.URL}, "ig_init --no-pq")
+		out, err := bash(t, []string{"IG_HOME=" + lost, "IG_BASE=" + srv.URL}, "ig_init --no-pq")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -82,7 +82,7 @@ func TestTheScriptRestoresABoxFromItsIdentityAlone(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "identity"), mustRead(t, filepath.Join(lost, "identity")), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		env := []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}
+		env := []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}
 		n0 := len(srv.Requests())
 		if out, err := bash(t, env, "ig_rekey --no-pq 2> \"$IG/../rekey.err\""); err != nil || !strings.HasPrefix(out, `{"type":"prekey",`) || exists(filepath.Join(dir, "..", "rekey.err")) {
 			t.Fatalf("forgotten %v: a renewal of the box restored from its identity alone: %v %q", forgotten, err, out)
@@ -143,7 +143,7 @@ func TestAnInitRunAgainRewritesNothing(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
-	env := []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}
+	env := []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}
 	if _, err := bash(t, env, "ig_init --no-pq"); err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,7 @@ func TestInitMakesTheIdentityFilesUnderTheLock(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
-	env := []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL, "IG_LOCK_WAIT=1"}
+	env := []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL, "IG_LOCK_WAIT=1"}
 	if _, err := bash(t, env, "ig_init --no-pq"); err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestAnIdentityPubOutOfFormIsRefused(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
-	env := []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}
+	env := []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}
 	if _, err := bash(t, env, "ig_init --no-pq"); err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +253,7 @@ func TestAPrekeyKeyACrashLeftEmptyIsMadeAgain(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
-	env := []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}
+	env := []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}
 	if _, err := bash(t, env, "ig_work(){ return 1; }; ig_init --no-pq"); err == nil { // cut short once the key is made
 		t.Fatal("init went through")
 	}
@@ -296,7 +296,7 @@ func TestAnInitCrashedBeforeItsIdentityIsSyncedRegisters(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
-	env := []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}
+	env := []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}
 	if out, err := exec.Command("ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "", "-f", filepath.Join(dir, "identity")).CombinedOutput(); err != nil {
 		t.Fatal(string(out))
 	}
@@ -317,7 +317,7 @@ func TestGitignoreIsMovedIntoPlace(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
-	env := []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}
+	env := []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}
 	if _, err := bash(t, env, "ig_init --no-pq"); err != nil {
 		t.Fatal(err)
 	}
@@ -339,7 +339,7 @@ func TestGitignoreIsMovedIntoPlace(t *testing.T) {
 func TestAForgottenBoxsRenewalRefusesARevocationsAnswerThatIsNoRecord(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
-	env := []string{"IRONGALL_HOME=" + t.TempDir(), "IG_BASE=" + srv.URL}
+	env := []string{"IG_HOME=" + t.TempDir(), "IG_BASE=" + srv.URL}
 	out, err := bash(t, env, "ig_init --no-pq")
 	if err != nil {
 		t.Fatal(err)
@@ -407,7 +407,7 @@ func TestAKeptMessageFileIsWrittenBesideAndMoved(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
-	env := []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}
+	env := []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}
 	out, err := bash(t, env, "ig_init --no-pq")
 	if err != nil {
 		t.Fatal(err)
@@ -478,7 +478,7 @@ func TestAddrNeedsABox(t *testing.T) {
 	command := func(home string, args ...string) (string, string, int) {
 		t.Helper()
 		cmd := exec.Command("bash", append([]string{abs(t, "irongall.sh")}, args...)...)
-		cmd.Env = append(os.Environ(), "IRONGALL_HOME="+home, "IG_BASE="+srv.URL)
+		cmd.Env = append(os.Environ(), "IG_HOME="+home, "IG_BASE="+srv.URL)
 		var out, errs strings.Builder
 		cmd.Stdout, cmd.Stderr = &out, &errs
 		_ = cmd.Run()
@@ -495,7 +495,7 @@ func TestAddrNeedsABox(t *testing.T) {
 		t.Errorf("addr with no box wrote %v", ls)
 	}
 	lost := t.TempDir()
-	out, err := bash(t, []string{"IRONGALL_HOME=" + lost, "IG_BASE=" + srv.URL}, "ig_init --no-pq")
+	out, err := bash(t, []string{"IG_HOME=" + lost, "IG_BASE=" + srv.URL}, "ig_init --no-pq")
 	if err != nil {
 		t.Fatal(err)
 	}

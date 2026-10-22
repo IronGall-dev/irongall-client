@@ -111,7 +111,7 @@ func (b *sbox) sh(commands string) ran {
 	b.w.t.Helper()
 	cmd := exec.Command("bash", "-c", ". "+abs(b.w.t, "irongall.sh")+"\n"+commands)
 	cmd.Dir = b.w.work
-	cmd.Env = append(os.Environ(), "IRONGALL_HOME="+b.dir, "IG_BASE="+b.w.srv.URL, "W="+b.w.work, "SRV="+b.w.srv.URL)
+	cmd.Env = append(os.Environ(), "IG_HOME="+b.dir, "IG_BASE="+b.w.srv.URL, "W="+b.w.work, "SRV="+b.w.srv.URL)
 	var out, errs bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errs
 	r := ran{}

@@ -43,7 +43,7 @@ func TestScriptAClockThatJumpsDuringARenewalDeletesNoKey(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
-	env := []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}
+	env := []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}
 	if out, err := bash(t, env, "ig_init --no-pq"); err != nil {
 		t.Fatalf("init: %q, %v", out, err)
 	}
@@ -135,7 +135,7 @@ func TestTheScriptTakesARetryAboveTheFloor(t *testing.T) {
 			kt := protocol.PostQuantum
 			dir := t.TempDir()
 			sh := func(at time.Duration, cmd string) (string, error) {
-				return bash(t, []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}, igNow(at)+cmd)
+				return bash(t, []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}, igNow(at)+cmd)
 			}
 			if _, err := sh(0, "ig_init"); err != nil {
 				t.Fatal(err)
@@ -226,7 +226,7 @@ func TestTheScriptTakesAStretchedRetryAtHonestClocks(t *testing.T) {
 			kt := protocol.PostQuantum
 			dir := t.TempDir()
 			sh := func(at time.Duration, cmd string) (string, error) {
-				return bash(t, []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}, clk.igNow(at)+cmd)
+				return bash(t, []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}, clk.igNow(at)+cmd)
 			}
 			if _, err := sh(0, "ig_init"); err != nil {
 				t.Fatal(err)
@@ -325,7 +325,7 @@ func TestScriptAClockThatJumpsDuringADrainPrunesNoLine(t *testing.T) {
 	srv := fakeserver.New(t, time.Now)
 	kt := protocol.PostQuantum
 	dir := t.TempDir()
-	env := []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}
+	env := []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}
 	if out, err := bash(t, env, "ig_init"); err != nil {
 		t.Fatalf("init: %q, %v", out, err)
 	}

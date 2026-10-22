@@ -48,7 +48,7 @@ func TestScriptInitOfABoxThatHoldsItsOwnRevocationSignsNothing(t *testing.T) {
 		}
 		next.ServeHTTP(w, r)
 	})
-	env := []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}
+	env := []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}
 	for _, cmd := range []string{"ig_init --no-pq", "ig_renew"} {
 		out, err := bash(t, env, cmd)
 		made, _ := filepath.Glob(filepath.Join(dir, "work", "*"))

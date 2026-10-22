@@ -213,7 +213,7 @@ func TestScriptDrainsEveryPageAndHoldsTheLock(t *testing.T) {
 	if after, _ := w.served(b); after <= before {
 		t.Error("ig_rekey did not renew once the lock was free")
 	}
-	if r := b.sh(`rc=0; IRONGALL_HOME=$IG bash -c '. "$1"; hold(){ [ -d "$IG/lock" ] || exit 9; kill -TERM $$; sleep 5; }; ig_lock hold' _ ` + abs(t, "irongall.sh") + ` 2> /dev/null || rc=$?; echo $rc`); r.out != "143\n" || exists(b.file("lock")) {
+	if r := b.sh(`rc=0; IG_HOME=$IG bash -c '. "$1"; hold(){ [ -d "$IG/lock" ] || exit 9; kill -TERM $$; sleep 5; }; ig_lock hold' _ ` + abs(t, "irongall.sh") + ` 2> /dev/null || rc=$?; echo $rc`); r.out != "143\n" || exists(b.file("lock")) {
 		t.Errorf("a command killed while it holds the lock: %v", r)
 	}
 	a.mustSend(b, "kept")

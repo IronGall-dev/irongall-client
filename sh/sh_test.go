@@ -164,7 +164,7 @@ func identity(t *testing.T, box string) (string, string) {
 }
 
 // scratch is a directory for the script's scratch files, as its box's is.
-func scratch(t *testing.T) []string { return []string{"IRONGALL_HOME=" + t.TempDir()} }
+func scratch(t *testing.T) []string { return []string{"IG_HOME=" + t.TempDir()} }
 
 // The script's verdict on every vector is the one the vectors name, as the
 // Go client's is (protocol/vectors_test.go).
@@ -732,7 +732,7 @@ func TestAP256BoxInBothClients(t *testing.T) {
 	kt := protocol.PostQuantum
 	sh := func(dir, commands string) string {
 		t.Helper()
-		out, err := bash(t, []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}, commands)
+		out, err := bash(t, []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}, commands)
 		if err != nil {
 			t.Fatalf("%s: %v", commands, err)
 		}
@@ -797,7 +797,7 @@ func TestTheScriptsSendABoxDeniesFails(t *testing.T) {
 	kt := protocol.PostQuantum
 	shDir := t.TempDir()
 	sh := func(commands string) (string, error) {
-		return bash(t, []string{"IRONGALL_HOME=" + shDir, "IG_BASE=" + srv.URL}, commands)
+		return bash(t, []string{"IG_HOME=" + shDir, "IG_BASE=" + srv.URL}, commands)
 	}
 	out, err := sh("ig_init")
 	if err != nil {
@@ -835,7 +835,7 @@ func TestWithGoClient(t *testing.T) {
 	kt := protocol.PostQuantum
 	shDir, goDir := t.TempDir(), t.TempDir()
 	sh := func(dir, commands string) (string, error) {
-		return bash(t, []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}, commands)
+		return bash(t, []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}, commands)
 	}
 	out, err := sh(shDir, "ig_init")
 	if err != nil {
@@ -1149,7 +1149,7 @@ func TestRevocationInBothClients(t *testing.T) {
 	opt := client.Options{Base: srv.URL}
 	kt := protocol.PostQuantum
 	sh := func(dir, commands string) (string, error) {
-		return bash(t, []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}, commands)
+		return bash(t, []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}, commands)
 	}
 	scriptBox := func() (string, protocol.Address) {
 		t.Helper()
@@ -1345,7 +1345,7 @@ func TestVectorsRevokedCertificates(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(kept, "identity.doc"), read(aDoc), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	env := []string{"IRONGALL_HOME=" + box}
+	env := []string{"IG_HOME=" + box}
 	for _, c := range []struct {
 		name  string
 		certs *protocol.RevokedCertificates
@@ -1400,7 +1400,7 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 	kt := protocol.PostQuantum
 	dir := t.TempDir()
 	sh := func(commands string) (string, error) {
-		return bash(t, []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}, commands)
+		return bash(t, []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}, commands)
 	}
 	out, err := sh("ig_init")
 	if err != nil {
@@ -1503,7 +1503,7 @@ func TestAJSONBodyFromTheGoClient(t *testing.T) {
 	kt := protocol.PostQuantum
 	dir := t.TempDir()
 	sh := func(commands string) (string, error) {
-		return bash(t, []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}, commands)
+		return bash(t, []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}, commands)
 	}
 	if _, err := sh("ig_init"); err != nil {
 		t.Fatal(err)
@@ -1577,7 +1577,7 @@ func TestTheCommandLine(t *testing.T) {
 	run := func(stdin string, args ...string) (string, string, int) {
 		t.Helper()
 		cmd := exec.Command("bash", append([]string{abs(t, "irongall.sh")}, args...)...)
-		cmd.Env = append(os.Environ(), "IRONGALL_HOME="+home, "IG_BASE="+srv.URL)
+		cmd.Env = append(os.Environ(), "IG_HOME="+home, "IG_BASE="+srv.URL)
 		cmd.Stdin = strings.NewReader(stdin)
 		var out, errs bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &out, &errs
@@ -1649,7 +1649,7 @@ func TestASendDuringADrainHidesNoRevocation(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	ctx, srv := context.Background(), fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
-	env := []string{"IRONGALL_HOME=" + t.TempDir(), "IG_BASE=" + srv.URL, "IG_LOCK_WAIT=2"}
+	env := []string{"IG_HOME=" + t.TempDir(), "IG_BASE=" + srv.URL, "IG_LOCK_WAIT=2"}
 	out, err := bash(t, env, "ig_init --no-pq")
 	if err != nil {
 		t.Fatal(err)
@@ -1737,11 +1737,11 @@ func TestBothClientsCallTheSameServers(t *testing.T) {
 	}
 	// Each call is held to it too, as the Go client's are: ig_api calls no
 	// curl for a server out of form, whoever named it.
-	if _, err := bash(t, []string{"IRONGALL_HOME=" + t.TempDir()}, `curl(){ echo "curl was called" >&2; return 7; }; IG_BASE=http://example.com ig_api GET /v1/x`); err == nil || !strings.Contains(err.Error(), refusal) || strings.Contains(err.Error(), "curl was called") {
+	if _, err := bash(t, []string{"IG_HOME=" + t.TempDir()}, `curl(){ echo "curl was called" >&2; return 7; }; IG_BASE=http://example.com ig_api GET /v1/x`); err == nil || !strings.Contains(err.Error(), refusal) || strings.Contains(err.Error(), "curl was called") {
 		t.Errorf("ig_api to a server over http elsewhere: %v", err)
 	}
 	cmd := exec.Command("bash", abs(t, "irongall.sh"), "addr")
-	cmd.Env = append(os.Environ(), "IRONGALL_HOME="+t.TempDir(), "IG_BASE=http://example.com")
+	cmd.Env = append(os.Environ(), "IG_HOME="+t.TempDir(), "IG_BASE=http://example.com")
 	if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), refusal) {
 		t.Errorf("irongall.sh addr with a server over http elsewhere: %v %q", err, out)
 	}
@@ -1765,7 +1765,7 @@ func TestTheScriptFollowsNoRedirect(t *testing.T) {
 	}))
 	t.Cleanup(other.Close)
 	dir := t.TempDir()
-	env := []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}
+	env := []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}
 	if _, err := bash(t, env, "ig_init"); err != nil {
 		t.Fatalf("ig_init: %v", err)
 	}
@@ -1812,7 +1812,7 @@ func TestNoCallOfTheScriptFollowsARedirect(t *testing.T) {
 	t.Cleanup(other.Close)
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
-	env := []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}
+	env := []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}
 	if _, err := bash(t, env, "ig_init"); err != nil {
 		t.Fatalf("ig_init: %v", err)
 	}
@@ -1869,7 +1869,7 @@ func TestAnAnswerWithNoBodyPutsOnlyJSONOnStderr(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(status) }))
 		t.Cleanup(srv.Close)
 		cmd := exec.Command("bash", "-c", ". "+abs(t, "irongall.sh")+"\nig_api GET /v1/x")
-		cmd.Env = append(os.Environ(), "IRONGALL_HOME="+t.TempDir(), "IG_BASE="+srv.URL)
+		cmd.Env = append(os.Environ(), "IG_HOME="+t.TempDir(), "IG_BASE="+srv.URL)
 		var errs bytes.Buffer
 		cmd.Stderr = &errs
 		_ = cmd.Run()
@@ -1895,7 +1895,7 @@ func TestAServerThatIsNotThereIsNoAnswer(t *testing.T) {
 	}
 	base := "http://" + l.Addr().String()
 	_ = l.Close()
-	_, err = bash(t, []string{"IRONGALL_HOME=" + t.TempDir(), "IG_BASE=" + base}, "ig_api GET /v1/x")
+	_, err = bash(t, []string{"IG_HOME=" + t.TempDir(), "IG_BASE=" + base}, "ig_api GET /v1/x")
 	if err == nil || !strings.Contains(err.Error(), `{"type":"error","message":"no answer from `+base+`"}`) || strings.Contains(err.Error(), "curl") || strings.Contains(err.Error(), `"status":`) {
 		t.Errorf("a server that is not there: %v", err)
 	}
@@ -1907,7 +1907,7 @@ func TestAServerThatIsNotThereIsNoAnswer(t *testing.T) {
 func TestA3xxIsNoAnswerWhateverItsLines(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
-	env := []string{"IRONGALL_HOME=" + t.TempDir(), "IG_BASE=" + srv.URL}
+	env := []string{"IG_HOME=" + t.TempDir(), "IG_BASE=" + srv.URL}
 	if _, err := bash(t, env, "ig_init"); err != nil {
 		t.Fatal(err)
 	}
@@ -1956,7 +1956,7 @@ func TestTheScriptReadsNoCurlrc(t *testing.T) {
 		_, _ = w.Write([]byte(`{"messages":[]}`))
 	}))
 	t.Cleanup(other.Close)
-	env := []string{"IRONGALL_HOME=" + t.TempDir(), "IG_BASE=" + srv.URL, curlrc("location-trusted")}
+	env := []string{"IG_HOME=" + t.TempDir(), "IG_BASE=" + srv.URL, curlrc("location-trusted")}
 	if _, err := bash(t, env, "ig_init"); err != nil {
 		t.Fatal(err)
 	}
@@ -1978,7 +1978,7 @@ func TestTheScriptReadsNoCurlrc(t *testing.T) {
 	u, _ := url.Parse(fakeserver.New(t, time.Now).URL)
 	front := httptest.NewTLSServer(httputil.NewSingleHostReverseProxy(u))
 	t.Cleanup(front.Close)
-	env = []string{"IRONGALL_HOME=" + t.TempDir(), "IG_BASE=" + front.URL, curlrc("insecure")}
+	env = []string{"IG_HOME=" + t.TempDir(), "IG_BASE=" + front.URL, curlrc("insecure")}
 	if out, err := bash(t, env, "ig_init && ig_recv"); err == nil {
 		t.Errorf("insecure: a server whose certificate nobody signed made a box and drained it: %q", out)
 	}
@@ -2015,7 +2015,7 @@ func TestTheScriptCallsThisMachineDirectly(t *testing.T) {
 		t.Fatal(err)
 	}
 	register := func(base string) (string, error) {
-		env := []string{"IRONGALL_HOME=" + t.TempDir(), "IG_BASE=" + base, "CURL_CA_BUNDLE=" + ca, "no_proxy=", "NO_PROXY="}
+		env := []string{"IG_HOME=" + t.TempDir(), "IG_BASE=" + base, "CURL_CA_BUNDLE=" + ca, "no_proxy=", "NO_PROXY="}
 		for _, v := range []string{"http_proxy", "https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"} {
 			env = append(env, v+"="+proxy.URL)
 		}
@@ -2052,7 +2052,7 @@ func TestTheScriptHoldsALowerLifetimeOverAWaitingRenewal(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
-	env := []string{"IRONGALL_HOME=" + dir, "IG_BASE=" + srv.URL}
+	env := []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}
 	if _, err := bash(t, env, "ig_init"); err != nil {
 		t.Fatalf("ig_init: %v", err)
 	}
