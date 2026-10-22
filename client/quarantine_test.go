@@ -144,3 +144,65 @@ func TestADeliveryLeavesNothingOfAnEarlierRefusal(t *testing.T) {
 		t.Errorf("after its delivery the box keeps %+v, %v of its refusal", qs, err)
 	}
 }
+
+// A refused message names its signer only where the box holds no revocation
+// of that address or that certificate (#265): mail a thief signs with a taken
+// working key whose certificate the identity revoked, posted from the thief's
+// own box, is kept as claiming the identity, never as signed by it; and so is
+// mail of an address the box holds revoked.
+func TestARefusalNamesNoSignerTheBoxHoldsRevoked(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a, b, thief := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+	stolen := worker(t, a)
+	if _, err := a.Rekey(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.RevokeEarlier(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if held, err := b.Ask(ctx, a.Address()); err != nil || held.Certificates == nil {
+		t.Fatalf("b asks about a: %+v, %v", held, err)
+	}
+	line := e.line(a.Identity().Document(), a.Address(), b.Address(), "signed with a key a revoked, posted from another box")
+	id := e.seal(b, thief.Address(), line, forge.Sign(t, stolen, line, b.Address()))
+	res := receive(t, b)
+	if len(res.Refused) != 1 || res.Refused[0].Code != protocol.RefusedAttribution {
+		t.Fatalf("the thief's mail: %+v", res)
+	}
+	q := quarantinedAs(t, b, id)
+	if q.SignedBy != "" || q.ClaimsIdentity != a.Address().String() || q.CertificateSerial != 0 {
+		t.Errorf("mail under a certificate the box holds revoked is kept as %+v", q)
+	}
+
+	// The address itself revoked: mail signed by its working key in use.
+	rec, err := a.Revocation()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := b.KeepRevocation(rec); err != nil {
+		t.Fatal(err)
+	}
+	line = e.line(a.Identity().Document(), a.Address(), b.Address(), "from an address the box holds revoked")
+	id = e.seal(b, thief.Address(), line, forge.Sign(t, worker(t, a), line, b.Address()))
+	receive(t, b)
+	if q := quarantinedAs(t, b, id); q.SignedBy != "" || q.ClaimsIdentity != a.Address().String() {
+		t.Errorf("mail of an address the box holds revoked is kept as %+v", q)
+	}
+}
+
+// quarantinedAs is what quarantine list gives of message id.
+func quarantinedAs(t *testing.T, b *client.Box, id string) client.Quarantined {
+	t.Helper()
+	qs, err := b.Quarantined()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range qs {
+		if q.ID == id {
+			return q
+		}
+	}
+	t.Fatalf("quarantine/ holds no %s: %+v", id, qs)
+	return client.Quarantined{}
+}

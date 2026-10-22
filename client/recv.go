@@ -463,6 +463,20 @@ func (b *Box) judge(ctx context.Context, ct []byte, listedFrom string, asked *lo
 	now := b.now()
 	found := &protocol.Findings{At: now}
 	refused := func(code, reason string) (verdict, error) {
+		// A refusal says who signed it only where this box holds no
+		// revocation of that address or of that certificate, read from what
+		// it holds, with no ask: an identity that revoked the key disowned
+		// what it signs, and the record names it as the identity it claims,
+		// as for a signature that does not verify (#265).
+		if found.Signed && found.Identity != nil {
+			held, err := b.held(*found.Identity)
+			if err != nil {
+				return verdict{}, fmt.Errorf("a fault of this box, so the message stays on the server: %w", err)
+			}
+			if held.Revoked || held.Certificates != nil && held.Certificates.Revokes(found.Serial) {
+				found.Signed = false
+			}
+		}
 		return verdict{refusal: &Refusal{Code: code, Reason: reason, Findings: found}, found: found}, nil
 	}
 	ids, err := b.prekeyIdentities()
