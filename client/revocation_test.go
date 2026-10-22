@@ -404,6 +404,131 @@ func TestABoxLearnsItIsRevoked(t *testing.T) {
 	}
 }
 
+// Every 410 revoked carries the record its server answered from (PROTOCOL.md
+// §6.3; #353), at a send to a revoked box, at a revoked box's poll, and at
+// the publish of a revocation it holds already. One that verifies is taken
+// as the read's is, with no second call. Where an operator puts none in its
+// place, or another box's revocation, the box reads the box the call named,
+// once, and takes it as revoked only because what that read carries
+// verifies.
+func TestA410CarriesTheRecord(t *testing.T) {
+	ctx := context.Background()
+	type call struct{ method, path string }
+	for _, at := range []struct {
+		name string
+		// do revokes a box in env e and makes the call a 410 answers,
+		// through forged, the middleware that answers that call. It returns
+		// the call, the box the call named, and its error.
+		do func(t *testing.T, e *env, forged func(w http.ResponseWriter, r *http.Request, next http.Handler)) (call, protocol.Address, error)
+		// revoked is what a box makes of a 410 whose record verifies.
+		revoked func(t *testing.T, err error, named protocol.Address)
+	}{
+		{"a send's", func(t *testing.T, e *env, forged func(http.ResponseWriter, *http.Request, http.Handler)) (call, protocol.Address, error) {
+			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			revoke(t, e, b)
+			post := call{http.MethodPost, "/v1/" + b.Address().String() + "/messages"}
+			read := false
+			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+				switch at, ok := forge.ReadOf(r); {
+				case ok && at == b.Address() && !read: // the read before the post serves B as it was
+					read = true
+					e.serve(w, r, next, func(*protocol.BoxResponse) {})
+				case r.Method == post.method && r.URL.Path == post.path:
+					forged(w, r, next)
+				default:
+					next.ServeHTTP(w, r)
+				}
+			})
+			_, err := a.Send(ctx, b.Address(), "to a box revoked since its read")
+			if failed(a, b.Address()) != 1 || !keptRevocation(a, b.Address()) {
+				t.Errorf("the message was not moved to outbox/failed/, or the revocation not kept: %v", err)
+			}
+			return post, b.Address(), err
+		}, func(t *testing.T, err error, named protocol.Address) {
+			if !isRevoked(err, named, false) {
+				t.Errorf("send: %v", err)
+			}
+		}},
+		{"a poll's", func(t *testing.T, e *env, forged func(http.ResponseWriter, *http.Request, http.Handler)) (call, protocol.Address, error) {
+			a := e.box(protocol.Classic)
+			revoke(t, e, a)
+			poll := call{http.MethodGet, "/v1/" + a.Address().String() + "/messages"}
+			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+				if r.Method == poll.method && r.URL.Path == poll.path {
+					forged(w, r, next)
+					return
+				}
+				next.ServeHTTP(w, r)
+			})
+			_, err := a.Receive(ctx)
+			if st, serr := a.Status(t.Context()); serr != nil || !st.Revoked {
+				t.Errorf("status after the poll: %+v, %v", st, serr)
+			}
+			return poll, a.Address(), err
+		}, func(t *testing.T, err error, named protocol.Address) {
+			if !isRevoked(err, named, true) {
+				t.Errorf("the poll: %v", err)
+			}
+		}},
+		{"a publish's", func(t *testing.T, e *env, forged func(http.ResponseWriter, *http.Request, http.Handler)) (call, protocol.Address, error) {
+			a := e.box(protocol.Classic)
+			rec := revoke(t, e, a)
+			put := call{http.MethodPut, "/v1/" + a.Address().String() + "/revocations"}
+			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+				if r.Method == put.method && r.URL.Path == put.path {
+					forged(w, r, next)
+					return
+				}
+				next.ServeHTTP(w, r)
+			})
+			_, err := client.Revoke(ctx, e.opts(), rec)
+			return put, a.Address(), err
+		}, func(t *testing.T, err error, _ protocol.Address) {
+			if err != nil {
+				t.Errorf("published again to a server that holds it: %v", err)
+			}
+		}},
+	} {
+		for _, c := range []struct {
+			name  string
+			carry func(t *testing.T, e *env) func(http.ResponseWriter, *http.Request, http.Handler)
+			reads int // of the box named, after the 410
+		}{
+			{"its own record", func(*testing.T, *env) func(http.ResponseWriter, *http.Request, http.Handler) {
+				return func(w http.ResponseWriter, r *http.Request, next http.Handler) { next.ServeHTTP(w, r) }
+			}, 0},
+			{"no record", func(*testing.T, *env) func(http.ResponseWriter, *http.Request, http.Handler) {
+				return func(w http.ResponseWriter, r *http.Request, next http.Handler) { forge.Carry(w, r, next, nil) }
+			}, 1},
+			{"another box's revocation", func(t *testing.T, e *env) func(http.ResponseWriter, *http.Request, http.Handler) {
+				ofC, err := e.box(protocol.Classic).Revocation(t.Context())
+				if err != nil {
+					t.Fatal(err)
+				}
+				return func(w http.ResponseWriter, r *http.Request, next http.Handler) { forge.Carry(w, r, next, ofC) }
+			}, 1},
+		} {
+			t.Run(at.name+" 410 with "+c.name, func(t *testing.T) {
+				e := newEnv(t)
+				made, named, err := at.do(t, e, c.carry(t, e))
+				at.revoked(t, err, named)
+				log, after, reads := e.srv.Requests(), -1, 0
+				for i, r := range log {
+					switch {
+					case r.Method == made.method && r.Path == made.path:
+						after = i
+					case after >= 0 && r.Method == http.MethodGet && r.Path == "/v1/"+named.String():
+						reads++
+					}
+				}
+				if after < 0 || reads != c.reads {
+					t.Errorf("%d reads of the box named after the 410, want %d: %+v", reads, c.reads, log)
+				}
+			})
+		}
+	}
+}
+
 // Revoking is checked before it is sent, takes no key but the record, and
 // doing it twice changes nothing.
 func TestRevokeTakesOnlyARecordThatVerifies(t *testing.T) {

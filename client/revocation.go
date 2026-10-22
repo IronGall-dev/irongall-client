@@ -671,12 +671,23 @@ func (b *Box) revokeBelow(ctx context.Context, serial uint64) (*protocol.Revoked
 
 // proved turns a server's "revoked" into something this box has checked. who
 // is the box a call named. If err is the server saying who is revoked, or
-// that this box is, the server is asked for the revocation: one that verifies
-// makes it a [RevokedError], which is final. With none, the error says so and
-// stays what it was, a call that failed: a server's word revokes nothing.
+// that this box is, the revocation is checked: the record a 410 carries,
+// taken as the read's is (take), and otherwise the one the server is then
+// asked for. One that verifies makes it a [RevokedError], which is final.
+// With none, the error says so and stays what it was, a call that failed: a
+// server's word revokes nothing.
 func (b *Box) proved(ctx context.Context, who protocol.Address, err error, l *lookups) error {
 	switch code(err) {
 	case protocol.CodeRevoked:
+		if rec := recordOf(err); rec != nil {
+			gone, terr := b.take(who, rec)
+			if terr != nil {
+				return fmt.Errorf("%w; keeping the revocation it carried failed: %v", err, terr)
+			}
+			if gone {
+				return &RevokedError{Address: who, Own: who == b.id.Address()}
+			}
+		}
 	case protocol.CodeSenderRevoked:
 		who = b.id.Address()
 	default:
@@ -789,7 +800,7 @@ func (b *Box) Publish(ctx context.Context, rec *protocol.Revocations) (protocol.
 		return a, b.publishRecord(ctx, a, rec)
 	}
 	// As this box, under its lock: of its own address, what the server then
-	// serves is kept (servesRevocation). A revocation of its certificates
+	// shows is kept (servesRevocation). A revocation of its certificates
 	// below the one the server holds is answered conflict: the box reads
 	// itself and keeps that one once it verifies, which covers this one, and
 	// the record has nothing left to do.
@@ -816,7 +827,7 @@ func (b *Box) Publish(ctx context.Context, rec *protocol.Revocations) (protocol.
 func (b *Box) publishRecord(ctx context.Context, a protocol.Address, rec *protocol.Revocations) error {
 	_, err := b.call(ctx, http.MethodPut, "/v1/"+a.String()+"/revocations", rec, nil, nil)
 	if code(err) == protocol.CodeRevoked {
-		served, serr := b.servesRevocation(ctx, a)
+		served, serr := b.servesRevocation(ctx, a, recordOf(err))
 		if serr != nil {
 			return serr
 		}
@@ -830,22 +841,37 @@ func (b *Box) publishRecord(ctx context.Context, a protocol.Address, rec *protoc
 // servesRevocation reports whether this box's server shows a revocation of
 // address a that verifies. A server answers a record sent for an address it
 // holds revoked with revoked, without checking the record (PROTOCOL.md
-// §6.3); that answer is taken only once what it serves is checked. Of this
-// box's own address, what verifies is kept (known), as all a box verifies
-// of itself is; of another's, nothing is, and a publish with no box
-// ([Publish]) keeps nothing.
-func (b *Box) servesRevocation(ctx context.Context, a protocol.Address) (bool, error) {
-	if b.id != nil && a == b.id.Address() {
+// §6.3); that answer is taken only once what it shows is checked: the record
+// the 410 carried, and where that is none or does not verify, the one the
+// read of a's box then carries. Of this box's own address, what verifies is
+// kept (take, known), as all a box verifies of itself is; of another's,
+// nothing is, and a publish with no box ([Publish]) keeps nothing.
+func (b *Box) servesRevocation(ctx context.Context, a protocol.Address, carried *protocol.Revocations) (bool, error) {
+	own := b.id != nil && a == b.id.Address()
+	if carried != nil {
+		if own {
+			if gone, err := b.take(a, carried); gone || err != nil {
+				return gone, err
+			}
+		} else if revokes(a, carried) {
+			return true, nil
+		}
+	}
+	if own {
 		if _, err := b.known(ctx); err != nil {
 			return false, err
 		}
 		return b.revoked(a)
 	}
 	_, err := b.call(ctx, http.MethodGet, "/v1/"+a.String(), nil, nil, nil)
-	rec := recordOf(err)
+	return revokes(a, recordOf(err)), nil
+}
+
+// revokes reports whether rec holds a revocation of address a that verifies.
+func revokes(a protocol.Address, rec *protocol.Revocations) bool {
 	if rec == nil || len(rec.Revocation) == 0 {
-		return false, nil
+		return false
 	}
-	_, err = protocol.VerifyRevocation(a, rec.Identity, rec.Revocation)
-	return err == nil, nil
+	_, err := protocol.VerifyRevocation(a, rec.Identity, rec.Revocation)
+	return err == nil
 }

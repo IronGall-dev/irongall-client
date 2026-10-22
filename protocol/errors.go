@@ -199,9 +199,10 @@ type Problem struct {
 	// Member is the request member or query parameter that is missing,
 	// unknown, given twice or not of its form (bad_request).
 	Member string `json:"member,omitempty"`
-	// Record is the revocation record of the address a read of a box named
-	// (revoked, on GET /v1/<address>). A client checks it, and takes
-	// "revoked" on nothing less.
+	// Record is the revocation record of the address a 410 revoked names,
+	// which the read of a box always carries, and any other call's where its
+	// server answers from the record (PROTOCOL.md §6.3). A client checks it,
+	// and takes "revoked" on nothing less.
 	Record *Revocations `json:"record,omitempty"`
 }
 

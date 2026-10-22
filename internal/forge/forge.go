@@ -57,6 +57,23 @@ func Serve(t testing.TB, s *fakeserver.Server, w http.ResponseWriter, r *http.Re
 	fakeserver.WriteJSON(w, http.StatusOK, br)
 }
 
+// Carry answers r as next answers it, but that a 410 revoked carries rec in
+// place of the record its server holds, or none for nil: an operator that
+// says an address is revoked and shows another record, or none.
+func Carry(w http.ResponseWriter, r *http.Request, next http.Handler, rec *protocol.Revocations) {
+	got := httptest.NewRecorder()
+	next.ServeHTTP(got, r)
+	if got.Code == http.StatusGone {
+		Refuse(w, protocol.CodeRevoked, func(p *protocol.Problem) { p.Record = rec })
+		return
+	}
+	for k, v := range got.Header() {
+		w.Header()[k] = v
+	}
+	w.WriteHeader(got.Code)
+	_, _ = w.Write(got.Body.Bytes())
+}
+
 // Hides puts an operator in front of s that serves every box without what
 // its identity signed about it: a revoked box as if it were not, and no
 // revocation of a box's certificates.

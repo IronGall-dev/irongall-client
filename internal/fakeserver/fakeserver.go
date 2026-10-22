@@ -234,6 +234,13 @@ func problem(w http.ResponseWriter, code protocol.Code, detail string, with ...f
 	_ = json.NewEncoder(w).Encode(p)
 }
 
+// revoked answers that an address is revoked, carrying the record the
+// server holds of it, as every 410 revoked does (PROTOCOL.md §6.3).
+func revoked(w http.ResponseWriter, identity []byte, k *revocations, detail string) {
+	rec := &protocol.Revocations{Identity: identity, Revocation: k.revoked, RevokedCertificates: k.certList, RevokedCertificatesSignature: k.certListSig}
+	problem(w, protocol.CodeRevoked, detail, func(p *protocol.Problem) { p.Record = rec })
+}
+
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(v); err != nil {
 		problem(w, protocol.CodeBadRequest, err.Error())
@@ -327,7 +334,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 	if b := s.boxes[a]; b != nil {
 		if b.revoked != nil {
-			problem(w, protocol.CodeRevoked, "this box is revoked")
+			revoked(w, b.identity, &b.revocations, "this box is revoked")
 			return
 		}
 		if bytes.Equal(b.statement, req.Prekey) && bytes.Equal(b.signature, req.PrekeySignature) {
@@ -347,7 +354,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	var kept revocations
 	if h := s.held[a]; h != nil {
 		if h.revoked != nil {
-			problem(w, protocol.CodeRevoked, "this address is revoked")
+			revoked(w, h.identity, &h.revocations, "this address is revoked")
 			return
 		}
 		if h.listed != nil && h.listed.Revokes(cert.Serial()) {
@@ -375,13 +382,11 @@ func (s *Server) getBox(w http.ResponseWriter, r *http.Request) {
 	b := s.boxes[a]
 	if h := s.held[a]; b == nil && h != nil && h.revoked != nil {
 		// A revoked address is read as its record, box or none.
-		rec := &protocol.Revocations{Identity: h.identity, Revocation: h.revoked, RevokedCertificates: h.certList, RevokedCertificatesSignature: h.certListSig}
-		problem(w, protocol.CodeRevoked, "this address is revoked", func(p *protocol.Problem) { p.Record = rec })
+		revoked(w, h.identity, &h.revocations, "this address is revoked")
 		return
 	}
 	if b != nil && b.revoked != nil {
-		rec := &protocol.Revocations{Identity: b.identity, Revocation: b.revoked, RevokedCertificates: b.certList, RevokedCertificatesSignature: b.certListSig}
-		problem(w, protocol.CodeRevoked, "this box is revoked", func(p *protocol.Problem) { p.Record = rec })
+		revoked(w, b.identity, &b.revocations, "this box is revoked")
 		return
 	}
 	if b == nil {
@@ -408,19 +413,20 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 	b := s.boxes[a]
 	h := s.held[a]
 	var kept *revocations
+	var identity []byte
 	switch {
 	case b != nil:
-		kept = &b.revocations
+		kept, identity = &b.revocations, b.identity
 	case h != nil:
-		kept = &h.revocations
+		kept, identity = &h.revocations, h.identity
 	default:
 		h = &held{identity: req.Identity}
 		kept = &h.revocations
 	}
 	// A revoked address takes nothing more, and nothing sent for it is
-	// checked (PROTOCOL.md §6.3).
+	// checked (PROTOCOL.md §6.3): it is answered with the record held.
 	if kept.revoked != nil {
-		problem(w, protocol.CodeRevoked, "this address is revoked")
+		revoked(w, identity, kept, "this address is revoked")
 		return
 	}
 	// A revocation of certificates: the address goes on. The highest serial
@@ -499,7 +505,7 @@ func (s *Server) newPrekey(w http.ResponseWriter, r *http.Request) {
 	defer s.mu.Unlock()
 	b := s.boxes[a]
 	if b != nil && b.revoked != nil {
-		problem(w, protocol.CodeRevoked, "this box is revoked")
+		revoked(w, b.identity, &b.revocations, "this box is revoked")
 		return
 	}
 	if b == nil {
@@ -608,7 +614,7 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
 		return
 	case rcpt.revoked != nil:
-		problem(w, protocol.CodeRevoked, "this box is revoked")
+		revoked(w, rcpt.identity, &rcpt.revocations, "this box is revoked")
 		return
 	case !rcpt.current():
 		problem(w, protocol.CodePrekeyExpired, "the box must publish a new prekey: its current one is under a revoked certificate")
@@ -675,7 +681,7 @@ func (s *Server) owner(h func(http.ResponseWriter, *http.Request, *box)) http.Ha
 		defer s.mu.Unlock()
 		b := s.boxes[a]
 		if b != nil && b.revoked != nil {
-			problem(w, protocol.CodeRevoked, "this box is revoked")
+			revoked(w, b.identity, &b.revocations, "this box is revoked")
 			return
 		}
 		if b == nil {

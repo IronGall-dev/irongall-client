@@ -81,13 +81,11 @@ paths:
         statement against the certificate, and the revocation against the
         identity (§6.3a). A revoked address is `410 revoked`, with the record
         held in `record`, which a client checks and never believes (§6.3).
-        With a pass the call is counted against the box that asks; with none,
-        against the address it comes from (§8). Both clients send none.
-        Answered for an active box: an
+        It takes no pass: it is public, and a server counts it against the
+        address it comes from, whatever `Authorization` it carries, and reads
+        no pass on it (§4.1, §8). Answered for an active box: an
         address with no box is `404`.
-      security:
-        - {}
-        - pass: []
+      security: []
       responses:
         '200':
           description: The box, as its identity and working key signed it, and what the server says of its key types.
@@ -106,10 +104,6 @@ paths:
                 $ref: '#/components/schemas/BoxResponse'
         '400':
           $ref: '#/components/responses/BadRequest'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '410':
@@ -262,7 +256,7 @@ paths:
         serial again, `200`; beside a revocation of the address, one no higher
         than the one held changes nothing, and the answer is `201`. An address
         already revoked is `410`, answered from the record before any
-        signature in the body is checked.
+        signature in the body is checked, and carrying it.
       security: []
       requestBody:
         required: true
@@ -934,8 +928,11 @@ components:
     Gone:
       description: |
         `revoked`: the box named is revoked, forever. A client checks the
-        revocation and believes nothing less (§6.3): the read of a box carries
-        it, so after any other call a client reads the box.
+        revocation and believes nothing less (§6.3): every `410 revoked` a
+        server answers from the record it holds carries that record in
+        `record`, which a client verifies as it verifies the read's, and it
+        reads the box only when a `410` carries none, or one that does not
+        verify.
       headers:
         Date:
           $ref: '#/components/headers/Date'
@@ -951,6 +948,8 @@ components:
                     const: 410
                   code:
                     const: revoked
+                  record:
+                    $ref: '#/components/schemas/RevokedRecord'
     RequestTimeout:
       description: '`request_timeout`: the body did not arrive in the time the server waits for it (RFC 9110 §15.5.9). Send it again.'
       headers:
@@ -1257,10 +1256,11 @@ components:
               const: revocation_record
     RevokedRecord:
       description: |
-        The record a revoked address is answered with on the read of its box
-        (`PROTOCOL.md` §6.3): always the revocation of the address, and the
-        revocation of its certificates when the server holds one. It proves
-        itself, as any record does.
+        The record a `410 revoked` carries (`PROTOCOL.md` §6.3): on the read
+        of a box always, and on any other call's where the server answers from
+        it. It holds the revocation of the address always, and the revocation
+        of its certificates when the server holds one. It proves itself, as
+        any record does.
       type: object
       required: [type, identity, revocation_signature]
       dependentRequired:
@@ -1425,7 +1425,7 @@ components:
           description: '`bad_request`: the request member or query parameter that is missing, unknown or given twice, or holds a value its call does not take.'
           type: [string, 'null']
         record:
-          description: '`revoked`, on the read of a box: the revocation record the server holds (§6.3). A client checks it, and believes nothing less.'
+          description: '`revoked`: the revocation record the server holds (§6.3), on the read of a box always and on any other call where the server answers from it. A client checks it, and believes nothing less.'
           anyOf:
             - $ref: '#/components/schemas/RevokedRecord'
             - type: 'null'

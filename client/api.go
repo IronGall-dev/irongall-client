@@ -291,8 +291,7 @@ func (b *Box) ownerTaken(ctx context.Context, method, path string, hdr http.Head
 type taken = tk.Reading
 
 // lookup GETs box a from this box's server (GET /v1/<a>), with no pass: the
-// read is public, and a pass would only have the server count it against
-// this box (PROTOCOL.md §4.1).
+// read is public, and a server reads no pass on it (PROTOCOL.md §4.1).
 func (b *Box) lookup(ctx context.Context, a protocol.Address, out any) (*http.Response, error) {
 	return b.call(ctx, http.MethodGet, "/v1/"+a.String(), nil, nil, out)
 }

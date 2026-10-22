@@ -94,7 +94,7 @@ ig_owner(){ # <METHOD> <PATH> [body file] [curl args…] → ig_api as this box:
 ig_taken(){ # → the reading of this machine's clock a server took, in Unix time: the date of the pass in $IG/pass, which the call ig_owner made, or the renewal ig_renew sent, carried once the server answered it: its not_after less the ten minutes a pass is signed for. Every deletion by the clock is by one, never by a reading of the clock (PROTOCOL.md §0): a clock far off is stopped at its pass, and one that jumps or steps back while a call is in flight deletes nothing by where it went
   local na; na=$(ig_time "$(sed -n 's/.* not_after="\([^"]*\)".*/\1/p' "$IG/pass" 2> /dev/null)") && echo $((na - 600))
 }
-ig_look(){ # <address> → ig_api GET of a box from this box's server (GET /v1/<address>), with no pass: the read is public, and a pass would only have the server count it against this box (PROTOCOL.md §4.1)
+ig_look(){ # <address> → ig_api GET of a box from this box's server (GET /v1/<address>), with no pass: the read is public, and a server reads none on it (PROTOCOL.md §4.1)
   ig_api GET "/v1/$1"
 }
 ig_clock(){ # after a call the server refused: if it refused the pass, or a prekey statement, for its time, says what the server dates its answer and what this machine's clock reads. A new pass does not cure that, so it is nearly always a clock. The date is the server's word: a clock set by a server's lie makes an ended certificate valid again, so this sends its reader to a time source of their own

@@ -262,7 +262,8 @@ func (b *Box) drain(ctx context.Context, asked *lookups, res *Result) error {
 		resp, at, err := b.ownerTaken(ctx, http.MethodGet, path, hdr, nil, &list)
 		if err != nil {
 			// A server that says this box is revoked, or its certificate, is
-			// asked to show it.
+			// held to what it shows: the record a 410 carries, or what the
+			// box's read of itself then shows.
 			return b.ownCertRevoked(ctx, b.proved(ctx, b.id.Address(), err, asked))
 		}
 		if page == 0 {

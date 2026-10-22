@@ -35,7 +35,7 @@ func lookups(e *env) (seen func() map[string]bool) {
 }
 
 // A box's lookups carry no pass (PROTOCOL.md §4.1, §8): the read is public,
-// and a pass would only have a server count it against the box. Not the
+// and a server reads none on it. Not the
 // recipient's box before a send, not a sender's in a drain, and not a box's
 // read of its own.
 func TestLookupsCarryNoPass(t *testing.T) {
