@@ -124,11 +124,11 @@ func (e *APIError) words() string {
 	case protocol.CodePassExpired:
 		return "the server refused this box's pass, and a new one, as not valid at its clock"
 	case protocol.CodeCertificateNotCurrent:
-		s := "the server holds another certificate as this box's current one"
+		s := "the server takes this box's pass under another certificate than the one it signs under"
 		if p.CertificateSerial != nil {
 			s += fmt.Sprintf(", serial %d", *p.CertificateSerial)
 		}
-		return s + ", as after a restore or a renewal on another machine: irongall prekey renew certifies a new working key above it"
+		return s + ", as after a restore or a renewal on another machine, and the one this box signs under may be revoked too: irongall prekey renew certifies a new working key above it"
 	case protocol.CodeCertificateRevoked:
 		return "the server holds the certificate this box signs under as one its identity revoked: irongall prekey renew certifies a new working key above it"
 	case protocol.CodeUnknownSender:

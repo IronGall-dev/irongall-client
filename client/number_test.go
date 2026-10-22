@@ -2,6 +2,7 @@ package client_test
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -63,6 +64,24 @@ func servedCertificate(t *testing.T, e *env, b *client.Box) uint64 {
 		t.Fatal(err)
 	}
 	return cert.Serial()
+}
+
+// A box whose identity renewed on another machine: its pass is under another
+// certificate than the one its server takes, which the refusal names, and
+// the box says it with that serial, a certificate it does not hold (#263,
+// IronGall-dev/irongall-server#66).
+func TestAPassUnderAnotherCertificateIsToldTheOneTheServerTakes(t *testing.T) {
+	e := newEnv(t)
+	b := e.box(protocol.Classic)
+	e.clock.Add(2 * time.Second)
+	if _, err := restore(t, e, b).Rekey(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+	took := servedCertificate(t, e, b)
+	_, err := b.Receive(context.Background())
+	if client.Code(err) != protocol.CodeCertificateNotCurrent || !strings.Contains(err.Error(), fmt.Sprintf("another certificate than the one it signs under, serial %d", took)) || numberOf(t, b) == took {
+		t.Fatalf("recv after a renewal on another machine, which the server took at %d: %v", took, err)
+	}
 }
 
 // A new box's number is its clock, in seconds, and so is a renewal's once the

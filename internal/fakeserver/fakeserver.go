@@ -301,7 +301,8 @@ func (s *Server) pass(w http.ResponseWriter, r *http.Request, identity []byte, u
 		problem(w, protocol.CodeUnauthorized, "not this box's pass for this server")
 		return false
 	case !bytes.Equal(cert.Marshal(), under.Marshal()):
-		problem(w, protocol.CodeCertificateNotCurrent, "the pass is not under the box's current certificate")
+		n := under.Serial()
+		problem(w, protocol.CodeCertificateNotCurrent, "the pass is not under the certificate this call takes a pass under", func(p *protocol.Problem) { p.CertificateSerial = &n })
 		return false
 	}
 	return true

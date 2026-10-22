@@ -872,10 +872,12 @@ components:
     Unauthorized:
       description: |
         The pass is refused: `unauthorized` (none, not this box's, or not for
-        this server) · `pass_expired` · `certificate_not_current` (with the
-        current `certificate_serial` when the server has one) ·
-        `certificate_revoked`. A client signs another pass and tries once more
-        (§6.1b).
+        this server) · `pass_expired` · `certificate_not_current` (under
+        another certificate than the one the call takes a pass under, revoked
+        or not, whose serial is `certificate_serial`) · `certificate_revoked`
+        (the box's current certificate is one its identity revoked, answered
+        before any pass is read). A client signs another pass and tries once
+        more (§6.1b).
       headers:
         Date:
           $ref: '#/components/headers/Date'
@@ -1429,7 +1431,7 @@ components:
             - $ref: '#/components/schemas/Integer'
             - type: 'null'
         certificate_serial:
-          description: '`stale_prekey`, `conflict` on a prekey, `certificate_not_current`: the current certificate''s serial.'
+          description: '`stale_prekey`, `conflict` on a prekey: the current certificate''s serial; `certificate_not_current`: the serial of the certificate the call takes a pass under, or of the one a new statement must be above.'
           anyOf:
             - $ref: '#/components/schemas/Integer'
             - type: 'null'
