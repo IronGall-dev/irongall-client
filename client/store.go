@@ -28,7 +28,7 @@ import (
 //
 //	box          the box's own records, each by its name: serial, pass, etag, seen-floor, acl, revoked, revoked-certs, renew-failed, not-made
 //	prekeys      each prekey statement this box signed, by its serial: the statement, its signature and when it was signed, in one value
-//	intent       the renewal under way, under "renewal": the number it took and how far it got
+//	intent       the renewal under way, under "renewal": the number it took
 //	peers        what this box pinned of each peer, by its address, in one value
 //	seen         the replay set, by ciphertext hash; seen-sender by sender and msg_id, and seen-time by sent_at, its two indexes
 //	quarantine   what this client's checks found of each message it refused, by its id: quarantine/ keeps the message as served

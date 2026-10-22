@@ -152,6 +152,7 @@ func (b *Box) sendWith(ctx context.Context, to protocol.Address, env *protocol.E
 	if err := writeFile(stem+".P", p); err != nil {
 		return nil, err
 	}
+	step("outbox written")
 	aclErr := b.syncACL(ctx)
 	if err := b.replyWaits(to, aclErr); err != nil {
 		return nil, fmt.Errorf("%w: nothing is posted, so that no reply is refused; kept in the outbox, irongall outbox flush sends it", err)
@@ -307,12 +308,14 @@ func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked 
 		}
 		return nil, b.undelivered(stem, err)
 	}
+	step("posted")
 	// Recorded before the outbox entry goes: a crash in between seals and
 	// posts it again, and its reader drops the copy by its msg_id.
 	sent, err := b.recordSent(stem, posted, r)
 	if err != nil {
 		return nil, fmt.Errorf("sent, but not recorded in sent/ (still in the outbox: irongall outbox flush posts it again, and its reader drops the copy): %w", err)
 	}
+	step("sent kept")
 	if err := removeIfExists(stem + ".P"); err != nil {
 		return sent, err
 	}

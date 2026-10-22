@@ -32,6 +32,13 @@ func SetDrainLimits(t *testing.T, messages, bytes, pages int) {
 	t.Cleanup(func() { maxDrainMessages, maxDrainBytes, maxDrainPages = m, b, p })
 }
 
+// SetStep has f called with the name of each step a command passes
+// (steps.go), for a test that kills its process at one.
+func SetStep(f func(name string)) { atStep = f }
+
+// Steps are the steps of one kind of write (steps.go).
+func Steps(kind string) []string { return steps[kind] }
+
 // DeleteAtServer deletes the box at its server, as its owner may with curl
 // and its pass (PROTOCOL.md §6.2): no command of this client does.
 func (b *Box) DeleteAtServer(ctx context.Context) error {

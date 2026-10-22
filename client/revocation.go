@@ -631,7 +631,12 @@ func (b *Box) revokeBelow(ctx context.Context, serial uint64) (*protocol.Revoked
 	// next one it signs runs at least as high.
 	perr := b.publishRecord(ctx, own, rec)
 	if perr == nil {
-		return certs, b.keepRevokedCerts(own, rec.Identity, rec.RevokedCertificates, rec.RevokedCertificatesSignature)
+		step("revocation published")
+		if err := b.keepRevokedCerts(own, rec.Identity, rec.RevokedCertificates, rec.RevokedCertificatesSignature); err != nil {
+			return certs, err
+		}
+		step("revocation kept")
+		return certs, nil
 	}
 	if code(perr) != protocol.CodeConflict {
 		return nil, perr

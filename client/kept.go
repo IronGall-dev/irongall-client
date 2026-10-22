@@ -158,11 +158,16 @@ func (b *Box) keepRefused(id string, m *protocol.MessageInfo, ct []byte, why *Re
 	if err := writeFile(b.path("quarantine", id+".json"), raw); err != nil {
 		return err
 	}
+	step("refusal written")
 	rec, err := json.Marshal(quarantineRecord{Code: why.Code, Reason: why.Reason, Judged: newKeptFindings(why.Findings)})
 	if err != nil {
 		return err
 	}
-	return b.update(func(s store) error { return s.put(bucketQuarantine, id, rec) })
+	if err := b.update(func(s store) error { return s.put(bucketQuarantine, id, rec) }); err != nil {
+		return err
+	}
+	step("refusal kept")
+	return nil
 }
 
 func servedRefusal(m *protocol.MessageInfo, ct []byte) ([]byte, error) {

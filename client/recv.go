@@ -388,6 +388,7 @@ func (b *Box) receiveOne(ctx context.Context, m protocol.MessageInfo, res *Resul
 			if err != nil {
 				return fetched, err
 			}
+			step("delivery written")
 			// A message refused once, whose ack was lost, and delivered
 			// now, keeps nothing in quarantine/ (#211): its file goes first,
 			// then what the box's state keeps of it, with the line.
@@ -402,6 +403,7 @@ func (b *Box) receiveOne(ctx context.Context, m protocol.MessageInfo, res *Resul
 			}); err != nil {
 				return fetched, err
 			}
+			step("delivery seen")
 			switch where {
 			case landInbox:
 				res.Delivered = append(res.Delivered, *d)

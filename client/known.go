@@ -89,7 +89,7 @@ func (b *Box) known(ctx context.Context) (*own, error) {
 		// ended.
 		o.statement, o.cert, o.bad = protocol.VerifyPrekeyRecord(b.id, br.Prekey, br.PrekeySignature)
 		if o.bad == nil {
-			if err := b.noteNotMade(o, br.Prekey); err != nil {
+			if err := b.noteServed(o, br.Prekey); err != nil {
 				return o, err
 			}
 		}
@@ -111,15 +111,26 @@ type NotMade struct {
 	At string `json:"at"`
 }
 
-// noteNotMade keeps what a read served of the box's own statement when the
-// box did not make it, and drops what it kept once a read serves one it made.
-func (b *Box) noteNotMade(o *own, served []byte) error {
+// noteServed keeps what a read served of the box's own statement. One the box
+// did not make is kept as [NotMade], and dropped once a read serves one it
+// made. One it made, under the certificate it made with it, and above the one
+// it published last, the server took, whether or not the box saw the answer:
+// its process may have ended in between (steps.go). It is recorded as publish
+// records one, with no pass, before the box does anything more.
+func (b *Box) noteServed(o *own, served []byte) error {
 	rec, err := b.prekeyOf(o.statement.Serial)
 	if err != nil {
 		return err
 	}
 	if rec != nil && bytes.Equal(rec.Statement, served) {
-		return b.update(func(s store) error { return s.del(bucketBox, "not-made") })
+		if err := b.update(func(s store) error { return s.del(bucketBox, "not-made") }); err != nil {
+			return err
+		}
+		published, err := b.publishedSerial()
+		if err != nil || o.statement.Serial <= published || o.cert.Serial() != o.statement.Serial {
+			return err
+		}
+		return b.recordTaken(o.statement.Serial, "")
 	}
 	nm, err := json.Marshal(NotMade{Serial: o.statement.Serial, CertificateSerial: o.cert.Serial(), At: b.now().UTC().Format(protocol.TimeLayout)})
 	if err != nil {

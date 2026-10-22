@@ -351,23 +351,41 @@ func (b *Box) publish(ctx context.Context, path string, req any, n uint64) (take
 	if err != nil {
 		return taken{}, err
 	}
-	// What the server took is recorded first, in one transaction: the serial,
-	// the pass, which is under the certificate the server now holds this box
-	// to, and the renewal under way done, with any that failed before it.
+	step("renewal taken")
+	return at, b.recordTaken(n, pass)
+}
+
+// recordTaken records statement n as one the server took, before anything
+// else is done, in one transaction: n as the prekey this box published last,
+// unless a higher one is; the renewal under way done, with any that failed
+// before it, unless a later one is under way; and pass, which is under the
+// certificate the server now holds this box to, as the pass the box keeps,
+// or with none given, no pass. Then the working keys older than n go.
+func (b *Box) recordTaken(n uint64, pass string) error {
 	if err := b.update(func(s store) error {
 		if err := b.recordPublished(s, n); err != nil {
 			return err
 		}
-		for _, k := range []struct{ bucket, key string }{{bucketIntent, "renewal"}, {bucketBox, "renew-failed"}} {
-			if err := s.del(k.bucket, k.key); err != nil {
-				return err
+		begun, err := decimal(s.get(bucketIntent, "renewal"), "renewal")
+		if err != nil {
+			return err
+		}
+		if begun <= n {
+			for _, k := range []struct{ bucket, key string }{{bucketIntent, "renewal"}, {bucketBox, "renew-failed"}} {
+				if err := s.del(k.bucket, k.key); err != nil {
+					return err
+				}
 			}
+		}
+		if pass == "" {
+			return s.del(bucketBox, "pass")
 		}
 		return s.put(bucketBox, "pass", []byte(pass))
 	}); err != nil {
-		return at, err
+		return err
 	}
-	return at, b.dropWork(n)
+	step("renewal recorded")
+	return b.dropWork(n)
 }
 
 // makeDirs makes the box's directories that are missing, its .gitignore and
@@ -538,12 +556,14 @@ func (b *Box) makePrekey(serial uint64, kt protocol.KeyType) (*protocol.Prekey, 
 	if err != nil {
 		return nil, err
 	}
+	step("working key made")
 	stem := b.path("prekeys", fmt.Sprint(serial))
 	if !exists(stem+".agekey") || keyType(stem+".agekey") != kt {
 		if err := newAgeKey(stem+".agekey", kt, b.now()); err != nil {
 			return nil, err
 		}
 	}
+	step("prekey made")
 	recipient, err := ageRecipient(stem + ".agekey")
 	if err != nil {
 		return nil, err
@@ -562,7 +582,11 @@ func (b *Box) makePrekey(serial uint64, kt protocol.KeyType) (*protocol.Prekey, 
 	if err != nil {
 		return nil, err
 	}
-	return p, b.update(func(s store) error { return s.put(bucketPrekeys, serialKey(serial), rec) })
+	if err := b.update(func(s store) error { return s.put(bucketPrekeys, serialKey(serial), rec) }); err != nil {
+		return nil, err
+	}
+	step("statement kept")
+	return p, nil
 }
 
 // begin records serial as the number of the renewal under way. A number an
@@ -591,9 +615,13 @@ func (b *Box) begin(serial uint64) error {
 			}
 		}
 	}
-	return b.update(func(s store) error {
+	if err := b.update(func(s store) error {
 		return s.put(bucketIntent, "renewal", strconv.AppendUint(nil, serial, 10))
-	})
+	}); err != nil {
+		return err
+	}
+	step("renewal begun")
+	return nil
 }
 
 // ageRecipient returns the recipient an age key file's key is encrypted to.

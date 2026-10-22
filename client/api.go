@@ -238,7 +238,10 @@ func passRefused(c protocol.Code) bool {
 // owner makes a request as this box, with in as its body when not nil (call):
 // a call that carries the box's pass. If the server refuses the pass, because
 // it ran out sooner by the server's clock or was signed under a certificate
-// the server no longer takes, the box signs another and tries once more.
+// the server no longer takes, the box signs another and tries once more. A
+// pass under a certificate that is not the box's current one at the server
+// has the box read itself there first (known), which records a renewal the
+// server took whose answer the box never had.
 func (b *Box) owner(ctx context.Context, method, path string, in, out any) (*http.Response, error) {
 	return b.ownerWith(ctx, method, path, nil, in, out)
 }
@@ -270,6 +273,11 @@ func (b *Box) ownerTaken(ctx context.Context, method, path string, hdr http.Head
 			}
 			at, err := tk.By(pass)
 			return resp, at, err
+		}
+		if code(err) == protocol.CodeCertificateNotCurrent {
+			if _, err := b.known(ctx); err != nil {
+				return nil, taken{}, err
+			}
 		}
 		if err := b.dropPass(); err != nil {
 			return nil, taken{}, err

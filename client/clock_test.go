@@ -258,9 +258,9 @@ func TestAnEnvelopeDatedAheadWaitsInTheOutbox(t *testing.T) {
 // know it is registered. Mail arrives for its first prekey. Its clock then
 // reads two hours back, where its first certificate has not begun, and init
 // runs again, and is refused at its pass, with the first prekey's key kept.
-// With the clock right, init reads what the server holds and renews above
-// it, as a box restored from its identity does (#87), and the key stays, so
-// the mail that waited is still read.
+// Its read of itself there showed the registration the server took, which
+// it recorded (noteServed), so with the clock right init has nothing left to
+// do, and the key stays: the mail that waited is still read.
 func TestInitNeverDropsAKeyMailMayBeWaitingFor(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
@@ -303,8 +303,8 @@ func TestInitNeverDropsAKeyMailMayBeWaitingFor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if served, _ := e.srv.Prekey(b.Address()); served == nil || numberOf(t, b) <= first(t, keyFile) {
-		t.Fatalf("init published %d, where the server held the first prekey's", numberOf(t, b))
+	if n := numberOf(t, b); n != first(t, keyFile) || servedSerial(t, e, b) != n {
+		t.Fatalf("init recorded %d, where the server took the first prekey, %d", n, first(t, keyFile))
 	}
 	landAll(t, b)
 	if res := receive(t, b); len(res.Delivered) != 1 || len(res.Refused) != 0 {
