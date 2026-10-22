@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"time"
 
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
@@ -488,13 +487,6 @@ type Remedy struct {
 	Unread error
 }
 
-// remedyWait is the longest Retry-After the remedy waits out before it sends
-// its renewal once more. Once the revocation is taken, nothing under the
-// certificates it revokes is: whoever spent the box's calls with a taken
-// working key can spend no more, and a server's own pacing of the renewal
-// ends within a refill.
-const remedyWait = time.Minute
-
 // RenewAndRevoke is the remedy for a box whose working key may have been
 // taken, with the address kept: a revocation, signed by the identity, of
 // every certificate before a new one, then a new prekey under a new working
@@ -512,15 +504,15 @@ const remedyWait = time.Minute
 // and goes on above it, or stops there with nothing renewed when it shows
 // none that covers what this one would have. Only then is the new
 // certificate numbered, one above the revocation, so it is never revoked as
-// it is made, and the renewal is sent. Once a server has taken the revocation it takes
-// nothing under the certificates it revokes, the one the box was using among
-// them: whoever holds that working key can no longer spend the box's calls,
-// and the renewal that follows is not counted against the identity's
-// certificates for the day (PROTOCOL.md §6.3a). If the server refuses the
-// renewal with a Retry-After of at most a minute, it is sent again once after
-// it. While the box's server holds the revocation and not the renewal, the
-// box takes no mail there and signs none, and [Box.Receive] and [Box.Rekey]
-// send the renewal again.
+// it is made, and the renewal is sent, once. Once a server has taken the
+// revocation it takes nothing under the certificates it revokes, the one the
+// box was using among them: whoever holds that working key can no longer
+// spend the box's calls, and the renewal that follows spends none of the
+// box's counts, the calls a taker spent before the revocation among them
+// (PROTOCOL.md §6.3a, §6.4; IronGall-dev/irongall-server#84). While the
+// box's server holds the revocation and not the renewal, the box takes no
+// mail there and signs none, and [Box.Receive] and [Box.Rekey] send the
+// renewal again.
 //
 // It returns no Remedy where it stopped before it published anything, a box
 // shown its own revocation on the way among them, which is its [RevokedError]
@@ -575,16 +567,6 @@ func (b *Box) renewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy,
 		return r, nil
 	}
 	at, err := b.sendRenewal(ctx, req, r.Below)
-	var api *APIError
-	if at.None() && errors.As(err, &api) && api.Status == http.StatusTooManyRequests && api.RetryAfter > 0 && api.RetryAfter <= remedyWait {
-		select {
-		case <-ctx.Done():
-			r.NotRenewed = err
-			return r, nil
-		case <-time.After(api.RetryAfter):
-		}
-		at, err = b.sendRenewal(ctx, req, r.Below)
-	}
 	if at.None() {
 		r.NotRenewed = b.proved(ctx, own, err, l)
 		return r, nil

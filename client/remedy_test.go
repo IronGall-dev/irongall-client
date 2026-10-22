@@ -114,45 +114,43 @@ func TestTheRemedyRevokesWhateverTheRenewalMeets(t *testing.T) {
 	}
 }
 
-// A taker who holds the working key can spend the box's calls, so the server
-// may refuse the renewal for them. Once the server holds the revocation it
-// takes nothing under the taken certificate, and the calls come back: a
-// refusal with a short Retry-After is waited out and the renewal sent once
-// more. A longer one is not waited for.
-func TestTheRemedyWaitsOutAShortRetryAfter(t *testing.T) {
+// The remedy sends its renewal once, and waits out no Retry-After
+// (IronGall-dev/irongall-server#84): once the server holds the revocation,
+// the renewal that replaces the revoked certificate spends none of the box's
+// counts, so the calls a taker spent before it cannot hold the renewal back.
+// A renewal refused all the same is sent again at the box's next renewal,
+// as the one it waited for.
+func TestTheRemedySendsItsRenewalOnce(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	a := e.box(protocol.Classic)
 	var order []string
 	refused := 0
-	retryAfter := "1"
 	e.srv.SetMiddle(func(w http.ResponseWriter, req *http.Request, next http.Handler) {
 		if req.Method == http.MethodPut {
 			order = append(order, req.URL.Path[strings.LastIndex(req.URL.Path, "/")+1:])
 		}
 		if req.Method == http.MethodPut && strings.HasSuffix(req.URL.Path, "/prekey") && refused < 1 {
 			refused++
-			w.Header().Set("Retry-After", retryAfter)
+			w.Header().Set("Retry-After", "1")
 			fakeserver.WriteJSON(w, http.StatusTooManyRequests, protocol.Problem{Type: protocol.CodeRateLimited.TypeURI(), Code: protocol.CodeRateLimited, Status: http.StatusTooManyRequests})
 			return
 		}
 		next.ServeHTTP(w, req)
 	})
 	r, err := a.RenewAndRevoke(ctx, "")
-	if err != nil || r.Prekey == nil || r.NotRenewed != nil || r.Revoked == nil || numberOf(t, a) != r.Below {
-		t.Fatalf("the remedy after a short Retry-After: %+v, %v", r, err)
-	}
-	if strings.Join(order, " ") != "revocations prekey prekey" {
-		t.Fatalf("the remedy's uploads, in order: %v", order)
-	}
-
-	refused, retryAfter, order = 0, "120", nil
-	r, err = a.RenewAndRevoke(ctx, "")
 	if err != nil || r.Prekey != nil || client.Code(r.NotRenewed) != protocol.CodeRateLimited || r.Revoked == nil {
-		t.Fatalf("the remedy after a long Retry-After: %+v, %v", r, err)
+		t.Fatalf("the remedy after a refusal with a Retry-After of a second: %+v, %v", r, err)
 	}
 	if strings.Join(order, " ") != "revocations prekey" {
-		t.Fatalf("the remedy's uploads after a long Retry-After, in order: %v", order)
+		t.Fatalf("the remedy's uploads, in order: %v", order)
+	}
+	order = nil
+	if _, err := a.Rekey(ctx, ""); err != nil || numberOf(t, a) != r.Below {
+		t.Fatalf("the next renewal: %v; the box stands at certificate %d, not the remedy's %d", err, numberOf(t, a), r.Below)
+	}
+	if strings.Join(order, " ") != "prekey" {
+		t.Fatalf("the next renewal's uploads, in order: %v", order)
 	}
 }
 
