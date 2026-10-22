@@ -189,39 +189,49 @@ func TestVectorsIdentity(t *testing.T) {
 	}
 	// Each is refused as the Go client refuses it: with status 2 if it is a
 	// well-formed document of a key type the client does not verify, which
-	// has a refusal of its own, and with status 1 otherwise.
+	// has a refusal of its own, and with status 1 otherwise. The ok- ones
+	// are taken.
 	//
-	// OpenSSH's builds disagree on two of them (PROTOCOL.md §2, §3): a P-256
-	// key with a coordinate too short, or at the group's order less one or
-	// more, is refused by the Go client and by OpenSSH up to 10.2p1, and taken
-	// from 10.3p1 (9bea0818), which the script's ssh-keygen decides. On such a
-	// build both are taken together, a known variance; anything else fails.
+	// OpenSSH's builds disagree on those two (PROTOCOL.md §2, §3): a P-256
+	// key with a coordinate of 128 bits or fewer, or of the group's order
+	// less one or more, is taken by the Go client and by OpenSSH from 10.3p1
+	// (9bea0818), and refused up to 10.2p1, which the script's ssh-keygen
+	// decides. On such a build both are refused together, a known variance;
+	// anything else fails.
 	classes := map[int]int{}
-	coordinates := map[string]bool{"p256-short-coordinate.doc": false, "p256-coordinate-over-order.doc": false}
+	coordinates := map[string]bool{}
 	for _, d := range docs {
+		name := filepath.Base(d)
 		doc, _ := os.ReadFile(d) //nolint:gosec // a test vector
 		_, gerr := protocol.ParseIdentity(doc)
+		_, err := bash(t, nil, "ig_idcheck "+abs(t, d))
+		if strings.HasPrefix(name, "ok-") {
+			if gerr != nil {
+				t.Errorf("%s: the Go client refuses it: %v", name, gerr)
+			}
+			coordinates[name] = err == nil
+			continue
+		}
 		want := 1
 		if errors.Is(gerr, protocol.ErrIdentityType) {
 			want = 2
 		}
-		_, err := bash(t, nil, "ig_idcheck "+abs(t, d))
-		if _, known := coordinates[filepath.Base(d)]; known && gerr != nil && err == nil {
-			coordinates[filepath.Base(d)] = true
-			classes[want]++
-			continue
-		}
 		var exit *exec.ExitError
 		if gerr == nil || !errors.As(err, &exit) || exit.ExitCode() != want {
-			t.Errorf("%s: the Go client says %v; the script's status is %v, want %d", filepath.Base(d), gerr, err, want)
+			t.Errorf("%s: the Go client says %v; the script's status is %v, want %d", name, gerr, err, want)
 		}
 		classes[want]++
 	}
-	switch short, over := coordinates["p256-short-coordinate.doc"], coordinates["p256-coordinate-over-order.doc"]; {
+	switch short, over := coordinates["ok-p256-short-coordinate.doc"], coordinates["ok-p256-coordinate-over-order.doc"]; {
+	case len(coordinates) != 2:
+		t.Errorf("the ok- identity vectors: %v, want the two P-256 coordinate ones", coordinates)
 	case short && over:
-		t.Logf("%s takes a P-256 key whose coordinate is too short or at the order, as OpenSSH does from 10.3p1, and the script with it: a known variance (PROTOCOL.md §3)", sshBuild())
 	case short || over:
 		t.Errorf("the script takes one of the two P-256 coordinate vectors and refuses the other (short %v, over the order %v): neither the Go client's verdict nor the known variance", short, over)
+	case !p256():
+		t.Logf("%s reads no P-256 key, so the script refuses both ok- identity vectors: a known variance (PROTOCOL.md §3)", sshBuild())
+	default:
+		t.Logf("%s refuses a P-256 key whose coordinate is 128 bits or shorter or at the order less one or more, as OpenSSH did up to 10.2p1, and the script with it: a known variance (PROTOCOL.md §3)", sshBuild())
 	}
 	if classes[1] == 0 || classes[2] == 0 {
 		t.Errorf("the identity vectors hold no document of each class: %v", classes)

@@ -336,7 +336,7 @@ for want in 2049:ok 2050:bad; do
   armor "$(restr "$X" "$o" "$(restr "$g" "$i" "$(restr "$rs" 0 "${z// /00}$(content "$rs" 0)")")")" > "revoke/c-${want#*:}-r-${want%:*}-bytes.sig"
 done
 
-# Identity documents every implementation must reject.
+# Identity documents every implementation must reject, but ok-*, which every one takes.
 GOOD=$(sed -n 2p a/identity.doc)
 printf 'irongall-v1\n%s comment\n' "$GOOD" > identity/comment.doc
 printf 'irongall-v1\r\n%s\r\n' "$GOOD" > identity/crlf.doc
@@ -357,9 +357,9 @@ identity_doc c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a > 
 identity_doc c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa > identity/small-order-8d.doc
 identity_doc eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f > identity/small-order-non-canonical.doc # y = p + 1
 printf 'irongall-v1\nssh-ed25519 %s\n' "$(bin "$(str "$(asc ssh-ed25519)00")$(str "$(printf %s "${GOOD#* }" | base64 -d | tail -c 32 | od -An -v -tx1 | tr -d ' \n')")" | b64)" > identity/type-name-ending-in-nul.doc # A's key, its type name ending in a NUL: ssh-keygen reads it as A's key and writes it back without the NUL
-# The same for the P-256 type. With p the field's size and n the group's order: a point is 04, x, y, and the protocol
-# refuses a coordinate of 128 bits or fewer, or of n - 1 or more. OpenSSH refused those up to 10.2p1 and takes them
-# from 10.3p1.
+# The same for the P-256 type. With p the field's size and n the group's order: a point is 04, x, y, on the curve, each
+# coordinate below p, and nothing more (PROTOCOL.md §2). OpenSSH up to 10.2p1 also refused a coordinate of 128 bits or
+# fewer, or of n - 1 or more, and takes those from 10.3p1, as the protocol does.
 GOOD_C=$(sed -n 2p c/identity.doc); X=${POINT:0:64}; Y=${POINT:64}
 Y5=459243b9aa581806fe913bce99817ade11ca503c64d9a3c533415c083248fbcc # a square root of 5^3 - 3*5 + b mod p: (5, Y5) is on the curve
 printf 'irongall-v1\n%s comment\n' "$GOOD_C" > identity/p256-comment.doc
@@ -368,8 +368,9 @@ p256_doc "04$POINT" nistp384 > identity/p256-curve-name-mismatch.doc
 p256_doc "04${POINT}00" > identity/p256-trailing-byte.doc
 p256_doc "04$X${Y:0:63}$(printf '%x' $((0x${Y: -1} ^ 1)))" > identity/p256-off-curve.doc # y with its last bit flipped
 p256_doc "04ffffffff00000001000000000000000000000001000000000000000000000004$Y5" > identity/p256-coordinate-not-reduced.doc # x = p + 5: the point (5, Y5), x not reduced
-p256_doc "040000000000000000000000000000000000000000000000000000000000000005$Y5" > identity/p256-short-coordinate.doc # x = 5: on the curve; the Go library takes it and OpenSSH does not
-p256_doc "04ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632554484f0c0fda434ef0a808458914f328715d7a545e198ac7eee31dffe861b5d23f" > identity/p256-coordinate-over-order.doc # x = n + 3, the first from n - 1 up that is on the curve; likewise
+p256_doc "00" > identity/p256-point-at-infinity.doc # the point at infinity, as SEC1 writes it: one zero byte
+p256_doc "040000000000000000000000000000000000000000000000000000000000000005$Y5" > identity/ok-p256-short-coordinate.doc # x = 5: on the curve, so taken; OpenSSH refused it up to 10.2p1
+p256_doc "04ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632554484f0c0fda434ef0a808458914f328715d7a545e198ac7eee31dffe861b5d23f" > identity/ok-p256-coordinate-over-order.doc # x = n + 3, the first from n - 1 up that is on the curve; likewise
 printf 'irongall-v1\necdsa-sha2-nistp256 %s\n' "$(bin "$(str "$(asc ecdsa-sha2-nistp256)")$(str "$(asc nistp256)00")$(str "04$POINT")" | b64)" > identity/p256-curve-name-ending-in-nul.doc # C's key, its curve name ending in a NUL: ssh-keygen reads it as C's key and writes it back without the NUL
 # A well-formed document of a key type no client verifies: a name, and a wire key that begins with that name.
 NOTYPE=no-such-key-type@irongall.invalid

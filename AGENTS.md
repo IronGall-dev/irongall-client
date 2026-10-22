@@ -126,7 +126,7 @@ Each rule names the code that keeps it and, where one exists, the test that hold
   - **With each prekey a client declares the key types it verifies** (`sender_key_types`, §2c; `IG_SENDERS`): all of them, never `any` unless told to. An optional type is never what a client makes by default, and `init --identity-type` warns.
   - 🛑 **Nothing may rest on a certificate having one set of bytes:** one an ECDSA identity signed has other encodings ((r, n − s), and either number zero-padded up to the 2,049 bytes OpenSSH reads), which anyone can write and both verifiers take (`TestAP256IdentityCertifies`).
   - 🛑 **The script compares a document with itself rebuilt, byte for byte** (`ig_idcheck`): a shell variable drops a NUL, so a test of the variable alone passes a file that holds one (`identity/nul-*.doc`).
-  - 🛑 **An identity key's checks live in `protocol.ParseIdentity`, not in `sshsig`** (Ed25519: small order, non-canonical; P-256: the bounds OpenSSH put on a point up to 10.2p1): x/crypto's would not make them, and every identity a verifier uses has passed `ParseIdentity` first.
+  - 🛑 **An identity key's checks live in `protocol.ParseIdentity`, not in `sshsig`** (Ed25519: small order, non-canonical; P-256 has none beyond the point x/crypto reads, as OpenSSH from 10.3p1, decided on #354): x/crypto's would not make them, and every identity a verifier uses has passed `ParseIdentity` first.
 
 ### Certificates and the working key
 

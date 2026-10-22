@@ -227,7 +227,7 @@ ig_idcheck(){ # <identity document> [address] → 0 only for a two-line document
   grep -Eqx '[!-+.-~-]{1,64} [A-Za-z0-9+/]+={0,2}' <<< "$l" && [ "$(printf %s "${l#* }" | base64 -d 2> /dev/null | base64 | tr -d '\n')" = "${l#* }" ] &&
     [ "$(printf %s "${l#* }" | base64 -d | head -c $((4 + ${#t})) | od -An -v -tx1 | tr -d ' \n')" = "$(printf %08x "${#t}")$(ig_asc "$t")" ] || return 1
   case $t in ssh-ed25519 | ecdsa-sha2-nistp256) ;; *) return 2 ;; esac
-  # the key in its one encoding: ssh-keygen reads it, and its fingerprint, the SHA-256 of the key as OpenSSH writes it back, is the SHA-256 of these bytes. ssh-keygen refuses a P-256 point off the curve, and up to 10.2p1 one with a coordinate of 128 bits or fewer, or of the group's order less one or more; from 10.3p1 it takes those, a known variance (PROTOCOL.md §3)
+  # the key in its one encoding: ssh-keygen reads it, and its fingerprint, the SHA-256 of the key as OpenSSH writes it back, is the SHA-256 of these bytes. ssh-keygen refuses a P-256 point off the curve, compressed, at infinity or with a coordinate not below the field's size, which is all a P-256 key is held to (PROTOCOL.md §2). Up to 10.2p1 it also refuses one with a coordinate of 128 bits or fewer, or of the group's order less one or more, which the protocol takes: a known variance (PROTOCOL.md §3)
   fp=$(ssh-keygen -l -E sha256 -f - <<< "$l" 2> /dev/null | awk '{print $2}') && fp=${fp#SHA256:} && [ -n "$fp" ] &&
     [ "$(printf '%s=' "$fp" | base64 -d | od -An -v -tx1 | tr -d ' \n')" = "$(printf %s "${l#* }" | base64 -d | sha256sum | cut -c1-64)" ] || return 1
   case $t in      # then the type's own checks: an Ed25519 key canonical and not of small order

@@ -3,13 +3,16 @@ package protocol
 import (
 	"bufio"
 	"bytes"
+	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/elliptic"
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"io"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -136,6 +139,9 @@ func TestVectorBadIdentities(t *testing.T) {
 	for _, f := range glob(t, "identity/*.doc") {
 		doc, _ := os.ReadFile(f)
 		name := filepath.Base(f)
+		if strings.HasPrefix(name, "ok-") {
+			continue // TestVectorP256Coordinates
+		}
 		_, err := ParseIdentity(doc)
 		if err == nil {
 			t.Errorf("%s: accepted", name)
@@ -145,24 +151,15 @@ func TestVectorBadIdentities(t *testing.T) {
 		// error with bad_key, and a well-formed document of a type it does
 		// not register with unsupported_key_type.
 		keyCase := strings.HasPrefix(name, "small-order") || name == "non-canonical.doc" || name == "negative-zero.doc"
-		p256Refuses := name == "p256-short-coordinate.doc" || name == "p256-coordinate-over-order.doc"
 		want := ErrIdentityFormat
 		switch {
-		case keyCase, p256Refuses:
+		case keyCase:
 			want = ErrIdentityKey
 		case strings.HasPrefix(name, "unsupported-"):
 			want = ErrIdentityType
 		}
 		if !errors.Is(err, want) {
 			t.Errorf("%s: %v, want it to wrap %v", name, err, want)
-		}
-		// Control: these two are points on the curve in the one encoding,
-		// which the library takes, so the check OpenSSH makes has to be ours.
-		if p256Refuses {
-			wire := mustB64(t, bytes.Fields(doc)[2])
-			if key, err := ssh.ParsePublicKey(wire); err != nil || !bytes.Equal(key.Marshal(), wire) {
-				t.Errorf("%s: control: the library refuses it already: %v", name, err)
-			}
 		}
 		// Control: the key cases are well-formed documents, so the KEY check
 		// is what refused them, and edwards25519 itself decodes the point,
@@ -182,6 +179,39 @@ func TestVectorBadIdentities(t *testing.T) {
 				t.Errorf("%s: control: edwards25519 rejects it already: %v", name, err)
 			}
 		}
+	}
+}
+
+// A P-256 key is a point on the curve, and nothing more (PROTOCOL.md §2): the
+// two ok- documents are points with a coordinate that OpenSSH refused up to
+// 10.2p1, one of 128 bits or fewer and one of n - 1 or more, and every
+// implementation takes each, as OpenSSH from 10.3p1 and the Go library do.
+func TestVectorP256Coordinates(t *testing.T) {
+	n := elliptic.P256().Params().N
+	limit := new(big.Int).Sub(n, big.NewInt(1))
+	docs := glob(t, "identity/ok-*.doc")
+	if len(docs) != 2 {
+		t.Fatalf("%d ok- identity documents, want 2", len(docs))
+	}
+	bounds := map[string]bool{}
+	for _, f := range docs {
+		doc, _ := os.ReadFile(f)
+		name := filepath.Base(f)
+		id, err := ParseIdentity(doc)
+		if err != nil || id.Type() != IdentityP256 {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		// Control: each still has a coordinate past one of OpenSSH's old
+		// bounds, so the vector tests what its name says.
+		pub := id.PublicKey().(ssh.CryptoPublicKey).CryptoPublicKey().(*ecdsa.PublicKey)
+		for _, c := range []*big.Int{pub.X, pub.Y} {
+			bounds["short"] = bounds["short"] || c.BitLen() <= n.BitLen()/2
+			bounds["over"] = bounds["over"] || c.Cmp(limit) >= 0
+		}
+	}
+	if !bounds["short"] || !bounds["over"] {
+		t.Errorf("control: the ok- documents hold no coordinate past each of OpenSSH's old bounds: %v", bounds)
 	}
 }
 

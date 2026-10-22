@@ -158,43 +158,6 @@ func TestEd25519DocumentForm(t *testing.T) {
 	}
 }
 
-// What OpenSSH required of a P-256 point beyond being on the curve up to
-// 10.2p1, and the protocol still does: each coordinate more than 128 bits
-// long, and below the group's order less one.
-func TestCheckP256(t *testing.T) {
-	n := elliptic.P256().Params().N
-	wire := func(x, y *big.Int) []byte {
-		q := append([]byte{4}, x.FillBytes(make([]byte, 32))...)
-		q = append(q, y.FillBytes(make([]byte, 32))...)
-		return append(append(sshString(IdentityP256), sshString("nistp256")...), append([]byte{0, 0, 0, 65}, q...)...)
-	}
-	two128 := new(big.Int).Lsh(big.NewInt(1), 128)
-	ok := two128                                     // 129 bits
-	short := new(big.Int).Sub(two128, big.NewInt(1)) // 128 bits
-	last := new(big.Int).Sub(n, big.NewInt(2))       // n - 2
-	over := new(big.Int).Sub(n, big.NewInt(1))       // n - 1
-	for _, c := range []struct {
-		name string
-		x, y *big.Int
-		good bool
-	}{
-		{"both just long enough", ok, ok, true},
-		{"both just below the limit", last, last, true},
-		{"x of 128 bits", short, ok, false},
-		{"y of 128 bits", ok, short, false},
-		{"x of n - 1", over, ok, false},
-		{"y of n - 1", ok, over, false},
-		{"x of zero", new(big.Int), ok, false},
-	} {
-		if err := checkP256(wire(c.x, c.y)); (err == nil) != c.good {
-			t.Errorf("%s: %v", c.name, err)
-		}
-	}
-	if err := checkP256([]byte{2}); err == nil {
-		t.Error("a key that is no uncompressed point passed")
-	}
-}
-
 // A P-256 identity certifies an Ed25519 working key, and what that key signs
 // verifies under it; a certificate another P-256 key signed does not.
 func TestAP256IdentityCertifies(t *testing.T) {
