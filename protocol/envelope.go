@@ -106,7 +106,7 @@ type Envelope struct {
 }
 
 // wireEnvelope is the JSON form. No reader depends on the order of its
-// members; this is the order the stock script writes them in.
+// members; they are written in the order PROTOCOL.md §4.2 lists them.
 type wireEnvelope struct {
 	V          json.Number     `json:"v"` // written as a number; read only as one
 	From       Address         `json:"from"`

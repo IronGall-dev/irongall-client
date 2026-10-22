@@ -173,7 +173,7 @@ ig_lifetime(){ # → the seconds each new prekey of this box is valid for: what 
   l=$(cat "$IG/prekey-lifetime" 2> /dev/null) && [[ $l =~ ^[1-9][0-9]{0,9}$ ]] && { printf '%s\n' "$l" | cmp -s - "$IG/prekey-lifetime" || printf '%s' "$l" | cmp -s - "$IG/prekey-lifetime"; } && [ "$l" -ge 97200 ] && [ "$l" -le 2851200 ] && echo "$l" ||      # compared with itself rebuilt: $(…) drops line feeds and NULs
     ig_refuse "this box's prekey-lifetime file names no lifetime: one is a number of seconds, alone on its line, from 97200 (a day and three hours) to 2851200 (33 days)"
 }
-ig_prekey(){ # <serial> [--no-pq] → prekeys/<serial>.agekey and its statement, signed by a NEW working key (ig_work): a NEW key, valid for the box's prekey lifetime (ig_lifetime), and prekeys/<serial>.made, when it was signed, which the Go client times its renewals by. A re-run reuses the key a failed attempt left, whatever its type, unless it is empty
+ig_prekey(){ # <serial> [--no-pq] → prekeys/<serial>.agekey and its statement, signed by a NEW working key (ig_work): a NEW key, valid for the box's prekey lifetime (ig_lifetime), and prekeys/<serial>.made, when it was signed: a statement an earlier attempt left is sent again only while it was made for no longer than the box's lifetime (ig_renew). A re-run reuses the key a failed attempt left, whatever its type, unless it is empty
   local A p="$IG/prekeys/$1" l t k; A=$(cat "$IG/address") || return 1
   [ -s "$p.txt.sig" ] && return 0
   ig_finished || { ig_done $?; return 1; }      # the one path to this box's certificates and statements: a box that holds its own revocation makes neither, init and prekey renew alike
@@ -429,7 +429,7 @@ ig_keepcerts(){ # <address> <identity document> <statement> <signature> → keep
 ig_keep(){ # <address> <its identity document> <signature> → the revocation, kept for good: called only once ig_revcheck took it. A revoked address stays revoked
   if [ "$1" = "$(cat "$IG/address" 2> /dev/null)" ]; then ig_put "$3" "$IG/revoked.sig"; else ig_meet "$1" "$2" && ig_put "$3" "$IG/peers/$1/revoke.sig"; fi
 }
-ig_record(){ # <record> → the address it is a revocation of, only if it verifies; its parts are left in $IG/rev.doc and $IG/rev.sig. A record is one line of JSON, {type, identity, revocation_signature}: its type, revocation_record, which a record may leave out and may name no other, then the identity document and the signature, each base64
+ig_record(){ # <record> → the address it is a revocation of, only if it verifies; its parts are left in $IG/rev.doc and $IG/rev.sig. A record is one line of JSON, {type, identity, revocation_signature}: its type, revocation_record, which this script does not read, then the identity document and the signature, each base64
   local A
   ig_isrecord "$1" && ig_bytes "$1" identity "$IG/rev.doc" && ig_bytes "$1" revocation_signature "$IG/rev.sig" || return 1
   A=$(sha256sum < "$IG/rev.doc" | cut -c1-64) && ig_revcheck "$A" "$IG/rev.doc" "$IG/rev.sig" && echo "$A"
