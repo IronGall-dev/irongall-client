@@ -351,3 +351,81 @@ ig_api(){ orig_ig_api "$@"; local rc=$?; case "$1 $2" in "GET /v1/"*/messages | 
 		t.Errorf("a clock that jumped after the server took the list pruned the replay set by where it went: %q, then %q", before, after)
 	}
 }
+
+// The script dates its retry after 409 stale_prekey once the recipient's box
+// is read again, as it dates its first post (#341): ig_post reads the box
+// before each seal and seals to what it read. Here the retry's read is
+// answered 59 seconds later, by the clock the script (ig_now), the server
+// and the Go boxes share, and each message is dated after its retry's read
+// was answered: the script's, and the Go client's sent the same way.
+func TestTheScriptDatesARetryAfterItsBoxRead(t *testing.T) {
+	need(t, append(scriptTools, "curl")...)
+	ctx := context.Background()
+	clk := &frozen{base: time.Now().UTC().Truncate(time.Second)}
+	clockFile := filepath.Join(t.TempDir(), "now")
+	set := func(d time.Duration) {
+		clk.Set(d)
+		if err := os.WriteFile(clockFile, []byte(fmt.Sprintln(clk.Now().Unix())), 0o600); err != nil {
+			t.Error(err)
+		}
+	}
+	set(0)
+	srv := fakeserver.New(t, clk.Now)
+	r, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, Now: clk.Now}, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetPolicy(ctx, client.Policy{Unknown: client.LandInbox, Server: client.AdmitAll}); err != nil {
+		t.Fatal(err)
+	}
+	env := []string{"IG_HOME=" + t.TempDir(), "IG_BASE=" + srv.URL}
+	igNow := `ig_now(){ cat "` + clockFile + `"; }` + "\n"
+	if out, err := bash(t, env, igNow+"ig_init --no-pq"); err != nil {
+		t.Fatalf("init: %q, %v", out, err)
+	}
+	g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, Now: clk.Now}, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	box := "/v1/" + r.Address().String()
+	posts, reads := 0, 0
+	srv.SetMiddle(func(w http.ResponseWriter, q *http.Request, next http.Handler) {
+		switch {
+		case q.Method == http.MethodPost && q.URL.Path == box+"/messages":
+			if posts++; posts%2 == 1 {
+				staleProblem(w)
+				return
+			}
+		case q.Method == http.MethodGet && q.URL.Path == box:
+			if reads++; reads%2 == 0 {
+				set(time.Duration(clk.off.Load()) + 59*time.Second) // the retry's read, answered 59s later
+			}
+		}
+		next.ServeHTTP(w, q)
+	})
+	if out, err := bash(t, env, igNow+"echo 'from the script' | ig_send "+r.Address().String()); err != nil {
+		t.Fatalf("the script's send: %q, %v", out, err)
+	}
+	read := map[string]time.Time{"from the script": clk.Now()}
+	if reads != 2 || posts != 2 {
+		t.Errorf("the script's send read the box %d times and posted %d, want twice each", reads, posts)
+	}
+	if _, err := g.Send(ctx, r.Address(), "from the Go client"); err != nil {
+		t.Fatalf("the Go client's send: %v", err)
+	}
+	read["from the Go client"] = clk.Now()
+	srv.SetMiddle(nil)
+	res, err := r.Receive(ctx)
+	if err != nil || len(res.Delivered) != 2 {
+		t.Fatalf("delivered %d: %v", len(res.Delivered), err)
+	}
+	for _, d := range res.Delivered {
+		var body string
+		_ = json.Unmarshal(d.Envelope.Body, &body)
+		at, ok := read[strings.TrimSpace(body)]
+		t.Logf("%q dated %s, its retry's read answered at %s", body, d.Envelope.SentAt.Format(protocol.TimeLayout), at.Format(protocol.TimeLayout))
+		if !ok || d.Envelope.SentAt.Before(at) {
+			t.Errorf("%q is dated %v before its retry's box read was answered", body, at.Sub(d.Envelope.SentAt))
+		}
+	}
+}

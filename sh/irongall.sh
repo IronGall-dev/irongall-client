@@ -527,22 +527,24 @@ ig_seal(){ # <address> <envelope stem> [the box ig_lookup read] → what to post
   [ "$(wc -c < "$s.age")" -eq "$t" ] || { rm -f "$s.age"; ig_refuse "the encrypted message is not the $t bytes its padding was made for: it is not sent at a size that tells its length"; return 1; }
   printf 'prekey_serial=%s&certificate_serial=%s\n' "$ps" "$pc" > "$s.query"      # the prekey is named by both serials, its own and its certificate's, written as the digits ig_resolve checked. The body is the age file as it is, and no signature is beside it: the server knows the sender from the pass the post carries
 }
-ig_post(){ # <address> <envelope stem> → seals it and POSTs it; on 409 stale_prekey, seals the SAME envelope again, once, to the box read again. Before anything is sealed, the recipient's box is read (ig_lookup), and the seal is made to what this box then holds. A post that fails is told, and nothing is kept
-  local B=$1 o=$2 c
+ig_post(){ # <address> <envelope stem> → seals it and POSTs it; on 409 stale_prekey, seals the SAME envelope again, once, to the box read again. Before each seal, the recipient's box is read (ig_lookup), and the seal is made to what this box then holds, dated after that read. A post that fails is told, and nothing is kept
+  local B=$1 o=$2 c try
   ig_finished; case $? in      # a box that holds its own revocation can never deliver it: every reader that holds the revocation refuses its mail, whenever it was signed
     0) ;;
     1) ig_err "REVOKED: this box's own address is revoked, for good, and the revocation verifies, so its mail can never be delivered: nothing is sent"; return 1 ;;
     *) ig_done 3; return 1 ;;
   esac
-  rm -f "$IG/error.json"
-  ig_lookup "$B"; case $? in      # asked before every post: what verifies is kept, and "none held" is the server's word, kept nowhere
-    0) ig_err "REVOKED: $B is revoked, for good, and the revocation verifies, so it can never be delivered: nothing is sent"; return 1 ;;
-    1) rm -f "$IG/error.json" ;;      # its 404 is an answer, and not one about the message
-    2) rm -f "$IG/error.json"; ig_err "the box $B could not be read, so nothing is sent"; return 1 ;;      # no answer is not "none held". Whatever code the failed lookup carried is no answer about the message
-    *) ig_refuse "what this box keeps about $B does not verify, or could not be written: nothing is sent"; return 1 ;;
-  esac
-  ig_seal "$B" "$o" "$IG/box.json" && ig_owner POST "/v1/$B/messages?$(cat "$IG/seal.query")" "$IG/seal.age" > "$IG/receipt.json" && ig_receipt && { ig_sent "$B"; return; }      # sealed to the box the lookup read
-  if [ "$(ig_code)" = stale_prekey ]; then ig_seal "$B" "$o" && ig_owner POST "/v1/$B/messages?$(cat "$IG/seal.query")" "$IG/seal.age" > "$IG/receipt.json" && ig_receipt && { ig_sent "$B"; return; }; fi
+  for try in first retry; do
+    rm -f "$IG/error.json"
+    ig_lookup "$B"; case $? in      # asked before every post, the retry's included: what verifies is kept, and "none held" is the server's word, kept nowhere
+      0) ig_err "REVOKED: $B is revoked, for good, and the revocation verifies, so it can never be delivered: nothing is sent"; return 1 ;;
+      1) rm -f "$IG/error.json" ;;      # its 404 is an answer, and not one about the message
+      2) rm -f "$IG/error.json"; ig_err "the box $B could not be read, so nothing is sent"; return 1 ;;      # no answer is not "none held". Whatever code the failed lookup carried is no answer about the message
+      *) ig_refuse "what this box keeps about $B does not verify, or could not be written: nothing is sent"; return 1 ;;
+    esac
+    ig_seal "$B" "$o" "$IG/box.json" && ig_owner POST "/v1/$B/messages?$(cat "$IG/seal.query")" "$IG/seal.age" > "$IG/receipt.json" && ig_receipt && { ig_sent "$B"; return; }      # sealed to the box the lookup read, and dated once it was read
+    [ "$try" = first ] && [ "$(ig_code)" = stale_prekey ] || break      # a newer prekey: the same envelope, sealed again once, to the box read again
+  done
   c=$(ig_code)
   case $c in revoked) ig_lookup "$B" ;; sender_revoked) ig_lookup "$(cat "$IG/address")" ;; esac      # a server's "revoked" is checked: with the revocation in hand it is final, and without one it is a call that failed
   if ig_gone "$B" || ig_gone "$(cat "$IG/address")"; then ig_err "REVOKED: the revocation verifies, so it can never be delivered: nothing is sent"; return 1; fi
