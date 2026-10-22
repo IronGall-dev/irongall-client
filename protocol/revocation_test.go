@@ -111,8 +111,9 @@ func TestVectorBadRevocations(t *testing.T) {
 	}
 }
 
-// A revocation record names its own type, first, whoever writes it; a reader
-// takes one without it, as the route says what the body is, and refuses one
+// A revocation record names its own type, whoever writes it, and this
+// package writes it first; a reader takes one without it, as the route says
+// what the body is, or with it anywhere among the members, and refuses one
 // that names any other type, an empty one or one of another JSON type
 // included, as a request with its member named (PROTOCOL.md §6.3).
 func TestARecordNamesItsType(t *testing.T) {
@@ -127,6 +128,7 @@ func TestARecordNamesItsType(t *testing.T) {
 	for body, want := range map[string]error{
 		`{"type":"revocation_record","identity":"ZG9j","revocation_signature":"c2ln"}`: nil,
 		`{"identity":"ZG9j","revocation_signature":"c2ln"}`:                            nil,
+		`{"identity":"ZG9j","revocation_signature":"c2ln","type":"revocation_record"}`: nil,
 		`{"type":null,"identity":"ZG9j","revocation_signature":"c2ln"}`:                nil,
 		`{"type":"revocation","identity":"ZG9j","revocation_signature":"c2ln"}`:        ErrMemberValue,
 		`{"type":"","identity":"ZG9j","revocation_signature":"c2ln"}`:                  ErrMemberValue,

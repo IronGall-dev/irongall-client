@@ -1063,7 +1063,8 @@ line is the record as every server takes it: irongall revocation publish
 			if err != nil {
 				return err
 			}
-			// The record names its own type, first: the line is the record.
+			// The record names its own type, which it writes first, as every
+			// line has its type: the line is the record.
 			r, err := json.Marshal(rec)
 			if err != nil {
 				return err

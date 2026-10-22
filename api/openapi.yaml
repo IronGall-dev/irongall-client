@@ -226,7 +226,7 @@ paths:
       security: []
       responses:
         '200':
-          description: The record held, which proves itself and names its type first.
+          description: The record held, which proves itself and names its type.
           headers:
             Date:
               $ref: '#/components/headers/Date'
@@ -1248,7 +1248,7 @@ components:
             - $ref: '#/components/schemas/Bytes'
             - type: 'null'
     RevocationRecordAnswer:
-      description: A record as a server serves it, which names its type first.
+      description: A record as a server serves it, which names its type, in no set order among its members.
       allOf:
         - $ref: '#/components/schemas/RevocationRecord'
         - required: [type]
