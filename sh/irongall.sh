@@ -33,7 +33,10 @@ export LC_ALL=C   # every pattern and tool reads bytes, as the Go client does: u
 IG_BASE=${IG_BASE:-https://irongall.dev}
 IG=${IG_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/irongall-sh/${IG_BOX:-default}}   # one box per directory, of this script's own: never the Go client's (its IRONGALL_HOME and ~/.config/irongall/, ig_ownbox), and never the working directory
 IG_LOCK_WAIT=${IG_LOCK_WAIT:-120}   # how many seconds a command waits for the box's lock while another command of the box holds it: what apt waits for its own lock when no one is at a terminal
-IG_SENDERS='["ssh-ed25519","ecdsa-sha2-nistp256"]'   # the identity key types ig_idcheck verifies. A box declares them with each prekey it publishes, and the server then refuses it mail from a box whose identity is of any other type
+IG_P256='ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBGD+1LolWp0xyWHrdMY1bWjASbiSO2H6bOZpYi5g8p+2eQP+EAi4vJmkGunpVii8ZPLxsgwtfp9Rd6PClNRGIpk='   # a P-256 key, box C's identity in this repo's testdata/vectors/ (RFC 6979 §A.2.5's published test key), for ig_senders to ask ssh-keygen to read
+ig_senders(){ # → the identity key types ig_idcheck verifies on this build, as a JSON list. A box declares them with each prekey it publishes, and the server then refuses it mail from a box whose identity is of any other type (PROTOCOL.md §2c): ssh-ed25519, and ecdsa-sha2-nistp256 only where this build's ssh-keygen reads a P-256 key. One built without OpenSSL reads none, so ig_idcheck refuses every P-256 identity there (PROTOCOL.md §3), and a box that declared the type would be sent mail it then refuses
+  if ssh-keygen -l -f - <<< "$IG_P256" > /dev/null 2>&1; then echo '["ssh-ed25519","ecdsa-sha2-nistp256"]'; else echo '["ssh-ed25519"]'; fi
+}
 ig_out(){ jq -cn --arg type "$1" "${@:2}" '$ARGS.named'; }      # <type> [--arg <name> <text> | --argjson <name> <JSON>]… → one line of JSON on stdout, its type first and then each member in turn, as the Go client prints one: what a command did or met on the way
 ig_err(){ jq -cn --arg m "$*" '{type:"error", message:$m}' >&2; }      # <words> → the line on stderr that says a command failed, in this script's own words
 ig_refuse(){ ig_err "REFUSED: $*"; return 1; }
@@ -196,7 +199,7 @@ ig_init(){ # [--no-pq] → creates this box, or finishes a half-done init, and r
     rm -f "$p.txt" "$p.made" "$p.txt.sig" "$IG/work/$n" "$IG/work/$n.pub" "$IG/work/$n-cert.pub" "$IG/pass.new"
   fi
   ig_prekey "$n" "${1-}" || return 1
-  jq -n --arg i "$(ig_b64 "$IG/identity.doc")" --arg p "$(ig_b64 "$p.txt")" --arg s "$(ig_b64 "$p.txt.sig")" --argjson k "$IG_SENDERS" '{identity:$i, prekey:$p, prekey_signature:$s, sender_key_types:$k}' > "$IG/register.json"
+  jq -n --arg i "$(ig_b64 "$IG/identity.doc")" --arg p "$(ig_b64 "$p.txt")" --arg s "$(ig_b64 "$p.txt.sig")" --argjson k "$(ig_senders)" '{identity:$i, prekey:$p, prekey_signature:$s, sender_key_types:$k}' > "$IG/register.json"
   h=$(ig_pass "$n") && { ig_api PUT "/v1/$A" "$IG/register.json" -H "Authorization: $h" > /dev/null || { ig_clock; ig_own; false; }; } && mv "$IG/pass.new" "$IG/pass" && ig_putline "$IG/serial" "$n" && ig_addr
 }
 ig_addr(){ local a; ig_held || { [ -s "$IG/identity" ] && [ -s "$IG/address" ]; } || { ig_lock ig_addr; return; }; a=$(cat "$IG/address") && ig_out box --arg address "$a" --arg link "$IG_BASE/to/$a"; }      # the box's address and its link: what to give whoever should write to it. Read with no lock; with no box, ig_lock's refusal, and a box restored from its identity alone has its files made under the lock first (ig_identity), as the Go client's Open makes them
@@ -506,10 +509,9 @@ ig_padding(){ # <message bytes: the envelope's line and its signature> <age reci
   echo "$((c - 16 * (c > 65552 ? (c + 65551) / 65552 : 1) - n)) $s"
 }
 ig_seal(){ # <address> <envelope stem> [the box ig_lookup read] → what to post: $IG/seal.age, the envelope <stem>.P dated at this post ($IG/seal.P: its sent_at this clock, and nothing else changed, as a signed request's time is when it was signed, made anew for each attempt), signed for that recipient only, by the working key in use, then the line, the signature and the padding encrypted to the recipient's VERIFIED prekey; and $IG/seal.query, the query that names that prekey. It is git's layout for a signed tag: the signed bytes as they are, then the signature block. The envelope is read as its recipient will read it first. A seal is made for one post and never kept: ig_post seals the envelope again for its one retry
-  local B=$1 o=$2 s="$IG/seal" A r k n f t c why ps pc d l; rm -f "$s.P" "$s.sig" "$s.age" "$s.query"; A=$(cat "$IG/address") && n=$(cat "$IG/serial") || return 1
+  local B=$1 o=$2 s="$IG/seal" A r k n f t c why ps pc d; rm -f "$s.P" "$s.sig" "$s.age" "$s.query"; A=$(cat "$IG/address") && n=$(cat "$IG/serial") || return 1
   why=$(ig_envcheck "$o.P" "$A" "$B") && [ "$(wc -l < "$o.P")" -eq 1 ] && [ "$(jq -r .identity "$o.P")" = "$(ig_b64 "$IG/identity.doc")" ] || ig_refuse "the envelope is not one this box made for that address${why:+: $why}" || return 1
-  d=$(jq -nr --argjson t "$(ig_now)" '$t | todate') && l=$(cat "$o.P") && [[ $l == *'"sent_at":"'* ]] || return 1      # the line, its one line feed dropped by $(…): ig_envcheck holds it to no control byte
-  printf '%s"sent_at":"%s%s\n' "${l%%'"sent_at":"'*}" "$d" "$(t=${l#*'"sent_at":"'}; printf '%s' "${t:20}")" > "$s.P" || return 1      # the first sent_at member's 20 characters replaced: both clients write it before the body
+  d=$(jq -nr --argjson t "$(ig_now)" '$t | todate') && jq -c --arg d "$d" '.sent_at = $d' "$o.P" > "$s.P" || return 1      # written again by jq, as ig_send wrote it: the script seals only an envelope it has just built
   why=$(ig_envcheck "$s.P" "$A" "$B") && [ "$(wc -l < "$s.P")" -eq 1 ] && jq -e --arg d "$d" --slurpfile w "$o.P" '.sent_at == $d and del(.sent_at) == ($w[0] | del(.sent_at))' "$s.P" > /dev/null 2>&1 ||
     ig_refuse "the envelope does not read back as itself once dated at this post${why:+: $why}" || return 1
   c=$(ig_cert "$IG/prekeys/$n.txt.sig" "$IG/identity.doc" "$A") && [ $((${c##* } - $(ig_now))) -gt $((33*86400)) ] ||      # the certificate in use: the one this box's published prekey is signed under
@@ -579,7 +581,6 @@ ig_drain(){ # stops at a transient error or a fault of this box, leaving the res
     ig_owner GET "/v1/$B/messages${c:+?cursor=$c}" > "$IG/list.json" || { ig_own; return 1; }
     [ "$pages" -gt 1 ] || { IG_LISTED=$(ig_taken) && ig_forget "$IG_LISTED"; } || return 1      # the replay set pruned by this clock only once the server has taken a pass dated by it, and by that pass's date (ig_taken): a drain that a clock far off would prune is stopped at its pass first. IG_LISTED tells ig_recv the same reading for the keys
     ig_shape "$IG/list.json" list && n=$(jq -r '.messages | length' "$IG/list.json") || { ig_err "the server's list of messages is not one this client reads: the mail stays on the server"; return 1; }
-    sed -n 2p "$IG/response.meta" | grep -Eqx '[0-9]+' || { ig_err "the server's list of messages carries no poll interval, a Retry-After of digits alone (PROTOCOL.md §5.1): the mail stays on the server"; return 1; }      # the final answer's first Retry-After, trimmed (ig_status), as the Go client reads it; read and not kept: this script drains once and never waits, so it keeps no ETag either
     for ((i = 0; i < n; i++)); do
       id=$(jq -r --argjson i "$i" '.messages[$i].id | strings | select(test("\\A[0-9a-f]{64}\\z"))' "$IG/list.json") && ig_hex "$id" || continue      # tested in jq: $(…) drops trailing LFs and every NUL
       [ $((k += 1)) -le 1000 ] || { ig_out more --arg message "this run stopped at the most one drain takes: run recv again for the rest, which is still on the server"; return 0; }
@@ -743,7 +744,7 @@ ig_renew(){ # [--no-pq] → what ig_rekey does, the lock held. A serial is signe
   if [ -n "$new" ]; then [ "$s" -lt 9007199254740991 ] || ig_refuse "this box's certificate serial is the highest there is, so no later certificate can be made: the address cannot renew" || return 1; t=$(ig_now); s=$((t > s ? t : s + 1)); fi      # a new number: this machine's clock, in seconds, or one above the highest this box knows of when the clock gives nothing higher. An identity is a key and keeps no record of what it signed, and a box restored from it knows only what the server shows: by the clock, its certificate is above every one made before, on whatever machine. A verifier never reads a serial as a time, it only compares two
   [ -s "$IG/prekeys/$s.txt.sig" ] || rm -f "$IG/prekeys/$s.txt" "$IG/prekeys/$s.made"; ig_prekey "$s" "${1-}" || return 1
   if [ -n "$gone" ]; then u="/v1/$A"; w='{identity:$i}'; else u="/v1/$A/prekey"; w='{}'; fi      # a registration is the identity document, then what a new prekey carries
-  jq -n --arg i "$(ig_b64 "$IG/identity.doc")" --arg p "$(ig_b64 "$IG/prekeys/$s.txt")" --arg g "$(ig_b64 "$IG/prekeys/$s.txt.sig")" --argjson k "$IG_SENDERS" "$w"' + {prekey:$p, prekey_signature:$g, sender_key_types:$k}' > "$IG/rekey.json"
+  jq -n --arg i "$(ig_b64 "$IG/identity.doc")" --arg p "$(ig_b64 "$IG/prekeys/$s.txt")" --arg g "$(ig_b64 "$IG/prekeys/$s.txt.sig")" --argjson k "$(ig_senders)" "$w"' + {prekey:$p, prekey_signature:$g, sender_key_types:$k}' > "$IG/rekey.json"
   h=$(ig_pass "$s") && ig_api PUT "$u" "$IG/rekey.json" -H "Authorization: $h" > /dev/null || { ig_clock; ig_own; return 1; }      # a pass under the NEW certificate: that is how a box moves to one, and the server then takes no pass under an older
   [ "$s" -le "$(cat "$IG/serial" 2> /dev/null || echo 0)" ] || ig_putline "$IG/serial" "$s" || return 1
   mv "$IG/pass.new" "$IG/pass" || return 1

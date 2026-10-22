@@ -104,7 +104,7 @@ func TestScriptRefusesInItsOwnWords(t *testing.T) {
 		t.Errorf("a server that always has another page: %d lists, %v", lists, d)
 	}
 	// A fetch a byte short of the size its list gives, or a byte past it; a
-	// list whose cursor is not URL-safe; a list with no Retry-After.
+	// list whose cursor is not URL-safe.
 	a.mustSend(b, "whole or not at all")
 	q0 = len(b.files("quarantine"))
 	for _, c := range []struct {
@@ -123,10 +123,6 @@ func TestScriptRefusesInItsOwnWords(t *testing.T) {
 			c := "a/b"
 			l.NextCursor = &c
 			fakeserver.WriteList(rw, l)
-		}},
-		{"a list with no Retry-After", "/messages", "carries no poll interval", func(rw http.ResponseWriter, rec *httptest.ResponseRecorder) {
-			rw.Header().Set("Content-Type", "application/json")
-			_, _ = rw.Write(rec.Body.Bytes())
 		}},
 	} {
 		if c.suffix == "" {

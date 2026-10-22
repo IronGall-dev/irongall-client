@@ -798,6 +798,38 @@ func TestAP256BoxInBothClients(t *testing.T) {
 	}
 }
 
+// A box declares the identity key types its build verifies, at init and at
+// each renewal (PROTOCOL.md §2c; #358): ecdsa-sha2-nistp256 only where its
+// ssh-keygen reads a P-256 key. A build without OpenSSL reads none, and the
+// script refuses every P-256 identity there; here an ssh-keygen that reads
+// no P-256 key stands for one.
+func TestTheScriptDeclaresTheKeyTypesItsBuildVerifies(t *testing.T) {
+	w := newWorld(t)
+	declared := func(b *sbox) string {
+		t.Helper()
+		return strings.TrimSpace(b.must(`ig_look "$(cat "$IG/address")" | jq -c .sender_key_types`))
+	}
+	noP256 := `ssh-keygen(){ local k; if [ "$1" = -l ]; then k=$(cat); case $k in "ecdsa-sha2-nistp256 "*) return 255 ;; esac; command ssh-keygen "$@" <<< "$k"; else command ssh-keygen "$@"; fi; }` + "\n"
+	both, ed := `["ssh-ed25519","ecdsa-sha2-nistp256"]`, `["ssh-ed25519"]`
+	here := both
+	if !p256() {
+		here = ed
+		t.Logf("%s reads no P-256 key, so the script declares ssh-ed25519 alone: a known variance (PROTOCOL.md §3)", sshBuild())
+	}
+	b := w.box()
+	n := w.empty()
+	n.must(noP256 + "ig_init")
+	n.addr = mustAddress(t, n.dir)
+	if got, gotN := declared(b), declared(n); got != here || gotN != ed {
+		t.Errorf("init declares %s here and %s on a build that reads no P-256 key, want %s and %s", got, gotN, here, ed)
+	}
+	b.must(noP256 + "ig_rekey")
+	n.must("ig_rekey")
+	if got, gotN := declared(b), declared(n); got != ed || gotN != here {
+		t.Errorf("a renewal declares %s on a build that reads no P-256 key and %s here, want %s and %s", got, gotN, ed, here)
+	}
+}
+
 // A box whose ACL does not admit the script's box refuses its send, and the
 // script says so and keeps nothing: only the recipient can change that.
 func TestTheScriptsSendABoxDeniesFails(t *testing.T) {
