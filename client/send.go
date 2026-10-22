@@ -291,14 +291,6 @@ func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked 
 	if b.expired(stem) {
 		return nil, b.undelivered(stem, refuse("it was written more than %d days ago, and an outbox posts a message no longer than that", protocol.TTL/(24*time.Hour)))
 	}
-	// An envelope dated ahead of this machine's clock was written while the
-	// clock read ahead of where it reads now. It is not posted until the
-	// clock passes that time: the outbox's TTL is counted from when it was
-	// written, and a reader's replay set reaches back that far past a first
-	// post and no further (protocol.SeenFor).
-	if t, ok := b.sentAt(stem); ok && t.After(b.now()) {
-		return nil, refuse("its envelope is dated %s, ahead of this machine's clock: it was written while the clock read ahead of where it reads now, and the outbox counts its 33 days from when it was written. It is kept in the outbox, and irongall outbox flush sends it once the clock passes that time", t.Format(protocol.TimeLayout))
-	}
 	r, posted, err := b.trySend(ctx, to, stem, asked)
 	// A read of the box is never an answer about the message: whatever code
 	// a failed one carries, the entry stays.
@@ -532,12 +524,20 @@ func (b *Box) seal(ctx context.Context, to protocol.Address, stem string, l *loo
 	}
 	// Dated last, once the recipient's box is read: the sent_at a server
 	// meets is this clock at the post, less only what the seal and the
-	// second the dating truncates take (protocol.PostTime). And never more than the outbox's TTL
-	// after the entry was written, however long the read took or however
-	// often a seal is made again, so a retry is dated at most a TTL after
-	// its first copy, which a reader's replay set reaches back to.
+	// second the dating truncates take (protocol.PostTime). And dated within
+	// the outbox's TTL from when the entry was written, however long the
+	// read took, however the clock moved meanwhile and however often a seal
+	// is made again: never before it was written, and never more than a TTL
+	// after. So every copy is dated within a TTL of every other, and the
+	// line a reader keeps of the copy it delivered, protocol.SeenFor past its
+	// sent_at, is there when any other comes. An entry written while the
+	// clock read ahead of where it reads now waits in the outbox until the
+	// clock passes that time (#334).
 	wrote := env.SentAt
 	env.SentAt = b.now().UTC().Truncate(time.Second)
+	if env.SentAt.Before(wrote) {
+		return nil, refuse("its envelope is dated %s, ahead of this machine's clock: it was written while the clock read ahead of where it reads now, and the outbox counts its 33 days from when it was written, so it is posted once the clock passes that time", wrote.Format(protocol.TimeLayout))
+	}
 	if env.SentAt.After(wrote.Add(protocol.TTL)) {
 		return nil, refuse("it was written more than %d days ago, and an outbox posts a message no longer than that", protocol.TTL/(24*time.Hour))
 	}

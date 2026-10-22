@@ -384,3 +384,131 @@ func TestADailyReaderWhoseRenewalsAreRefused(t *testing.T) {
 		})
 	}
 }
+
+// A copy is never dated before its entry was written (#334): seal dates the
+// post once resolve has read the recipient's box, and the clock may step back
+// while that read is in flight, after post's look at the entry. A copy dated
+// X before the entry was written puts a retry, dated up to wrote + TTL, TTL +
+// X after the copy its reader delivered: past SeenFor's hour once the
+// reader's clock has used that hour, and delivered again. So the seal is
+// refused, and the entry waits in the outbox until the clock passes when it
+// was written, as one written ahead of the clock does.
+//
+// The sender's clock reads step fast when it writes the entry, and is
+// stepped back to right while the first post's box read is in flight. The
+// server is hostile only in losing the first answer, keeping the retry the
+// sender posts at W + TTL, and listing it once the reader's line is gone;
+// every pass here is one an honest server takes. The reader runs recv
+// monthly, its clock fast at the drain that prunes (its renewal refused, so
+// the retry's key stays) and slow a second later.
+func TestAFirstCopyIsNeverDatedBeforeItWasWritten(t *testing.T) {
+	ctx := context.Background()
+	day := 24 * time.Hour
+	fast, slow := 50*time.Minute, -(9*time.Minute + 59*time.Second)
+	for _, c := range []struct {
+		name       string
+		step       time.Duration // the sender's clock reads this fast when it writes, and is stepped back to right during the first post's box read
+		fast, slow time.Duration // the reader's clock at the drain that prunes, and a second later at the replay
+		prune      time.Duration // true time of the drain that prunes, after the first copy's sent_at + 2TTL
+	}{
+		{"the sender stepped back 5s; the reader 50m fast, then 9m59s slow", 5 * time.Second, fast, slow, 10*time.Minute + time.Second},
+		{"the sender stepped back 59s; the reader 50m fast, then 9m59s slow", 59 * time.Second, fast, slow, 10*time.Minute + time.Second},
+		{"the sender stepped back 5m; the reader 50m fast, then 9m59s slow", 5 * time.Minute, fast, slow, 10*time.Minute + time.Second},
+		{"the sender stepped back 59m; the reader 2m fast, then right", 59 * time.Minute, 2 * time.Minute, 0, 58*time.Minute + time.Second},
+		{"control: no step; the reader 50m fast, then 9m59s slow", 0, fast, slow, 10*time.Minute + time.Second},
+		{"control: no step; the reader 2m fast, then right", 0, 2 * time.Minute, 0, 58*time.Minute + time.Second},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newEnv(t)
+			off := time.Duration(0)
+			r, err := client.Init(ctx, t.TempDir(), e.skewed(&off), protocol.Classic)
+			if err != nil {
+				t.Fatal(err)
+			}
+			landAll(t, r)
+			offS := time.Duration(0)
+			s, err := client.Init(ctx, t.TempDir(), e.skewed(&offS), protocol.Classic)
+			if err != nil {
+				t.Fatal(err)
+			}
+			offS = c.step
+			box := "/v1/" + r.Address().String()
+			mode := "lose"
+			stepArmed := true
+			var retry []byte
+			e.srv.SetMiddle(func(w http.ResponseWriter, q *http.Request, next http.Handler) {
+				switch {
+				case q.Method == http.MethodGet && q.URL.Path == box && stepArmed:
+					stepArmed = false
+					offS = 0 // NTP steps the sender's clock back to right while its box read is in flight
+				case q.Method == http.MethodPost && q.URL.Path == box+"/messages" && mode == "lose":
+					next.ServeHTTP(httptest.NewRecorder(), q) // stored and listed; the answer is lost
+					http.Error(w, "lost", http.StatusServiceUnavailable)
+					return
+				case q.Method == http.MethodPost && q.URL.Path == box+"/messages" && mode == "keep":
+					retry, _ = io.ReadAll(q.Body) // kept, answered 503
+					http.Error(w, "down", http.StatusServiceUnavailable)
+					return
+				case q.Method == http.MethodPut && mode == "norenew":
+					http.Error(w, "down", http.StatusServiceUnavailable)
+					return
+				}
+				next.ServeHTTP(w, q)
+			})
+			wrote := e.clock.Now().Add(c.step).Truncate(time.Second) // the entry's sent_at, by the sender's clock
+			if _, err := s.Send(ctx, r.Address(), "pay invoice 23 once"); err == nil {
+				t.Fatal("the first answer came")
+			}
+			if e.srv.Count(r.Address()) == 0 {
+				// Nothing posted: the entry waits until the sender's clock
+				// passes when it was written, then goes (its answer lost).
+				e.clock.Add(c.step + time.Second)
+				if _, err := s.Flush(ctx); err == nil {
+					t.Fatal("the first answer came")
+				}
+			}
+			first := receive(t, r)
+			if len(first.Delivered) != 1 {
+				t.Fatalf("the first copy: %d delivered", len(first.Delivered))
+			}
+			firstSentAt := first.Delivered[0].Envelope.SentAt
+			if firstSentAt.Before(wrote) {
+				t.Errorf("the first copy is dated %v before its entry was written", wrote.Sub(firstSentAt))
+			}
+			mode = ""
+			// The sender's clock is right from here on: W + TTL by its clock
+			// is true time wrote + TTL.
+			e.clock.Add(30 * day)
+			receive(t, r)
+			e.clock.Add(wrote.Add(protocol.TTL - time.Hour).Sub(e.clock.Now()))
+			receive(t, s)          // the sender renews, so its certificate signs mail that waits
+			e.clock.Add(time.Hour) // the sender's clock reads W + TTL: the outbox's last second
+			mode = "keep"
+			_, err = s.Flush(ctx)
+			mode = ""
+			if retry == nil {
+				t.Fatalf("no retry was posted: %v", err)
+			}
+			e.clock.Add(firstSentAt.Add(60 * day).Sub(e.clock.Now()))
+			receive(t, r)
+			e.clock.Add(firstSentAt.Add(2*protocol.TTL + c.prune).Sub(e.clock.Now()))
+			off = c.fast
+			mode = "norenew"
+			if _, err := r.Receive(ctx); err != nil {
+				t.Logf("the drain that prunes: %v", err)
+			}
+			mode = ""
+			floor, _ := stateOf(r, "seen-floor")
+			e.clock.Add(time.Second)
+			off = c.slow
+			id := sha256.Sum256(retry)
+			e.srv.Inject(r.Address(), hex.EncodeToString(id[:]), s.Address(), retry)
+			res, err := r.Receive(ctx)
+			t.Logf("written at W, the first copy dated W%+v; floor %q: delivered %d, duplicates %d, refused %v, %v",
+				firstSentAt.Sub(wrote), bytes.TrimSpace(floor), len(res.Delivered), len(res.Duplicates), res.Refused, err)
+			if len(res.Delivered) != 0 {
+				t.Errorf("a message already delivered was delivered again, its sent_at the first copy's + %v", res.Delivered[0].Envelope.SentAt.Sub(firstSentAt))
+			}
+		})
+	}
+}
