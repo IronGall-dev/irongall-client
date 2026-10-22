@@ -356,6 +356,7 @@ identity_doc 26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85 > 
 identity_doc c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a > identity/small-order-8c.doc
 identity_doc c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa > identity/small-order-8d.doc
 identity_doc eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f > identity/small-order-non-canonical.doc # y = p + 1
+identity_doc 0200000000000000000000000000000000000000000000000000000000000000 > identity/off-curve.doc # y = 2: x^2 = 3/(4d + 1) is no square mod p, so no point has it. ssh-keygen reads any 32 bytes as a key
 printf 'irongall-v1\nssh-ed25519 %s\n' "$(bin "$(str "$(asc ssh-ed25519)00")$(str "$(printf %s "${GOOD#* }" | base64 -d | tail -c 32 | od -An -v -tx1 | tr -d ' \n')")" | b64)" > identity/type-name-ending-in-nul.doc # A's key, its type name ending in a NUL: ssh-keygen reads it as A's key and writes it back without the NUL
 # The same for the P-256 type. With p the field's size and n the group's order: a point is 04, x, y, on the curve, each
 # coordinate below p, and nothing more (PROTOCOL.md §2). OpenSSH up to 10.2p1 also refused a coordinate of 128 bits or
@@ -558,6 +559,7 @@ line "$A" "$B" "$ID_A\\n" > "$L"; refuse refuse-identity-ending-in-a-line-feed "
 line "$A" "$B" "$ID_A\\u0000" > "$L"; refuse refuse-identity-ending-in-a-nul "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
 printf '{"v":1,"from":null,"to":"%s","sent_at":"%s","msg_id":"%s","identity":"%s","body":"hello"}\n' "$B" "$NOW" "$MSG_ID" "$ID_A" > "$L"; refuse refuse-from-null "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B" # null is a member left out: it names no sender
 line "$(sha256sum < identity/small-order-1.doc | cut -c1-64)" "$B" "$(b64 < identity/small-order-1.doc)" > "$L"; refuse refuse-identity-of-small-order "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
+line "$(sha256sum < identity/off-curve.doc | cut -c1-64)" "$B" "$(b64 < identity/off-curve.doc)" > "$L"; refuse refuse-identity-off-curve "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
 line "$(sha256sum < identity/length-field.doc | cut -c1-64)" "$B" "$(b64 < identity/length-field.doc)" > "$L"; refuse refuse-identity-with-its-length-written-33 "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B" # A's key bytes, in a document that breaks its form
 line "$A" "$A" "$ID_A" > "$L"; refuse refuse-to-another-box "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
 # The layout. Each part has one place, and nothing is searched for.

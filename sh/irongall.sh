@@ -211,7 +211,7 @@ ig_dest(){ # <link or address> → the address: 64 hex, or taken from a link to 
 }
 
 # recipe: verify a peer
-ig_keycheck(){ # <32 bytes in hex> → 0 only for an Ed25519 key that is canonical and not of small order
+ig_keycheck(){ # <32 bytes in hex> → 0 only for an Ed25519 key that is a canonical point, not of small order
   [[ $1 =~ ^[0-9a-f]{64}$ && ! $1 =~ ^(e[d-f]|f[0-9a-f])(ff){30}(7f|ff)$ ]] || return 1      # y >= p: not canonical
   case $1 in      # the eight points of small order, and the two with x = 0 marked negative
     0100000000000000000000000000000000000000000000000000000000000000 | 0100000000000000000000000000000000000000000000000000000000000080 | \
@@ -220,6 +220,7 @@ ig_keycheck(){ # <32 bytes in hex> → 0 only for an Ed25519 key that is canonic
     26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc05 | 26e8958fc2b227b045c3f489f2ef98f0d5dfac05d3c63339b13802886d53fc85 | \
     c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a | c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa) return 1 ;;
   esac
+  age -r "ssh-ed25519 $(printf "$(printf %s "0000000b$(ig_asc ssh-ed25519)00000020$1" | sed 's/../\\x&/g')" | base64 | tr -d '\n')" < /dev/null > /dev/null 2>&1      # a point on the curve: age decodes the key as the Go client's edwards25519 does, and refuses 32 bytes that are no point, which ssh-keygen reads as a key
 }
 ig_idcheck(){ # <identity document> [address] → 0 only for a two-line document whose key is in its one encoding and passes its type's checks (and hashing to the address, given one). 2 for a well-formed document of a key type this script does not verify: nothing is wrong with it, and nothing it signed can be checked here. 1 for anything else
   local f=$1 l t fp

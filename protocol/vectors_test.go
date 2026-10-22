@@ -150,7 +150,7 @@ func TestVectorBadIdentities(t *testing.T) {
 		// A server answers a format error with identity_mismatch, a key
 		// error with bad_key, and a well-formed document of a type it does
 		// not register with unsupported_key_type.
-		keyCase := strings.HasPrefix(name, "small-order") || name == "non-canonical.doc" || name == "negative-zero.doc"
+		keyCase := strings.HasPrefix(name, "small-order") || name == "non-canonical.doc" || name == "negative-zero.doc" || name == "off-curve.doc"
 		want := ErrIdentityFormat
 		switch {
 		case keyCase:
@@ -163,7 +163,8 @@ func TestVectorBadIdentities(t *testing.T) {
 		}
 		// Control: the key cases are well-formed documents, so the KEY check
 		// is what refused them, and edwards25519 itself decodes the point,
-		// so the check has to be ours.
+		// so the check has to be ours. off-curve.doc is no point, so
+		// edwards25519 refuses it, where ssh-keygen reads it as a key.
 		if keyCase {
 			m := identityForm.FindSubmatch(doc)
 			if m == nil {
@@ -175,7 +176,11 @@ func TestVectorBadIdentities(t *testing.T) {
 				t.Fatal(err)
 			}
 			raw := key.(ssh.CryptoPublicKey).CryptoPublicKey().(ed25519.PublicKey)
-			if _, err := new(edwards25519.Point).SetBytes(raw); err != nil && name != "negative-zero.doc" {
+			_, err = new(edwards25519.Point).SetBytes(raw)
+			switch {
+			case name == "off-curve.doc" && err == nil:
+				t.Errorf("%s: control: edwards25519 decodes it, so it is a point", name)
+			case name != "off-curve.doc" && name != "negative-zero.doc" && err != nil:
 				t.Errorf("%s: control: edwards25519 rejects it already: %v", name, err)
 			}
 		}
@@ -765,6 +770,7 @@ var plainVerdicts = map[string]string{
 	"refuse-identity-ending-in-a-line-feed":              RefusedIdentity,
 	"refuse-identity-ending-in-a-nul":                    RefusedIdentity,
 	"refuse-identity-of-small-order":                     RefusedIdentity,
+	"refuse-identity-off-curve":                          RefusedIdentity,
 	"refuse-identity-with-its-length-written-33":         RefusedIdentity,
 	"refuse-no-line-feed":                                RefusedMessage,
 	"refuse-no-signature":                                RefusedMessage,
