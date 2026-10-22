@@ -483,13 +483,15 @@ func (b *Box) postSealed(ctx context.Context, to protocol.Address, s *sealed) (*
 // post. Nothing of it is written: the outbox keeps the envelope as written,
 // and a seal is made again for every post.
 //
-// The dating changes the value of the envelope's sent_at and no other byte of
-// its line as written (protocol.Dated), whichever client wrote it, and comes
-// last, once the recipient's box is read: a post's sent_at is its sender's
-// clock at that post, as a signed request's time is when it was signed, made
-// anew for each attempt (PROTOCOL.md §4.2, §4.5), so the server keeps a
-// message about as long as its reader takes it (protocol.Retention). The
-// msg_id stays, and the reader drops a retry by it.
+// The dating sets the envelope's sent_at, and comes last, once the
+// recipient's box is read: a post's sent_at is its sender's clock at that
+// post, as a signed request's time is when it was signed, made anew for each
+// attempt (PROTOCOL.md §4.2, §4.5), so the server keeps a message about as
+// long as its reader takes it (protocol.Retention). The line is written again
+// by the envelope's one writer (Envelope.Line), as sendWith wrote the entry:
+// the outbox is this box's own, which no other client writes. It is read back
+// as the envelope it was, dated at this post, before it is signed. The msg_id
+// stays, and the reader drops a retry by it.
 //
 // The envelope is read as its recipient will read it, so one the recipient
 // would refuse is never sealed. The padding is made here, for the prekey's
@@ -539,9 +541,9 @@ func (b *Box) seal(ctx context.Context, to protocol.Address, stem string, l *loo
 	if env.SentAt.After(wrote.Add(protocol.TTL)) {
 		return nil, refuse("it was written more than %d days ago, and an outbox posts a message no longer than that", protocol.TTL/(24*time.Hour))
 	}
-	line, err := protocol.Dated(written, env.SentAt)
+	line, err := env.Line()
 	if err != nil {
-		return nil, refuse("the outbox entry does not read back as itself once dated at this post")
+		return nil, err
 	}
 	if dated, err := protocol.OpenEnvelopeRecord(line, b.id.Address(), to); err != nil || !sameEnvelope(dated, env) {
 		return nil, refuse("the outbox entry does not read back as itself once dated at this post")

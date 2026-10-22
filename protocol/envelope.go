@@ -9,7 +9,6 @@ import (
 	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
 	"regexp"
 	"time"
 	"unicode/utf8"
@@ -195,75 +194,6 @@ func (e *Envelope) Line() ([]byte, error) {
 		return nil, err
 	}
 	return append(p, '\n'), nil
-}
-
-// Dated returns an envelope's line as written, with its sent_at member's
-// value set to t and every other byte as it was: a post dates the envelope
-// and changes nothing else (PROTOCOL.md §4.5), whichever client wrote it. The
-// line is read and written again as JSON tokens, each member but sent_at
-// written back raw, so a body or a subject is never spelled again. A line
-// that is not compact JSON, or whose sent_at is not a time in its one form,
-// is refused: dating it would change other bytes. A caller reads the result
-// back as the envelope it was.
-func Dated(line []byte, t time.Time) ([]byte, error) {
-	obj, ok := bytes.CutSuffix(line, []byte("\n"))
-	if !ok {
-		return nil, errors.New("an envelope's line ends with a line feed")
-	}
-	date := jsontext.Value(`"` + t.UTC().Format(TimeLayout) + `"`)
-	dec := jsontext.NewDecoder(bytes.NewReader(obj))
-	var out bytes.Buffer
-	enc := jsontext.NewEncoder(&out, jsontext.PreserveRawStrings(true))
-	tok, err := dec.ReadToken()
-	if err != nil || tok.Kind() != '{' {
-		return nil, errors.New("an envelope is a JSON object")
-	}
-	if err := enc.WriteToken(jsontext.BeginObject); err != nil {
-		return nil, err
-	}
-	for dec.PeekKind() != '}' {
-		raw, err := dec.ReadValue()
-		if err != nil {
-			return nil, err
-		}
-		name := raw.Clone() // a value read is valid only until the next read
-		var member string
-		if err := jsonv2.Unmarshal(name, &member); err != nil {
-			return nil, err
-		}
-		value, err := dec.ReadValue()
-		if err != nil {
-			return nil, err
-		}
-		if member == "sent_at" {
-			if len(value) != len(date) {
-				return nil, errors.New("an envelope's sent_at is a time in its one form")
-			}
-			value = date
-		}
-		if err := enc.WriteValue(name); err != nil {
-			return nil, err
-		}
-		if err := enc.WriteValue(value); err != nil {
-			return nil, err
-		}
-	}
-	if _, err := dec.ReadToken(); err != nil {
-		return nil, err
-	}
-	if _, err := dec.ReadToken(); !errors.Is(err, io.EOF) {
-		return nil, errors.New("an envelope's line is one JSON object")
-	}
-	if err := enc.WriteToken(jsontext.EndObject); err != nil {
-		return nil, err
-	}
-	// The encoder ends a value at the top level with a line feed of its own,
-	// and writes no space: one it dropped is a line that was not compact.
-	dated := append(bytes.TrimSuffix(out.Bytes(), []byte("\n")), '\n')
-	if len(dated) != len(line) {
-		return nil, errors.New("an envelope's line is compact JSON")
-	}
-	return dated, nil
 }
 
 // OpenEnvelope parses an envelope and checks it, in this order: it is UTF-8
