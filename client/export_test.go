@@ -39,13 +39,6 @@ func SetStep(f func(name string)) { atStep = f }
 // Steps are the steps of one kind of write (steps.go).
 func Steps(kind string) []string { return steps[kind] }
 
-// DeleteAtServer deletes the box at its server, as its owner may with curl
-// and its pass (PROTOCOL.md §6.2): no command of this client does.
-func (b *Box) DeleteAtServer(ctx context.Context) error {
-	_, err := b.owner(ctx, http.MethodDelete, b.boxPath(""), nil, nil)
-	return err
-}
-
 // PutRevocations puts a record to the server as it is, with none of the
 // checks Revoke makes first: what a client that skipped them would send.
 func PutRevocations(ctx context.Context, opt Options, a protocol.Address, rec *protocol.Revocations) (*http.Response, error) {

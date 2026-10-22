@@ -99,9 +99,8 @@ func (b *Box) renewFrom(ctx context.Context, st *ownRead) (*protocol.Prekey, tak
 type renewal struct {
 	req protocol.PrekeyRequest
 	// forgotten is set when the box's server holds no box at its address: it
-	// forgot it, past its record's expiry, or the box was deleted. The
-	// renewal then goes as a registration, which is how such a box comes
-	// back (PROTOCOL.md §3, §7).
+	// forgot it, past its record's expiry. The renewal then goes as a
+	// registration, which is how such a box comes back (PROTOCOL.md §3, §7).
 	forgotten bool
 }
 

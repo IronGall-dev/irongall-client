@@ -701,9 +701,7 @@ func TestARevocationsReadAnsweredOutOfFormIsNoAnswer(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	a := e.box(protocol.Classic)
-	if err := a.DeleteAtServer(ctx); err != nil {
-		t.Fatal(err)
-	}
+	e.srv.Forget(a.Address())
 	says(e, protocol.CodeNoSuchMailbox, http.MethodGet, "/revocations")
 	if held, err := a.Ask(ctx, a.Address()); err == nil {
 		t.Fatalf("a revocations read answered no_such_mailbox was taken as an answer: %+v", held)

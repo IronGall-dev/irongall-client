@@ -17,7 +17,7 @@ const (
 	// atUnread is a read that got no answer this box can use.
 	atUnread ownAt = iota
 	// atNone is a server that holds no box at this address: never
-	// registered, deleted by its owner, or forgotten (404 no_such_mailbox).
+	// registered, or forgotten (404 no_such_mailbox).
 	atNone
 	// atServed is an active box, served.
 	atServed

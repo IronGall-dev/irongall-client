@@ -157,7 +157,7 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 	res := &Result{}
 	err := b.drain(ctx, asked, res)
 	// A drain refused for what a renewal mends renews, and drains again, once:
-	// a server that holds no box at this address, deleted or forgotten, which
+	// a server that holds no box at this address, having forgotten it, which
 	// the renewal's registration brings back (PROTOCOL.md §3, §6.4), or one
 	// that holds the certificate in use revoked, which the refusal had this
 	// box read and keep (ownCertRevoked).

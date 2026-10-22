@@ -462,7 +462,7 @@ func TestAKeyNeverSignedIsUsed(t *testing.T) {
 // registration, is not mended by the renewal a drain so refused makes: the
 // next such renewal waits an hour, as one that failed does, so the box makes
 // one an hour there and not one at every Receive (#328). Control: a box its
-// owner deleted twice comes back at its first recv each time.
+// server forgot twice comes back at its first recv each time.
 func TestARenewalThatMendsNothingWaitsAnHour(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
@@ -499,12 +499,10 @@ func TestARenewalThatMendsNothingWaitsAnHour(t *testing.T) {
 	e.srv.SetMiddle(nil)
 	d := e.box(protocol.Classic)
 	for i := range 2 {
-		if err := d.DeleteAtServer(ctx); err != nil {
-			t.Fatal(err)
-		}
+		e.srv.Forget(d.Address())
 		e.clock.Add(time.Minute)
 		if res := receive(t, d); res.Renewed == nil || servedSerial(t, e, d) != res.Renewed.Serial {
-			t.Fatalf("the recv after delete %d: %+v", i+1, res)
+			t.Fatalf("the recv after it was forgotten, %d: %+v", i+1, res)
 		}
 	}
 }

@@ -712,7 +712,7 @@ ig_renew(){ # [--no-pq] → what ig_rekey does, the lock held. A serial is signe
   local A r s t na h c f cs p new x gone u w at; A=$(cat "$IG/address") || return 1; mkdir -p "$IG/prekeys"
   ig_finished || { ig_done $?; return 1; }
   ig_api GET "/v1/$A" > "$IG/self.json" 2> "$IG/self.err" || case $(ig_code) in
-    no_such_mailbox) gone=1 ;;      # 404: the server holds no box here any more, past its record's expiry or deleted (PROTOCOL.md §7), so nothing is served to number above or to hold to its order, and the renewal goes as a registration
+    no_such_mailbox) gone=1 ;;      # 404: the server holds no box here any more, past its record's expiry (PROTOCOL.md §7), so nothing is served to number above or to hold to its order, and the renewal goes as a registration
     revoked) ig_takerecord "$A"; [ $? != 3 ] || return 1; ig_finished || { ig_done $?; return 1; }; cat "$IG/self.err" >&2; return 1 ;;      # 410: the address's record, kept once it verifies, so the box signs nothing more here or at any server it is pointed at (PROTOCOL.md §6.3; #343)
     *) cat "$IG/self.err" >&2; return 1 ;;
   esac

@@ -36,7 +36,7 @@ var update = flag.Bool("update", false, "write testdata/statetable.golden from t
 //
 // A row is the box's directory (all of it, or the identity alone, as a
 // restore from its backup), what its server holds (never registered, an
-// active box, one its owner deleted, one the server forgot), and what the
+// active box, one the server forgot), and what the
 // server holds of a revocation of its certificates (none, through the one
 // in use, or through a serial a day ahead of the clock), each revocation
 // published by another holder of the identity and not kept by the box; then
@@ -114,17 +114,12 @@ type stateRow struct {
 func stateRows() []stateRow {
 	var rows []stateRow
 	for _, view := range []string{"full", "identity alone"} {
-		for _, server := range []string{"never registered", "active", "deleted", "forgotten"} {
+		for _, server := range []string{"never registered", "active", "forgotten"} {
 			for _, rev := range []string{"no revocation", "revoked through the one in use", "revoked a day ahead"} {
 				rows = append(rows, stateRow{view + ", " + server + ", " + rev, func(t *testing.T, e *env, dir string, peer *client.Box) {
 					makeBox(t, e, dir, peer, server == "never registered")
 					a := openBox(t, e, dir)
-					switch server {
-					case "deleted":
-						if err := a.DeleteAtServer(context.Background()); err != nil {
-							t.Fatal(err)
-						}
-					case "forgotten":
+					if server == "forgotten" {
 						e.srv.Forget(a.Address())
 					}
 					switch rev {
