@@ -75,7 +75,7 @@ func (e *env) box(kt protocol.KeyType) *client.Box {
 // landAll gives a box made outside env.box the policy env.box gives.
 func landAll(t *testing.T, b *client.Box) {
 	t.Helper()
-	if err := b.SetPolicy(client.Policy{Unknown: client.LandInbox, Server: client.AdmitAll}); err != nil {
+	if err := b.SetPolicy(t.Context(), client.Policy{Unknown: client.LandInbox, Server: client.AdmitAll}); err != nil {
 		t.Fatal(err)
 	}
 }

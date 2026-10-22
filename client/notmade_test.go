@@ -52,14 +52,14 @@ func TestAStatementTheBoxDidNotMakeIsSaid(t *testing.T) {
 	if res.NotMade == nil || res.NotMade.Serial != n+5 || res.NotMade.CertificateSerial != n || res.Renewed == nil || res.Renewed.Type() != protocol.PostQuantum {
 		t.Fatalf("recv shown a statement it did not make: %+v, renewed %+v", res.NotMade, res.Renewed)
 	}
-	if st, err := b.Status(); err != nil || st.PrekeyNotMade == nil || len(st.Attention) != 1 || !strings.Contains(st.Attention[0], "did not make") {
+	if st, err := b.Status(t.Context()); err != nil || st.PrekeyNotMade == nil || len(st.Attention) != 1 || !strings.Contains(st.Attention[0], "did not make") {
 		t.Fatalf("status: %+v, %v", st, err)
 	}
 	e.srv.SetMiddle(nil)
 	if _, err := b.Rekey(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
-	if st, err := b.Status(); err != nil || st.PrekeyNotMade != nil || len(st.Attention) != 0 {
+	if st, err := b.Status(t.Context()); err != nil || st.PrekeyNotMade != nil || len(st.Attention) != 0 {
 		t.Fatalf("status once its server serves its own: %+v, %v", st, err)
 	}
 }

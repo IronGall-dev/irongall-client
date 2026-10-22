@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
@@ -171,26 +172,90 @@ func (b *Box) update(f func(store) error) error {
 // may, or read-only, which any number of readings may at once, while no
 // command writes. The first time it finds the file held it tells
 // Options.Waiting, if set, so that a wait is not read as a hang.
+//
+// A flock gives a writer that waits no preference over readings, which
+// overlap and leave it no moment the file is free, so it holds the box's gate
+// while it waits, a flock on the box's directory, and every reading takes the
+// gate and lets go of it around its own lock: readings wait behind a waiting
+// writer, and those under way finish, as SQLite's PENDING lock has them
+// (#344). The file is opened as bbolt opens it, never made (openWhole).
 func (b *Box) openState(ctx context.Context, readOnly bool) (*bolt.DB, error) {
 	deadline := time.Now().Add(lockPatience)
 	told := false
+	waited := func() error {
+		if !time.Now().Before(deadline) {
+			return errLocked
+		}
+		if !told && b.waiting != nil {
+			b.waiting()
+			told = true
+		}
+		return ctx.Err()
+	}
+	var gate *os.File
+	defer func() {
+		if gate != nil {
+			_ = gate.Close() // lets go of its flock
+		}
+	}()
+	takeGate := func() error {
+		g, ok, err := tryGate(b.dir)
+		if ok {
+			gate = g
+		}
+		return err
+	}
+	if readOnly {
+		for {
+			if err := takeGate(); err != nil {
+				return nil, err
+			}
+			if gate != nil {
+				break
+			}
+			if err := waited(); err != nil {
+				return nil, err
+			}
+			time.Sleep(lockTry)
+		}
+	}
 	for {
-		db, err := bolt.Open(b.path("state"), 0o600, &bolt.Options{Timeout: lockTry, ReadOnly: readOnly})
+		db, err := bolt.Open(b.path("state"), 0o600, &bolt.Options{Timeout: lockTry, ReadOnly: readOnly, OpenFile: openWhole})
 		if err == nil {
 			return db, nil
 		}
 		if !errors.Is(err, berrors.ErrTimeout) {
 			return nil, err
 		}
-		if !time.Now().Before(deadline) {
-			return nil, errLocked
+		if gate == nil {
+			if err := takeGate(); err != nil {
+				return nil, err
+			}
 		}
-		if !told && b.waiting != nil {
-			b.waiting()
-			told = true
-		}
-		if err := ctx.Err(); err != nil {
+		if err := waited(); err != nil {
 			return nil, err
 		}
 	}
 }
+
+// openWhole opens the state file as bbolt asks, but never makes it, which
+// makeState alone does, and refuses one of no bytes: bbolt would make a
+// database in either, in place, where a cut can leave a file that faults
+// every process that opens it after (#323).
+func openWhole(name string, flag int, perm os.FileMode) (*os.File, error) {
+	f, err := os.OpenFile(name, flag&^os.O_CREATE, perm) //nolint:gosec // the box's own state file
+	if err != nil {
+		return nil, err
+	}
+	if info, err := f.Stat(); err != nil || info.Size() == 0 {
+		_ = f.Close()
+		if err == nil {
+			err = errEmptyState
+		}
+		return nil, err
+	}
+	return f, nil
+}
+
+// errEmptyState is a state file of no bytes, which this client never leaves.
+var errEmptyState = refuse("the box's state file is empty, which this client never leaves: something else made it, and it holds none of the box's records; delete it, and the next command makes it again")

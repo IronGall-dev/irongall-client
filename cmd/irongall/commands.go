@@ -249,12 +249,12 @@ func (e *cli) quarantineListCmd() *cobra.Command {
 		`List the mail quarantine/ keeps: a "quarantined" line for each message, with
 its id, the code it was refused for (the README's table has each), and the
 sender and the time the server gave, each only when it has its form.`,
-		nargs(0, 0), func(*cobra.Command, []string) error {
+		nargs(0, 0), func(c *cobra.Command, _ []string) error {
 			b, err := e.box()
 			if err != nil {
 				return err
 			}
-			qs, err := b.Quarantined()
+			qs, err := b.Quarantined(c.Context())
 			for _, q := range qs {
 				l, jerr := json.Marshal(q)
 				if jerr == nil {
@@ -397,12 +397,12 @@ func (e *cli) statusCmd() *cobra.Command {
 		`Say what this box holds and what needs a look, as one "status" line, from its
 own files and with no call to the server: its prekey, a renewal that has not
 gone through, refused mail in quarantine/, held mail, mail not yet delivered.`,
-		nargs(0, 0), func(*cobra.Command, []string) error {
+		nargs(0, 0), func(c *cobra.Command, _ []string) error {
 			b, err := e.box()
 			if err != nil {
 				return err
 			}
-			s, err := b.Status()
+			s, err := b.Status(c.Context())
 			if err != nil {
 				return err
 			}
@@ -467,7 +467,7 @@ allowed file that was lost.`,
 				return err
 			}
 			if rebuild {
-				n, err := b.RebuildAllowed()
+				n, err := b.RebuildAllowed(c.Context())
 				if err != nil {
 					return err
 				}
@@ -579,7 +579,7 @@ digit. It allows its peer.`,
 			if err != nil {
 				return err
 			}
-			if err := b.SetAlias(args[0], to); err != nil {
+			if err := b.SetAlias(c.Context(), args[0], to); err != nil {
 				return err
 			}
 			if err := e.out(line("alias", "name", args[0], "address", to)); err != nil {
@@ -591,12 +591,12 @@ digit. It allows its peer.`,
 
 func (e *cli) aliasRmCmd() *cobra.Command {
 	return command("rm <name>", "remove a name", `Remove the alias of this name, and print an "alias_removed" line.`,
-		nargs(1, 1), func(_ *cobra.Command, args []string) error {
+		nargs(1, 1), func(c *cobra.Command, args []string) error {
 			b, err := e.box()
 			if err != nil {
 				return err
 			}
-			if err := b.RemoveAlias(args[0]); err != nil {
+			if err := b.RemoveAlias(c.Context(), args[0]); err != nil {
 				return err
 			}
 			return e.out(line("alias_removed", "name", args[0]))
@@ -699,7 +699,7 @@ neither --no-pq nor --pq it keeps the type the box has.`,
 			if err != nil {
 				return err
 			}
-			nm, err := b.NotMade()
+			nm, err := b.NotMade(c.Context())
 			if err != nil || nm == nil {
 				return err
 			}
@@ -935,7 +935,7 @@ that one, with the address in full.`,
 			if len(args) == 1 {
 				rec, err = readRecord(args[0])
 			} else {
-				rec, err = b.CertificatesRecord()
+				rec, err = b.CertificatesRecord(c.Context())
 				if err == nil && rec == nil {
 					err = errors.New("this box holds no revocation of its certificates: irongall cert revoke-earlier makes one")
 				}
@@ -948,7 +948,7 @@ that one, with the address in full.`,
 			if len(rec.Revocation) > 0 {
 				return errors.New("the record carries a revocation of its address, which nothing undoes: nothing was published. irongall revocation publish --record <file> <address> publishes one, with the address in full as the confirmation")
 			}
-			a, _, err := b.KeepRevocation(rec)
+			a, _, err := b.KeepRevocation(c.Context(), rec)
 			if err != nil {
 				return err
 			}
@@ -963,7 +963,7 @@ that one, with the address in full.`,
 			if a == b.Address() {
 				// A server that held a higher one showed it, and the box keeps
 				// that one.
-				if held, err := b.CertificatesRecord(); err == nil && held != nil {
+				if held, err := b.CertificatesRecord(c.Context()); err == nil && held != nil {
 					if h, err := protocol.ParseRevokedCertificates(held.RevokedCertificates); err == nil && h.Through > through {
 						through, said = h.Through, "the server holds a revocation of this box's certificates through a higher serial, which covers this one: this box keeps that one"
 					}
@@ -977,7 +977,7 @@ that one, with the address in full.`,
 			if a != b.Address() {
 				return nil
 			}
-			st, err := b.Status()
+			st, err := b.Status(c.Context())
 			if err != nil || !st.Revoked {
 				return err
 			}
@@ -1054,12 +1054,12 @@ the day the box is lost (umask 077; irongall revocation make > <file>). The
 line is the record as every server takes it: irongall revocation publish
 --record publishes it, and so does a PUT of it to
 <server>/v1/<address>/revocations.`,
-		nargs(0, 0), func(*cobra.Command, []string) error {
+		nargs(0, 0), func(c *cobra.Command, _ []string) error {
 			b, err := e.box()
 			if err != nil {
 				return err
 			}
-			rec, err := b.Revocation()
+			rec, err := b.Revocation(c.Context())
 			if err != nil {
 				return err
 			}
@@ -1108,7 +1108,7 @@ server, and the command fails unless the server took it: run it again.`,
 				if b.Address() != a {
 					return errors.New("that is not this box's address: nothing was published. irongall revocation publish takes this box's own address, or a record of another with --record")
 				}
-				if rec, err = b.Revocation(); err != nil {
+				if rec, err = b.Revocation(c.Context()); err != nil {
 					return err
 				}
 			}
@@ -1124,7 +1124,7 @@ server, and the command fails unless the server took it: run it again.`,
 			// Once the server has taken it, it is out. If the box it is about is
 			// the one here, it keeps it too.
 			if openErr == nil && b.Address() == a {
-				if _, _, err := b.KeepRevocation(rec); err != nil {
+				if _, _, err := b.KeepRevocation(c.Context(), rec); err != nil {
 					return err
 				}
 			}
@@ -1140,7 +1140,7 @@ func (e *cli) keepCmd() *cobra.Command {
 irongall revocation make prints), check it, and keep it: this box then sends
 that address nothing and takes nothing from it. A record may carry a
 revocation of the box's certificates, which is kept the same way.`,
-		nargs(1, 1), func(_ *cobra.Command, args []string) error {
+		nargs(1, 1), func(c *cobra.Command, args []string) error {
 			b, err := e.box()
 			if err != nil {
 				return err
@@ -1149,7 +1149,7 @@ revocation of the box's certificates, which is kept the same way.`,
 			if err != nil {
 				return err
 			}
-			a, held, err := b.KeepRevocation(rec)
+			a, held, err := b.KeepRevocation(c.Context(), rec)
 			if err != nil {
 				return err
 			}

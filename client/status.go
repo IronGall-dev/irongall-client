@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -56,9 +57,8 @@ type Status struct {
 
 // Status reads the box's own files and its state, read-only: it waits while a
 // command writes the box, and changes nothing.
-func (b *Box) Status() (st *Status, err error) {
-	err = b.view(func(store) error { st, err = b.status(); return err })
-	return st, err
+func (b *Box) Status(ctx context.Context) (*Status, error) {
+	return reading(ctx, b, b.status)
 }
 
 func (b *Box) status() (*Status, error) {
@@ -74,7 +74,7 @@ func (b *Box) status() (*Status, error) {
 	if s.Policy, err = b.Policy(); err != nil {
 		s.Attention = append(s.Attention, fmt.Sprintf("the box's policy cannot be read, so it neither sends nor receives until that is put right: %v", err))
 	}
-	switch pending, perr := b.ACLPending(); {
+	switch pending, perr := b.aclPending(); {
 	case err != nil: // said above
 	case perr != nil:
 		s.Attention = append(s.Attention, fmt.Sprintf("whom this box allows or blocks cannot be read, so it neither sends nor receives until that is put right: %v", perr))
@@ -138,7 +138,7 @@ func (b *Box) status() (*Status, error) {
 		}
 		s.Attention = append(s.Attention, fmt.Sprintf("a new prekey signed at %s was never seen published: the server refused it or did not answer; irongall recv sends it again", since))
 	}
-	if s.PrekeyNotMade, err = b.NotMade(); err != nil {
+	if s.PrekeyNotMade, err = b.notMade(); err != nil {
 		return nil, err
 	}
 	if s.PrekeyNotMade != nil {
@@ -163,7 +163,7 @@ func (b *Box) status() (*Status, error) {
 // what the box's state keeps of each: a message it keeps no code for counts
 // as "unknown".
 func (b *Box) quarantineCodes() string {
-	qs, _ := b.Quarantined()
+	qs, _ := b.quarantined()
 	var codes []string
 	for _, q := range qs {
 		if !slices.Contains(codes, q.Code) {

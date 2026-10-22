@@ -710,7 +710,7 @@ func TestAskingAtAnyTimeAndARevocationHandedOver(t *testing.T) {
 	// C never asks: the record reaches it as a file, and the server may say
 	// what it likes.
 	forge.Hides(e.t, e.srv)
-	got, held, err := c.KeepRevocation(first)
+	got, held, err := c.KeepRevocation(t.Context(), first)
 	if err != nil || got != a.Address() || held.Revoked || held.Certificates == nil || held.Certificates.Through != firstThrough || !keptList(c, a.Address()) {
 		t.Fatalf("a revocation of certificates handed over: %+v, %v", held, err)
 	}
@@ -733,10 +733,10 @@ func TestAskingAtAnyTimeAndARevocationHandedOver(t *testing.T) {
 	if later <= firstThrough {
 		t.Fatalf("the later revocation runs through %d, not above %d", later, firstThrough)
 	}
-	if _, held, err := c.KeepRevocation(record(t, e, a)); err != nil || held.Certificates.Through != later {
+	if _, held, err := c.KeepRevocation(t.Context(), record(t, e, a)); err != nil || held.Certificates.Through != later {
 		t.Fatalf("a later revocation of certificates: %+v, %v", held, err)
 	}
-	if _, held, err := c.KeepRevocation(first); err != nil || held.Certificates.Through != later || !held.Certificates.Revokes(second) {
+	if _, held, err := c.KeepRevocation(t.Context(), first); err != nil || held.Certificates.Through != later || !held.Certificates.Revokes(second) {
 		t.Fatalf("a lower one handed over again: %+v, %v", held, err)
 	}
 
@@ -744,7 +744,7 @@ func TestAskingAtAnyTimeAndARevocationHandedOver(t *testing.T) {
 	// revocation beside a revocation of certificates the working key signed
 	// keeps nothing.
 	d := e.box(protocol.Classic)
-	rev, err := d.Revocation()
+	rev, err := d.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -762,11 +762,11 @@ func TestAskingAtAnyTimeAndARevocationHandedOver(t *testing.T) {
 		"another box's revocation, and none":     {Identity: rev.Identity, Revocation: first.RevokedCertificatesSignature},
 		"nothing but the identity":               {Identity: rev.Identity},
 	} {
-		if _, _, err := c.KeepRevocation(bad); err == nil || keptRevocation(c, d.Address()) || keptList(c, d.Address()) {
+		if _, _, err := c.KeepRevocation(t.Context(), bad); err == nil || keptRevocation(c, d.Address()) || keptList(c, d.Address()) {
 			t.Fatalf("%s was kept: %v", name, err)
 		}
 	}
-	if _, held, err := c.KeepRevocation(rev); err != nil || !held.Revoked {
+	if _, held, err := c.KeepRevocation(t.Context(), rev); err != nil || !held.Revoked {
 		t.Fatalf("the revocation alone: %+v, %v", held, err)
 	}
 

@@ -81,7 +81,9 @@ type Options struct {
 	Waiting func()
 }
 
-// Box is one box: its state directory and the server it talks to.
+// Box is one box: its state directory and the server it talks to. It is
+// safe for concurrent use: a command or reading of one goroutine waits for
+// another's, as one of another process does.
 type Box struct {
 	dir  string
 	base string
@@ -102,6 +104,9 @@ type Box struct {
 	// runs one command at a time.
 	db *bolt.DB
 	tx *bolt.Tx
+	// slot is held by the one command or reading of this Box under way, of
+	// whichever goroutine ([Box.claim]).
+	slot chan struct{}
 }
 
 // Open opens an existing box's state directory. A directory holding only
@@ -128,7 +133,7 @@ func Open(dir string, opt Options) (*Box, error) {
 // takes every request through one transport (newTransport) and follows no
 // redirect (followNone).
 func newBox(dir string, opt Options) (*Box, error) {
-	b := &Box{dir: dir, base: strings.TrimRight(opt.Base, "/"), http: opt.HTTPClient, now: opt.Now, identityType: opt.IdentityType, senderKeyTypes: opt.SenderKeyTypes, waiting: opt.Waiting}
+	b := &Box{dir: dir, base: strings.TrimRight(opt.Base, "/"), http: opt.HTTPClient, now: opt.Now, identityType: opt.IdentityType, senderKeyTypes: opt.SenderKeyTypes, waiting: opt.Waiting, slot: make(chan struct{}, 1)}
 	if b.senderKeyTypes == nil {
 		b.senderKeyTypes = protocol.IdentityTypes()
 	}

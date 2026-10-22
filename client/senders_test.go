@@ -32,7 +32,7 @@ func TestMailFromASenderNotAllowedIsHeld(t *testing.T) {
 	if inbox, _ := filepath.Glob(filepath.Join(b.Dir(), "inbox", "*.json")); len(inbox) != 0 {
 		t.Fatalf("inbox/ holds %v", inbox)
 	}
-	st, err := b.Status()
+	st, err := b.Status(t.Context())
 	if err != nil || st.Held != 2 || !strings.Contains(strings.Join(st.Attention, "\n"), "2 held in held/") {
 		t.Fatalf("status: %+v, %v", st, err)
 	}
@@ -72,10 +72,10 @@ func TestWritingOrNamingAPeerAllowsIt(t *testing.T) {
 	if res := receive(t, b); len(res.Delivered) != 1 || len(res.Held) != 0 {
 		t.Fatalf("a reply from a box written to: %+v", res)
 	}
-	if err := b.SetAlias("carol", c.Address()); err != nil {
+	if err := b.SetAlias(t.Context(), "carol", c.Address()); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.RemoveAlias("carol"); err != nil {
+	if err := b.RemoveAlias(t.Context(), "carol"); err != nil {
 		t.Fatal(err)
 	}
 	send(t, c, b, "from a box once named")
@@ -163,7 +163,7 @@ func TestABoxDropsMailFromASenderItBlockedWhateverItsServerDoes(t *testing.T) {
 	if len(res.Blocked) != 1 || len(res.Held)+len(res.Delivered) != 0 || res.ACLErr == nil || e.srv.Count(b.Address()) != 0 {
 		t.Fatalf("a drain with the sender blocked here only: %+v", res)
 	}
-	if st, err := b.Status(); err != nil || !strings.Contains(strings.Join(st.Attention, "\n"), "ACL has changed") {
+	if st, err := b.Status(t.Context()); err != nil || !strings.Contains(strings.Join(st.Attention, "\n"), "ACL has changed") {
 		t.Fatalf("status: %+v, %v", st, err)
 	}
 	e.srv.SetMiddle(nil)
@@ -193,7 +193,7 @@ func TestUnderServerAllowedTheServerRefusesTheRest(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b, stranger := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
-	if err := b.SetPolicy(client.Policy{Unknown: client.LandHeld, Server: client.AdmitAllowed}); err != nil {
+	if err := b.SetPolicy(t.Context(), client.Policy{Unknown: client.LandHeld, Server: client.AdmitAllowed}); err != nil {
 		t.Fatal(err)
 	}
 	var calls []string
@@ -225,7 +225,7 @@ func TestUnderServerAllowedTheServerRefusesTheRest(t *testing.T) {
 		t.Fatalf("the calls of a send to an allowed address: %v", calls)
 	}
 	// Back to "server all": the server lets everyone in again.
-	if err := b.SetPolicy(client.DefaultPolicy()); err != nil {
+	if err := b.SetPolicy(t.Context(), client.DefaultPolicy()); err != nil {
 		t.Fatal(err)
 	}
 	if err := b.SyncACL(ctx); err != nil {
@@ -302,7 +302,7 @@ func TestAPolicyThatCannotBeReadStopsTheDrain(t *testing.T) {
 		if _, err := b.Receive(context.Background()); !errors.As(err, &refused) || e.srv.Count(b.Address()) != 1 {
 			t.Fatalf("a drain with %s %q: %v, %d left", name, text, err, e.srv.Count(b.Address()))
 		}
-		if st, err := b.Status(); err != nil || !strings.Contains(strings.Join(st.Attention, "\n"), "neither sends nor receives") {
+		if st, err := b.Status(t.Context()); err != nil || !strings.Contains(strings.Join(st.Attention, "\n"), "neither sends nor receives") {
 			t.Fatalf("status with %s %q: %+v, %v", name, text, st, err)
 		}
 		if err := os.Remove(filepath.Join(b.Dir(), name)); err != nil {
@@ -320,20 +320,20 @@ func TestRebuildAllowed(t *testing.T) {
 	e := newEnv(t)
 	a, b, c, d := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
 	send(t, b, a, "to a")
-	if err := b.SetAlias("carol", c.Address()); err != nil {
+	if err := b.SetAlias(t.Context(), "carol", c.Address()); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(b.Dir(), "allowed"), []byte(d.Address().String()), 0o600); err != nil { // no line end, as a person may write it
 		t.Fatal(err)
 	}
-	n, err := b.RebuildAllowed()
+	n, err := b.RebuildAllowed(t.Context())
 	if err != nil || n != 2 {
 		t.Fatalf("rebuild: %d, %v", n, err)
 	}
 	if allowed, err := b.Allowed(); err != nil || len(allowed) != 3 {
 		t.Fatalf("allowed: %v, %v", allowed, err)
 	}
-	if n, err := b.RebuildAllowed(); err != nil || n != 0 {
+	if n, err := b.RebuildAllowed(t.Context()); err != nil || n != 0 {
 		t.Fatalf("a second rebuild: %d, %v", n, err)
 	}
 }
@@ -387,7 +387,7 @@ func TestASendWaitsOnTheACLOnlyWhenTheReplyWouldBeRefused(t *testing.T) {
 		t.Fatalf("a send with the ACL refused and none taken: %+v, %v; posted %d", s, err, e.srv.Count(a.Address()))
 	}
 	e.srv.SetMiddle(nil)
-	if err := b.SetPolicy(client.Policy{Unknown: client.LandHeld, Server: client.AdmitAllowed}); err != nil {
+	if err := b.SetPolicy(t.Context(), client.Policy{Unknown: client.LandHeld, Server: client.AdmitAllowed}); err != nil {
 		t.Fatal(err)
 	}
 	if err := b.SyncACL(ctx); err != nil || !e.srv.ACL(b.Address()).Allow.Has(a.Address()) {

@@ -68,7 +68,7 @@ func quarantinedFindings(t *testing.T, kind string) {
 	if err != nil || len(res.Refused) != 2 || len(res.Delivered) != 0 {
 		t.Fatalf("%+v, %v", res, err)
 	}
-	qs, err := b.Quarantined()
+	qs, err := b.Quarantined(t.Context())
 	if err != nil || len(qs) != 2 {
 		t.Fatalf("%+v, %v", qs, err)
 	}
@@ -142,7 +142,7 @@ func TestADeliveryLeavesNothingOfAnEarlierRefusal(t *testing.T) {
 	if res := receive(t, b); len(res.Delivered) != 1 || res.Delivered[0].ID != id {
 		t.Fatalf("the same message once the clock reached it: %+v", res)
 	}
-	if qs, err := b.Quarantined(); err != nil || len(qs) != 0 || exists(filepath.Join(b.Dir(), "quarantine", id+".json")) || has(b, "quarantine/"+id+".reason") {
+	if qs, err := b.Quarantined(t.Context()); err != nil || len(qs) != 0 || exists(filepath.Join(b.Dir(), "quarantine", id+".json")) || has(b, "quarantine/"+id+".reason") {
 		t.Errorf("after its delivery the box keeps %+v, %v of its refusal", qs, err)
 	}
 }
@@ -232,21 +232,21 @@ func TestARefusalNamesNoSignerTheBoxHoldsRevoked(t *testing.T) {
 	}{
 		{"nothing", false, "", func(*testing.T, *client.Box, *client.Box, uint64) {}},
 		{"the address revoked", true, client.RefusedRevoked, func(t *testing.T, a, b *client.Box, _ uint64) {
-			rec, err := a.Revocation()
+			rec, err := a.Revocation(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := b.KeepRevocation(rec); err != nil {
+			if _, _, err := b.KeepRevocation(t.Context(), rec); err != nil {
 				t.Fatal(err)
 			}
 		}},
 		{"its certificates revoked through the mail's", true, client.RefusedCertificate, func(t *testing.T, a, b *client.Box, n uint64) {
-			if _, _, err := b.KeepRevocation(certsRecord(t, a.Dir(), n)); err != nil {
+			if _, _, err := b.KeepRevocation(t.Context(), certsRecord(t, a.Dir(), n)); err != nil {
 				t.Fatal(err)
 			}
 		}},
 		{"its certificates revoked through the one below the mail's", false, "", func(t *testing.T, a, b *client.Box, n uint64) {
-			if _, _, err := b.KeepRevocation(certsRecord(t, a.Dir(), n-1)); err != nil {
+			if _, _, err := b.KeepRevocation(t.Context(), certsRecord(t, a.Dir(), n-1)); err != nil {
 				t.Fatal(err)
 			}
 		}},
@@ -310,7 +310,7 @@ func identityKey(t *testing.T, b *client.Box) ssh.Signer {
 // quarantinedAs is what quarantine list gives of message id.
 func quarantinedAs(t *testing.T, b *client.Box, id string) client.Quarantined {
 	t.Helper()
-	qs, err := b.Quarantined()
+	qs, err := b.Quarantined(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

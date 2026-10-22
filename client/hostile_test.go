@@ -76,7 +76,7 @@ func TestARefusalNeverQuotesTheMessage(t *testing.T) {
 			t.Errorf("%s was not quarantined", r.ID)
 		}
 	}
-	st, err := b.Status()
+	st, err := b.Status(t.Context())
 	if err != nil || st.Quarantine != len(sent) || len(st.Attention) != 1 || !strings.Contains(st.Attention[0], "(bad_envelope, bad_identity, reattributed, stale)") {
 		t.Fatalf("status: %+v, %v", st, err)
 	}
@@ -371,7 +371,7 @@ func TestQuarantineKeepsNoServerTextInTheClear(t *testing.T) {
 	// What the checks established is this client's: the first was signed by
 	// a, whom the server's list did not name; the second never decrypted, so
 	// nothing is known of it but when it was judged.
-	qs, err := b.Quarantined()
+	qs, err := b.Quarantined(t.Context())
 	if err != nil || len(qs) != 2 {
 		t.Fatalf("Quarantined: %+v, %v", qs, err)
 	}
@@ -395,7 +395,7 @@ func TestQuarantineKeepsNoServerTextInTheClear(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(b.Dir(), "quarantine", old+".json"), []byte(`{"id":"`+injected+`","from":"`+injected+`","received_at":"`+injected+`","ciphertext":"QUJD","judged":`+j+`}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if qs, err := b.Quarantined(); err != nil || len(qs) != 3 || !slices.Contains(qs, client.Quarantined{ID: old, Code: "unknown"}) {
+	if qs, err := b.Quarantined(t.Context()); err != nil || len(qs) != 3 || !slices.Contains(qs, client.Quarantined{ID: old, Code: "unknown"}) {
 		t.Fatalf("Quarantined with a file of the old form: %+v, %v", qs, err)
 	}
 	// What the checks found is the box's state's, which only this client
@@ -405,7 +405,7 @@ func TestQuarantineKeepsNoServerTextInTheClear(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(b.Dir(), "quarantine", old+".json"), []byte(`{"id":"`+old+`","ciphertext":"QUJD","judged":`+planted+`}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if qs, err := b.Quarantined(); err != nil || len(qs) != 3 || !slices.Contains(qs, client.Quarantined{ID: old, Code: "unknown"}) {
+	if qs, err := b.Quarantined(t.Context()); err != nil || len(qs) != 3 || !slices.Contains(qs, client.Quarantined{ID: old, Code: "unknown"}) {
 		t.Fatalf("Quarantined with findings planted in a file: %+v, %v", qs, err)
 	}
 	// A file is read as every JSON text is (PROTOCOL.md §0b): a name in
@@ -417,7 +417,7 @@ func TestQuarantineKeepsNoServerTextInTheClear(t *testing.T) {
 		if err := os.WriteFile(f, []byte(rec), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if qs, err := b.Quarantined(); err != nil || len(qs) != 4 || !slices.Contains(qs, client.Quarantined{ID: other, Code: "unknown"}) {
+		if qs, err := b.Quarantined(t.Context()); err != nil || len(qs) != 4 || !slices.Contains(qs, client.Quarantined{ID: other, Code: "unknown"}) {
 			t.Errorf("Quarantined with %s: %+v, %v", rec, qs, err)
 		}
 		if err := os.Remove(f); err != nil {
@@ -425,13 +425,13 @@ func TestQuarantineKeepsNoServerTextInTheClear(t *testing.T) {
 		}
 	}
 	b.SetRecord(t, "quarantine/"+old+".reason", []byte("bad_signature: \x1b[2J"+injected))
-	if qs, err := b.Quarantined(); err != nil || len(qs) != 3 || !slices.Contains(qs, client.Quarantined{ID: old, Code: protocol.RefusedSignature}) {
+	if qs, err := b.Quarantined(t.Context()); err != nil || len(qs) != 3 || !slices.Contains(qs, client.Quarantined{ID: old, Code: protocol.RefusedSignature}) {
 		t.Fatalf("Quarantined with a reason of control bytes: %+v, %v", qs, err)
 	}
 	if gone, err := b.RemoveQuarantined(ctx, []string{old}); err != nil || len(gone) != 1 {
 		t.Fatalf("RemoveQuarantined of the old file: %v, %v", gone, err)
 	}
-	st, err := b.Status()
+	st, err := b.Status(t.Context())
 	if err != nil || len(st.Attention) != 1 || !strings.Contains(st.Attention[0], "irongall quarantine list") || strings.Contains(st.Attention[0], ".reason") {
 		t.Fatalf("status: %+v, %v", st.Attention, err)
 	}
@@ -440,7 +440,7 @@ func TestQuarantineKeepsNoServerTextInTheClear(t *testing.T) {
 			t.Errorf("RemoveQuarantined %v: no error", ids)
 		}
 	}
-	if qs, _ := b.Quarantined(); len(qs) != 2 {
+	if qs, _ := b.Quarantined(t.Context()); len(qs) != 2 {
 		t.Fatalf("a refused RemoveQuarantined deleted mail: %+v", qs)
 	}
 	if gone, err := b.RemoveQuarantined(ctx, []string{first.Refused[0].ID}); err != nil || len(gone) != 1 {
@@ -450,7 +450,7 @@ func TestQuarantineKeepsNoServerTextInTheClear(t *testing.T) {
 		t.Fatalf("RemoveQuarantined all: %v, %v", gone, err)
 	}
 	left, _ := filepath.Glob(filepath.Join(b.Dir(), "quarantine", "*"))
-	if st, _ := b.Status(); len(left) != 0 || len(st.Attention) != 0 {
+	if st, _ := b.Status(t.Context()); len(left) != 0 || len(st.Attention) != 0 {
 		t.Fatalf("after: %v, %+v", left, st.Attention)
 	}
 }

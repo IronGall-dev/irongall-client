@@ -40,7 +40,7 @@ func TestAPrekeyIsMadeForTheBoxsLifetime(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
-	st, err := b.Status()
+	st, err := b.Status(t.Context())
 	if err != nil || st.PrekeyLifetime != int64(protocol.PrekeyLifetime/time.Second) || st.PrekeyMade != e.clock.Now().Format(protocol.TimeLayout) {
 		t.Fatalf("a new box's status: %+v, %v", st, err)
 	}
@@ -58,7 +58,7 @@ func TestAPrekeyIsMadeForTheBoxsLifetime(t *testing.T) {
 		if got := madeOf(t, b, p.Serial); got != now.Format(protocol.TimeLayout) {
 			t.Errorf("a lifetime of %v: the record says %q", d, got)
 		}
-		st, err := b.Status()
+		st, err := b.Status(t.Context())
 		if err != nil || st.PrekeyLifetime != int64(d/time.Second) || st.PrekeyMade != now.Format(protocol.TimeLayout) || strings.Contains(strings.Join(st.Attention, " "), "lifetime") {
 			t.Errorf("a lifetime of %v: status %+v, %v", d, st, err)
 		}
@@ -128,7 +128,7 @@ func TestAPrekeyWithNoRecordIsRenewedAndItsKeysKept(t *testing.T) {
 	receive(t, b)
 	k2 := numberOf(t, b)
 	b.SetRecord(t, "prekeys/"+strconv.FormatUint(k2, 10)+".made", nil)
-	st, err := b.Status()
+	st, err := b.Status(t.Context())
 	if err != nil || st.PrekeyMade != "" {
 		t.Fatalf("status with no record: %+v, %v", st, err)
 	}
@@ -167,7 +167,7 @@ func TestALifetimeOutOfFormIsNeverTheDefault(t *testing.T) {
 		if res, err := b.Receive(ctx); err != nil || res.RenewErr == nil || !strings.Contains(res.RenewErr.Error(), "prekey-lifetime") || numberOf(t, b) != n {
 			t.Errorf("%q: a receive due to renew: %+v, %v", raw, res, err)
 		}
-		if st, err := b.Status(); err != nil || st.PrekeyLifetime != 0 || !strings.Contains(strings.Join(st.Attention, " "), "prekey lifetime cannot be read") {
+		if st, err := b.Status(t.Context()); err != nil || st.PrekeyLifetime != 0 || !strings.Contains(strings.Join(st.Attention, " "), "prekey lifetime cannot be read") {
 			t.Errorf("%q: status %+v, %v", raw, st, err)
 		}
 	}

@@ -18,7 +18,7 @@ func TestAliasNamesAPeer(t *testing.T) {
 	e := newEnv(t)
 	a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
 	for name, to := range map[string]*client.Box{"zed": c, "bob": b} {
-		if err := a.SetAlias(name, to.Address()); err != nil {
+		if err := a.SetAlias(t.Context(), name, to.Address()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -43,13 +43,13 @@ func TestAliasNamesAPeer(t *testing.T) {
 		t.Fatalf("zed received %+v", res)
 	}
 
-	if err := a.RemoveAlias("bob"); err != nil {
+	if err := a.RemoveAlias(t.Context(), "bob"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.Destination("bob"); err == nil || !strings.Contains(err.Error(), "no alias named bob") {
 		t.Fatalf("a removed alias: %v", err)
 	}
-	if err := a.RemoveAlias("bob"); err == nil {
+	if err := a.RemoveAlias(t.Context(), "bob"); err == nil {
 		t.Fatal("removed an alias that is not there")
 	}
 	if to, err := a.Destination("zed"); err != nil || to != c.Address() {
@@ -62,14 +62,14 @@ func TestAliasNamesAPeer(t *testing.T) {
 func TestAliasIsNeverMoved(t *testing.T) {
 	e := newEnv(t)
 	a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
-	if err := a.SetAlias("bob", b.Address()); err != nil {
+	if err := a.SetAlias(t.Context(), "bob", b.Address()); err != nil {
 		t.Fatal(err)
 	}
 	var refused *client.RefusedError
-	if err := a.SetAlias("bob", c.Address()); !errors.As(err, &refused) || !strings.Contains(refused.Reason, "already names "+b.Address().String()) {
+	if err := a.SetAlias(t.Context(), "bob", c.Address()); !errors.As(err, &refused) || !strings.Contains(refused.Reason, "already names "+b.Address().String()) {
 		t.Fatalf("moving bob: %v", err)
 	}
-	if err := a.SetAlias("bob", b.Address()); err != nil {
+	if err := a.SetAlias(t.Context(), "bob", b.Address()); err != nil {
 		t.Fatalf("naming the same address again: %v", err)
 	}
 	if data, _ := os.ReadFile(filepath.Join(a.Dir(), "aliases")); string(data) != "bob "+b.Address().String()+"\n" {
@@ -87,7 +87,7 @@ func TestAliasGrammar(t *testing.T) {
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	for _, name := range []string{"", "Bob", "-x", ".x", "a b", "a/b", "é", b.Address().String(), b.Link(), strings.Repeat("a", 33), "bob\n"} {
 		var refused *client.RefusedError
-		if err := a.SetAlias(name, b.Address()); !errors.As(err, &refused) || !strings.Contains(refused.Reason, "not an alias") {
+		if err := a.SetAlias(t.Context(), name, b.Address()); !errors.As(err, &refused) || !strings.Contains(refused.Reason, "not an alias") {
 			t.Errorf("%q: %v", name, err)
 		}
 	}
@@ -95,7 +95,7 @@ func TestAliasGrammar(t *testing.T) {
 		t.Fatal("a refused name made the aliases file")
 	}
 	for _, name := range []string{"b", "b2", "box.example.org", "the_bot-2", strings.Repeat("a", 32)} {
-		if err := a.SetAlias(name, b.Address()); err != nil {
+		if err := a.SetAlias(t.Context(), name, b.Address()); err != nil {
 			t.Errorf("%q: %v", name, err)
 		}
 	}
@@ -124,7 +124,7 @@ func TestAliasFileEditedByHand(t *testing.T) {
 	if _, err := a.Destination("carol"); err == nil {
 		t.Fatal("a name with no address was resolved")
 	}
-	if err := a.SetAlias("dan", c.Address()); err != nil {
+	if err := a.SetAlias(t.Context(), "dan", c.Address()); err != nil {
 		t.Fatal(err)
 	}
 	if data, _ := os.ReadFile(file); string(data) != hand+"dan "+c.Address().String()+"\n" { //nolint:gosec // a test's own directory
@@ -137,7 +137,7 @@ func TestAliasFileEditedByHand(t *testing.T) {
 	if _, err := a.Destination("bob"); !errors.As(err, &refused) || !strings.Contains(refused.Reason, "names 2 addresses") {
 		t.Fatalf("a name with two addresses: %v", err)
 	}
-	if err := a.RemoveAlias("bob"); err != nil {
+	if err := a.RemoveAlias(t.Context(), "bob"); err != nil {
 		t.Fatal(err)
 	}
 	if data, _ := os.ReadFile(file); string(data) != "# my peers\nBad "+c.Address().String()+"\ncarol not-an-address\n" { //nolint:gosec // a test's own directory

@@ -322,7 +322,7 @@ func TestARenewalIsNumberedAboveTheBoxsOwnRevocation(t *testing.T) {
 			t.Fatal(err)
 		}
 		rec := &protocol.Revocations{Identity: a.Identity().Document(), RevokedCertificates: certs.Statement(), RevokedCertificatesSignature: sig}
-		if _, _, err := a.KeepRevocation(rec); err != nil {
+		if _, _, err := a.KeepRevocation(t.Context(), rec); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := a.Publish(ctx, rec); err != nil {

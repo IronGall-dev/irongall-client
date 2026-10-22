@@ -56,11 +56,11 @@ func (b *Box) Aliases() ([]Alias, error) {
 // ([Box.Allow]). A name that already names another address is refused,
 // never moved: remove it first, so no send goes to a peer other than the
 // one the name meant when it was learned.
-func (b *Box) SetAlias(name string, a protocol.Address) error {
+func (b *Box) SetAlias(ctx context.Context, name string, a protocol.Address) error {
 	if err := ValidAlias(name); err != nil {
 		return err
 	}
-	return b.lockedFinishedDo(context.Background(), func() error { return b.setAlias(name, a) })
+	return b.lockedFinishedDo(ctx, func() error { return b.setAlias(name, a) })
 }
 
 func (b *Box) setAlias(name string, a protocol.Address) error {
@@ -85,8 +85,8 @@ func (b *Box) setAlias(name string, a protocol.Address) error {
 
 // RemoveAlias removes a name. The peer's pinned identity and mail stay, and
 // it stays allowed: un-naming a peer is not blocking it.
-func (b *Box) RemoveAlias(name string) error {
-	return b.lockedFinishedDo(context.Background(), func() error { return b.removeAlias(name) })
+func (b *Box) RemoveAlias(ctx context.Context, name string) error {
+	return b.lockedFinishedDo(ctx, func() error { return b.removeAlias(name) })
 }
 
 func (b *Box) removeAlias(name string) error {

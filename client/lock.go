@@ -22,6 +22,11 @@ import (
 // again, such as its revocations and a peer's serials (decided on #62, #83 and
 // #96). A box directory on NFS, where a flock is not one to rely on, is not
 // supported (#188).
+//
+// In one process, goroutines that share a Box take turns in its slot first
+// (claim), at each exported entry that reads or writes the state file, so a
+// command of one waits for another's as a command of another process does
+// (#329).
 
 // errLocked is returned when another command still holds the box's lock once
 // a command has waited for it as long as it waits.
@@ -44,6 +49,13 @@ func (b *Box) hold(ctx context.Context) (func() error, error) {
 		return nil, fmt.Errorf("the box's state file: %w", err)
 	}
 	db, err := b.openState(ctx, false)
+	// Removed between makeState and the open: made again beside its place,
+	// never in place (openWhole).
+	if errors.Is(err, fs.ErrNotExist) {
+		if err = b.makeState(); err == nil {
+			db, err = b.openState(ctx, false)
+		}
+	}
 	if err != nil {
 		if errors.Is(err, errLocked) || ctx.Err() != nil {
 			return nil, err
@@ -86,7 +98,62 @@ func (b *Box) makeState() error {
 	if err := os.Link(tmp.Name(), b.path("state")); err != nil && !errors.Is(err, fs.ErrExist) {
 		return err
 	}
+	// The name it was made under goes before the directory is synced, so a
+	// cut after leaves no second link to the live file.
+	if err := os.Remove(tmp.Name()); err != nil {
+		return err
+	}
 	return syncDir(b.dir)
+}
+
+// claim takes the Box's slot for one command or reading, waiting while
+// another goroutine's holds it as hold waits for the state file: up to
+// lockPatience, while ctx lasts, telling Options.Waiting once (#329).
+func (b *Box) claim(ctx context.Context) (func(), error) {
+	select {
+	case b.slot <- struct{}{}:
+		return func() { <-b.slot }, nil
+	default:
+	}
+	if b.waiting != nil {
+		b.waiting()
+	}
+	wait := time.NewTimer(lockPatience)
+	defer wait.Stop()
+	select {
+	case b.slot <- struct{}{}:
+		return func() { <-b.slot }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-wait.C:
+		return nil, errLocked
+	}
+}
+
+// reading runs f, a reading of the box that writes nothing, in the Box's
+// slot (claim) and with its state file open read-only throughout, which
+// waits while a command writes the box: what f's views read is one state,
+// never a command's half done (#329), and the wait ends with ctx (#330).
+func reading[T any](ctx context.Context, b *Box, f func() (T, error)) (v T, err error) {
+	release, err := b.claim(ctx)
+	if err != nil {
+		return v, err
+	}
+	defer release()
+	db, err := b.openState(ctx, true)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		// No state file yet: it holds nothing (view).
+	case err != nil:
+		return v, err
+	default:
+		b.db = db
+		defer func() {
+			b.db = nil
+			_ = db.Close() // read only
+		}()
+	}
+	return f()
 }
 
 // locked runs f with the box's lock held ([Box.hold]), and lets go of it
@@ -109,6 +176,11 @@ func locked[T any](ctx context.Context, b *Box, f func() (T, error)) (v T, err e
 // which moves what waits to outbox/failed/, and a change to the box's own
 // files alone. Each signs nothing (sign).
 func lockedFinished[T any](ctx context.Context, b *Box, f func() (T, error)) (v T, err error) {
+	unclaim, err := b.claim(ctx)
+	if err != nil {
+		return v, err
+	}
+	defer unclaim()
 	release, err := b.hold(ctx)
 	if err != nil {
 		return v, err

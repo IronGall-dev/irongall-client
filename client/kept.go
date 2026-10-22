@@ -221,7 +221,12 @@ type Quarantined struct {
 // box's state keeps of why it was refused. A message with no record there,
 // or one this client did not write, has the code "unknown" and nothing from
 // it. Each value is held to its form again as it is read.
-func (b *Box) Quarantined() ([]Quarantined, error) {
+func (b *Box) Quarantined(ctx context.Context) ([]Quarantined, error) {
+	return reading(ctx, b, b.quarantined)
+}
+
+// quarantined is Quarantined inside a command or a reading.
+func (b *Box) quarantined() ([]Quarantined, error) {
 	names, err := filepath.Glob(b.path("quarantine", "*.json"))
 	if err != nil {
 		return nil, err
@@ -306,7 +311,7 @@ func quarantineOf(s store, id string) quarantineRecord {
 func (b *Box) RemoveQuarantined(ctx context.Context, ids []string) ([]string, error) {
 	return lockedFinished(ctx, b, func() ([]string, error) {
 		if len(ids) == 0 {
-			qs, err := b.Quarantined()
+			qs, err := b.quarantined()
 			if err != nil {
 				return nil, err
 			}

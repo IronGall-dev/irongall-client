@@ -28,7 +28,7 @@ func TestScriptInitOfABoxThatHoldsItsOwnRevocationSignsNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec, err := a.Revocation()
+	rec, err := a.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

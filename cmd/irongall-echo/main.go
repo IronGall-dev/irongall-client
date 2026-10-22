@@ -141,7 +141,7 @@ func start(ctx context.Context, dir, identity string, opt client.Options, kt pro
 	}
 	// An echo box answers whoever writes: every sender's mail lands in
 	// inbox/, where a box would hold mail from one it has not allowed.
-	if err := b.SetPolicy(client.Policy{Unknown: client.LandInbox, Server: client.AdmitAll}); err != nil {
+	if err := b.SetPolicy(ctx, client.Policy{Unknown: client.LandInbox, Server: client.AdmitAll}); err != nil {
 		return nil, err
 	}
 	now := opt.Now

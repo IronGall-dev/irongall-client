@@ -178,7 +178,7 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 		}
 	}
 	res.Renewed, res.RenewErr, res.ACLErr = renewed, renewErr, aclErr
-	if nm, nerr := b.NotMade(); nerr != nil && err == nil {
+	if nm, nerr := b.notMade(); nerr != nil && err == nil {
 		err = nerr
 	} else {
 		res.NotMade = nm

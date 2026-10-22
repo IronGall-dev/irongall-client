@@ -68,7 +68,7 @@ func TestARemedyShownItsOwnRevocationOnTheWaySaysThatAlone(t *testing.T) {
 			e := newEnv(t)
 			a := e.box(protocol.Classic)
 			first, files := numberOf(t, a), prekeyFiles(t, a)
-			rec, err := a.Revocation()
+			rec, err := a.Revocation(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -132,7 +132,7 @@ func TestADrainShownItsOwnRevocationOnTheWaySaysRevoked(t *testing.T) {
 		t.Run(c, func(t *testing.T) {
 			e := newEnv(t)
 			a := e.box(protocol.Classic)
-			rec, err := a.Revocation()
+			rec, err := a.Revocation(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -201,7 +201,7 @@ func TestAFlushShownItsOwnRevocationAtOneEntryAsksNothingMore(t *testing.T) {
 		}
 	}
 	down = false
-	rec, err := a.Revocation()
+	rec, err := a.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func TestInitOfARestoredBoxRevokedAtItsServerSaysRevoked(t *testing.T) {
 		t.Run(c, func(t *testing.T) {
 			e := newEnv(t)
 			a := e.box(protocol.Classic)
-			rec, err := a.Revocation()
+			rec, err := a.Revocation(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -256,7 +256,7 @@ func TestInitOfARestoredBoxRevokedAtItsServerSaysRevoked(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if st, err := b.Status(); err != nil || !st.Revoked {
+			if st, err := b.Status(t.Context()); err != nil || !st.Revoked {
 				t.Errorf("the restored box after init: %+v, %v", st, err)
 			}
 		})

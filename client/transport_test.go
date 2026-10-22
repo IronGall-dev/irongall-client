@@ -140,7 +140,7 @@ func TestARedirectedPublishIsNotTaken(t *testing.T) {
 		e := newEnv(t)
 		x := newElsewhere(t)
 		b := e.box(protocol.Classic)
-		rec, err := b.Revocation()
+		rec, err := b.Revocation(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -175,7 +175,7 @@ func TestAServerIsCalledOverHTTPSOrOnThisMachine(t *testing.T) {
 	ctx := context.Background()
 	const refusal = "is not a server this client calls"
 	// Publish needs no box, so only the check of each call holds it.
-	rec, err := newEnv(t).box(protocol.Classic).Revocation()
+	rec, err := newEnv(t).box(protocol.Classic).Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

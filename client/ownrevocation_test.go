@@ -303,14 +303,16 @@ func finishedCommands(ctx context.Context, a, b *client.Box, rec *protocol.Revoc
 	}
 	run = []command{
 		{"Ask", func() error { _, err := a.Ask(ctx, a.Address()); return err }},
-		{"KeepRevocation", func() error { _, _, err := a.KeepRevocation(rec); return err }},
+		{"KeepRevocation", func() error { _, _, err := a.KeepRevocation(ctx, rec); return err }},
 		{"Publish", func() error { _, err := a.Publish(ctx, rec); return err }},
 		{"Flush", func() error { _, err := a.Flush(ctx); return err }},
-		{"SetAlias", func() error { return a.SetAlias("peer", b.Address()) }},
-		{"RemoveAlias", func() error { return a.RemoveAlias("peer") }},
+		{"SetAlias", func() error { return a.SetAlias(ctx, "peer", b.Address()) }},
+		{"RemoveAlias", func() error { return a.RemoveAlias(ctx, "peer") }},
 		{"RemoveQuarantined", func() error { _, err := a.RemoveQuarantined(ctx, nil); return err }},
-		{"SetPolicy", func() error { return a.SetPolicy(client.Policy{Unknown: client.LandInbox, Server: client.AdmitAll}) }},
-		{"RebuildAllowed", func() error { _, err := a.RebuildAllowed(); return err }},
+		{"SetPolicy", func() error {
+			return a.SetPolicy(ctx, client.Policy{Unknown: client.LandInbox, Server: client.AdmitAll})
+		}},
+		{"RebuildAllowed", func() error { _, err := a.RebuildAllowed(ctx); return err }},
 		{"SetPrekeyLifetime", func() error { return a.SetPrekeyLifetime(ctx, protocol.PrekeyLifetime) }},
 	}
 	return refused, run
@@ -353,7 +355,7 @@ func TestABoxThatKeepsItsOwnRevocationSignsNothingMore(t *testing.T) {
 	if _, err := a.Send(ctx, b.Address(), "waits in the outbox"); err == nil {
 		t.Fatal("a send was taken by a server that is down")
 	}
-	rec, err := a.Revocation()
+	rec, err := a.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,10 +364,10 @@ func TestABoxThatKeepsItsOwnRevocationSignsNothingMore(t *testing.T) {
 		t.Fatal("the revocation was taken by a server that is down")
 	}
 	e.srv.SetMiddle(nil)
-	if _, _, err := a.KeepRevocation(rec); err != nil { // as revocation publish does once any server took it
+	if _, _, err := a.KeepRevocation(t.Context(), rec); err != nil { // as revocation publish does once any server took it
 		t.Fatal(err)
 	}
-	if st, err := a.Status(); err != nil || !st.Revoked {
+	if st, err := a.Status(t.Context()); err != nil || !st.Revoked {
 		t.Fatalf("status: %+v, %v", st, err)
 	}
 	before := signed(t, a)
@@ -413,7 +415,7 @@ func TestABoxThatKeepsItsOwnRevocationSignsNothingMore(t *testing.T) {
 	if failed, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "failed", "*.P")); len(failed) != 1 {
 		t.Errorf("%d entries in outbox/failed/, want the one it can never deliver", len(failed))
 	}
-	if again, err := a.Revocation(); err != nil || !bytes.Equal(again.Revocation, rec.Revocation) {
+	if again, err := a.Revocation(t.Context()); err != nil || !bytes.Equal(again.Revocation, rec.Revocation) {
 		t.Errorf("the record of a finished box: %v, not the one it holds", err)
 	}
 	if _, err := a.Revoke(ctx, rec); err != nil { // published again: its server takes it
@@ -496,7 +498,7 @@ func TestARenewalThatMeetsItsOwnRevocationSignsNothing(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	a := e.box(protocol.Classic)
-	rec, err := a.Revocation()
+	rec, err := a.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -504,7 +506,7 @@ func TestARenewalThatMeetsItsOwnRevocationSignsNothing(t *testing.T) {
 	before, number, begun := signed(t, a), numberOf(t, a), begunAt(t, a)
 	e.clock.Add(2 * time.Second)
 	_, err = a.Rekey(ctx, "")
-	if st, serr := a.Status(); serr != nil || !st.Revoked {
+	if st, serr := a.Status(t.Context()); serr != nil || !st.Revoked {
 		t.Fatalf("the box did not keep its own revocation: %+v, %v", st, serr)
 	}
 	var gone *client.RevokedError
@@ -520,7 +522,7 @@ func TestInitOfABoxThatHoldsItsOwnRevocationSignsNothing(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	a := e.box(protocol.Classic)
-	rec, err := a.Revocation()
+	rec, err := a.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -536,7 +538,7 @@ func TestInitOfABoxThatHoldsItsOwnRevocationSignsNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := r.KeepRevocation(rec); err != nil {
+	if _, _, err := r.KeepRevocation(t.Context(), rec); err != nil {
 		t.Fatal(err)
 	}
 	var calls atomic.Int32
@@ -559,14 +561,14 @@ func TestABoxRevokedAtItsServerSignsNothingAtAnother(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	a := e.box(protocol.Classic)
-	rec, err := a.Revocation()
+	rec, err := a.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.Revoke(ctx, rec); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := a.KeepRevocation(rec); err != nil {
+	if _, _, err := a.KeepRevocation(t.Context(), rec); err != nil {
 		t.Fatal(err)
 	}
 	other := fakeserver.New(t, e.clock.Now)
@@ -674,7 +676,7 @@ func TestAnAddressRevocationBesideALowerRevocationOfCertificates(t *testing.T) {
 	n := numberOf(t, a)
 	publishAt(t, e.srv.URL, ownRevocation(t, a, n+10))
 	both := ownRevocation(t, a, n+5)
-	rec, err := a.Revocation()
+	rec, err := a.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

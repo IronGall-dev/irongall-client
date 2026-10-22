@@ -25,11 +25,11 @@ func finishedBox(t *testing.T) *Box {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec, err := b.Revocation()
+	rec, err := b.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := b.KeepRevocation(rec); err != nil {
+	if _, _, err := b.KeepRevocation(t.Context(), rec); err != nil {
 		t.Fatal(err)
 	}
 	return b

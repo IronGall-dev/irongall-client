@@ -143,7 +143,7 @@ func stateRows() []stateRow {
 	return append(rows,
 		stateRow{"full, address revoked at the server", func(t *testing.T, e *env, dir string, peer *client.Box) {
 			makeBox(t, e, dir, peer, false)
-			rec, err := openBox(t, e, dir).Revocation()
+			rec, err := openBox(t, e, dir).Revocation(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -151,7 +151,7 @@ func stateRows() []stateRow {
 		}},
 		stateRow{"identity alone, address revoked at the server", func(t *testing.T, e *env, dir string, peer *client.Box) {
 			makeBox(t, e, dir, peer, false)
-			rec, err := openBox(t, e, dir).Revocation()
+			rec, err := openBox(t, e, dir).Revocation(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -161,12 +161,12 @@ func stateRows() []stateRow {
 		stateRow{"full, finished: it holds its own revocation", func(t *testing.T, e *env, dir string, peer *client.Box) {
 			makeBox(t, e, dir, peer, false)
 			a := openBox(t, e, dir)
-			rec, err := a.Revocation()
+			rec, err := a.Revocation(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}
 			publish(t, e, rec)
-			if _, _, err := a.KeepRevocation(rec); err != nil {
+			if _, _, err := a.KeepRevocation(t.Context(), rec); err != nil {
 				t.Fatal(err)
 			}
 		}},
@@ -361,21 +361,21 @@ func stateCommands() []stateCommand {
 			if rec == nil {
 				return "", fmt.Errorf("no record to hand over")
 			}
-			if _, _, err := b.KeepRevocation(rec); err != nil {
+			if _, _, err := b.KeepRevocation(ctx, rec); err != nil {
 				return "", err
 			}
 			_, err = b.Publish(ctx, rec)
 			return "", err
 		}},
-		{"revocation make", func(_ context.Context, e *env, dir string, _ *client.Box) (string, error) {
+		{"revocation make", func(ctx context.Context, e *env, dir string, _ *client.Box) (string, error) {
 			b, err := open(e, dir)
 			if err != nil {
 				return "", err
 			}
-			_, err = b.Revocation()
+			_, err = b.Revocation(ctx)
 			return "", err
 		}},
-		{"revocation keep", func(_ context.Context, e *env, dir string, _ *client.Box) (string, error) {
+		{"revocation keep", func(ctx context.Context, e *env, dir string, _ *client.Box) (string, error) {
 			b, err := open(e, dir)
 			if err != nil {
 				return "", err
@@ -384,7 +384,7 @@ func stateCommands() []stateCommand {
 			if rec == nil {
 				return "", fmt.Errorf("no record to hand over")
 			}
-			_, h, err := b.KeepRevocation(rec)
+			_, h, err := b.KeepRevocation(ctx, rec)
 			return heldWords(h), err
 		}},
 		{"revocation publish", func(ctx context.Context, e *env, dir string, _ *client.Box) (string, error) {
@@ -392,14 +392,14 @@ func stateCommands() []stateCommand {
 			if err != nil {
 				return "", err
 			}
-			rec, err := b.Revocation()
+			rec, err := b.Revocation(ctx)
 			if err != nil {
 				return "", err
 			}
 			if _, err := b.Revoke(ctx, rec); err != nil {
 				return "", err
 			}
-			_, h, err := b.KeepRevocation(rec)
+			_, h, err := b.KeepRevocation(ctx, rec)
 			return heldWords(h), err
 		}},
 		{"revocation ask", func(ctx context.Context, e *env, dir string, _ *client.Box) (string, error) {

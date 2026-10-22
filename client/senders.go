@@ -100,11 +100,11 @@ func (b *Box) Policy() (Policy, error) {
 
 // SetPolicy writes the box's policy file. The server learns what it changes
 // at the box's next send, recv, allow or block ([Box.SyncACL]).
-func (b *Box) SetPolicy(p Policy) error {
+func (b *Box) SetPolicy(ctx context.Context, p Policy) error {
 	if err := p.check(); err != nil {
 		return err
 	}
-	return b.lockedFinishedDo(context.Background(), func() error {
+	return b.lockedFinishedDo(ctx, func() error {
 		return writeFile(b.path("policy"), []byte("unknown "+p.Unknown+"\nserver "+p.Server+"\n"))
 	})
 }
@@ -400,8 +400,8 @@ func (b *Box) block(a protocol.Address) (int, error) {
 // an alias for or has sent mail to, as sent/ names them, and returns how
 // many it added. What the file lists stays. It is for a box whose allowed
 // file was lost: send, alias and allow keep it otherwise.
-func (b *Box) RebuildAllowed() (int, error) {
-	return lockedFinished(context.Background(), b, b.rebuildAllowed)
+func (b *Box) RebuildAllowed(ctx context.Context) (int, error) {
+	return lockedFinished(ctx, b, b.rebuildAllowed)
 }
 
 func (b *Box) rebuildAllowed() (int, error) {
@@ -471,7 +471,12 @@ func (b *Box) tookACL() (*protocol.ACL, error) {
 
 // ACLPending reports whether the box's files say an ACL other than the one
 // its server last took: the next send, recv, allow or block sends it.
-func (b *Box) ACLPending() (bool, error) {
+func (b *Box) ACLPending(ctx context.Context) (bool, error) {
+	return reading(ctx, b, b.aclPending)
+}
+
+// aclPending is ACLPending inside a command or a reading.
+func (b *Box) aclPending() (bool, error) {
 	want, err := b.wantACL()
 	if err != nil {
 		return false, err

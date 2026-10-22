@@ -75,7 +75,7 @@ func TestARevocationPublishedToARevokedBox(t *testing.T) {
 	}
 	says(e, protocol.CodeRevoked, http.MethodPut, "/revocations")
 	b := e.box(protocol.Classic)
-	other, err := b.Revocation()
+	other, err := b.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

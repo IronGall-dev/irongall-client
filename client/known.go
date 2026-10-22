@@ -141,7 +141,12 @@ func (b *Box) noteServed(o *own, served []byte) error {
 
 // NotMade is the statement the box's server served in its name, at the box's
 // last read of itself, that the box did not make, or nil.
-func (b *Box) NotMade() (nm *NotMade, err error) {
+func (b *Box) NotMade(ctx context.Context) (*NotMade, error) {
+	return reading(ctx, b, b.notMade)
+}
+
+// notMade is NotMade inside a command or a reading.
+func (b *Box) notMade() (nm *NotMade, err error) {
 	err = b.view(func(s store) error {
 		raw := s.get(bucketBox, "not-made")
 		if raw == nil {

@@ -83,6 +83,9 @@ func main() {
 	// standard logger, raw (#297): stderr has only this client's lines.
 	log.SetOutput(io.Discard)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	// The first interrupt ends the command's waits and calls; a second, with
+	// the handler gone, ends the process (#330).
+	go func() { <-ctx.Done(); stop() }()
 	err := run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
 	stop()
 	os.Exit(report(err, os.Stderr))

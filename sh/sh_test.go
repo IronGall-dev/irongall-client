@@ -1192,7 +1192,7 @@ func TestRevocationInBothClients(t *testing.T) {
 	}
 	s1, s1Addr := scriptBox()
 	g1 := goBox()
-	if a, _, err := g1.KeepRevocation(record(s1)); err != nil || a != s1Addr {
+	if a, _, err := g1.KeepRevocation(t.Context(), record(s1)); err != nil || a != s1Addr {
 		t.Fatalf("the Go client refuses the record of the script's box: %v", err)
 	}
 	if _, err := g1.Send(ctx, s1Addr, "to a box whose record was handed over"); !errors.As(err, &gone) {
@@ -1231,7 +1231,7 @@ func TestRevocationInBothClients(t *testing.T) {
 	if _, err := g3.Send(ctx, to, "sent before the revocation"); err != nil {
 		t.Fatal(err)
 	}
-	rec, err := g3.Revocation()
+	rec, err := g3.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1487,7 +1487,7 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 // number from its clock, so a test reads the number and never assumes one.
 func numberOf(t *testing.T, b *client.Box) uint64 {
 	t.Helper()
-	st, err := b.Status()
+	st, err := b.Status(t.Context())
 	if err != nil || st.PrekeySerial == 0 {
 		t.Fatalf("the Go box's status: %+v, %v", st, err)
 	}
@@ -1559,7 +1559,7 @@ func TestAJSONBodyFromTheGoClient(t *testing.T) {
 // mail from a sender not allowed lands is the Go client's own (client/).
 func landAll(t *testing.T, b *client.Box) {
 	t.Helper()
-	if err := b.SetPolicy(client.Policy{Unknown: client.LandInbox, Server: client.AdmitAll}); err != nil {
+	if err := b.SetPolicy(t.Context(), client.Policy{Unknown: client.LandInbox, Server: client.AdmitAll}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -1669,7 +1669,7 @@ func TestASendDuringADrainHidesNoRevocation(t *testing.T) {
 	if _, err := g.Send(ctx, s, "sent before the revocation"); err != nil {
 		t.Fatal(err)
 	}
-	rec, err := g.Revocation()
+	rec, err := g.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

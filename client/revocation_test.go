@@ -25,7 +25,7 @@ import (
 // revoke publishes b's own revocation, as its owner would.
 func revoke(t *testing.T, e *env, b *client.Box) *protocol.Revocations {
 	t.Helper()
-	rec, err := b.Revocation()
+	rec, err := b.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestWhatIsNotARevocationRevokesNothing(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
-	ofC, err := c.Revocation()
+	ofC, err := c.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -336,12 +336,12 @@ func TestARevocationHandedOver(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
-	rec, err := b.Revocation()
+	rec, err := b.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	// The server knows of no revocation of B, and serves B as ever.
-	ofC, err := c.Revocation()
+	ofC, err := c.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,11 +349,11 @@ func TestARevocationHandedOver(t *testing.T) {
 		"another box's signature": {Identity: rec.Identity, Revocation: ofC.Revocation},
 		"no signature":            {Identity: rec.Identity},
 	} {
-		if _, _, err := a.KeepRevocation(bad); err == nil || keptRevocation(a, b.Address()) {
+		if _, _, err := a.KeepRevocation(t.Context(), bad); err == nil || keptRevocation(a, b.Address()) {
 			t.Fatalf("%s was kept as a revocation: %v", name, err)
 		}
 	}
-	if got, held, err := a.KeepRevocation(rec); err != nil || got != b.Address() || !held.Revoked || held.Certificates != nil {
+	if got, held, err := a.KeepRevocation(t.Context(), rec); err != nil || got != b.Address() || !held.Revoked || held.Certificates != nil {
 		t.Fatalf("keeping a good record: %v", err)
 	}
 	var asked atomic.Int32
@@ -383,7 +383,7 @@ func TestABoxLearnsItIsRevoked(t *testing.T) {
 	if _, err := a.Receive(ctx); err == nil || isRevoked(err, a.Address(), true) || !strings.Contains(err.Error(), "no revocation") {
 		t.Fatalf("a box told it is revoked, with nothing shown: %v", err)
 	}
-	if st, err := a.Status(); err != nil || st.Revoked {
+	if st, err := a.Status(t.Context()); err != nil || st.Revoked {
 		t.Fatalf("status after a server's word: %+v, %v", st, err)
 	}
 	e.srv.SetMiddle(nil)
@@ -395,7 +395,7 @@ func TestABoxLearnsItIsRevoked(t *testing.T) {
 	if _, err := a.Receive(ctx); !isRevoked(err, a.Address(), true) {
 		t.Fatalf("a revoked box's drain: %v", err)
 	}
-	st, err := a.Status()
+	st, err := a.Status(t.Context())
 	if err != nil || !st.Revoked || len(st.Attention) == 0 || !strings.Contains(st.Attention[0], "revoked") {
 		t.Fatalf("status of a revoked box: %+v, %v", st, err)
 	}
@@ -410,7 +410,7 @@ func TestRevokeTakesOnlyARecordThatVerifies(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
-	rec, err := a.Revocation()
+	rec, err := a.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -42,7 +42,12 @@ func (e *RevokedError) Error() string {
 // record is what [Revoke] sends, and it can be made long before it is needed
 // and kept somewhere other than the box. A box that holds its own
 // revocation returns the one it holds, and signs nothing (sign).
-func (b *Box) Revocation() (*protocol.Revocations, error) {
+func (b *Box) Revocation(ctx context.Context) (*protocol.Revocations, error) {
+	return reading(ctx, b, b.revocation)
+}
+
+// revocation is Revocation inside a command or a reading.
+func (b *Box) revocation() (*protocol.Revocations, error) {
 	if gone, err := b.revoked(b.id.Address()); err != nil {
 		return nil, err
 	} else if gone {
@@ -118,8 +123,8 @@ func (b *Box) held(a protocol.Address) (*Held, error) {
 // It returns the address and what this box then holds about it. A revocation
 // of certificates through no higher a serial than the one held changes
 // nothing.
-func (b *Box) KeepRevocation(rec *protocol.Revocations) (a protocol.Address, h *Held, err error) {
-	_, err = lockedFinished(context.Background(), b, func() (struct{}, error) {
+func (b *Box) KeepRevocation(ctx context.Context, rec *protocol.Revocations) (a protocol.Address, h *Held, err error) {
+	_, err = lockedFinished(ctx, b, func() (struct{}, error) {
 		a, h, err = b.keepRevocationRecord(rec)
 		return struct{}{}, err
 	})
@@ -374,7 +379,12 @@ func (b *Box) revokedCerts(a protocol.Address) (*protocol.RevokedCertificates, e
 // CertificatesRecord is the record of this box's own revocation of its
 // certificates that it keeps, the one it published or was shown, or nil: what
 // irongall cert publish-revoked sends again.
-func (b *Box) CertificatesRecord() (*protocol.Revocations, error) {
+func (b *Box) CertificatesRecord(ctx context.Context) (*protocol.Revocations, error) {
+	return reading(ctx, b, b.certificatesRecord)
+}
+
+// certificatesRecord is CertificatesRecord inside a command or a reading.
+func (b *Box) certificatesRecord() (*protocol.Revocations, error) {
 	_, _, statement, sig, err := b.heldRecord(b.id.Address())
 	if err != nil || statement == nil {
 		return nil, err

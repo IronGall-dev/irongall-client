@@ -1213,7 +1213,7 @@ func TestHelpRunsNothing(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("the server holds the box revoked: %d", resp.StatusCode)
 	}
-	if st, err := b.Status(); err != nil || st.Revoked {
+	if st, err := b.Status(t.Context()); err != nil || st.Revoked {
 		t.Fatalf("the box keeps a revocation of itself: %+v, %v", st, err)
 	}
 }
@@ -1485,7 +1485,7 @@ func TestRevokedAsk(t *testing.T) {
 	}
 
 	// The address revoked: both say so, in the words revocation keep has.
-	r, err := a.Revocation()
+	r, err := a.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1564,7 +1564,7 @@ func TestCertPublishRevokedKeepsTheRevocationItMeets(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Its address revoked from elsewhere, with a record made in advance.
-	rec, err := b.Revocation()
+	rec, err := b.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1604,7 +1604,7 @@ func TestCertPublishRevokedKeepsTheRevocationItMeets(t *testing.T) {
 	if lines := printed(t, out.String()); typesOf(lines) != "certificates_revoked revoked" || lines[1]["address"] != b.Address().String() {
 		t.Fatalf("its output: %q", out.String())
 	}
-	if st, err := b.Status(); err != nil || !st.Revoked {
+	if st, err := b.Status(t.Context()); err != nil || !st.Revoked {
 		t.Fatalf("the box's status after: %+v, %v", st, err)
 	}
 }
@@ -1652,7 +1652,7 @@ func TestCertRevokeEarlierShownItsOwnRevocationSaysThatAlone(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			rec, err := b.Revocation()
+			rec, err := b.Revocation(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1736,7 +1736,7 @@ func TestCertRevokeEarlierSaysWhatHappenedToEach(t *testing.T) {
 
 	// The box's own address revoked: the command says so, and makes nothing.
 	srv.SetMiddle(nil)
-	rec, err := b.Revocation()
+	rec, err := b.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1760,7 +1760,7 @@ func TestCertRevokeEarlierSaysWhatHappenedToEach(t *testing.T) {
 // each number from its clock, so a test reads it and never assumes one.
 func inUse(t *testing.T, b *client.Box) string {
 	t.Helper()
-	st, err := b.Status()
+	st, err := b.Status(t.Context())
 	if err != nil || st.PrekeySerial == 0 {
 		t.Fatalf("the box's status: %+v, %v", st, err)
 	}
