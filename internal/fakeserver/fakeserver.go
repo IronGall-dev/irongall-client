@@ -549,8 +549,9 @@ func order(w http.ResponseWriter, b *box, p *protocol.Prekey, cert *protocol.Cer
 }
 
 // maxCiphertext is the most of a send's body the fake reads: the body is the
-// ciphertext itself, and no message a test sends comes near it.
-const maxCiphertext = 16 << 20
+// ciphertext itself, at most protocol.MaxCiphertext, and no message a test
+// sends comes near it.
+const maxCiphertext = protocol.MaxCiphertext
 
 // sendQuery reads a send's query: both serials, once each, and nothing else.
 // It writes the refusal, naming the parameter, and reports false if not.
