@@ -35,7 +35,9 @@ import (
 //	an expired prekey                     B's prekey past its not_after        → the send refuses to encrypt
 //	rollback of a peer's prekey           B's older prekey served again        → the send refuses (serial went down)
 //	a stolen working key, replaced since  a new prekey under B's old certificate → the send refuses (certificate serial went down)
+//	a lower serial, the same certificate  B's working key signs one below      → the send refuses (serial went down)
 //	rollback of the box's own prekey      the box's own older prekey served    → rekey refuses (it published a higher one)
+//	its own lower, the same certificate   its working key signs one below      → rekey refuses (it published a higher one)
 //	replay under a new id                 a delivered ciphertext, stored again → refused as a replay
 //	sent_at older than 33 days            an envelope dated 33 days and 1 s ago → refused as stale
 //	not encrypted to this box             A's message to C, stored in B's box  → refused: it does not decrypt
@@ -273,6 +275,55 @@ func TestForgeries(t *testing.T) {
 			}
 			next.ServeHTTP(w, r)
 		})
+		if _, err := b.Rekey(ctx, ""); err == nil || !strings.Contains(err.Error(), "rollback") {
+			t.Fatalf("rekey: %v, want a rollback refusal", err)
+		}
+		if now, _ := e.srv.Prekey(b.Address()); !bytes.Equal(now, published) {
+			t.Fatal("a prekey was published over a rollback")
+		}
+	})
+
+	// below serves b's statement in use at one serial below it, under the same
+	// certificate, signed by its working key, which whoever took it holds.
+	below := func(t *testing.T, e *env, b *client.Box) {
+		t.Helper()
+		st, _ := e.srv.Prekey(b.Address())
+		p, err := protocol.ParsePrekey(st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p.Serial--
+		sig, err := protocol.Sign(worker(t, b), p.Statement(), protocol.PrekeyNamespace(b.Address()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if r.Method == http.MethodGet && r.URL.Path == boxPath(b) {
+				fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: b.Identity().Document(), Prekey: p.Statement(), PrekeySignature: sig})
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+
+	t.Run("a lower serial, the same certificate", func(t *testing.T) {
+		e := newEnv(t)
+		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+		send(t, a, b, "sees the prekey in use")
+		below(t, e, b)
+		if _, err := a.Send(ctx, b.Address(), "secret"); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("serial %d is below %d", numberOf(t, b)-1, numberOf(t, b))) {
+			t.Fatalf("send: %v, want a rollback refusal", err)
+		}
+		if e.srv.Count(b.Address()) != 1 {
+			t.Fatal("something was sent")
+		}
+	})
+
+	t.Run("its own lower, the same certificate", func(t *testing.T) {
+		e := newEnv(t)
+		b := e.box(protocol.Classic)
+		published, _ := e.srv.Prekey(b.Address())
+		below(t, e, b)
 		if _, err := b.Rekey(ctx, ""); err == nil || !strings.Contains(err.Error(), "rollback") {
 			t.Fatalf("rekey: %v, want a rollback refusal", err)
 		}

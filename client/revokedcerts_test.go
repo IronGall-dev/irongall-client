@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
@@ -240,6 +241,57 @@ func TestALaterCertificateOutranksAnyPrekeySerial(t *testing.T) {
 	}
 }
 
+// A revocation of certificates the box keeps that no longer verifies, or is
+// no record, is an error at each use, never nothing revoked: the box's own
+// stops a renewal, and a peer's a send to it and a drain of its mail, which
+// stays on the server (#69).
+func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnError(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	if _, err := a.Rekey(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.RevokeEarlier(ctx); err != nil {
+		t.Fatal(err)
+	}
+	send(t, b, a, "keeps what a's box carries")
+	raw, ok := a.Record(t, "revoked-certs.json")
+	if !ok {
+		t.Fatal("a keeps no revocation of its certificates")
+	}
+	var rec protocol.Revocations
+	if err := protocol.Unmarshal(raw, &rec); err != nil {
+		t.Fatal(err)
+	}
+	other, err := protocol.NewRevokedCertificates(a.Address(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.RevokedCertificates = other.Statement() // under the signature of another
+	tampered, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := numberOf(t, a)
+	for _, c := range []struct{ name, why string }{{string(tampered), "no longer verifies"}, {"not a record", "is not a record"}} {
+		a.SetRecord(t, "revoked-certs.json", []byte(c.name))
+		e.clock.Add(2 * time.Second)
+		if _, err := a.Rekey(ctx, ""); err == nil || !strings.Contains(err.Error(), c.why) || numberOf(t, a) != n {
+			t.Errorf("its own %s: rekey %v, published %d of %d", c.why, err, numberOf(t, a), n)
+		}
+	}
+	b.SetRecord(t, "peers/"+a.Address().String()+"/revoked-certs.json", tampered)
+	if _, err := b.Send(ctx, a.Address(), "to a box whose revocation b keeps broken"); err == nil || !strings.Contains(err.Error(), "no longer verifies") {
+		t.Errorf("a peer's that no longer verifies: send %v", err)
+	}
+	a.SetRecord(t, "revoked-certs.json", raw)
+	send(t, a, b, "from a box whose revocation b keeps broken")
+	if _, err := b.Receive(ctx); err == nil || !strings.Contains(err.Error(), "no longer verifies") || e.srv.Count(b.Address()) != 1 {
+		t.Errorf("a peer's that no longer verifies: recv %v, the server holds %d", err, e.srv.Count(b.Address()))
+	}
+}
+
 // A send names its prekey by both serials, its own and its certificate's, in
 // its query, and its body is the age file itself, as an octet stream.
 func TestASendNamesBothSerials(t *testing.T) {
@@ -266,5 +318,32 @@ func TestASendNamesBothSerials(t *testing.T) {
 	h := sha256.Sum256(body)
 	if contentType != protocol.CiphertextContentType || !bytes.HasPrefix(body, []byte("age-encryption.org/v1\n")) || hex.EncodeToString(h[:]) != id {
 		t.Errorf("a send's body, %s: %q…, not the ciphertext the receipt names", contentType, body[:min(len(body), 40)])
+	}
+	// A statement whose serial is not its certificate's: a box makes none, so
+	// here its working key signs one five above, and the two serials differ.
+	st, _ := e.srv.Prekey(b.Address())
+	p, err := protocol.ParsePrekey(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Serial += 5
+	sig, err := protocol.Sign(worker(t, b), p.Statement(), protocol.PrekeyNamespace(b.Address()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	query = ""
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == boxPath(b):
+			fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: b.Identity().Document(), Prekey: p.Statement(), PrekeySignature: sig})
+			return
+		case r.Method == http.MethodPost && r.URL.Path == boxPath(b)+"/messages" && query == "":
+			query = r.URL.RawQuery
+		}
+		next.ServeHTTP(w, r)
+	})
+	_, _ = a.Send(context.Background(), b.Address(), "sealed to a statement five above its certificate")
+	if want := "prekey_serial=" + strconv.FormatUint(p.Serial, 10) + "&certificate_serial=" + n; query != want {
+		t.Errorf("a send to a statement five above its certificate: %q, want %q", query, want)
 	}
 }

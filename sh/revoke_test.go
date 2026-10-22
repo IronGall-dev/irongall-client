@@ -6,6 +6,7 @@ import (
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -445,6 +446,50 @@ func TestScriptUnderItsOwnRevokedCertificate(t *testing.T) {
 	ce.publish(ce.certs("CE2", top, ce.file("identity")))
 	if r := ce.sh(`ig_lookup "$(cat "$IG/address")"; ig_rekey`); r.rc == 0 || !strings.Contains(r.err, "revoked its certificates through the highest serial there is") {
 		t.Errorf("a renewal with no serial left: %v", r)
+	}
+}
+
+// A box makes no certificate above the highest serial there is (#69): not
+// past an earlier attempt that took the highest and left nothing it can send,
+// and not when what it published is the highest, its server holding no box
+// for it to read.
+func TestScriptMakesNoCertificateAboveTheHighest(t *testing.T) {
+	w := newWorld(t)
+	cf := w.box()
+	n := cf.num()
+	above := func() bool {
+		return cf.has(fmt.Sprintf("prekeys/%d.agekey", uint64(top)+1)) || cf.has(fmt.Sprintf("work/%d-cert.pub", uint64(top)+1))
+	}
+	writeFile(t, cf.file(fmt.Sprintf("prekeys/%d.txt.sig", uint64(top))), []byte("not a signature\n"))
+	if r := cf.sh("ig_rekey"); r.rc == 0 || !strings.Contains(r.err, "certificate serial is the highest there is") || cf.num() != n || above() {
+		t.Errorf("a renewal past an attempt at the highest serial: %v", r)
+	}
+	if err := os.Remove(cf.file(fmt.Sprintf("prekeys/%d.txt.sig", uint64(top)))); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, cf.file("serial"), fmt.Appendln(nil, uint64(top)))
+	w.failing(cf, protocol.CodeNoSuchMailbox)
+	if r := cf.sh("ig_rekey"); r.rc == 0 || !strings.Contains(r.err, "certificate serial is the highest there is") || above() {
+		t.Errorf("a renewal from the highest serial, published: %v", r)
+	}
+}
+
+// A kept revocation of a peer's certificates that does not verify is a fault
+// of the box, where the server shows none to keep instead (#69): a send to
+// the peer posts nothing, and a drain of its mail stops with the mail on the
+// server.
+func TestScriptStopsAtAKeptRevocationThatDoesNotVerify(t *testing.T) {
+	w := newWorld(t)
+	ca, cb := w.box(), w.box()
+	ca.mustSend(cb, "pins CB")
+	writeFile(t, ca.file("peers/"+cb.addr.String()+"/revoked-certs.json"), mustRead(t, cb.certs("CB-not-its-own", 1, ca.file("identity"))))
+	n := w.posts(cb.addr)
+	if r := ca.send(cb.addr.String(), "not past a revocation that does not verify"); r.rc == 0 || !strings.Contains(r.err, "does not verify") || w.posts(cb.addr) != n || !ca.bare() {
+		t.Errorf("a send: %v", r)
+	}
+	cb.mustSend(ca, "waits past a revocation that does not verify")
+	if d := ca.recv(); d.rc == 0 || len(d.mail) != 0 || w.srv.Count(ca.addr) != 1 || !strings.Contains(d.said, "does not verify") {
+		t.Errorf("a drain: %v", d)
 	}
 }
 
