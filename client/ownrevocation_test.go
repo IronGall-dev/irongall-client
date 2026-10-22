@@ -18,6 +18,7 @@ import (
 
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
+	"github.com/IronGall-dev/irongall-client/internal/forge"
 	"github.com/IronGall-dev/irongall-client/protocol"
 	"golang.org/x/crypto/ssh"
 )
@@ -213,6 +214,37 @@ func TestTheRemedyStopsAtAConflictThatShowsNothing(t *testing.T) {
 	r, err := a.RenewAndRevoke(ctx, "")
 	if err != nil || r == nil || client.Code(r.NotRevoked) != protocol.CodeConflict || r.NotRenewed == nil || r.Prekey != nil || puts.Load() != 1 || renewals.Load() != 0 {
 		t.Fatalf("the remedy at a conflict that shows nothing: %+v, %v; %d publishes, %d renewals", r, err, puts.Load(), renewals.Load())
+	}
+}
+
+// A conflict whose server then shows a revocation that verifies, and runs
+// lower than the one this box signed, stops the remedy as one that shows
+// nothing does: it does not cover the certificate in use, so nothing is taken
+// as revoked and nothing is renewed (#337).
+func TestTheRemedyStopsAtAConflictThatShowsALowerRecord(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a := e.box(protocol.Classic)
+	lower := ownRevocation(t, a, numberOf(t, a)-1)
+	var renewals atomic.Int32
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		switch {
+		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/revocations"):
+			forge.Refuse(w, protocol.CodeConflict)
+			return
+		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/prekey"):
+			renewals.Add(1)
+		case r.Method == http.MethodGet && r.URL.Path == boxPath(a):
+			e.serve(w, r, next, func(b *protocol.BoxResponse) {
+				b.RevokedCertificates, b.RevokedCertificatesSignature = lower.RevokedCertificates, lower.RevokedCertificatesSignature
+			})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	r, err := a.RenewAndRevoke(ctx, "")
+	if err != nil || r == nil || client.Code(r.NotRevoked) != protocol.CodeConflict || r.Revoked != nil || r.NotRenewed == nil || r.Prekey != nil || renewals.Load() != 0 {
+		t.Fatalf("the remedy at a conflict that shows a lower record: %+v, %v; %d renewals", r, err, renewals.Load())
 	}
 }
 

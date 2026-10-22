@@ -178,6 +178,71 @@ func TestARenewalKilledAtEachStepLeavesTheBoxWhole(t *testing.T) {
 	}
 }
 
+// A box its server forgot, killed at each step of the registration that
+// brings it back: its server holds no ACL of it, whatever became of the
+// answer, and the next commands send the ACL again (#324). A recv brings the
+// box back where the registration was not taken.
+func TestAForgottenBoxKilledAtEachStepOfItsRegistrationSendsItsACLAgain(t *testing.T) {
+	for _, step := range client.Steps("renewal") {
+		t.Run(step, func(t *testing.T) {
+			e := newEnv(t)
+			a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+			if _, err := b.Block(context.Background(), c.Address()); err != nil || e.srv.ACL(b.Address()) == nil {
+				t.Fatalf("the block before the box was forgotten: %v", err)
+			}
+			e.srv.Forget(b.Address())
+			e.clock.Add(2 * time.Second)
+			crash(t, e, b, "rekey", step, protocol.Address{})
+			x, err := client.Open(b.Dir(), e.opts())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := x.Receive(context.Background()); err != nil {
+				t.Fatalf("the recv after the crash: %v", err)
+			}
+			whole(t, e, b, a)
+			if acl := e.srv.ACL(b.Address()); acl == nil || !slices.Contains(acl.Deny.Addrs, c.Address()) {
+				t.Fatalf("after a crash at %s the server holds the ACL %+v, which does not deny the sender the box blocked", step, acl)
+			}
+		})
+	}
+}
+
+// A renewal killed after its key and working key were made, before its
+// statement was signed, leaves files no statement names; the remedy, which
+// takes nothing an earlier attempt left, passes over that number, and its
+// files go (begin; #337).
+func TestARemedyPassingOverAKilledRenewalDropsWhatItLeft(t *testing.T) {
+	e := newEnv(t)
+	b := e.box(protocol.Classic)
+	e.clock.Add(2 * time.Second)
+	crash(t, e, b, "rekey", "prekey made", protocol.Address{})
+	x, err := client.Open(b.Dir(), e.opts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := x.Record(t, "renewal")
+	left, err := strconv.ParseUint(string(raw), 10, 64)
+	if err != nil {
+		t.Fatalf("the renewal under way: %q, %v", raw, err)
+	}
+	files := []string{prekeyFile(x, left, ".agekey"), workFile(x, left, ""), workFile(x, left, ".pub"), workFile(x, left, "-cert.pub")}
+	for _, f := range files {
+		if !exists(f) {
+			t.Fatalf("the killed renewal left no %s", f)
+		}
+	}
+	e.clock.Add(2 * time.Second)
+	if r, err := x.RenewAndRevoke(context.Background(), ""); err != nil || r == nil || r.Prekey == nil || r.Prekey.Serial <= left {
+		t.Fatalf("the remedy: %+v, %v", r, err)
+	}
+	for _, f := range files {
+		if exists(f) {
+			t.Errorf("the remedy passed over %d and left %s", left, f)
+		}
+	}
+}
+
 // A renewal the server took, whose answer the box never had, is recorded at
 // the box's next read of itself, which a pass refused as under a certificate
 // not current sends it to; a later renewal the box has begun keeps its

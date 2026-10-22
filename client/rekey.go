@@ -102,20 +102,21 @@ type renewal struct {
 }
 
 // sendRenewal publishes renewal r of statement n: as a new prekey, or to a
-// server that forgot the box, as its registration. A box registered anew
-// has no ACL at its server, so what this box kept of the last one the server
-// took goes, and the next send or recv sends it again. It returns the
-// reading the server took, as publish does.
+// server that forgot the box, as its registration. A server that holds no
+// box holds no ACL of it, and a box registered anew has none there, so what
+// this box kept of the last one the server took goes before the registration
+// is sent: whatever becomes of the answer, a fault after it or a process
+// ended before it is recorded, the next send or recv sends the ACL again
+// (#324). It returns the reading the server took, as publish does.
 func (b *Box) sendRenewal(ctx context.Context, r renewal, n uint64) (taken, error) {
 	if !r.forgotten {
 		return b.publish(ctx, b.boxPath("/prekey"), r.req, n)
 	}
-	reg := protocol.RegisterRequest{Identity: b.id.Document(), Prekey: r.req.Prekey, PrekeySignature: r.req.PrekeySignature, SenderKeyTypes: r.req.SenderKeyTypes}
-	at, err := b.publish(ctx, b.boxPath(""), reg, n)
-	if err != nil {
-		return at, err
+	if err := b.update(func(s store) error { return s.del(bucketBox, "acl") }); err != nil {
+		return taken{}, err
 	}
-	return at, b.update(func(s store) error { return s.del(bucketBox, "acl") })
+	reg := protocol.RegisterRequest{Identity: b.id.Document(), Prekey: r.req.Prekey, PrekeySignature: r.req.PrekeySignature, SenderKeyTypes: r.req.SenderKeyTypes}
+	return b.publish(ctx, b.boxPath(""), reg, n)
 }
 
 // ownRead is what a renewal learned from its read of its own box.
@@ -519,8 +520,10 @@ func (b *Box) prekeyStatement(n uint64) (*protocol.Prekey, error) {
 	return protocol.ParsePrekey(rec.Statement)
 }
 
-// renewFailure is a renewal Receive tried that was not taken, as the box keeps
-// it: when, by this machine's clock, and why, in this client's words.
+// renewFailure is a renewal Receive tried that did not go through, as the box
+// keeps it: when, by this machine's clock, and why, in this client's words.
+// It is one the server did not take, or one it took that did not mend the
+// drain it was made for.
 type renewFailure struct {
 	At    string `json:"at"`
 	Error string `json:"error"`
@@ -552,18 +555,24 @@ func (b *Box) renewNow(ctx context.Context) (*protocol.Prekey, error) {
 	}
 	if at, err := protocol.ParseTime(last.At); err == nil {
 		if since := b.now().Sub(at); since >= 0 && since < renewRetry {
-			return nil, fmt.Errorf("the renewal at %s was not taken, and recv tries it again from %s: %s", last.At, at.Add(renewRetry).Format(protocol.TimeLayout), last.Error)
+			return nil, fmt.Errorf("the renewal at %s did not go through, and recv tries it again from %s: %s", last.At, at.Add(renewRetry).Format(protocol.TimeLayout), last.Error)
 		}
 	}
 	p, err := b.rekey(ctx, "")
 	if p == nil && err != nil {
-		failed, jerr := json.Marshal(renewFailure{At: b.now().UTC().Format(protocol.TimeLayout), Error: err.Error()})
-		if jerr == nil {
-			jerr = b.update(func(s store) error { return s.put(bucketBox, "renew-failed", failed) })
-		}
-		return nil, errors.Join(err, jerr)
+		return nil, errors.Join(err, b.holdRenewal(err))
 	}
 	return p, err
+}
+
+// holdRenewal keeps why a renewal did not go through, so renewNow tries the
+// next one only renewRetry after it.
+func (b *Box) holdRenewal(why error) error {
+	failed, err := json.Marshal(renewFailure{At: b.now().UTC().Format(protocol.TimeLayout), Error: why.Error()})
+	if err != nil {
+		return err
+	}
+	return b.update(func(s store) error { return s.put(bucketBox, "renew-failed", failed) })
 }
 
 // renewDue reports whether the current prekey is to be renewed: once it is

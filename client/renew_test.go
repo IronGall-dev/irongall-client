@@ -457,3 +457,84 @@ func TestAKeyNeverSignedIsUsed(t *testing.T) {
 		t.Fatal("the attempt's working key was used again")
 	}
 }
+
+// A server that answers every list 404 no_such_mailbox, and takes every
+// registration, is not mended by the renewal a drain so refused makes: the
+// next such renewal waits an hour, as one that failed does, so the box makes
+// one an hour there and not one at every Receive (#328). Control: a box its
+// owner deleted twice comes back at its first recv each time.
+func TestARenewalThatMendsNothingWaitsAnHour(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	b := e.box(protocol.Classic)
+	own := "/v1/" + b.Address().String()
+	var registrations int
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		switch {
+		case r.Method == http.MethodGet && (r.URL.Path == own || r.URL.Path == own+"/messages"):
+			forge.Refuse(w, protocol.CodeNoSuchMailbox)
+		case r.Method == http.MethodGet && r.URL.Path == own+"/revocations":
+			forge.Refuse(w, protocol.CodeNotRevoked)
+		case r.Method == http.MethodPut && r.URL.Path == own:
+			registrations++
+			fakeserver.WriteJSON(w, http.StatusCreated, struct{}{})
+		default:
+			next.ServeHTTP(w, r)
+		}
+	})
+	for range 10 {
+		e.clock.Add(time.Minute)
+		if _, err := b.Receive(ctx); err == nil {
+			t.Fatal("a drain answered 404 went through")
+		}
+	}
+	if registrations != 1 {
+		t.Fatalf("10 Receives a minute apart registered %d times, want once", registrations)
+	}
+	e.clock.Add(time.Hour)
+	if _, err := b.Receive(ctx); err == nil || registrations != 2 {
+		t.Fatalf("an hour later: %d registrations, %v; want 2 and the drain refused", registrations, err)
+	}
+
+	e.srv.SetMiddle(nil)
+	d := e.box(protocol.Classic)
+	for i := range 2 {
+		if err := d.DeleteAtServer(ctx); err != nil {
+			t.Fatal(err)
+		}
+		e.clock.Add(time.Minute)
+		if res := receive(t, d); res.Renewed == nil || servedSerial(t, e, d) != res.Renewed.Serial {
+			t.Fatalf("the recv after delete %d: %+v", i+1, res)
+		}
+	}
+}
+
+// A drain mended part way says what its first pass delivered: what landed
+// and was acked before the refusal is in the command's Result, beside what
+// the drain after the renewal delivered (#332).
+func TestADrainMendedPartWaySaysWhatItsFirstPassDelivered(t *testing.T) {
+	e := newEnv(t)
+	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	for _, body := range []string{"one", "two", "three"} {
+		send(t, a, b, body)
+	}
+	e.srv.SetPage(1)
+	list := "/v1/" + b.Address().String() + "/messages"
+	var refused atomic.Bool
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.Method == http.MethodGet && r.URL.Path == list && r.URL.Query().Get("cursor") != "" && refused.CompareAndSwap(false, true) {
+			forge.Refuse(w, protocol.CodeNoSuchMailbox)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	res := receive(t, b)
+	var got []string
+	for _, d := range res.Delivered {
+		got = append(got, string(d.Envelope.Body))
+	}
+	slices.Sort(got)
+	if !refused.Load() || res.Renewed == nil || !slices.Equal(got, []string{`"one"`, `"three"`, `"two"`}) {
+		t.Fatalf("a drain mended after its second page: renewed %v, delivered %q, want all three", res.Renewed != nil, got)
+	}
+}

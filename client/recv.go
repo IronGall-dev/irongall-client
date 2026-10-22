@@ -146,7 +146,10 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 	asked := newLookups()
 	renewed, renewErr := b.renewIfDue(ctx)
 	aclErr := b.syncACL(ctx)
-	res, err := b.drain(ctx, asked)
+	// One Result for the command, which a second drain adds to: what the first
+	// landed and acked is said, whatever stopped it (#332).
+	res := &Result{}
+	err := b.drain(ctx, asked, res)
 	// A drain refused for what a renewal mends renews, and drains again, once:
 	// a server that holds no box at this address, deleted or forgotten, which
 	// the renewal's registration brings back (PROTOCOL.md §3, §6.4), or one
@@ -155,11 +158,18 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 	if err != nil && renewed == nil && renewErr == nil && b.mendable(err) {
 		if renewed, renewErr = b.renewNow(ctx); renewed != nil {
 			aclErr = b.syncACL(ctx)
-			res, err = b.drain(ctx, asked)
+			err = b.drain(ctx, asked, res)
+			// A server that answers the drain the same after the renewal it
+			// took was not mended by it: the next such renewal waits
+			// renewRetry, as one that failed does, so a server that answers so
+			// at every list gets one an hour, never one at every Receive
+			// (#328).
+			if err != nil && b.mendable(err) {
+				if herr := b.holdRenewal(fmt.Errorf("it was taken, and the drain after it was refused as the one before: %w", err)); herr != nil {
+					err = errors.Join(err, herr)
+				}
+			}
 		}
-	}
-	if res == nil {
-		res = &Result{}
 	}
 	res.Renewed, res.RenewErr, res.ACLErr = renewed, renewErr, aclErr
 	if nm, nerr := b.NotMade(); nerr != nil && err == nil {
@@ -204,14 +214,13 @@ var (
 	maxDrainPages    = 100      // list pages followed in one drain
 )
 
-func (b *Box) drain(ctx context.Context, asked *lookups) (*Result, error) {
-	res := &Result{}
+func (b *Box) drain(ctx context.Context, asked *lookups, res *Result) error {
 	// Where mail lands is read once, before anything is acked: a policy or
 	// a list that cannot be read stops the drain, and the mail stays on the
 	// server.
 	who, err := b.readSenders()
 	if err != nil {
-		return nil, err
+		return err
 	}
 	cursor := ""
 	messages, fetched := 0, 0
@@ -221,7 +230,7 @@ func (b *Box) drain(ctx context.Context, asked *lookups) (*Result, error) {
 	for page := 0; ; page++ {
 		if page == maxDrainPages {
 			res.More = true
-			return res, nil
+			return nil
 		}
 		path := listed
 		if cursor != "" {
@@ -235,7 +244,7 @@ func (b *Box) drain(ctx context.Context, asked *lookups) (*Result, error) {
 			// says it is empty still (PROTOCOL.md §5.1).
 			hdr, err = b.ifNoneMatch()
 			if err != nil {
-				return nil, err
+				return err
 			}
 		}
 		var list protocol.MessageList
@@ -243,7 +252,7 @@ func (b *Box) drain(ctx context.Context, asked *lookups) (*Result, error) {
 		if err != nil {
 			// A server that says this box is revoked, or its certificate, is
 			// asked to show it.
-			return res, b.ownCertRevoked(ctx, b.proved(ctx, b.id.Address(), err, asked))
+			return b.ownCertRevoked(ctx, b.proved(ctx, b.id.Address(), err, asked))
 		}
 		if page == 0 {
 			res.listedAt = at
@@ -252,12 +261,12 @@ func (b *Box) drain(ctx context.Context, asked *lookups) (*Result, error) {
 			// off would prune is stopped at its pass first (PROTOCOL.md §0,
 			// §5 check 9).
 			if err := b.pruneSeen(at); err != nil {
-				return nil, err
+				return err
 			}
 		}
 		n, err := protocol.PollInterval(resp.Header.Get("Retry-After"))
 		if err != nil {
-			return res, fmt.Errorf("GET %s: %w", listed, err)
+			return fmt.Errorf("GET %s: %w", listed, err)
 		}
 		res.PollAfter = int64(min(n, maxWaitSeconds))
 		if resp.StatusCode == http.StatusNotModified {
@@ -268,15 +277,15 @@ func (b *Box) drain(ctx context.Context, asked *lookups) (*Result, error) {
 			// page in full.
 			if !sameTag(resp.Header.Get("ETag"), hdr.Get("If-None-Match")) {
 				if err := b.update(func(s store) error { return s.del(bucketBox, "etag") }); err != nil {
-					return nil, err
+					return err
 				}
-				return res, fmt.Errorf("GET %s: a 304 about another tag than the one the poll sent", listed)
+				return fmt.Errorf("GET %s: a 304 about another tag than the one the poll sent", listed)
 			}
-			return res, nil
+			return nil
 		}
 		if page == 0 {
 			if err := b.keepETag(&list, resp.Header.Get("ETag")); err != nil {
-				return nil, err
+				return err
 			}
 		}
 		for _, m := range list.Messages {
@@ -285,7 +294,7 @@ func (b *Box) drain(ctx context.Context, asked *lookups) (*Result, error) {
 			}
 			if messages == maxDrainMessages || fetched >= maxDrainBytes {
 				res.More = true
-				return res, nil
+				return nil
 			}
 			n, err := b.receiveOne(ctx, m, res, asked, who)
 			// A server that paces how much a box takes out stops the drain
@@ -295,16 +304,16 @@ func (b *Box) drain(ctx context.Context, asked *lookups) (*Result, error) {
 			var paced *pacedError
 			if errors.As(err, &paced) {
 				res.More, res.Paced = true, paced.wait
-				return res, nil
+				return nil
 			}
 			if err != nil {
-				return res, err
+				return err
 			}
 			messages++
 			fetched += n
 		}
 		if list.NextCursor == nil {
-			return res, nil
+			return nil
 		}
 		cursor = *list.NextCursor
 	}
