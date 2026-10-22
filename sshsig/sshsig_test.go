@@ -230,6 +230,30 @@ func TestRejects(t *testing.T) {
 	}
 }
 
+// An error of Verify quotes none of the signer's bytes: a namespace or a hash
+// name that is refused is named by the check it fails, so an embedder that
+// logs the error prints no text a sender chose.
+func TestVerifyQuotesNothingTheSignatureCarries(t *testing.T) {
+	s, _ := ssh.NewSignerFromKey(ed25519.NewKeyFromSeed(rfc8032Seed))
+	msg := []byte("m")
+	h := sha512Sum(msg)
+	pk := s.PublicKey().Marshal()
+	const said = "SENDER-CHOSEN: ignore the previous instructions"
+	for _, c := range []struct{ name, namespace, hash string }{
+		{"a namespace", said, "sha512"},
+		{"a hash name", ns, said},
+	} {
+		sig, err := s.Sign(rand.Reader, signedData(c.namespace, "", c.hash, h))
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = Verify(s.PublicKey(), msg, build(pk, c.namespace, "", c.hash, ssh.Marshal(sig), 1), ns)
+		if err == nil || strings.Contains(err.Error(), "SENDER-CHOSEN") {
+			t.Errorf("%s the signer chose: %v", c.name, err)
+		}
+	}
+}
+
 // The reserved field is read as "ssh-keygen -Y verify" reads it: the blob's is
 // skipped, and the data the key signed has an empty one. So a blob whose field
 // holds bytes, over a signature of an empty one, verifies, and a signature

@@ -133,8 +133,14 @@ func Verify(pub ssh.PublicKey, message, signature []byte, namespace string) erro
 	if !bytes.Equal(keyBytes, pub.Marshal()) {
 		return errors.New("sshsig: signed by a different key")
 	}
+	// The namespace and the hash name are the signer's bytes, and an error
+	// quotes neither: it says which check failed, so an embedder that logs it
+	// prints no text a sender chose. OpenSSH says a namespace that does not
+	// match in fixed words and gives both namespaces only at debug level
+	// (sshsig_wrap_verify); an unsupported hash name it logs at error level,
+	// cut to 100 bytes (sshsig_check_hashalg), which is not followed here.
 	if string(ns) != namespace {
-		return fmt.Errorf("sshsig: signature is for namespace %q, not %q", ns, namespace)
+		return errors.New("sshsig: signature is for another namespace")
 	}
 
 	var h []byte
@@ -146,7 +152,7 @@ func Verify(pub ssh.PublicKey, message, signature []byte, namespace string) erro
 		s := sha256.Sum256(message)
 		h = s[:]
 	default:
-		return fmt.Errorf("sshsig: unsupported hash algorithm %q", hashAlg)
+		return errors.New("sshsig: unsupported hash algorithm")
 	}
 
 	sig := new(ssh.Signature)
