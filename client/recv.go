@@ -55,7 +55,10 @@ type Refusal struct {
 	Code   string
 	Reason string
 	// Findings is what the checks established about it before it was
-	// refused (protocol.Findings): kept with it in quarantine/.
+	// refused (protocol.Findings): kept with it in quarantine/. Where the box
+	// holds a revocation of the address that signed it, or of its
+	// certificate, it is the clock and the identity alone, with Signed false,
+	// as for a signature that does not verify (#265).
 	Findings *protocol.Findings
 }
 
@@ -476,7 +479,7 @@ func (b *Box) judge(ctx context.Context, ct []byte, listedFrom string, asked *lo
 				return verdict{}, fmt.Errorf("a fault of this box, so the message stays on the server: %w", err)
 			}
 			if held.Revoked || held.Certificates != nil && held.Certificates.Revokes(found.Serial) {
-				found.Signed = false
+				*found = protocol.Findings{At: found.At, Identity: found.Identity}
 			}
 		}
 		return verdict{refusal: &Refusal{Code: code, Reason: reason, Findings: found}, found: found}, nil

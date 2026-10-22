@@ -2,8 +2,10 @@ package client_test
 
 import (
 	"context"
+	"encoding/base64"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -146,49 +148,178 @@ func TestADeliveryLeavesNothingOfAnEarlierRefusal(t *testing.T) {
 }
 
 // A refused message names its signer only where the box holds no revocation
-// of that address or that certificate (#265): mail a thief signs with a taken
-// working key whose certificate the identity revoked, posted from the thief's
-// own box, is kept as claiming the identity, never as signed by it; and so is
-// mail of an address the box holds revoked.
+// of that address or that certificate (#265), whichever check refuses it:
+// each refusal a signature that verifies can meet, against each thing the
+// reading box can hold of its signer. Where it holds a revocation that covers
+// the mail, the record and Refusal.Findings give the identity the mail claims
+// and nothing more, as for a signature that does not verify (#336); where it
+// holds none that does, both name the signer and its certificate.
 func TestARefusalNamesNoSignerTheBoxHoldsRevoked(t *testing.T) {
-	ctx := context.Background()
-	e := newEnv(t)
-	a, b, thief := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
-	stolen := worker(t, a)
-	if _, err := a.Rekey(ctx, ""); err != nil {
-		t.Fatal(err)
+	type sent struct {
+		id     string
+		serial uint64 // the certificate it is signed under
 	}
-	if _, err := a.RevokeEarlier(ctx); err != nil {
-		t.Fatal(err)
+	// under is a's working key certified anew by a's identity at serial n,
+	// its certificate starting at start.
+	under := func(t *testing.T, a *client.Box, n uint64, start time.Time) ssh.Signer {
+		cert, err := protocol.NewCertificate(a.Identity(), identityKey(t, a), workKey(t, a).PublicKey(), n, start)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s, err := ssh.NewCertSigner(cert.PublicKey().(*ssh.Certificate), workKey(t, a))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return s
 	}
-	if held, err := b.Ask(ctx, a.Address()); err != nil || held.Certificates == nil {
-		t.Fatalf("b asks about a: %+v, %v", held, err)
+	signed := func(e *env, b *client.Box, s ssh.Signer, line []byte, postedBy protocol.Address) string {
+		return e.seal(b, postedBy, line, forge.Sign(t, s, line, b.Address()))
 	}
-	line := e.line(a.Identity().Document(), a.Address(), b.Address(), "signed with a key a revoked, posted from another box")
-	id := e.seal(b, thief.Address(), line, forge.Sign(t, stolen, line, b.Address()))
-	res := receive(t, b)
-	if len(res.Refused) != 1 || res.Refused[0].Code != protocol.RefusedAttribution {
-		t.Fatalf("the thief's mail: %+v", res)
+	// Each refusal, by the check that makes it where the box holds nothing
+	// of a; "" is mail that passes every check before the revocations'.
+	refusals := []struct {
+		name, code string
+		send       func(t *testing.T, e *env, a, b, thief *client.Box) sent
+	}{
+		{"its certificate not begun", protocol.RefusedSignature, func(t *testing.T, e *env, a, b, _ *client.Box) sent {
+			n := numberOf(t, a) + 1
+			line := e.line(a.Identity().Document(), a.Address(), b.Address(), "not begun")
+			return sent{signed(e, b, under(t, a, n, e.clock.Now().Add(2*time.Hour)), line, a.Address()), n}
+		}},
+		{"its certificate ended", protocol.RefusedSignature, func(t *testing.T, e *env, a, b, _ *client.Box) sent {
+			n := numberOf(t, a) - 1000
+			line := e.line(a.Identity().Document(), a.Address(), b.Address(), "ended")
+			return sent{signed(e, b, under(t, a, n, e.clock.Now().Add(-70*24*time.Hour)), line, a.Address()), n}
+		}},
+		{"sent_at older than the TTL", protocol.RefusedStale, func(t *testing.T, e *env, a, b, _ *client.Box) sent {
+			line := forge.Line(t, a.Identity().Document(), a.Address(), b.Address(), "old", e.clock.Now().Add(-protocol.TTL-time.Second))
+			return sent{signed(e, b, worker(t, a), line, a.Address()), numberOf(t, a)}
+		}},
+		{"sent_at ahead", protocol.RefusedFuture, func(t *testing.T, e *env, a, b, _ *client.Box) sent {
+			line := forge.Line(t, a.Identity().Document(), a.Address(), b.Address(), "ahead", e.clock.Now().Add(protocol.MaxSkew+time.Minute))
+			return sent{signed(e, b, worker(t, a), line, a.Address()), numberOf(t, a)}
+		}},
+		{"to another box", protocol.RefusedAttribution, func(t *testing.T, e *env, a, b, thief *client.Box) sent {
+			line := e.line(a.Identity().Document(), a.Address(), thief.Address(), "to another")
+			return sent{signed(e, b, worker(t, a), line, a.Address()), numberOf(t, a)}
+		}},
+		{"an envelope of another version", protocol.RefusedEnvelope, func(t *testing.T, e *env, a, b, _ *client.Box) sent {
+			env := `{"v":2,"from":"` + a.Address().String() + `","to":"` + b.Address().String() + `","identity":"` + base64.StdEncoding.EncodeToString(a.Identity().Document()) + `","sent_at":"` + e.clock.Now().Format(protocol.TimeLayout) + `","msg_id":"77777777-2222-4333-8444-555555555555","body":"x"}`
+			return sent{mail(t, e, a, b, env), numberOf(t, a)}
+		}},
+		{"sent_at below the replay set's floor", protocol.RefusedStale, func(t *testing.T, e *env, a, b, _ *client.Box) sent {
+			b.SetRecord(t, "seen-floor", []byte(strconv.FormatInt(e.clock.Now().Unix(), 10)))
+			line := e.line(a.Identity().Document(), a.Address(), b.Address(), "below the floor")
+			return sent{signed(e, b, worker(t, a), line, a.Address()), numberOf(t, a)}
+		}},
+		{"posted by another box", protocol.RefusedAttribution, func(t *testing.T, e *env, a, b, thief *client.Box) sent {
+			line := e.line(a.Identity().Document(), a.Address(), b.Address(), "posted from the thief's box")
+			return sent{signed(e, b, worker(t, a), line, thief.Address()), numberOf(t, a)}
+		}},
+		{"good in every other way", "", func(t *testing.T, e *env, a, b, _ *client.Box) sent {
+			line := e.line(a.Identity().Document(), a.Address(), b.Address(), "good mail")
+			return sent{signed(e, b, worker(t, a), line, a.Address()), numberOf(t, a)}
+		}},
 	}
-	q := quarantinedAs(t, b, id)
-	if q.SignedBy != "" || q.ClaimsIdentity != a.Address().String() || q.CertificateSerial != 0 {
-		t.Errorf("mail under a certificate the box holds revoked is kept as %+v", q)
+	// What b holds of a when it judges: covers is whether it covers the mail,
+	// and late the refusal of mail that passes every check before the
+	// revocations'.
+	holdings := []struct {
+		name   string
+		covers bool
+		late   string
+		hold   func(t *testing.T, a, b *client.Box, serial uint64)
+	}{
+		{"nothing", false, "", func(*testing.T, *client.Box, *client.Box, uint64) {}},
+		{"the address revoked", true, client.RefusedRevoked, func(t *testing.T, a, b *client.Box, _ uint64) {
+			rec, err := a.Revocation()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := b.KeepRevocation(rec); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"its certificates revoked through the mail's", true, client.RefusedCertificate, func(t *testing.T, a, b *client.Box, n uint64) {
+			if _, _, err := b.KeepRevocation(certificatesThrough(t, a, n)); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"its certificates revoked through the one below the mail's", false, "", func(t *testing.T, a, b *client.Box, n uint64) {
+			if _, _, err := b.KeepRevocation(certificatesThrough(t, a, n-1)); err != nil {
+				t.Fatal(err)
+			}
+		}},
 	}
+	for _, r := range refusals {
+		for _, h := range holdings {
+			t.Run(r.name+", "+h.name, func(t *testing.T) {
+				e := newEnv(t)
+				a, b, thief := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+				m := r.send(t, e, a, b, thief)
+				h.hold(t, a, b, m.serial)
+				res := receive(t, b)
+				code := r.code
+				if code == "" {
+					code = h.late
+				}
+				if code == "" {
+					if len(res.Delivered) != 1 || len(res.Refused) != 0 {
+						t.Fatalf("want it delivered: %+v", res)
+					}
+					return
+				}
+				if len(res.Refused) != 1 || res.Refused[0].Code != code || res.Refused[0].ID != m.id {
+					t.Fatalf("want it refused %s: %+v", code, res)
+				}
+				q, f := quarantinedAs(t, b, m.id), res.Refused[0].Findings
+				if h.covers {
+					if q.SignedBy != "" || q.ClaimsIdentity != a.Address().String() || q.CertificateSerial != 0 || q.SentAt != "" || q.MsgID != "" {
+						t.Errorf("kept as %+v, where the box holds a revocation that covers it", q)
+					}
+					if f.Signed || f.Identity == nil || *f.Identity != a.Address() || f.Serial != 0 || !f.Began.IsZero() || !f.Ends.IsZero() || !f.SentAt.IsZero() || f.MsgID != "" {
+						t.Errorf("Refusal.Findings %+v, where the box holds a revocation that covers it", f)
+					}
+					return
+				}
+				if q.SignedBy != a.Address().String() || q.CertificateSerial != m.serial {
+					t.Errorf("kept as %+v, where the box holds no revocation that covers it", q)
+				}
+				if !f.Signed || f.Serial != m.serial {
+					t.Errorf("Refusal.Findings %+v, where the box holds no revocation that covers it", f)
+				}
+			})
+		}
+	}
+}
 
-	// The address itself revoked: mail signed by its working key in use.
-	rec, err := a.Revocation()
+// identityKey is a box's identity key.
+func identityKey(t *testing.T, b *client.Box) ssh.Signer {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(b.Dir(), "identity"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := b.KeepRevocation(rec); err != nil {
+	s, err := ssh.ParsePrivateKey(raw)
+	if err != nil {
 		t.Fatal(err)
 	}
-	line = e.line(a.Identity().Document(), a.Address(), b.Address(), "from an address the box holds revoked")
-	id = e.seal(b, thief.Address(), line, forge.Sign(t, worker(t, a), line, b.Address()))
-	receive(t, b)
-	if q := quarantinedAs(t, b, id); q.SignedBy != "" || q.ClaimsIdentity != a.Address().String() {
-		t.Errorf("mail of an address the box holds revoked is kept as %+v", q)
+	return s
+}
+
+// certificatesThrough is a's identity's revocation of its certificates
+// through serial n, as a record.
+func certificatesThrough(t *testing.T, a *client.Box, n uint64) *protocol.Revocations {
+	t.Helper()
+	r, err := protocol.NewRevokedCertificates(a.Address(), n)
+	if err != nil {
+		t.Fatal(err)
 	}
+	sig, err := protocol.SignRevokedCertificates(identityKey(t, a), r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &protocol.Revocations{Identity: a.Identity().Document(), RevokedCertificates: r.Statement(), RevokedCertificatesSignature: sig}
 }
 
 // quarantinedAs is what quarantine list gives of message id.

@@ -111,9 +111,10 @@ type quarantineRecord struct {
 // keptFindings is what this client's checks established about a refused
 // message (protocol.Findings), so that its owner can judge it once its key is
 // gone: when it was judged, by this machine's clock; who signed it, or only
-// the identity it carries when the signature does not verify; and, when it
-// does, the certificate's serial and dates and the envelope's sent_at and
-// msg_id. Each is a value this client checked the form of.
+// the identity it carries when the signature does not verify or the box
+// holds a revocation of that address or that certificate (#265); and, with
+// who signed it, the certificate's serial and dates and the envelope's
+// sent_at and msg_id. Each is a value this client checked the form of.
 type keptFindings struct {
 	At                string `json:"at"`
 	SignedBy          string `json:"signed_by,omitempty"`
