@@ -543,7 +543,28 @@ func (b *Box) syncACL(ctx context.Context) error {
 	if want.SameLists(took) {
 		return nil
 	}
-	return b.sendACL(ctx, want)
+	// An ACL kept as taken that holds what no file of the box says was
+	// adopted from its server: replacing it drops what another writer put
+	// there, which the next Receive reports, as the heal reports one.
+	return b.sendACL(ctx, want, unsaid(took))
+}
+
+// unsaid reports whether acl holds what no file of a box says, so what no
+// box sends: a deny of AnyAddress, or addresses beside an allow of it. A box
+// keeps such an ACL as taken only by adopting it from its server
+// (adoptPending), and only another writer can have put it there.
+func unsaid(acl *protocol.ACL) bool {
+	return acl != nil && (acl.Deny.Any || acl.Allow.Any && len(acl.Allow.Addrs) > 0)
+}
+
+// replacedNote reports, and clears, a replacement syncACL made since the
+// last Receive of an ACL that held what no file of the box says.
+func (b *Box) replacedNote() (bool, error) {
+	var noted bool
+	if err := b.view(func(s store) error { noted = s.get(bucketBox, "acl-replaced") != nil; return nil }); err != nil || !noted {
+		return false, err
+	}
+	return true, b.update(func(s store) error { return s.del(bucketBox, "acl-replaced") })
 }
 
 // checkACL is syncACL with the ACL the box's server holds read first, as
@@ -581,14 +602,15 @@ func (b *Box) checkACL(ctx context.Context) (bool, error) {
 	}
 	switch {
 	case !want.SameLists(held):
-		if err := b.sendACL(ctx, want); err != nil {
+		if err := b.sendACL(ctx, want, false); err != nil {
 			return false, err
 		}
-		return !held.SameLists(took), nil
+		// What no file says is another writer's, adopted or not.
+		return !held.SameLists(took) || unsaid(held), nil
 	case !want.SameLists(took):
 		// The server already holds what the box's files say: it is kept as
 		// taken, and nothing is sent.
-		return false, b.keepTook(held)
+		return false, b.keepTook(held, false)
 	}
 	return false, nil
 }
@@ -604,8 +626,9 @@ func (b *Box) heldACL(ctx context.Context) (*protocol.ACL, error) {
 }
 
 // sendACL sends the box's ACL, want, and keeps the server's answer as the
-// ACL it took: once more after a box_changed, as it is.
-func (b *Box) sendACL(ctx context.Context, want *protocol.ACL) error {
+// ACL it took: once more after a box_changed, as it is. With replaced set,
+// what it replaced is noted for the next Receive to report (keepTook).
+func (b *Box) sendACL(ctx context.Context, want *protocol.ACL, replaced bool) error {
 	got, err := b.putACL(ctx, want)
 	if code(err) == protocol.CodeBoxChanged {
 		got, err = b.putACL(ctx, want)
@@ -613,16 +636,23 @@ func (b *Box) sendACL(ctx context.Context, want *protocol.ACL) error {
 	if err != nil {
 		return fmt.Errorf("the server did not take this box's ACL: %w", err)
 	}
-	return b.keepTook(got)
+	return b.keepTook(got, replaced)
 }
 
-// keepTook keeps acl as the ACL the box's server last took.
-func (b *Box) keepTook(acl *protocol.ACL) error {
+// keepTook keeps acl as the ACL the box's server last took, and with
+// replaced set, in the same transaction, the note that it replaced one this
+// box did not write (replacedNote).
+func (b *Box) keepTook(acl *protocol.ACL, replaced bool) error {
 	data, err := json.Marshal(acl.Document())
 	if err != nil {
 		return err
 	}
-	return b.update(func(s store) error { return s.put(bucketBox, "acl", data) })
+	return b.update(func(s store) error {
+		if err := s.put(bucketBox, "acl", data); err != nil || !replaced {
+			return err
+		}
+		return s.put(bucketBox, "acl-replaced", []byte("1"))
+	})
 }
 
 // A box restored from its identity alone has none of its owner's lists:
@@ -669,9 +699,9 @@ func (b *Box) beginAdoption() error {
 // file. Then, in one transaction, the ACL read is kept as the one the server
 // last took, and the mark goes. Run again after a crash, it adds nothing
 // twice. What no file of the box says, a deny of AnyAddress or addresses
-// beside an allow of AnyAddress, is not adopted: the box's next ACL replaces
-// it, as the heal does. It returns the ACL it read, or nil when no adoption
-// was pending.
+// beside an allow of AnyAddress (unsaid), is not adopted: the box's next ACL
+// replaces it, and that is reported as the heal's is (syncACL, checkACL). It
+// returns the ACL it read, or nil when no adoption was pending.
 func (b *Box) adoptPending(ctx context.Context) (*protocol.ACL, error) {
 	var pending bool
 	if err := b.view(func(s store) error { pending = s.get(bucketIntent, "adopt-acl") != nil; return nil }); err != nil || !pending {

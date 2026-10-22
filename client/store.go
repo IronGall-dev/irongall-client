@@ -27,7 +27,7 @@ import (
 //
 // Its buckets:
 //
-//	box          the box's own records, each by its name: serial, pass, etag, seen-floor, acl, revoked, revoked-certs, renew-failed, not-made
+//	box          the box's own records, each by its name: serial, pass, etag, seen-floor, acl, acl-replaced, revoked, revoked-certs, renew-failed, not-made
 //	prekeys      each prekey statement this box signed, by its serial: the statement, its signature and when it was signed, in one value
 //	intent       the renewal under way, under "renewal": the number it took; and under "adopt-acl", a restore's adoption of its server's ACL, until it is done
 //	peers        what this box pinned of each peer, by its address, in one value

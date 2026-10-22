@@ -101,7 +101,9 @@ type Result struct {
 	// ACLReplaced reports that, at this Receive's renewal, the box's server
 	// held an ACL other than the one this box last sent it, which another
 	// machine of the box, whoever holds its pass or the server itself wrote,
-	// and that the box sent its own in its place (checkACL).
+	// and that the box sent its own in its place (checkACL); or that a sync
+	// since the last Receive replaced an ACL a restore adopted that held what
+	// no file of the box says (syncACL; #366).
 	ACLReplaced bool
 	// NotMade is a statement the box's server served in its name, at the
 	// box's last read of itself, that the box did not make, or nil
@@ -188,6 +190,13 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 				}
 			}
 		}
+	}
+	// A replacement of an ACL that held what no file of the box says, which
+	// a sync made since the last Receive, is reported here (#366).
+	if noted, nerr := b.replacedNote(); nerr != nil && err == nil {
+		err = nerr
+	} else {
+		replaced = replaced || noted
 	}
 	res.Renewed, res.RenewErr, res.ACLErr, res.ACLReplaced = renewed, renewErr, aclErr, replaced
 	if nm, nerr := b.notMade(); nerr != nil && err == nil {

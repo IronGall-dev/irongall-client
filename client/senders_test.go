@@ -424,6 +424,55 @@ func TestARestoredBoxAdoptsItsServersACL(t *testing.T) {
 	})
 }
 
+// What a restored box adopts and no file of it says, a pause (a deny of
+// AnyAddress) or addresses beside an allow of AnyAddress, goes with the first
+// ACL the box sends, and recv reports that as the heal's acl_replaced, once:
+// whether a later recv's sync sends it, a send's sync, or the renewal of the
+// recv that restored the box (#366).
+func TestARestoredBoxReportsWhatItDidNotAdopt(t *testing.T) {
+	ctx := context.Background()
+	for _, held := range []struct {
+		name string
+		acl  func(a, c protocol.Address) *protocol.ACL
+	}{
+		{"a pause", func(a, _ protocol.Address) *protocol.ACL {
+			return &protocol.ACL{Allow: protocol.ACLList{Any: true}, Deny: protocol.NewACLList(true, []protocol.Address{a})}
+		}},
+		{"an address beside allow *", func(a, c protocol.Address) *protocol.ACL {
+			return &protocol.ACL{Allow: protocol.NewACLList(true, []protocol.Address{c}), Deny: protocol.NewACLList(false, []protocol.Address{a})}
+		}},
+	} {
+		for _, how := range []string{"recv after prekey renew", "send after prekey renew", "recv"} {
+			t.Run(held.name+", "+how, func(t *testing.T) {
+				e := newEnv(t)
+				a, b, c := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+				e.srv.PutACL(b.Address(), held.acl(a.Address(), c.Address()))
+				r := restore(t, e, b)
+				e.clock.Add(time.Minute)
+				if how != "recv" {
+					if _, err := r.Rekey(ctx, ""); err != nil {
+						t.Fatal(err)
+					}
+				}
+				if how == "send after prekey renew" {
+					send(t, r, c, "a send whose sync replaces the adopted ACL")
+				}
+				res := receive(t, r)
+				own := &protocol.ACL{Allow: protocol.ACLList{Any: true}, Deny: protocol.NewACLList(false, []protocol.Address{a.Address()})}
+				if !res.ACLReplaced || res.ACLErr != nil || !e.srv.ACL(b.Address()).SameLists(own) {
+					t.Fatalf("the recv after the restore: %+v; the server holds %+v", res, e.srv.ACL(b.Address()))
+				}
+				if blocked, _ := r.Blocked(); !slices.Equal(blocked, []protocol.Address{a.Address()}) {
+					t.Fatalf("the restored box blocks %v", blocked)
+				}
+				if res := receive(t, r); res.ACLReplaced {
+					t.Fatalf("the replacement is reported again: %+v", res)
+				}
+			})
+		}
+	}
+}
+
 // A server that answers box_changed to an ACL (the box changed while it
 // handled the request) is sent it again, as it is: the write is not lost to
 // a race.
