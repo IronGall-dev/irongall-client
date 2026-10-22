@@ -36,36 +36,42 @@ func IfNoneMatch(lines []string, etag string) bool {
 
 // IfMatch reports whether an If-Match field's condition is true for a page
 // whose entity-tag is etag, "" for a page that carries none, as RFC 9110
-// §13.1.1 has an origin server evaluate it and as net/http's checkIfMatch
-// does: no field is no condition; an element "*" is true; a list of
-// entity-tags is true when one is etag by the strong comparison
-// (§8.8.3.2), which a weak tag never is; and anything else is false. lines
-// are the field's lines as a request carries them (http.Header.Values).
+// §13.1.1 has an origin server evaluate it, and as PROTOCOL.md §5.1 reads
+// it: no field is no condition; "*" as the whole value is true, a page with
+// no tag included, since it is a current representation; a list of
+// entity-tags, each read through its closing quote (cutETag) and empty
+// elements taken (§5.6.1.2), is true when one of them is etag by the strong
+// comparison (§8.8.3.2), which a weak tag never is; and a value of any other
+// form is false: "*" among tags, a tag followed by anything but a comma, and
+// an empty value, which lists no tag, among them. lines are the field's
+// lines as a request carries them (http.Header.Values), read as one list
+// (§5.3), as IfNoneMatch reads its field. net/http's checkIfMatch differs:
+// it reads the first line alone, takes an empty one as no field, and is
+// true at the first "*" or matching tag, whatever follows it.
 func IfMatch(lines []string, etag string) bool {
 	if len(lines) == 0 {
 		return true
 	}
-	v := strings.Join(lines, ",")
-	for {
-		v = strings.TrimLeft(v, " \t")
-		switch {
-		case v == "":
-			return false
-		case v[0] == ',':
-			v = v[1:]
+	v := strings.Trim(strings.Join(lines, ","), " \t")
+	if v == "*" {
+		return true
+	}
+	matched := false
+	for v != "" {
+		if v[0] == ',' {
+			v = strings.TrimLeft(v[1:], " \t")
 			continue
-		case v[0] == '*':
-			return true
 		}
 		tag, rest, ok := cutETag(v)
 		if !ok {
 			return false
 		}
-		if etag != "" && tag == etag && !strings.HasPrefix(tag, "W/") {
-			return true
+		matched = matched || etag != "" && tag == etag && !strings.HasPrefix(tag, "W/")
+		if v = strings.TrimLeft(rest, " \t"); v != "" && v[0] != ',' {
+			return false
 		}
-		v = rest
 	}
+	return matched
 }
 
 // cutETag cuts the entity-tag that s begins with, [W/] DQUOTE *etagc DQUOTE

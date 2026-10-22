@@ -96,8 +96,10 @@ func FuzzIfNoneMatch(f *testing.F) {
 }
 
 // If-Match is evaluated as RFC 9110 §13.1.1 has an origin server evaluate
-// it, and as net/http's checkIfMatch does: strongly, "*" true, and any
-// other form false.
+// it: strongly, "*" true only as the whole value, and any other form false,
+// "*" among tags and a tag followed by anything but a comma among them
+// (#333), where net/http's checkIfMatch is true at the first "*" or matching
+// tag.
 func TestIfMatch(t *testing.T) {
 	const tag = `"abc"`
 	for _, c := range []struct {
@@ -118,6 +120,13 @@ func TestIfMatch(t *testing.T) {
 		{[]string{tag}, "", false},
 		{[]string{`abc`}, tag, false},
 		{[]string{``}, tag, false},
+		{[]string{`"x", *`}, tag, false},
+		{[]string{`*, "x"`}, tag, false},
+		{[]string{`*`, tag}, tag, false},
+		{[]string{`*junk`}, tag, false},
+		{[]string{tag + ` junk`}, tag, false},
+		{[]string{tag + `"x"`}, tag, false},
+		{[]string{` * `}, tag, true},
 	} {
 		if got := IfMatch(c.lines, c.etag); got != c.want {
 			t.Errorf("If-Match %q on a page tagged %q: %v, want %v", c.lines, c.etag, got, c.want)
