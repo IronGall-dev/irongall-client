@@ -42,6 +42,9 @@ info:
       member is optional (§0a).
     - A message's ciphertext is the body itself, `application/octet-stream`,
       on a send and on a fetch (§4.5).
+    - Every call evaluates `If-Match` and `If-None-Match` once it knows its
+      target's state (§13): a false one is `412`, or `304` to a `GET`. No
+      client needs either but a poll's `If-None-Match` (§5.1).
     - An unknown route gets the router's plain `404` or `405`, with no code.
       A server may add routes inside v1, and a client reads that answer as a
       route this server does not offer (§0a).
@@ -86,6 +89,9 @@ paths:
         no pass on it (§4.1, §8). Answered for an active box: an
         address with no box is `404`.
       security: []
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IfNoneMatch'
       responses:
         '200':
           description: The box, as its identity and working key signed it, and what the server says of its key types.
@@ -102,6 +108,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/BoxResponse'
+        '304':
+          description: The target is the one `If-None-Match` named, `*` naming any that exists, and the answer has no content (RFC 9110 §15.4.5).
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
+            Vary:
+              $ref: '#/components/headers/Vary'
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
@@ -126,6 +141,8 @@ paths:
                         const: revoked
                       record:
                         $ref: '#/components/schemas/RevokedRecord'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -147,6 +164,9 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/RegisterRequest'
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IfNoneMatch'
       responses:
         '200':
           $ref: '#/components/responses/Done'
@@ -162,6 +182,8 @@ paths:
           $ref: '#/components/responses/Conflict'
         '410':
           $ref: '#/components/responses/Gone'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
         '413':
           $ref: '#/components/responses/ContentTooLarge'
         '429':
@@ -188,6 +210,9 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/PrekeyRequest'
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IfNoneMatch'
       responses:
         '200':
           $ref: '#/components/responses/Done'
@@ -203,6 +228,8 @@ paths:
           $ref: '#/components/responses/Conflict'
         '410':
           $ref: '#/components/responses/Gone'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
         '413':
           $ref: '#/components/responses/ContentTooLarge'
         '429':
@@ -224,6 +251,9 @@ paths:
         the same from the read of a box; this is for its own, where the
         server holds no box for it.
       security: []
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IfNoneMatch'
       responses:
         '200':
           description: The record held, which proves itself and names its type.
@@ -236,10 +266,19 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RevocationRecordAnswer'
+        '304':
+          description: The target is the one `If-None-Match` named, `*` naming any that exists, and the answer has no content (RFC 9110 §15.4.5).
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
         '400':
           $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -264,6 +303,9 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/RevocationRecord'
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IfNoneMatch'
       responses:
         '200':
           $ref: '#/components/responses/Done'
@@ -277,6 +319,8 @@ paths:
           $ref: '#/components/responses/Conflict'
         '410':
           $ref: '#/components/responses/Gone'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
         '413':
           $ref: '#/components/responses/ContentTooLarge'
         '429':
@@ -302,6 +346,12 @@ paths:
           in: header
           required: false
           description: The `ETag` a `GET` answered with the ACL the writer read, so that it replaces only that one. Read as RFC 9110 §13.1.1 has an origin server evaluate it, as a list's is, and compared strongly with the tag of the ACL held, a box with none included, before the body is read; a false one is `412`, and nothing changes. Without it, the `PUT` replaces whatever is held.
+          schema:
+            type: string
+        - name: If-None-Match
+          in: header
+          required: false
+          description: Read as on every route (§13), and before the body is read. `*`, or the tag of the ACL held, compared weakly, is `412`, since a box always has an ACL, its open one when it has put none. No client needs it.
           schema:
             type: string
       requestBody:
@@ -397,6 +447,9 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/AdoptRequest'
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IfNoneMatch'
       responses:
         '200':
           description: The account the box now belongs to.
@@ -423,6 +476,8 @@ paths:
           $ref: '#/components/responses/Conflict'
         '410':
           $ref: '#/components/responses/Gone'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
         '413':
           $ref: '#/components/responses/ContentTooLarge'
         '429':
@@ -434,6 +489,9 @@ paths:
       operationId: leave
       summary: Leave the box's account
       description: '`PROTOCOL.md` §6.5. `204` in an account or not.'
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IfNoneMatch'
       responses:
         '204':
           $ref: '#/components/responses/NoContent'
@@ -447,6 +505,8 @@ paths:
           $ref: '#/components/responses/Conflict'
         '410':
           $ref: '#/components/responses/Gone'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -481,6 +541,8 @@ paths:
           description: The serial of the certificate that prekey's statement is signed under. A prekey is named by the two (`PROTOCOL.md` §2b).
           schema:
             $ref: '#/components/schemas/SerialText'
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IfNoneMatch'
       requestBody:
         required: true
         description: The age file, binary, not armored (`PROTOCOL.md` §4.3), exactly as its sender wrote it, of at most 16 MiB (§4.5). A server reads it as bytes whatever its `Content-Type` says.
@@ -525,6 +587,8 @@ paths:
           $ref: '#/components/responses/Conflict'
         '410':
           $ref: '#/components/responses/Gone'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
         '413':
           $ref: '#/components/responses/ContentTooLarge'
         '429':
@@ -579,7 +643,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/MessageList'
         '304':
-          description: The first page is unchanged since the `ETag` the poll sent back, and it has no content (RFC 9110 §15.4.5).
+          description: The first page is unchanged since the `ETag` the poll sent back, or the `If-None-Match` is `*`, which names any page, a page after the first among them, and it has no content (RFC 9110 §15.4.5).
           headers:
             Date:
               $ref: '#/components/headers/Date'
@@ -588,8 +652,8 @@ paths:
             Retry-After:
               $ref: '#/components/headers/PollInterval'
             ETag:
-              description: The page's tag, the one the poll sent back; a `304` with another is no answer (§5.1).
-              required: true
+              description: A first page's tag, the one the poll sent back; a `304` with another, or with none to a poll that sent one, is no answer (§5.1). A page after the first has none.
+              required: false
               schema:
                 type: string
         '400':
@@ -620,6 +684,9 @@ paths:
         else: who sent it, on the server's word, and when, are in the list. A
         message is meant to be fetched once: past the box's budget,
         `429 fetch_paced` or `429 refetch_spent` (§5.7).
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IfNoneMatch'
       responses:
         '200':
           description: The age file exactly as its sender posted it, of the `size` the list gave.
@@ -630,6 +697,13 @@ paths:
               $ref: '#/components/headers/Cache-Control'
           content:
             application/octet-stream: {}
+        '304':
+          description: The target is the one `If-None-Match` named, `*` naming any that exists, and the answer has no content (RFC 9110 §15.4.5).
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -638,6 +712,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '410':
           $ref: '#/components/responses/Gone'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -650,6 +726,9 @@ paths:
         `PROTOCOL.md` §5.7. Deletes the ciphertext; the server keeps a dedupe
         record until the message's `expires_at`. `404 no_such_message`: treat
         it as gone.
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IfNoneMatch'
       responses:
         '204':
           $ref: '#/components/responses/NoContent'
@@ -661,6 +740,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '410':
           $ref: '#/components/responses/Gone'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -685,6 +766,9 @@ paths:
         `503`. A client takes the address from the path and never fetches the
         page. A query a shared link picked up is ignored.
       security: []
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IfNoneMatch'
       responses:
         '200':
           description: The page.
@@ -712,12 +796,37 @@ paths:
             text/html:
               schema:
                 type: string
+        '304':
+          description: The page exists for every address, so `If-None-Match` is false only as `*`, and the answer has no content (RFC 9110 §15.4.5).
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              description: How long a cache may keep the page, as on its `200`.
+              required: true
+              schema:
+                type: string
         '404':
           description: Not an address.
           content:
             text/plain:
               schema:
                 type: string
+        '412':
+          description: '`precondition_failed`: an `If-Match` that lists a tag, which the page carries none of (§13).'
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+          content:
+            application/problem+json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Problem'
+                  - properties:
+                      status:
+                        const: 412
+                      code:
+                        const: precondition_failed
         '429':
           description: '`rate_limited`: past the calls a server takes with no pass from the IP address the request comes from (§8).'
           headers:
@@ -767,6 +876,20 @@ components:
       description: A message id, the lowercase hex SHA-256 of its ciphertext. Any other form is `404 no_such_message`.
       schema:
         $ref: '#/components/schemas/MessageID'
+    IfMatch:
+      name: If-Match
+      in: header
+      required: false
+      description: Evaluated as RFC 9110 §13.1.1 has an origin server evaluate it, in §13.2.2's order, once the route knows its target's state (`PROTOCOL.md` §13). `*` is true where the target exists; a list of tags is false where it carries none, as here; anything else is false. A false one is `412`. No client needs it.
+      schema:
+        type: string
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      required: false
+      description: Evaluated as RFC 9110 §13.1.2 has an origin server evaluate it, after `If-Match` (`PROTOCOL.md` §13). `*` is false where the target exists; a list of tags names none here, so it holds. A false one is `304` to a `GET`, and `412` to any other method. No client needs it.
+      schema:
+        type: string
 
   headers:
     Date:
@@ -1023,7 +1146,7 @@ components:
                   code:
                     const: request_timeout
     PreconditionFailed:
-      description: '`precondition_failed`: the `If-Match` of a list or of an ACL''s `GET` or `PUT` evaluated false (RFC 9110 §13.1.1).'
+      description: '`precondition_failed`: an `If-Match` evaluated false (RFC 9110 §13.1.1), or an `If-None-Match` to any method but `GET` (§13.1.2), as every route evaluates them (`PROTOCOL.md` §13).'
       headers:
         Date:
           $ref: '#/components/headers/Date'
