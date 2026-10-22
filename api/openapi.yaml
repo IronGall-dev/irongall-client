@@ -447,7 +447,7 @@ paths:
             $ref: '#/components/schemas/SerialText'
       requestBody:
         required: true
-        description: The age file, binary, not armored (`PROTOCOL.md` §4.3), exactly as its sender wrote it. A server reads it as bytes whatever its `Content-Type` says.
+        description: The age file, binary, not armored (`PROTOCOL.md` §4.3), exactly as its sender wrote it, of at most 16 MiB (§4.5). A server reads it as bytes whatever its `Content-Type` says.
         content:
           application/octet-stream: {}
       responses:
@@ -1200,8 +1200,9 @@ components:
           description: The box whose pass the send carried, on the server's word. A client holds it to the sender it verifies.
           $ref: '#/components/schemas/Address'
         size:
-          description: The ciphertext's size in bytes, which its fetch answers exactly.
+          description: The ciphertext's size in bytes, which its fetch answers exactly, at most 16 MiB (`PROTOCOL.md` §4.5).
           $ref: '#/components/schemas/Integer'
+          maximum: 16777216
         received_at:
           $ref: '#/components/schemas/Time'
         expires_at:

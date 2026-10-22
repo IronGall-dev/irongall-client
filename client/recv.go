@@ -513,7 +513,7 @@ func (b *Box) judge(ctx context.Context, ct []byte, listedFrom string, asked *lo
 	if err != nil {
 		return refused(RefusedDecrypt, "it does not decrypt with this box's prekeys")
 	}
-	p, err := io.ReadAll(io.LimitReader(r, maxResponse))
+	p, err := io.ReadAll(io.LimitReader(r, protocol.MaxCiphertext)) // less than its ciphertext, which is at most that
 	if err != nil {
 		return refused(RefusedDecrypt, "it does not decrypt with this box's prekeys")
 	}

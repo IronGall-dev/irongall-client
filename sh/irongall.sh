@@ -591,7 +591,7 @@ ig_one(){ # <me> <id> <its list entry> → 0 once the message is judged and its 
   local B=$1 id=$2 m="$IG/msg" A why rc h z
   rm -f "$m.json" "$m.age" "$m.sig" "$m.P" "$m.T" "$m.doc"
   cp "$3" "$m.json" && z=$(jq -r '.size // 0' "$m.json") || return 1      # an integer from 0 to 2^53 - 1, or null, which is 0 (ig_shape)
-  if [ "$z" -le 16777216 ] && ig_owner GET "/v1/$B/messages/$id" "" --max-filesize $((z > 0 ? z : 1)) > "$m.age"; then :      # no more than the list says it holds
+  if [ "$z" -le 16777216 ] && ig_owner GET "/v1/$B/messages/$id" "" --max-filesize $((z > 0 ? z : 1)) > "$m.age"; then :      # no more than the list says it holds, and every size up to 16 MiB, the protocol's largest ciphertext, which every reader takes; a listed size past it is no ciphertext's (PROTOCOL.md §4.5, §5.2)
   elif [ "$(ig_code)" = no_such_message ]; then return 0      # already gone
   elif [ "$z" -le 16777216 ] && [[ $(ig_status) != 2?? ]]; then return 1; fi      # a 2xx that curl cut short is a body past its size
   [ "$(wc -c < "$m.age" 2> /dev/null)" = "$z" ] || { ig_err "the server's answer for message $id is not the $z bytes of ciphertext its list gives: it stays on the server"; return 1; }      # an answer that breaks its form, the server's fault and not the sender's: no verdict, and no ack

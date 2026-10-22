@@ -127,6 +127,13 @@ func (b *BoxResponse) Record() *Revocations {
 // body of a send and of a fetch: the age file's exact bytes.
 const CiphertextContentType = "application/octet-stream"
 
+// MaxCiphertext is the most bytes a message's ciphertext may be, in a send and
+// in a fetch (PROTOCOL.md §4.5): every reader takes one of any size up to it,
+// and a server's caps on a ciphertext are at most it. It is a whole number of
+// its own padding blocks (PaddedSize), so a message that fits it bare fits it
+// padded. A larger one is a new version of the protocol (§0a).
+const MaxCiphertext = 16 << 20
+
 // SendQuery is the query of POST /v1/<recipient>/messages, whose body is an
 // age file encrypted to the recipient's prekey. The sender is the box whose
 // pass the call carries. The message's signature is inside the file, so the

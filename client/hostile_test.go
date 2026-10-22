@@ -479,6 +479,8 @@ func TestAFetchIsTheSizeItsListGives(t *testing.T) {
 		"listed a byte larger":     {func(m *protocol.MessageInfo) { m.Size++ }, same, false},
 		"listed as nothing":        {func(m *protocol.MessageInfo) { m.Size = 0 }, same, false},
 		"listed larger than any":   {func(m *protocol.MessageInfo) { m.Size = 1 << 40 }, same, false},
+		// A body of the size listed, a byte past the largest ciphertext.
+		"listed past the largest": {func(m *protocol.MessageInfo) { m.Size = protocol.MaxCiphertext + 1 }, func([]byte) []byte { return make([]byte, protocol.MaxCiphertext+1) }, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := newEnv(t)
@@ -526,6 +528,43 @@ func TestAFetchIsTheSizeItsListGives(t *testing.T) {
 				t.Fatalf("from an honest server: %+v", res)
 			}
 		})
+	}
+}
+
+// Every reader takes a ciphertext of any size up to the protocol's largest
+// (PROTOCOL.md §4.5, §5.2): one listed and served at exactly that size is
+// read whole and judged, a verdict like any other, and the drain goes on. It
+// is no age file, so it is refused as undecryptable, kept and acked.
+func TestAFetchOfTheLargestCiphertextIsRead(t *testing.T) {
+	e := newEnv(t)
+	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	send(t, a, b, "listed as the largest a ciphertext may be")
+	largest := make([]byte, protocol.MaxCiphertext)
+	sum := sha256.Sum256(largest)
+	id := hex.EncodeToString(sum[:])
+	served := false
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == boxPath(b)+"/messages":
+			rec := httptest.NewRecorder()
+			next.ServeHTTP(rec, r)
+			var list protocol.MessageList
+			if err := protocol.Unmarshal(rec.Body.Bytes(), &list); err != nil || len(list.Messages) != 1 {
+				t.Errorf("the list: %v", err)
+				return
+			}
+			list.Messages[0].ID, list.Messages[0].Size = id, protocol.MaxCiphertext
+			fakeserver.WriteList(w, list)
+		case r.Method == http.MethodGet && r.URL.Path == boxPath(b)+"/messages/"+id:
+			served = true
+			fakeserver.WriteCiphertext(w, largest)
+		default:
+			next.ServeHTTP(w, r)
+		}
+	})
+	res := receive(t, b)
+	if !served || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedDecrypt || res.Refused[0].ID != id {
+		t.Fatalf("a fetch of %d bytes, served %v: %+v", protocol.MaxCiphertext, served, res)
 	}
 }
 

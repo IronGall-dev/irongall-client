@@ -19,8 +19,12 @@ import (
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
-// maxResponse bounds what is read of any response. A message is far smaller;
-// the bound only stops a server from filling memory.
+// maxResponse bounds what is read of any answer but a fetch's: a list, the
+// read of a box, a problem. It is this client's own, which the protocol does
+// not fix, and only stops a server from filling memory. A fetch is bounded by
+// the protocol's largest ciphertext instead (protocol.MaxCiphertext), which
+// every reader takes, so that this bound moves without changing which mail a
+// box reads.
 const maxResponse = 16 << 20
 
 // maxWaitSeconds bounds a wait a server asks for, the Retry-After of a refusal
@@ -104,8 +108,10 @@ func (b *Box) callAt(ctx context.Context, base, method, path string, in any, hdr
 	limit := int64(maxResponse)
 	if raw && answered {
 		// A fetch reads no more than its list says the message holds, and a
-		// byte past it to see that the body ends there.
-		if ct.size < 0 || ct.size > maxResponse || resp.ContentLength >= 0 && resp.ContentLength != ct.size {
+		// byte past it to see that the body ends there. A listed size past
+		// the protocol's largest ciphertext is no ciphertext's (PROTOCOL.md
+		// §4.5), and one up to it is read whatever its size (§5.2).
+		if ct.size < 0 || ct.size > protocol.MaxCiphertext || resp.ContentLength >= 0 && resp.ContentLength != ct.size {
 			return resp, notListed(name, ct.size)
 		}
 		limit = ct.size + 1
