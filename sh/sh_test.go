@@ -1044,19 +1044,22 @@ func TestWithGoClient(t *testing.T) {
 	}
 	out, err = sh(shDir, "ig_recv")
 	var line struct {
-		MsgID      string `json:"msg_id"`
-		Subject    string `json:"subject"`
-		InReplyTo  string `json:"in_reply_to"`
-		Supersedes string `json:"supersedes"`
+		Envelope struct {
+			MsgID      string `json:"msg_id"`
+			Subject    string `json:"subject"`
+			InReplyTo  string `json:"in_reply_to"`
+			Supersedes string `json:"supersedes"`
+		}
 	}
-	if err != nil || json.Unmarshal([]byte(out), &line) != nil || line.Subject != f.Subject || line.InReplyTo != f.InReplyTo || line.Supersedes != f.Supersedes {
+	if err != nil || json.Unmarshal([]byte(out), &line) != nil || line.Envelope.Subject != f.Subject || line.Envelope.InReplyTo != f.InReplyTo || line.Envelope.Supersedes != f.Supersedes {
 		t.Fatalf("ig_recv printed %q, %v", out, err)
 	}
-	sameButReceipt(t, filepath.Join(goDir, "sent", shAddr.String()+"."+line.MsgID+".json"), []byte(out), r.ID)
+	sameButReceipt(t, filepath.Join(goDir, "sent", shAddr.String()+"."+line.Envelope.MsgID+".json"), []byte(out), r.ID)
 }
 
 // sameButReceipt checks a sent/ record: the line its recipient delivered, as
-// inbox/ keeps it, with one more member, a receipt naming the message by id.
+// inbox/ keeps it, as its envelope, and a receipt naming the message by id
+// beside it, and nothing else (#356).
 func sameButReceipt(t *testing.T, record string, delivered []byte, id string) {
 	t.Helper()
 	data, err := os.ReadFile(record) //nolint:gosec // a test's own directory
@@ -1070,21 +1073,19 @@ func sameButReceipt(t *testing.T, record string, delivered []byte, id string) {
 	if err := json.Unmarshal(delivered, &want); err != nil {
 		t.Fatal(err)
 	}
-	// A mail line as recv prints it is the record's line behind its type
-	// and its id, which is the receipt's; inbox/ keeps the line without them.
+	// A mail line as recv prints it carries the line inbox/ keeps as its
+	// envelope, behind its type and its id, which is the receipt's.
 	if _, printed := want["type"]; printed {
-		if want["type"] != "mail" || want["id"] != id {
+		if want["type"] != "mail" || want["id"] != id || len(want) != 3 {
 			t.Errorf("the line delivered is %v, the message %s", want, id)
 		}
-		delete(want, "type")
-		delete(want, "id")
+		want, _ = want["envelope"].(map[string]any)
 	}
 	receipt, _ := got["receipt"].(map[string]any)
 	if receipt["id"] != id || receipt["received_at"] == nil || receipt["expires_at"] == nil || len(receipt) != 3 {
 		t.Errorf("%s: its receipt is %v, the message %s", record, receipt, id)
 	}
-	delete(got, "receipt")
-	if !reflect.DeepEqual(got, want) {
+	if len(got) != 2 || !reflect.DeepEqual(got["envelope"], want) {
 		t.Errorf("%s holds %v, its recipient delivered %v", record, got, want)
 	}
 }
@@ -1576,13 +1577,13 @@ func TestAJSONBodyFromTheGoClient(t *testing.T) {
 		var bodies []any
 		for l := range strings.Lines(out) {
 			var line struct {
-				Type string
-				Body json.RawMessage
+				Type     string
+				Envelope struct{ Body json.RawMessage }
 			}
 			if err := json.Unmarshal([]byte(l), &line); err != nil || line.Type != "mail" {
 				t.Fatalf("ig_recv printed %q", out)
 			}
-			bodies = append(bodies, value(line.Body))
+			bodies = append(bodies, value(line.Envelope.Body))
 		}
 		return bodies
 	}

@@ -326,10 +326,11 @@ func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked 
 }
 
 // recordSent keeps a sent message in sent/, named <address>.<msg_id> by the
-// envelope posted: its envelope as that post signed it (signed), one line
-// of JSON as the recipient's recv delivers it, with one more member,
-// "receipt", the server's answer to that post. The client never deletes
-// from sent/.
+// envelope posted: one line of JSON, {"envelope":…,"receipt":…}, the
+// envelope as that post signed it (signed), as the recipient's recv
+// delivers it, and the server's answer to that post. The envelope's members
+// are only ever inside "envelope", so one it gains later never meets the
+// record's own (#356). The client never deletes from sent/.
 func (b *Box) recordSent(stem string, signed []byte, r *protocol.Receipt) (*Sent, error) {
 	to, _, _ := strings.Cut(filepath.Base(stem), ".")
 	peer, err := protocol.ParseAddress(to)
@@ -352,11 +353,7 @@ func (b *Box) recordSent(stem string, signed []byte, r *protocol.Receipt) (*Sent
 	if err != nil {
 		return nil, err
 	}
-	// The receipt goes in as the last member.
-	if !json.Valid(p) || !bytes.HasSuffix(p, []byte("}")) {
-		return nil, errors.New("the outbox entry's envelope is not a JSON object")
-	}
-	line := slices.Concat(p[:len(p)-1], []byte(`,"receipt":`), receipt, []byte("}"))
+	line := slices.Concat([]byte(`{"envelope":`), p, []byte(`,"receipt":`), receipt, []byte("}"))
 	if !json.Valid(line) {
 		return nil, errors.New("the outbox entry's envelope is not a JSON object")
 	}

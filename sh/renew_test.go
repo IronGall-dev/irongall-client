@@ -230,7 +230,8 @@ func TestScriptDrainsEveryPageAndHoldsTheLock(t *testing.T) {
 }
 
 // sent/ keeps every message the server took: one line, the line its reader
-// delivered with the server's receipt, named <address>.<msg_id>.
+// delivered as its envelope and the server's receipt beside it, and nothing
+// else (#356), named <address>.<msg_id>.
 func TestScriptKeepsWhatWasSent(t *testing.T) {
 	w := newWorld(t)
 	a, b := w.box(), w.box()
@@ -264,22 +265,24 @@ func TestScriptKeepsWhatWasSent(t *testing.T) {
 		name := "sent/" + f
 		fi, _ := os.Stat(a.file(name))
 		var s struct {
-			To, From string
-			MsgID    string `json:"msg_id"`
-			Receipt  map[string]any
+			Envelope struct {
+				To, From string
+				MsgID    string `json:"msg_id"`
+			}
+			Receipt map[string]any
 		}
-		var m map[string]any
+		var m map[string]map[string]any
 		if strings.Contains(a.read(name), "\n") || fi.Mode().Perm() != 0o600 || jsonLine(a.read(name), &m) != nil || jsonLine(a.read(name), &s) != nil {
 			t.Fatalf("%s is not one line of JSON, 0600: %q", name, a.read(name))
 		}
-		if f != s.To+"."+s.MsgID+".json" || s.From != a.addr.String() || m["identity"] != nil {
+		if f != s.Envelope.To+"."+s.Envelope.MsgID+".json" || s.Envelope.From != a.addr.String() || len(m) != 2 || m["envelope"]["identity"] != nil {
 			t.Errorf("%s: %q", name, a.read(name))
 		}
 		id, _ := s.Receipt["id"].(string)
 		if got := strings.TrimSpace(a.must(`jq -c .receipt "$IG/` + name + `"`)); got != receipts[id] {
 			t.Errorf("%s's receipt %s is not the server's, %s", name, got, receipts[id])
 		}
-		if got, want := a.must(`jq -c 'del(.receipt)' "$IG/`+name+`"`), b.must(`jq -c . "$IG/inbox/`+id+`.json"`); got != want {
+		if got, want := a.must(`jq -c .envelope "$IG/`+name+`"`), b.must(`jq -c . "$IG/inbox/`+id+`.json"`); got != want {
 			t.Errorf("%s is not the line its reader delivered, and the receipt: %q, %q", name, got, want)
 		}
 	}

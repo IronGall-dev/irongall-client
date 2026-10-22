@@ -162,8 +162,9 @@ func TestNothingIsWrittenForAMessageItsReaderRefuses(t *testing.T) {
 }
 
 // sent/ keeps each message the server took: one line, the line the recipient
-// delivers, with the server's receipt as its last member. Nothing is left in
-// the outbox.
+// delivers as its envelope, byte for byte, and the server's receipt beside
+// it, and no member beside the envelope's own but the receipt (#356).
+// Nothing is left in the outbox.
 func TestSentKeepsTheEnvelopeAndTheReceipt(t *testing.T) {
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -193,18 +194,8 @@ func TestSentKeepsTheEnvelopeAndTheReceipt(t *testing.T) {
 	if err := json.Unmarshal(got["receipt"], &receipt); err != nil || receipt != r.Receipt || receipt.ID != d.ID || receipt.ReceivedAt == "" || receipt.ExpiresAt == "" {
 		t.Fatalf("the receipt kept is %+v, the server's %+v, the message %s: %v", receipt, r.Receipt, d.ID, err)
 	}
-	delete(got, "receipt")
-	var delivered map[string]json.RawMessage
-	if err := json.Unmarshal(d.Line, &delivered); err != nil {
-		t.Fatal(err)
-	}
-	if len(got) != len(delivered) {
-		t.Fatalf("the record has %d members beside the receipt, the delivered line %d", len(got), len(delivered))
-	}
-	for k, v := range delivered {
-		if string(got[k]) != string(v) {
-			t.Errorf("%s: sent %s, delivered %s", k, got[k], v)
-		}
+	if len(got) != 2 || string(got["envelope"]) != string(d.Line) {
+		t.Fatalf("the record is %s, want the delivered line %s as its envelope and the receipt beside it", rec, d.Line)
 	}
 	if left, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "*.*")); len(left) != 0 {
 		t.Fatalf("the outbox still holds %v", left)

@@ -211,7 +211,7 @@ func TestRecvPrintsTheCheckedLine(t *testing.T) {
 		t.Fatalf("recv: %v %s", err, errs.String())
 	}
 	lines := strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n")
-	if len(lines) != 1 || strings.Contains(out.String(), someone.String()) || !strings.Contains(lines[0], `"body":"real"`) || !strings.HasPrefix(lines[0], `{"type":"mail","id":"`+hex.EncodeToString(h[:])+`","v":1,`) {
+	if len(lines) != 1 || strings.Contains(out.String(), someone.String()) || !strings.Contains(lines[0], `"body":"real"`) || !strings.HasPrefix(lines[0], `{"type":"mail","id":"`+hex.EncodeToString(h[:])+`","envelope":{"v":1,`) {
 		t.Fatalf("recv printed %q", out.String())
 	}
 }
@@ -246,9 +246,9 @@ func TestRecvLineHasNoOtherLineBreaks(t *testing.T) {
 	if strings.ContainsAny(line, "\n\u0085\u2028\u2029") {
 		t.Fatalf("recv printed a line break inside the line: %q", line)
 	}
-	var env struct{ Body string }
-	if err := json.Unmarshal([]byte(line), &env); err != nil || env.Body != body {
-		t.Fatalf("the body changed: %q, %v", env.Body, err)
+	var mail struct{ Envelope struct{ Body string } }
+	if err := json.Unmarshal([]byte(line), &mail); err != nil || mail.Envelope.Body != body {
+		t.Fatalf("the body changed: %q, %v", mail.Envelope.Body, err)
 	}
 }
 
@@ -523,10 +523,12 @@ func TestNothingTheServerWritesIsPrinted(t *testing.T) {
 		t.Fatal(err)
 	}
 	var rec struct {
-		MsgID   string `json:"msg_id"`
+		Envelope struct {
+			MsgID string `json:"msg_id"`
+		}
 		Receipt protocol.Receipt
 	}
-	if err := json.Unmarshal(data, &rec); err != nil || out.String() != `{"type":"sent","id":"`+rec.Receipt.ID+`","msg_id":"`+rec.MsgID+`","to":"`+b.Address().String()+`"}`+"\n" {
+	if err := json.Unmarshal(data, &rec); err != nil || out.String() != `{"type":"sent","id":"`+rec.Receipt.ID+`","msg_id":"`+rec.Envelope.MsgID+`","to":"`+b.Address().String()+`"}`+"\n" {
 		t.Fatalf("flush printed %q, and sent/ holds the receipt %q: %v", out.String(), rec.Receipt.ID, err)
 	}
 }
@@ -821,12 +823,14 @@ func TestSendFlags(t *testing.T) {
 		t.Fatalf("sent/ holds %v", recs)
 	}
 	var rec struct {
-		Body    string
-		Subject string
-		MsgID   string `json:"msg_id"`
+		Envelope struct {
+			Body    string
+			Subject string
+			MsgID   string `json:"msg_id"`
+		}
 		Receipt protocol.Receipt
 	}
-	if err := json.Unmarshal(must(t, recs[0]), &rec); err != nil || rec.Body != "the answer" || rec.Subject != "re: yours" || rec.Receipt.ID != ls[0]["id"] || rec.MsgID != ls[0]["msg_id"] {
+	if err := json.Unmarshal(must(t, recs[0]), &rec); err != nil || rec.Envelope.Body != "the answer" || rec.Envelope.Subject != "re: yours" || rec.Receipt.ID != ls[0]["id"] || rec.Envelope.MsgID != ls[0]["msg_id"] {
 		t.Fatalf("the record: %+v, %v; send printed %q", rec, err, id.String())
 	}
 
@@ -836,12 +840,14 @@ func TestSendFlags(t *testing.T) {
 		t.Fatalf("recv: %v %s", err, errs.String())
 	}
 	var line struct {
-		Body       string `json:"body"`
-		Subject    string `json:"subject"`
-		InReplyTo  string `json:"in_reply_to"`
-		Supersedes string `json:"supersedes"`
+		Envelope struct {
+			Body       string `json:"body"`
+			Subject    string `json:"subject"`
+			InReplyTo  string `json:"in_reply_to"`
+			Supersedes string `json:"supersedes"`
+		}
 	}
-	if err := json.Unmarshal(out.Bytes(), &line); err != nil || line.Body != "the answer" || line.Subject != "re: yours" || line.InReplyTo != first || line.Supersedes != old {
+	if err := json.Unmarshal(out.Bytes(), &line); err != nil || line.Envelope.Body != "the answer" || line.Envelope.Subject != "re: yours" || line.Envelope.InReplyTo != first || line.Envelope.Supersedes != old {
 		t.Fatalf("recv printed %q: %v", out.String(), err)
 	}
 }
@@ -896,11 +902,13 @@ func TestSendJSONFlag(t *testing.T) {
 	}
 	var bodies []string
 	for _, l := range strings.Split(strings.TrimSpace(out.String()), "\n") {
-		var line struct{ Body json.RawMessage }
+		var line struct {
+			Envelope struct{ Body json.RawMessage }
+		}
 		if err := json.Unmarshal([]byte(l), &line); err != nil {
 			t.Fatal(err)
 		}
-		bodies = append(bodies, string(line.Body))
+		bodies = append(bodies, string(line.Envelope.Body))
 	}
 	slices.Sort(bodies)
 	if want := []string{`"{\"action\": \"approve\", \"id\": 7}"`, `[1,{"b":true}]`, `{"action":"approve","id":7}`}; !slices.Equal(bodies, want) {
@@ -939,9 +947,15 @@ func TestRecvHeadersAndShow(t *testing.T) {
 	if typesOf(ls) != "mail_headers" || strings.Contains(out.String(), "SYSTEM") || strings.Contains(out.String(), "URGENT") {
 		t.Fatalf("recv --headers printed %q", out.String())
 	}
+	// The envelope's members are only ever inside "envelope", the line's
+	// own beside it (#356): a reader finds .envelope.from on this line and on
+	// a mail line alike.
 	h := ls[0]
 	id := h["id"].(string)
-	if h["from"] != a.Address().String() || h["to"] != b.Address().String() || h["in_reply_to"] != answers || h["body_size"] != json.Number(strconv.Itoa(len(`"`+body+`"`))) || h["v"] != json.Number("1") {
+	env, _ := h["envelope"].(map[string]any)
+	if len(h) != 4 || h["body_size"] != json.Number(strconv.Itoa(len(`"`+body+`"`))) ||
+		len(env) != 6 || env["from"] != a.Address().String() || env["to"] != b.Address().String() || env["in_reply_to"] != answers || env["v"] != json.Number("1") ||
+		env["sent_at"] == nil || env["msg_id"] == nil {
 		t.Fatalf("the line: %v", h)
 	}
 	inbox := must(t, filepath.Join(b.Dir(), "inbox", id+".json"))
@@ -949,7 +963,7 @@ func TestRecvHeadersAndShow(t *testing.T) {
 	if err := do(ctx, "show", []string{id}, strings.NewReader(""), &out, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	if want := `{"type":"mail","id":"` + id + `",` + string(inbox[1:]) + "\n"; out.String() != want {
+	if want := `{"type":"mail","id":"` + id + `","envelope":` + string(inbox) + "}\n"; out.String() != want {
 		t.Fatalf("show printed %q, want %q", out.String(), want)
 	}
 	for _, args := range [][]string{nil, {"../inbox/" + id}, {strings.ToUpper(id)}, {id, id}} {
@@ -1860,7 +1874,7 @@ func TestHeldAndPeerCommands(t *testing.T) {
 	}
 	allowed := `{"type":"allowed","address":"` + a.Address().String() + `"}` + "\n"
 	out, _, err = cmd("peer allow", a.Address().String())
-	if ls := printed(t, out); err != nil || typesOf(ls) != "mail allowed" || ls[0]["body"] != "from a stranger" || ls[0]["id"] != h.IDs[0] || !strings.HasSuffix(out, allowed) {
+	if ls := printed(t, out); err != nil || typesOf(ls) != "mail allowed" || ls[0]["envelope"].(map[string]any)["body"] != "from a stranger" || ls[0]["id"] != h.IDs[0] || !strings.HasSuffix(out, allowed) {
 		t.Fatalf("peer allow: %v %q", err, out)
 	}
 	if out, _, err = cmd("peer list"); err != nil || out != allowed {

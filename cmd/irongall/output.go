@@ -25,10 +25,14 @@ import (
 // wrong, and the line that says it is waiting.
 
 // line is one line of output: a JSON object whose first member is "type",
-// then each name in kv followed by its value, in turn. A value is written
-// with encoding/json; a nil one is left out, with its name.
-func line(typ string, kv ...any) []byte {
-	b := append([]byte(`{"type":`), value(typ)...)
+// then the members of kv, as object writes them.
+func line(typ string, kv ...any) []byte { return object(append([]any{"type", typ}, kv...)...) }
+
+// object is a JSON object of each name in kv followed by its value, in turn.
+// A value is written with encoding/json, or as its bytes are when it is raw;
+// a nil one is left out, with its name.
+func object(kv ...any) []byte {
+	b := []byte{'{'}
 	for i := 0; i+1 < len(kv); i += 2 {
 		v := kv[i+1]
 		if v == nil {
@@ -37,7 +41,9 @@ func line(typ string, kv ...any) []byte {
 		if r := reflect.ValueOf(v); (r.Kind() == reflect.Pointer || r.Kind() == reflect.Slice) && r.IsNil() {
 			continue
 		}
-		b = append(b, ',')
+		if len(b) > 1 {
+			b = append(b, ',')
+		}
 		b = append(b, value(kv[i])...)
 		b = append(b, ':')
 		b = append(b, value(v)...)
@@ -45,10 +51,17 @@ func line(typ string, kv ...any) []byte {
 	return append(b, '}')
 }
 
+// raw is a JSON text this client built, which a line carries as its bytes
+// are: encoding it again would write raw the line breaks it escapes.
+type raw []byte
+
 // value is v as JSON, with <, > and & as they are, since a line is read as
 // JSON and never as HTML. Every value a line carries is a string, a number, a
 // list of strings or a JSON text this client built, none of which fails.
 func value(v any) []byte {
+	if r, ok := v.(raw); ok {
+		return r
+	}
 	var b bytes.Buffer
 	enc := json.NewEncoder(&b)
 	enc.SetEscapeHTML(false)
@@ -71,18 +84,22 @@ func typed(typ string, obj []byte) []byte {
 	return append(append(b[:len(b)-1], ','), obj[1:]...)
 }
 
-// mail is a message's line: its id, the SHA-256 of its ciphertext, then the
-// line inbox/<id>.json keeps, which this client built from the checked
-// fields of the envelope.
+// mail is a message's line: its id, the SHA-256 of its ciphertext, and its
+// envelope, the line inbox/<id>.json keeps, as its bytes are, which this
+// client built from the checked fields of the envelope. The envelope's
+// members are only ever inside "envelope", so one it gains later (PROTOCOL.md
+// §0a) never meets a member of the line's own (#356; PRECEDENTS.md, Part 2,
+// § 3e).
 func mail(d client.Delivery) []byte {
-	return typed("mail", append(append([]byte(`{"id":`), value(d.ID)...), append([]byte{','}, d.Line[1:]...)...))
+	return line("mail", "id", d.ID, "envelope", raw(d.Line))
 }
 
 // mailHeaders is a message's line without the text its sender chose: its id,
-// the envelope's checked fields but for its body and subject, and the size of
-// its body in bytes, as the envelope carries it. in_reply_to and supersedes
-// are the sender's words, which a reader holds only to being strings, so each
-// is here only when it has a msg_id's form; irongall show prints them as sent.
+// its envelope with the checked fields but its body and subject, and the
+// size of its body in bytes, as the envelope carries it. in_reply_to and
+// supersedes are the sender's words, which a reader holds only to being
+// strings, so each is here only when it has a msg_id's form; irongall show
+// prints them as sent.
 func mailHeaders(d client.Delivery) []byte {
 	env := d.Envelope
 	msgID := func(s string) any {
@@ -91,9 +108,11 @@ func mailHeaders(d client.Delivery) []byte {
 		}
 		return s
 	}
-	return line("mail_headers", "id", d.ID, "v", protocol.EnvelopeVersion, "from", env.From, "to", env.To,
-		"sent_at", env.SentAt.UTC().Format(protocol.TimeLayout), "msg_id", env.MsgID,
-		"in_reply_to", msgID(env.InReplyTo), "supersedes", msgID(env.Supersedes), "body_size", len(env.Body))
+	return line("mail_headers", "id", d.ID,
+		"envelope", raw(object("v", protocol.EnvelopeVersion, "from", env.From, "to", env.To,
+			"sent_at", env.SentAt.UTC().Format(protocol.TimeLayout), "msg_id", env.MsgID,
+			"in_reply_to", msgID(env.InReplyTo), "supersedes", msgID(env.Supersedes))),
+		"body_size", len(env.Body))
 }
 
 // out prints a line on stdout.

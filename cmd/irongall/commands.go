@@ -202,11 +202,11 @@ monthly and the box never lapses. It prints a "refused" line for each message
 it refused, keeping it in quarantine/, and a "held" line for each it held,
 keeping it in held/.
 
-With --headers, a "mail_headers" line takes each "mail" line's place: the
-fields this client checked, and the body's size, with none of the text the
-sender chose, its body and subject. Each message is kept in inbox/ as ever,
-and irongall show <id> prints its "mail" line, so a reader can decide by
-sender before it reads what the sender wrote.`,
+With --headers, a "mail_headers" line takes each "mail" line's place: its
+"envelope" has the fields this client checked with none of the text the
+sender chose, no body and no subject, and the line has the body's size. Each
+message is kept in inbox/ as ever, and irongall show <id> prints its "mail"
+line, so a reader can decide by sender before it reads what the sender wrote.`,
 		nargs(0, 0), func(c *cobra.Command, _ []string) error {
 			b, err := e.box()
 			if err != nil {

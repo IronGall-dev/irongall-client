@@ -233,9 +233,9 @@ func (b *sbox) recv(prefix ...string) drain {
 func (d drain) bodies() []string {
 	var bs []string
 	for _, l := range d.mail {
-		var m struct{ Body string }
+		var m struct{ Envelope struct{ Body string } }
 		_ = json.Unmarshal([]byte(l), &m)
-		bs = append(bs, m.Body)
+		bs = append(bs, m.Envelope.Body)
 	}
 	return bs
 }

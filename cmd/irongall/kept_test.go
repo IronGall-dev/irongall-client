@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -74,7 +75,7 @@ func TestOnlyRecvsOwnLineIsShown(t *testing.T) {
 	for _, d := range res.Delivered {
 		kept := must(t, filepath.Join(b.Dir(), "inbox", d.ID+".json"))
 		var out bytes.Buffer
-		if err := do(ctx, "show", []string{d.ID}, strings.NewReader(""), &out, io.Discard); err != nil || unseen(out.String()) || !strings.HasSuffix(strings.TrimSuffix(out.String(), "\n"), string(kept[1:])) {
+		if err := do(ctx, "show", []string{d.ID}, strings.NewReader(""), &out, io.Discard); err != nil || unseen(out.String()) || out.String() != `{"type":"mail","id":"`+d.ID+`","envelope":`+string(kept)+"}\n" {
 			t.Errorf("show of recv's own line: %v, printed %+q, kept %+q", err, out.String(), kept)
 		}
 	}
@@ -96,7 +97,7 @@ func TestOnlyRecvsOwnLineIsShown(t *testing.T) {
 	reordered, _ := json.Marshal(members) // sorted by name, as recv does not write them
 	for name, other := range map[string][]byte{
 		"its tag characters raw":       bare,
-		"a type and an id first":       append([]byte(`{"type":"mail","id":"`+strings.Repeat("0", 64)+`",`), kept[1:]...),
+		"the mail line around it":      slices.Concat([]byte(`{"type":"mail","id":"`+strings.Repeat("0", 64)+`","envelope":`), kept, []byte("}")),
 		"a space after it":             append(append([]byte{}, kept...), ' '),
 		"its members in another order": reordered,
 	} {
