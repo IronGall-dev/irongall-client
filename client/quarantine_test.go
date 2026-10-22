@@ -241,12 +241,12 @@ func TestARefusalNamesNoSignerTheBoxHoldsRevoked(t *testing.T) {
 			}
 		}},
 		{"its certificates revoked through the mail's", true, client.RefusedCertificate, func(t *testing.T, a, b *client.Box, n uint64) {
-			if _, _, err := b.KeepRevocation(certificatesThrough(t, a, n)); err != nil {
+			if _, _, err := b.KeepRevocation(certsRecord(t, a.Dir(), n)); err != nil {
 				t.Fatal(err)
 			}
 		}},
 		{"its certificates revoked through the one below the mail's", false, "", func(t *testing.T, a, b *client.Box, n uint64) {
-			if _, _, err := b.KeepRevocation(certificatesThrough(t, a, n-1)); err != nil {
+			if _, _, err := b.KeepRevocation(certsRecord(t, a.Dir(), n-1)); err != nil {
 				t.Fatal(err)
 			}
 		}},
@@ -305,21 +305,6 @@ func identityKey(t *testing.T, b *client.Box) ssh.Signer {
 		t.Fatal(err)
 	}
 	return s
-}
-
-// certificatesThrough is a's identity's revocation of its certificates
-// through serial n, as a record.
-func certificatesThrough(t *testing.T, a *client.Box, n uint64) *protocol.Revocations {
-	t.Helper()
-	r, err := protocol.NewRevokedCertificates(a.Address(), n)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sig, err := protocol.SignRevokedCertificates(identityKey(t, a), r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &protocol.Revocations{Identity: a.Identity().Document(), RevokedCertificates: r.Statement(), RevokedCertificatesSignature: sig}
 }
 
 // quarantinedAs is what quarantine list gives of message id.
