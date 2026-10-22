@@ -512,8 +512,10 @@ const remedyWait = time.Minute
 // box takes no mail there and signs none, and [Box.Receive] and [Box.Rekey]
 // send the renewal again.
 //
-// It returns no Remedy when it published nothing, and an error with one
-// only for a fault after the renewal was taken.
+// It returns no Remedy where it stopped before it published anything, a box
+// shown its own revocation on the way among them, which is its [RevokedError]
+// alone; otherwise the Remedy says what each publish met, and an error beside
+// it is a fault after the renewal was taken.
 func (b *Box) RenewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy, error) {
 	return locked(ctx, b, func() (*Remedy, error) { return b.renewAndRevoke(ctx, kt) })
 }
@@ -525,17 +527,18 @@ func (b *Box) renewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy,
 	if err != nil {
 		return nil, err
 	}
-	// A box whose read showed it its own revocation has nothing to remedy:
-	// the remedy's answer, not its guard, which is sign's.
-	if err := b.finished(); err != nil {
-		return nil, err
-	}
 	below, _, err := b.nextNumber(st, true)
 	if err != nil {
 		return nil, err
 	}
 	r := &Remedy{Below: below, Unread: st.unread}
 	r.Revoked, r.NotRevoked = b.revokeBelow(ctx, below)
+	// A box shown its own revocation on the way, a 410 to its publish or at
+	// the read after a conflict, has nothing more to remedy, and says that
+	// alone: no server took anything from it there (#326).
+	if err := b.finished(); err != nil {
+		return nil, err
+	}
 	// A conflict that showed no revocation covering what this one would have
 	// stops here: a server that holds a higher one would refuse a renewal under
 	// it, and nothing here tells how high it runs.
@@ -693,6 +696,12 @@ func (b *Box) ownCertRevoked(ctx context.Context, err error) error {
 	}
 	o, kerr := b.known(ctx)
 	if kerr == nil {
+		// The read may show the box its own revocation, at the box or at its
+		// revocations: kept once it verifies, it is what the refusal was
+		// (#335).
+		if err := b.finished(); err != nil {
+			return err
+		}
 		kerr = o.err
 	}
 	if kerr != nil {

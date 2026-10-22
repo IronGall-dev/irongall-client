@@ -145,6 +145,12 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 	// box's own revocation, then the drain's about each sender.
 	asked := newLookups()
 	renewed, renewErr := b.renewIfDue(ctx)
+	// A renewal whose read showed the box its own revocation ends the
+	// command there, in those words: such a box takes no mail and signs
+	// nothing more (#335).
+	if err := b.finished(); err != nil {
+		return &Result{}, err
+	}
 	aclErr := b.syncACL(ctx)
 	// One Result for the command, which a second drain adds to: what the first
 	// landed and acked is said, whatever stopped it (#332).
@@ -197,6 +203,11 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 // server holds no box at this address, or this box holds a revocation of the
 // certificate it uses.
 func (b *Box) mendable(err error) bool {
+	// A box that holds its own revocation renews nothing: it signs nothing
+	// more (#335).
+	if b.finished() != nil {
+		return false
+	}
 	if code(err) == protocol.CodeNoSuchMailbox {
 		return true
 	}

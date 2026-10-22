@@ -313,7 +313,7 @@ func (b *Box) init(ctx context.Context, kt protocol.KeyType) (*Box, error) {
 	// anything under it: its renewal goes as a registration with no read,
 	// which a server would count as a miss of its address.
 	if !fresh {
-		_, err := b.rekey(ctx, kt)
+		_, err := b.rekeyProved(ctx, kt)
 		return b, err
 	}
 	if kt == "" {

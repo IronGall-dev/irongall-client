@@ -43,10 +43,14 @@ import (
 // prekey with an error is one the server took, and a fault of this box after
 // that.
 func (b *Box) Rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey, error) {
-	return locked(ctx, b, func() (*protocol.Prekey, error) {
-		p, err := b.rekey(ctx, kt)
-		return p, b.proved(ctx, b.id.Address(), err, newLookups())
-	})
+	return locked(ctx, b, func() (*protocol.Prekey, error) { return b.rekeyProved(ctx, kt) })
+}
+
+// rekeyProved is rekey, with a server's "revoked" to it checked (proved):
+// Rekey and Init's restore from an identity alone answer it alike (#342).
+func (b *Box) rekeyProved(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey, error) {
+	p, err := b.rekey(ctx, kt)
+	return p, b.proved(ctx, b.id.Address(), err, newLookups())
 }
 
 // rekey is Rekey with the lock held. It returns the prekey once the server
@@ -154,6 +158,12 @@ func (b *Box) readOwn(ctx context.Context, kt protocol.KeyType, unused bool) (*o
 	out := &ownRead{kt: kt}
 	o, err := b.known(ctx)
 	if err != nil {
+		return nil, err
+	}
+	// A read that showed the box its own revocation, kept once it verified,
+	// at the box or at its revocations, ends the renewal here, in those
+	// words: such a box signs nothing more (PROTOCOL.md §6.3; #339).
+	if err := b.finished(); err != nil {
 		return nil, err
 	}
 	out.forgotten = o.at == atNone
@@ -560,6 +570,12 @@ func (b *Box) renewNow(ctx context.Context) (*protocol.Prekey, error) {
 	}
 	p, err := b.rekey(ctx, "")
 	if p == nil && err != nil {
+		// A box that holds its own revocation renews nothing again: there
+		// is nothing to try in an hour.
+		var gone *RevokedError
+		if errors.As(err, &gone) {
+			return nil, err
+		}
 		return nil, errors.Join(err, b.holdRenewal(err))
 	}
 	return p, err

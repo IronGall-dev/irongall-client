@@ -1638,6 +1638,52 @@ func TestCertRevokeEarlierWhenTheRenewalIsRefused(t *testing.T) {
 	}
 }
 
+// cert revoke-earlier on a box shown its own revocation on the way says that
+// alone: no certificates_revoked line, whose "send it again" a box that sends
+// nothing cannot do, and none of the renewal's advice. At its publish's 410,
+// and where its revocation of certificates was taken and the address revoked
+// before the renewal (#326).
+func TestCertRevokeEarlierShownItsOwnRevocationSaysThatAlone(t *testing.T) {
+	ctx := context.Background()
+	for _, at := range []string{"its publish", "its renewal"} {
+		t.Run(at, func(t *testing.T) {
+			srv := fakeserver.New(t, time.Now)
+			b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec, err := b.Revocation()
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err := json.Marshal(rec)
+			if err != nil {
+				t.Fatal(err)
+			}
+			own := "/v1/" + b.Address().String()
+			var once atomic.Bool
+			srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+				next.ServeHTTP(w, r)
+				hit := at == "its publish" && r.Method == http.MethodGet && r.URL.Path == own ||
+					at == "its renewal" && r.Method == http.MethodPut && r.URL.Path == own+"/revocations"
+				if hit && once.CompareAndSwap(false, true) {
+					req := httptest.NewRequest(http.MethodPut, own+"/revocations", bytes.NewReader(body))
+					req.Header.Set("Content-Type", "application/json")
+					next.ServeHTTP(httptest.NewRecorder(), req)
+				}
+			})
+			t.Setenv("IRONGALL_HOME", b.Dir())
+			t.Setenv("IRONGALL_BASE", srv.URL)
+			var out, errs bytes.Buffer
+			err = do(ctx, "cert revoke-earlier", nil, strings.NewReader(""), &out, &errs)
+			var gone *client.RevokedError
+			if !errors.As(err, &gone) || !gone.Own || err.Error() != gone.Error() || len(printed(t, out.String())) != 0 {
+				t.Fatalf("cert revoke-earlier: %v, stdout %q", err, out.String())
+			}
+		})
+	}
+}
+
 // refusing is a middleware that answers every call of method whose path ends
 // in suffix with code.
 func refusing(code protocol.Code, method, suffix string) func(http.ResponseWriter, *http.Request, http.Handler) {

@@ -277,6 +277,17 @@ var undeliverable = []protocol.Code{
 // has recorded, is refused. A read that serves no box is not "none held":
 // nothing is sealed or posted, and the entry stays.
 func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked *lookups) (*Sent, error) {
+	// A box shown its own revocation since its command began, by an entry
+	// before this one or a pass refused on the way, posts nothing more: the
+	// entry goes to outbox/failed/ with nothing asked, as at a flush's start
+	// (#340).
+	if err := b.finished(); err != nil {
+		var gone *RevokedError
+		if !errors.As(err, &gone) {
+			return nil, err
+		}
+		return nil, b.undelivered(stem, err)
+	}
 	if b.expired(stem) {
 		return nil, b.undelivered(stem, refuse("it was written more than %d days ago, and an outbox posts a message no longer than that", protocol.TTL/(24*time.Hour)))
 	}

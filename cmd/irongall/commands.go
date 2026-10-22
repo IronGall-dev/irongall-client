@@ -876,6 +876,11 @@ revocation it takes none there either.`,
 				}
 				return fmt.Errorf("no new prekey, and nothing is revoked: %w", err)
 			}
+			// A box shown its own revocation before its renewal was taken says
+			// that alone: it sends nothing again and renews nothing (#326).
+			if gone := (*client.RevokedError)(nil); errors.As(r.NotRenewed, &gone) && gone.Own {
+				return r.NotRenewed
+			}
 			if r.Unread != nil {
 				if err := e.out(line("box_unread", failure(fmt.Errorf("this box's server could not be read, or served what this box does not take, so the new certificate was numbered from what this box knows: %w", r.Unread))...)); err != nil {
 					return err

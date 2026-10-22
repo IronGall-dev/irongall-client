@@ -149,6 +149,15 @@ func stateRows() []stateRow {
 			}
 			publish(t, e, rec)
 		}},
+		stateRow{"identity alone, address revoked at the server", func(t *testing.T, e *env, dir string, peer *client.Box) {
+			makeBox(t, e, dir, peer, false)
+			rec, err := openBox(t, e, dir).Revocation()
+			if err != nil {
+				t.Fatal(err)
+			}
+			publish(t, e, rec)
+			identityAlone(t, dir)
+		}},
 		stateRow{"full, finished: it holds its own revocation", func(t *testing.T, e *env, dir string, peer *client.Box) {
 			makeBox(t, e, dir, peer, false)
 			a := openBox(t, e, dir)
