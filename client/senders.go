@@ -104,10 +104,11 @@ func (b *Box) SetPolicy(ctx context.Context, p Policy) error {
 	if err := p.check(); err != nil {
 		return err
 	}
-	return b.lockedFinishedDo(ctx, func() error {
-		return writeFile(b.path("policy"), []byte("unknown "+p.Unknown+"\nserver "+p.Server+"\n"))
-	})
+	return b.lockedFinishedDo(ctx, func() error { return writeFile(b.path("policy"), p.file()) })
 }
+
+// file is the policy file that says p.
+func (p Policy) file() []byte { return []byte("unknown " + p.Unknown + "\nserver " + p.Server + "\n") }
 
 // addresses reads one of the box's address lists, allowed or blocked: an
 // address to a line, with blank lines and lines starting with "#" skipped,
@@ -142,18 +143,38 @@ func (b *Box) addresses(name string) ([]protocol.Address, error) {
 // crash leaves the list as it was or with the line, never a line cut short,
 // which would stop every drain and send until it was put right.
 func (b *Box) addTo(name string, a protocol.Address) (bool, error) {
+	n, err := b.addAll(name, []protocol.Address{a})
+	return n == 1, err
+}
+
+// addAll is addTo of each address in addrs, in one write, and returns how
+// many it added.
+func (b *Box) addAll(name string, addrs []protocol.Address) (int, error) {
 	have, err := b.addresses(name)
-	if err != nil || slices.Contains(have, a) {
-		return false, err
+	if err != nil {
+		return 0, err
+	}
+	var lines []byte
+	n := 0
+	for _, a := range addrs {
+		if slices.Contains(have, a) {
+			continue
+		}
+		have = append(have, a)
+		lines = append(lines, a.String()+"\n"...)
+		n++
+	}
+	if n == 0 {
+		return 0, nil
 	}
 	data, err := os.ReadFile(b.path(name))
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return false, err
+		return 0, err
 	}
 	if len(data) > 0 && data[len(data)-1] != '\n' {
 		data = append(data, '\n') // a line someone wrote without its end
 	}
-	return true, writeFile(b.path(name), append(data, a.String()+"\n"...))
+	return n, writeFile(b.path(name), append(data, lines...))
 }
 
 // Allowed returns the senders whose mail lands in inbox/ whatever the
@@ -505,6 +526,11 @@ func (b *Box) SyncACL(ctx context.Context) error {
 }
 
 func (b *Box) syncACL(ctx context.Context) error {
+	// A restore that has yet to adopt its server's ACL adopts it before
+	// anything is compared or sent.
+	if _, err := b.adoptPending(ctx); err != nil {
+		return err
+	}
 	want, err := b.wantACL()
 	if err != nil {
 		return err
@@ -533,6 +559,12 @@ func (b *Box) syncACL(ctx context.Context) error {
 // sends what syncACL would, and the next renewal reads again. The read is the
 // one call it adds, to a renewal and to nothing else.
 func (b *Box) checkACL(ctx context.Context) (bool, error) {
+	// A restore that has yet to adopt its server's ACL adopts it first, and
+	// compares with what it read.
+	held, err := b.adoptPending(ctx)
+	if err != nil {
+		return false, err
+	}
 	want, err := b.wantACL()
 	if err != nil {
 		return false, err
@@ -541,9 +573,10 @@ func (b *Box) checkACL(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	held, err := b.heldACL(ctx)
-	if err != nil {
-		return false, b.syncACL(ctx)
+	if held == nil {
+		if held, err = b.heldACL(ctx); err != nil {
+			return false, b.syncACL(ctx)
+		}
 	}
 	switch {
 	case !want.SameLists(held):
@@ -589,6 +622,94 @@ func (b *Box) keepTook(acl *protocol.ACL) error {
 		return err
 	}
 	return b.update(func(s store) error { return s.put(bucketBox, "acl", data) })
+}
+
+// A box restored from its identity alone has none of its owner's lists:
+// they went with the lost machine. The open ACL its empty files make would
+// replace, at its first renewal (checkACL), whatever its server holds, every
+// block in it. So a restore adopts the ACL its server holds, and the heal
+// applies from then on (#366).
+//
+// A renewal of a box that has published nothing, and that has none of its
+// allowed, blocked and policy files, marks the adoption as begun before it
+// signs anything (beginAdoption, in readOwn). Once a renewal is taken, which
+// gives the box a pass, the box reads GET …/acl and writes its lists from it
+// (adoptPending): Init's restore and Rekey do at once, and syncACL and
+// checkACL do first while the mark stands, so no ACL is compared or sent
+// before it. A box restored with any of those files, as the README says to
+// back them up, adopts nothing: its files are its ACL, as ever.
+//
+// What a hostile server gains by lying there, once: an allow entry it adds
+// lands that sender's mail in inbox/ and not in held/, once its signature
+// verifies; a deny entry it adds, or an allow list that puts the box under
+// "server allowed", has mail dropped or refused that the server could drop
+// anyway. Each stays in the box's files until its owner edits them. It
+// forges no sender.
+
+// beginAdoption marks the adoption of its server's ACL as begun, on a box
+// that has published nothing and has none of its owner's lists.
+func (b *Box) beginAdoption() error {
+	published, err := b.publishedSerial()
+	if err != nil || published > 0 {
+		return err
+	}
+	for _, name := range []string{"allowed", "blocked", "policy"} {
+		if _, err := os.Lstat(b.path(name)); !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
+	return b.update(func(s store) error { return s.put(bucketIntent, "adopt-acl", []byte("begun")) })
+}
+
+// adoptPending adopts the ACL the box's server holds, when a restore marked
+// the adoption as begun: it reads GET …/acl and adds its entries to the
+// box's lists, a deny's to blocked and an allow list's to allowed, and with
+// an allow list the policy "server allowed", unless the box has a policy
+// file. Then, in one transaction, the ACL read is kept as the one the server
+// last took, and the mark goes. Run again after a crash, it adds nothing
+// twice. What no file of the box says, a deny of AnyAddress or addresses
+// beside an allow of AnyAddress, is not adopted: the box's next ACL replaces
+// it, as the heal does. It returns the ACL it read, or nil when no adoption
+// was pending.
+func (b *Box) adoptPending(ctx context.Context) (*protocol.ACL, error) {
+	var pending bool
+	if err := b.view(func(s store) error { pending = s.get(bucketIntent, "adopt-acl") != nil; return nil }); err != nil || !pending {
+		return nil, err
+	}
+	held, err := b.heldACL(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("this box was restored from its identity alone, and the ACL its server holds, whose lists it takes as its own, could not be read: the next recv, send, allow or block reads it again before it sends any: %w", err)
+	}
+	if _, err := b.addAll("blocked", held.Deny.Addrs); err != nil {
+		return nil, err
+	}
+	if !held.Allow.Any {
+		if _, err := b.addAll("allowed", held.Allow.Addrs); err != nil {
+			return nil, err
+		}
+		if _, err := os.Lstat(b.path("policy")); errors.Is(err, fs.ErrNotExist) {
+			if err := writeFile(b.path("policy"), Policy{Unknown: LandHeld, Server: AdmitAllowed}.file()); err != nil {
+				return nil, err
+			}
+		} else if err != nil {
+			return nil, err
+		}
+	}
+	step("lists adopted")
+	data, err := json.Marshal(held.Document())
+	if err != nil {
+		return nil, err
+	}
+	if err := b.update(func(s store) error {
+		if err := s.put(bucketBox, "acl", data); err != nil {
+			return err
+		}
+		return s.del(bucketIntent, "adopt-acl")
+	}); err != nil {
+		return nil, err
+	}
+	step("adoption recorded")
+	return held, nil
 }
 
 // putACL sends an ACL, and returns the server's answer, which must be that

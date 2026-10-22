@@ -111,7 +111,8 @@ type Box struct {
 
 // Open opens an existing box's state directory. A directory holding only
 // the identity, a box restored from its backup, gets the box's other
-// directories; [Box.Rekey] then gives it a working key and a prekey.
+// directories; [Box.Rekey] then gives it a working key and a prekey, and
+// the lists its server's ACL holds when it has none of its own.
 func Open(dir string, opt Options) (*Box, error) {
 	b, err := newBox(dir, opt)
 	if err != nil {

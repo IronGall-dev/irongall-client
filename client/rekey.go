@@ -30,9 +30,10 @@ import (
 // lifetime, at most 33 days or the box's shorter one, whatever the server
 // does with what it was sent. It needs only the identity, so it also
 // recovers a box that lost its prekeys or its working key, and such a box
-// needs no record of the numbers the lost machine used. The upload carries a
-// pass under the new certificate, and the server then takes no pass under an
-// older one.
+// needs no record of the numbers the lost machine used; one that lost its
+// allowed, blocked and policy files too takes them from the ACL its server
+// holds (adoptPending). The upload carries a pass under the new
+// certificate, and the server then takes no pass under an older one.
 // [Box.Receive] renews the prekey once it is more than a day old, so a box
 // received at least monthly never lapses; Rekey is for a new key type, for
 // recovery, and for boxes that are only ever sent from.
@@ -48,9 +49,15 @@ func (b *Box) Rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey,
 
 // rekeyProved is rekey, with a server's "revoked" to it checked (proved):
 // Rekey and Init's restore from an identity alone answer it alike (#342).
+// Once its renewal is taken, a restore adopts the ACL its server holds
+// (adoptPending; #366).
 func (b *Box) rekeyProved(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey, error) {
 	p, err := b.rekey(ctx, kt)
-	return p, b.proved(ctx, b.id.Address(), err, newLookups())
+	if err = b.proved(ctx, b.id.Address(), err, newLookups()); p == nil || err != nil {
+		return p, err
+	}
+	_, err = b.adoptPending(ctx)
+	return p, err
 }
 
 // rekey is Rekey with the lock held. It returns the prekey once the server
@@ -110,12 +117,18 @@ type renewal struct {
 // this box kept of the last one the server took goes before the registration
 // is sent: whatever becomes of the answer, a fault after it or a process
 // ended before it is recorded, the next send or recv sends the ACL again
-// (#324). It returns the reading the server took, as publish does.
+// (#324). So does a restore's adoption of it, which has nothing to adopt
+// (#366). It returns the reading the server took, as publish does.
 func (b *Box) sendRenewal(ctx context.Context, r renewal, n uint64) (taken, error) {
 	if !r.forgotten {
 		return b.publish(ctx, b.boxPath("/prekey"), r.req, n)
 	}
-	if err := b.update(func(s store) error { return s.del(bucketBox, "acl") }); err != nil {
+	if err := b.update(func(s store) error {
+		if err := s.del(bucketBox, "acl"); err != nil {
+			return err
+		}
+		return s.del(bucketIntent, "adopt-acl")
+	}); err != nil {
 		return taken{}, err
 	}
 	reg := protocol.RegisterRequest{Identity: b.id.Document(), Prekey: r.req.Prekey, PrekeySignature: r.req.PrekeySignature, SenderKeyTypes: r.req.SenderKeyTypes}
@@ -166,6 +179,14 @@ func (b *Box) readOwn(ctx context.Context, kt protocol.KeyType, unused bool) (*o
 		return nil, err
 	}
 	out.forgotten = o.at == atNone
+	// A restore from the identity alone adopts its server's ACL once a
+	// renewal is taken: marked before anything is signed (#366). A server
+	// that holds no box holds no ACL of it, so a registration adopts none.
+	if !out.forgotten {
+		if err := b.beginAdoption(); err != nil {
+			return nil, err
+		}
+	}
 	if o.err != nil {
 		if !unused || ctx.Err() != nil {
 			return nil, o.err

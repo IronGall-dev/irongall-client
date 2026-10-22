@@ -329,6 +329,101 @@ func TestARenewalReplacesAnACLAnotherWriterPut(t *testing.T) {
 	}
 }
 
+// A box restored from its identity alone adopts the ACL its server holds, by
+// each way a restore goes (init, prekey renew, and a recv that renews), so its
+// first renewal finds the two alike and the server's blocks stay; the heal
+// still replaces an ACL another writer puts there after (#366). A box
+// restored with one of its lists beside the identity adopts nothing: its
+// files are its ACL, and its first renewal puts it.
+func TestARestoredBoxAdoptsItsServersACL(t *testing.T) {
+	ctx := context.Background()
+	lost := func(t *testing.T, e *env) (b, blocked, allowed *client.Box, own *protocol.ACL) {
+		t.Helper()
+		a, b, c := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+		if _, err := b.Block(ctx, a.Address()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := b.Allow(ctx, c.Address()); err != nil {
+			t.Fatal(err)
+		}
+		if err := b.SetPolicy(ctx, client.Policy{Unknown: client.LandHeld, Server: client.AdmitAllowed}); err != nil {
+			t.Fatal(err)
+		}
+		if err := b.SyncACL(ctx); err != nil {
+			t.Fatal(err)
+		}
+		own = e.srv.ACL(b.Address())
+		if own == nil || own.Allow.Any || !own.Allow.Has(c.Address()) || !own.Deny.Has(a.Address()) {
+			t.Fatalf("the lost box's ACL: %+v", own)
+		}
+		return b, a, c, own
+	}
+	for _, how := range []string{"init", "prekey renew", "recv"} {
+		t.Run(how, func(t *testing.T) {
+			e := newEnv(t)
+			b, a, c, own := lost(t, e)
+			r := restore(t, e, b)
+			e.clock.Add(time.Minute)
+			var err error
+			switch how {
+			case "init":
+				_, err = client.Init(ctx, r.Dir(), e.opts(), "")
+			case "prekey renew":
+				_, err = r.Rekey(ctx, "")
+			case "recv":
+				var res *client.Result
+				res, err = r.Receive(ctx)
+				if err == nil && (res.Renewed == nil || res.ACLReplaced || res.ACLErr != nil) {
+					t.Fatalf("the recv that restored the box: %+v", res)
+				}
+			}
+			if err != nil {
+				t.Fatalf("the restore: %v", err)
+			}
+			e.clock.Add(25 * time.Hour)
+			if res := receive(t, r); res.Renewed == nil || res.ACLReplaced || res.ACLErr != nil || !e.srv.ACL(b.Address()).SameLists(own) {
+				t.Fatalf("the restored box's first renewal: %+v; the server holds %+v, the lost box's was %+v", res, e.srv.ACL(b.Address()), own)
+			}
+			blocked, _ := r.Blocked()
+			allowed, _ := r.Allowed()
+			policy, _ := r.Policy()
+			if !slices.Equal(blocked, []protocol.Address{a.Address()}) || !slices.Equal(allowed, []protocol.Address{c.Address()}) || policy != (client.Policy{Unknown: client.LandHeld, Server: client.AdmitAllowed}) {
+				t.Fatalf("the restored box's lists: blocked %v, allowed %v, %+v", blocked, allowed, policy)
+			}
+
+			// Another writer pauses the box: the next renewal replaces it.
+			e.srv.PutACL(b.Address(), &protocol.ACL{Deny: protocol.ACLList{Any: true}})
+			e.clock.Add(25 * time.Hour)
+			if res := receive(t, r); res.Renewed == nil || !res.ACLReplaced || !e.srv.ACL(b.Address()).SameLists(own) {
+				t.Fatalf("the renewal after another writer's ACL: %+v; the server holds %+v", res, e.srv.ACL(b.Address()))
+			}
+		})
+	}
+
+	t.Run("with its blocked file", func(t *testing.T) {
+		e := newEnv(t)
+		b, a, _, own := lost(t, e)
+		r := restore(t, e, b)
+		if err := os.WriteFile(filepath.Join(r.Dir(), "blocked"), []byte(a.Address().String()+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		e.clock.Add(time.Minute)
+		if _, err := r.Rekey(ctx, ""); err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range []string{"allowed", "policy"} {
+			if _, err := os.Stat(filepath.Join(r.Dir(), f)); !errors.Is(err, os.ErrNotExist) {
+				t.Errorf("a box restored with its blocked file wrote %s: %v", f, err)
+			}
+		}
+		e.clock.Add(25 * time.Hour)
+		want := &protocol.ACL{Allow: protocol.ACLList{Any: true}, Deny: own.Deny}
+		if res := receive(t, r); res.Renewed == nil || !res.ACLReplaced || !e.srv.ACL(b.Address()).SameLists(want) {
+			t.Fatalf("the first renewal of a box restored with its blocked file: %+v; the server holds %+v", res, e.srv.ACL(b.Address()))
+		}
+	})
+}
+
 // A server that answers box_changed to an ACL (the box changed while it
 // handled the request) is sent it again, as it is: the write is not lost to
 // a race.

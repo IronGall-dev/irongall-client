@@ -333,6 +333,41 @@ func TestTheRemedyKilledAtEachStepLeavesTheBoxWhole(t *testing.T) {
 	}
 }
 
+// A restore from the identity alone killed at each step of its renewal and
+// of its adoption of its server's ACL: the next recv adopts it, each entry
+// once, and the restored box's first renewal finds the two alike, so the
+// server's blocks stay (#366).
+func TestARestoreKilledAtEachStepAdoptsItsServersACL(t *testing.T) {
+	for _, step := range append(client.Steps("renewal"), client.Steps("adoption")...) {
+		t.Run(step, func(t *testing.T) {
+			ctx := context.Background()
+			e := newEnv(t)
+			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			if _, err := b.Block(ctx, a.Address()); err != nil {
+				t.Fatal(err)
+			}
+			own := e.srv.ACL(b.Address())
+			r := restore(t, e, b)
+			e.clock.Add(2 * time.Second)
+			crash(t, e, r, "rekey", step, protocol.Address{})
+			x, err := client.Open(r.Dir(), e.opts())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := x.Receive(ctx); err != nil {
+				t.Fatalf("the recv after the crash: %v", err)
+			}
+			e.clock.Add(25 * time.Hour)
+			if res := receive(t, x); res.Renewed == nil || res.ACLReplaced || !e.srv.ACL(b.Address()).SameLists(own) {
+				t.Fatalf("the first renewal after a crash at %s: %+v; the server holds %+v, the lost box's was %+v", step, res, e.srv.ACL(b.Address()), own)
+			}
+			if data, err := os.ReadFile(filepath.Join(x.Dir(), "blocked")); err != nil || string(data) != a.Address().String()+"\n" {
+				t.Fatalf("blocked after a crash at %s: %q, %v", step, data, err)
+			}
+		})
+	}
+}
+
 // A drain killed at each step of a delivery: the message is in the inbox
 // once, and leaves the server.
 func TestADrainKilledAtEachStepOfADeliveryDeliversOnce(t *testing.T) {
