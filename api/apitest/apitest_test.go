@@ -5,7 +5,6 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -118,51 +117,32 @@ func TestAHeaderTheDescriptionDoesNotNameFails(t *testing.T) {
 	}
 }
 
-// Every number in a JSON answer, and in a JSON request a server takes, is an
-// integer as PROTOCOL.md §0b writes one, in digits alone: JSON Schema counts
-// 1.0 and 1e0 as integers, and both clients refuse them.
+// Every number in a JSON answer is an integer as PROTOCOL.md §0b writes one,
+// in digits alone: JSON Schema counts 1.0 and 1e0 as integers, and both
+// clients refuse them. No JSON request a server takes holds a number.
 func TestEveryNumberIsAnIntegerInDigitsAlone(t *testing.T) {
 	addr := "/v1/" + strings.Repeat("ab", 32)
-	call := func(method, path, request string, status int, answer string) []string {
+	list := func(count string) []string {
 		r := &reported{TB: t}
-		srv := apitest.Handler(r, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			_, _ = io.ReadAll(req.Body)
+		srv := apitest.Handler(r, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Date", time.Now().UTC().Format(http.TimeFormat))
 			w.Header().Set("Cache-Control", "no-store")
-			if method == http.MethodGet {
-				w.Header().Set("Retry-After", "30")
-			}
-			w.WriteHeader(status)
-			_, _ = w.Write([]byte(answer + "\n"))
+			w.Header().Set("Retry-After", "30")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"count":` + count + `,"messages":[],"next_cursor":null}` + "\n"))
 		}))
-		req := httptest.NewRequest(method, path, strings.NewReader(request))
+		req := httptest.NewRequest(http.MethodGet, addr+"/messages", nil)
 		req.Header.Set("Authorization", "irongall-pass x")
 		srv.ServeHTTP(httptest.NewRecorder(), req)
 		return r.errs
 	}
-	list := func(count string) []string {
-		return call(http.MethodGet, addr+"/messages", "", 200, `{"count":`+count+`,"messages":[],"next_cursor":null}`)
-	}
-	acl := func(version string, status int) []string {
-		answer := `{"version":1,"allow":["*"],"deny":[]}`
-		if status != 200 {
-			answer = `{}`
-		}
-		return call(http.MethodPut, addr+"/acl", `{"version":`+version+`,"allow":["*"]}`, status, answer)
-	}
 	if errs := list("0"); len(errs) > 0 {
 		t.Fatalf("a list of none: %q", errs)
-	}
-	if errs := acl("1", 200); len(errs) > 0 {
-		t.Fatalf("an ACL taken: %q", errs)
 	}
 	for _, n := range []string{"0.0", "0e0", "0E0", "-0"} {
 		if errs := list(n); len(errs) == 0 {
 			t.Errorf("a list whose count is %s passes", n)
-		}
-		if errs := acl(strings.Replace(n, "0", "1", 1), 200); len(errs) == 0 {
-			t.Errorf("an ACL request whose version is %s, answered 200, passes", strings.Replace(n, "0", "1", 1))
 		}
 	}
 }

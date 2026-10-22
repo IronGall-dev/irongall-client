@@ -13,15 +13,15 @@ const AnyAddress = "*"
 
 // ACLDocument is a box's sender ACL as it travels (PROTOCOL.md §6.2): the
 // body of PUT /v1/<address>/acl, which replaces the box's ACL whole, and
-// the answer to GET. Version is the document's own number, which only
-// rises. Allow is required, so that an ACL always says whom it lets in: a
-// document with none is refused, where Matrix reads one as letting in
-// nobody. Deny may be left out, for none. Write both lists, empty or not:
-// an empty Allow that is left out is not "nobody" but a refusal.
+// the answer to GET. It carries no version: the server's ETag of it is what
+// a writer that read it names in If-Match. Allow is required, so that an ACL
+// always says whom it lets in: a document with none is refused, where Matrix
+// reads one as letting in nobody. Deny may be left out, for none. Write both
+// lists, empty or not: an empty Allow that is left out is not "nobody" but a
+// refusal.
 type ACLDocument struct {
-	Version *uint64  `json:"version"`
-	Allow   []string `json:"allow"`
-	Deny    []string `json:"deny"`
+	Allow []string `json:"allow"`
+	Deny  []string `json:"deny"`
 }
 
 // ACL is a sender ACL in its checked form: who may send to a box. Deny is
@@ -29,9 +29,8 @@ type ACLDocument struct {
 // sender neither matches is refused. A box with no ACL takes mail from
 // everyone: a nil *ACL is that.
 type ACL struct {
-	Version uint64
-	Allow   ACLList
-	Deny    ACLList
+	Allow ACLList
+	Deny  ACLList
 }
 
 // ACLList is one of an ACL's lists: AnyAddress, addresses, or both, the
@@ -95,15 +94,15 @@ func (a *ACL) Admits(from Address) bool {
 }
 
 // SameLists reports whether two ACLs admit the same senders by the same
-// lists, whatever their versions. No ACL is the same as one that allows
-// AnyAddress and denies nothing.
+// lists. No ACL is the same as one that allows AnyAddress and denies
+// nothing.
 func (a *ACL) SameLists(b *ACL) bool {
 	x, y := a.orOpen(), b.orOpen()
 	return x.Allow.Equal(y.Allow) && x.Deny.Equal(y.Deny)
 }
 
-// orOpen is a, or the ACL a box with none has: version 0, allowing
-// AnyAddress and denying nothing.
+// orOpen is a, or the ACL a box with none has: allowing AnyAddress and
+// denying nothing.
 func (a *ACL) orOpen() *ACL {
 	if a == nil {
 		return &ACL{Allow: ACLList{Any: true}}
@@ -111,20 +110,19 @@ func (a *ACL) orOpen() *ACL {
 	return a
 }
 
-// Document is the ACL as it travels. A box with none answers GET with this
-// of nil: version 0, allowing AnyAddress and denying nothing.
+// Document is the ACL as it travels, in its one form: each list as Entries
+// writes it. A box with none answers GET with this of nil: allowing
+// AnyAddress and denying nothing.
 func (a *ACL) Document() ACLDocument {
 	o := a.orOpen()
-	v := o.Version
-	return ACLDocument{Version: &v, Allow: o.Allow.Entries(), Deny: o.Deny.Entries()}
+	return ACLDocument{Allow: o.Allow.Entries(), Deny: o.Deny.Entries()}
 }
 
 // Errors of an ACL document.
 var (
-	// ErrACL is a document that is not an ACL: no version, or one that is not
-	// from 1 to MaxSerial; no allow list; or an entry that is neither an
-	// address nor AnyAddress.
-	ErrACL = errors.New("not an ACL: a version from 1 to 2^53 - 1, an allow list, and entries that are each an address or *")
+	// ErrACL is a document that is not an ACL: no allow list, or an entry
+	// that is neither an address nor AnyAddress.
+	ErrACL = errors.New("not an ACL: an allow list, and entries that are each an address or *")
 	// ErrACLTooLarge is an ACL with more entries in its two lists together
 	// than the server takes.
 	ErrACLTooLarge = errors.New("the ACL has more entries than this server takes")
@@ -135,7 +133,7 @@ var (
 // AnyAddress counting as one and a repeat counting as often as it is
 // written; 0 sets no bound.
 func CheckACL(d *ACLDocument, maxEntries int) (*ACL, error) {
-	if d.Version == nil || *d.Version < 1 || *d.Version > MaxSerial || d.Allow == nil {
+	if d.Allow == nil {
 		return nil, ErrACL
 	}
 	if maxEntries > 0 && len(d.Allow)+len(d.Deny) > maxEntries {
@@ -149,7 +147,7 @@ func CheckACL(d *ACLDocument, maxEntries int) (*ACL, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ACL{Version: *d.Version, Allow: allow, Deny: deny}, nil
+	return &ACL{Allow: allow, Deny: deny}, nil
 }
 
 func parseACLList(entries []string) (ACLList, error) {

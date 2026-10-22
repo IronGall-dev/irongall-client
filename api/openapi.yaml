@@ -293,10 +293,17 @@ paths:
       summary: Replace the box's ACL
       description: |
         `PROTOCOL.md` §6.2: whom the server takes the box's mail from,
-        replaced whole by a higher `version`. Mail held from a sender the new
-        `deny` matches is deleted with it. One that allows nobody and denies
-        `*` is how a box pauses: every sender is refused and its unacked mail
-        deleted, until a later ACL lets senders in again.
+        replaced whole. Mail held from a sender the new `deny` matches is
+        deleted with it. One that allows nobody and denies `*` is how a box
+        pauses: every sender is refused and its unacked mail deleted, until a
+        later ACL lets senders in again.
+      parameters:
+        - name: If-Match
+          in: header
+          required: false
+          description: The `ETag` a `GET` answered with the ACL the writer read, so that it replaces only that one. Read as RFC 9110 §13.1.1 has an origin server evaluate it, as a list's is, and compared strongly with the tag of the ACL held, a box with none included, before the body is read; a false one is `412`, and nothing changes. Without it, the `PUT` replaces whatever is held.
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -305,7 +312,7 @@ paths:
               $ref: '#/components/schemas/ACLRequest'
       responses:
         '200':
-          $ref: '#/components/responses/ACL'
+          $ref: '#/components/responses/ACLTaken'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -318,6 +325,8 @@ paths:
           $ref: '#/components/responses/Conflict'
         '410':
           $ref: '#/components/responses/Gone'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
         '413':
           $ref: '#/components/responses/ContentTooLarge'
         '429':
@@ -330,10 +339,35 @@ paths:
       summary: The box's ACL
       description: |
         `PROTOCOL.md` §6.2. A box with none answers
-        `{"version":0,"allow":["*"],"deny":[]}`, which is what none means.
+        `{"allow":["*"],"deny":[]}`, which is what none means. The answer
+        carries the ACL's `ETag`, and its preconditions are read as a list's
+        are, in RFC 9110 §13.2.2's order, once the answer without them would
+        be `200`.
+      parameters:
+        - name: If-Match
+          in: header
+          required: false
+          description: Evaluated first, as RFC 9110 §13.1.1 has an origin server evaluate it, and compared strongly; a false one is `412`.
+          schema:
+            type: string
+        - name: If-None-Match
+          in: header
+          required: false
+          description: Read as RFC 9110 §13.1.2 has a server evaluate it, `*` only as the whole value and each listed tag through its closing quote, and compared weakly; one that names the ACL's tag is `304`.
+          schema:
+            type: string
       responses:
         '200':
           $ref: '#/components/responses/ACL'
+        '304':
+          description: The ACL is the one the `If-None-Match` named, and the answer has no content (RFC 9110 §15.4.5).
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
+            ETag:
+              $ref: '#/components/headers/ACLETag'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -342,6 +376,8 @@ paths:
           $ref: '#/components/responses/NotFound'
         '410':
           $ref: '#/components/responses/Gone'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '503':
@@ -770,6 +806,12 @@ components:
       required: false
       schema:
         type: string
+    ACLETag:
+      description: A strong entity tag of the ACL as held (RFC 9110 §8.8.3), opaque, which changes whenever its lists do; a box with none has the tag of the ACL it answers. Only a `GET` carries it (`PROTOCOL.md` §6.2).
+      required: true
+      schema:
+        type: string
+        pattern: '^"[\x21\x23-\x7e]*"$'
     WWW-Authenticate:
       description: The scheme a call must use, `irongall-pass`, with any auth-params a server adds (RFC 9110 §11.6.1).
       required: true
@@ -803,7 +845,20 @@ components:
         Cache-Control:
           $ref: '#/components/headers/Cache-Control'
     ACL:
-      description: The ACL as held, `*` first, then each address once, in ascending order of its hex.
+      description: The ACL as held, `*` first, then each address once, in ascending order of its hex, with its tag.
+      headers:
+        Date:
+          $ref: '#/components/headers/Date'
+        Cache-Control:
+          $ref: '#/components/headers/Cache-Control'
+        ETag:
+          $ref: '#/components/headers/ACLETag'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ACL'
+    ACLTaken:
+      description: The ACL as held once the `PUT` took it, `*` first, then each address once, in ascending order of its hex. No `ETag`, since what is held may not be what was sent (RFC 9110 §9.3.4; `PROTOCOL.md` §6.2).
       headers:
         Date:
           $ref: '#/components/headers/Date'
@@ -904,7 +959,7 @@ components:
                     enum: [no_such_mailbox, no_such_message, not_revoked]
     Conflict:
       description: |
-        `conflict` (what is held is newer, or another: with `version`,
+        `conflict` (what is held is newer, or another: with
         `prekey_serial` and `certificate_serial`, or `through`, as the call
         has one) · `box_changed` (send it again as it is) · `stale_prekey`
         (with the current `prekey_serial` and `certificate_serial`: read the
@@ -968,7 +1023,7 @@ components:
                   code:
                     const: request_timeout
     PreconditionFailed:
-      description: '`precondition_failed`: the list''s `If-Match` evaluated false (RFC 9110 §13.1.1).'
+      description: '`precondition_failed`: the `If-Match` of a list or of an ACL''s `GET` or `PUT` evaluated false (RFC 9110 §13.1.1).'
       headers:
         Date:
           $ref: '#/components/headers/Date'
@@ -1052,11 +1107,6 @@ components:
       description: An integer in digits alone, from 0 to 2^53 − 1 (`PROTOCOL.md` §0b).
       type: integer
       minimum: 0
-      maximum: 9007199254740991
-    Serial:
-      description: A serial, from 1 to 2^53 − 1 (`PROTOCOL.md` §2a, §2b).
-      type: integer
-      minimum: 1
       maximum: 9007199254740991
     Time:
       description: RFC 3339 UTC to the second (`PROTOCOL.md` §2a).
@@ -1289,11 +1339,8 @@ components:
     ACLRequest:
       type: object
       additionalProperties: false
-      required: [version, allow]
+      required: [allow]
       properties:
-        version:
-          description: Above the version held, or `409 conflict`.
-          $ref: '#/components/schemas/Serial'
         allow:
           description: '`["*"]` is everyone, `[]` nobody. Required, so an ACL always says whom it lets in.'
           type: array
@@ -1306,11 +1353,8 @@ components:
             $ref: '#/components/schemas/ACLEntry'
     ACL:
       type: object
-      required: [version, allow, deny]
+      required: [allow, deny]
       properties:
-        version:
-          description: The version held; 0 for a box with none.
-          $ref: '#/components/schemas/Integer'
         allow:
           type: array
           items:
@@ -1393,11 +1437,6 @@ components:
           description: '`pair_full`: when the oldest of them expires.'
           anyOf:
             - $ref: '#/components/schemas/Time'
-            - type: 'null'
-        version:
-          description: '`conflict` on an ACL: the version held.'
-          anyOf:
-            - $ref: '#/components/schemas/Integer'
             - type: 'null'
         prekey_serial:
           description: '`stale_prekey`: the box''s current prekey; `conflict` on a prekey: the serial a new one must be above.'

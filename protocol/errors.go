@@ -180,8 +180,6 @@ type Problem struct {
 	// box holds unacked, and when the oldest of them expires (pair_full).
 	Unacked         *int64 `json:"unacked,omitempty"`
 	OldestExpiresAt string `json:"oldest_expires_at,omitempty"`
-	// Version is the version of the ACL held (conflict).
-	Version *uint64 `json:"version,omitempty"`
 	// PrekeySerial and CertificateSerial are the serials of the prekey and
 	// of the certificate the server holds as the box's current ones
 	// (stale_prekey; conflict and certificate_not_current give the one that

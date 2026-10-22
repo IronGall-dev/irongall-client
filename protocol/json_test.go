@@ -87,12 +87,10 @@ func TestUnmarshalRequest(t *testing.T) {
 		into func() any
 		want error
 	}{
-		{`{"version":9007199254740991,"allow":[],"deny":[]}`, acl, nil},
-		{`{"version":9007199254740992,"allow":[],"deny":[]}`, acl, ErrJSON},
-		{`{"version":1.0,"allow":[],"deny":[]}`, acl, ErrJSON},
-		{`{"version":1e0,"allow":[],"deny":[]}`, acl, ErrJSON},
-		{`{"version":"1","allow":[],"deny":[]}`, acl, ErrJSON},
-		{`{"version":1,"version":1,"allow":[],"deny":[]}`, acl, ErrJSON},
+		{`{"allow":[],"deny":[]}`, acl, nil},
+		{`{"allow":[],"allow":[],"deny":[]}`, acl, ErrJSON},
+		{`{"allow":"*","deny":[]}`, acl, ErrJSON},
+		{`{"version":1,"allow":[],"deny":[]}`, acl, ErrUnknownMember},
 		{`{"prekey":"AAA=","prekey_signature":"AAAA"}`, prekey, nil},
 		{`{"prekey":"AAB=","prekey_signature":"AAAA"}`, prekey, ErrNotBase64},
 		{`{"prekey":"AAA","prekey_signature":"AAAA"}`, prekey, ErrNotBase64},
@@ -183,7 +181,7 @@ func TestCheckCursor(t *testing.T) {
 // What every reader refuses is said in fixed words: none of the text they
 // refuse is quoted.
 func TestAJSONRefusalQuotesNothing(t *testing.T) {
-	for _, body := range []string{`{"evil":"\ud800"}`, `{"evil":1,"evil":2}`, `{"version":"evil"}`, "{\"evil\":\"\xff\"}", `{"evil":NaN}`} {
+	for _, body := range []string{`{"evil":"\ud800"}`, `{"evil":1,"evil":2}`, `{"allow":"evil"}`, "{\"evil\":\"\xff\"}", `{"evil":NaN}`} {
 		err := Unmarshal([]byte(body), new(ACLDocument))
 		if err == nil || strings.Contains(err.Error(), "evil") {
 			t.Errorf("%s: %v", body, err)

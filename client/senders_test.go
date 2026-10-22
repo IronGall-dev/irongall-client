@@ -208,7 +208,7 @@ func TestUnderServerAllowedTheServerRefusesTheRest(t *testing.T) {
 		t.Fatalf("the calls of a send to a new address: %v", calls)
 	}
 	acl := e.srv.ACL(b.Address())
-	if acl == nil || acl.Allow.Any || !acl.Allow.Has(a.Address()) || acl.Allow.Len() != 1 || acl.Version != 1 {
+	if acl == nil || acl.Allow.Any || !acl.Allow.Has(a.Address()) || acl.Allow.Len() != 1 {
 		t.Fatalf("the server holds %+v", acl)
 	}
 	send(t, a, b, "the reply")
@@ -231,14 +231,16 @@ func TestUnderServerAllowedTheServerRefusesTheRest(t *testing.T) {
 	if err := b.SyncACL(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if acl := e.srv.ACL(b.Address()); !acl.Allow.Any || acl.Version != 2 {
+	if acl := e.srv.ACL(b.Address()); !acl.Allow.Any || acl.Deny.Len() != 0 {
 		t.Fatalf("the server holds %+v", acl)
 	}
 }
 
-// A server that holds a later ACL than the box last saw, sent from another
-// machine of the box, is asked for its version, and the box's goes above it.
-func TestAnACLGoesAboveTheVersionTheServerHolds(t *testing.T) {
+// An ACL replaces whatever the server holds, whoever sent it: a box whose
+// record of what its server took is gone, as on a second machine of the
+// box, sends the ACL its files say in one PUT, with no If-Match and no read
+// first, and keeps the server's answer.
+func TestAnACLReplacesWhatTheServerHolds(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
@@ -246,24 +248,34 @@ func TestAnACLGoesAboveTheVersionTheServerHolds(t *testing.T) {
 		t.Fatal(err)
 	}
 	b.SetRecord(t, "acl.json", nil) // as on a second machine
+	var calls []string
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if strings.HasSuffix(r.URL.Path, "/acl") {
+			calls = append(calls, r.Method+" If-Match:"+r.Header.Get("If-Match"))
+		}
+		next.ServeHTTP(w, r)
+	})
 	c := e.heldBox(protocol.Classic)
 	if _, err := b.Block(ctx, c.Address()); err != nil {
 		t.Fatal(err)
 	}
+	if strings.Join(calls, ", ") != "PUT If-Match:" {
+		t.Fatalf("the calls of the ACL: %q", calls)
+	}
 	acl := e.srv.ACL(b.Address())
-	if acl.Version != 2 || !acl.Deny.Has(a.Address()) || !acl.Deny.Has(c.Address()) {
+	if acl.Deny.Len() != 2 || !acl.Deny.Has(a.Address()) || !acl.Deny.Has(c.Address()) {
 		t.Fatalf("the server holds %+v", acl)
 	}
 	var took protocol.ACLDocument
 	data, _ := stateOf(b, "acl.json")
-	if err := protocol.Unmarshal(data, &took); err != nil || *took.Version != 2 {
+	if err := protocol.Unmarshal(data, &took); err != nil || len(took.Deny) != 2 {
 		t.Fatalf("the ACL kept: %s, %v", data, err)
 	}
 }
 
 // A server that answers box_changed to an ACL (the box changed while it
-// handled the request) is sent it again, as one that holds a later version
-// is: the write is not lost to a race.
+// handled the request) is sent it again, as it is: the write is not lost to
+// a race.
 func TestAnACLIsSentAgainWhenTheBoxChanged(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)

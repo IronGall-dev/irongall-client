@@ -150,8 +150,6 @@ func (e *APIError) words() string {
 	case protocol.CodeConflict:
 		s := "the server holds a newer version of what was sent, or another"
 		switch {
-		case p.Version != nil:
-			s += fmt.Sprintf(": version %d", *p.Version)
 		case p.Through != nil:
 			s += fmt.Sprintf(": a revocation of certificates through serial %d", *p.Through)
 		case p.PrekeySerial != nil:
@@ -169,7 +167,7 @@ func (e *APIError) words() string {
 	case protocol.CodeRevoked:
 		return "the server answers that that box is revoked: this client takes that only from a revocation that verifies"
 	case protocol.CodePreconditionFailed:
-		return "the server's page no longer has the tag the request's If-Match named"
+		return "what the server holds no longer has the tag the request's If-Match named"
 	case protocol.CodeTooLarge:
 		return "too large for the server" + limit(p, ": its limit is %d")
 	case protocol.CodeRateLimited:

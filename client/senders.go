@@ -491,10 +491,13 @@ func (b *Box) aclPending() (bool, error) {
 // SyncACL sends the box's server the ACL the box's files say, unless that
 // is the one it took last, which is the case for a box that has blocked
 // nobody and lets every sender reach the server: such a box sends none, and
-// its server holds none. Each one sent replaces the last whole, at the next
-// version; a server that holds a later one (another machine of this box
-// sent it) is asked for its version, and sent this one above it, once. The
-// server's answer must be the ACL sent, and is kept in acl.json.
+// its server holds none. Each one sent replaces whatever the server holds,
+// whoever wrote it, and carries no If-Match (PROTOCOL.md §6.2): the box's
+// files are what its ACL is, so what another machine of the box sent is
+// replaced, not merged, and a precondition would only add a read and a 412
+// to end the same way. One the server answers box_changed (the box changed
+// while it handled the request) is sent again as it is, once. The server's
+// answer must be the ACL sent, and is kept in acl.json.
 func (b *Box) SyncACL(ctx context.Context) error {
 	return b.lockedDo(ctx, func() error { return b.syncACL(ctx) })
 }
@@ -511,17 +514,9 @@ func (b *Box) syncACL(ctx context.Context) error {
 	if want.SameLists(took) {
 		return nil
 	}
-	want.Version = 1
-	if took != nil {
-		want.Version = took.Version + 1
-	}
 	got, err := b.putACL(ctx, want)
-	if c := code(err); c == protocol.CodeConflict || c == protocol.CodeBoxChanged {
-		var v uint64
-		if v, err = b.heldVersion(ctx); err == nil {
-			want.Version = v + 1
-			got, err = b.putACL(ctx, want)
-		}
+	if code(err) == protocol.CodeBoxChanged {
+		got, err = b.putACL(ctx, want)
 	}
 	if err != nil {
 		return fmt.Errorf("the server did not take this box's ACL: %w", err)
@@ -533,19 +528,6 @@ func (b *Box) syncACL(ctx context.Context) error {
 	return b.update(func(s store) error { return s.put(bucketBox, "acl", data) })
 }
 
-// heldVersion asks the box's server the version of the ACL it holds: 0 for
-// none.
-func (b *Box) heldVersion(ctx context.Context) (uint64, error) {
-	var d protocol.ACLDocument
-	if _, err := b.owner(ctx, http.MethodGet, b.boxPath("/acl"), nil, &d); err != nil {
-		return 0, err
-	}
-	if d.Version == nil || *d.Version > protocol.MaxSerial {
-		return 0, errors.New("the server's answer is not an ACL")
-	}
-	return *d.Version, nil
-}
-
 // putACL sends an ACL, and returns the server's answer, which must be that
 // ACL.
 func (b *Box) putACL(ctx context.Context, acl *protocol.ACL) (*protocol.ACL, error) {
@@ -554,7 +536,7 @@ func (b *Box) putACL(ctx context.Context, acl *protocol.ACL) (*protocol.ACL, err
 		return nil, err
 	}
 	got, err := protocol.CheckACL(&d, 0)
-	if err != nil || got.Version != acl.Version || !got.SameLists(acl) {
+	if err != nil || !got.SameLists(acl) {
 		return nil, errors.New("the server answered with another ACL than the one sent")
 	}
 	return got, nil

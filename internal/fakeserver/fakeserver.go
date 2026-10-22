@@ -812,20 +812,23 @@ func WriteCiphertext(w http.ResponseWriter, ct []byte) {
 	_, _ = w.Write(ct)
 }
 
-// putACL replaces the box's ACL with one of a higher version, and deletes
-// what is waiting from every sender its deny list matches.
+// putACL replaces the box's ACL whole, and deletes what is waiting from
+// every sender its deny list matches. An If-Match is read as a server reads
+// one (protocol.IfMatch), against the tag of the ACL held, a box with none
+// included, before the body: a false one is 412, and changes nothing. It
+// answers the ACL as held, with no ETag (RFC 9110 §9.3.4).
 func (s *Server) putACL(w http.ResponseWriter, r *http.Request, b *box) {
+	if !protocol.IfMatch(r.Header.Values("If-Match"), aclTag(b.acl)) {
+		problem(w, protocol.CodePreconditionFailed, "the If-Match is false")
+		return
+	}
 	var d protocol.ACLDocument
 	if !decode(w, r, &d) {
 		return
 	}
 	acl, err := protocol.CheckACL(&d, 0)
-	switch {
-	case err != nil:
+	if err != nil {
 		problem(w, protocol.CodeBadRequest, "not an ACL")
-		return
-	case b.acl != nil && acl.Version <= b.acl.Version:
-		problem(w, protocol.CodeConflict, "a version that is not above the one held")
 		return
 	}
 	b.acl = acl
@@ -837,8 +840,29 @@ func (s *Server) putACL(w http.ResponseWriter, r *http.Request, b *box) {
 	WriteJSON(w, http.StatusOK, acl.Document())
 }
 
-func (s *Server) getACL(w http.ResponseWriter, _ *http.Request, b *box) {
+// getACL answers the ACL as held, nil for none, with its ETag, its If-Match
+// and If-None-Match read as a list's (PROTOCOL.md §6.2): a false If-Match is
+// 412, then an If-None-Match that names the tag is 304.
+func (s *Server) getACL(w http.ResponseWriter, r *http.Request, b *box) {
+	tag := aclTag(b.acl)
+	if !protocol.IfMatch(r.Header.Values("If-Match"), tag) {
+		problem(w, protocol.CodePreconditionFailed, "the If-Match is false")
+		return
+	}
+	w.Header().Set("ETag", tag)
+	if protocol.IfNoneMatch(r.Header.Values("If-None-Match"), tag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
 	WriteJSON(w, http.StatusOK, b.acl.Document())
+}
+
+// aclTag is the ETag of an ACL as held, nil for none: the SHA-256 of its
+// document's JSON, as a list's is of its page.
+func aclTag(acl *protocol.ACL) string {
+	body, _ := json.Marshal(acl.Document())
+	sum := sha256.Sum256(body)
+	return `"` + hex.EncodeToString(sum[:16]) + `"`
 }
 
 // ACL returns a box's sender ACL, nil if it has none.
