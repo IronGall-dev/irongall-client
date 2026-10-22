@@ -115,7 +115,7 @@ A refusal's words are this client's own, never text from the message, its sender
 
 | Code | The check that failed |
 |---|---|
-| `undecryptable` | it is not encrypted to a prekey this box holds |
+| `undecryptable` | it is not encrypted to a prekey this box holds, or not to exactly one recipient of a prekey's type, as every server takes a send |
 | `bad_message` | what was decrypted is not an envelope line and then a signature block |
 | `bad_envelope` | the envelope is not UTF-8 JSON, one object with no key twice, version 1, with a body, a `msg_id` and a `sent_at` |
 | `bad_identity` | the envelope carries no identity document, or one that breaks its format |

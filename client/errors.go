@@ -42,7 +42,7 @@ func (e *lookupError) Unwrap() error { return e.err }
 // and never quote the message, its claimed sender's text or the server's:
 // whoever reads a refusal may be a model.
 const (
-	RefusedDecrypt    = "undecryptable"           // not encrypted to a prekey this box holds
+	RefusedDecrypt    = "undecryptable"           // not encrypted to a prekey this box holds, or not to exactly one recipient of a prekey's type
 	RefusedReplay     = "replay"                  // this ciphertext was already received
 	RefusedID         = "bad_id"                  // the server's id for it is not the SHA-256 of its ciphertext
 	RefusedPrekeyType = "unsupported_prekey_type" // the recipient's prekey is an age recipient of a type this client cannot encrypt to

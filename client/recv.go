@@ -482,7 +482,8 @@ type verdict struct {
 // them pass; otherwise why says which failed, in a code and in this client's
 // own words. An error is this box's own fault, not the message's: no verdict.
 //
-//  1. Decryption with every retained prekey.
+//  1. Decryption with every retained prekey, of a file with exactly one
+//     native recipient stanza (oneNative).
 //  2. What came out is an envelope line and then a signature block.
 //  3. The line carries the sender's identity document, and its from is that
 //     document's hash.
@@ -532,6 +533,9 @@ func (b *Box) judge(ctx context.Context, ct []byte, listedFrom string, asked *lo
 		return verdict{}, err
 	}
 	r, err := age.Decrypt(bytes.NewReader(ct), ids...)
+	if errors.Is(err, errNotOneNative) {
+		return refused(RefusedDecrypt, "it is not encrypted to exactly one recipient of a prekey's type, as every server takes a send: nothing was decrypted")
+	}
 	if err != nil {
 		return refused(RefusedDecrypt, "it does not decrypt with this box's prekeys")
 	}

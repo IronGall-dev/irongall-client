@@ -1,6 +1,7 @@
 package client_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -17,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	"filippo.io/age"
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
 	"github.com/IronGall-dev/irongall-client/internal/forge"
@@ -604,6 +606,85 @@ func TestAListsCursorIsURLSafe(t *testing.T) {
 			t.Errorf("%q: %v, delivered %d, asked %q", c.cursor, err, len(res.Delivered), queries)
 		case !c.taken && (err == nil || len(queries) != 1 || fetched || e.srv.Count(b.Address()) != 1):
 			t.Errorf("%q: taken: %v, asked %q, fetched %v", c.cursor, err, queries, fetched)
+		}
+	}
+}
+
+// grease is an age recipient that writes one grease stanza, as rage and
+// pyrage add to every file (PROTOCOL.md §4.5 step 7).
+type grease struct{}
+
+func (grease) Wrap([]byte) ([]*age.Stanza, error) {
+	return []*age.Stanza{{Type: "x-grease", Args: []string{"x"}, Body: []byte("grease")}}, nil
+}
+
+// A file without exactly one native recipient stanza is refused as
+// undecryptable before any key agreement, as every server refuses such a
+// send (PROTOCOL.md §4.5 step 7, §5 check 1): age tries every prekey on every
+// stanza, up to 1,024 (#49). Two native stanzas, one to the box's own prekey,
+// are refused, which age alone would decrypt; one native stanza with a
+// grease stanza beside it is delivered.
+func TestAFileWithoutOneNativeStanzaIsRefusedUndecrypted(t *testing.T) {
+	e := newEnv(t)
+	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	st, _ := e.srv.Prekey(b.Address())
+	p, err := protocol.ParsePrekey(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	own, err := p.Recipient()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stranger, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := os.ReadFile(prekeyFile(b, numberOf(t, b), ".agekey"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids, err := age.ParseIdentities(bytes.NewReader(key))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name string
+		to   []age.Recipient
+		code string
+	}{
+		{"two native stanzas, one the box's own", []age.Recipient{stranger.Recipient(), own}, client.RefusedDecrypt},
+		{"a native stanza and a grease stanza", []age.Recipient{grease{}, own}, ""},
+	} {
+		env, err := protocol.NewEnvelope(a.Address(), b.Address(), c.name, e.clock.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		env.Identity = a.Identity().Document()
+		line, sig, err := protocol.SignEnvelope(env, worker(t, a))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ct bytes.Buffer
+		w, err := age.Encrypt(&ct, c.to...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = w.Write(append(line, sig...))
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if r, err := age.Decrypt(bytes.NewReader(ct.Bytes()), ids...); err != nil || r == nil {
+			t.Fatalf("%s: age alone does not decrypt it: %v", c.name, err)
+		}
+		id := sha256.Sum256(ct.Bytes())
+		e.srv.Inject(b.Address(), hex.EncodeToString(id[:]), a.Address(), ct.Bytes())
+		res := receive(t, b)
+		switch {
+		case c.code == "" && (len(res.Delivered) != 1 || len(res.Refused) != 0):
+			t.Errorf("%s: %+v", c.name, res)
+		case c.code != "" && (len(res.Refused) != 1 || res.Refused[0].Code != c.code || len(res.Delivered) != 0 || !strings.Contains(res.Refused[0].Reason, "exactly one recipient")):
+			t.Errorf("%s: %+v", c.name, res)
 		}
 	}
 }

@@ -696,7 +696,8 @@ func readAgeKeys(name string) ([]age.Identity, error) {
 	return ids, nil
 }
 
-// prekeyIdentities returns every retained prekey, to decrypt with.
+// prekeyIdentities returns every retained prekey, to decrypt with, each
+// behind oneNative.
 func (b *Box) prekeyIdentities() ([]age.Identity, error) {
 	names, err := filepath.Glob(b.path("prekeys", "*.agekey"))
 	if err != nil {
@@ -708,12 +709,43 @@ func (b *Box) prekeyIdentities() ([]age.Identity, error) {
 		if err != nil {
 			return nil, err
 		}
-		all = append(all, ids...)
+		for _, id := range ids {
+			all = append(all, oneNative{id})
+		}
 	}
 	if len(all) == 0 {
 		return nil, errors.New("this box holds no prekeys: publish a new one with irongall prekey renew")
 	}
 	return all, nil
+}
+
+// oneNative is a prekey identity that takes a file only with exactly one
+// native recipient stanza, of a type a prekey has (protocol.PostQuantum,
+// protocol.Classic), as every server takes a send (PROTOCOL.md §4.5 step 7,
+// §5 check 1); a grease stanza and any other age ignores, as it does. age
+// tries every identity on every stanza, up to 1,024, so a file of 1,024
+// native stanzas costs a box about a thousand times what an honest message
+// does, for each prekey it keeps (#49, measured; PRECEDENTS.md, Part 2,
+// § 4), and only a server can serve one. Every identity is wrapped, so age,
+// which tries its own types first, tries them in the box's order, and the
+// first refuses such a file before any key agreement.
+type oneNative struct{ age.Identity }
+
+// errNotOneNative is a file oneNative refuses.
+var errNotOneNative = errors.New("not exactly one native recipient stanza")
+
+// Unwrap is the identity's own, for a file with exactly one native stanza.
+func (o oneNative) Unwrap(stanzas []*age.Stanza) ([]byte, error) {
+	n := 0
+	for _, s := range stanzas {
+		if s.Type == string(protocol.PostQuantum) || s.Type == string(protocol.Classic) {
+			n++
+		}
+	}
+	if n != 1 {
+		return nil, errNotOneNative
+	}
+	return o.Identity.Unwrap(stanzas)
 }
 
 func (b *Box) boxPath(rest string) string { return "/v1/" + b.id.Address().String() + rest }
