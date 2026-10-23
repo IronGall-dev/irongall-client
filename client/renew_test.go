@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -95,19 +97,22 @@ func TestAForgottenBoxRegistersAnewAtItsRenewal(t *testing.T) {
 // its upload, which the server then answers 404 no_such_mailbox (PROTOCOL.md
 // §6.4: "at any moment"): the renewal reads the box once more, and where the
 // server holds no box sends the same statement as its registration, by
-// prekey renew and by the renewal recv makes, whose ACL then goes again as
-// after any registration (#386). Control: a box forgotten before the read,
-// which the read's answer alone sends as a registration.
+// prekey renew, by the renewal recv makes, whose ACL then goes again as
+// after any registration, and by the remedy's renewal, after its revocation
+// (#386). Control: a box forgotten before the read, which the read's answer
+// alone sends as a registration.
 func TestARenewalWhoseUploadMeetsABoxForgottenSinceItsReadRegistersIt(t *testing.T) {
 	ctx := context.Background()
 	for _, c := range []struct {
-		name         string
-		before, recv bool
-		calls        string
+		name, how string
+		before    bool
+		calls     string
 	}{
-		{"control: prekey renew of a box forgotten before its read", true, false, "GET /v1/own, GET /v1/own/revocations, PUT /v1/own +pass"},
-		{"prekey renew", false, false, "GET /v1/own, PUT /v1/own/prekey +pass, GET /v1/own, GET /v1/own/revocations, PUT /v1/own +pass"},
-		{"recv", false, true, "GET /v1/own, PUT /v1/own/prekey +pass, GET /v1/own, GET /v1/own/revocations, PUT /v1/own +pass, GET /v1/own/acl +pass, PUT /v1/own/acl +pass, GET /v1/own/messages +pass"},
+		{"control: prekey renew of a box forgotten before its read", "prekey renew", true, "GET /v1/own, GET /v1/own/revocations, PUT /v1/own +pass"},
+		{"prekey renew", "prekey renew", false, "GET /v1/own, PUT /v1/own/prekey +pass, GET /v1/own, GET /v1/own/revocations, PUT /v1/own +pass"},
+		{"recv", "recv", false, "GET /v1/own, PUT /v1/own/prekey +pass, GET /v1/own, GET /v1/own/revocations, PUT /v1/own +pass, GET /v1/own/acl +pass, PUT /v1/own/acl +pass, GET /v1/own/messages +pass"},
+		{"control: cert revoke-earlier of a box forgotten before its read", "cert revoke-earlier", true, "GET /v1/own, GET /v1/own/revocations, PUT /v1/own/revocations, PUT /v1/own +pass"},
+		{"cert revoke-earlier", "cert revoke-earlier", false, "GET /v1/own, PUT /v1/own/revocations, PUT /v1/own/prekey +pass, GET /v1/own, GET /v1/own/revocations, PUT /v1/own +pass"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv(t)
@@ -115,7 +120,7 @@ func TestARenewalWhoseUploadMeetsABoxForgottenSinceItsReadRegistersIt(t *testing
 			if _, err := b.Block(ctx, d.Address()); err != nil {
 				t.Fatal(err)
 			}
-			if c.recv {
+			if c.how == "recv" {
 				e.clock.Add(25 * time.Hour)
 			} else {
 				e.clock.Add(2 * time.Second)
@@ -144,12 +149,18 @@ func TestARenewalWhoseUploadMeetsABoxForgottenSinceItsReadRegistersIt(t *testing
 			})
 			from := len(e.srv.Requests())
 			var err error
-			if c.recv {
+			switch c.how {
+			case "recv":
 				var res *client.Result
 				if res, err = b.Receive(ctx); err == nil && (res.Renewed == nil || res.RenewErr != nil || res.ACLErr != nil) {
 					t.Errorf("the recv: renewed %v, its renewal's error %v, its ACL's %v", res.Renewed != nil, res.RenewErr, res.ACLErr)
 				}
-			} else {
+			case "cert revoke-earlier":
+				var r *client.Remedy
+				if r, err = b.RenewAndRevoke(ctx, ""); err == nil && (r == nil || r.Revoked == nil || r.NotRevoked != nil || r.Prekey == nil || r.NotRenewed != nil) {
+					t.Errorf("the remedy: %+v", r)
+				}
+			default:
 				_, err = b.Rekey(ctx, "")
 			}
 			e.srv.SetMiddle(nil)
@@ -170,7 +181,7 @@ func TestARenewalWhoseUploadMeetsABoxForgottenSinceItsReadRegistersIt(t *testing
 			if servedSerial(t, e, b) != numberOf(t, b) {
 				t.Fatalf("the server serves %d, the box published %d", servedSerial(t, e, b), numberOf(t, b))
 			}
-			if c.recv {
+			if c.how == "recv" {
 				if acl := e.srv.ACL(b.Address()); acl == nil || !acl.Deny.Has(d.Address()) {
 					t.Errorf("the box registered anew did not send its ACL again: %+v", acl)
 				}
@@ -233,6 +244,103 @@ func TestARenewalWhoseUploadIs404RegistersOnlyOnAReadThatShowsNoBox(t *testing.T
 			}
 			if client.Code(err) != protocol.CodeNoSuchMailbox || strings.Join(calls, ", ") != c.calls || numberOf(t, b) != first {
 				t.Fatalf("an upload answered 404 with %s: %v; calls %q, want %q; published %d, was %d", c.name, err, calls, c.calls, numberOf(t, b), first)
+			}
+		})
+	}
+}
+
+// A renewal whose upload meets a box forgotten since its read, and whose
+// read of itself again shows no box and ends there: at a fault of the box
+// itself, at the write that keeps what the read of its revocations showed (a
+// revocation of its certificates that another holder of its identity
+// published as the box was forgotten), the renewal's error is that fault;
+// at the box's own revocation, published by another holder between the read
+// of the box and that of its revocations, it is that alone, and the box
+// keeps what it kept, its ACL among it. Either way no registration goes and
+// nothing is made or signed after it (#386). The next renewal, the fault
+// gone, registers the box.
+func TestARenewalWhoseReadAgainEndsSendsNoRegistration(t *testing.T) {
+	ctx := context.Background()
+	full := &os.PathError{Op: "write", Path: "state", Err: syscall.ENOSPC}
+	for _, c := range []string{"a fault of the box", "its own revocation"} {
+		t.Run(c, func(t *testing.T) {
+			e := newEnv(t)
+			b, d := e.box(protocol.Classic), e.box(protocol.Classic)
+			if _, err := b.Block(ctx, d.Address()); err != nil || !has(b, "acl.json") {
+				t.Fatalf("the block: %v", err)
+			}
+			first := numberOf(t, b)
+			rec := certsRecord(t, b.Dir(), first) // by another holder of the identity
+			if c == "its own revocation" {
+				var err error
+				if rec, err = b.Revocation(ctx); err != nil {
+					t.Fatal(err)
+				}
+			}
+			e.clock.Add(2 * time.Second)
+			var armed, forgot atomic.Bool
+			client.SetWriteFault(t, func() error { // at that write alone
+				if armed.CompareAndSwap(true, false) {
+					return full
+				}
+				return nil
+			})
+			var keys []string
+			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+				switch {
+				case r.Method == http.MethodPut && r.URL.Path == boxPath(b)+"/prekey" && forgot.CompareAndSwap(false, true):
+					e.srv.Forget(b.Address())
+					if c == "a fault of the box" {
+						putRecord(t, next, b.Address(), rec)
+					}
+				case r.Method == http.MethodGet && r.URL.Path == boxPath(b) && forgot.Load():
+					next.ServeHTTP(w, r)
+					if c == "its own revocation" {
+						putRecord(t, next, b.Address(), rec)
+					}
+					return
+				case r.Method == http.MethodGet && r.URL.Path == boxPath(b)+"/revocations":
+					// The box's next write is the keep of what this read shows.
+					keys = keysOf(b.Dir())
+					armed.Store(c == "a fault of the box")
+				}
+				next.ServeHTTP(w, r)
+			})
+			from := len(e.srv.Requests())
+			_, err := b.Rekey(ctx, "")
+			armed.Store(false)
+			e.srv.SetMiddle(nil)
+			var calls []string
+			for _, q := range e.srv.Requests()[from:] {
+				s := q.Method + " " + strings.ReplaceAll(q.Path, b.Address().String(), "own")
+				if q.Pass {
+					s += " +pass"
+				}
+				calls = append(calls, s)
+			}
+			if want := "GET /v1/own, PUT /v1/own/prekey +pass, GET /v1/own, GET /v1/own/revocations"; strings.Join(calls, ", ") != want {
+				t.Fatalf("calls %q, want %q", calls, want)
+			}
+			if got := keysOf(b.Dir()); !slices.Equal(got, keys) {
+				t.Errorf("made after the read again: %v, then %v", keys, got)
+			}
+			if c == "a fault of the box" {
+				if !errors.Is(err, syscall.ENOSPC) {
+					t.Fatalf("the renewal: %v, want the fault", err)
+				}
+				if _, err := b.Rekey(ctx, ""); err != nil || servedSerial(t, e, b) != numberOf(t, b) {
+					t.Fatalf("the next renewal: %v; the server serves %d, the box published %d", err, servedSerial(t, e, b), numberOf(t, b))
+				}
+				return
+			}
+			var gone *client.RevokedError
+			if !errors.As(err, &gone) || !gone.Own {
+				t.Fatalf("the renewal: %v, want the box's own revocation", err)
+			} else if _, alone := err.(*client.RevokedError); !alone {
+				t.Errorf("the renewal's error is not its revocation alone: %v", err)
+			}
+			if !has(b, "acl.json") || !has(b, "revoked.sig") {
+				t.Errorf("after the event the box keeps its ACL %v and its revocation %v", has(b, "acl.json"), has(b, "revoked.sig"))
 			}
 		})
 	}

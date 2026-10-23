@@ -512,6 +512,19 @@ func partwayHides(e *env, a *client.Box) func(int, http.ResponseWriter, *http.Re
 	}
 }
 
+// forgetsAtUpload is the state's operator that forgets box a as its first
+// prekey upload arrives, which the server then answers 404 no_such_mailbox
+// (#386).
+func forgetsAtUpload(e *env, a *client.Box) func(int, http.ResponseWriter, *http.Request, http.Handler) bool {
+	var forgot atomic.Bool
+	return func(_ int, _ http.ResponseWriter, r *http.Request, _ http.Handler) bool {
+		if r.Method == http.MethodPut && r.URL.Path == boxPath(a)+"/prekey" && forgot.CompareAndSwap(false, true) {
+			e.srv.Forget(a.Address())
+		}
+		return false
+	}
+}
+
 func partwayCases() []partwayCase {
 	recv := func(e *env, a *client.Box) partwaySet {
 		return partwaySet{dir: a.Dir(), a: a, check: recvSaysItAlone, run: func(ctx context.Context) (any, error) { return a.Receive(ctx) }}
@@ -578,13 +591,14 @@ func partwayCases() []partwayCase {
 		{"prekey renew, its server forgets it between its read and its upload", func(t *testing.T, e *env) partwaySet {
 			a := e.box(protocol.Classic)
 			e.clock.Add(2 * time.Second)
-			var forgot atomic.Bool
-			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Rekey(ctx, "") }, inner: func(_ int, _ http.ResponseWriter, r *http.Request, _ http.Handler) bool {
-				if r.Method == http.MethodPut && r.URL.Path == boxPath(a)+"/prekey" && forgot.CompareAndSwap(false, true) {
-					e.srv.Forget(a.Address())
-				}
-				return false
-			}}
+			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Rekey(ctx, "") }, inner: forgetsAtUpload(e, a)}
+		}},
+		{"cert revoke-earlier, its server forgets it between its read and its upload", func(t *testing.T, e *env) partwaySet {
+			a := e.box(protocol.Classic)
+			e.clock.Add(2 * time.Second)
+			s := remedy(a)
+			s.inner = forgetsAtUpload(e, a)
+			return s
 		}},
 		{"cert revoke-earlier", func(t *testing.T, e *env) partwaySet {
 			a := e.box(protocol.Classic)

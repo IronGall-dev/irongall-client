@@ -96,21 +96,6 @@ func (b *Box) renewFrom(ctx context.Context, st *ownRead) (*protocol.Prekey, tak
 	// From here a statement at next exists, signed, whatever the server
 	// makes of it.
 	at, err := b.sendRenewal(ctx, req, next)
-	// A server may forget a box past its record's expiry at any moment, and
-	// answer its upload 404 no_such_mailbox after a read that served it
-	// (PROTOCOL.md §6.4): the box reads itself once more (known, whose error
-	// is its own revocation where the read shows one), and where the server
-	// holds no box the same statement goes as its registration (#386).
-	if at.None() && !req.forgotten && code(err) == protocol.CodeNoSuchMailbox {
-		o, kerr := b.known(ctx)
-		if kerr != nil {
-			return nil, taken{}, kerr
-		}
-		if o.at == atNone && o.err == nil {
-			req.forgotten = true
-			at, err = b.sendRenewal(ctx, req, next)
-		}
-	}
 	if at.None() {
 		return nil, taken{}, err
 	}
@@ -127,18 +112,37 @@ type renewal struct {
 }
 
 // sendRenewal publishes renewal r of statement n: as a new prekey, or to a
-// server that forgot the box, as its registration. A server that holds no
-// box holds no ACL of it, and a box registered anew has none there, so what
-// this box kept of the last one the server took goes before the registration
-// is sent, and with it any mark that another writer put it (keepHeld):
-// whatever becomes of the answer, a fault after it or a process ended before
-// it is recorded, the next send or recv sends the ACL again (#324), and
-// reports no ACL another writer put replaced, since the server dropped it
-// with the box. So does a restore's adoption of it, which has nothing to
-// adopt (#366). It returns the reading the server took, as publish does.
+// server that forgot the box, as its registration, for every renewal (Rekey,
+// Receive's, Init's, the remedy's). A server may forget a box past its
+// record's expiry at any moment, and answer its upload 404 no_such_mailbox
+// after a read that served it (PROTOCOL.md §6.4): the box then reads itself
+// once more (known, whose error, a fault of the box or its own revocation,
+// ends the renewal there), and where that read shows no box, every call
+// answered, the same statement goes as its registration (#386); otherwise
+// the upload's answer stands.
+//
+// A server that holds no box holds no ACL of it, and a box registered anew
+// has none there, so what this box kept of the last one the server took goes
+// before the registration is sent, and with it any mark that another writer
+// put it (keepHeld): whatever becomes of the answer, a fault after it or a
+// process ended before it is recorded, the next send or recv sends the ACL
+// again (#324), and reports no ACL another writer put replaced, since the
+// server dropped it with the box. So does a restore's adoption of it, which
+// has nothing to adopt (#366). It returns the reading the server took, as
+// publish does.
 func (b *Box) sendRenewal(ctx context.Context, r renewal, n uint64) (taken, error) {
 	if !r.forgotten {
-		return b.publish(ctx, b.boxPath("/prekey"), r.req, n)
+		at, err := b.publish(ctx, b.boxPath("/prekey"), r.req, n)
+		if !at.None() || code(err) != protocol.CodeNoSuchMailbox {
+			return at, err
+		}
+		o, kerr := b.known(ctx)
+		if kerr != nil {
+			return taken{}, kerr
+		}
+		if o.at != atNone || o.err != nil {
+			return at, err
+		}
 	}
 	if err := b.update(func(s store) error {
 		for _, k := range []string{"acl", "acl-another-writer"} {
