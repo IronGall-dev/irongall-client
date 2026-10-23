@@ -460,12 +460,14 @@ func (b *Box) keepRevokedCerts(a protocol.Address, doc, statement, sig []byte) e
 // have been taken, and is what "irongall cert revoke-earlier" runs; this
 // is its second half alone, for a box that has renewed already.
 //
-// It revokes through the serial below the one in use. A box numbers a
-// certificate by its clock ([protocol.SerialAt]), so that covers every
-// certificate made before this one on any machine, whether this box knows of
-// it or not: one a lost machine made and never published is among them,
-// unless that machine's clock read ahead of this one's (PROTOCOL.md §2b); a
-// later run covers that one.
+// It revokes through the serial below the one in use, as the box holds it
+// once it has read itself at its server (known), which records a renewal the
+// server took whose answer the box never had. A box numbers a certificate by
+// its clock ([protocol.SerialAt]), so that covers every certificate made
+// before this one on any machine, whether this box knows of it or not: one a
+// lost machine made and never published is among them, unless that machine's
+// clock read ahead of this one's (PROTOCOL.md §2b); a later run covers that
+// one.
 //
 // It returns the revocation, or nil when the certificate in use has serial
 // 1, which nothing is below.
@@ -473,16 +475,17 @@ func (b *Box) keepRevokedCerts(a protocol.Address, doc, statement, sig []byte) e
 // read yet, is refused too: nobody can tell it from a thief's.
 func (b *Box) RevokeEarlier(ctx context.Context) (*protocol.RevokedCertificates, error) {
 	return locked(ctx, b, func() (*protocol.RevokedCertificates, error) {
-		current, err := b.publishedSerial()
-		if err != nil {
-			return nil, err
-		}
 		// What its server holds of the box's own revocations, kept where it
-		// verifies: an answer it cannot use stops nothing.
+		// verifies, and of its renewals (noteServed): an answer it cannot use
+		// stops nothing.
 		if _, err := b.known(ctx); err != nil {
 			return nil, err
 		}
 		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		current, err := b.publishedSerial()
+		if err != nil {
 			return nil, err
 		}
 		return b.revokeBelow(ctx, current)

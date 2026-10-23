@@ -93,6 +93,50 @@ func TestRevokeEarlierEndsWhatAnOldWorkingKeySigns(t *testing.T) {
 	}
 }
 
+// RevokeEarlier after a renewal the server took whose answer the box never
+// had, its process killed at "renewal taken": its read of itself records that
+// renewal (noteServed), so it revokes below the certificate in use once the
+// read is done, the one before the renewal among them, and a reader refuses
+// what that one's working key signs after it. Read before, the serial left
+// that certificate unrevoked (#391).
+func TestRevokeEarlierAfterARenewalTakenUnseenRevokesTheCertificateBeforeIt(t *testing.T) {
+	for _, killed := range []bool{false, true} {
+		name := "the renewal recorded"
+		if killed {
+			name = "the renewal taken unseen"
+		}
+		t.Run(name, func(t *testing.T) {
+			ctx := context.Background()
+			e := newEnv(t)
+			b, c := e.box(protocol.Classic), e.box(protocol.Classic)
+			before := numberOf(t, b)
+			stolen := worker(t, b) // in use before the renewal: whoever copied the box holds it
+			e.clock.Add(2 * time.Second)
+			if killed {
+				crash(t, e, b, "rekey", "renewal taken", protocol.Address{})
+			} else if _, err := b.Rekey(ctx, ""); err != nil {
+				t.Fatal(err)
+			}
+			x, err := client.Open(b.Dir(), e.opts())
+			if err != nil {
+				t.Fatal(err)
+			}
+			certs, err := x.RevokeEarlier(ctx)
+			inUse := numberOf(t, x)
+			if err != nil || certs == nil || certs.Through != inUse-1 || !certs.Revokes(before) || inUse != servedSerial(t, e, x) {
+				t.Errorf("RevokeEarlier, with %d in use before the renewal and %d after (the server's %d): %+v, %v", before, inUse, servedSerial(t, e, x), certs, err)
+			}
+			// What that working key signs after, as b, put in c's box by
+			// whoever holds it and the server: c reads b's box, with its
+			// revocation of certificates, before it judges.
+			mailAs(t, e, x, c, stolen, "signed with the working key b used before its renewal")
+			if res := receive(t, c); len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedCertificate {
+				t.Errorf("mail under certificate %d after RevokeEarlier: delivered %d, refused %+v", before, len(res.Delivered), res.Refused)
+			}
+		})
+	}
+}
+
 // A revocation of certificates is the identity's to sign, and the highest one
 // a reader has verified stands: what a server shows that a working key
 // signed, or that is a lower one of the identity's own, changes nothing.
