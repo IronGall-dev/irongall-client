@@ -3,19 +3,28 @@ package client_test
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/IronGall-dev/irongall-client/client"
+	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
 	"github.com/IronGall-dev/irongall-client/internal/forge"
 	"github.com/IronGall-dev/irongall-client/protocol"
+	"golang.org/x/crypto/ssh"
 )
 
 // A command that learns part way that its box is finished, a read on the way
@@ -260,5 +269,556 @@ func TestInitOfARestoredBoxRevokedAtItsServerSaysRevoked(t *testing.T) {
 				t.Errorf("the restored box after init: %+v, %v", st, err)
 			}
 		})
+	}
+}
+
+// Every command a box runs under its lock, in the states that reach each of
+// its paths, against a server made hostile at its 1st call, then its 2nd, and
+// on through every call an honest run makes: the crash tests' kill at each
+// step is the model (crash_test.go). At that call the box's address is
+// revoked at its server, by another holder of the record, and the call is
+// answered one way (partwayVariants). An answer to a call that names the box,
+// showing its own revocation, that verifies, is the event: the box then holds
+// the revocation, the command's error is it, and nothing more is asked or
+// signed; between a call whose answer must be proved and the event, only the
+// proof's own reads of the box go out. A box shown none that verifies holds
+// none, and its command is not REVOKED: a server's word revokes nothing.
+func TestEveryCommandShownItsOwnRevocationAtEachCall(t *testing.T) {
+	for _, c := range partwayCases() {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			honest := partwayHonest(t, c)
+			for n, call := range honest {
+				for _, v := range partwayVariants {
+					if v == partwayRead && !(call.method == http.MethodGet && strings.HasSuffix(call.path, "/revocations")) {
+						continue
+					}
+					t.Run(fmt.Sprintf("call %d %s %s/%s", n+1, call.method, call.short, v), func(t *testing.T) {
+						t.Parallel()
+						partwayAt(t, c, n+1, v)
+					})
+				}
+			}
+		})
+	}
+}
+
+// What the call made hostile answers.
+const (
+	partwayRecord   = "410 with its record"
+	partwayServed   = "410 with a record that does not verify, the revocation served"
+	partwayUnserved = "410 with a record that does not verify, none published"
+	partwayCert     = "401 certificate_revoked"
+	partwayRead     = "a 2xx read of its revocations carrying it"
+)
+
+var partwayVariants = []string{partwayRecord, partwayServed, partwayUnserved, partwayCert, partwayRead}
+
+// A partwayCase is a command in a state that reaches one of its paths.
+type partwayCase struct {
+	name string
+	set  func(t *testing.T, e *env) partwaySet
+}
+
+// partwaySet is a box put in its state: its directory, the box whose
+// revocation is published, the state's own operator at call i (it answers r
+// and reports true, or leaves it to the server), the command, and what the
+// command must say once it learned the revocation, beyond what every one must.
+type partwaySet struct {
+	dir   string
+	a     *client.Box
+	inner func(i int, w http.ResponseWriter, r *http.Request, next http.Handler) bool
+	run   func(ctx context.Context) (any, error)
+	check func(t *testing.T, w *partwayRun)
+}
+
+// partwayCall is one call the command made, and what it was answered.
+type partwayCall struct {
+	method, path, short string
+	pass                bool
+	status              int
+	// shows is an answer to a call naming the box that carries its own
+	// revocation, verifying: a 410's record, or a read of its revocations.
+	shows bool
+}
+
+func (c partwayCall) String() string {
+	s := fmt.Sprintf("%s %s %d", c.method, c.short, c.status)
+	if c.pass {
+		s += " +pass"
+	}
+	if c.shows {
+		s += " (shows it)"
+	}
+	return s
+}
+
+// partwayRun is what one run did.
+type partwayRun struct {
+	box   *client.Box // opened again once the command ended
+	got   any
+	err   error
+	calls []partwayCall
+	event int // the index in calls of the event, or -1
+}
+
+// partwayLog is the operator in front of the server for one run: hostile at
+// call n alone, as v says, and the state's own operator at every other.
+type partwayLog struct {
+	mu    sync.Mutex
+	calls []partwayCall
+	event int
+	keys  []string // the box's working keys and prekeys when the event was answered
+}
+
+func (l *partwayLog) middle(t *testing.T, s partwaySet, rec, bad *protocol.Revocations, n int, v string) func(http.ResponseWriter, *http.Request, http.Handler) {
+	own := s.a.Address()
+	return func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		l.mu.Lock()
+		i := len(l.calls) + 1
+		l.calls = append(l.calls, partwayCall{method: r.Method, path: r.URL.Path, short: partwayShort(r.URL.Path, own), pass: r.Header.Get("Authorization") != ""})
+		l.mu.Unlock()
+		got := httptest.NewRecorder()
+		switch {
+		case i == n:
+			if v != partwayUnserved {
+				putRecord(t, next, own, rec)
+			}
+			switch v {
+			case partwayRecord:
+				forge.Refuse(got, protocol.CodeRevoked, func(p *protocol.Problem) { p.Record = rec })
+			case partwayServed, partwayUnserved:
+				forge.Refuse(got, protocol.CodeRevoked, func(p *protocol.Problem) { p.Record = bad })
+			case partwayCert:
+				forge.Refuse(got, protocol.CodeCertificateRevoked)
+			case partwayRead:
+				fakeserver.WriteJSON(got, http.StatusOK, rec)
+			}
+		case s.inner != nil && s.inner(i, got, r, next):
+		default:
+			next.ServeHTTP(got, r)
+		}
+		shows := partwayNames(r.URL.Path, own) && partwayShows(r, got, own)
+		l.mu.Lock()
+		l.calls[i-1].status, l.calls[i-1].shows = got.Code, shows
+		if shows && l.event < 0 {
+			// The command waits for this answer: nothing of the box moves.
+			l.event, l.keys = i-1, keysOf(s.dir)
+		}
+		l.mu.Unlock()
+		for k, vs := range got.Header() {
+			w.Header()[k] = vs
+		}
+		w.WriteHeader(got.Code)
+		_, _ = w.Write(got.Body.Bytes())
+	}
+}
+
+// partwayShows reports whether an answer carries a's revocation, verifying.
+func partwayShows(r *http.Request, got *httptest.ResponseRecorder, a protocol.Address) bool {
+	var rec *protocol.Revocations
+	switch {
+	case got.Code == http.StatusGone:
+		var p protocol.Problem
+		if protocol.Unmarshal(got.Body.Bytes(), &p) != nil {
+			return false
+		}
+		rec = p.Record
+	case got.Code == http.StatusOK && r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/revocations"):
+		rec = &protocol.Revocations{}
+		if protocol.Unmarshal(got.Body.Bytes(), rec) != nil {
+			return false
+		}
+	}
+	if rec == nil || len(rec.Revocation) == 0 {
+		return false
+	}
+	_, err := protocol.VerifyRevocation(a, rec.Identity, rec.Revocation)
+	return err == nil
+}
+
+// partwayNames reports whether a call's path names box a.
+func partwayNames(path string, a protocol.Address) bool {
+	own := "/v1/" + a.String()
+	return path == own || strings.HasPrefix(path, own+"/")
+}
+
+// partwayIsRead reports whether a call is a read of a box or of its
+// revocations, which carries no pass.
+func partwayIsRead(c partwayCall) bool {
+	rest, _ := strings.CutPrefix(c.path, "/v1/")
+	return c.method == http.MethodGet && (!strings.Contains(rest, "/") || strings.HasSuffix(rest, "/revocations"))
+}
+
+// partwayMustLearn reports whether the box must hold its revocation after
+// call c was answered as v: an answer about the box itself that its proof
+// reads the box for (the revocation is served by then), or one that carries
+// the record itself. A 401 is about the box's own pass, whatever box the
+// call names; a read carries no pass and is not read again.
+func partwayMustLearn(c partwayCall, v string, a protocol.Address) bool {
+	switch v {
+	case partwayRecord:
+		return partwayNames(c.path, a)
+	case partwayServed:
+		return partwayNames(c.path, a) && !partwayIsRead(c)
+	case partwayCert:
+		return !partwayIsRead(c)
+	case partwayRead:
+		return true
+	}
+	return false
+}
+
+// partwayProved reports whether call c, answered as v, is one whose answer
+// the box proves by reading itself: what goes out between it and the event
+// is that read alone.
+func partwayProved(c partwayCall, v string, a protocol.Address) bool {
+	return v == partwayServed && partwayNames(c.path, a) && !partwayIsRead(c) || v == partwayCert && !partwayIsRead(c)
+}
+
+var partwayHex = regexp.MustCompile(`[0-9a-f]{64}`)
+
+// partwayShort is a path with the box's address written own and any other
+// address or id written as #.
+func partwayShort(path string, a protocol.Address) string {
+	return partwayHex.ReplaceAllString(strings.ReplaceAll(path, a.String(), "own"), "#")
+}
+
+// keysOf is what a box's work/ and prekeys/ hold, by name.
+func keysOf(dir string) []string {
+	var names []string
+	for _, d := range []string{"work", "prekeys"} {
+		es, _ := os.ReadDir(filepath.Join(dir, d))
+		for _, e := range es {
+			names = append(names, d+"/"+e.Name())
+		}
+	}
+	return names
+}
+
+// partwayHonest runs c against the honest server and returns its calls.
+func partwayHonest(t *testing.T, c partwayCase) []partwayCall {
+	t.Helper()
+	e := newEnv(t)
+	s := c.set(t, e)
+	l := &partwayLog{event: -1}
+	e.srv.SetMiddle(l.middle(t, s, nil, nil, 0, ""))
+	if _, err := s.run(context.Background()); err != nil {
+		t.Fatalf("the honest run: %v; calls %v", err, l.calls)
+	}
+	e.srv.SetMiddle(nil)
+	if len(l.calls) == 0 {
+		t.Fatal("the honest run made no call")
+	}
+	return l.calls
+}
+
+// partwayAt runs c with its server hostile at call n, as v says, and holds
+// the run to what every command must do.
+func partwayAt(t *testing.T, c partwayCase, n int, v string) {
+	ctx := context.Background()
+	e := newEnv(t)
+	s := c.set(t, e)
+	rec, err := s.a.Revocation(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := &partwayLog{event: -1}
+	e.srv.SetMiddle(l.middle(t, s, rec, notItsRecord(t, s.a), n, v))
+	got, err := s.run(ctx)
+	e.srv.SetMiddle(nil)
+	if len(l.calls) < n {
+		t.Fatalf("the run made %d calls, the honest one at least %d: %v", len(l.calls), n, l.calls)
+	}
+	box, oerr := client.Open(s.dir, e.opts())
+	if oerr != nil {
+		t.Fatal(oerr)
+	}
+	st, serr := box.Status(ctx)
+	if serr != nil {
+		t.Fatal(serr)
+	}
+	w := &partwayRun{box: box, got: got, err: err, calls: l.calls, event: l.event}
+	at := l.calls[n-1]
+	if l.event < 0 {
+		if partwayMustLearn(at, v, s.a.Address()) {
+			t.Errorf("answered %s at %s, and nothing it asked showed it its revocation: %v; calls %v", v, at, err, l.calls)
+		}
+		if st.Revoked {
+			t.Errorf("it holds its own revocation, which no answer showed: calls %v", l.calls)
+		}
+		if finishedOwn(err) {
+			t.Errorf("REVOKED on a server's word: %v; calls %v", err, l.calls)
+		}
+		return
+	}
+	if !st.Revoked {
+		t.Errorf("an answer showed it its revocation, which it does not hold: calls %v", l.calls)
+	}
+	if !finishedOwn(err) {
+		t.Errorf("the command's error is not its revocation: %v; calls %v", err, l.calls)
+	}
+	for _, c := range l.calls[l.event+1:] {
+		t.Errorf("asked after the event: %s; calls %v", c, l.calls)
+	}
+	if partwayProved(at, v, s.a.Address()) {
+		for _, c := range l.calls[n:l.event] {
+			if c.method != http.MethodGet || c.short != "/v1/own" && c.short != "/v1/own/revocations" {
+				t.Errorf("asked between the answer to prove and the proof: %s; calls %v", c, l.calls)
+			}
+		}
+	}
+	for _, k := range keysOf(s.dir) {
+		if !slices.Contains(l.keys, k) {
+			t.Errorf("made %s after the event: calls %v", k, l.calls)
+		}
+	}
+	if has(box, "pass") {
+		t.Errorf("it keeps a pass after the event: calls %v", l.calls)
+	}
+	if s.check != nil {
+		s.check(t, w)
+	}
+}
+
+// notItsRecord is a record of a's identity whose revocation another key
+// signed: one that does not verify.
+func notItsRecord(t *testing.T, a *client.Box) *protocol.Revocations {
+	t.Helper()
+	_, key, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.NewSignerFromKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig, err := protocol.SignRevocation(signer, a.Address())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &protocol.Revocations{Identity: a.Identity().Document(), Revocation: sig}
+}
+
+// recvSaysItAlone holds a drain that learned it to that alone: no renewal and
+// no ACL failed, and no renewal is kept as one that failed (#335, #378).
+func recvSaysItAlone(t *testing.T, w *partwayRun) {
+	if res, _ := w.got.(*client.Result); res != nil && (res.RenewErr != nil || res.ACLErr != nil) {
+		t.Errorf("recv's result: a renewal that failed %v, an ACL not sent %v; calls %v", res.RenewErr, res.ACLErr, w.calls)
+	}
+	if has(w.box, "renew-failed") {
+		t.Errorf("it keeps a renewal that failed: calls %v", w.calls)
+	}
+}
+
+// remedySaysItAlone holds a remedy that learned it before its server took
+// its revocation to no Remedy: no server took anything from it (#326, #379).
+func remedySaysItAlone(t *testing.T, w *partwayRun) {
+	for _, c := range w.calls[:w.event] {
+		if c.method == http.MethodPut && c.short == "/v1/own/revocations" && c.status < 300 {
+			return
+		}
+	}
+	if r, _ := w.got.(*client.Remedy); r != nil {
+		t.Errorf("a Remedy where no server took anything: %+v; calls %v", r, w.calls)
+	}
+}
+
+// outboxSaysItAlone holds a send or a flush that learned it to leaving
+// nothing waiting it had not tried before: the entry it was posting then,
+// and each it had not reached, are in outbox/failed/, with nothing asked of
+// a later one (#340). One tried before, and kept for a call that failed, may
+// wait.
+func outboxSaysItAlone(t *testing.T, w *partwayRun) {
+	own := "/v1/" + w.box.Address().String()
+	at := ""
+	for _, c := range w.calls[:w.event+1] {
+		if !partwayNames(c.path, w.box.Address()) {
+			at, _, _ = strings.Cut(strings.TrimPrefix(c.path, "/v1/"), "/")
+		}
+	}
+	left, _ := filepath.Glob(filepath.Join(w.box.Dir(), "outbox", "*.P"))
+	for _, name := range left {
+		to, _, _ := strings.Cut(filepath.Base(name), ".")
+		reached := slices.ContainsFunc(w.calls[:w.event+1], func(c partwayCall) bool { return c.path != own && strings.HasPrefix(c.path, "/v1/"+to) })
+		if !reached || to == at {
+			t.Errorf("waits in the outbox, not in outbox/failed/: the entry to %s, which it was posting when it learned it or had not reached; calls %v", partwayShort("/v1/"+to, w.box.Address()), w.calls)
+		}
+	}
+}
+
+// partwayHides is the state's operator that serves the box's first read of
+// itself without the revocation of its certificates its server holds, so
+// that its publish of one is answered conflict.
+func partwayHides(e *env, a *client.Box) func(int, http.ResponseWriter, *http.Request, http.Handler) bool {
+	return func(i int, w http.ResponseWriter, r *http.Request, next http.Handler) bool {
+		if i != 1 || r.Method != http.MethodGet || r.URL.Path != boxPath(a) {
+			return false
+		}
+		e.serve(w, r, next, func(b *protocol.BoxResponse) { b.RevokedCertificates, b.RevokedCertificatesSignature = nil, nil })
+		return true
+	}
+}
+
+func partwayCases() []partwayCase {
+	recv := func(e *env, a *client.Box) partwaySet {
+		return partwaySet{dir: a.Dir(), a: a, check: recvSaysItAlone, run: func(ctx context.Context) (any, error) { return a.Receive(ctx) }}
+	}
+	remedy := func(a *client.Box) partwaySet {
+		return partwaySet{dir: a.Dir(), a: a, check: remedySaysItAlone, run: func(ctx context.Context) (any, error) { return a.RenewAndRevoke(ctx, "") }}
+	}
+	earlier := func(a *client.Box) partwaySet {
+		return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.RevokeEarlier(ctx) }}
+	}
+	restored := func(t *testing.T, e *env, a *client.Box) partwaySet {
+		dir := restore(t, e, a).Dir()
+		e.clock.Add(2 * time.Second)
+		return partwaySet{dir: dir, a: a, run: func(ctx context.Context) (any, error) { return client.Init(ctx, dir, e.opts(), protocol.Classic) }}
+	}
+	serverAllowed := func(t *testing.T, a *client.Box) {
+		t.Helper()
+		if err := a.SetPolicy(t.Context(), client.Policy{Unknown: client.LandInbox, Server: client.AdmitAllowed}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return []partwayCase{
+		{"recv", func(t *testing.T, e *env) partwaySet {
+			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			send(t, b, a, "waits")
+			return recv(e, a)
+		}},
+		{"recv, a renewal due", func(t *testing.T, e *env) partwaySet {
+			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			send(t, b, a, "waits")
+			e.clock.Add(25 * time.Hour)
+			return recv(e, a)
+		}},
+		{"recv, mended after a 404", func(t *testing.T, e *env) partwaySet {
+			a := e.box(protocol.Classic)
+			e.srv.Forget(a.Address())
+			e.clock.Add(time.Minute)
+			return recv(e, a)
+		}},
+		{"recv, mended after certificate_revoked", func(t *testing.T, e *env) partwaySet {
+			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			send(t, b, a, "waits")
+			publish(t, e, certsRecord(t, a.Dir(), numberOf(t, a)))
+			e.clock.Add(time.Minute)
+			return recv(e, a)
+		}},
+		{"recv, a renewal due on a box its server forgot", func(t *testing.T, e *env) partwaySet {
+			a := e.box(protocol.Classic)
+			e.srv.Forget(a.Address())
+			e.clock.Add(25 * time.Hour)
+			return recv(e, a)
+		}},
+		{"prekey renew", func(t *testing.T, e *env) partwaySet {
+			a := e.box(protocol.Classic)
+			e.clock.Add(2 * time.Second)
+			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Rekey(ctx, "") }}
+		}},
+		{"prekey renew, a box its server forgot", func(t *testing.T, e *env) partwaySet {
+			a := e.box(protocol.Classic)
+			e.srv.Forget(a.Address())
+			e.clock.Add(2 * time.Second)
+			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Rekey(ctx, "") }}
+		}},
+		{"cert revoke-earlier", func(t *testing.T, e *env) partwaySet {
+			a := e.box(protocol.Classic)
+			e.clock.Add(2 * time.Second)
+			return remedy(a)
+		}},
+		{"cert revoke-earlier after a conflict", func(t *testing.T, e *env) partwaySet {
+			a := e.box(protocol.Classic)
+			publishAt(t, e.srv.URL, ownRevocation(t, a, numberOf(t, a)+7200))
+			e.clock.Add(2 * time.Second)
+			s := remedy(a)
+			s.inner = partwayHides(e, a)
+			return s
+		}},
+		{"RevokeEarlier", func(t *testing.T, e *env) partwaySet {
+			a := e.box(protocol.Classic)
+			e.clock.Add(2 * time.Second)
+			return earlier(a)
+		}},
+		{"RevokeEarlier after a conflict", func(t *testing.T, e *env) partwaySet {
+			a := e.box(protocol.Classic)
+			publishAt(t, e.srv.URL, ownRevocation(t, a, numberOf(t, a)+7200))
+			e.clock.Add(2 * time.Second)
+			s := earlier(a)
+			s.inner = partwayHides(e, a)
+			return s
+		}},
+		{"send", func(t *testing.T, e *env) partwaySet {
+			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			return partwaySet{dir: a.Dir(), a: a, check: outboxSaysItAlone, run: func(ctx context.Context) (any, error) { return a.Send(ctx, b.Address(), "sent") }}
+		}},
+		{"send, its ACL changed", func(t *testing.T, e *env) partwaySet {
+			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			serverAllowed(t, a)
+			return partwaySet{dir: a.Dir(), a: a, check: outboxSaysItAlone, run: func(ctx context.Context) (any, error) { return a.Send(ctx, b.Address(), "sent") }}
+		}},
+		{"send JSON", func(t *testing.T, e *env) partwaySet {
+			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			return partwaySet{dir: a.Dir(), a: a, check: outboxSaysItAlone, run: func(ctx context.Context) (any, error) {
+				return a.SendJSON(ctx, b.Address(), []byte(`{"sent":true}`), client.Fields{})
+			}}
+		}},
+		{"outbox flush, two waiting", func(t *testing.T, e *env) partwaySet {
+			a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+				if r.Method == http.MethodPost {
+					forge.Refuse(w, protocol.CodeUnavailable)
+					return
+				}
+				next.ServeHTTP(w, r)
+			})
+			for _, p := range []*client.Box{b, c} {
+				if _, err := a.Send(t.Context(), p.Address(), "waits"); err == nil {
+					t.Fatal("a send went out while the server was down")
+				}
+			}
+			e.srv.SetMiddle(nil)
+			return partwaySet{dir: a.Dir(), a: a, check: outboxSaysItAlone, run: func(ctx context.Context) (any, error) { return a.Flush(ctx) }}
+		}},
+		{"init, restored from its identity alone", func(t *testing.T, e *env) partwaySet {
+			return restored(t, e, e.box(protocol.Classic))
+		}},
+		{"init, restored from its identity alone, its server forgot it", func(t *testing.T, e *env) partwaySet {
+			a := e.box(protocol.Classic)
+			e.srv.Forget(a.Address())
+			return restored(t, e, a)
+		}},
+		{"peer allow", func(t *testing.T, e *env) partwaySet {
+			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			serverAllowed(t, a)
+			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Allow(ctx, b.Address()) }}
+		}},
+		{"peer block", func(t *testing.T, e *env) partwaySet {
+			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Block(ctx, b.Address()) }}
+		}},
+		{"SyncACL", func(t *testing.T, e *env) partwaySet {
+			a := e.box(protocol.Classic)
+			serverAllowed(t, a)
+			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return nil, a.SyncACL(ctx) }}
+		}},
+		{"account adopt", func(t *testing.T, e *env) partwaySet {
+			a := e.box(protocol.Classic)
+			key := e.srv.AdoptKey("acct")
+			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Adopt(ctx, key) }}
+		}},
+		{"account leave", func(t *testing.T, e *env) partwaySet {
+			a := e.box(protocol.Classic)
+			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return nil, a.Leave(ctx) }}
+		}},
+		{"Resolve a peer", func(t *testing.T, e *env) partwaySet {
+			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Resolve(ctx, b.Address()) }}
+		}},
+		{"Resolve itself", func(t *testing.T, e *env) partwaySet {
+			a := e.box(protocol.Classic)
+			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Resolve(ctx, a.Address()) }}
+		}},
 	}
 }
