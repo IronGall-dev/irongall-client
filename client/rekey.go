@@ -96,10 +96,35 @@ func (b *Box) renewFrom(ctx context.Context, st *ownRead) (*protocol.Prekey, tak
 	// From here a statement at next exists, signed, whatever the server
 	// makes of it.
 	at, err := b.sendRenewal(ctx, req, next)
-	if at.None() {
+	took, err := b.tookRenewal(next, at, err)
+	if !took {
 		return nil, taken{}, err
 	}
 	return p, at, err
+}
+
+// tookRenewal decides whether renewal n is taken once sendRenewal has
+// returned at and err for it, from the box's state: n recorded published,
+// which publish writes of an upload its server took and a read of itself
+// writes of a statement its server serves (noteServed), the one place that
+// fact is kept, never the upload's answer. An upload answered otherwise,
+// whose read again served it, is taken with no reading to prune by, and that
+// answer is no error (#402 item 1). The reading at is the server's having
+// taken the upload where a fault of this box kept it from being recorded
+// (#110). The error beside a renewal taken is a fault of this box.
+func (b *Box) tookRenewal(n uint64, at taken, err error) (bool, error) {
+	if !at.None() {
+		return true, err
+	}
+	published, perr := b.publishedSerial()
+	if perr != nil || published < n {
+		return false, errors.Join(err, perr)
+	}
+	if code(err) != "" {
+		// The upload's answer, which the read after it showed wrong.
+		return true, nil
+	}
+	return true, err
 }
 
 // renewal is a renewal made and signed, ready to send.
@@ -118,8 +143,10 @@ type renewal struct {
 // after a read that served it (PROTOCOL.md §6.4): the box then reads itself
 // once more (known, whose error, a fault of the box or its own revocation,
 // ends the renewal there), and where that read shows no box, every call
-// answered, the same statement goes as its registration (#386); otherwise
-// the upload's answer stands.
+// answered, the same statement goes as its registration (#386); otherwise it
+// returns the upload's answer, and whether the renewal was taken is the box's
+// state's to say (tookRenewal), which that read wrote if it served the
+// statement (noteServed).
 //
 // A server that holds no box holds no ACL of it, and a box registered anew
 // has none there, so what this box kept of the last one the server took goes

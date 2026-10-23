@@ -613,7 +613,8 @@ func (b *Box) renewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy,
 		return done(nil)
 	}
 	at, err := b.sendRenewal(ctx, req, r.Below)
-	if at.None() {
+	took, err := b.tookRenewal(r.Below, at, err)
+	if !took {
 		r.NotRenewed = err
 		return done(nil)
 	}

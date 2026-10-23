@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -244,6 +245,64 @@ func TestARenewalWhoseUploadIs404RegistersOnlyOnAReadThatShowsNoBox(t *testing.T
 			}
 			if client.Code(err) != protocol.CodeNoSuchMailbox || strings.Join(calls, ", ") != c.calls || numberOf(t, b) != first {
 				t.Fatalf("an upload answered 404 with %s: %v; calls %q, want %q; published %d, was %d", c.name, err, calls, c.calls, numberOf(t, b), first)
+			}
+		})
+	}
+}
+
+// An upload the server took and answered 404 no_such_mailbox, whose read
+// again serves the very statement it carried, is a renewal taken, by the box's
+// state, which that read wrote (noteServed): Rekey, Receive's renewal and the
+// remedy return the new prekey with no error, the server's answer being no
+// fault of the box, and recv keeps no failed renewal (#402 item 1).
+func TestAnUploadAnswered404WhoseReadAgainServesItIsTaken(t *testing.T) {
+	ctx := context.Background()
+	for _, how := range []string{"prekey renew", "recv", "cert revoke-earlier"} {
+		t.Run(how, func(t *testing.T) {
+			e := newEnv(t)
+			b := e.box(protocol.Classic)
+			first := numberOf(t, b)
+			if how == "recv" {
+				e.clock.Add(25 * time.Hour)
+			} else {
+				e.clock.Add(2 * time.Second)
+			}
+			var lied atomic.Bool
+			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+				if r.Method == http.MethodPut && r.URL.Path == boxPath(b)+"/prekey" && lied.CompareAndSwap(false, true) {
+					next.ServeHTTP(httptest.NewRecorder(), r) // taken
+					forge.Refuse(w, protocol.CodeNoSuchMailbox)
+					return
+				}
+				next.ServeHTTP(w, r)
+			})
+			var p *protocol.Prekey
+			var err error
+			switch how {
+			case "prekey renew":
+				p, err = b.Rekey(ctx, "")
+			case "recv":
+				res, rerr := b.Receive(ctx)
+				if rerr != nil {
+					t.Fatal(rerr)
+				}
+				p, err = res.Renewed, res.RenewErr
+			case "cert revoke-earlier":
+				r, rerr := b.RenewAndRevoke(ctx, "")
+				if r == nil {
+					t.Fatalf("no remedy: %v", rerr)
+				}
+				p, err = r.Prekey, errors.Join(r.NotRenewed, rerr)
+			}
+			e.srv.SetMiddle(nil)
+			if !lied.Load() {
+				t.Fatal("no upload was answered 404")
+			}
+			if p == nil || err != nil || numberOf(t, b) == first || numberOf(t, b) != p.Serial || servedSerial(t, e, b) != p.Serial {
+				t.Fatalf("%s: prekey %+v, error %v; the box records published %d (was %d), the server serves %d", how, p, err, numberOf(t, b), first, servedSerial(t, e, b))
+			}
+			if _, held := b.Record(t, "renew-failed"); held {
+				t.Errorf("%s: the box keeps a failed renewal beside the one it recorded taken", how)
 			}
 		})
 	}
