@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -421,6 +422,42 @@ func TestARenewalWhosePUTIsNotTakenLeavesTheBoxsACLPending(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// A box whose renewal's PUT was not taken, and which its server then forgot,
+// with the ACL another writer put there, says it replaced nothing when the
+// registration that brings it back sends its own: the server held no ACL by
+// then, and the registration drops the mark with the ACL kept (sendRenewal;
+// #377).
+func TestARegistrationDropsTheMarkOfAnotherWritersACL(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	b, c, d := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+	if _, err := b.Block(ctx, c.Address()); err != nil {
+		t.Fatal(err)
+	}
+	own := e.srv.ACL(b.Address())
+	e.srv.PutACL(b.Address(), &protocol.ACL{Allow: protocol.ACLList{Any: true}, Deny: protocol.NewACLList(false, []protocol.Address{d.Address()})})
+	var failing atomic.Bool
+	failing.Store(true)
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if failing.Load() && r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/acl") {
+			fakeserver.WriteJSON(w, protocol.CodeUnavailable.Status(), protocol.Problem{Type: protocol.CodeUnavailable.TypeURI(), Code: protocol.CodeUnavailable, Status: int64(protocol.CodeUnavailable.Status())})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	e.clock.Add(25 * time.Hour)
+	if res := receive(t, b); res.Renewed == nil || res.ACLErr == nil {
+		t.Fatalf("the renewal whose PUT was refused: %+v", res)
+	}
+	failing.Store(false)
+	e.srv.Forget(b.Address())
+	e.clock.Add(time.Minute)
+	res := receive(t, b)
+	if res.Renewed == nil || res.ACLErr != nil || res.ACLReplaced || !e.srv.ACL(b.Address()).SameLists(own) {
+		t.Fatalf("the recv that registered the box again: renewed %v, its ACL's error %v, replaced %v; the server holds %+v, the box's own is %+v", res.Renewed != nil, res.ACLErr, res.ACLReplaced, e.srv.ACL(b.Address()), own)
 	}
 }
 

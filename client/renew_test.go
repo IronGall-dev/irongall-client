@@ -183,6 +183,61 @@ func TestARenewalWhoseUploadMeetsABoxForgottenSinceItsReadRegistersIt(t *testing
 	}
 }
 
+// An upload answered 404 no_such_mailbox whose read again shows a box, or
+// gets no answer, of the box or of its revocations where it shows none, is
+// no box forgotten: the renewal's error is the upload's, and no
+// registration goes (#386). A negative answer and no answer are different
+// things.
+func TestARenewalWhoseUploadIs404RegistersOnlyOnAReadThatShowsNoBox(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		again func(w http.ResponseWriter, r *http.Request, next http.Handler)
+		calls string
+	}{
+		{"the box served again", func(w http.ResponseWriter, r *http.Request, next http.Handler) { next.ServeHTTP(w, r) }, "GET /v1/own, PUT /v1/own/prekey +pass, GET /v1/own"},
+		{"no answer", func(w http.ResponseWriter, _ *http.Request, _ http.Handler) {
+			forge.Refuse(w, protocol.CodeUnavailable)
+		}, "GET /v1/own, PUT /v1/own/prekey +pass, GET /v1/own"},
+		{"no box shown, and no answer about its revocations", func(w http.ResponseWriter, _ *http.Request, _ http.Handler) {
+			forge.Refuse(w, protocol.CodeNoSuchMailbox)
+		}, "GET /v1/own, PUT /v1/own/prekey +pass, GET /v1/own, GET /v1/own/revocations"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newEnv(t)
+			b := e.box(protocol.Classic)
+			first := numberOf(t, b)
+			e.clock.Add(2 * time.Second)
+			var reads atomic.Int32
+			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+				switch {
+				case r.Method == http.MethodPut && r.URL.Path == boxPath(b)+"/prekey":
+					forge.Refuse(w, protocol.CodeNoSuchMailbox) // the box is still held
+				case r.Method == http.MethodGet && r.URL.Path == boxPath(b) && reads.Add(1) > 1:
+					c.again(w, r, next)
+				case r.Method == http.MethodGet && r.URL.Path == boxPath(b)+"/revocations":
+					forge.Refuse(w, protocol.CodeUnavailable)
+				default:
+					next.ServeHTTP(w, r)
+				}
+			})
+			from := len(e.srv.Requests())
+			_, err := b.Rekey(context.Background(), "")
+			e.srv.SetMiddle(nil)
+			var calls []string
+			for _, q := range e.srv.Requests()[from:] {
+				s := q.Method + " " + strings.ReplaceAll(q.Path, b.Address().String(), "own")
+				if q.Pass {
+					s += " +pass"
+				}
+				calls = append(calls, s)
+			}
+			if client.Code(err) != protocol.CodeNoSuchMailbox || strings.Join(calls, ", ") != c.calls || numberOf(t, b) != first {
+				t.Fatalf("an upload answered 404 with %s: %v; calls %q, want %q; published %d, was %d", c.name, err, calls, c.calls, numberOf(t, b), first)
+			}
+		})
+	}
+}
+
 // A box restored from its identity alone (README: "put it alone in an empty
 // box directory and run irongall prekey renew") at a server that forgot it:
 // nothing is served to take a key type from and nothing was published, so it
