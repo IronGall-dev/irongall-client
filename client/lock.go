@@ -160,21 +160,36 @@ func reading[T any](ctx context.Context, b *Box, f func() (T, error)) (v T, err 
 // after, on every way out of f, a panic among them. It is the one entry of
 // every command that writes the box, so a box that holds its own revocation
 // is refused here, before anything is asked or written (PROTOCOL.md §6.3):
-// only what §6.3 lets it still do runs on one, through lockedFinished.
+// only what §6.3 lets it still do runs on one, through lockedFinished. A
+// command that learns it part way returns it at its exit (outcome).
 func locked[T any](ctx context.Context, b *Box, f func() (T, error)) (v T, err error) {
 	return lockedFinished(ctx, b, func() (T, error) {
 		if err := b.finished(); err != nil {
 			return v, err
 		}
-		return f()
+		v, err := f()
+		return outcome(b, v, err)
 	})
+}
+
+// outcome is what a command that began with its box unfinished returns:
+// what it returned, or once it kept the box's own revocation on the way
+// (keepRevocation), that revocation alone as its error, beside what it did
+// before (#332), whatever else it met after, a call refused among them.
+func outcome[T any](b *Box, v T, err error) (T, error) {
+	if b.ended != nil {
+		return v, b.ended
+	}
+	return v, err
 }
 
 // lockedFinished is locked for a command a box that holds its own
 // revocation still runs, since it neither carries a pass nor asks for
 // anything §6.3 refuses: asking about a revocation and keeping one, a flush,
 // which moves what waits to outbox/failed/, and a change to the box's own
-// files alone. Each signs nothing (sign).
+// files alone. Each signs nothing (sign). Each begins having kept no
+// revocation of its own, and asks nothing once it has (call); finishing the
+// box is what some of them are for, so none is held to locked's outcome.
 func lockedFinished[T any](ctx context.Context, b *Box, f func() (T, error)) (v T, err error) {
 	unclaim, err := b.claim(ctx)
 	if err != nil {
@@ -185,7 +200,9 @@ func lockedFinished[T any](ctx context.Context, b *Box, f func() (T, error)) (v 
 	if err != nil {
 		return v, err
 	}
+	b.ended = nil
 	defer func() {
+		b.ended = nil
 		if e := release(); err == nil {
 			err = e
 		}

@@ -153,12 +153,6 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 	// box's own revocation, then the drain's about each sender.
 	asked := newLookups()
 	renewed, renewErr := b.renewIfDue(ctx)
-	// A renewal whose read showed the box its own revocation ends the
-	// command there, in those words: such a box takes no mail and signs
-	// nothing more (#335).
-	if err := b.finished(); err != nil {
-		return &Result{}, err
-	}
 	// After a renewal the ACL the server holds is read too, about once a
 	// day, so one that another writer put there lasts until the box's next
 	// renewal at most; at any other Receive only a change of the box's own
@@ -172,7 +166,7 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 	// a server that holds no box at this address, having forgotten it, which
 	// the renewal's registration brings back (PROTOCOL.md §3, §6.4), or one
 	// that holds the certificate in use revoked, which the refusal had this
-	// box read and keep (ownCertRevoked).
+	// box read and keep (proved).
 	if err != nil && renewed == nil && renewErr == nil && b.mendable(err) {
 		if renewed, renewErr = b.renewNow(ctx); renewed != nil {
 			var again bool
@@ -190,6 +184,14 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 				}
 			}
 		}
+	}
+	// A box shown its own revocation on the way, at its renewal, its ACL or
+	// its drain, takes no mail and signs nothing more, and says that alone,
+	// beside what it already did (#332, #335, #378): no renewal or ACL is left
+	// to try again.
+	if gone := ownRevoked(err, renewErr, aclErr); gone != nil {
+		res.Renewed, res.ACLReplaced = renewed, replaced
+		return res, gone
 	}
 	// A replacement of an ACL that held what no file of the box says, which
 	// a sync made since the last Receive, is reported here (#366).
@@ -234,9 +236,9 @@ func (b *Box) aclAt(ctx context.Context, renewed *protocol.Prekey) (bool, error)
 // server holds no box at this address, or this box holds a revocation of the
 // certificate it uses.
 func (b *Box) mendable(err error) bool {
-	// A box that holds its own revocation renews nothing: it signs nothing
-	// more (#335).
-	if b.finished() != nil {
+	// The box's own revocation is mended by nothing: it signs nothing more
+	// (#335).
+	if ownRevoked(err) != nil {
 		return false
 	}
 	if code(err) == protocol.CodeNoSuchMailbox {
@@ -292,10 +294,9 @@ func (b *Box) drain(ctx context.Context, asked *lookups, res *Result) error {
 		var list protocol.MessageList
 		resp, at, err := b.ownerTaken(ctx, http.MethodGet, path, hdr, nil, &list)
 		if err != nil {
-			// A server that says this box is revoked, or its certificate, is
-			// held to what it shows: the record a 410 carries, or what the
-			// box's read of itself then shows.
-			return b.ownCertRevoked(ctx, b.proved(ctx, b.id.Address(), err, asked))
+			// A server that says this box is revoked, or its certificate, was
+			// held to what it shows (proved, in call).
+			return err
 		}
 		if page == 0 {
 			res.listedAt = at

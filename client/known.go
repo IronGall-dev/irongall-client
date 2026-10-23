@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -44,25 +45,32 @@ type own struct {
 // known reads this box at its own server, GET /v1/<own>, and its
 // revocations, GET …/revocations, where the server holds no box for it, and
 // keeps what verifies of the box's own revocations that either carries
-// (take): what its identity revoked outlives the box (PROTOCOL.md §3a,
-// §6.3). It is the one read of the box's own state at its server, and a
-// command decides about its own box from what it returns.
+// (take, and a 410's record in call): what its identity revoked outlives the
+// box (PROTOCOL.md §3a, §6.3). It is the one read of the box's own state at
+// its server, and a command decides about its own box from what it returns.
 //
-// The error is a fault here, after which nothing more is kept; what the
-// server did not answer is the value's err.
+// The error is a fault here, after which nothing more is kept, or the box's
+// own revocation, a [RevokedError], once the read showed one that verifies:
+// final for whatever read. What the server did not answer is the value's err.
 func (b *Box) known(ctx context.Context) (*own, error) {
 	o := &own{at: atUnread}
 	var br protocol.BoxResponse
 	_, err := b.call(ctx, http.MethodGet, b.boxPath(""), nil, nil, &br)
-	rec := br.Record()
+	var rec *protocol.Revocations
+	var gone *RevokedError
 	switch {
+	case errors.As(err, &gone):
+		return o, err
 	case err == nil:
 		o.at = atServed
+		rec = br.Record()
 	case code(err) == protocol.CodeNoSuchMailbox:
 		o.at = atNone
 		var held protocol.Revocations
 		_, err := b.call(ctx, http.MethodGet, b.boxPath("/revocations"), nil, nil, &held)
 		switch {
+		case errors.As(err, &gone):
+			return o, err
 		case err == nil:
 			rec = &held
 		case code(err) == protocol.CodeNotRevoked:
@@ -72,15 +80,17 @@ func (b *Box) known(ctx context.Context) (*own, error) {
 			o.err = err
 		}
 	case code(err) == protocol.CodeRevoked:
-		// A revoked address is answered with its record, which proves itself.
+		// A revoked address is answered with its record, which proves itself:
+		// this one carried none that verifies.
 		o.at, o.err = atRevoked, err
-		rec = recordOf(err)
 	default:
 		o.err = err
 	}
 	if rec != nil {
-		if _, err := b.take(b.id.Address(), rec); err != nil {
+		if gone, err := b.take(b.id.Address(), rec); err != nil {
 			return o, err
+		} else if gone {
+			return o, &RevokedError{Address: b.id.Address(), Own: true}
 		}
 	}
 	if o.at == atServed {

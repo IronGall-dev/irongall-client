@@ -107,6 +107,10 @@ type Box struct {
 	// slot is held by the one command or reading of this Box under way, of
 	// whichever goroutine ([Box.claim]).
 	slot chan struct{}
+	// ended is this box's own revocation once the command under way has kept
+	// it, having begun with none (keepRevocation): that command asks nothing
+	// more (call), and returns it (locked). Each command begins with none.
+	ended *RevokedError
 }
 
 // Open opens an existing box's state directory. A directory holding only
@@ -281,8 +285,12 @@ func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*B
 		return nil, err
 	}
 	// Under the box's lock from its identity on, as every command that writes
-	// the box.
-	return lockedFinished(ctx, b, func() (*Box, error) { return b.init(ctx, kt) })
+	// the box, and with its outcome, once init has read that the box is not
+	// finished.
+	return lockedFinished(ctx, b, func() (*Box, error) {
+		r, err := b.init(ctx, kt)
+		return outcome(b, r, err)
+	})
 }
 
 func (b *Box) init(ctx context.Context, kt protocol.KeyType) (*Box, error) {
@@ -319,7 +327,7 @@ func (b *Box) init(ctx context.Context, kt protocol.KeyType) (*Box, error) {
 	// anything under it: its renewal goes as a registration with no read,
 	// which a server would count as a miss of its address.
 	if !fresh {
-		_, err := b.rekeyProved(ctx, kt)
+		_, err := b.rekeyAdopting(ctx, kt)
 		return b, err
 	}
 	if kt == "" {

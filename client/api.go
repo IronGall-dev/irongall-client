@@ -52,7 +52,22 @@ type ciphertext struct {
 // [transportError], in this client's words. A server whose URL
 // [checkServerURL] refuses is called not at all. It returns the response,
 // whose body is consumed.
+//
+// Every answer passes here, so what one says of a revocation is proved here
+// and nowhere else (proved): a caller meets a [RevokedError] that verified,
+// or the call's error. A command that has kept its box's own revocation asks
+// nothing more: each call of it after that returns the revocation before any
+// request is made.
 func (b *Box) call(ctx context.Context, method, path string, in any, hdr http.Header, out any) (*http.Response, error) {
+	if b.ended != nil {
+		return nil, b.ended
+	}
+	resp, err := b.exchange(ctx, method, path, in, hdr, out)
+	return resp, b.proved(ctx, method, path, err)
+}
+
+// exchange is call's request and its answer, as the server gave it.
+func (b *Box) exchange(ctx context.Context, method, path string, in any, hdr http.Header, out any) (*http.Response, error) {
 	if err := checkServerURL(b.base); err != nil {
 		return nil, err
 	}

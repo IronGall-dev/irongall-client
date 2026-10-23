@@ -59,6 +59,10 @@ func (b *Box) resolve(ctx context.Context, peer protocol.Address, l *lookups) (*
 	if gone {
 		return nil, nil, &RevokedError{Address: peer, Own: peer == b.id.Address()}
 	}
+	// This box's own revocation, kept on the way, ends the command.
+	if ended := ownRevoked(err); ended != nil {
+		return nil, nil, ended
+	}
 	if err != nil {
 		if code(err) == protocol.CodeRevoked {
 			err = fmt.Errorf("%w; it showed no revocation of %s that verifies, so this box does not take that address as revoked", err, peer)

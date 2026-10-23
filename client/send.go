@@ -154,6 +154,10 @@ func (b *Box) sendWith(ctx context.Context, to protocol.Address, env *protocol.E
 	}
 	step("outbox written")
 	aclErr := b.syncACL(ctx)
+	// Shown its own revocation at its ACL, the box can never deliver it.
+	if gone := ownRevoked(aclErr); gone != nil {
+		return nil, b.undelivered(stem, gone)
+	}
 	if err := b.replyWaits(to, aclErr); err != nil {
 		return nil, fmt.Errorf("%w: nothing is posted, so that no reply is refused; kept in the outbox, irongall outbox flush sends it", err)
 	}
@@ -225,6 +229,10 @@ func (b *Box) flush(ctx context.Context) ([]*Sent, error) {
 	var errs []error
 	// The recipients this flush has asked the server about: one lookup each.
 	asked := newLookups()
+	// Once its ACL or an entry's post has shown the box its own revocation,
+	// each later entry goes to outbox/failed/ with nothing asked, as at the
+	// flush's start (#340).
+	gone := ownRevoked(aclErr)
 	for _, n := range names {
 		stem := strings.TrimSuffix(n, ".P")
 		to, msgID, _ := strings.Cut(filepath.Base(stem), ".")
@@ -236,12 +244,17 @@ func (b *Box) flush(ctx context.Context) ([]*Sent, error) {
 			errs = append(errs, fmt.Errorf("%s: not an outbox entry", filepath.Base(n)))
 			continue
 		}
+		if gone != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", filepath.Base(stem), b.undelivered(stem, gone)))
+			continue
+		}
 		if err := b.replyWaits(peer, aclErr); err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w: nothing is posted, so that no reply is refused", filepath.Base(stem), err))
 			continue
 		}
 		s, err := b.post(ctx, peer, stem, asked)
 		if err != nil {
+			gone = ownRevoked(err)
 			errs = append(errs, fmt.Errorf("%s: %w", filepath.Base(stem), err))
 			continue
 		}
@@ -277,21 +290,18 @@ var undeliverable = []protocol.Code{
 // has recorded, is refused. A read that serves no box is not "none held":
 // nothing is sealed or posted, and the entry stays.
 func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked *lookups) (*Sent, error) {
-	// A box shown its own revocation since its command began, by an entry
-	// before this one or a pass refused on the way, posts nothing more: the
-	// entry goes to outbox/failed/ with nothing asked, as at a flush's start
-	// (#340).
-	if err := b.finished(); err != nil {
-		var gone *RevokedError
-		if !errors.As(err, &gone) {
-			return nil, err
-		}
-		return nil, b.undelivered(stem, err)
-	}
 	if b.expired(stem) {
 		return nil, b.undelivered(stem, refuse("it was written more than %d days ago, and an outbox posts a message no longer than that", protocol.TTL/(24*time.Hour)))
 	}
 	r, posted, err := b.trySend(ctx, to, stem, asked)
+	// A revocation that verified, the recipient's or this box's own, is
+	// final (proved, in call): the entry goes to outbox/failed/. A box shown
+	// its own since its command began, by an entry before this one or a pass
+	// refused on the way, asks nothing for this one either (call; #340).
+	var gone *RevokedError
+	if errors.As(err, &gone) {
+		return nil, b.undelivered(stem, err)
+	}
 	// A read of the box is never an answer about the message: whatever code
 	// a failed one carries, the entry stays.
 	var unread *lookupError
@@ -299,14 +309,11 @@ func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked 
 		return nil, fmt.Errorf("the box %s could not be read, so nothing is posted: %w (kept in the outbox: retry with irongall outbox flush)", to, err)
 	}
 	if err != nil {
-		// A server's "revoked" is checked: with the revocation in hand it is
-		// final, and without one it is a call that failed. So is its word
-		// that this box's certificate is revoked: the entry then waits for
-		// the renewal, as a seal under a certificate the box holds revoked
-		// does.
-		err = b.ownCertRevoked(ctx, b.proved(ctx, to, err, asked))
-		var gone *RevokedError
-		if !errors.As(err, &gone) && !slices.Contains(undeliverable, code(err)) {
+		// A server's "revoked" without the revocation in hand is a call that
+		// failed. So is its word that this box's certificate is revoked: the
+		// entry then waits for the renewal, as a seal under a certificate the
+		// box holds revoked does.
+		if !slices.Contains(undeliverable, code(err)) {
 			return nil, fmt.Errorf("%w (kept in the outbox: retry with irongall outbox flush)", err)
 		}
 		return nil, b.undelivered(stem, err)

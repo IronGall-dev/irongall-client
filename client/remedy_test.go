@@ -269,9 +269,9 @@ func heldCertsOf(t *testing.T, e *env, a *client.Box) *protocol.RevokedCertifica
 // the remedy's ask after a conflict does too (#258): the server holds a
 // revocation of the box's certificates through T, two hours above the
 // certificate in use, made on another machine, and gives no answer to the
-// remedy's first read of it, so the remedy's record conflicts. The box asks
-// again, signs the higher one, and numbers its new certificate above it
-// (PROTOCOL.md §6.3a).
+// remedy's first read of it, so the remedy's record conflicts. The box reads
+// itself again, keeps the higher one, and numbers its new certificate above
+// it (PROTOCOL.md §6.3a).
 func TestTheRemedyOfAForgottenBoxAsksItsRevocationsAgainAfterItsConflict(t *testing.T) {
 	e := newEnv(t)
 	a := e.box(protocol.Classic)

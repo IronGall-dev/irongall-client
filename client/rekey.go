@@ -44,16 +44,16 @@ import (
 // prekey with an error is one the server took, and a fault of this box after
 // that.
 func (b *Box) Rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey, error) {
-	return locked(ctx, b, func() (*protocol.Prekey, error) { return b.rekeyProved(ctx, kt) })
+	return locked(ctx, b, func() (*protocol.Prekey, error) { return b.rekeyAdopting(ctx, kt) })
 }
 
-// rekeyProved is rekey, with a server's "revoked" to it checked (proved):
-// Rekey and Init's restore from an identity alone answer it alike (#342).
-// Once its renewal is taken, a restore adopts the ACL its server holds
-// (adoptPending; #366).
-func (b *Box) rekeyProved(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey, error) {
+// rekeyAdopting is rekey, after which a restore adopts the ACL its server
+// holds once its renewal is taken (adoptPending; #366): Rekey and Init's
+// restore from an identity alone. Receive's renewal adopts it where it reads
+// the server's ACL (checkACL).
+func (b *Box) rekeyAdopting(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey, error) {
 	p, err := b.rekey(ctx, kt)
-	if err = b.proved(ctx, b.id.Address(), err, newLookups()); p == nil || err != nil {
+	if p == nil || err != nil {
 		return p, err
 	}
 	_, err = b.adoptPending(ctx)
@@ -155,7 +155,9 @@ type ownRead struct {
 // it numbers anything, keeping what verifies of the box's own revocations.
 // Every renewal asks, so the certificate it makes next is numbered above the
 // highest serial it has been shown revoked, and is never revoked as it is
-// made (PROTOCOL.md §2b), on a box restored from its identity too.
+// made (PROTOCOL.md §2b), on a box restored from its identity too. A read
+// that showed the box its own revocation is known's error, which ends the
+// renewal here, in those words: such a box signs nothing more (§6.3; #339).
 //
 // A server that holds no box at this address shows nothing to number above
 // or to hold to its order: the renewal is numbered above what this box knows
@@ -164,18 +166,12 @@ type ownRead struct {
 // With unused set, for the remedy, an answer it cannot use stops nothing: no
 // answer, a served statement that does not verify, or one ordered before
 // what this box published. The renewal is numbered from what the box knows,
-// and the revocation still goes to whoever takes it (PROTOCOL.md §6.3). A
-// plain renewal stops there: the refusal is the check.
+// and the revocation still goes to the server (PROTOCOL.md §6.3a). A plain
+// renewal stops there: the refusal is the check.
 func (b *Box) readOwn(ctx context.Context, kt protocol.KeyType, unused bool) (*ownRead, error) {
 	out := &ownRead{kt: kt}
 	o, err := b.known(ctx)
 	if err != nil {
-		return nil, err
-	}
-	// A read that showed the box its own revocation, kept once it verified,
-	// at the box or at its revocations, ends the renewal here, in those
-	// words: such a box signs nothing more (PROTOCOL.md §6.3; #339).
-	if err := b.finished(); err != nil {
 		return nil, err
 	}
 	out.forgotten = o.at == atNone
