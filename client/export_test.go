@@ -17,6 +17,10 @@ import (
 // which call answered.
 func Code(err error) protocol.Code { return code(err) }
 
+// PassRefused reports whether c refuses the pass a call carried, so that the
+// box signs another and tries once more (passRefused).
+func PassRefused(c protocol.Code) bool { return passRefused(c) }
+
 // SetLockPatience shortens how long a command waits for the box's lock, for
 // one test.
 func SetLockPatience(t *testing.T, d time.Duration) {

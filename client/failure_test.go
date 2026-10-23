@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -254,6 +255,58 @@ func TestAPassUnderAnOlderCertificateIsReplaced(t *testing.T) {
 	}
 	if now, _ := stateOf(b, "pass"); bytes.Equal(now, old) {
 		t.Fatal("the refused pass is still the one kept")
+	}
+}
+
+// Every code that refuses the pass a call carried has the box sign another
+// and try once more under it, never the pass refused, which the server would
+// refuse again (PROTOCOL.md §6.1b): after pass_expired the same pass is the
+// clock's sign, and the box's pass after certificate_revoked is signed anew
+// too (#408 item 3). The codes are read from the code, every one protocol
+// knows that passRefused takes, and those are every 401's (§13).
+func TestEveryRefusalOfThePassIsTriedUnderANewOne(t *testing.T) {
+	var refusing []protocol.Code
+	for _, c := range protocol.Codes() {
+		if client.PassRefused(c) != (c.Status() == http.StatusUnauthorized) {
+			t.Errorf("%s, a %d: taken as a refusal of the pass %v", c, c.Status(), client.PassRefused(c))
+		}
+		if client.PassRefused(c) {
+			refusing = append(refusing, c)
+		}
+	}
+	if len(refusing) == 0 {
+		t.Fatal("no code refuses the pass")
+	}
+	for _, c := range refusing {
+		t.Run(string(c), func(t *testing.T) {
+			e := newEnv(t)
+			b := e.box(protocol.Classic)
+			list := boxPath(b) + "/messages"
+			var mu sync.Mutex
+			var passes []string
+			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+				if r.Method == http.MethodGet && r.URL.Path == list {
+					mu.Lock()
+					passes = append(passes, r.Header.Get("Authorization"))
+					first := len(passes) == 1
+					mu.Unlock()
+					if first {
+						forge.Refuse(w, c)
+						return
+					}
+				}
+				next.ServeHTTP(w, r)
+			})
+			e.clock.Add(time.Minute) // within the kept pass's life, and a second past its date
+			if _, err := b.Receive(context.Background()); err != nil {
+				t.Fatalf("a drain whose list was refused %s once: %v", c, err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if len(passes) < 2 || passes[0] == "" || passes[1] == passes[0] {
+				t.Errorf("after %s the drain's list carried %d passes, the second the one refused: %v", c, len(passes), len(passes) >= 2 && passes[1] == passes[0])
+			}
+		})
 	}
 }
 
