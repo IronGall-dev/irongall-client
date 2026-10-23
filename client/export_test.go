@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -20,6 +21,13 @@ func Code(err error) protocol.Code { return code(err) }
 // PassRefused reports whether c refuses the pass a call carried, so that the
 // box signs another and tries once more (passRefused).
 func PassRefused(c protocol.Code) bool { return passRefused(c) }
+
+// ProvedCodes are the answers about a revocation that proved checks and
+// never believes (provedCodes).
+func ProvedCodes() []protocol.Code { return slices.Clone(provedCodes) }
+
+// Undeliverable are the answers that end a message for good (undeliverable).
+func Undeliverable() []protocol.Code { return slices.Clone(undeliverable) }
 
 // SetLockPatience shortens how long a command waits for the box's lock, for
 // one test.

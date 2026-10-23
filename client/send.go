@@ -268,7 +268,8 @@ func (b *Box) flush(ctx context.Context) ([]*Sent, error) {
 // them: only the recipient can change it, and a message it admits later is
 // one this box sends again. A server saying a box is revoked is not among
 // them: that is final only once this box holds the revocation
-// ([Box.proved]).
+// ([Box.proved]), so no code of provedCodes' is
+// (TestNoAnswerProvedIsUndeliverable).
 var undeliverable = []protocol.Code{
 	protocol.CodeBadAddress, protocol.CodeTooLarge, protocol.CodeConflict, protocol.CodeSenderNotAllowed,
 }

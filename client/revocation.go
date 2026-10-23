@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/IronGall-dev/irongall-client/protocol"
@@ -709,6 +710,12 @@ func (b *Box) revokeBelow(ctx context.Context, serial uint64) (*protocol.Revoked
 	return nil, fmt.Errorf("%w; it showed no revocation of this box's certificates that verifies and covers every one below %d", perr, serial)
 }
 
+// provedCodes are the answers about a revocation that proved checks and
+// never believes: each is final only once this box holds a revocation that
+// verifies, so none is ever one of undeliverable's, whose answers end a
+// message for good (TestNoAnswerProvedIsUndeliverable).
+var provedCodes = []protocol.Code{protocol.CodeRevoked, protocol.CodeSenderRevoked, protocol.CodeCertificateRevoked}
+
 // proved turns what a server answered about a revocation into what this box
 // has checked, by what the answer names (PROTOCOL.md §6.3, §6.3a). Every
 // answer of every call passes it (call), and nothing else proves one:
@@ -732,7 +739,7 @@ func (b *Box) revokeBelow(ctx context.Context, serial uint64) (*protocol.Revoked
 // nothing is kept.
 func (b *Box) proved(ctx context.Context, method, path string, err error) error {
 	c := code(err)
-	if c != protocol.CodeRevoked && c != protocol.CodeSenderRevoked && c != protocol.CodeCertificateRevoked {
+	if !slices.Contains(provedCodes, c) {
 		return err
 	}
 	who, read, ok := named(method, path)

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -81,6 +82,68 @@ func TestAServersWordRevokesNothing(t *testing.T) {
 			}
 			if keptRevocation(a, b.Address()) || failed(a, b.Address()) != 0 {
 				t.Fatal("a server's word was kept as a revocation, or ended the message")
+			}
+			e.srv.SetMiddle(nil)
+			if rs, err := a.Flush(ctx); err != nil || len(rs) != 1 {
+				t.Fatalf("flush once the server stopped saying so: %v", err)
+			}
+			if res := receive(t, b); len(res.Delivered) != 1 {
+				t.Fatal("the message never arrived")
+			}
+		})
+	}
+}
+
+// No answer proved checks, and never believes, ends a message for good: each
+// is final only once the box holds a revocation that verifies (PROTOCOL.md
+// §6.3). Both sets are the code's own (#414 item 2).
+func TestNoAnswerProvedIsUndeliverable(t *testing.T) {
+	if len(client.ProvedCodes()) == 0 || len(client.Undeliverable()) == 0 {
+		t.Fatalf("proved checks %v, and %v end a message", client.ProvedCodes(), client.Undeliverable())
+	}
+	for _, c := range client.ProvedCodes() {
+		if slices.Contains(client.Undeliverable(), c) {
+			t.Errorf("%s, which proved checks and never believes, ends a message for good", c)
+		}
+	}
+}
+
+// A server that answers a post with any answer about a revocation that
+// proved checks, and holds no revocation to show, has revoked nothing: the
+// message stays in the outbox, the box holds no revocation of its own, and
+// the message goes once the server stops saying so. The answers are the
+// code's own (provedCodes); at 403 sender_revoked the box reads itself, once
+// (PROTOCOL.md §6.3; #414 item 2).
+func TestAServersWordAtAPostEndsNoMessage(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range client.ProvedCodes() {
+		t.Run(string(c), func(t *testing.T) {
+			e := newEnv(t)
+			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			post := postTo(b)
+			var own atomic.Int32
+			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+				if r.Method == http.MethodPost && r.URL.Path == post {
+					forge.Refuse(w, c)
+					return
+				}
+				if r.Method == http.MethodGet && r.URL.Path == boxPath(a) {
+					own.Add(1)
+				}
+				next.ServeHTTP(w, r)
+			})
+			_, err := a.Send(ctx, b.Address(), "from a box the server says is revoked")
+			if err == nil || finishedOwn(err) || !strings.Contains(err.Error(), "kept in the outbox") {
+				t.Errorf("send: %v", err)
+			}
+			if n := own.Load(); c == protocol.CodeSenderRevoked && n != 1 {
+				t.Errorf("the box read itself %d times after the 403, want 1", n)
+			}
+			if st, serr := a.Status(ctx); serr != nil || st.Revoked || keptRevocation(a, b.Address()) {
+				t.Errorf("a server's word was kept as a revocation: %+v, %v", st, serr)
+			}
+			if failed(a, b.Address()) != 0 {
+				t.Error("a server's word ended the message: it is in outbox/failed/")
 			}
 			e.srv.SetMiddle(nil)
 			if rs, err := a.Flush(ctx); err != nil || len(rs) != 1 {
