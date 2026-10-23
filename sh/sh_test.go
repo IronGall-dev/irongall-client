@@ -170,6 +170,7 @@ func scratch(t *testing.T) []string { return []string{"IG_HOME=" + t.TempDir()} 
 // Go client's is (protocol/vectors_test.go).
 func TestVectorsIdentity(t *testing.T) {
 	need(t, scriptTools...)
+	t.Logf("ssh-keygen: %s", sshBuild())
 	for _, box := range []string{"a", "b", "c"} { // c's identity is a P-256 key
 		if box == "c" && !p256() {
 			t.Logf("%s reads no P-256 key, so the script refuses c/identity.doc: a known variance (PROTOCOL.md §3)", sshBuild())
@@ -196,10 +197,12 @@ func TestVectorsIdentity(t *testing.T) {
 	// key with a coordinate of 128 bits or fewer, or of the group's order
 	// less one or more, is taken by the Go client and by OpenSSH from 10.3p1
 	// (9bea0818), and refused up to 10.2p1, which the script's ssh-keygen
-	// decides. On such a build both are refused together, a known variance;
-	// anything else fails.
+	// decides. The script taking both is the Go client's verdict, on any
+	// build. Both refused is the known variance only where ssh-keygen -l
+	// itself refuses both, as TestVectorsSignatureForm asks it of each R
+	// vector; anything else fails.
 	classes := map[int]int{}
-	coordinates := map[string]bool{}
+	coordinates := map[string][2]bool{} // the script's verdict and ssh-keygen's alone: taken or not
 	for _, d := range docs {
 		name := filepath.Base(d)
 		doc, _ := os.ReadFile(d) //nolint:gosec // a test vector
@@ -209,7 +212,10 @@ func TestVectorsIdentity(t *testing.T) {
 			if gerr != nil {
 				t.Errorf("%s: the Go client refuses it: %v", name, gerr)
 			}
-			coordinates[name] = err == nil
+			_, line, _ := strings.Cut(string(doc), "\n")
+			keygen := exec.Command("ssh-keygen", "-l", "-f", "-")
+			keygen.Stdin = strings.NewReader(line)
+			coordinates[name] = [2]bool{err == nil, keygen.Run() == nil}
 			continue
 		}
 		want := 1
@@ -225,9 +231,9 @@ func TestVectorsIdentity(t *testing.T) {
 	switch short, over := coordinates["ok-p256-short-coordinate.doc"], coordinates["ok-p256-coordinate-over-order.doc"]; {
 	case len(coordinates) != 2:
 		t.Errorf("the ok- identity vectors: %v, want the two P-256 coordinate ones", coordinates)
-	case short && over:
-	case short || over:
-		t.Errorf("the script takes one of the two P-256 coordinate vectors and refuses the other (short %v, over the order %v): neither the Go client's verdict nor the known variance", short, over)
+	case short[0] && over[0]:
+	case short != [2]bool{} || over != [2]bool{}:
+		t.Errorf("the P-256 coordinate vectors, as [the script, ssh-keygen] taken: short %v, over the order %v; neither the Go client's verdict nor the known variance", short, over)
 	case !p256():
 		t.Logf("%s reads no P-256 key, so the script refuses both ok- identity vectors: a known variance (PROTOCOL.md §3)", sshBuild())
 	default:
