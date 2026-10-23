@@ -201,7 +201,7 @@ pv ok-the-address-as-a-token 'irongall-pass address=%s, not_after="%s", signatur
 pv ok-empty-list-elements 'irongall-pass ,address="%s",, not_after="%s" , ,signature="%s",' "$A" "$PT" "$PS"
 pv ok-a-tab-before-an-empty-element 'irongall-pass \t,address="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS" # 1*SP, then OWS "," (RFC 9110 §11.4, §5.6.1.2)
 pv bad-a-tab-after-the-scheme 'irongall-pass\taddress="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
-pv bad-the-scheme-with-a-long-s 'irongall-pa\u017f\u017f address="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS" # a token is ASCII: U+017F folds to s only by Unicode's rules (RFC 9110 §5.6.2)
+pv bad-the-scheme-with-a-long-s 'irongall-pa\xc5\xbf\xc5\xbf address="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS" # a token is ASCII: U+017F folds to s only by Unicode's rules (RFC 9110 §5.6.2)
 pv bad-another-scheme 'irongall-pass-v1 address="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
 pv bad-no-parameters 'irongall-pass'
 pv bad-a-token68 'irongall-pass %s' "$PS"
