@@ -96,6 +96,21 @@ func (b *Box) renewFrom(ctx context.Context, st *ownRead) (*protocol.Prekey, tak
 	// From here a statement at next exists, signed, whatever the server
 	// makes of it.
 	at, err := b.sendRenewal(ctx, req, next)
+	// A server may forget a box past its record's expiry at any moment, and
+	// answer its upload 404 no_such_mailbox after a read that served it
+	// (PROTOCOL.md §6.4): the box reads itself once more (known, whose error
+	// is its own revocation where the read shows one), and where the server
+	// holds no box the same statement goes as its registration (#386).
+	if at.None() && !req.forgotten && code(err) == protocol.CodeNoSuchMailbox {
+		o, kerr := b.known(ctx)
+		if kerr != nil {
+			return nil, taken{}, kerr
+		}
+		if o.at == atNone && o.err == nil {
+			req.forgotten = true
+			at, err = b.sendRenewal(ctx, req, next)
+		}
+	}
 	if at.None() {
 		return nil, taken{}, err
 	}

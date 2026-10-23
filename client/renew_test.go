@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -87,6 +88,98 @@ func TestAForgottenBoxRegistersAnewAtItsRenewal(t *testing.T) {
 	// The server lost the box's ACL with the box, and the box sends it again.
 	if acl := e.srv.ACL(b.Address()); acl == nil || !slices.Contains(acl.Deny.Addrs, c.Address()) {
 		t.Fatalf("a box registered anew did not send its ACL again: %+v", acl)
+	}
+}
+
+// A box its server forgets between its renewal's read, which serves it, and
+// its upload, which the server then answers 404 no_such_mailbox (PROTOCOL.md
+// §6.4: "at any moment"): the renewal reads the box once more, and where the
+// server holds no box sends the same statement as its registration, by
+// prekey renew and by the renewal recv makes, whose ACL then goes again as
+// after any registration (#386). Control: a box forgotten before the read,
+// which the read's answer alone sends as a registration.
+func TestARenewalWhoseUploadMeetsABoxForgottenSinceItsReadRegistersIt(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		name         string
+		before, recv bool
+		calls        string
+	}{
+		{"control: prekey renew of a box forgotten before its read", true, false, "GET /v1/own, GET /v1/own/revocations, PUT /v1/own +pass"},
+		{"prekey renew", false, false, "GET /v1/own, PUT /v1/own/prekey +pass, GET /v1/own, GET /v1/own/revocations, PUT /v1/own +pass"},
+		{"recv", false, true, "GET /v1/own, PUT /v1/own/prekey +pass, GET /v1/own, GET /v1/own/revocations, PUT /v1/own +pass, GET /v1/own/acl +pass, PUT /v1/own/acl +pass, GET /v1/own/messages +pass"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newEnv(t)
+			a, b, d := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+			if _, err := b.Block(ctx, d.Address()); err != nil {
+				t.Fatal(err)
+			}
+			if c.recv {
+				e.clock.Add(25 * time.Hour)
+			} else {
+				e.clock.Add(2 * time.Second)
+			}
+			if c.before {
+				e.srv.Forget(b.Address())
+			}
+			var mu sync.Mutex
+			sent := map[string]json.RawMessage{} // the statement each PUT of the box carried, by its path
+			forgot := false
+			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+				if r.Method == http.MethodPut && (r.URL.Path == boxPath(b) || r.URL.Path == boxPath(b)+"/prekey") {
+					body, _ := io.ReadAll(r.Body)
+					r.Body = io.NopCloser(bytes.NewReader(body))
+					var m map[string]json.RawMessage
+					_ = json.Unmarshal(body, &m)
+					mu.Lock()
+					sent[r.URL.Path] = m["prekey"]
+					if !forgot && strings.HasSuffix(r.URL.Path, "/prekey") {
+						forgot = true
+						e.srv.Forget(b.Address())
+					}
+					mu.Unlock()
+				}
+				next.ServeHTTP(w, r)
+			})
+			from := len(e.srv.Requests())
+			var err error
+			if c.recv {
+				var res *client.Result
+				if res, err = b.Receive(ctx); err == nil && (res.Renewed == nil || res.RenewErr != nil || res.ACLErr != nil) {
+					t.Errorf("the recv: renewed %v, its renewal's error %v, its ACL's %v", res.Renewed != nil, res.RenewErr, res.ACLErr)
+				}
+			} else {
+				_, err = b.Rekey(ctx, "")
+			}
+			e.srv.SetMiddle(nil)
+			var calls []string
+			for _, q := range e.srv.Requests()[from:] {
+				s := q.Method + " " + strings.ReplaceAll(q.Path, b.Address().String(), "own")
+				if q.Pass {
+					s += " +pass"
+				}
+				calls = append(calls, s)
+			}
+			if err != nil || strings.Join(calls, ", ") != c.calls {
+				t.Fatalf("the renewal: %v; calls %q, want %q", err, calls, c.calls)
+			}
+			if !c.before && !bytes.Equal(sent[boxPath(b)], sent[boxPath(b)+"/prekey"]) {
+				t.Errorf("the registration carried another statement than the upload: %s, %s", sent[boxPath(b)], sent[boxPath(b)+"/prekey"])
+			}
+			if servedSerial(t, e, b) != numberOf(t, b) {
+				t.Fatalf("the server serves %d, the box published %d", servedSerial(t, e, b), numberOf(t, b))
+			}
+			if c.recv {
+				if acl := e.srv.ACL(b.Address()); acl == nil || !acl.Deny.Has(d.Address()) {
+					t.Errorf("the box registered anew did not send its ACL again: %+v", acl)
+				}
+			}
+			send(t, a, b, "to the box registered anew")
+			if got := receive(t, b); len(got.Delivered) != 1 {
+				t.Fatalf("mail to the box registered anew: %+v", got)
+			}
+		})
 	}
 }
 

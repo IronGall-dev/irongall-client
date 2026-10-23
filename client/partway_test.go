@@ -575,6 +575,17 @@ func partwayCases() []partwayCase {
 			e.clock.Add(2 * time.Second)
 			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Rekey(ctx, "") }}
 		}},
+		{"prekey renew, its server forgets it between its read and its upload", func(t *testing.T, e *env) partwaySet {
+			a := e.box(protocol.Classic)
+			e.clock.Add(2 * time.Second)
+			var forgot atomic.Bool
+			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Rekey(ctx, "") }, inner: func(_ int, _ http.ResponseWriter, r *http.Request, _ http.Handler) bool {
+				if r.Method == http.MethodPut && r.URL.Path == boxPath(a)+"/prekey" && forgot.CompareAndSwap(false, true) {
+					e.srv.Forget(a.Address())
+				}
+				return false
+			}}
+		}},
 		{"cert revoke-earlier", func(t *testing.T, e *env) partwaySet {
 			a := e.box(protocol.Classic)
 			e.clock.Add(2 * time.Second)
