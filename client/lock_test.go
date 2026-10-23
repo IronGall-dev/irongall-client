@@ -3,9 +3,14 @@ package client_test
 import (
 	"context"
 	"errors"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"go/types"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -273,10 +278,13 @@ func TestABoxSharedByGoroutinesRunsOneAtATime(t *testing.T) {
 	}
 }
 
-// waits are the entries of box b that wait for its lock, each a reading or a
-// command that would write: an alias for c, and the keep of rec, c's
-// revocation.
-func waits(b, c *client.Box, rec *protocol.Revocations) map[string]func(context.Context) error {
+// waits are the entries that wait for box b's lock, each a reading or a
+// command, by its name: every exported function and Box method that takes the
+// lock or reads the box, and every Box method that calls one of those (Send,
+// Revoke). TestEveryEntryThatWaitsIsTriedWithItsContext holds the list to the
+// code. c is a peer, rec c's revocation, and opt the options b was opened
+// with.
+func waits(b, c *client.Box, rec *protocol.Revocations, opt client.Options) map[string]func(context.Context) error {
 	return map[string]func(context.Context) error{
 		"Status":             func(ctx context.Context) error { _, err := b.Status(ctx); return err },
 		"Quarantined":        func(ctx context.Context) error { _, err := b.Quarantined(ctx); return err },
@@ -289,9 +297,139 @@ func waits(b, c *client.Box, rec *protocol.Revocations) map[string]func(context.
 		"SetPolicy": func(ctx context.Context) error {
 			return b.SetPolicy(ctx, client.Policy{Unknown: client.LandInbox, Server: client.AdmitAll})
 		},
-		"KeepRevocation": func(ctx context.Context) error { _, _, err := b.KeepRevocation(ctx, rec); return err },
-		"RebuildAllowed": func(ctx context.Context) error { _, err := b.RebuildAllowed(ctx); return err },
+		"KeepRevocation":    func(ctx context.Context) error { _, _, err := b.KeepRevocation(ctx, rec); return err },
+		"RebuildAllowed":    func(ctx context.Context) error { _, err := b.RebuildAllowed(ctx); return err },
+		"RemoveQuarantined": func(ctx context.Context) error { _, err := b.RemoveQuarantined(ctx, nil); return err },
+		"SetPrekeyLifetime": func(ctx context.Context) error { return b.SetPrekeyLifetime(ctx, protocol.PrekeyLifetime) },
+		"Receive":           func(ctx context.Context) error { _, err := b.Receive(ctx); return err },
+		"Rekey":             func(ctx context.Context) error { _, err := b.Rekey(ctx, ""); return err },
+		"RevokeEarlier":     func(ctx context.Context) error { _, err := b.RevokeEarlier(ctx); return err },
+		"RenewAndRevoke":    func(ctx context.Context) error { _, err := b.RenewAndRevoke(ctx, ""); return err },
+		"Send":              func(ctx context.Context) error { _, err := b.Send(ctx, c.Address(), "waits"); return err },
+		"SendWith": func(ctx context.Context) error {
+			_, err := b.SendWith(ctx, c.Address(), "waits", client.Fields{})
+			return err
+		},
+		"SendJSON": func(ctx context.Context) error {
+			_, err := b.SendJSON(ctx, c.Address(), []byte(`{"waits":true}`), client.Fields{})
+			return err
+		},
+		"Flush":   func(ctx context.Context) error { _, err := b.Flush(ctx); return err },
+		"Allow":   func(ctx context.Context) error { _, err := b.Allow(ctx, c.Address()); return err },
+		"Block":   func(ctx context.Context) error { _, err := b.Block(ctx, c.Address()); return err },
+		"SyncACL": func(ctx context.Context) error { return b.SyncACL(ctx) },
+		"Adopt":   func(ctx context.Context) error { _, err := b.Adopt(ctx, "key"); return err },
+		"Leave":   func(ctx context.Context) error { return b.Leave(ctx) },
+		"Resolve": func(ctx context.Context) error { _, err := b.Resolve(ctx, c.Address()); return err },
+		"Ask":     func(ctx context.Context) error { _, err := b.Ask(ctx, c.Address()); return err },
+		"Publish": func(ctx context.Context) error { _, err := b.Publish(ctx, rec); return err },
+		"Revoke":  func(ctx context.Context) error { _, err := b.Revoke(ctx, rec); return err },
+		"client.Init": func(ctx context.Context) error {
+			_, err := client.Init(ctx, b.Dir(), opt, protocol.Classic)
+			return err
+		},
 	}
+}
+
+// Every entry that waits for a box's lock is one of waits', and every one of
+// waits' is one that waits, so each is tried with its context (#406 item 2):
+// an exported function or Box method that takes the lock or reads the box
+// (locked, lockedFinished, lockedDo, lockedFinishedDo, reading), and a Box
+// method that calls one of those on its own box, whatever it does first.
+func TestEveryEntryThatWaitsIsTriedWithItsContext(t *testing.T) {
+	names, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	type entry struct {
+		name string
+		recv string // the Box method's receiver, or "" for a function
+		body *ast.BlockStmt
+	}
+	var entries []entry
+	for _, name := range names {
+		if strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(token.NewFileSet(), name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range f.Decls {
+			fn, ok := d.(*ast.FuncDecl)
+			if !ok || !fn.Name.IsExported() || fn.Body == nil {
+				continue
+			}
+			switch {
+			case fn.Recv == nil:
+				entries = append(entries, entry{"client." + fn.Name.Name, "", fn.Body})
+			case len(fn.Recv.List[0].Names) == 1 && types.ExprString(fn.Recv.List[0].Type) == "*Box":
+				entries = append(entries, entry{fn.Name.Name, fn.Recv.List[0].Names[0].Name, fn.Body})
+			}
+		}
+	}
+	wait := map[string]bool{}
+	for _, e := range entries {
+		wait[e.name] = calls(e.body, "", "locked", "lockedFinished", "lockedDo", "lockedFinishedDo", "reading")
+	}
+	for grew := true; grew; {
+		grew = false
+		for _, e := range entries {
+			if e.recv == "" || wait[e.name] {
+				continue
+			}
+			for name, w := range wait {
+				if w && !strings.HasPrefix(name, "client.") && calls(e.body, e.recv, name) {
+					wait[e.name], grew = true, true
+					break
+				}
+			}
+		}
+	}
+	tried := waits(nil, nil, nil, client.Options{})
+	for name, w := range wait {
+		if _, ok := tried[name]; w && !ok {
+			t.Errorf("%s waits for the box's lock and is not tried with its context: add it to waits", name)
+		}
+	}
+	for name := range tried {
+		if !wait[name] {
+			t.Errorf("waits tries %s, which waits for no lock", name)
+		}
+	}
+}
+
+// calls reports whether body calls one of names, as a function or a method,
+// or, where recv is given, as a method of recv alone.
+func calls(body *ast.BlockStmt, recv string, names ...string) bool {
+	found := false
+	ast.Inspect(body, func(n ast.Node) bool {
+		c, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		fun := c.Fun
+		if x, ok := fun.(*ast.IndexExpr); ok {
+			fun = x.X
+		}
+		if x, ok := fun.(*ast.IndexListExpr); ok {
+			fun = x.X
+		}
+		name := ""
+		switch x := fun.(type) {
+		case *ast.Ident:
+			if recv == "" {
+				name = x.Name
+			}
+		case *ast.SelectorExpr:
+			if id, ok := x.X.(*ast.Ident); recv == "" || ok && id.Name == recv {
+				name = x.Sel.Name
+			}
+		}
+		found = found || name != "" && slices.Contains(names, name)
+		return true
+	})
+	return found
 }
 
 // endsWithItsContext runs each of waits with a context of 200 ms while what
@@ -333,7 +471,7 @@ func TestAWaitForTheLockEndsWithItsContext(t *testing.T) {
 	}
 	release := holdState(t, b)
 	defer release()
-	endsWithItsContext(t, "the lock is held", waits(b, c, rec))
+	endsWithItsContext(t, "the lock is held", waits(b, c, rec, e.opts()))
 	release()
 	release = func() {}
 	writtenNothing(t, b, c)
@@ -365,7 +503,7 @@ func TestAWaitForTheSlotEndsWithItsContext(t *testing.T) {
 	done := make(chan error, 1)
 	go func() { _, err := b.Receive(context.Background()); done <- err }()
 	<-in
-	endsWithItsContext(t, "another goroutine's command holds the slot", waits(b, c, rec))
+	endsWithItsContext(t, "another goroutine's command holds the slot", waits(b, c, rec, e.opts()))
 	close(out)
 	if err := <-done; err != nil {
 		t.Fatal(err)
