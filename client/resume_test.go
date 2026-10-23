@@ -427,3 +427,84 @@ func TestAFetchIsCutWhenItStallsAndNotWhileItMoves(t *testing.T) {
 		t.Fatalf("a fetch whose bytes kept moving: %+v after %s", res, took)
 	}
 }
+
+// The partial file is taken only as far as the box's state records it
+// synced: bytes past that, which a crash can leave unsynced, are cut off,
+// and the next fetch asks from the recorded length.
+func TestAPartialIsTakenOnlyAsFarAsStateRecordsIt(t *testing.T) {
+	e := newEnv(t)
+	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	f := &fetches{b: b}
+	id, ct := cutOnce(t, e, a, b, f)
+	file, err := os.OpenFile(filepath.Join(b.Dir(), "partial"), os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write([]byte("bytes no sync covered")); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		f.is(r)
+		next.ServeHTTP(w, r)
+	})
+	res := receive(t, b)
+	if len(res.Delivered) != 1 || res.Delivered[0].ID != id {
+		t.Fatalf("after bytes past the record: %+v", res)
+	}
+	if got := f.asked(); got[len(got)-1] != protocol.RangeAsk(int64(len(ct)/2)) {
+		t.Fatalf("the fetch asked %q, want from the %d bytes recorded", got[len(got)-1], len(ct)/2)
+	}
+}
+
+// A partial goes once its message is judged, though the drain then stops at
+// its limit and never empties the box.
+func TestAPartialGoesOnceItsMessageIsJudged(t *testing.T) {
+	e := newEnv(t)
+	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	f := &fetches{b: b}
+	id, _ := cutOnce(t, e, a, b, f)
+	send(t, a, b, "behind it, where the drain stops")
+	client.SetDrainLimits(t, 1, 64<<20, 100)
+	res := receive(t, b)
+	if len(res.Delivered) != 1 || res.Delivered[0].ID != id || !res.More {
+		t.Fatalf("a drain of one: %+v", res)
+	}
+	noPartial(t, b)
+}
+
+// A fetch of another message, which a server may list first, drops what was
+// kept of the one before it, in state before the file takes its bytes: the
+// message cut is fetched whole after, and delivered, never judged on the
+// other's bytes.
+func TestAFetchOfAnotherMessageDropsWhatWasKept(t *testing.T) {
+	e := newEnv(t)
+	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	f := &fetches{b: b}
+	id, _ := cutOnce(t, e, a, b, f)
+	other := send(t, a, b, strings.Repeat("listed first by its server, fetched whole. ", 1500)).ID
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.Method == http.MethodGet && r.URL.Path == boxPath(b)+"/messages" {
+			var list protocol.MessageList
+			if err := protocol.Unmarshal(honest(next, r).Body.Bytes(), &list); err != nil || len(list.Messages) != 2 {
+				t.Errorf("the list: %v", err)
+				return
+			}
+			slices.Reverse(list.Messages)
+			fakeserver.WriteList(w, list)
+			return
+		}
+		f.is(r)
+		next.ServeHTTP(w, r)
+	})
+	res := receive(t, b)
+	if len(res.Refused) != 0 || len(res.Delivered) != 2 || res.Delivered[0].ID != other || res.Delivered[1].ID != id {
+		t.Fatalf("a drain that fetched another message first: %+v", res)
+	}
+	if got := f.asked(); !slices.Equal(got[len(got)-2:], []string{"", ""}) {
+		t.Errorf("the fetches asked %q: both whole", got)
+	}
+	noPartial(t, b)
+}

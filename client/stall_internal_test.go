@@ -56,6 +56,18 @@ func readsEvery(r *http.Request, chunk int, pause time.Duration) (int, error) {
 	}
 }
 
+// cutOrGiveUp waits for r's context to end, as a server that sends nothing
+// more waits, and gives up after many times stallBound with an error of its
+// own: a call no bound cut.
+func cutOrGiveUp(r *http.Request) error {
+	select {
+	case <-r.Context().Done():
+		return r.Context().Err()
+	case <-time.After(10 * stallBound):
+		return errors.New("the call was never cut")
+	}
+}
+
 func created() *http.Response {
 	return &http.Response{StatusCode: http.StatusCreated, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("{}"))}
 }
@@ -83,8 +95,7 @@ func TestAPostRunsWhileItsBytesMove(t *testing.T) {
 		if _, err := r.Body.Read(make([]byte, 4<<10)); err != nil {
 			return nil, err
 		}
-		<-r.Context().Done() // and reads nothing more
-		return nil, r.Context().Err()
+		return nil, cutOrGiveUp(r) // and reads nothing more
 	})
 	start = time.Now()
 	_, err := stalled.exchange(context.Background(), http.MethodPost, "/v1/x/messages", &ciphertext{bytes: body}, nil, nil)
@@ -99,8 +110,7 @@ func TestAPostRunsWhileItsBytesMove(t *testing.T) {
 func TestTheWaitForTheHeadIsBounded(t *testing.T) {
 	shortBound(t)
 	b := slowBox(t, func(r *http.Request) (*http.Response, error) {
-		<-r.Context().Done()
-		return nil, r.Context().Err()
+		return nil, cutOrGiveUp(r)
 	})
 	start := time.Now()
 	_, err := b.exchange(context.Background(), http.MethodGet, "/v1/x/messages/y", nil, nil, &ciphertext{size: 10})
@@ -141,7 +151,7 @@ func (tr *trickle) Close() error { return nil }
 func TestAnyOtherCallIsBoundedWhole(t *testing.T) {
 	shortBound(t)
 	b := slowBox(t, func(r *http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: &trickle{r.Context(), 1000, stallBound / 4}}, nil
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: &trickle{r.Context(), 40, stallBound / 4}}, nil
 	})
 	start := time.Now()
 	var out struct{}
