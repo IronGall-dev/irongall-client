@@ -66,16 +66,17 @@ func PutRevocations(ctx context.Context, opt Options, a protocol.Address, rec *p
 // (txt, txt.sig, made) and "quarantine/<id>.reason" ("<code>: <reason>"),
 // each a record's bytes as that file held them; and the records no file held,
 // "renewal" (the number of the renewal under way), "acl-read" (the read of
-// the server's ACL a renewal recv began owes), "renew-failed", "not-made" and
-// "acl-another-writer". So a test reads and changes the box's state as it did
-// its files.
+// the server's ACL a renewal recv began owes), "adopt-acl" (a restore's
+// adoption of its server's ACL, begun), "renew-failed", "not-made",
+// "acl-another-writer" and "acl-replaced". So a test reads and changes the
+// box's state as it did its files.
 func (b *Box) Records() (map[string][]byte, error) {
 	out := map[string][]byte{}
 	err := b.view(func(s store) error {
 		for _, r := range []struct{ key, name string }{
 			{"serial", "serial"}, {"pass", "pass"}, {"etag", "etag"}, {"seen-floor", "seen-floor"},
 			{"acl", "acl.json"}, {"revoked", "revoked.sig"}, {"revoked-certs", "revoked-certs.json"},
-			{"renew-failed", "renew-failed"}, {"not-made", "not-made"}, {"acl-another-writer", "acl-another-writer"},
+			{"renew-failed", "renew-failed"}, {"not-made", "not-made"}, {"acl-another-writer", "acl-another-writer"}, {"acl-replaced", "acl-replaced"},
 		} {
 			if v := s.get(bucketBox, r.key); v != nil {
 				out[r.name] = v
@@ -137,7 +138,7 @@ func (b *Box) Records() (map[string][]byte, error) {
 		}); err != nil {
 			return err
 		}
-		for _, k := range []string{"renewal", "acl-read"} {
+		for _, k := range []string{"renewal", "acl-read", "adopt-acl"} {
 			if v := s.get(bucketIntent, k); v != nil {
 				out[k] = v
 			}
@@ -179,7 +180,7 @@ func (b *Box) SetRecord(t *testing.T, name string, v []byte) {
 				}
 				return s.put(bucket, key, v)
 			}
-			for key, file := range map[string]string{"serial": "serial", "pass": "pass", "etag": "etag", "seen-floor": "seen-floor", "acl": "acl.json", "revoked": "revoked.sig", "revoked-certs": "revoked-certs.json", "renew-failed": "renew-failed", "not-made": "not-made", "acl-another-writer": "acl-another-writer"} {
+			for key, file := range map[string]string{"serial": "serial", "pass": "pass", "etag": "etag", "seen-floor": "seen-floor", "acl": "acl.json", "revoked": "revoked.sig", "revoked-certs": "revoked-certs.json", "renew-failed": "renew-failed", "not-made": "not-made", "acl-another-writer": "acl-another-writer", "acl-replaced": "acl-replaced"} {
 				if name == file {
 					return put(bucketBox, key, v)
 				}
@@ -261,7 +262,7 @@ func (b *Box) SetRecord(t *testing.T, name string, v []byte) {
 				}
 				return s.put(bucketPrekeys, serialKey(n), raw)
 			}
-			if name == "renewal" || name == "acl-read" {
+			if name == "renewal" || name == "acl-read" || name == "adopt-acl" {
 				return put(bucketIntent, name, v)
 			}
 			if rest, ok := strings.CutPrefix(name, "quarantine/"); ok {
