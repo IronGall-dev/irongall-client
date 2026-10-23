@@ -1020,9 +1020,12 @@ components:
         this server) · `pass_expired` · `certificate_not_current` (under
         another certificate than the one the call takes a pass under, revoked
         or not, whose serial is `certificate_serial`) · `certificate_revoked`
-        (the box's current certificate is one its identity revoked, answered
-        before any pass is read). A client signs another pass and tries once
-        more (§6.1b).
+        (the call takes a pass under the box's current certificate, or brings
+        a statement under a certificate, that its identity revoked; an upload
+        under a later certificate it has not revoked is the way back). A
+        client signs another pass and tries once more, after a
+        `certificate_revoked` only once its own box shows no revocation that
+        covers its certificate (§6.1b).
       headers:
         Date:
           $ref: '#/components/headers/Date'
