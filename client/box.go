@@ -12,6 +12,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -732,8 +733,8 @@ func readAgeKeys(name string) ([]age.Identity, error) {
 	return ids, nil
 }
 
-// prekeyIdentities returns every retained prekey, to decrypt with, each
-// behind oneNative.
+// prekeyIdentities returns every retained prekey, to decrypt with once
+// oneNative has taken the file (decrypt).
 func (b *Box) prekeyIdentities() ([]age.Identity, error) {
 	names, err := filepath.Glob(b.path("prekeys", "*.agekey"))
 	if err != nil {
@@ -745,9 +746,7 @@ func (b *Box) prekeyIdentities() ([]age.Identity, error) {
 		if err != nil {
 			return nil, err
 		}
-		for _, id := range ids {
-			all = append(all, oneNative{id})
-		}
+		all = append(all, ids...)
 	}
 	if len(all) == 0 {
 		return nil, errors.New("this box holds no prekeys: publish a new one with irongall prekey renew")
@@ -755,33 +754,46 @@ func (b *Box) prekeyIdentities() ([]age.Identity, error) {
 	return all, nil
 }
 
-// oneNative is a prekey identity that takes a file only with exactly one
-// native recipient stanza, of a type a prekey has (protocol.PostQuantum,
-// protocol.Classic), as every server takes a send (PROTOCOL.md §4.5 step 7,
-// §5 check 1); a grease stanza and any other age ignores, as it does. age
-// tries every identity on every stanza, up to 1,024, so a file of 1,024
-// native stanzas costs a box about a thousand times what an honest message
-// does, for each prekey it keeps (#49, measured; PRECEDENTS.md, Part 2,
-// § 4), and only a server can serve one. Every identity is wrapped, so age,
-// which tries its own types first, tries them in the box's order, and the
-// first refuses such a file before any key agreement.
-type oneNative struct{ age.Identity }
-
-// errNotOneNative is a file oneNative refuses.
-var errNotOneNative = errors.New("not exactly one native recipient stanza")
-
-// Unwrap is the identity's own, for a file with exactly one native stanza.
-func (o oneNative) Unwrap(stanzas []*age.Stanza) ([]byte, error) {
-	n := 0
-	for _, s := range stanzas {
-		if s.Type == string(protocol.PostQuantum) || s.Type == string(protocol.Classic) {
-			n++
-		}
+// decrypt decrypts ct with ids, every retained prekey, once oneNative has
+// taken it: age is given no identity before the stanzas are counted, so a
+// file oneNative refuses reaches no key agreement.
+func decrypt(ct []byte, ids []age.Identity) (io.Reader, error) {
+	if err := oneNative(ct); err != nil {
+		return nil, err
 	}
-	if n != 1 {
-		return nil, errNotOneNative
-	}
-	return o.Identity.Unwrap(stanzas)
+	return age.Decrypt(bytes.NewReader(ct), ids...)
 }
+
+// oneNative takes an age file only with exactly one native recipient stanza,
+// of a type a prekey has (protocol.PostQuantum, protocol.Classic), as every
+// server takes a send (PROTOCOL.md §4.5 step 7, §5 check 1); a grease stanza
+// and any other age ignores, as it does. age tries every identity on every
+// stanza, up to 1,024, so a file of 1,024 native stanzas costs a box about a
+// thousand times what an honest message does, for each prekey it keeps (#49,
+// measured; PRECEDENTS.md, Part 2, § 4), and only a server can serve one.
+// The stanzas are read and counted once, before anything is decrypted, by
+// protocol.ReadStanzas, the reading a server's check of a send shares. A
+// file with none is a case of its own (§4.5 step 7): errNoNative.
+func oneNative(ct []byte) error {
+	st, err := protocol.ReadStanzas(ct)
+	if err != nil {
+		return err
+	}
+	switch len(st.Native) {
+	case 1:
+		return nil
+	case 0:
+		return errNoNative
+	}
+	return errNotOneNative
+}
+
+// errNotOneNative is a file of two native recipient stanzas or more, which
+// oneNative refuses.
+var errNotOneNative = errors.New("more than one native recipient stanza")
+
+// errNoNative is a file with no native recipient stanza, which oneNative
+// refuses.
+var errNoNative = errors.New("no native recipient stanza")
 
 func (b *Box) boxPath(rest string) string { return "/v1/" + b.id.Address().String() + rest }

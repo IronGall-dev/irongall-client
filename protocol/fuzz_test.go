@@ -16,6 +16,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"filippo.io/age"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -471,6 +472,60 @@ func FuzzUnmarshal(f *testing.F) {
 		}
 	})
 }
+
+// ReadStanzas reads a header only as age reads it: it errs, with nothing
+// beside it, exactly where age.ExtractHeader does, and otherwise each stanza
+// age lists is sorted once: as many native stanzas as age lists of a type a
+// prekey has, each of one of those types, and Other only where a stanza age
+// lists is neither native nor of grease's type.
+func FuzzReadStanzas(f *testing.F) {
+	seeds(f, "message/*.age")
+	f.Fuzz(func(t *testing.T, ct []byte) {
+		st, err := ReadStanzas(ct)
+		hdr, herr := age.ExtractHeader(bytes.NewReader(ct))
+		if err != nil {
+			if st.Native != nil || st.Other {
+				t.Fatalf("an error with a result beside it: %+v, %v", st, err)
+			}
+			if herr == nil {
+				var noMatch *age.NoIdentityMatchError
+				if _, derr := age.DecryptHeader(hdr, nobody{}); errors.As(derr, &noMatch) {
+					t.Fatalf("refused a header age reads: %v", err)
+				}
+			}
+			return
+		}
+		if herr != nil {
+			t.Fatalf("read a header age does not: %v", herr)
+		}
+		var noMatch *age.NoIdentityMatchError
+		if _, derr := age.DecryptHeader(hdr, nobody{}); !errors.As(derr, &noMatch) {
+			t.Fatalf("read a header age's decryption does not: %v", derr)
+		}
+		native, other := 0, false
+		for _, typ := range noMatch.StanzaTypes {
+			switch {
+			case typ == string(PostQuantum) || typ == string(Classic):
+				native++
+			case !grease.MatchString(typ):
+				other = true
+			}
+		}
+		if len(st.Native) != native || other && !st.Other {
+			t.Fatalf("age lists %q; read as %+v", noMatch.StanzaTypes, st)
+		}
+		for _, k := range st.Native {
+			if k != PostQuantum && k != Classic {
+				t.Fatalf("a native stanza of type %q", k)
+			}
+		}
+	})
+}
+
+// nobody is an age identity that matches no stanza.
+type nobody struct{}
+
+func (nobody) Unwrap([]*age.Stanza) ([]byte, error) { return nil, age.ErrIncorrectIdentity }
 
 // isRefusal reports whether err is an EnvelopeError with that code.
 func isRefusal(err error, code string) bool {

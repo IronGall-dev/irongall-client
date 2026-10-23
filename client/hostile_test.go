@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"filippo.io/age"
 	"github.com/IronGall-dev/irongall-client/client"
@@ -619,8 +620,9 @@ func (grease) Wrap([]byte) ([]*age.Stanza, error) {
 // undecryptable before any key agreement, as every server refuses such a
 // send (PROTOCOL.md §4.5 step 7, §5 check 1): age tries every prekey on every
 // stanza, up to 1,024 (#49). Two native stanzas, one to the box's own prekey,
-// are refused, which age alone would decrypt; one native stanza with a
-// grease stanza beside it is delivered.
+// are refused, which age alone would decrypt; so is a file of grease alone,
+// in words of its own (#417 item 4); one native stanza with a grease stanza
+// beside it is delivered.
 func TestAFileWithoutOneNativeStanzaIsRefusedUndecrypted(t *testing.T) {
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -646,12 +648,14 @@ func TestAFileWithoutOneNativeStanzaIsRefusedUndecrypted(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, c := range []struct {
-		name string
-		to   []age.Recipient
-		code string
+		name   string
+		to     []age.Recipient
+		code   string
+		reason string
 	}{
-		{"two native stanzas, one the box's own", []age.Recipient{stranger.Recipient(), own}, client.RefusedDecrypt},
-		{"a native stanza and a grease stanza", []age.Recipient{grease{}, own}, ""},
+		{"two native stanzas, one the box's own", []age.Recipient{stranger.Recipient(), own}, client.RefusedDecrypt, "exactly one recipient"},
+		{"grease alone", []age.Recipient{grease{}}, client.RefusedDecrypt, "no recipient"},
+		{"a native stanza and a grease stanza", []age.Recipient{grease{}, own}, "", ""},
 	} {
 		env, err := protocol.NewEnvelope(a.Address(), b.Address(), c.name, e.clock.Now())
 		if err != nil {
@@ -671,7 +675,7 @@ func TestAFileWithoutOneNativeStanzaIsRefusedUndecrypted(t *testing.T) {
 		if err := w.Close(); err != nil {
 			t.Fatal(err)
 		}
-		if r, err := age.Decrypt(bytes.NewReader(ct.Bytes()), ids...); err != nil || r == nil {
+		if r, err := age.Decrypt(bytes.NewReader(ct.Bytes()), ids...); (err != nil || r == nil) && c.reason != "no recipient" {
 			t.Fatalf("%s: age alone does not decrypt it: %v", c.name, err)
 		}
 		id := sha256.Sum256(ct.Bytes())
@@ -680,8 +684,63 @@ func TestAFileWithoutOneNativeStanzaIsRefusedUndecrypted(t *testing.T) {
 		switch {
 		case c.code == "" && (len(res.Delivered) != 1 || len(res.Refused) != 0):
 			t.Errorf("%s: %+v", c.name, res)
-		case c.code != "" && (len(res.Refused) != 1 || res.Refused[0].Code != c.code || len(res.Delivered) != 0 || !strings.Contains(res.Refused[0].Reason, "exactly one recipient")):
+		case c.code != "" && (len(res.Refused) != 1 || res.Refused[0].Code != c.code || len(res.Delivered) != 0 || !strings.Contains(res.Refused[0].Reason, c.reason)):
 			t.Errorf("%s: %+v", c.name, res)
 		}
+	}
+}
+
+// A file of two native stanzas, one to a prekey the box retired and one to
+// its current, is refused undecrypted, on an X25519 box and a post-quantum
+// one alike: the stanzas are counted before age is given any of the box's
+// prekeys, the retired among them, which age alone would decrypt with (#417
+// item 1).
+func TestTwoNativeStanzasOneToARetiredPrekeyAreRefused(t *testing.T) {
+	for _, kt := range []protocol.KeyType{protocol.Classic, protocol.PostQuantum} {
+		t.Run(string(kt), func(t *testing.T) {
+			e := newEnv(t)
+			a, b := e.box(protocol.Classic), e.box(kt)
+			recipient := func() age.Recipient {
+				st, _ := e.srv.Prekey(b.Address())
+				p, err := protocol.ParsePrekey(st)
+				if err != nil {
+					t.Fatal(err)
+				}
+				r, err := p.Recipient()
+				if err != nil {
+					t.Fatal(err)
+				}
+				return r
+			}
+			retired := recipient()
+			e.clock.Add(2 * time.Second)
+			if _, err := b.Rekey(t.Context(), ""); err != nil {
+				t.Fatal(err)
+			}
+			current := recipient()
+			env, err := protocol.NewEnvelope(a.Address(), b.Address(), "to a retired prekey and the current", e.clock.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			env.Identity = a.Identity().Document()
+			line, sig, err := protocol.SignEnvelope(env, worker(t, a))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var ct bytes.Buffer
+			w, err := age.Encrypt(&ct, retired, current)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, _ = w.Write(append(line, sig...))
+			if err := w.Close(); err != nil {
+				t.Fatal(err)
+			}
+			id := sha256.Sum256(ct.Bytes())
+			e.srv.Inject(b.Address(), hex.EncodeToString(id[:]), a.Address(), ct.Bytes())
+			if res := receive(t, b); len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedDecrypt {
+				t.Fatalf("%+v", res)
+			}
+		})
 	}
 }

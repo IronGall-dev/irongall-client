@@ -1,7 +1,6 @@
 package client
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -17,7 +16,6 @@ import (
 	"time"
 	"unicode/utf16"
 
-	"filippo.io/age"
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
@@ -606,7 +604,8 @@ type verdict struct {
 // own words. An error is this box's own fault, not the message's: no verdict.
 //
 //  1. Decryption with every retained prekey, of a file with exactly one
-//     native recipient stanza (oneNative).
+//     native recipient stanza, counted before anything is decrypted
+//     (decrypt, oneNative).
 //  2. What came out is an envelope line and then a signature block.
 //  3. The line carries the sender's identity document, and its from is that
 //     document's hash.
@@ -655,11 +654,13 @@ func (b *Box) judge(ctx context.Context, ct []byte, listedFrom string, asked *lo
 	if err != nil {
 		return verdict{}, err
 	}
-	r, err := age.Decrypt(bytes.NewReader(ct), ids...)
-	if errors.Is(err, errNotOneNative) {
+	r, err := decrypt(ct, ids)
+	switch {
+	case errors.Is(err, errNoNative):
+		return refused(RefusedDecrypt, "it is encrypted to no recipient of a prekey's type, which no server takes as a send: nothing was decrypted")
+	case errors.Is(err, errNotOneNative):
 		return refused(RefusedDecrypt, "it is not encrypted to exactly one recipient of a prekey's type, as every server takes a send: nothing was decrypted")
-	}
-	if err != nil {
+	case err != nil:
 		return refused(RefusedDecrypt, "it does not decrypt with this box's prekeys")
 	}
 	p, err := io.ReadAll(io.LimitReader(r, protocol.MaxCiphertext)) // less than its ciphertext, which is at most that
