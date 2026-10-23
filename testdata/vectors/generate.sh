@@ -48,7 +48,7 @@ bech32() { # <human-readable part> <bytes, hex>
 armor() { printf -- '-----BEGIN SSH SIGNATURE-----\n'; bin "$1" | b64 | fold -w 70; printf -- '\n-----END SSH SIGNATURE-----\n'; }
 blob() { sed '1d;$d' "$1" | tr -d '\n' | base64 -d | od -An -v -tx1 | tr -d ' \n'; }
 # A blob in hex with S + L in place of the S at a hex offset: the other encoding of an Ed25519 signature's S, which
-# RFC 8032 §5.1.7 refuses and ssh-keygen before 10.3p1 takes. S and L are 32 bytes, little-endian.
+# RFC 8032 §5.1.7 refuses and ssh-keygen before the cut PROTOCOL.md §3 gives takes. S and L are 32 bytes, little-endian.
 plusl() { # <blob hex> <hex offset of S>
   local x=$1 o=$2 s=${1:$2:64} l=edd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010 r="" c=0 i t
   for ((i = 0; i < 64; i += 2)); do t=$((16#${s:i:2} + 16#${l:i:2} + c)); c=$((t >> 8)); r+=$(printf %02x $((t & 255))); done
