@@ -493,25 +493,44 @@ func takesTheLock(body *ast.BlockStmt) bool {
 // server holds the revocation, published from elsewhere, and the box does
 // not. The box keeps the revocation and signs nothing more, this renewal
 // included, the revocation learned inside the command: no certificate and no
-// prekey statement, and no key made for one (#227).
+// prekey statement, no key made for one, and no renewal begun (#227). So it
+// is where a server that answers it holds no box shows the revocation at the
+// box's read of its revocations.
 func TestARenewalThatMeetsItsOwnRevocationSignsNothing(t *testing.T) {
-	ctx := context.Background()
-	e := newEnv(t)
-	a := e.box(protocol.Classic)
-	rec, err := a.Revocation(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	publishAt(t, e.srv.URL, rec) // as another machine of the box's owner would
-	before, number, begun := signed(t, a), numberOf(t, a), begunAt(t, a)
-	e.clock.Add(2 * time.Second)
-	_, err = a.Rekey(ctx, "")
-	if st, serr := a.Status(t.Context()); serr != nil || !st.Revoked {
-		t.Fatalf("the box did not keep its own revocation: %+v, %v", st, serr)
-	}
-	var gone *client.RevokedError
-	if !errors.As(err, &gone) || !gone.Own || numberOf(t, a) != number || begunAt(t, a) != begun || !slices.Equal(signed(t, a), slices.DeleteFunc(before, func(n string) bool { return n == "pass" })) {
-		t.Errorf("a renewal that met its own revocation: %v; serial %d -> %d; a prekey begun at %d -> %d; signed %v -> %v", err, number, numberOf(t, a), begun, begunAt(t, a), before, signed(t, a))
+	for _, at := range []string{"the read of the box", "the read of its revocations"} {
+		t.Run(at, func(t *testing.T) {
+			ctx := context.Background()
+			e := newEnv(t)
+			a := e.box(protocol.Classic)
+			rec, err := a.Revocation(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			publishAt(t, e.srv.URL, rec) // as another machine of the box's owner would
+			if at == "the read of its revocations" {
+				e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+					if r.Method == http.MethodGet && r.URL.Path == boxPath(a) {
+						forge.Refuse(w, protocol.CodeNoSuchMailbox)
+						return
+					}
+					next.ServeHTTP(w, r)
+				})
+			}
+			before, number, begun := signed(t, a), numberOf(t, a), begunAt(t, a)
+			_, renewing := a.Record(t, "renewal")
+			e.clock.Add(2 * time.Second)
+			_, err = a.Rekey(ctx, "")
+			if st, serr := a.Status(t.Context()); serr != nil || !st.Revoked {
+				t.Fatalf("the box did not keep its own revocation: %+v, %v", st, serr)
+			}
+			var gone *client.RevokedError
+			if !errors.As(err, &gone) || !gone.Own || numberOf(t, a) != number || begunAt(t, a) != begun || !slices.Equal(signed(t, a), slices.DeleteFunc(before, func(n string) bool { return n == "pass" })) {
+				t.Errorf("a renewal that met its own revocation: %v; serial %d -> %d; a prekey begun at %d -> %d; signed %v -> %v", err, number, numberOf(t, a), begun, begunAt(t, a), before, signed(t, a))
+			}
+			if v, ok := a.Record(t, "renewal"); ok != renewing {
+				t.Errorf("a renewal that met its own revocation began one: %q", v)
+			}
+		})
 	}
 }
 

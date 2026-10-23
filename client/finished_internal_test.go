@@ -98,3 +98,46 @@ func TestAPrekeyOnAFinishedBoxWritesNoKey(t *testing.T) {
 		t.Fatalf("a prekey on a finished box: %v; %d files, were %d", err, files(), before)
 	}
 }
+
+// A command that keeps its box's own revocation on the way asks nothing
+// more: each call after it, a read with no pass among them, returns the
+// revocation before any request (call), and a read of another box is not
+// that box's revocation (readBox). The next command begins with none.
+func TestACommandThatKeptItsOwnRevocationAsksNothingMore(t *testing.T) {
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	b, err := Init(ctx, t.TempDir(), Options{Base: srv.URL}, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer, err := Init(ctx, t.TempDir(), Options{Base: srv.URL}, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := b.Revocation(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := len(srv.Requests())
+	_, err = lockedFinished(ctx, b, func() (struct{}, error) {
+		id, err := protocol.VerifyRevocation(b.id.Address(), rec.Identity, rec.Revocation)
+		if err != nil {
+			return struct{}{}, err
+		}
+		if err := b.keepRevocation(id, rec.Revocation); err != nil {
+			return struct{}{}, err
+		}
+		_, gone, err := b.readBox(ctx, peer.Address(), nil)
+		if gone {
+			t.Error("a read of a peer after the box kept its own revocation says the peer is revoked")
+		}
+		return struct{}{}, err
+	})
+	var ended *RevokedError
+	if !errors.As(err, &ended) || !ended.Own || len(srv.Requests()) != before {
+		t.Errorf("a read after the box kept its own revocation: %v, with %d requests", err, len(srv.Requests())-before)
+	}
+	if _, err := b.Publish(ctx, rec); err != nil || len(srv.Requests()) != before+1 {
+		t.Errorf("the next command, a publish of the record: %v, with %d requests", err, len(srv.Requests())-before)
+	}
+}

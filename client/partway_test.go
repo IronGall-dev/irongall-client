@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -52,6 +53,43 @@ func putRecord(t *testing.T, next http.Handler, a protocol.Address, rec *protoco
 func finishedOwn(err error) bool {
 	var gone *client.RevokedError
 	return errors.As(err, &gone) && gone.Own
+}
+
+// A read answered 410 revoked with a record that does not verify is that
+// read's answer: nothing more is asked of it, so a proof's own reads are never
+// proved again (proved), and a server that answers so at every read gets one
+// (#353).
+func TestARevokedReadWhoseRecordDoesNotVerifyIsNotReadAgain(t *testing.T) {
+	for _, of := range []string{"a peer", "itself"} {
+		t.Run(of, func(t *testing.T) {
+			ctx := context.Background()
+			e := newEnv(t)
+			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			read := b
+			if of == "itself" {
+				read = a
+			}
+			bad := notItsRecord(t, read)
+			var reads atomic.Int32
+			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+				// Bounded, so that a box that reads again still ends.
+				if r.Method == http.MethodGet && r.URL.Path == boxPath(read) && reads.Add(1) <= 10 {
+					forge.Refuse(w, protocol.CodeRevoked, func(p *protocol.Problem) { p.Record = bad })
+					return
+				}
+				next.ServeHTTP(w, r)
+			})
+			var err error
+			if of == "itself" {
+				_, err = a.Rekey(ctx, "")
+			} else {
+				_, err = a.Resolve(ctx, b.Address())
+			}
+			if client.Code(err) != protocol.CodeRevoked || finishedOwn(err) || reads.Load() != 1 {
+				t.Errorf("a read of %s answered 410 with a record that does not verify: %v, after %d reads of it", of, err, reads.Load())
+			}
+		})
+	}
 }
 
 // Every command a box runs under its lock, in the states that reach each of
@@ -112,6 +150,9 @@ type partwaySet struct {
 	inner func(i int, w http.ResponseWriter, r *http.Request, next http.Handler) bool
 	run   func(ctx context.Context) (any, error)
 	check func(t *testing.T, w *partwayRun)
+	// joined is a command whose error joins its entries', a flush's: it holds
+	// the revocation, and is not it alone.
+	joined bool
 }
 
 // partwayCall is one call the command made, and what it was answered.
@@ -322,9 +363,19 @@ func partwayAt(t *testing.T, c partwayCase, n int, v string) {
 	}
 	w := &partwayRun{box: box, got: got, err: err, calls: l.calls, event: l.event}
 	at := l.calls[n-1]
+	if peerRevoked(err) {
+		t.Errorf("its error names a peer revoked, where none is: %v; calls %v", err, l.calls)
+	}
 	if l.event < 0 {
 		if partwayMustLearn(at, v, s.a.Address()) {
 			t.Errorf("answered %s at %s, and nothing it asked showed it its revocation: %v; calls %v", v, at, err, l.calls)
+		}
+		// A 403 sender_revoked is proved by reading the box, which its server
+		// holds revoked by then.
+		for _, c := range l.calls[n-1:] {
+			if c.status == http.StatusForbidden && !partwayIsRead(c) && strings.HasSuffix(c.path, "/messages") {
+				t.Errorf("answered 403 at %s, and it did not read itself: %v; calls %v", c, err, l.calls)
+			}
 		}
 		if st.Revoked {
 			t.Errorf("it holds its own revocation, which no answer showed: calls %v", l.calls)
@@ -339,6 +390,8 @@ func partwayAt(t *testing.T, c partwayCase, n int, v string) {
 	}
 	if !finishedOwn(err) {
 		t.Errorf("the command's error is not its revocation: %v; calls %v", err, l.calls)
+	} else if _, alone := err.(*client.RevokedError); !alone && !s.joined {
+		t.Errorf("the command's error is not its revocation alone: %v; calls %v", err, l.calls)
 	}
 	for _, c := range l.calls[l.event+1:] {
 		t.Errorf("asked after the event: %s; calls %v", c, l.calls)
@@ -361,6 +414,22 @@ func partwayAt(t *testing.T, c partwayCase, n int, v string) {
 	if s.check != nil {
 		s.check(t, w)
 	}
+}
+
+// peerRevoked reports whether err holds, anywhere in its tree, a
+// RevokedError of another address than the box's own.
+func peerRevoked(err error) bool {
+	var gone *client.RevokedError
+	if errors.As(err, &gone) && !gone.Own {
+		return true
+	}
+	switch u := err.(type) {
+	case interface{ Unwrap() []error }:
+		return slices.ContainsFunc(u.Unwrap(), peerRevoked)
+	case interface{ Unwrap() error }:
+		return peerRevoked(u.Unwrap())
+	}
+	return false
 }
 
 // notItsRecord is a record of a's identity whose revocation another key
@@ -536,9 +605,12 @@ func partwayCases() []partwayCase {
 			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 			return partwaySet{dir: a.Dir(), a: a, check: outboxSaysItAlone, run: func(ctx context.Context) (any, error) { return a.Send(ctx, b.Address(), "sent") }}
 		}},
-		{"send, its ACL changed", func(t *testing.T, e *env) partwaySet {
+		{"send, its ACL changed, the one its server took admitting no reply", func(t *testing.T, e *env) partwaySet {
 			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 			serverAllowed(t, a)
+			if err := a.SyncACL(t.Context()); err != nil {
+				t.Fatal(err)
+			}
 			return partwaySet{dir: a.Dir(), a: a, check: outboxSaysItAlone, run: func(ctx context.Context) (any, error) { return a.Send(ctx, b.Address(), "sent") }}
 		}},
 		{"send JSON", func(t *testing.T, e *env) partwaySet {
@@ -562,7 +634,26 @@ func partwayCases() []partwayCase {
 				}
 			}
 			e.srv.SetMiddle(nil)
-			return partwaySet{dir: a.Dir(), a: a, check: outboxSaysItAlone, run: func(ctx context.Context) (any, error) { return a.Flush(ctx) }}
+			return partwaySet{dir: a.Dir(), a: a, check: outboxSaysItAlone, joined: true, run: func(ctx context.Context) (any, error) { return a.Flush(ctx) }}
+		}},
+		{"outbox flush, its ACL changed, the one its server took admitting no reply", func(t *testing.T, e *env) partwaySet {
+			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			serverAllowed(t, a)
+			if err := a.SyncACL(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+				if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/acl") {
+					forge.Refuse(w, protocol.CodeUnavailable)
+					return
+				}
+				next.ServeHTTP(w, r)
+			})
+			if _, err := a.Send(t.Context(), b.Address(), "waits for the ACL"); err == nil {
+				t.Fatal("a send went out before the ACL that admits its reply")
+			}
+			e.srv.SetMiddle(nil)
+			return partwaySet{dir: a.Dir(), a: a, check: outboxSaysItAlone, joined: true, run: func(ctx context.Context) (any, error) { return a.Flush(ctx) }}
 		}},
 		{"init, restored from its identity alone", func(t *testing.T, e *env) partwaySet {
 			return restored(t, e, e.box(protocol.Classic))
