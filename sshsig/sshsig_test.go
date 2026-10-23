@@ -406,13 +406,32 @@ func FuzzVerify(f *testing.F) {
 	}
 	f.Add(sig)
 	f.Add(sig[:20])
+	f.Add(withReserved(sig, "000000")) // #401
 	f.Fuzz(func(t *testing.T, blob []byte) {
-		// Ed25519 is deterministic and Go requires canonical R and S, so
-		// exactly one blob verifies.
-		if Verify(s.PublicKey(), msg, blob, ns) == nil && !bytes.Equal(blob, sig) {
+		// Ed25519 is deterministic and Go requires canonical R and S, and
+		// nothing signs the reserved field (TestReservedAsSSHKeygen), so a
+		// blob that verifies is Sign's with some reserved string.
+		if Verify(s.PublicKey(), msg, blob, ns) == nil && !bytes.Equal(withReserved(blob, ""), sig) {
 			t.Fatalf("a different blob verified: %x", blob)
 		}
 	})
+}
+
+// withReserved is blob with reserved in its reserved field, or blob as it is
+// when its five fields do not read.
+func withReserved(blob []byte, reserved string) []byte {
+	r := reader(blob)
+	magic, ok := r.take(len(magicPreamble))
+	version, ok0 := r.uint32()
+	pub, ok1 := r.string()
+	namespace, ok2 := r.string()
+	_, ok3 := r.string()
+	hashAlg, ok4 := r.string()
+	sig, ok5 := r.string()
+	if !ok || string(magic) != magicPreamble || !ok0 || !ok1 || !ok2 || !ok3 || !ok4 || !ok5 {
+		return blob
+	}
+	return append(build(pub, string(namespace), reserved, string(hashAlg), sig, version), r...)
 }
 
 func FuzzRoundTrip(f *testing.F) {
