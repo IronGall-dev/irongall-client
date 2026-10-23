@@ -3,6 +3,7 @@ package client_test
 import (
 	"context"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -272,19 +273,11 @@ func TestABoxSharedByGoroutinesRunsOneAtATime(t *testing.T) {
 	}
 }
 
-// A wait for the box's lock ends with the caller's context, at every entry
-// that waits, and what it would have written is not written (#330).
-func TestAWaitForTheLockEndsWithItsContext(t *testing.T) {
-	client.SetLockPatience(t, 3*time.Second) // a wait that ignores its context fails at this, not at two minutes
-	e := newEnv(t)
-	b, c := e.box(protocol.Classic), e.box(protocol.Classic)
-	rec, err := c.Revocation(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	release := holdState(t, b)
-	defer release()
-	for name, f := range map[string]func(context.Context) error{
+// waits are the entries of box b that wait for its lock, each a reading or a
+// command that would write: an alias for c, and the keep of rec, c's
+// revocation.
+func waits(b, c *client.Box, rec *protocol.Revocations) map[string]func(context.Context) error {
+	return map[string]func(context.Context) error{
 		"Status":             func(ctx context.Context) error { _, err := b.Status(ctx); return err },
 		"Quarantined":        func(ctx context.Context) error { _, err := b.Quarantined(ctx); return err },
 		"NotMade":            func(ctx context.Context) error { _, err := b.NotMade(ctx); return err },
@@ -298,23 +291,87 @@ func TestAWaitForTheLockEndsWithItsContext(t *testing.T) {
 		},
 		"KeepRevocation": func(ctx context.Context) error { _, _, err := b.KeepRevocation(ctx, rec); return err },
 		"RebuildAllowed": func(ctx context.Context) error { _, err := b.RebuildAllowed(ctx); return err },
-	} {
+	}
+}
+
+// endsWithItsContext runs each of waits with a context of 200 ms while what
+// it waits for is held, and fails the test unless each ended with it.
+func endsWithItsContext(t *testing.T, held string, waits map[string]func(context.Context) error) {
+	t.Helper()
+	for name, f := range waits {
 		ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 		start := time.Now()
 		err := f(ctx)
 		cancel()
 		if !errors.Is(err, context.DeadlineExceeded) || time.Since(start) > 5*time.Second {
-			t.Errorf("%s while the lock is held: %v after %v", name, err, time.Since(start))
+			t.Errorf("%s while %s: %v after %v", name, held, err, time.Since(start))
 		}
 	}
-	release()
-	release = func() {}
+}
+
+// writtenNothing fails the test if b keeps an alias, or c's revocation,
+// which waits would have written had a wait not ended.
+func writtenNothing(t *testing.T, b, c *client.Box) {
+	t.Helper()
 	if as, err := b.Aliases(); err != nil || len(as) != 0 {
 		t.Errorf("an alias was written after its wait ended: %+v, %v", as, err)
 	}
 	if held, err := b.Ask(t.Context(), c.Address()); err != nil || held.Revoked {
 		t.Errorf("a revocation was kept after its wait ended: %+v, %v", held, err)
 	}
+}
+
+// A wait for the box's lock ends with the caller's context, at every entry
+// that waits, and what it would have written is not written (#330).
+func TestAWaitForTheLockEndsWithItsContext(t *testing.T) {
+	client.SetLockPatience(t, 3*time.Second) // a wait that ignores its context fails at this, not at two minutes
+	e := newEnv(t)
+	b, c := e.box(protocol.Classic), e.box(protocol.Classic)
+	rec, err := c.Revocation(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	release := holdState(t, b)
+	defer release()
+	endsWithItsContext(t, "the lock is held", waits(b, c, rec))
+	release()
+	release = func() {}
+	writtenNothing(t, b, c)
+}
+
+// So does a wait for the Box's slot, which a command of another goroutine
+// sharing the Box holds, at every entry (claim; #330). Each entry takes the
+// slot before the state file, so the slot's is the wait timed: holdState,
+// above, times only the file's (#380).
+func TestAWaitForTheSlotEndsWithItsContext(t *testing.T) {
+	client.SetLockPatience(t, 3*time.Second) // a wait that ignores its context ends at this, refused, not at two minutes
+	e := newEnv(t)
+	b, c := e.box(protocol.Classic), e.box(protocol.Classic)
+	rec, err := c.Revocation(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A Receive of b on another goroutine holds b's slot while the server
+	// holds its list.
+	in, out := make(chan struct{}), make(chan struct{})
+	listed := sync.OnceFunc(func() { close(in) })
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.Method == http.MethodGet && r.URL.Path == boxPath(b)+"/messages" {
+			listed()
+			<-out
+		}
+		next.ServeHTTP(w, r)
+	})
+	done := make(chan error, 1)
+	go func() { _, err := b.Receive(context.Background()); done <- err }()
+	<-in
+	endsWithItsContext(t, "another goroutine's command holds the slot", waits(b, c, rec))
+	close(out)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	e.srv.SetMiddle(nil)
+	writtenNothing(t, b, c)
 }
 
 // A command that waits for the box's lock goes before readings that come
