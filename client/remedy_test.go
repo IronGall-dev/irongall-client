@@ -369,3 +369,65 @@ func TestAFaultAfterTheRevocationWasTakenLeavesItTaken(t *testing.T) {
 		})
 	}
 }
+
+// A conflict whose read again shows a higher revocation of the box's
+// certificates, which verifies, and a fault of the box at its keep: the
+// revocation is the server's and shown, so RevokeEarlier and the remedy
+// return it with the fault as the call's error, never as nothing revoked,
+// and the remedy numbers its renewal above it, which the server then takes
+// (#406 item 1; #383 on the conflict path). The fault fires once, at the
+// keep the read after the conflict makes.
+func TestAFaultKeepingTheRevocationShownAfterAConflictLeavesItTaken(t *testing.T) {
+	ctx := context.Background()
+	full := &os.PathError{Op: "write", Path: "state", Err: syscall.ENOSPC}
+	for _, name := range []string{"RevokeEarlier", "RenewAndRevoke"} {
+		t.Run(name, func(t *testing.T) {
+			e := newEnv(t)
+			a := e.box(protocol.Classic)
+			T := numberOf(t, a) + 7200
+			publish(t, e, certsRecord(t, a.Dir(), T)) // a higher revocation, the identity's own
+			var reads atomic.Int32
+			var armed, fired atomic.Bool
+			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+				if r.Method == http.MethodGet && r.URL.Path == boxPath(a) {
+					if reads.Add(1) == 1 { // hidden at the first read: the publish conflicts
+						e.serve(w, r, next, func(br *protocol.BoxResponse) { br.RevokedCertificates, br.RevokedCertificatesSignature = nil, nil })
+						return
+					}
+					if reads.Load() == 2 { // shown at the read after the conflict; its keep fails
+						armed.Store(true)
+					}
+				}
+				next.ServeHTTP(w, r)
+			})
+			client.SetWriteFault(t, func() error {
+				if armed.CompareAndSwap(true, false) {
+					fired.Store(true)
+					return full
+				}
+				return nil
+			})
+			var certs *protocol.RevokedCertificates
+			var err error
+			if name == "RevokeEarlier" {
+				certs, err = a.RevokeEarlier(ctx)
+			} else {
+				r, rerr := a.RenewAndRevoke(ctx, "")
+				if r == nil {
+					t.Fatalf("no remedy: %v", rerr)
+				}
+				certs, err = r.Revoked, rerr
+				if r.NotRevoked != nil || r.NotRenewed != nil || r.Prekey == nil || r.Below <= T || servedSerial(t, e, a) != r.Below {
+					t.Errorf("the remedy: below %d, not revoked %v, not renewed %v, prekey %+v; the server holds through %d and serves %d", r.Below, r.NotRevoked, r.NotRenewed, r.Prekey, T, servedSerial(t, e, a))
+				}
+			}
+			e.srv.SetMiddle(nil)
+			if !fired.Load() {
+				t.Fatal("the fault never fired")
+			}
+			if certs == nil || certs.Through != T || !errors.Is(err, syscall.ENOSPC) {
+				t.Errorf("the server holds and showed a verified revocation through %d: %+v, %v", T, certs, err)
+			}
+		})
+	}
+}

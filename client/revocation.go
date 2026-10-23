@@ -595,11 +595,14 @@ func (b *Box) renewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy,
 		return done(nil)
 	}
 	// Numbered once the revocation is final: above whatever a server showed
-	// on the way.
+	// on the way, kept or not (#406 item 1).
 	held, err := b.revokedCerts(own)
 	if err != nil {
 		r.NotRenewed = err
 		return done(nil)
+	}
+	if r.Revoked != nil && (held == nil || held.Through < r.Revoked.Through) {
+		held = r.Revoked
 	}
 	if held != nil && held.Through >= r.Below {
 		if r.NotRenewed = noneAbove(held.Through); r.NotRenewed != nil {
@@ -647,7 +650,7 @@ func (b *Box) ownRevokes(n uint64) bool {
 // once it verifies: it is the revocation, with no error, when it covers every
 // certificate below serial, as the box's would have; otherwise the conflict
 // is the error (PROTOCOL.md §6.3a). The revocation with an error is one the
-// server took, and a fault of this box at its keep after that.
+// server took or holds, and a fault of this box at its keep after that.
 func (b *Box) revokeBelow(ctx context.Context, serial uint64) (*protocol.RevokedCertificates, error) {
 	if serial <= 1 {
 		return nil, nil
@@ -684,7 +687,14 @@ func (b *Box) revokeBelow(ctx context.Context, serial uint64) (*protocol.Revoked
 	if code(perr) != protocol.CodeConflict {
 		return nil, perr
 	}
-	if _, err := b.known(ctx); err != nil {
+	o, err := b.known(ctx)
+	if err != nil {
+		// One the read showed, verified, that covers what this one would
+		// have is the revocation whether or not this box kept it: the fault
+		// comes beside it, as at a keep after the publish (#406 item 1).
+		if o.certs != nil && o.certs.Through >= serial-1 && ownRevoked(err) == nil {
+			return o.certs, err
+		}
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {

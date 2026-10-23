@@ -36,6 +36,11 @@ type own struct {
 	statement *protocol.Prekey
 	cert      *protocol.Certificate
 	bad       error
+	// certs is the revocation of this box's certificates the read showed,
+	// verified, or nil: there beside a fault in keeping it too, since what
+	// its server holds and showed is so whether or not this box could keep
+	// it (#406 item 1).
+	certs *protocol.RevokedCertificates
 	// err is the error of the call that got no answer this box can use, or
 	// the server's 410: GET /v1/<own>'s, or GET …/revocations' where the
 	// server holds no box. It is nil when every call was answered.
@@ -52,6 +57,8 @@ type own struct {
 // The error is a fault here, after which nothing more is kept, or the box's
 // own revocation, a [RevokedError], once the read showed one that verifies:
 // final for whatever read. What the server did not answer is the value's err.
+// The value comes back beside an error too: the revocation of the box's
+// certificates the read showed, verified, is its certs, kept or not.
 func (b *Box) known(ctx context.Context) (*own, error) {
 	o := &own{at: atUnread}
 	var br protocol.BoxResponse
@@ -87,6 +94,10 @@ func (b *Box) known(ctx context.Context) (*own, error) {
 		o.err = err
 	}
 	if rec != nil {
+		if len(rec.RevokedCertificates) > 0 {
+			// What does not verify counts as nothing shown.
+			o.certs, _ = protocol.VerifyRevokedCertificates(b.id.Address(), rec.Identity, rec.RevokedCertificates, rec.RevokedCertificatesSignature)
+		}
 		if gone, err := b.take(b.id.Address(), rec); err != nil {
 			return o, err
 		} else if gone {
