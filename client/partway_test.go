@@ -724,3 +724,48 @@ func partwayCases() []partwayCase {
 		}},
 	}
 }
+
+// A flush that learns its box's own revocation at an entry's post moves each
+// later entry to outbox/failed/ with nothing asked (#340), by the box's own
+// ended state, the one fact, which the keep sets: here the record the box is
+// shown also revokes the certificate it signs under, so a later entry's seal
+// would refuse before any call and leave it waiting (#414 item 1).
+func TestAFlushThatLearnsItsOwnRevocationMovesEveryLaterEntry(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.Method == http.MethodPost {
+			forge.Refuse(w, protocol.CodeUnavailable)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	for _, p := range []*client.Box{b, c} {
+		if _, err := a.Send(ctx, p.Address(), "waits"); err == nil {
+			t.Fatal("a send went out while the server was down")
+		}
+	}
+	e.srv.SetMiddle(nil)
+	// Another holder of the box's identity revokes the certificate it signs
+	// under, then the address: what the server carries of it holds both.
+	publish(t, e, certsRecord(t, a.Dir(), numberOf(t, a)))
+	revoke(t, e, a)
+	var calls []string
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		next.ServeHTTP(w, r)
+	})
+	_, err := a.Flush(ctx)
+	e.srv.SetMiddle(nil)
+	if !finishedOwn(err) {
+		t.Errorf("the flush's error does not hold its box's revocation: %v", err)
+	}
+	if st, serr := a.Status(ctx); serr != nil || !st.Revoked {
+		t.Errorf("the box does not hold its revocation: %+v, %v", st, serr)
+	}
+	left, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "*.P"))
+	if len(left) != 0 || failed(a, b.Address())+failed(a, c.Address()) != 2 {
+		t.Errorf("%d of 2 entries wait in the outbox, not in outbox/failed/, after the flush learned its box's revocation (calls %v): %v", len(left), calls, err)
+	}
+}

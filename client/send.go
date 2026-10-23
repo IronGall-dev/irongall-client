@@ -229,10 +229,6 @@ func (b *Box) flush(ctx context.Context) ([]*Sent, error) {
 	var errs []error
 	// The recipients this flush has asked the server about: one lookup each.
 	asked := newLookups()
-	// Once its ACL or an entry's post has shown the box its own revocation,
-	// each later entry goes to outbox/failed/ with nothing asked, as at the
-	// flush's start (#340).
-	gone := ownRevoked(aclErr)
 	for _, n := range names {
 		stem := strings.TrimSuffix(n, ".P")
 		to, msgID, _ := strings.Cut(filepath.Base(stem), ".")
@@ -244,8 +240,12 @@ func (b *Box) flush(ctx context.Context) ([]*Sent, error) {
 			errs = append(errs, fmt.Errorf("%s: not an outbox entry", filepath.Base(n)))
 			continue
 		}
-		if gone != nil {
-			errs = append(errs, fmt.Errorf("%s: %w", filepath.Base(stem), b.undelivered(stem, gone)))
+		// Once its ACL or an entry's post has shown the box its own
+		// revocation, each later entry goes to outbox/failed/ with nothing
+		// asked, as at the flush's start (#340), by the box's own ended
+		// state, which the keep sets (keepRevocation): the one fact.
+		if b.ended != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", filepath.Base(stem), b.undelivered(stem, b.ended)))
 			continue
 		}
 		if err := b.replyWaits(peer, aclErr); err != nil {
@@ -254,7 +254,6 @@ func (b *Box) flush(ctx context.Context) ([]*Sent, error) {
 		}
 		s, err := b.post(ctx, peer, stem, asked)
 		if err != nil {
-			gone = ownRevoked(err)
 			errs = append(errs, fmt.Errorf("%s: %w", filepath.Base(stem), err))
 			continue
 		}
