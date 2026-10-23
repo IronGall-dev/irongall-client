@@ -214,7 +214,7 @@ func decoded(t testing.TB, where string, r *http.Request, rec *recorder) ([]byte
 	if ce == "" || rec.body.Len() == 0 {
 		return rec.body.Bytes(), true
 	}
-	ae := strings.ToLower(strings.Join(r.Header.Values("Accept-Encoding"), ","))
+	ae := protocol.LowerASCII(strings.Join(r.Header.Values("Accept-Encoding"), ","))
 	if ce != "gzip" || !strings.Contains(ae, "gzip") && !strings.Contains(ae, "*") {
 		t.Errorf("apitest: %s: an answer in %q, which the request did not take (Accept-Encoding %q)", where, ce, r.Header.Values("Accept-Encoding"))
 		return nil, false

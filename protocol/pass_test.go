@@ -574,3 +574,22 @@ func TestAPassWrittenAnotherWayIsOnePass(t *testing.T) {
 		t.Error("a signature that differs in a bit is written back as the same pass")
 	}
 }
+
+// LowerASCII, the one fold a protocol token is compared by, lowers A to Z
+// and nothing else: no character Unicode's case folding takes for an ASCII
+// letter (the long s, the Kelvin sign, the dotted capital I) becomes one
+// (#405).
+func TestLowerASCIILowersAToZAlone(t *testing.T) {
+	for in, want := range map[string]string{
+		"IronGall-Pass":  "irongall-pass",
+		"BYTES":          "bytes",
+		"byteſ":          "byteſ",
+		"KEY":            "Key",
+		"İD":             "İd",
+		"[]^_`{|}~@AZaz": "[]^_`{|}~@azaz",
+	} {
+		if got := LowerASCII(in); got != want {
+			t.Errorf("LowerASCII(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

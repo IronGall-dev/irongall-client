@@ -7,7 +7,7 @@ import (
 )
 
 // A fetch's Range is read as one open-ended byte range, "bytes=N-", the unit
-// in any case (RFC 9110 §14.1), and nothing else: several ranges, a closed
+// in any ASCII case (RFC 9110 §14.1), and nothing else: several ranges, a closed
 // one, a suffix, another unit, a form with spaces, two lines, or a Range
 // beside an If-Range are answered with the whole body (PROTOCOL.md §5.2).
 func TestRangeAsked(t *testing.T) {
@@ -39,6 +39,8 @@ func TestRangeAsked(t *testing.T) {
 		{[]string{"bytes=0x5-"}, nil, 0, false},
 		{[]string{"bytes=５-"}, nil, 0, false},
 		{[]string{"items=5-"}, nil, 0, false},
+		{[]string{"byteſ=5-"}, nil, 0, false}, // a token is ASCII: U+017F folds to s only by Unicode's rules (#405)
+		{[]string{"BYTEſ=5-"}, nil, 0, false},
 		{[]string{"bytes5-"}, nil, 0, false},
 		{[]string{"bytes=5"}, nil, 0, false},
 	} {

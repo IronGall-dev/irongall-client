@@ -152,22 +152,24 @@ func (b *Box) dropWork(n uint64) error {
 }
 
 // serverName is the server's name as this box calls it, which a pass names:
-// the host of the server's URL, lowercase, and its port only when that is not
-// the scheme's default, as an origin is written (RFC 6454 §6.2): the port as
-// a number, and none for https on 443 or http on 80.
+// the host of the server's URL, lowercase in ASCII (protocol.LowerASCII: a
+// host with a letter only Unicode's rules lower names no server), and its
+// port only when that is not the scheme's default, as an origin is written
+// (RFC 6454 §6.2): the port as a number, and none for https on 443 or http
+// on 80.
 func (b *Box) serverName() (string, error) {
 	u, err := url.Parse(b.base)
 	if err != nil || u.Host == "" {
 		return "", fmt.Errorf("the server's URL %q has no host to name in a pass", b.base)
 	}
 	port := u.Port()
-	name := strings.TrimSuffix(strings.ToLower(u.Host), ":"+port)
+	name := strings.TrimSuffix(protocol.LowerASCII(u.Host), ":"+port)
 	if port != "" {
 		n, err := strconv.ParseUint(port, 10, 16)
 		if err != nil {
 			return "", fmt.Errorf("the server's URL %q has no port to name in a pass", b.base)
 		}
-		if defaultPort[strings.ToLower(u.Scheme)] != n {
+		if defaultPort[protocol.LowerASCII(u.Scheme)] != n {
 			name += ":" + strconv.FormatUint(n, 10)
 		}
 	}

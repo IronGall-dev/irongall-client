@@ -217,7 +217,7 @@ func newTransport(rt http.RoundTripper) http.RoundTripper {
 		c := ht.Clone()
 		proxy := c.Proxy
 		c.Proxy = func(r *http.Request) (*url.URL, error) {
-			if h := strings.ToLower(r.URL.Hostname()); h == "localhost" || onThisMachine(h) || proxy == nil {
+			if h := protocol.LowerASCII(r.URL.Hostname()); h == "localhost" || onThisMachine(h) || proxy == nil {
 				return nil, nil
 			}
 			return proxy(r)

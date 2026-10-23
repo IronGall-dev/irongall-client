@@ -189,7 +189,7 @@ func ParsePass(authorization string) (*Pass, error) {
 // by their names in lowercase.
 func passParams(v string) (map[string]string, error) {
 	scheme, rest, ok := strings.Cut(v, " ")
-	if len(scheme) != len(PassScheme) || asciiLower(scheme) != PassScheme { // a token, so ASCII: no Unicode case folding (RFC 9110 §5.6.2, §11.1; #268)
+	if len(scheme) != len(PassScheme) || LowerASCII(scheme) != PassScheme {
 		return nil, errors.New("its scheme is not " + PassScheme)
 	}
 	if !ok {
@@ -207,7 +207,7 @@ func passParams(v string) (map[string]string, error) {
 			if err != nil {
 				return nil, err
 			}
-			name = strings.ToLower(name)
+			name = LowerASCII(name)
 			if name != "address" && name != "not_after" && name != "signature" {
 				return nil, errors.New("it has a parameter a pass has not")
 			}
@@ -280,8 +280,14 @@ func tchar(c byte) bool {
 	return 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9' || strings.IndexByte("!#$%&'*+-.^_`|~", c) >= 0
 }
 
-// asciiLower is s with A to Z made lowercase, and nothing else changed.
-func asciiLower(s string) string {
+// LowerASCII is s with A to Z made lowercase, and nothing else changed: the
+// one fold every comparison of a protocol token in any case makes, in both
+// repositories. A token is ASCII (RFC 9110 §5.6.2), and Unicode's case
+// folding, strings.EqualFold's and strings.ToLower's, takes characters that
+// are no token's for ASCII letters (U+017F folds to s, the Kelvin sign to
+// k), so a value a token would refuse would read as one. The linter refuses
+// strings.EqualFold (.golangci.yml; #268, #405).
+func LowerASCII(s string) string {
 	b := []byte(s)
 	for i, c := range b {
 		if 'A' <= c && c <= 'Z' {

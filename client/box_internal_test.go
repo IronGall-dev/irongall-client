@@ -51,6 +51,12 @@ func TestAPassNamesTheServerAsAnOrigin(t *testing.T) {
 	if got, err := (&Box{base: "https://irongall.dev:65536"}).serverName(); err == nil {
 		t.Errorf("a port that is no port: named %q", got)
 	}
+	// A host is lowercased in ASCII alone: one whose K is the Kelvin sign,
+	// which Unicode's rules lower to k, names no server, never key.example
+	// (#405).
+	if got, err := (&Box{base: "https://\u212aey.example"}).serverName(); err == nil {
+		t.Errorf("a host that is not ASCII: named %q", got)
+	}
 }
 
 // Init with an identity type this client does not make writes nothing: the
