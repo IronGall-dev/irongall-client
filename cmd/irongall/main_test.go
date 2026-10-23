@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -1804,6 +1805,50 @@ func TestCertRevokeEarlierSaysWhatHappenedToEach(t *testing.T) {
 	out.Reset()
 	if err := do(ctx, "prekey renew", nil, strings.NewReader(""), &out, &errs); !errors.As(err, &gone) || !gone.Own {
 		t.Fatalf("prekey renew on a revoked box: %v", err)
+	}
+}
+
+// What cert revoke-earlier says of a revocation its server took that the box
+// did not keep, a fault of the box after the server's answer, which the
+// remedy returns as revoked with the fault as its error
+// (TestAFaultAfterTheRevocationWasTakenLeavesItTaken, in client): revoked, as
+// for any revocation taken, then the fault; never "nothing is revoked"
+// (#383). A fake server makes no fault of the box, so the remedy's result is
+// built here.
+func TestCertRevokeEarlierSaysARevocationTakenAndNotKeptIsRevoked(t *testing.T) {
+	own, err := protocol.ParseAddress(strings.Repeat("ab", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	certs, err := protocol.NewRevokedCertificates(own, 41)
+	if err != nil {
+		t.Fatal(err)
+	}
+	full := &os.PathError{Op: "write", Path: "state", Err: syscall.ENOSPC}
+	p := &protocol.Prekey{Address: own, Serial: 42, NotAfter: time.Now().Add(33 * 24 * time.Hour)}
+	for _, c := range []struct {
+		name  string
+		r     *client.Remedy
+		types string
+	}{
+		{"its renewal not taken", &client.Remedy{Below: 42, NotRenewed: errors.New("the renewal was refused"), Revoked: certs}, "certificates_revoked"},
+		{"its renewal taken", &client.Remedy{Below: 42, Prekey: p, Revoked: certs}, "prekey certificates_revoked"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var out, errs bytes.Buffer
+			err := (&cli{stdout: &out, stderr: &errs}).remedied(own, c.r, full)
+			lines := printed(t, out.String())
+			if typesOf(lines) != c.types || lines[len(lines)-1]["through"] != json.Number("41") {
+				t.Fatalf("its output: %q", out.String())
+			}
+			said := fmt.Sprint(err)
+			if !errors.Is(err, syscall.ENOSPC) || strings.Contains(said, "nothing is revoked") || strings.Contains(said, "NOT revoked") {
+				t.Errorf("a revocation taken and not kept: %s", said)
+			}
+			if c.r.NotRenewed != nil && (!strings.Contains(said, "NOT published: the renewal was refused") || !strings.Contains(said, "sends no mail, and its server takes none")) {
+				t.Errorf("beside a renewal not taken: %s", said)
+			}
+		})
 	}
 }
 

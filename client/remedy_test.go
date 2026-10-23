@@ -3,9 +3,13 @@ package client_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -294,5 +298,74 @@ func TestTheRemedyOfAForgottenBoxAsksItsRevocationsAgainAfterItsConflict(t *test
 	}
 	if r.Revoked == nil || r.Revoked.Through < T || r.Below <= T || r.Prekey == nil {
 		t.Errorf("the remedy of a forgotten box after its server's conflict: below %d, revoked %v, not revoked %v, not renewed %v; the server holds through %d", r.Below, r.Revoked, r.NotRevoked, r.NotRenewed, T)
+	}
+}
+
+// A revocation the box's server took, and a fault of the box at its keep
+// after that, is a revocation taken, as a renewal is (#110): the remedy and
+// RevokeEarlier return it with the fault as the call's error, never as a
+// revocation not taken, and the box's next read of itself keeps what its
+// server holds (#383). The fault is a full disk's from the publish on: at
+// the keep alone, after which the remedy's renewal is taken, or at every
+// write after it, where the renewal is not.
+func TestAFaultAfterTheRevocationWasTakenLeavesItTaken(t *testing.T) {
+	ctx := context.Background()
+	full := &os.PathError{Op: "write", Path: "state", Err: syscall.ENOSPC}
+	for _, c := range []struct {
+		name string
+		// once is a fault at the keep alone.
+		once bool
+		run  func(t *testing.T, b *client.Box) (*protocol.RevokedCertificates, error)
+	}{
+		{"RevokeEarlier", true, func(t *testing.T, b *client.Box) (*protocol.RevokedCertificates, error) {
+			return b.RevokeEarlier(ctx)
+		}},
+		{"the remedy, its renewal taken", true, func(t *testing.T, b *client.Box) (*protocol.RevokedCertificates, error) {
+			r, err := b.RenewAndRevoke(ctx, "")
+			if r == nil {
+				t.Fatalf("no remedy: %v", err)
+			}
+			if r.NotRevoked != nil || r.Prekey == nil || r.NotRenewed != nil {
+				t.Errorf("the remedy: %+v, %v", r, err)
+			}
+			return r.Revoked, err
+		}},
+		{"the remedy, its renewal not taken", false, func(t *testing.T, b *client.Box) (*protocol.RevokedCertificates, error) {
+			r, err := b.RenewAndRevoke(ctx, "")
+			if r == nil {
+				t.Fatalf("no remedy: %v", err)
+			}
+			if r.NotRevoked != nil || r.Prekey != nil || !errors.Is(r.NotRenewed, syscall.ENOSPC) {
+				t.Errorf("the remedy: %+v, %v", r, err)
+			}
+			return r.Revoked, err
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newEnv(t)
+			b := e.box(protocol.Classic)
+			e.clock.Add(2 * time.Second)
+			var armed atomic.Bool
+			client.SetStep(func(name string) {
+				if name == "revocation published" {
+					armed.Store(true)
+				}
+			})
+			t.Cleanup(func() { client.SetStep(nil) })
+			client.SetWriteFault(t, func() error {
+				if c.once && armed.CompareAndSwap(true, false) || !c.once && armed.Load() {
+					return full
+				}
+				return nil
+			})
+			certs, err := c.run(t, b)
+			armed.Store(false)
+			if certs == nil || !errors.Is(err, syscall.ENOSPC) || heldCertsOf(t, e, b).Through != certs.Through || has(b, "revoked-certs.json") {
+				t.Fatalf("a revocation taken and not kept: %+v, %v; kept %v", certs, err, has(b, "revoked-certs.json"))
+			}
+			if held, err := b.Ask(ctx, b.Address()); err != nil || held.Certificates == nil || held.Certificates.Through != certs.Through {
+				t.Errorf("the box's next read of itself: %+v, %v", held, err)
+			}
+		})
 	}
 }

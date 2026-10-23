@@ -155,6 +155,11 @@ func (b *Box) view(f func(store) error) error {
 // what goes together is written together. No server call is made inside
 // one.
 func (b *Box) update(f func(store) error) error {
+	if failWrite != nil {
+		if err := failWrite(); err != nil {
+			return err
+		}
+	}
 	if b.tx != nil {
 		if !b.tx.Writable() {
 			return errNotHeld
@@ -170,6 +175,11 @@ func (b *Box) update(f func(store) error) error {
 		return f(store{tx})
 	})
 }
+
+// failWrite is asked before each write of the box's state, and a write it
+// gives an error fails with it, as a full disk or EIO fails one: nil but in
+// a test.
+var failWrite func() error
 
 // openState opens the box's state file, waiting up to lockPatience while
 // another command holds it: for writing, which only one command at a time

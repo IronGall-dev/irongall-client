@@ -876,54 +876,65 @@ revocation it takes none there either.`,
 				return err
 			}
 			r, err := b.RenewAndRevoke(c.Context(), kt)
-			if r == nil {
-				var gone *client.RevokedError
-				if errors.As(err, &gone) {
-					return err
-				}
-				return fmt.Errorf("no new prekey, and nothing is revoked: %w", err)
-			}
-			// A box shown its own revocation before its renewal was taken says
-			// that alone: it sends nothing again and renews nothing (#326).
-			if gone := (*client.RevokedError)(nil); errors.As(r.NotRenewed, &gone) && gone.Own {
-				return r.NotRenewed
-			}
-			if r.Unread != nil {
-				if err := e.out(line("box_unread", failure(fmt.Errorf("this box's server could not be read, or served what this box does not take, so the new certificate was numbered from what this box knows: %w", r.Unread))...)); err != nil {
-					return err
-				}
-			}
-			if r.Prekey != nil {
-				if err := e.out(prekey(r.Prekey)); err != nil {
-					return err
-				}
-			}
-			if r.Revoked != nil {
-				const resend = "Mail this box sent before now, and that its reader has not read yet, was signed under a certificate just revoked and will be refused: send it again."
-				if err := e.out(line("certificates_revoked", "address", b.Address(), "through", r.Revoked.Through, "message", resend)); err != nil {
-					return err
-				}
-			}
-			// What became of the new prekey first, then of the revocation.
-			dark := fmt.Sprintf("Every certificate before %d is revoked, the one this box was using among them, so it sends no mail, and its server takes none for it, until the new prekey is taken: irongall prekey renew sends it again, and so does irongall recv", r.Below)
-			switch {
-			case r.NotRenewed == nil && r.NotRevoked == nil && r.Revoked == nil:
-				if err != nil {
-					return err
-				}
-				return e.out(line("no_earlier_certificate", "message", "no earlier certificate to revoke"))
-			case r.NotRenewed == nil && r.NotRevoked == nil:
-				return err
-			case r.NotRenewed == nil:
-				return fmt.Errorf("the new prekey is published, and the earlier certificates are NOT revoked: %w. irongall cert revoke-earlier revokes them", r.NotRevoked)
-			case r.NotRevoked == nil:
-				return fmt.Errorf("the new prekey is NOT published: %w. %s", r.NotRenewed, dark)
-			}
-			return fmt.Errorf("the new prekey is NOT published: %w, and nothing is revoked: %v. irongall cert revoke-earlier tries both again", r.NotRenewed, r.NotRevoked)
+			return e.remedied(b.Address(), r, err)
 		})
 	c.Flags().BoolVar(&noPQ, "no-pq", false, "switch to a prekey without post-quantum encryption (X25519 only)")
 	c.Flags().BoolVar(&pq, "pq", false, "switch to a post-quantum prekey")
 	return c
+}
+
+// remedied prints what the remedy of box own did, r and err as
+// RenewAndRevoke returned them, and returns the command's error: what became
+// of the new prekey first, then of the revocation. What a server took is
+// said as taken, and a fault of the box after it is the error beside it
+// (#110, #383).
+func (e *cli) remedied(own protocol.Address, r *client.Remedy, err error) error {
+	if r == nil {
+		var gone *client.RevokedError
+		if errors.As(err, &gone) {
+			return err
+		}
+		return fmt.Errorf("no new prekey, and nothing is revoked: %w", err)
+	}
+	// A box shown its own revocation before its renewal was taken says
+	// that alone: it sends nothing again and renews nothing (#326).
+	if gone := (*client.RevokedError)(nil); errors.As(r.NotRenewed, &gone) && gone.Own {
+		return r.NotRenewed
+	}
+	if r.Unread != nil {
+		if err := e.out(line("box_unread", failure(fmt.Errorf("this box's server could not be read, or served what this box does not take, so the new certificate was numbered from what this box knows: %w", r.Unread))...)); err != nil {
+			return err
+		}
+	}
+	if r.Prekey != nil {
+		if err := e.out(prekey(r.Prekey)); err != nil {
+			return err
+		}
+	}
+	if r.Revoked != nil {
+		const resend = "Mail this box sent before now, and that its reader has not read yet, was signed under a certificate just revoked and will be refused: send it again."
+		if err := e.out(line("certificates_revoked", "address", own, "through", r.Revoked.Through, "message", resend)); err != nil {
+			return err
+		}
+	}
+	dark := fmt.Sprintf("Every certificate before %d is revoked, the one this box was using among them, so it sends no mail, and its server takes none for it, until the new prekey is taken: irongall prekey renew sends it again, and so does irongall recv", r.Below)
+	switch {
+	case r.NotRenewed == nil && r.NotRevoked == nil && r.Revoked == nil:
+		if err != nil {
+			return err
+		}
+		return e.out(line("no_earlier_certificate", "message", "no earlier certificate to revoke"))
+	case r.NotRenewed == nil && r.NotRevoked == nil:
+		return err
+	case r.NotRenewed == nil:
+		return fmt.Errorf("the new prekey is published, and the earlier certificates are NOT revoked: %w. irongall cert revoke-earlier revokes them", r.NotRevoked)
+	case r.NotRevoked == nil && err != nil:
+		// The revocation taken, and a fault of this box after it.
+		return fmt.Errorf("the new prekey is NOT published: %w. %s. %w", r.NotRenewed, dark, err)
+	case r.NotRevoked == nil:
+		return fmt.Errorf("the new prekey is NOT published: %w. %s", r.NotRenewed, dark)
+	}
+	return fmt.Errorf("the new prekey is NOT published: %w, and nothing is revoked: %v. irongall cert revoke-earlier tries both again", r.NotRenewed, r.NotRevoked)
 }
 
 func (e *cli) publishRevokedCmd() *cobra.Command {

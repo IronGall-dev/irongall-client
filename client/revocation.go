@@ -470,7 +470,9 @@ func (b *Box) keepRevokedCerts(a protocol.Address, doc, statement, sig []byte) e
 // one.
 //
 // It returns the revocation, or nil when the certificate in use has serial
-// 1, which nothing is below.
+// 1, which nothing is below. A revocation with an error is one the server
+// took, and a fault of this box after that: the box keeps it at its next
+// read of itself (#383).
 // Mail this box sent under those certificates, and that its reader has not
 // read yet, is refused too: nobody can tell it from a thief's.
 func (b *Box) RevokeEarlier(ctx context.Context) (*protocol.RevokedCertificates, error) {
@@ -502,7 +504,9 @@ type Remedy struct {
 	Prekey *protocol.Prekey
 	// NotRenewed is why the server did not take it, or nil.
 	NotRenewed error
-	// Revoked is the revocation of those certificates, if a server took it.
+	// Revoked is the revocation of those certificates, if a server took it,
+	// whether or not this box kept it: one it did not keep is the call's
+	// error, a fault of this box after the server took it (#383).
 	Revoked *protocol.RevokedCertificates
 	// NotRevoked is why the box's server did not take the revocation, or
 	// nil. One it holds higher, shown and verified, is taken: Revoked is that
@@ -545,8 +549,8 @@ type Remedy struct {
 // It returns no Remedy where it stopped before it published anything, a box
 // shown its own revocation on the way among them, which is its [RevokedError]
 // alone; otherwise the Remedy says what each publish met, and an error beside
-// it is a fault after the renewal was taken, or the box's own revocation,
-// shown at the renewal.
+// it is a fault of this box after a server took the revocation or the
+// renewal, or the box's own revocation, shown at the renewal.
 func (b *Box) RenewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy, error) {
 	return locked(ctx, b, func() (*Remedy, error) { return b.renewAndRevoke(ctx, kt) })
 }
@@ -562,7 +566,19 @@ func (b *Box) renewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy,
 		return nil, err
 	}
 	r := &Remedy{Below: below, Unread: st.unread}
-	r.Revoked, r.NotRevoked = b.revokeBelow(ctx, below)
+	// A revocation the server took that this box did not keep is taken: the
+	// fault is the call's error, beside whatever the renewal meets, as a
+	// renewal's is (#110, #383).
+	var notKept error
+	if r.Revoked, r.NotRevoked = b.revokeBelow(ctx, below); r.Revoked != nil {
+		notKept, r.NotRevoked = r.NotRevoked, nil
+	}
+	done := func(err error) (*Remedy, error) {
+		if notKept != nil {
+			err = errors.Join(notKept, err)
+		}
+		return r, err
+	}
 	// A box shown its own revocation on the way, a 410 to its publish or at
 	// the read after a conflict, has nothing more to remedy, and says that
 	// alone: no server took anything from it there (#326).
@@ -574,39 +590,39 @@ func (b *Box) renewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy,
 	// it, and nothing here tells how high it runs.
 	if code(r.NotRevoked) == protocol.CodeConflict {
 		r.NotRenewed = refuse("the server holds a revocation of this box's certificates higher than the one it signed, and showed none that verifies: nothing is renewed above it. irongall revocation ask <this box's address> reads it again, and irongall cert revoke-earlier tries again")
-		return r, nil
+		return done(nil)
 	}
 	// Numbered once the revocation is final: above whatever a server showed
 	// on the way.
 	held, err := b.revokedCerts(own)
 	if err != nil {
 		r.NotRenewed = err
-		return r, nil
+		return done(nil)
 	}
 	if held != nil && held.Through >= r.Below {
 		if r.NotRenewed = noneAbove(held.Through); r.NotRenewed != nil {
-			return r, nil
+			return done(nil)
 		}
 		r.Below = held.Through + 1
 	}
 	p, req, err := b.makeRenewal(st, r.Below, nil)
 	if err != nil {
 		r.NotRenewed = err
-		return r, nil
+		return done(nil)
 	}
 	at, err := b.sendRenewal(ctx, req, r.Below)
 	if at.None() {
 		r.NotRenewed = err
-		return r, nil
+		return done(nil)
 	}
 	// Taken: a fault of this box after that is the call's error, and the
 	// renewal stands (#110).
 	r.Prekey = p
 	if err != nil {
-		return r, err
+		return done(err)
 	}
 	// By the reading the server took the renewal at (PROTOCOL.md §0).
-	return r, b.prune(at)
+	return done(b.prune(at))
 }
 
 // ownRevokes reports whether this box holds a revocation of its own
@@ -627,7 +643,8 @@ func (b *Box) ownRevokes(n uint64) bool {
 // conflict, and the box reads itself once more (known), which keeps that one
 // once it verifies: it is the revocation, with no error, when it covers every
 // certificate below serial, as the box's would have; otherwise the conflict
-// is the error (PROTOCOL.md §6.3a).
+// is the error (PROTOCOL.md §6.3a). The revocation with an error is one the
+// server took, and a fault of this box at its keep after that.
 func (b *Box) revokeBelow(ctx context.Context, serial uint64) (*protocol.RevokedCertificates, error) {
 	if serial <= 1 {
 		return nil, nil

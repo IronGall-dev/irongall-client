@@ -36,6 +36,14 @@ func SetDrainLimits(t *testing.T, messages, bytes, pages int) {
 // (steps.go), for a test that kills its process at one.
 func SetStep(f func(name string)) { atStep = f }
 
+// SetWriteFault has each write of the box's state ask f first, and fail
+// with the error it gives, for one test: a fault of the box itself, at the
+// writes a test chooses (SetStep tells it where a command is).
+func SetWriteFault(t *testing.T, f func() error) {
+	failWrite = f
+	t.Cleanup(func() { failWrite = nil })
+}
+
 // Steps are the steps of one kind of write (steps.go).
 func Steps(kind string) []string { return steps[kind] }
 
