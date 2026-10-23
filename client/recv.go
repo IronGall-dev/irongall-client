@@ -495,10 +495,14 @@ func (b *Box) receiveOne(ctx context.Context, m protocol.MessageInfo, res *Resul
 		}
 		ct := &ciphertext{size: m.Size, keep: p}
 		_, err = b.ownerWith(ctx, http.MethodGet, b.boxPath("/messages/"+id), p.ask(), nil, ct)
-		if eerr := p.end(); eerr != nil {
-			err = errors.Join(err, eerr)
-		}
 		fetched = p.got()
+		// A fault of this box at keeping what the fetch read is the error,
+		// ahead of the fetch's own and never joined to it: a cut at the
+		// drain's time is the bound reached (drain), and a fault in its chain
+		// would be taken for one, with nothing kept.
+		if eerr := p.end(); eerr != nil {
+			return fetched, eerr
+		}
 		var api *APIError
 		switch {
 		case code(err) == protocol.CodeNoSuchMessage:

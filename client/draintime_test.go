@@ -4,12 +4,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -182,4 +185,57 @@ func TestADrainHoldsTheLockForItsTimeAndTheNextGoesOnFromIt(t *testing.T) {
 		t.Fatalf("the fetches were served %v bytes, want the %d after the %d kept", ns, protocol.MaxCiphertext-kept, kept)
 	}
 	noPartial(t, z)
+}
+
+// At the drain's bound in time, a fault of the box itself at keeping what
+// the cut fetch read (here its state's write of the record, as a full disk
+// fails it) is the drain's error, never More with no error: the drain takes
+// a cut at its time as the bound reached, and the fault comes back ahead of
+// the cut's error, out of its reach (#403 item 2).
+func TestAFaultKeepingThePartialAtTheDrainsTimeIsAnError(t *testing.T) {
+	e := newEnv(t)
+	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	send(t, a, b, strings.Repeat("trickled until the drain's time cuts it. ", 3000))
+	var armed, failed atomic.Bool
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, boxPath(b)+"/messages/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		rec := httptest.NewRecorder()
+		next.ServeHTTP(rec, r)
+		for k, v := range rec.Header() {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(rec.Code)
+		ct := rec.Body.Bytes()
+		armed.Store(true) // the next write of the box's state fails, once
+		for i := 0; i < len(ct); i += 4 << 10 {
+			if _, err := w.Write(ct[i:min(i+4<<10, len(ct))]); err != nil {
+				return
+			}
+			w.(http.Flusher).Flush()
+			time.Sleep(100 * time.Millisecond)
+		}
+	})
+	full := &os.PathError{Op: "write", Path: "state", Err: syscall.ENOSPC}
+	client.SetWriteFault(t, func() error {
+		if armed.Load() && failed.CompareAndSwap(false, true) {
+			return full
+		}
+		return nil
+	})
+	opt := e.opts()
+	opt.DrainTime = 500 * time.Millisecond
+	x, err := client.Open(b.Dir(), opt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := x.Receive(context.Background())
+	if !failed.Load() {
+		t.Fatal("the fault never fired")
+	}
+	if !errors.Is(err, syscall.ENOSPC) || res != nil && res.More {
+		t.Errorf("the box's own fault keeping the partial at the drain's time: More %v, error %v", res != nil && res.More, err)
+	}
 }
