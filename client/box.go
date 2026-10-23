@@ -45,17 +45,24 @@ const EchoAddress = "21804ec172dd0dbdca3d9a6d461799130324b42fa708b3bb727e18e0bfc
 // readable by irongall.dev's operator.
 const EchoAddressNoPQ = "7f87929a91aa19bd2ca3a833d33d66c2b2f09dc83b9e2987a6af66d12a9c6b4b"
 
-// requestTimeout bounds one request of the default HTTP client.
-const requestTimeout = time.Minute
+// requestTimeout bounds a request of the default HTTP client (stall): one
+// that sends or fetches a ciphertext, by how long it may go with no byte of
+// it moving, and any other whole. A var for a test (SetRequestTimeout).
+var requestTimeout = time.Minute
 
 // Options configures a [Box]. The zero value is ready to use.
 type Options struct {
 	// Base is the server's base URL; DefaultBase if empty. It is https, or
 	// http only to a server on this machine ([checkServerURL]).
 	Base string
-	// HTTPClient makes the requests; if nil, a client whose requests time
-	// out after a minute, so a server that never answers cannot hold the
-	// box's lock for ever. The box uses a copy of it that follows no
+	// HTTPClient makes the requests; if nil, a client that cuts a request
+	// after a minute, so a server that stops answering cannot hold the box's
+	// lock for ever: a send or a fetch of a ciphertext once a minute passes
+	// with no byte of it moving, the wait for its answer's head among them,
+	// with no bound on the whole, so a message of any size moves on a slow
+	// link (#381), and any other request after a minute in all. A client
+	// given here is used as it is, its own timeouts its choice, and none of
+	// those bounds is added. The box uses a copy of it that follows no
 	// redirect ([followNone]).
 	HTTPClient *http.Client
 	// Now is the clock; time.Now if nil.
@@ -88,7 +95,10 @@ type Box struct {
 	dir  string
 	base string
 	http *http.Client
-	now  func() time.Time
+	// stall is set where http is the default client, whose requests are
+	// bounded by requestTimeout (stall); one given is used as it is.
+	stall bool
+	now   func() time.Time
 	// identity is the identity key, which signs certificates and revocations
 	// and nothing else, and none once the box is finished (sign).
 	identity *sign.Identity
@@ -156,7 +166,7 @@ func newBox(dir string, opt Options) (*Box, error) {
 		return nil, fmt.Errorf("this client makes no identity key of type %q: %s", b.identityType, strings.Join(protocol.IdentityTypes(), " or "))
 	}
 	if b.http == nil {
-		b.http = &http.Client{Timeout: requestTimeout}
+		b.http, b.stall = &http.Client{}, true
 	} else {
 		c := *b.http
 		b.http = &c

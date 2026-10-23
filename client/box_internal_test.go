@@ -3,19 +3,27 @@ package client
 import (
 	"context"
 	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
-// With no HTTP client given, requests time out: a server that never answers
-// cannot hold the box's lock for ever.
-func TestDefaultClientTimesOut(t *testing.T) {
-	if b, err := newBox(t.TempDir(), Options{}); err != nil || b.http.Timeout <= 0 {
-		t.Fatal("the default HTTP client has no timeout")
+// With no HTTP client given, requests are bounded by requestTimeout (stall),
+// so a server that stops answering cannot hold the box's lock for ever, and
+// the client has no Timeout of its own, which would cut a ciphertext's body
+// on a slow link whatever moved (#381). A client given is used as it is,
+// its own timeouts its choice.
+func TestOnlyTheDefaultClientIsBoundedByTheBox(t *testing.T) {
+	if b, err := newBox(t.TempDir(), Options{}); err != nil || !b.stall || b.http.Timeout != 0 {
+		t.Fatalf("the default HTTP client: bounded by the box %v, Timeout %v", b.stall, b.http.Timeout)
+	}
+	if b, err := newBox(t.TempDir(), Options{HTTPClient: &http.Client{Timeout: time.Second}}); err != nil || b.stall || b.http.Timeout != time.Second {
+		t.Fatalf("a client given: bounded by the box %v, Timeout %v", b.stall, b.http.Timeout)
 	}
 }
 

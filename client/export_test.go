@@ -25,6 +25,19 @@ func SetLockPatience(t *testing.T, d time.Duration) {
 	t.Cleanup(func() { lockPatience = old })
 }
 
+// SetRequestTimeout shortens how long the default HTTP client lets a request
+// go, for one test: one that sends or fetches a ciphertext with no byte of it
+// moving, and any other whole.
+func SetRequestTimeout(t *testing.T, d time.Duration) {
+	old := requestTimeout
+	requestTimeout = d
+	t.Cleanup(func() { requestTimeout = old })
+}
+
+// Partial is what the box's state records of its partial file: which
+// message it is of, and how many of its bytes are synced; "" and 0 for none.
+func (b *Box) Partial() (string, int64, error) { return b.partialRecord() }
+
 // SetDrainLimits lowers what one drain takes, for one test.
 func SetDrainLimits(t *testing.T, messages, bytes, pages int) {
 	m, b, p := maxDrainMessages, maxDrainBytes, maxDrainPages
@@ -68,15 +81,16 @@ func PutRevocations(ctx context.Context, opt Options, a protocol.Address, rec *p
 // "renewal" (the number of the renewal under way), "acl-read" (the read of
 // the server's ACL a renewal recv began owes), "adopt-acl" (a restore's
 // adoption of its server's ACL, begun), "renew-failed", "not-made",
-// "acl-another-writer" and "acl-replaced". So a test reads and changes the
-// box's state as it did its files.
+// "acl-another-writer", "acl-replaced" and "partial" (the message the
+// partial file is of, and how many of its bytes are synced). So a test
+// reads and changes the box's state as it did its files.
 func (b *Box) Records() (map[string][]byte, error) {
 	out := map[string][]byte{}
 	err := b.view(func(s store) error {
 		for _, r := range []struct{ key, name string }{
 			{"serial", "serial"}, {"pass", "pass"}, {"etag", "etag"}, {"seen-floor", "seen-floor"},
 			{"acl", "acl.json"}, {"revoked", "revoked.sig"}, {"revoked-certs", "revoked-certs.json"},
-			{"renew-failed", "renew-failed"}, {"not-made", "not-made"}, {"acl-another-writer", "acl-another-writer"}, {"acl-replaced", "acl-replaced"},
+			{"renew-failed", "renew-failed"}, {"not-made", "not-made"}, {"acl-another-writer", "acl-another-writer"}, {"acl-replaced", "acl-replaced"}, {"partial", "partial"},
 		} {
 			if v := s.get(bucketBox, r.key); v != nil {
 				out[r.name] = v

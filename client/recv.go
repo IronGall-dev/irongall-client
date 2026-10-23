@@ -213,9 +213,11 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 	// and the keys that mail waits for stay (PROTOCOL.md §0).
 	if !res.listedAt.None() {
 		// Only a drain that emptied the box may delete retired prekeys
-		// early.
+		// early; and it leaves no message a partial could be of.
 		if err == nil && !res.More {
-			err = b.dropRetired(res.listedAt)
+			if err = b.dropRetired(res.listedAt); err == nil {
+				err = b.dropPartials()
+			}
 		}
 		if e := b.prune(res.listedAt); err == nil {
 			err = e
@@ -439,13 +441,17 @@ func (e *pacedError) Unwrap() error { return e.err }
 // receiveOne judges one message of a list unless its id was already handled,
 // stores the verdict, and acks it, and returns the bytes of ciphertext it
 // fetched. The fetch answers the ciphertext alone, of the size the list
-// gives; who sent it, on the server's word, and when, are the list's. An
-// error is transient, a fetch that is not of that size, or a fault of this
-// box (an unreadable key, a full disk): the message stays on the server for
-// the next drain, never judged by a box that cannot judge it.
+// gives; who sent it, on the server's word, and when, are the list's. It
+// goes on from what an earlier fetch of the message kept, and keeps what it
+// reads should it be cut (partial.go). An error is transient, a fetch that
+// is not of that size, or a fault of this box (an unreadable key, a full
+// disk): the message stays on the server for the next drain, never judged
+// by a box that cannot judge it.
 //
 // Files are named by the SHA-256 of the ciphertext as computed here, never by
-// the server's id; a message whose id is not that hash is refused.
+// the server's id; a message whose id is not that hash is refused. The hash
+// is of the whole, what was kept and what this fetch read, so bytes a server
+// splices into a range are refused as any wrong ciphertext is.
 func (b *Box) receiveOne(ctx context.Context, m protocol.MessageInfo, res *Result, asked *lookups, who *senders) (fetched int, err error) {
 	id := m.ID
 	handled, err := b.seenHash(id)
@@ -453,18 +459,25 @@ func (b *Box) receiveOne(ctx context.Context, m protocol.MessageInfo, res *Resul
 		return 0, err
 	}
 	if !handled {
-		ct := &ciphertext{size: m.Size}
-		_, err := b.owner(ctx, http.MethodGet, b.boxPath("/messages/"+id), nil, ct)
+		p, err := b.resume(id, m.Size)
+		if err != nil {
+			return 0, err
+		}
+		ct := &ciphertext{size: m.Size, keep: p}
+		_, err = b.ownerWith(ctx, http.MethodGet, b.boxPath("/messages/"+id), p.ask(), nil, ct)
+		if eerr := p.end(); eerr != nil {
+			err = errors.Join(err, eerr)
+		}
+		fetched = p.got()
 		var api *APIError
 		switch {
 		case code(err) == protocol.CodeNoSuchMessage:
-			return 0, nil // already gone
+			return 0, p.drop() // already gone
 		case errors.As(err, &api) && (api.Problem.Code == protocol.CodeFetchPaced || api.Problem.Code == protocol.CodeRefetchSpent) && api.RetryAfter > 0:
 			return 0, &pacedError{wait: api.RetryAfter, err: err}
 		case err != nil:
-			return 0, err
+			return fetched, err
 		}
-		fetched = len(ct.bytes)
 		h := sha256.Sum256(ct.bytes)
 		local := hex.EncodeToString(h[:])
 		v, err := b.judge(ctx, ct.bytes, m.From, asked)
@@ -530,6 +543,10 @@ func (b *Box) receiveOne(ctx context.Context, m protocol.MessageInfo, res *Resul
 			default:
 				res.Blocked = append(res.Blocked, local)
 			}
+		}
+		// Judged, and the verdict on disk: what was kept of it goes.
+		if err := p.drop(); err != nil {
+			return fetched, err
 		}
 	}
 	_, err = b.owner(ctx, http.MethodDelete, b.boxPath("/messages/"+id), nil, nil)

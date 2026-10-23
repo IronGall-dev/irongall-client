@@ -14,6 +14,7 @@ var steps = map[string][]string{
 	"post":       {"outbox written", "posted", "sent kept"},
 	"adoption":   {"lists adopted", "adoption recorded"},
 	"heal":       {"ACL read owed", "held ACL kept", "ACL read made"},
+	"partial":    {"partial kept", "partial dropped"},
 }
 
 // atStep is called at each step with its name: nil but in a test.

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -490,6 +491,55 @@ func TestADrainKilledAtEachStepOfARefusalKeepsItOnce(t *testing.T) {
 				t.Fatalf("after the crash: %+v, %v; the server holds %d", qs, err, e.srv.Count(x.Address()))
 			}
 			whole(t, e, x, a)
+		})
+	}
+}
+
+// A drain killed at each step of a fetch's partial: once a cut fetch has
+// recorded what it kept, and once a judged message's partial is dropped,
+// before its ack. The next drain delivers the message once, asking only for
+// the bytes the box did not keep, so the server serves each byte of it once
+// in all; and the box keeps no partial after (#381).
+func TestADrainKilledAtEachStepOfAPartialDeliversOnce(t *testing.T) {
+	for _, step := range client.Steps("partial") {
+		t.Run(step, func(t *testing.T) {
+			e := newEnv(t)
+			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			const body = "fetched by a drain that dies. "
+			send(t, a, b, strings.Repeat(body, 2000))
+			f := &fetches{b: b}
+			var size atomic.Int64
+			var cut atomic.Bool
+			cut.Store(step == "partial kept")
+			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+				if !f.is(r) {
+					next.ServeHTTP(w, r)
+					return
+				}
+				if cut.CompareAndSwap(true, false) {
+					ct := honest(next, r).Body.Bytes()
+					size.Store(int64(len(ct)))
+					cutAfter(f, w, ct, len(ct)/2)
+				}
+				next.ServeHTTP(f.counted(w), r)
+			})
+			crash(t, e, b, "receive", step, protocol.Address{})
+			before := f.served.Load()
+			x, err := client.Open(b.Dir(), e.opts())
+			if err != nil {
+				t.Fatal(err)
+			}
+			res := receive(t, x)
+			if step == "partial kept" {
+				if len(res.Delivered) != 1 || f.served.Load() != size.Load() {
+					t.Fatalf("after the crash: %+v; the server served %d bytes of %d", res, f.served.Load(), size.Load())
+				}
+			} else if len(res.Delivered) != 0 || f.served.Load() != before || e.srv.Count(x.Address()) != 0 {
+				t.Fatalf("after the crash: %+v, a message the dead drain delivered; the server served %d bytes more, and holds %d", res, f.served.Load()-before, e.srv.Count(x.Address()))
+			}
+			noPartial(t, x)
+			e.srv.SetMiddle(nil)
+			whole(t, e, x, a, strings.Repeat(body, 2000))
 		})
 	}
 }

@@ -13,6 +13,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	tk "github.com/IronGall-dev/irongall-client/client/internal/taken"
@@ -36,10 +38,13 @@ const maxWaitSeconds = 24 * 60 * 60
 // ciphertext is a message's ciphertext as the whole body of a send or of a
 // fetch: the age file's exact bytes, never JSON (PROTOCOL.md §4.5, §5.2). As
 // what a fetch reads into, size is the length its list gives, and a body of
-// any other length is no answer.
+// any other length is no answer; keep is the partial it reads through, which
+// holds what an earlier attempt kept and keeps what this one reads
+// (partial.go).
 type ciphertext struct {
 	bytes []byte
 	size  int64
+	keep  *partial
 }
 
 // call makes one API request of this box's server. A request body is sent as
@@ -84,10 +89,27 @@ func (b *Box) exchange(ctx context.Context, method, path string, in any, hdr htt
 		}
 		body, contentType = bytes.NewReader(j), "application/json"
 	}
+	_, rawIn := in.(*ciphertext)
+	ct, raw := out.(*ciphertext)
+	// The default client bounds a call by requestTimeout: a ciphertext's,
+	// sent or fetched, by its stalls alone, so one of any size moves on a slow
+	// link that keeps moving, and any other call whole (stall).
+	var cut *stall
+	if b.stall {
+		if rawIn || raw {
+			ctx, cut = newStall(ctx)
+			defer cut.stop()
+		} else {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, requestTimeout)
+			defer cancel()
+		}
+	}
 	req, err := http.NewRequestWithContext(ctx, method, b.base+path, body)
 	if err != nil {
 		return nil, err
 	}
+	cut.sending(req)
 	for k, v := range hdr {
 		req.Header[k] = v
 	}
@@ -101,8 +123,9 @@ func (b *Box) exchange(ctx context.Context, method, path string, in any, hdr htt
 	name = method + " " + name
 	resp, err := b.http.Do(req)
 	if err != nil {
-		return nil, noAnswer(name, "no answer that is HTTP", err)
+		return nil, noAnswer(name, "no answer that is HTTP", cut.why(err))
 	}
+	resp.Body = cut.reading(resp.Body)
 	defer resp.Body.Close() //nolint:errcheck // read fully below
 	if resp.StatusCode == http.StatusNotModified {
 		// A 304 has no content (RFC 9110 §15.4.5), and answers only the
@@ -113,21 +136,16 @@ func (b *Box) exchange(ctx context.Context, method, path string, in any, hdr htt
 		return resp, nil
 	}
 	answered := resp.StatusCode >= 200 && resp.StatusCode <= 299
-	ct, raw := out.(*ciphertext)
-	limit := int64(maxResponse)
 	if raw && answered {
-		// A fetch reads no more than its list says the message holds, and a
-		// byte past it to see that the body ends there. A listed size past
-		// the protocol's largest ciphertext is no ciphertext's (PROTOCOL.md
-		// §4.5), and one up to it is read whatever its size (§5.2).
-		if ct.size < 0 || ct.size > protocol.MaxCiphertext || resp.ContentLength >= 0 && resp.ContentLength != ct.size {
-			return resp, notListed(name, ct.size)
+		readErr, err := ct.read(name, resp)
+		if readErr != nil {
+			return nil, noAnswer(name, "an answer whose body could not be read", cut.why(readErr))
 		}
-		limit = ct.size + 1
+		return resp, err
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, limit))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse))
 	if err != nil {
-		return nil, noAnswer(name, "an answer whose body could not be read", err)
+		return nil, noAnswer(name, "an answer whose body could not be read", cut.why(err))
 	}
 	if !answered {
 		e := &APIError{Status: resp.StatusCode}
@@ -147,18 +165,115 @@ func (b *Box) exchange(ctx context.Context, method, path string, in any, hdr htt
 		}
 		return resp, e
 	}
-	switch {
-	case raw:
-		if int64(len(data)) != ct.size {
-			return resp, notListed(name, ct.size)
-		}
-		ct.bytes = data
-	case out != nil:
+	if out != nil {
 		if err := protocol.Unmarshal(data, out); err != nil {
 			return resp, fmt.Errorf("%s: the response is not the JSON expected: %w", name, err)
 		}
 	}
 	return resp, nil
+}
+
+// stall cuts a call of the default client that sends or fetches a
+// ciphertext once requestTimeout passes with no byte of it moving: before
+// its answer's head, the wait from the last byte it sent, and in its
+// answer's body, the wait for the next byte, as curl's --speed-time does
+// with a limit of one byte. Nothing bounds the whole, so a ciphertext of any
+// size moves on a link that keeps moving it (#381). A nil stall cuts
+// nothing: a client the box was given keeps its own timeouts.
+type stall struct {
+	cancel  context.CancelCauseFunc
+	ctx     context.Context
+	last    atomic.Int64 // when a byte last moved, in Unix nanoseconds
+	mu      sync.Mutex   // holds timer, which check may read before newStall has set it, and stopped
+	timer   *time.Timer
+	stopped bool
+}
+
+// errStalled is a call stall cut: no byte of it moved in requestTimeout.
+var errStalled = fmt.Errorf("no byte moved for as long as a call waits: %w", context.DeadlineExceeded)
+
+// newStall is ctx, cut once requestTimeout passes with no byte moving.
+func newStall(ctx context.Context) (context.Context, *stall) {
+	s := &stall{}
+	s.ctx, s.cancel = context.WithCancelCause(ctx)
+	s.last.Store(time.Now().UnixNano())
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.timer = time.AfterFunc(requestTimeout, s.check)
+	return s.ctx, s
+}
+
+// check cuts the call when no byte has moved for requestTimeout, and
+// otherwise looks again when that much will have passed since the last.
+func (s *stall) check() {
+	idle := time.Since(time.Unix(0, s.last.Load()))
+	if idle >= requestTimeout {
+		s.cancel(errStalled)
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.stopped {
+		s.timer.Reset(requestTimeout - idle)
+	}
+}
+
+// stop ends the stall's watch, once its call has returned.
+func (s *stall) stop() {
+	s.mu.Lock()
+	s.stopped = true
+	s.timer.Stop()
+	s.mu.Unlock()
+	s.cancel(nil)
+}
+
+// why is err, or errStalled where the stall cut the call: net/http reports
+// it as the context canceled, which is not what happened.
+func (s *stall) why(err error) error {
+	if s != nil && errors.Is(context.Cause(s.ctx), errStalled) {
+		return errStalled
+	}
+	return err
+}
+
+// sending has each byte of req's body that is read to be sent count as one
+// that moved.
+func (s *stall) sending(req *http.Request) {
+	if s == nil || req.Body == nil || req.Body == http.NoBody {
+		return
+	}
+	req.Body = s.reading(req.Body)
+	if get := req.GetBody; get != nil {
+		req.GetBody = func() (io.ReadCloser, error) {
+			b, err := get()
+			if err != nil {
+				return nil, err
+			}
+			return s.reading(b), nil
+		}
+	}
+}
+
+// reading is r, each byte read of it counted as one that moved.
+func (s *stall) reading(r io.ReadCloser) io.ReadCloser {
+	if s == nil {
+		return r
+	}
+	return moving{r, s}
+}
+
+// moving is a body whose every read that gets a byte is a byte that moved.
+type moving struct {
+	io.ReadCloser
+	s *stall
+}
+
+func (m moving) Read(p []byte) (int, error) {
+	n, err := m.ReadCloser.Read(p)
+	if n > 0 {
+		m.s.last.Store(time.Now().UnixNano())
+	}
+	return n, err
 }
 
 // notListed is a fetch whose body is not the size its list gave: an answer
