@@ -219,6 +219,29 @@ func TestMailFromARevokedSenderIsRefused(t *testing.T) {
 	}
 }
 
+// A drain reads each sender's box once, however many of its messages it
+// holds, from senders this box holds no revocation of (PROTOCOL.md §5 check
+// 8): the read marks the sender answered (readBox), and judge reads none it
+// has marked. Above, the sender is revoked, so judge asks nothing after its
+// first message, marked or not (#384).
+func TestADrainReadsEachSendersBoxOnce(t *testing.T) {
+	e := newEnv(t)
+	to, a, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+	for range 3 {
+		send(t, a, to, "from a")
+	}
+	for range 2 {
+		send(t, c, to, "from c")
+	}
+	op := watch(e, nil)
+	if res := receive(t, to); len(res.Delivered) != 5 {
+		t.Fatalf("delivered %d of 5", len(res.Delivered))
+	}
+	if na, nc := op.count(http.MethodGet, boxPath(a)), op.count(http.MethodGet, boxPath(c)); na != 1 || nc != 1 {
+		t.Errorf("a drain of three messages from one sender and two from another read their boxes %d and %d times, want 1 and 1", na, nc)
+	}
+}
+
 // problemBad returns the answer/problem-bad-* vectors: bodies that are no
 // problem as PROTOCOL.md §0b reads one, and so no code at all.
 func problemBad(t *testing.T) []string {
