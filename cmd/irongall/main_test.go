@@ -302,6 +302,82 @@ func must(t *testing.T, name string) []byte {
 	return b
 }
 
+// recv --drain-time bounds one drain's time: at it recv stops with a "more"
+// line, as at the drain's other limits, and exits 0, and the next recv goes
+// on from what the cut fetch kept and delivers the message. A duration that
+// is not above zero is a wrong command line.
+func TestRecvDrainTimeStopsAsTheOtherLimitsDo(t *testing.T) {
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	opt := client.Options{Base: srv.URL}
+	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allows(t, b, a)
+	body := strings.Repeat("read over two runs of recv. ", 10000)
+	if _, err := a.Send(ctx, b.Address(), body); err != nil {
+		t.Fatal(err)
+	}
+	var slow atomic.Bool
+	slow.Store(true)
+	var ranges atomic.Int32
+	srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, "/v1/"+b.Address().String()+"/messages/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if r.Header.Get("Range") != "" {
+			ranges.Add(1)
+		}
+		if !slow.Load() {
+			next.ServeHTTP(w, r)
+			return
+		}
+		rec := httptest.NewRecorder()
+		next.ServeHTTP(rec, r)
+		for k, v := range rec.Header() {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(rec.Code)
+		ct := rec.Body.Bytes()
+		for i := 0; i < len(ct); i += 8 << 10 {
+			if _, err := w.Write(ct[i:min(i+8<<10, len(ct))]); err != nil {
+				return
+			}
+			w.(http.Flusher).Flush()
+			time.Sleep(50 * time.Millisecond)
+		}
+	})
+	t.Setenv("IRONGALL_HOME", b.Dir())
+	t.Setenv("IRONGALL_BASE", srv.URL)
+	var out, errs bytes.Buffer
+	if err := do(ctx, "recv", []string{"--drain-time", "500ms"}, strings.NewReader(""), &out, &errs); err != nil {
+		t.Fatalf("recv --drain-time 500ms: %v %s", err, errs.String())
+	}
+	if ls := printed(t, out.String()); typesOf(ls) != "more" || errs.Len() != 0 {
+		t.Fatalf("recv --drain-time 500ms printed %q, and on stderr %q", out.String(), errs.String())
+	}
+	slow.Store(false)
+	out.Reset()
+	if err := do(ctx, "recv", nil, strings.NewReader(""), &out, &errs); err != nil {
+		t.Fatalf("recv after: %v %s", err, errs.String())
+	}
+	if !strings.Contains(out.String(), `"body":"`+body+`"`) || ranges.Load() != 1 {
+		t.Fatalf("recv after the drain's time: %d ranged fetches, printed %.200q", ranges.Load(), out.String())
+	}
+	for _, d := range []string{"0", "-1s", "0s"} {
+		var wrong *usageError
+		if err := do(ctx, "recv", []string{"--drain-time", d}, strings.NewReader(""), io.Discard, io.Discard); !errors.As(err, &wrong) || !strings.Contains(err.Error(), "--drain-time takes a duration above zero") {
+			t.Errorf("recv --drain-time %s: %v", d, err)
+		}
+	}
+}
+
 // recv --wait after a paced drain goes on once the later of the server's
 // two waits is over, the pace and the poll interval, since its next run
 // begins with a poll (#116, #117); recv alone advises the same wait.

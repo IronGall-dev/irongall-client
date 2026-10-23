@@ -86,6 +86,11 @@ type Options struct {
 	// by another command of the box, once, before it waits for it: a box's
 	// commands write its files one at a time.
 	Waiting func()
+	// DrainTime is how long one Receive drains while bytes move, holding the
+	// box's lock: past it the drain stops, as at its other limits
+	// (Result.More), and a fetch under way keeps what it read for the next
+	// Receive to go on from. Zero is DefaultDrainTime.
+	DrainTime time.Duration
 }
 
 // Box is one box: its state directory and the server it talks to. It is
@@ -109,6 +114,8 @@ type Box struct {
 	senderKeyTypes []string
 	// waiting is told when a command waits for the box's lock ([Box.hold]).
 	waiting func()
+	// drainTime bounds a Receive's drain (Options.DrainTime).
+	drainTime time.Duration
 	// db is the box's state file while a command holds it ([Box.hold]) or a
 	// reading has it open read-only ([reading]), and tx the transaction of
 	// it under way ([Box.view], [Box.update]). A Box runs one command or
@@ -175,6 +182,10 @@ func newBox(dir string, opt Options) (*Box, error) {
 	b.http.CheckRedirect = followNone
 	if b.now == nil {
 		b.now = time.Now
+	}
+	b.drainTime = opt.DrainTime
+	if b.drainTime <= 0 {
+		b.drainTime = DefaultDrainTime
 	}
 	return b, nil
 }

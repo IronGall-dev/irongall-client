@@ -78,8 +78,9 @@ type Result struct {
 	Duplicates []string
 	Refused    []Refusal
 	// More reports that the drain stopped at one of its limits (see
-	// maxDrainMessages), or because the server paced it: the rest is still
-	// on the server for the next Receive.
+	// maxDrainMessages), its time among them (Options.DrainTime), or because
+	// the server paced it: the rest is still on the server for the next
+	// Receive, which goes on from what a fetch the time cut kept.
 	More bool
 	// Paced is how long the server asked the box to wait before taking out
 	// more, when it paced the drain (a 429 fetch_paced or refetch_spent with
@@ -128,7 +129,8 @@ func (r *Result) Again() time.Duration {
 	return max(r.Paced, time.Duration(r.PollAfter)*time.Second)
 }
 
-// Receive drains the box: every page, every message. Each message is judged
+// Receive drains the box: every page, every message, up to the drain's
+// limits, its time among them (Options.DrainTime). Each message is judged
 // by one gate (see [Box.judge]); only one that passes every check lands,
 // where the box's say over its sender puts it: inbox/ for a sender it
 // allowed, held/ for one it has not (unless its policy lands that mail in
@@ -161,9 +163,12 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 	// is sent, with no read.
 	replaced, aclErr := b.aclAt(ctx)
 	// One Result for the command, which a second drain adds to: what the first
-	// landed and acked is said, whatever stopped it (#332).
+	// landed and acked is said, whatever stopped it (#332). The two drains
+	// share one bound in time, and nothing else is under it.
 	res := &Result{}
-	err := b.drain(ctx, asked, res)
+	drainCtx, stop := context.WithTimeoutCause(ctx, b.drainTime, errDrainTime)
+	defer stop()
+	err := b.drain(drainCtx, asked, res)
 	// A drain refused for what a renewal mends renews, and drains again, once:
 	// a server that holds no box at this address, having forgotten it, which
 	// the renewal's registration brings back (PROTOCOL.md §3, §6.4), or one
@@ -174,7 +179,7 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 			var again bool
 			again, aclErr = b.aclAt(ctx)
 			replaced = replaced || again
-			err = b.drain(ctx, asked, res)
+			err = b.drain(drainCtx, asked, res)
 			// A server that answers the drain the same after the renewal it
 			// took was not mended by it: the next such renewal waits
 			// renewRetry, as one that failed does, so a server that answers so
@@ -313,16 +318,41 @@ func (b *Box) mendable(err error) bool {
 }
 
 // A drain is bounded, so that a server which lists mail without end, or
-// serves answers as large as it may, costs one Receive a known amount of
-// time and disk at most. A drain that reaches a limit stops there: what is
-// left stays on the server for the next Receive.
+// serves answers as large as it may, or as slowly as it may, costs one
+// Receive a known amount of time and disk at most. A drain that reaches a
+// limit stops there: what is left stays on the server for the next Receive.
 var (
 	maxDrainMessages = 1000     // messages handled in one drain
 	maxDrainBytes    = 64 << 20 // of ciphertext fetched in one drain
 	maxDrainPages    = 100      // list pages followed in one drain
 )
 
+// DefaultDrainTime is how long one Receive drains while bytes move, unless
+// Options.DrainTime (recv --drain-time) says otherwise: the drain's bound in
+// time, beside its others. At it a call under way is cut, and a fetch keeps
+// what it read for the next Receive to go on from (partial.go), so a drain
+// of large mail on a slow link completes over several (#2, #381).
+const DefaultDrainTime = 15 * time.Minute
+
+// errDrainTime is the cause of a drain's context's end at its bound in
+// time: no error, the drain's limit (DefaultDrainTime). net/http gives a
+// call it cut the cause as its error, so it is a deadline's too.
+var errDrainTime = fmt.Errorf("the drain ran as long as one drain runs: %w", context.DeadlineExceeded)
+
+// drain drains the box until its list ends or a limit stops it. A call that
+// its bound in time cut (Options.DrainTime, the cause of ctx's end) stops
+// it as its other limits do, with Result.More and no error: what it
+// delivered stays delivered, and a fetch under way kept what it read.
 func (b *Box) drain(ctx context.Context, asked *lookups, res *Result) error {
+	err := b.drainPages(ctx, asked, res)
+	if err != nil && errors.Is(context.Cause(ctx), errDrainTime) && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)) {
+		res.More = true
+		return nil
+	}
+	return err
+}
+
+func (b *Box) drainPages(ctx context.Context, asked *lookups, res *Result) error {
 	// Where mail lands is read once, before anything is acked: a policy or
 	// a list that cannot be read stops the drain, and the mail stays on the
 	// server.
@@ -400,7 +430,7 @@ func (b *Box) drain(ctx context.Context, asked *lookups, res *Result) error {
 			if !hexID.MatchString(m.ID) {
 				continue
 			}
-			if messages == maxDrainMessages || fetched >= maxDrainBytes {
+			if messages == maxDrainMessages || fetched >= maxDrainBytes || errors.Is(context.Cause(ctx), errDrainTime) {
 				res.More = true
 				return nil
 			}

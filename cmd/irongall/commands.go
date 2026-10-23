@@ -193,7 +193,7 @@ twice in an object among them, is refused, and nothing is sent.`,
 }
 
 func (e *cli) recvCmd() *cobra.Command {
-	var wait time.Duration
+	var wait, drain time.Duration
 	var headers bool
 	c := command("recv [flags]", "receive, verify and ack every message: one line of JSON each",
 		`Receive, verify and ack every message: a "mail" line for each, built from the
@@ -206,8 +206,18 @@ With --headers, a "mail_headers" line takes each "mail" line's place: its
 "envelope" has the fields this client checked with none of the text the
 sender chose, no body and no subject, and the line has the body's size. Each
 message is kept in inbox/ as ever, and irongall show <id> prints its "mail"
-line, so a reader can decide by sender before it reads what the sender wrote.`,
-		nargs(0, 0), func(c *cobra.Command, _ []string) error {
+line, so a reader can decide by sender before it reads what the sender wrote.
+
+One drain runs for at most --drain-time, holding the box's lock: there it
+stops with a "more" line, as at its other limits, and keeps what it read of
+the message it was fetching, which the next recv goes on from.`,
+		checked(nargs(0, 0), func(c *cobra.Command, _ []string) error {
+			if drain <= 0 {
+				return wrong(c, "%s --drain-time takes a duration above zero, such as 15m", c.CommandPath())
+			}
+			return nil
+		}), func(c *cobra.Command, _ []string) error {
+			e.opt.DrainTime = drain
 			b, err := e.box()
 			if err != nil {
 				return err
@@ -215,6 +225,7 @@ line, so a reader can decide by sender before it reads what the sender wrote.`,
 			return e.recv(c, b, wait, headers)
 		})
 	c.Flags().DurationVar(&wait, "wait", 0, "poll until a message arrives, for at most this long")
+	c.Flags().DurationVar(&drain, "drain-time", client.DefaultDrainTime, "how long one drain runs before it stops for the next recv")
 	// As an IMAP client fetches a message's ENVELOPE apart from its body (RFC
 	// 9051 §6.4.5), as mail clients list headers before they open a message.
 	c.Flags().BoolVar(&headers, "headers", false, "print each message's checked fields and its body's size, without its body or subject")
