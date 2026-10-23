@@ -480,9 +480,6 @@ func TestAFetchIsTheSizeItsListGives(t *testing.T) {
 		"a byte less, unannounced": {func(*protocol.MessageInfo) {}, func(ct []byte) []byte { return ct[:len(ct)-1] }, true},
 		"listed a byte larger":     {func(m *protocol.MessageInfo) { m.Size++ }, same, false},
 		"listed as nothing":        {func(m *protocol.MessageInfo) { m.Size = 0 }, same, false},
-		"listed larger than any":   {func(m *protocol.MessageInfo) { m.Size = 1 << 40 }, same, false},
-		// A body of the size listed, a byte past the largest ciphertext.
-		"listed past the largest": {func(m *protocol.MessageInfo) { m.Size = protocol.MaxCiphertext + 1 }, func([]byte) []byte { return make([]byte, protocol.MaxCiphertext+1) }, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := newEnv(t)

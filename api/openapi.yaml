@@ -1406,7 +1406,7 @@ components:
           description: The box whose pass the send carried, on the server's word. A client holds it to the sender it verifies.
           $ref: '#/components/schemas/Address'
         size:
-          description: The ciphertext's size in bytes, which its fetch answers exactly, at most 16 MiB (`PROTOCOL.md` §4.5).
+          description: The ciphertext's size in bytes, which its fetch answers exactly, at most 16 MiB (`PROTOCOL.md` §4.5). A client refuses a list that gives a larger one.
           $ref: '#/components/schemas/Integer'
           maximum: 16777216
         received_at:

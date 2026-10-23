@@ -235,10 +235,10 @@ func (ct *ciphertext) read(name string, resp *http.Response) (readErr, err error
 		}
 		from = p.kept
 	}
-	// A listed size past the protocol's largest ciphertext is no
-	// ciphertext's (§4.5), and one up to it is read whatever its size
-	// (§5.2).
-	if ct.size < 0 || ct.size > protocol.MaxCiphertext || resp.ContentLength >= 0 && resp.ContentLength != ct.size-from {
+	// The listed size is at most the protocol's largest ciphertext, which
+	// the list's form holds (protocol.MessageList), and is read whatever its
+	// size (§5.2).
+	if resp.ContentLength >= 0 && resp.ContentLength != ct.size-from {
 		return nil, errors.Join(notListed(name, ct.size), p.drop())
 	}
 	if err := p.begin(from); err != nil {

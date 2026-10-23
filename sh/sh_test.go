@@ -571,7 +571,7 @@ var answerTypes = map[string]func() any{
 var answerRead = map[string]bool{
 	"box-bad-prekey-a-number": true, "box-bad-revoked-certificates-a-number": true, "box-bad-signature-unpadded": true,
 	"list-bad-cursor-a-number": true, "list-bad-cursor-a-percent": true, "list-bad-cursor-a-slash": true, "list-bad-cursor-empty": true,
-	"list-bad-messages-an-object": true, "list-bad-size-a-string": true, "receipt-bad-id-an-array": true,
+	"list-bad-messages-an-object": true, "list-bad-size-a-string": true, "list-bad-size-past-the-largest": true, "receipt-bad-id-an-array": true,
 	"record-bad-a-second-value": true, "record-bad-an-array": true, "record-bad-empty": true, "record-bad-identity-a-number": true,
 	"record-bad-identity-wrapped": true, "record-bad-revocation-signature-unpadded": true, "record-bad-revocation-signature-unused-bits-set": true,
 }
@@ -582,8 +582,8 @@ var answerRead = map[string]bool{
 func TestVectorsAnswer(t *testing.T) {
 	need(t, scriptTools...)
 	files, _ := filepath.Glob(filepath.Join(vectors, "answer", "*.json"))
-	if len(files) != 58 {
-		t.Fatalf("%d answer/ vectors, want 58", len(files))
+	if len(files) != 60 {
+		t.Fatalf("%d answer/ vectors, want 60", len(files))
 	}
 	for name := range answerRead {
 		if _, err := os.Stat(filepath.Join(vectors, "answer", name+".json")); err != nil {

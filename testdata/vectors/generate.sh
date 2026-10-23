@@ -680,6 +680,9 @@ at list-bad-count-a-fraction '{"count":0.5,"messages":[],"next_cursor":null}'
 at list-bad-count-written-with-a-fraction '{"count":1.0,"messages":[],"next_cursor":null}' # an integer member is written as one
 at list-bad-count-written-with-an-exponent '{"count":1e0,"messages":[],"next_cursor":null}' # jq gives it back as 1, so the script takes it: how jq reads a number, a difference that guards none of the five (AGENTS.md § The shell client)
 at list-bad-size-a-string '{"count":1,"messages":[{"id":"%s","from":"%s","size":"2048"}],"next_cursor":null}' "$HASH" "$A"
+# A size is at most 16 MiB, the largest ciphertext (PROTOCOL.md §4.5, §5.1): a list that gives a larger one is no answer, before anything is fetched
+at list-ok-size-the-largest '{"count":1,"messages":[{"id":"%s","from":"%s","size":16777216,"received_at":"%s","expires_at":"2026-11-12T00:00:00Z"}],"next_cursor":null}' "$HASH" "$A" "$NOW"
+at list-bad-size-past-the-largest '{"count":1,"messages":[{"id":"%s","from":"%s","size":16777217,"received_at":"%s","expires_at":"2026-11-12T00:00:00Z"}],"next_cursor":null}' "$HASH" "$A" "$NOW"
 at list-bad-messages-an-object '{"count":0,"messages":{},"next_cursor":null}'
 at list-bad-cursor-a-number '{"count":0,"messages":[],"next_cursor":7}'
 # A cursor is opaque and URL-safe (AEP-158): one or more of A-Z, a-z, 0-9, - and _, pasted into the next query as it is

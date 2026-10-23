@@ -2,6 +2,9 @@ package client_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -507,4 +510,100 @@ func TestAFetchOfAnotherMessageDropsWhatWasKept(t *testing.T) {
 		t.Errorf("the fetches asked %q: both whole", got)
 	}
 	noPartial(t, b)
+}
+
+// No size a server gives is taken past the protocol's largest ciphertext
+// (PROTOCOL.md §4.5, §5.1, §5.2), whether the box keeps part of the message
+// or none: a list that gives one is no answer, and a fetch's Content-Length
+// or Content-Range that is not the listed size breaks its answer's form.
+// Either way the drain stops with nothing judged or acked, the message still
+// on the server, nothing fetched on a list that is no answer, and nothing
+// made by the size: a resume once made its buffer from the listed size
+// before any bound held it, and 2^53 − 1 panicked the drain (#404). 🛑 No
+// case asks for more than a ciphertext's bytes where a regression would
+// allocate them: a size like 1 << 40 there has the host find a TiB.
+func TestNoSizeAServerGivesIsTakenPastTheLargestCiphertext(t *testing.T) {
+	type answer func(w http.ResponseWriter, honest *httptest.ResponseRecorder, size int64)
+	header := func(name string, value func(kept, size int64) string) answer {
+		return func(w http.ResponseWriter, h *httptest.ResponseRecorder, size int64) {
+			kept := int64(0)
+			if h.Code == http.StatusPartialContent {
+				var last, length int64
+				if _, err := fmt.Sscanf(h.Header().Get("Content-Range"), "bytes %d-%d/%d", &kept, &last, &length); err != nil {
+					panic(err)
+				}
+			}
+			maps.Copy(w.Header(), h.Header())
+			w.Header().Set(name, value(kept, size))
+			w.WriteHeader(h.Code)
+			_, _ = w.Write(h.Body.Bytes())
+		}
+	}
+	for _, c := range []struct {
+		name  string
+		sizes []int64
+		// fetch answers the fetch, given the honest answer, with the size
+		// it gives; nil leaves it honest and gives the size in the list.
+		fetch answer
+		cut   bool
+	}{
+		{"in the list", []int64{-1, protocol.MaxCiphertext + 1, protocol.MaxInteger}, nil, false},
+		{"in the list, part of it kept", []int64{-1, protocol.MaxCiphertext + 1, protocol.MaxInteger}, nil, true},
+		// net/http's server sends no Content-Length of -1, and its client
+		// takes none: the two larger are the ones a server can give.
+		{"as the Content-Length", []int64{protocol.MaxCiphertext + 1, protocol.MaxInteger}, header("Content-Length", func(_, size int64) string { return strconv.FormatInt(size, 10) }), false},
+		{"as the Content-Length, part of it kept", []int64{protocol.MaxCiphertext + 1, protocol.MaxInteger}, header("Content-Length", func(kept, size int64) string { return strconv.FormatInt(size-kept, 10) }), true},
+		{"as the Content-Range's length", []int64{-1, protocol.MaxCiphertext + 1, protocol.MaxInteger}, header("Content-Range", func(kept, size int64) string { return fmt.Sprintf("bytes %d-%d/%d", kept, size-1, size) }), true},
+	} {
+		for _, size := range c.sizes {
+			t.Run(c.name+"/"+strconv.FormatInt(size, 10), func(t *testing.T) {
+				e := newEnv(t)
+				a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+				f := &fetches{b: b}
+				var id string
+				if c.cut {
+					id, _ = cutOnce(t, e, a, b, f)
+				} else {
+					id = send(t, a, b, strings.Repeat("a message listed or served at a size past any. ", 1500)).ID
+				}
+				before := len(f.asked())
+				e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+					switch {
+					case f.is(r) && c.fetch != nil:
+						c.fetch(w, honest(next, r), size)
+					case r.Method == http.MethodGet && r.URL.Path == boxPath(b)+"/messages" && c.fetch == nil:
+						var list protocol.MessageList
+						if err := protocol.Unmarshal(honest(next, r).Body.Bytes(), &list); err != nil || len(list.Messages) != 1 {
+							t.Errorf("the list: %v", err)
+							return
+						}
+						list.Messages[0].Size = size
+						fakeserver.WriteList(w, list)
+					default:
+						next.ServeHTTP(w, r)
+					}
+				})
+				res, err := func() (res *client.Result, err error) {
+					defer func() {
+						if p := recover(); p != nil {
+							res, err = &client.Result{}, fmt.Errorf("the drain panicked: %v", p)
+						}
+					}()
+					return b.Receive(context.Background())
+				}()
+				switch {
+				case err == nil || len(res.Delivered)+len(res.Refused) != 0 || e.srv.Count(b.Address()) != 1:
+					t.Fatalf("%+v, %v; the server holds %d", res, err, e.srv.Count(b.Address()))
+				case c.fetch == nil && (!errors.Is(err, protocol.ErrMemberValue) || len(f.asked()) != before):
+					t.Fatalf("a list that is no answer: %v, and %d fetches", err, len(f.asked())-before)
+				case c.fetch != nil && !strings.Contains(err.Error(), "bytes of ciphertext the list gives"):
+					t.Fatalf("a fetch of another size: %v", err)
+				}
+				e.srv.SetMiddle(nil)
+				if res := receive(t, b); len(res.Delivered) != 1 || res.Delivered[0].ID != id {
+					t.Fatalf("the drain after: %+v", res)
+				}
+			})
+		}
+	}
 }

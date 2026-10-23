@@ -42,8 +42,8 @@ var answerTypes = map[string]func() any{
 // answer.
 func TestVectorAnswers(t *testing.T) {
 	files := glob(t, "answer/*.json")
-	if len(files) != 58 {
-		t.Fatalf("%d answer/ vectors, want 58", len(files))
+	if len(files) != 60 {
+		t.Fatalf("%d answer/ vectors, want 60", len(files))
 	}
 	for _, f := range files {
 		name := strings.TrimSuffix(filepath.Base(f), ".json")

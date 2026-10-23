@@ -286,12 +286,19 @@ func CheckCursor(s string) error {
 	return nil
 }
 
-// checkType refuses a list whose next_cursor is not a cursor (CheckCursor):
-// it breaks the list's form, as a member of another type does, so it is no
-// answer.
+// checkType refuses a list whose next_cursor is not a cursor (CheckCursor),
+// or that gives a message a size past MaxCiphertext, which is no
+// ciphertext's (PROTOCOL.md §4.5): either breaks the list's form, as a
+// member of another type does, so it is no answer, and a reader allocates
+// nothing by a size it gives that is not held here first.
 func (l *MessageList) checkType() error {
 	if l.NextCursor != nil && CheckCursor(*l.NextCursor) != nil {
 		return &memberError{name: "next_cursor", known: true}
+	}
+	for _, m := range l.Messages {
+		if m.Size > MaxCiphertext {
+			return &memberError{name: "size", known: true}
+		}
 	}
 	return nil
 }
