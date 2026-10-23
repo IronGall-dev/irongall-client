@@ -509,6 +509,33 @@ func (b *Box) aclPending() (bool, error) {
 	return !want.SameLists(took), nil
 }
 
+// aclWhy says, in this client's words, what changed where the ACL the box's
+// files say is not the one its server last took, as the box knows it: its
+// server held one another writer put there, at the box's last read of it
+// (keepHeld); its server holds none this box sent, having taken none or none
+// since it registered the box anew (sendRenewal); a restore adopted one that
+// holds what no file of the box says (adoptPending); or the box's own lists
+// changed.
+func (b *Box) aclWhy() (string, error) {
+	took, err := b.tookACL()
+	if err != nil {
+		return "", err
+	}
+	var other bool
+	if err := b.view(func(s store) error { other = s.get(bucketBox, "acl-another-writer") != nil; return nil }); err != nil {
+		return "", err
+	}
+	switch {
+	case other:
+		return "this box's server held an ACL another writer put there, at the box's last read of it", nil
+	case took == nil:
+		return "this box's server holds no ACL this box sent: it has taken none, or none since it registered the box anew", nil
+	case unsaid(took):
+		return "the ACL this box adopted from its server when it was restored holds what no file of the box says", nil
+	}
+	return "this box's lists have changed since its server last took its ACL", nil
+}
+
 // SyncACL sends the box's server the ACL the box's files say, unless that
 // is the one it took last, which is the case for a box that has blocked
 // nobody and lets every sender reach the server: such a box sends none, and
@@ -654,7 +681,11 @@ func (b *Box) sendACL(ctx context.Context, want *protocol.ACL, replaced bool) er
 		got, err = b.putACL(ctx, want)
 	}
 	if err != nil {
-		return fmt.Errorf("the server did not take this box's ACL: %w", err)
+		why, werr := b.aclWhy()
+		if werr != nil {
+			return errors.Join(fmt.Errorf("the server did not take this box's ACL: %w", err), werr)
+		}
+		return fmt.Errorf("the server did not take this box's ACL, sent where %s: %w", why, err)
 	}
 	return b.keepTook(got, replaced)
 }

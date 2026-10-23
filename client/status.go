@@ -79,7 +79,11 @@ func (b *Box) status() (*Status, error) {
 	case perr != nil:
 		s.Attention = append(s.Attention, fmt.Sprintf("whom this box allows or blocks cannot be read, so it neither sends nor receives until that is put right: %v", perr))
 	case pending:
-		s.Attention = append(s.Attention, "this box's ACL has changed since its server last took it: the next send, recv, allow or block sends it")
+		why, err := b.aclWhy()
+		if err != nil {
+			return nil, err
+		}
+		s.Attention = append(s.Attention, why+": the next send, recv, allow or block sends this box's own")
 	}
 	for dir, n := range map[string]*int{"inbox/*.json": &s.Inbox, "sent/*.json": &s.Sent, "outbox/*.P": &s.Outbox, "outbox/failed/*.P": &s.OutboxFailed, "quarantine/*.json": &s.Quarantine, "held/*.json": &s.Held} {
 		names, err := filepath.Glob(b.path(filepath.FromSlash(dir)))

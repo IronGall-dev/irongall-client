@@ -361,7 +361,7 @@ func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration, headers 
 			}
 			aclErr = res.ACLErr
 			if res.ACLErr != nil {
-				lines = append(lines, line("acl_not_sent", failure(fmt.Errorf("this box's ACL has changed and was not sent to its server: the next recv sends it, and irongall status says whether it went through: %w", res.ACLErr))...))
+				lines = append(lines, line("acl_not_sent", failure(fmt.Errorf("the next recv sends this box's ACL, and irongall status says whether it went through: %w", res.ACLErr))...))
 			}
 			if res.ACLReplaced {
 				replaced = true
@@ -660,7 +660,7 @@ func (e *cli) aclNotSent(err error) error {
 	if err == nil {
 		return nil
 	}
-	if werr := e.out(line("acl_not_sent", failure(fmt.Errorf("this box's ACL has changed and was not sent to its server, which still takes the reply under the one it last took: the next send or recv sends it, and irongall status says whether it went through: %w", err))...)); werr != nil {
+	if werr := e.out(line("acl_not_sent", failure(fmt.Errorf("the box's server takes the reply under the ACL it last took: the next send or recv sends this box's, and irongall status says whether it went through: %w", err))...)); werr != nil {
 		return werr
 	}
 	return &needsALook{}

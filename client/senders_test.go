@@ -17,6 +17,7 @@ import (
 
 	"github.com/IronGall-dev/irongall-client/client"
 	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
+	"github.com/IronGall-dev/irongall-client/internal/forge"
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
@@ -167,7 +168,7 @@ func TestABoxDropsMailFromASenderItBlockedWhateverItsServerDoes(t *testing.T) {
 	if len(res.Blocked) != 1 || len(res.Held)+len(res.Delivered) != 0 || res.ACLErr == nil || e.srv.Count(b.Address()) != 0 {
 		t.Fatalf("a drain with the sender blocked here only: %+v", res)
 	}
-	if st, err := b.Status(t.Context()); err != nil || !strings.Contains(strings.Join(st.Attention, "\n"), "ACL has changed") {
+	if st, err := b.Status(t.Context()); err != nil || !strings.Contains(strings.Join(st.Attention, "\n"), "holds no ACL this box sent") {
 		t.Fatalf("status: %+v, %v", st, err)
 	}
 	e.srv.SetMiddle(nil)
@@ -398,7 +399,8 @@ func TestARenewalWhosePUTIsNotTakenLeavesTheBoxsACLPending(t *testing.T) {
 				}
 				pending, perr := b.ACLPending(ctx)
 				st, serr := b.Status(ctx)
-				if res.ACLReplaced || res.ACLErr == nil || !pending || perr != nil || serr != nil || !strings.Contains(strings.Join(st.Attention, "\n"), "ACL") {
+				const what = "this box's server held an ACL another writer put there"
+				if res.ACLReplaced || res.ACLErr == nil || !strings.Contains(res.ACLErr.Error(), what) || !pending || perr != nil || serr != nil || !strings.Contains(strings.Join(st.Attention, "\n"), what) {
 					t.Fatalf("the renewal whose PUT was refused: replaced %v, its error %v; pending %v (%v); attention %q (%v)", res.ACLReplaced, res.ACLErr, pending, perr, st.Attention, serr)
 				}
 				// A reply is judged against the ACL the server holds: under
@@ -423,6 +425,59 @@ func TestARenewalWhosePUTIsNotTakenLeavesTheBoxsACLPending(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// Where the ACL a box's files say is not the one its server last took, the
+// error of the sync that did not send it and status say what changed, never
+// that the box's ACL changed where its server's did: another writer's ACL a
+// renewal's read found (TestARenewalWhosePUTIsNotTakenLeavesTheBoxsACLPending),
+// none taken from the box, the box's own lists changed, or an ACL a restore
+// adopted that holds what no file of the box says.
+func TestWhatChangedInAnACLNotTakenIsSaid(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct{ name, what string }{
+		{"none taken", "this box's server holds no ACL this box sent"},
+		{"its lists changed", "this box's lists have changed since its server last took its ACL"},
+		{"an adopted ACL holding what no file says", "the ACL this box adopted from its server when it was restored holds what no file of the box says"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			e := newEnv(t)
+			b, d, x := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+			var refusing atomic.Bool
+			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+				if refusing.Load() && r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/acl") {
+					forge.Refuse(w, protocol.CodeUnavailable)
+					return
+				}
+				next.ServeHTTP(w, r)
+			})
+			box := b
+			switch c.name {
+			case "its lists changed":
+				if _, err := b.Block(ctx, d.Address()); err != nil {
+					t.Fatal(err)
+				}
+			case "an adopted ACL holding what no file says":
+				e.srv.PutACL(b.Address(), &protocol.ACL{Allow: protocol.ACLList{Any: true}, Deny: protocol.NewACLList(true, []protocol.Address{d.Address()})})
+				box = restore(t, e, b)
+				e.clock.Add(time.Minute)
+				if _, err := box.Rekey(ctx, ""); err != nil {
+					t.Fatal(err)
+				}
+			}
+			refusing.Store(true)
+			var err error
+			if c.name == "an adopted ACL holding what no file says" {
+				err = box.SyncACL(ctx)
+			} else {
+				_, err = box.Block(ctx, x.Address())
+			}
+			st, serr := box.Status(ctx)
+			if err == nil || !strings.Contains(err.Error(), c.what) || serr != nil || !strings.Contains(strings.Join(st.Attention, "\n"), c.what) {
+				t.Fatalf("the sync not taken: %v; status %q, %v; want each to say %q", err, st.Attention, serr, c.what)
+			}
+		})
 	}
 }
 
