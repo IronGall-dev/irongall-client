@@ -35,7 +35,8 @@ func unseen(s string) bool {
 // as the same record: its tag characters raw, a member recv never writes
 // (a type and an id, which would stand twice in the line printed), a space
 // after it, or its members in another order. show refuses it, and peer allow
-// delivers nothing of it; neither prints anything of it.
+// delivers nothing of it; neither prints anything of it. Each file is edited
+// from its own line, so held/'s is c's, which peer allow of c reaches (#390).
 func TestOnlyRecvsOwnLineIsShown(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -82,27 +83,35 @@ func TestOnlyRecvsOwnLineIsShown(t *testing.T) {
 	// Each tag character as escapeUnseen writes it, put back raw.
 	raw := regexp.MustCompile(`[\\]udb40[\\]udc([0-9a-f]{2})`)
 	inbox, held := filepath.Join(b.Dir(), "inbox", res.Delivered[0].ID+".json"), filepath.Join(b.Dir(), "held", res.Held[0].ID+".json")
-	kept := must(t, inbox)
-	bare := raw.ReplaceAllFunc(kept, func(m []byte) []byte {
-		n, _ := strconv.ParseUint(string(m[len(m)-2:]), 16, 8)
-		return []byte(string(rune(0xE0000 + n)))
-	})
-	if !unseen(string(bare)) {
-		t.Fatal("the line put back has no raw tag character")
+	bare := func(kept []byte) []byte {
+		b := raw.ReplaceAllFunc(kept, func(m []byte) []byte {
+			n, _ := strconv.ParseUint(string(m[len(m)-2:]), 16, 8)
+			return []byte(string(rune(0xE0000 + n)))
+		})
+		if !unseen(string(b)) {
+			t.Fatal("the line put back has no raw tag character")
+		}
+		return b
 	}
-	var members map[string]json.RawMessage
-	if err := json.Unmarshal(kept, &members); err != nil {
-		t.Fatal(err)
+	reordered := func(kept []byte) []byte {
+		var members map[string]json.RawMessage
+		if err := json.Unmarshal(kept, &members); err != nil {
+			t.Fatal(err)
+		}
+		r, _ := json.Marshal(members) // sorted by name, as recv does not write them
+		return r
 	}
-	reordered, _ := json.Marshal(members) // sorted by name, as recv does not write them
-	for name, other := range map[string][]byte{
-		"its tag characters raw":       bare,
-		"the mail line around it":      slices.Concat([]byte(`{"type":"mail","id":"`+strings.Repeat("0", 64)+`","envelope":`), kept, []byte("}")),
-		"a space after it":             append(append([]byte{}, kept...), ' '),
+	lines := map[string][]byte{inbox: must(t, inbox), held: must(t, held)}
+	for name, edit := range map[string]func([]byte) []byte{
+		"its tag characters raw": bare,
+		"the mail line around it": func(kept []byte) []byte {
+			return slices.Concat([]byte(`{"type":"mail","id":"`+strings.Repeat("0", 64)+`","envelope":`), kept, []byte("}"))
+		},
+		"a space after it":             func(kept []byte) []byte { return append(append([]byte{}, kept...), ' ') },
 		"its members in another order": reordered,
 	} {
-		for _, f := range []string{inbox, held} {
-			if err := os.WriteFile(f, other, 0o600); err != nil {
+		for f, kept := range lines {
+			if err := os.WriteFile(f, edit(kept), 0o600); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -111,9 +120,21 @@ func TestOnlyRecvsOwnLineIsShown(t *testing.T) {
 			t.Errorf("show of a file with %s: %v, printed %+q", name, err, out.String())
 		}
 		out.Reset()
-		if err := do(ctx, "peer allow", []string{c.Address().String()}, strings.NewReader(""), &out, io.Discard); err != nil || strings.Contains(out.String(), `"type":"mail"`) || unseen(out.String()) {
-			t.Errorf("peer allow with a held file with %s: %v, printed %+q", name, err, out.String())
+		err := do(ctx, "peer allow", []string{c.Address().String()}, strings.NewReader(""), &out, io.Discard)
+		_, gone := os.Stat(held)
+		if err != nil || strings.Contains(out.String(), `"type":"mail"`) || unseen(out.String()) || gone != nil {
+			t.Errorf("peer allow of c with its held file with %s: %v, printed %+q, moved out of held/ %v", name, err, out.String(), gone != nil)
 		}
+	}
+	// Control: c's line as recv kept it, which peer allow of c moves and
+	// prints.
+	if err := os.WriteFile(held, lines[held], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	err = do(ctx, "peer allow", []string{c.Address().String()}, strings.NewReader(""), &out, io.Discard)
+	if _, gone := os.Stat(held); err != nil || !strings.Contains(out.String(), `"type":"mail"`) || gone == nil {
+		t.Errorf("control: peer allow of c with its held line as recv kept it: %v, printed %+q, moved out of held/ %v", err, out.String(), gone != nil)
 	}
 }
 
