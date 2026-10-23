@@ -99,9 +99,10 @@ type Box struct {
 	senderKeyTypes []string
 	// waiting is told when a command waits for the box's lock ([Box.hold]).
 	waiting func()
-	// db is the box's state file while a command holds it ([Box.hold]), and
-	// tx the transaction of it under way ([Box.view], [Box.update]). A Box
-	// runs one command at a time.
+	// db is the box's state file while a command holds it ([Box.hold]) or a
+	// reading has it open read-only ([reading]), and tx the transaction of
+	// it under way ([Box.view], [Box.update]). A Box runs one command or
+	// reading at a time ([Box.claim]).
 	db *bolt.DB
 	tx *bolt.Tx
 	// none is set while a reading runs whose open found no state file
