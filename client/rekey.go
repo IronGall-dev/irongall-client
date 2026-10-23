@@ -130,17 +130,21 @@ type renewal struct {
 // server that forgot the box, as its registration. A server that holds no
 // box holds no ACL of it, and a box registered anew has none there, so what
 // this box kept of the last one the server took goes before the registration
-// is sent: whatever becomes of the answer, a fault after it or a process
-// ended before it is recorded, the next send or recv sends the ACL again
-// (#324). So does a restore's adoption of it, which has nothing to adopt
-// (#366). It returns the reading the server took, as publish does.
+// is sent, and with it any mark that another writer put it (keepHeld):
+// whatever becomes of the answer, a fault after it or a process ended before
+// it is recorded, the next send or recv sends the ACL again (#324), and
+// reports no ACL another writer put replaced, since the server dropped it
+// with the box. So does a restore's adoption of it, which has nothing to
+// adopt (#366). It returns the reading the server took, as publish does.
 func (b *Box) sendRenewal(ctx context.Context, r renewal, n uint64) (taken, error) {
 	if !r.forgotten {
 		return b.publish(ctx, b.boxPath("/prekey"), r.req, n)
 	}
 	if err := b.update(func(s store) error {
-		if err := s.del(bucketBox, "acl"); err != nil {
-			return err
+		for _, k := range []string{"acl", "acl-another-writer"} {
+			if err := s.del(bucketBox, k); err != nil {
+				return err
+			}
 		}
 		return s.del(bucketIntent, "adopt-acl")
 	}); err != nil {
@@ -598,6 +602,13 @@ func (b *Box) renewNow(ctx context.Context) (*protocol.Prekey, error) {
 		if since := b.now().Sub(at); since >= 0 && since < renewRetry {
 			return nil, fmt.Errorf("the renewal at %s did not go through, and recv tries it again from %s: %s", last.At, at.Add(renewRetry).Format(protocol.TimeLayout), last.Error)
 		}
+	}
+	// The renewal recv makes is followed by a read of the ACL its server
+	// holds (checkACL), owed from here, before anything is signed, until it
+	// is made: a process that ends once the server has taken the renewal,
+	// whatever records it then, leaves the read to the next Receive (#377).
+	if err := b.oweACLRead(); err != nil {
+		return nil, err
 	}
 	p, err := b.rekey(ctx, "")
 	if p == nil && err != nil {

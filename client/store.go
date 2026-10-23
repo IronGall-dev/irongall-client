@@ -27,9 +27,9 @@ import (
 //
 // Its buckets:
 //
-//	box          the box's own records, each by its name: serial, pass, etag, seen-floor, acl, acl-replaced, revoked, revoked-certs, renew-failed, not-made
+//	box          the box's own records, each by its name: serial, pass, etag, seen-floor, acl, acl-another-writer, acl-replaced, revoked, revoked-certs, renew-failed, not-made
 //	prekeys      each prekey statement this box signed, by its serial: the statement, its signature and when it was signed, in one value
-//	intent       the renewal under way, under "renewal": the number it took; and under "adopt-acl", a restore's adoption of its server's ACL, until it is done
+//	intent       the renewal under way, under "renewal": the number it took; under "adopt-acl", a restore's adoption of its server's ACL, until it is done; and under "acl-read", the read of its server's ACL a renewal recv began owes, with the serial the box had published then, until it is made
 //	peers        what this box pinned of each peer, by its address, in one value
 //	seen         the replay set, by ciphertext hash; seen-sender by sender and msg_id, and seen-time by sent_at, its two indexes
 //	quarantine   what this client's checks found of each message it refused, by its id: quarantine/ keeps the message as served

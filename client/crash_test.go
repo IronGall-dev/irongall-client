@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -205,6 +206,92 @@ func TestAForgottenBoxKilledAtEachStepOfItsRegistrationSendsItsACLAgain(t *testi
 				t.Fatalf("after a crash at %s the server holds the ACL %+v, which does not deny the sender the box blocked", step, acl)
 			}
 		})
+	}
+}
+
+// A recv whose renewal is due, killed at each step of its renewal and of the
+// read of its server's ACL that follows it: the read is owed from before the
+// renewal (#377), so the next recv makes it, whichever command recorded the
+// renewal. After it the server holds the box's own ACL, and recv has said it
+// replaced another writer's where one was there, once, and nothing where
+// none was: another writer's deny list or pause, the box's own, and a box
+// its server forgot, before the renewal's read or between the read and the
+// upload, which the renewal registers again (#386). A send between the kill
+// and the next recv, whose pass refused has the box read itself and record a
+// renewal taken unseen (ownerTaken), leaves the read owed too.
+func TestARecvKilledAtEachStepOfItsRenewalReadsItsServersACL(t *testing.T) {
+	const (
+		none = iota
+		before
+		atUpload
+	)
+	for _, s := range []struct {
+		name   string
+		other  func(d protocol.Address) *protocol.ACL
+		forget int
+		send   bool
+	}{
+		{"another writer's deny list", func(d protocol.Address) *protocol.ACL {
+			return &protocol.ACL{Allow: protocol.ACLList{Any: true}, Deny: protocol.NewACLList(false, []protocol.Address{d})}
+		}, none, false},
+		{"another writer's deny list, a send first", func(d protocol.Address) *protocol.ACL {
+			return &protocol.ACL{Allow: protocol.ACLList{Any: true}, Deny: protocol.NewACLList(false, []protocol.Address{d})}
+		}, none, true},
+		{"another writer's pause", func(protocol.Address) *protocol.ACL { return &protocol.ACL{Deny: protocol.ACLList{Any: true}} }, none, false},
+		{"its own", nil, none, false},
+		{"forgotten before the renewal's read", nil, before, false},
+		{"forgotten between the renewal's read and its upload", nil, atUpload, false},
+	} {
+		for _, step := range append(client.Steps("renewal"), client.Steps("heal")...) {
+			if step == "held ACL kept" && s.other == nil {
+				continue // nothing another writer put is there to keep
+			}
+			t.Run(s.name+", "+step, func(t *testing.T) {
+				ctx := context.Background()
+				e := newEnv(t)
+				a, b, c, d := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+				if _, err := b.Block(ctx, c.Address()); err != nil {
+					t.Fatal(err)
+				}
+				own := e.srv.ACL(b.Address())
+				if s.other != nil {
+					e.srv.PutACL(b.Address(), s.other(d.Address()))
+				}
+				switch s.forget {
+				case before:
+					e.srv.Forget(b.Address())
+				case atUpload:
+					var forgot atomic.Bool
+					e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+						if r.Method == http.MethodPut && r.URL.Path == boxPath(b)+"/prekey" && forgot.CompareAndSwap(false, true) {
+							e.srv.Forget(b.Address())
+						}
+						next.ServeHTTP(w, r)
+					})
+				}
+				e.clock.Add(25 * time.Hour)
+				crash(t, e, b, "receive", step, protocol.Address{})
+				x, err := client.Open(b.Dir(), e.opts())
+				if err != nil {
+					t.Fatal(err)
+				}
+				if s.send {
+					if _, err := x.Send(ctx, a.Address(), "sent before the next recv"); err != nil {
+						t.Fatalf("the send after the crash: %v", err)
+					}
+				}
+				res, err := x.Receive(ctx)
+				if err != nil || res.ACLErr != nil || res.RenewErr != nil {
+					t.Fatalf("the recv after the crash: %+v, %v", res, err)
+				}
+				if res.ACLReplaced != (s.other != nil) || !e.srv.ACL(x.Address()).SameLists(own) {
+					t.Fatalf("the recv after a crash at %s: acl_replaced %v; the server holds %+v, the box's own is %+v", step, res.ACLReplaced, e.srv.ACL(x.Address()), own)
+				}
+				if again := receive(t, x); again.ACLReplaced {
+					t.Fatalf("the replacement is reported again: %+v", again)
+				}
+			})
+		}
 	}
 }
 

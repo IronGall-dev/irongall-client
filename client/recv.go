@@ -94,16 +94,18 @@ type Result struct {
 	// RenewErr is why a due renewal failed. The drain went ahead, and a
 	// later Receive tries again, at most hourly.
 	RenewErr error
-	// ACLErr is why the box's ACL, changed since its server last took one,
-	// was not sent ([Box.SyncACL]). The drain went ahead, and the next
-	// Receive sends it.
+	// ACLErr is why the box's ACL was not sent where it differs from the one
+	// its server last took ([Box.SyncACL]), or from one another writer put
+	// there, which the renewal's read then kept as taken (checkACL). The drain
+	// went ahead, and the next send or Receive sends it.
 	ACLErr error
 	// ACLReplaced reports that, at this Receive's renewal, the box's server
 	// held an ACL other than the one this box last sent it, which another
 	// machine of the box, whoever holds its pass or the server itself wrote,
 	// and that the box sent its own in its place (checkACL); or that a sync
 	// since the last Receive replaced an ACL a restore adopted that held what
-	// no file of the box says (syncACL; #366).
+	// no file of the box says, or one another writer put that a renewal's
+	// read kept and could not replace then (syncACL; #366, #377).
 	ACLReplaced bool
 	// NotMade is a statement the box's server served in its name, at the
 	// box's last read of itself, that the box did not make, or nil
@@ -157,7 +159,7 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 	// day, so one that another writer put there lasts until the box's next
 	// renewal at most; at any other Receive only a change of the box's own
 	// is sent, with no read.
-	replaced, aclErr := b.aclAt(ctx, renewed)
+	replaced, aclErr := b.aclAt(ctx)
 	// One Result for the command, which a second drain adds to: what the first
 	// landed and acked is said, whatever stopped it (#332).
 	res := &Result{}
@@ -170,7 +172,7 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 	if err != nil && renewed == nil && renewErr == nil && b.mendable(err) {
 		if renewed, renewErr = b.renewNow(ctx); renewed != nil {
 			var again bool
-			again, aclErr = b.aclAt(ctx, renewed)
+			again, aclErr = b.aclAt(ctx)
 			replaced = replaced || again
 			err = b.drain(ctx, asked, res)
 			// A server that answers the drain the same after the renewal it
@@ -223,13 +225,66 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 }
 
 // aclAt sends the box's ACL as a Receive does: checked against what the
-// server holds when the Receive renewed (checkACL), and otherwise sent only
-// when the box's own changed (syncACL).
-func (b *Box) aclAt(ctx context.Context, renewed *protocol.Prekey) (bool, error) {
-	if renewed == nil {
+// server holds once a renewal a Receive began is taken, by whatever recorded
+// it, this Receive or another command after a process that ended (checkACL,
+// the read owed: oweACLRead), and otherwise sent only when the box's own
+// changed (syncACL). Once checkACL has run the read is made, whatever it
+// met: one that failed is no answer, and the next renewal reads again.
+func (b *Box) aclAt(ctx context.Context) (bool, error) {
+	owed, err := b.aclReadOwed()
+	if err != nil {
+		return false, err
+	}
+	if !owed {
 		return false, b.syncACL(ctx)
 	}
-	return b.checkACL(ctx)
+	replaced, err := b.checkACL(ctx)
+	if derr := b.update(func(s store) error { return s.del(bucketIntent, "acl-read") }); derr != nil {
+		return replaced, errors.Join(err, derr)
+	}
+	step("ACL read made")
+	return replaced, err
+}
+
+// oweACLRead records, before a renewal a Receive makes, that a read of the
+// ACL the box's server holds is owed once a renewal above the prekey it
+// published last is taken: under "acl-read", that prekey's serial, unless a
+// read is owed already, from a renewal not taken since.
+func (b *Box) oweACLRead() error {
+	if err := b.update(func(s store) error {
+		if s.get(bucketIntent, "acl-read") != nil {
+			return nil
+		}
+		published, err := decimal(s.get(bucketBox, "serial"), "serial")
+		if err != nil {
+			return err
+		}
+		return s.put(bucketIntent, "acl-read", strconv.AppendUint(nil, published, 10))
+	}); err != nil {
+		return err
+	}
+	step("ACL read owed")
+	return nil
+}
+
+// aclReadOwed reports whether a read of the ACL the box's server holds is
+// owed: a renewal a Receive began, or a later one, has been taken and
+// recorded, and checkACL has not run since.
+func (b *Box) aclReadOwed() (owed bool, err error) {
+	err = b.view(func(s store) error {
+		raw := s.get(bucketIntent, "acl-read")
+		if raw == nil {
+			return nil
+		}
+		before, err := decimal(raw, "acl-read")
+		if err != nil {
+			return err
+		}
+		published, err := decimal(s.get(bucketBox, "serial"), "serial")
+		owed = published > before
+		return err
+	})
+	return owed, err
 }
 
 // mendable reports whether a drain's error is one a renewal mends: the

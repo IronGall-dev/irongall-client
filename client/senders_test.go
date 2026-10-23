@@ -3,6 +3,7 @@ package client_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -326,6 +327,100 @@ func TestARenewalReplacesAnACLAnotherWriterPut(t *testing.T) {
 	}
 	if !e.srv.ACL(b.Address()).SameLists(own) || took() != kept {
 		t.Fatalf("the server holds %+v, the box keeps %s; want %+v, %s", e.srv.ACL(b.Address()), took(), own, kept)
+	}
+}
+
+// A renewal that reads another writer's ACL and whose PUT of the box's own
+// the server does not take keeps what the server holds as the ACL it took
+// (#377): status says the box's ACL is pending, a reply is judged against
+// the ACL the server holds, and the next recv, with no renewal, sends the
+// box's own and says it replaced another writer's, once. So for a pause and
+// for a deny list of addresses, which the box's files could say, and which
+// recv reports by the mark checkACL keeps beside it. Control: the PUT taken,
+// replaced and reported at the renewal.
+func TestARenewalWhosePUTIsNotTakenLeavesTheBoxsACLPending(t *testing.T) {
+	ctx := context.Background()
+	for _, other := range []struct {
+		name string
+		acl  func(d protocol.Address) *protocol.ACL
+	}{
+		{"a pause", func(protocol.Address) *protocol.ACL { return &protocol.ACL{Deny: protocol.ACLList{Any: true}} }},
+		{"a deny list", func(d protocol.Address) *protocol.ACL {
+			return &protocol.ACL{Allow: protocol.ACLList{Any: true}, Deny: protocol.NewACLList(false, []protocol.Address{d})}
+		}},
+	} {
+		for _, fail := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s, the PUT not taken %v", other.name, fail), func(t *testing.T) {
+				e := newEnv(t)
+				a, b, c, d := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+				if _, err := b.Block(ctx, c.Address()); err != nil {
+					t.Fatal(err)
+				}
+				own, theirs := e.srv.ACL(b.Address()), other.acl(d.Address())
+				e.srv.PutACL(b.Address(), theirs)
+				var mu sync.Mutex
+				failing := fail
+				var calls []string
+				e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+					if !strings.HasSuffix(r.URL.Path, "/acl") {
+						next.ServeHTTP(w, r)
+						return
+					}
+					mu.Lock()
+					calls = append(calls, r.Method)
+					refuse := failing && r.Method == http.MethodPut
+					mu.Unlock()
+					if refuse {
+						fakeserver.WriteJSON(w, protocol.CodeUnavailable.Status(), protocol.Problem{Type: protocol.CodeUnavailable.TypeURI(), Code: protocol.CodeUnavailable, Status: int64(protocol.CodeUnavailable.Status())})
+						return
+					}
+					next.ServeHTTP(w, r)
+				})
+				took := func() []string {
+					mu.Lock()
+					defer mu.Unlock()
+					out := calls
+					calls = nil
+					return out
+				}
+				e.clock.Add(25 * time.Hour)
+				res := receive(t, b)
+				if got := took(); res.Renewed == nil || strings.Join(got, " ") != "GET PUT" {
+					t.Fatalf("the renewal: %+v, calls %v", res, got)
+				}
+				if !fail {
+					if !res.ACLReplaced || res.ACLErr != nil || !e.srv.ACL(b.Address()).SameLists(own) {
+						t.Fatalf("control: the renewal's PUT taken: %+v; the server holds %+v", res, e.srv.ACL(b.Address()))
+					}
+					return
+				}
+				pending, perr := b.ACLPending(ctx)
+				st, serr := b.Status(ctx)
+				if res.ACLReplaced || res.ACLErr == nil || !pending || perr != nil || serr != nil || !strings.Contains(strings.Join(st.Attention, "\n"), "ACL") {
+					t.Fatalf("the renewal whose PUT was refused: replaced %v, its error %v; pending %v (%v); attention %q (%v)", res.ACLReplaced, res.ACLErr, pending, perr, st.Attention, serr)
+				}
+				// A reply is judged against the ACL the server holds: under
+				// the pause none is admitted, and the send waits for the ACL.
+				_, sendErr := b.Send(ctx, a.Address(), "while the server holds another writer's ACL")
+				if waits := sendErr != nil; waits != (other.name == "a pause") {
+					t.Fatalf("a send while the PUT is refused: %v", sendErr)
+				}
+				took()
+				mu.Lock()
+				failing = false // the server takes PUTs again
+				mu.Unlock()
+				again := receive(t, b)
+				if got := took(); again.Renewed != nil || !again.ACLReplaced || again.ACLErr != nil || strings.Join(got, " ") != "PUT" || !e.srv.ACL(b.Address()).SameLists(own) {
+					t.Fatalf("the next recv: %+v, calls %v; the server holds %+v, the box's own is %+v", again, got, e.srv.ACL(b.Address()), own)
+				}
+				if pending, _ := b.ACLPending(ctx); pending {
+					t.Fatal("the box's ACL is pending after the server took it")
+				}
+				if res := receive(t, b); res.ACLReplaced || len(took()) != 0 {
+					t.Fatalf("the replacement is reported again: %+v", res)
+				}
+			})
+		}
 	}
 }
 

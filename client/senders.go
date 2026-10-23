@@ -544,8 +544,10 @@ func (b *Box) syncACL(ctx context.Context) error {
 		return nil
 	}
 	// An ACL kept as taken that holds what no file of the box says was
-	// adopted from its server: replacing it drops what another writer put
-	// there, which the next Receive reports, as the heal reports one.
+	// adopted from its server, and one marked as another writer's was kept
+	// by checkACL before a PUT not taken: replacing either drops what
+	// another writer put there, which the next Receive reports, as the heal
+	// reports one (keepTook).
 	return b.sendACL(ctx, want, unsaid(took))
 }
 
@@ -577,9 +579,14 @@ func (b *Box) replacedNote() (bool, error) {
 // make, never a tag, whose making is the server's own; where they differ it
 // sends the box's own, as syncACL does, with no If-Match. It reports whether
 // the server held an ACL other than the one this box last sent, which this
-// box has now replaced with its own. A read that fails is no answer: the box
-// sends what syncACL would, and the next renewal reads again. The read is the
-// one call it adds, to a renewal and to nothing else.
+// box has now replaced with its own. What the server holds is kept as the
+// ACL it took before the box's own is sent, marked as another writer's where
+// it is not the one this box last sent (keepHeld; #377): a PUT the server
+// does not take, or a process that ends before its answer is kept, leaves
+// the box's own pending, which status says and the next send or recv sends,
+// and that sync reports the replacement. A read that fails is no answer: the
+// box sends what syncACL would, and the next renewal reads again. The read is
+// the one call it adds, to a renewal and to nothing else.
 func (b *Box) checkACL(ctx context.Context) (bool, error) {
 	// A restore that has yet to adopt its server's ACL adopts it first, and
 	// compares with what it read.
@@ -602,11 +609,18 @@ func (b *Box) checkACL(ctx context.Context) (bool, error) {
 	}
 	switch {
 	case !want.SameLists(held):
+		other := !held.SameLists(took)
+		if other {
+			if err := b.keepHeld(held); err != nil {
+				return false, err
+			}
+			step("held ACL kept")
+		}
 		if err := b.sendACL(ctx, want, false); err != nil {
 			return false, err
 		}
 		// What no file says is another writer's, adopted or not.
-		return !held.SameLists(took) || unsaid(held), nil
+		return other || unsaid(held), nil
 	case !want.SameLists(took):
 		// The server already holds what the box's files say: it is kept as
 		// taken, and nothing is sent.
@@ -639,19 +653,40 @@ func (b *Box) sendACL(ctx context.Context, want *protocol.ACL, replaced bool) er
 	return b.keepTook(got, replaced)
 }
 
-// keepTook keeps acl as the ACL the box's server last took, and with
-// replaced set, in the same transaction, the note that it replaced one this
-// box did not write (replacedNote).
+// keepTook keeps acl as the ACL the box's server last took, and in the same
+// transaction the note that it replaced one this box did not write
+// (replacedNote): with replaced set, or where the ACL kept before it is
+// marked as another writer's (keepHeld), whose mark goes.
 func (b *Box) keepTook(acl *protocol.ACL, replaced bool) error {
 	data, err := json.Marshal(acl.Document())
 	if err != nil {
 		return err
 	}
 	return b.update(func(s store) error {
-		if err := s.put(bucketBox, "acl", data); err != nil || !replaced {
+		other := s.get(bucketBox, "acl-another-writer") != nil
+		if err := s.put(bucketBox, "acl", data); err != nil {
+			return err
+		}
+		if err := s.del(bucketBox, "acl-another-writer"); err != nil || !replaced && !other {
 			return err
 		}
 		return s.put(bucketBox, "acl-replaced", []byte("1"))
+	})
+}
+
+// keepHeld keeps acl, read from the box's server, as the ACL it last took,
+// with the mark that another writer put it there, in one transaction: the ACL
+// the server takes next from this box replaced it (keepTook).
+func (b *Box) keepHeld(acl *protocol.ACL) error {
+	data, err := json.Marshal(acl.Document())
+	if err != nil {
+		return err
+	}
+	return b.update(func(s store) error {
+		if err := s.put(bucketBox, "acl", data); err != nil {
+			return err
+		}
+		return s.put(bucketBox, "acl-another-writer", []byte("1"))
 	})
 }
 
