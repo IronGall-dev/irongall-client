@@ -32,7 +32,7 @@ const (
 	CodeUnauthorized          Code = "unauthorized"            // no pass, or one that is not this box's, for this server
 	CodePassExpired           Code = "pass_expired"            // the pass, or the certificate it is under, is not valid at the server's clock: sign another, retry
 	CodeCertificateNotCurrent Code = "certificate_not_current" // the pass or statement is under a certificate that is neither the box's current one nor above it
-	CodeCertificateRevoked    Code = "certificate_revoked"     // the pass or statement is under a certificate the box's identity revoked
+	CodeCertificateRevoked    Code = "certificate_revoked"     // a certificate the box's identity revoked: which calls, PROTOCOL.md §6.1b and §13
 
 	// 403
 	CodeUnknownSender    Code = "unknown_sender"     // not registered
