@@ -180,10 +180,8 @@ type Problem struct {
 	// box holds unacked, and when the oldest of them expires (pair_full).
 	Unacked         *int64 `json:"unacked,omitempty"`
 	OldestExpiresAt string `json:"oldest_expires_at,omitempty"`
-	// PrekeySerial and CertificateSerial are the serials of the prekey and
-	// of the certificate the server holds as the box's current ones
-	// (stale_prekey; conflict and certificate_not_current give the one that
-	// a new statement must be above).
+	// PrekeySerial and CertificateSerial are serials of a prekey and of a
+	// certificate: which ones each code names is PROTOCOL.md §13's.
 	PrekeySerial      *uint64 `json:"prekey_serial,omitempty"`
 	CertificateSerial *uint64 `json:"certificate_serial,omitempty"`
 	// Through is the serial a revocation of certificates held runs through
