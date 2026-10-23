@@ -1,0 +1,30 @@
+# Dependency updates as pull requests (AGENTS.md: dependencies are minimums,
+# moved to the latest by committed updates). CI runs on each one before it is
+# merged, so every build, and every tag, matches a commit.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    groups:
+      go:
+        patterns: ["*"]
+    commit-message:
+      prefix: deps
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
