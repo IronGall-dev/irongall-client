@@ -104,6 +104,9 @@ type Box struct {
 	// runs one command at a time.
 	db *bolt.DB
 	tx *bolt.Tx
+	// none is set while a reading runs whose open found no state file
+	// ([reading]): each of its views reads nothing ([Box.view]).
+	none bool
 	// slot is held by the one command or reading of this Box under way, of
 	// whichever goroutine ([Box.claim]).
 	slot chan struct{}

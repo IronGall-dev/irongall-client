@@ -134,6 +134,9 @@ func (b *Box) claim(ctx context.Context) (func(), error) {
 // slot (claim) and with its state file open read-only throughout, which
 // waits while a command writes the box: what f's views read is one state,
 // never a command's half done (#329), and the wait ends with ctx (#330).
+// Where the open finds no state file, every view of f reads none, and opens
+// none that a command makes in the meantime, which would read a second state
+// and wait for that command with no context (#382).
 func reading[T any](ctx context.Context, b *Box, f func() (T, error)) (v T, err error) {
 	release, err := b.claim(ctx)
 	if err != nil {
@@ -143,7 +146,8 @@ func reading[T any](ctx context.Context, b *Box, f func() (T, error)) (v T, err 
 	db, err := b.openState(ctx, true)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
-		// No state file yet: it holds nothing (view).
+		b.none = true
+		defer func() { b.none = false }()
 	case err != nil:
 		return v, err
 	default:

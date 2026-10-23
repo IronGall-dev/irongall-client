@@ -118,13 +118,17 @@ func keySerial(k []byte) (uint64, error) {
 var errNotHeld = errors.New("this client wrote the box's state without its lock")
 
 // view runs f with the box's state to read: the transaction under way, if f
-// runs inside one; the state the command holds, if one does; otherwise the
+// runs inside one; the state the command or reading holds, if one does;
+// nothing, in a reading that found no state file ([reading]); otherwise the
 // state file opened read-only for f alone, waiting as [Box.hold] waits while
 // another command of the box holds it. A box with no state file yet holds
 // nothing.
 func (b *Box) view(f func(store) error) error {
 	if b.tx != nil {
 		return f(store{b.tx})
+	}
+	if b.none {
+		return f(store{})
 	}
 	db := b.db
 	if db == nil {
