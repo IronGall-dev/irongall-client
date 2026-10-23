@@ -99,8 +99,8 @@ func TestARevokedReadWhoseRecordDoesNotVerifyIsNotReadAgain(t *testing.T) {
 // revoked at its server, by another holder of the record, and the call is
 // answered one way (partwayVariants). An answer to a call that names the box,
 // showing its own revocation, that verifies, is the event: the box then holds
-// the revocation, the command's error is it, and nothing more is asked or
-// signed; between a call whose answer must be proved and the event, only the
+// the revocation, and no pass and no read of its server's ACL owed, the
+// command's error is it, and nothing more is asked or signed; between a call whose answer must be proved and the event, only the
 // proof's own reads of the box go out. A box shown none that verifies holds
 // none, and its command is not REVOKED: a server's word revokes nothing.
 func TestEveryCommandShownItsOwnRevocationAtEachCall(t *testing.T) {
@@ -410,6 +410,9 @@ func partwayAt(t *testing.T, c partwayCase, n int, v string) {
 	}
 	if has(box, "pass") {
 		t.Errorf("it keeps a pass after the event: calls %v", l.calls)
+	}
+	if has(box, "acl-read") {
+		t.Errorf("it keeps a read of its server's ACL owed after the event: calls %v", l.calls)
 	}
 	if s.check != nil {
 		s.check(t, w)

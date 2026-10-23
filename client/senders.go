@@ -584,27 +584,32 @@ func (b *Box) replacedNote() (bool, error) {
 // it is not the one this box last sent (keepHeld; #377): a PUT the server
 // does not take, or a process that ends before its answer is kept, leaves
 // the box's own pending, which status says and the next send or recv sends,
-// and that sync reports the replacement. A read that fails is no answer: the
-// box sends what syncACL would, and the next renewal reads again. The read is
-// the one call it adds, to a renewal and to nothing else.
-func (b *Box) checkACL(ctx context.Context) (bool, error) {
+// and that sync reports the replacement. It reports too whether the read is
+// made: the server's ACL answered, and what it showed kept where the box
+// keeps it, whatever the PUT after it met. A read that fails is no answer:
+// the box sends what syncACL would, and the read is not made, nor is it where
+// the box's own lists cannot be read or a fault of the box comes before what
+// the read showed is kept; aclAt keeps it owed for the next Receive. The read
+// is the one call it adds, to a renewal and to the Receives after one until
+// the read is made.
+func (b *Box) checkACL(ctx context.Context) (replaced, made bool, err error) {
 	// A restore that has yet to adopt its server's ACL adopts it first, and
 	// compares with what it read.
 	held, err := b.adoptPending(ctx)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	want, err := b.wantACL()
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	took, err := b.tookACL()
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	if held == nil {
 		if held, err = b.heldACL(ctx); err != nil {
-			return false, b.syncACL(ctx)
+			return false, false, b.syncACL(ctx)
 		}
 	}
 	switch {
@@ -612,21 +617,22 @@ func (b *Box) checkACL(ctx context.Context) (bool, error) {
 		other := !held.SameLists(took)
 		if other {
 			if err := b.keepHeld(held); err != nil {
-				return false, err
+				return false, false, err
 			}
 			step("held ACL kept")
 		}
 		if err := b.sendACL(ctx, want, false); err != nil {
-			return false, err
+			return false, true, err
 		}
 		// What no file says is another writer's, adopted or not.
-		return other || unsaid(held), nil
+		return other || unsaid(held), true, nil
 	case !want.SameLists(took):
 		// The server already holds what the box's files say: it is kept as
 		// taken, and nothing is sent.
-		return false, b.keepTook(held, false)
+		err := b.keepTook(held, false)
+		return false, err == nil, err
 	}
-	return false, nil
+	return false, true, nil
 }
 
 // heldACL reads the ACL the box's server holds: one allowing everyone and

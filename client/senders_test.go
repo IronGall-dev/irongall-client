@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -422,6 +423,101 @@ func TestARenewalWhosePUTIsNotTakenLeavesTheBoxsACLPending(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// The read of its server's ACL that a renewal owes is made only once the
+// server's ACL is answered and what it showed is kept: a list of the box's
+// that cannot be read, a read the server does not answer, or a fault of the
+// box at the keep after it leave the read owed, and the next recv, with no
+// renewal due, makes it, once, replaces another writer's ACL and says so. A
+// restore's adoption read that fails leaves it owed too, and its own mark
+// has the next sync read the server's ACL either way.
+func TestAnACLReadNotMadeIsOwedToTheNextRecv(t *testing.T) {
+	ctx := context.Background()
+	full := &os.PathError{Op: "write", Path: "state", Err: syscall.ENOSPC}
+	for _, fault := range []string{"a list that cannot be read", "no answer to the read", "a fault of the box at the keep", "no answer to a restore's adoption read"} {
+		t.Run(fault, func(t *testing.T) {
+			e := newEnv(t)
+			b, c, d := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+			if _, err := b.Block(ctx, c.Address()); err != nil {
+				t.Fatal(err)
+			}
+			own := e.srv.ACL(b.Address())
+			x := b
+			if fault == "no answer to a restore's adoption read" {
+				x = restore(t, e, b)
+				e.clock.Add(time.Minute) // a restore's first recv renews
+			} else {
+				e.srv.PutACL(b.Address(), &protocol.ACL{Allow: protocol.ACLList{Any: true}, Deny: protocol.NewACLList(false, []protocol.Address{d.Address()})})
+				e.clock.Add(25 * time.Hour)
+			}
+			var armed atomic.Bool
+			client.SetWriteFault(t, func() error {
+				if armed.CompareAndSwap(true, false) {
+					return full
+				}
+				return nil
+			})
+			var mu sync.Mutex
+			failing := true
+			var calls []string
+			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+				if r.URL.Path != boxPath(b)+"/acl" {
+					next.ServeHTTP(w, r)
+					return
+				}
+				mu.Lock()
+				calls = append(calls, r.Method)
+				refuse := failing && r.Method == http.MethodGet && (fault == "no answer to the read" || fault == "no answer to a restore's adoption read")
+				keep := failing && r.Method == http.MethodGet && fault == "a fault of the box at the keep"
+				mu.Unlock()
+				if refuse {
+					fakeserver.WriteJSON(w, protocol.CodeUnavailable.Status(), protocol.Problem{Type: protocol.CodeUnavailable.TypeURI(), Code: protocol.CodeUnavailable, Status: int64(protocol.CodeUnavailable.Status())})
+					return
+				}
+				next.ServeHTTP(w, r)
+				armed.Store(keep) // the box's next write keeps what this read showed
+			})
+			took := func() string {
+				mu.Lock()
+				defer mu.Unlock()
+				s := strings.Join(calls, " ")
+				calls = nil
+				return s
+			}
+			blocked := filepath.Join(x.Dir(), "blocked")
+			if fault == "a list that cannot be read" {
+				if err := os.WriteFile(blocked, []byte("not an address\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			res, err := x.Receive(ctx)
+			if res == nil || res.Renewed == nil {
+				t.Fatalf("the recv whose renewal's read was not made: %+v, %v", res, err)
+			}
+			t.Logf("the recv at the renewal: ACL %v, %v; calls %q", res.ACLErr, err, took())
+			mu.Lock()
+			failing = false
+			mu.Unlock()
+			if fault == "a list that cannot be read" {
+				if err := os.WriteFile(blocked, []byte(c.Address().String()+"\n"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			e.clock.Add(time.Minute)
+			again := receive(t, x)
+			want, replaced := "GET PUT", true
+			if fault == "no answer to a restore's adoption read" {
+				want, replaced = "GET", false // its lists are the server's: nothing to send
+			}
+			if got := took(); again.Renewed != nil || got != want || again.ACLReplaced != replaced || again.ACLErr != nil || !e.srv.ACL(b.Address()).SameLists(own) {
+				t.Fatalf("the next recv: renewed %v, calls %q, want %q; replaced %v, its ACL's error %v; the server holds %+v, the box's own is %+v", again.Renewed != nil, got, want, again.ACLReplaced, again.ACLErr, e.srv.ACL(b.Address()), own)
+			}
+			if res := receive(t, x); res.ACLReplaced || took() != "" {
+				t.Fatalf("the recv after it: %+v", res)
+			}
+		})
 	}
 }
 

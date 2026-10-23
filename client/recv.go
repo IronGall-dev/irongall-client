@@ -228,8 +228,12 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 // server holds once a renewal a Receive began is taken, by whatever recorded
 // it, this Receive or another command after a process that ended (checkACL,
 // the read owed: oweACLRead), and otherwise sent only when the box's own
-// changed (syncACL). Once checkACL has run the read is made, whatever it
-// met: one that failed is no answer, and the next renewal reads again.
+// changed (syncACL). The read owed goes once it is made, the server's ACL
+// answered and what it showed kept (checkACL): a list that cannot be read, a
+// read the server did not answer, or a fault of the box before what it
+// showed is kept leave it owed, and the next Receive reads again (#377). A
+// box shown its own revocation owes none: the keep drops it
+// (keepRevocation).
 func (b *Box) aclAt(ctx context.Context) (bool, error) {
 	owed, err := b.aclReadOwed()
 	if err != nil {
@@ -238,7 +242,10 @@ func (b *Box) aclAt(ctx context.Context) (bool, error) {
 	if !owed {
 		return false, b.syncACL(ctx)
 	}
-	replaced, err := b.checkACL(ctx)
+	replaced, made, err := b.checkACL(ctx)
+	if !made {
+		return replaced, err
+	}
 	if derr := b.update(func(s store) error { return s.del(bucketIntent, "acl-read") }); derr != nil {
 		return replaced, errors.Join(err, derr)
 	}
@@ -269,7 +276,7 @@ func (b *Box) oweACLRead() error {
 
 // aclReadOwed reports whether a read of the ACL the box's server holds is
 // owed: a renewal a Receive began, or a later one, has been taken and
-// recorded, and checkACL has not run since.
+// recorded, and the read has not been made since.
 func (b *Box) aclReadOwed() (owed bool, err error) {
 	err = b.view(func(s store) error {
 		raw := s.get(bucketIntent, "acl-read")

@@ -203,18 +203,20 @@ func (b *Box) keepRevocation(id *protocol.Identity, sig []byte) error {
 		})
 	}
 	// The box's own: the pass it kept is a signature already made, which
-	// nothing may use now, and a renewal that failed is one nothing tries
-	// again. Kept by a command that began with none, it is the event that
-	// ends the command: it asks nothing more (call), and says that alone
-	// (locked).
+	// nothing may use now, and a renewal that failed, or the read of its
+	// server's ACL a renewal owed (aclAt), is one nothing tries again. Kept
+	// by a command that began with none, it is the event that ends the
+	// command: it asks nothing more (call), and says that alone (locked).
 	learned := false
 	if err := b.update(func(s store) error {
 		learned = s.get(bucketBox, "revoked") == nil
 		if err := s.put(bucketBox, "revoked", sig); err != nil {
 			return err
 		}
-		if err := s.del(bucketBox, "renew-failed"); err != nil {
-			return err
+		for _, k := range []struct{ bucket, key string }{{bucketBox, "renew-failed"}, {bucketIntent, "acl-read"}} {
+			if err := s.del(k.bucket, k.key); err != nil {
+				return err
+			}
 		}
 		return s.del(bucketBox, "pass")
 	}); err != nil {
