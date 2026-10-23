@@ -1852,6 +1852,60 @@ func TestCertRevokeEarlierSaysARevocationTakenAndNotKeptIsRevoked(t *testing.T) 
 	}
 }
 
+// Whatever became of the new prekey and of the revocation, cert
+// revoke-earlier says it, then a fault of the box after what a server took,
+// which the remedy returns as its error (#110, #383): in that order, and the
+// fault never dropped. Found building #383: with the renewal taken and the
+// revocation refused, the fault after the renewal was not printed. The
+// remedy's result is built here, as a fake server makes no fault of the box.
+func TestCertRevokeEarlierSaysAFaultOfTheBoxAfterWhatBecameOfEach(t *testing.T) {
+	own, err := protocol.ParseAddress(strings.Repeat("ab", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	certs, err := protocol.NewRevokedCertificates(own, 41)
+	if err != nil {
+		t.Fatal(err)
+	}
+	full := &os.PathError{Op: "write", Path: "state", Err: syscall.ENOSPC}
+	p := &protocol.Prekey{Address: own, Serial: 42, NotAfter: time.Now().Add(33 * 24 * time.Hour)}
+	notRenewed, notRevoked := errors.New("the renewal was refused"), errors.New("the revocation was refused")
+	for _, c := range []struct {
+		name  string
+		r     *client.Remedy
+		types string
+		// said is what the error says before the fault, in its order.
+		said []string
+	}{
+		{"nothing published", nil, "", []string{"no new prekey, and nothing is revoked"}},
+		{"nothing below, its renewal taken", &client.Remedy{Below: 42, Prekey: p}, "prekey", nil},
+		{"both taken", &client.Remedy{Below: 42, Prekey: p, Revoked: certs}, "prekey certificates_revoked", nil},
+		{"its renewal taken, its revocation refused", &client.Remedy{Below: 42, Prekey: p, NotRevoked: notRevoked}, "prekey", []string{"the new prekey is published", "NOT revoked: the revocation was refused"}},
+		{"its renewal refused, its revocation taken", &client.Remedy{Below: 42, NotRenewed: notRenewed, Revoked: certs}, "certificates_revoked", []string{"NOT published: the renewal was refused", "sends no mail, and its server takes none"}},
+		{"both refused", &client.Remedy{Below: 42, NotRenewed: notRenewed, NotRevoked: notRevoked}, "", []string{"NOT published: the renewal was refused", "nothing is revoked: the revocation was refused"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var out, errs bytes.Buffer
+			err := (&cli{stdout: &out, stderr: &errs}).remedied(own, c.r, full)
+			if got := typesOf(printed(t, out.String())); got != c.types {
+				t.Errorf("printed %q, want %q", got, c.types)
+			}
+			said := fmt.Sprint(err)
+			at := 0
+			for _, w := range append(c.said, full.Error()) {
+				i := strings.Index(said[at:], w)
+				if i < 0 {
+					t.Fatalf("the error does not say %q after what it said before: %s", w, said)
+				}
+				at += i + len(w)
+			}
+			if !errors.Is(err, syscall.ENOSPC) {
+				t.Errorf("the fault is not the error's: %v", err)
+			}
+		})
+	}
+}
+
 // inUse is the number of the prekey a box published last, which is its
 // working key's and its certificate's too, as its status has it. A box takes
 // each number from its clock, so a test reads it and never assumes one.

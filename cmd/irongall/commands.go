@@ -885,9 +885,11 @@ revocation it takes none there either.`,
 
 // remedied prints what the remedy of box own did, r and err as
 // RenewAndRevoke returned them, and returns the command's error: what became
-// of the new prekey first, then of the revocation. What a server took is
-// said as taken, and a fault of the box after it is the error beside it
-// (#110, #383).
+// of the new prekey first, then of the revocation, then a fault of the box
+// after what a server took, which is never dropped (#110, #383). What a
+// server took is said as taken. A box shown its own revocation says that
+// alone (#326), and RenewAndRevoke's error is then that revocation
+// (outcome), so nothing is dropped there.
 func (e *cli) remedied(own protocol.Address, r *client.Remedy, err error) error {
 	if r == nil {
 		var gone *client.RevokedError
@@ -918,23 +920,29 @@ func (e *cli) remedied(own protocol.Address, r *client.Remedy, err error) error 
 		}
 	}
 	dark := fmt.Sprintf("Every certificate before %d is revoked, the one this box was using among them, so it sends no mail, and its server takes none for it, until the new prekey is taken: irongall prekey renew sends it again, and so does irongall recv", r.Below)
+	// What a line printed above has not said, the prekey's first.
+	var said error
 	switch {
 	case r.NotRenewed == nil && r.NotRevoked == nil && r.Revoked == nil:
-		if err != nil {
-			return err
+		if err == nil {
+			return e.out(line("no_earlier_certificate", "message", "no earlier certificate to revoke"))
 		}
-		return e.out(line("no_earlier_certificate", "message", "no earlier certificate to revoke"))
 	case r.NotRenewed == nil && r.NotRevoked == nil:
-		return err
 	case r.NotRenewed == nil:
-		return fmt.Errorf("the new prekey is published, and the earlier certificates are NOT revoked: %w. irongall cert revoke-earlier revokes them", r.NotRevoked)
-	case r.NotRevoked == nil && err != nil:
-		// The revocation taken, and a fault of this box after it.
-		return fmt.Errorf("the new prekey is NOT published: %w. %s. %w", r.NotRenewed, dark, err)
+		said = fmt.Errorf("the new prekey is published, and the earlier certificates are NOT revoked: %w. irongall cert revoke-earlier revokes them", r.NotRevoked)
 	case r.NotRevoked == nil:
-		return fmt.Errorf("the new prekey is NOT published: %w. %s", r.NotRenewed, dark)
+		said = fmt.Errorf("the new prekey is NOT published: %w. %s", r.NotRenewed, dark)
+	default:
+		said = fmt.Errorf("the new prekey is NOT published: %w, and nothing is revoked: %v. irongall cert revoke-earlier tries both again", r.NotRenewed, r.NotRevoked)
 	}
-	return fmt.Errorf("the new prekey is NOT published: %w, and nothing is revoked: %v. irongall cert revoke-earlier tries both again", r.NotRenewed, r.NotRevoked)
+	// Then the fault of this box after what a server took, in every case.
+	switch {
+	case said == nil:
+		return err
+	case err == nil:
+		return said
+	}
+	return fmt.Errorf("%w. %w", said, err)
 }
 
 func (e *cli) publishRevokedCmd() *cobra.Command {
