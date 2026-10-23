@@ -29,6 +29,12 @@ import (
 // box reads.
 const maxResponse = 16 << 20
 
+// maxReceipt bounds what is read of a post's answer once the server took it,
+// a receipt: its three members are some 130 bytes, and this leaves room for
+// members a later version adds (PROTOCOL.md §0a). It is this client's own,
+// as maxResponse is. A refusal is read as any answer is.
+const maxReceipt = 4 << 10
+
 // maxWaitSeconds bounds a wait a server asks for, the Retry-After of a refusal
 // or of a list: a day, longer than any limit a server counts. A server may ask
 // for less; a larger number is read as a day, and never overflows the pause
@@ -91,9 +97,10 @@ func (b *Box) exchange(ctx context.Context, method, path string, in any, hdr htt
 	}
 	_, rawIn := in.(*ciphertext)
 	ct, raw := out.(*ciphertext)
-	// The default client bounds a call by requestTimeout: a ciphertext's,
-	// sent or fetched, by its stalls alone, so one of any size moves on a slow
-	// link that keeps moving, and any other call whole (stall).
+	// The default client bounds a call by requestTimeout: a ciphertext's
+	// bytes, sent or fetched, by their stalls alone, so one of any size moves
+	// on a slow link that keeps moving, and the rest of that call, and any
+	// other call, whole (stall).
 	var cut *stall
 	if b.stall {
 		if rawIn || raw {
@@ -125,7 +132,13 @@ func (b *Box) exchange(ctx context.Context, method, path string, in any, hdr htt
 	if err != nil {
 		return nil, noAnswer(name, "no answer that is HTTP", cut.why(err))
 	}
-	resp.Body = cut.reading(resp.Body)
+	answered := resp.StatusCode >= 200 && resp.StatusCode <= 299
+	if raw && answered {
+		resp.Body = cut.reading(resp.Body)
+	} else {
+		// Any answer but a fetched ciphertext, a post's among them.
+		cut.answering()
+	}
 	defer resp.Body.Close() //nolint:errcheck // read fully below
 	if resp.StatusCode == http.StatusNotModified {
 		// A 304 has no content (RFC 9110 §15.4.5), and answers only the
@@ -135,7 +148,6 @@ func (b *Box) exchange(ctx context.Context, method, path string, in any, hdr htt
 		}
 		return resp, nil
 	}
-	answered := resp.StatusCode >= 200 && resp.StatusCode <= 299
 	if raw && answered {
 		readErr, err := ct.read(name, resp)
 		if readErr != nil {
@@ -143,7 +155,11 @@ func (b *Box) exchange(ctx context.Context, method, path string, in any, hdr htt
 		}
 		return resp, err
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxResponse))
+	limit := int64(maxResponse)
+	if rawIn && answered {
+		limit = maxReceipt
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit))
 	if err != nil {
 		return nil, noAnswer(name, "an answer whose body could not be read", cut.why(err))
 	}
@@ -174,48 +190,82 @@ func (b *Box) exchange(ctx context.Context, method, path string, in any, hdr htt
 }
 
 // stall cuts a call of the default client that sends or fetches a
-// ciphertext once requestTimeout passes with no byte of it moving: before
-// its answer's head, the wait from the last byte it sent, and in its
-// answer's body, the wait for the next byte, as curl's --speed-time does
-// with a limit of one byte. Nothing bounds the whole, so a ciphertext of any
-// size moves on a link that keeps moving it (#381). A nil stall cuts
-// nothing: a client the box was given keeps its own timeouts.
+// ciphertext once requestTimeout passes with none of the ciphertext's bytes
+// moving: before its answer's head, the wait from the last byte it sent, and
+// in a fetched ciphertext, the wait for the next byte, as curl's
+// --speed-time does with a limit of one byte. Nothing bounds those bytes
+// whole, so a ciphertext of any size moves on a link that keeps moving it
+// (#381). The rest of the call is not the ciphertext, and is bounded whole,
+// by requestTimeout from where it begins (answering): a post's answer, from
+// when its body is sent or its answer's head comes, whichever is first, and
+// a fetch's answer that is not its ciphertext, from its head (#403 item 3).
+// It reads the monotonic clock alone: when a byte last moved is kept as an
+// offset from its start, so a step of the wall clock while a call is in
+// flight moves no bound (#403 item 4). A nil stall cuts nothing: a client
+// the box was given keeps its own timeouts.
 type stall struct {
 	cancel  context.CancelCauseFunc
 	ctx     context.Context
-	last    atomic.Int64 // when a byte last moved, in Unix nanoseconds
-	mu      sync.Mutex   // holds timer, which check may read before newStall has set it, and stopped
+	base    time.Time    // when the stall began, with its monotonic reading
+	last    atomic.Int64 // when a byte last moved, in nanoseconds after base
+	mu      sync.Mutex   // holds timer, which check may read before newStall has set it, whole and stopped
 	timer   *time.Timer
+	whole   bool // the rest of the call is bounded whole (answering)
 	stopped bool
 }
 
-// errStalled is a call stall cut: no byte of it moved in requestTimeout.
+// errStalled is a call stall cut: no byte of its ciphertext moved in
+// requestTimeout.
 var errStalled = fmt.Errorf("no byte moved for as long as a call waits: %w", context.DeadlineExceeded)
+
+// errUnanswered is a call stall cut once the rest of it, its answer, ran
+// requestTimeout.
+var errUnanswered = fmt.Errorf("no answer in as long as a call waits: %w", context.DeadlineExceeded)
 
 // newStall is ctx, cut once requestTimeout passes with no byte moving.
 func newStall(ctx context.Context) (context.Context, *stall) {
-	s := &stall{}
+	s := &stall{base: time.Now()}
 	s.ctx, s.cancel = context.WithCancelCause(ctx)
-	s.last.Store(time.Now().UnixNano())
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.timer = time.AfterFunc(requestTimeout, s.check)
 	return s.ctx, s
 }
 
+// moved records that a byte of the ciphertext moved, now.
+func (s *stall) moved() { s.last.Store(int64(time.Since(s.base))) }
+
 // check cuts the call when no byte has moved for requestTimeout, and
 // otherwise looks again when that much will have passed since the last.
 func (s *stall) check() {
-	idle := time.Since(time.Unix(0, s.last.Load()))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopped || s.whole {
+		return
+	}
+	idle := time.Since(s.base) - time.Duration(s.last.Load())
 	if idle >= requestTimeout {
 		s.cancel(errStalled)
 		return
 	}
+	s.timer.Reset(requestTimeout - idle)
+}
+
+// answering bounds the rest of the call whole, by requestTimeout from now,
+// and ends the watch of its bytes: no byte of an answer that is not a
+// ciphertext holds a call open by moving. Only its first call counts.
+func (s *stall) answering() {
+	if s == nil {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.stopped {
-		s.timer.Reset(requestTimeout - idle)
+	if s.stopped || s.whole {
+		return
 	}
+	s.whole = true
+	s.timer.Stop()
+	s.timer = time.AfterFunc(requestTimeout, func() { s.cancel(errUnanswered) })
 }
 
 // stop ends the stall's watch, once its call has returned.
@@ -227,29 +277,32 @@ func (s *stall) stop() {
 	s.cancel(nil)
 }
 
-// why is err, or errStalled where the stall cut the call: net/http reports
-// it as the context canceled, which is not what happened.
+// why is err, or the stall's cause where the stall cut the call: net/http
+// reports it as the context canceled, which is not what happened.
 func (s *stall) why(err error) error {
-	if s != nil && errors.Is(context.Cause(s.ctx), errStalled) {
-		return errStalled
+	if s == nil {
+		return err
+	}
+	if cause := context.Cause(s.ctx); errors.Is(cause, errStalled) || errors.Is(cause, errUnanswered) {
+		return cause
 	}
 	return err
 }
 
 // sending has each byte of req's body that is read to be sent count as one
-// that moved.
+// that moved, and the end of it bound the rest of the call whole.
 func (s *stall) sending(req *http.Request) {
 	if s == nil || req.Body == nil || req.Body == http.NoBody {
 		return
 	}
-	req.Body = s.reading(req.Body)
+	req.Body = sent{s.reading(req.Body), s}
 	if get := req.GetBody; get != nil {
 		req.GetBody = func() (io.ReadCloser, error) {
 			b, err := get()
 			if err != nil {
 				return nil, err
 			}
-			return s.reading(b), nil
+			return sent{s.reading(b), s}, nil
 		}
 	}
 }
@@ -271,7 +324,22 @@ type moving struct {
 func (m moving) Read(p []byte) (int, error) {
 	n, err := m.ReadCloser.Read(p)
 	if n > 0 {
-		m.s.last.Store(time.Now().UnixNano())
+		m.s.moved()
+	}
+	return n, err
+}
+
+// sent is a request's body whose end, read to be sent, bounds the rest of
+// its call whole: the wait for its answer.
+type sent struct {
+	io.ReadCloser
+	s *stall
+}
+
+func (b sent) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if errors.Is(err, io.EOF) {
+		b.s.answering()
 	}
 	return n, err
 }

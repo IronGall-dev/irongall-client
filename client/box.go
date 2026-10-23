@@ -45,9 +45,10 @@ const EchoAddress = "21804ec172dd0dbdca3d9a6d461799130324b42fa708b3bb727e18e0bfc
 // readable by irongall.dev's operator.
 const EchoAddressNoPQ = "7f87929a91aa19bd2ca3a833d33d66c2b2f09dc83b9e2987a6af66d12a9c6b4b"
 
-// requestTimeout bounds a request of the default HTTP client (stall): one
-// that sends or fetches a ciphertext, by how long it may go with no byte of
-// it moving, and any other whole. A var for a test (SetRequestTimeout).
+// requestTimeout bounds a request of the default HTTP client (stall): the
+// bytes of a ciphertext it sends or fetches, by how long they may go with
+// none moving, and the rest of that request, and any other, whole. A var
+// for a test (SetRequestTimeout).
 var requestTimeout = time.Minute
 
 // Options configures a [Box]. The zero value is ready to use.
@@ -60,7 +61,9 @@ type Options struct {
 	// lock for ever: a send or a fetch of a ciphertext once a minute passes
 	// with no byte of it moving, the wait for its answer's head among them,
 	// with no bound on the whole, so a message of any size moves on a slow
-	// link (#381), and any other request after a minute in all. A client
+	// link (#381); the rest of such a request, a send's answer once its
+	// ciphertext is sent and a fetch's answer that is not its ciphertext, and
+	// any other request, after a minute in all. A client
 	// given here is used as it is, its own timeouts its choice, and none of
 	// those bounds is added. The box uses a copy of it that follows no
 	// redirect ([followNone]).
