@@ -213,3 +213,43 @@ func TestARouteTheDescriptionLacksTakesOnlyALimitsOwn429(t *testing.T) {
 		}
 	}
 }
+
+// A fetch that asks for a range is answered 206 with the bytes from there on
+// and a Content-Range in its one form, or 200 with the whole body
+// (PROTOCOL.md §5.2): a 206 without one, or with one of another form, is no
+// answer of the description's, and neither Range nor If-Range is a header
+// the description refuses.
+func TestARangedFetchIsTheDescriptions(t *testing.T) {
+	path := "/v1/" + strings.Repeat("ab", 32) + "/messages/" + strings.Repeat("cd", 32)
+	fetch := func(status int, contentRange string, hdr ...string) []string {
+		r := &reported{TB: t}
+		h := apitest.Handler(r, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", protocol.CiphertextContentType)
+			w.Header().Set("Date", time.Now().UTC().Format(http.TimeFormat))
+			w.Header().Set("Cache-Control", "no-store")
+			if contentRange != "" {
+				w.Header().Set("Content-Range", contentRange)
+			}
+			w.WriteHeader(status)
+			_, _ = w.Write([]byte("tail"))
+		}))
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("Authorization", "irongall-pass x")
+		for i := 0; i+1 < len(hdr); i += 2 {
+			req.Header.Set(hdr[i], hdr[i+1])
+		}
+		h.ServeHTTP(httptest.NewRecorder(), req)
+		return r.errs
+	}
+	if errs := fetch(http.StatusPartialContent, protocol.ContentRange(6, 10), "Range", protocol.RangeAsk(6)); len(errs) > 0 {
+		t.Errorf("a 206 to a ranged fetch: %q", errs)
+	}
+	if errs := fetch(http.StatusOK, "", "Range", "bytes=6-", "If-Range", `"x"`); len(errs) > 0 {
+		t.Errorf("a 200 to a fetch with a Range and an If-Range: %q", errs)
+	}
+	for _, c := range []string{"", "bytes 06-9/10", "bytes 6-9/*", "items 6-9/10", "bytes */10", "bytes 6-9/10 "} {
+		if errs := fetch(http.StatusPartialContent, c, "Range", protocol.RangeAsk(6)); len(errs) == 0 {
+			t.Errorf("a 206 with Content-Range %q passes", c)
+		}
+	}
+}

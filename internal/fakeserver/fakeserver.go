@@ -793,11 +793,18 @@ func WriteList(w http.ResponseWriter, l protocol.MessageList) {
 }
 
 // fetch answers a message's ciphertext, and nothing else: the list says who
-// sent it and when.
+// sent it and when. A Range of one open-ended byte range that begins inside
+// it is answered 206 with the bytes from there on, and any other with the
+// whole body (PROTOCOL.md §5.2; protocol.RangeAsked), as irongall-server
+// answers them.
 func (s *Server) fetch(w http.ResponseWriter, r *http.Request, b *box) {
 	m := b.messages[r.PathValue("id")]
 	if m == nil {
 		problem(w, protocol.CodeNoSuchMessage, "acked or expired")
+		return
+	}
+	if from, ok := protocol.RangeAsked(r.Header.Values("Range"), r.Header.Values("If-Range")); ok && from < int64(len(m.ciphertext)) {
+		WritePartial(w, m.ciphertext, from)
 		return
 	}
 	WriteCiphertext(w, m.ciphertext)
@@ -810,6 +817,18 @@ func WriteCiphertext(w http.ResponseWriter, ct []byte) {
 	w.Header().Set("Content-Length", strconv.Itoa(len(ct)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(ct)
+}
+
+// WritePartial writes a fetch's answer to a range that begins at byte from,
+// below the ciphertext's length, as the server does: 206, the bytes from
+// there to the end, their length, and a Content-Range that says which they
+// are (protocol.ContentRange). A middleware forging one uses it.
+func WritePartial(w http.ResponseWriter, ct []byte, from int64) {
+	w.Header().Set("Content-Type", protocol.CiphertextContentType)
+	w.Header().Set("Content-Length", strconv.FormatInt(int64(len(ct))-from, 10))
+	w.Header().Set("Content-Range", protocol.ContentRange(from, int64(len(ct))))
+	w.WriteHeader(http.StatusPartialContent)
+	_, _ = w.Write(ct[from:])
 }
 
 // putACL replaces the box's ACL whole, and deletes what is waiting from

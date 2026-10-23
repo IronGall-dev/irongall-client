@@ -683,18 +683,48 @@ paths:
         `PROTOCOL.md` §5.2–§5.5. The answer is the ciphertext and nothing
         else: who sent it, on the server's word, and when, are in the list. A
         message is meant to be fetched once: past the box's budget,
-        `429 fetch_paced` or `429 refetch_spent` (§5.7).
+        `429 fetch_paced` or `429 refetch_spent` (§5.7). A fetch that was cut
+        resumes by range (§5.2): `Range: bytes=N-` is answered `206` with the
+        bytes from N to the end, and any other `Range` with the whole body,
+        `200`; no answer is `416`. A ranged fetch is counted as any fetch is.
       parameters:
         - $ref: '#/components/parameters/IfMatch'
         - $ref: '#/components/parameters/IfNoneMatch'
+        - name: Range
+          in: header
+          required: false
+          description: '`bytes=N-`, one open-ended byte range whose N is below the ciphertext''s length, asks for the bytes from N on (RFC 9110 §14.2). Any other range, a closed one, a suffix, several or one of another unit among them, gets the whole body, `200`.'
+          schema:
+            type: string
+        - name: If-Range
+          in: header
+          required: false
+          description: False whatever it holds, since a fetch carries no validator (`PROTOCOL.md` §5.2), so a `Range` beside it gets the whole body, `200` (RFC 9110 §13.1.5). No client needs it.
+          schema:
+            type: string
       responses:
         '200':
-          description: The age file exactly as its sender posted it, of the `size` the list gave.
+          description: The age file exactly as its sender posted it, of the `size` the list gave, to a fetch with no `Range` or one that is not `bytes=N-` with N below its length.
           headers:
             Date:
               $ref: '#/components/headers/Date'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
+          content:
+            application/octet-stream: {}
+        '206':
+          description: The bytes of the age file from the range's first to its end, to a fetch whose `Range` is `bytes=N-` with N below its length (RFC 9110 §15.3.7.1).
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
+            Content-Range:
+              description: '`bytes N-<last>/<length>`: the first byte asked, the age file''s last, and its length, the `size` the list gave, each in digits with no leading zero (RFC 9110 §14.4). One of any other form breaks the answer''s form.'
+              required: true
+              schema:
+                type: string
+                pattern: '^bytes (0|[1-9][0-9]*)-(0|[1-9][0-9]*)/[1-9][0-9]*$'
           content:
             application/octet-stream: {}
         '304':
