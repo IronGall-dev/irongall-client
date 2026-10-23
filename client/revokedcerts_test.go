@@ -292,6 +292,66 @@ func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnError(t *testing.T) {
 	}
 }
 
+// So it is where the server shows none of the box's revocations, and what a
+// box keeps is all there is (PROTOCOL.md §6.3a): above, each command meets
+// the fault first in its keep of what the read of a's box shows, so each use
+// of the kept record is held here, the renewal's (nextNumber), the send's
+// (resolve) and the drain's (judge) (#392).
+func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnErrorWhereTheServerShowsNone(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	if _, err := a.Rekey(ctx, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.RevokeEarlier(ctx); err != nil {
+		t.Fatal(err)
+	}
+	send(t, b, a, "keeps what a's box carries")
+	raw, ok := b.Record(t, "peers/"+a.Address().String()+"/revoked-certs.json")
+	if !ok {
+		t.Fatal("b keeps no revocation of a's certificates")
+	}
+	var rec protocol.Revocations
+	if err := protocol.Unmarshal(raw, &rec); err != nil {
+		t.Fatal(err)
+	}
+	other, err := protocol.NewRevokedCertificates(a.Address(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.RevokedCertificates = other.Statement() // under the signature of another
+	tampered, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.SetRecord(t, "peers/"+a.Address().String()+"/revoked-certs.json", tampered)
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.Method == http.MethodGet && r.URL.Path == boxPath(a) {
+			e.serve(w, r, next, func(br *protocol.BoxResponse) { br.RevokedCertificates, br.RevokedCertificatesSignature = nil, nil })
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	own, _ := a.Record(t, "revoked-certs.json")
+	a.SetRecord(t, "revoked-certs.json", tampered)
+	published := numberOf(t, a)
+	e.clock.Add(2 * time.Second)
+	if _, err := a.Rekey(ctx, ""); err == nil || !strings.Contains(err.Error(), "no longer verifies") || numberOf(t, a) != published {
+		t.Errorf("a renewal past a kept revocation of the box's own certificates that does not verify: %v, published %d of %d", err, numberOf(t, a), published)
+	}
+	a.SetRecord(t, "revoked-certs.json", own)
+	n := e.srv.Count(a.Address())
+	if _, err := b.Send(ctx, a.Address(), "to a box whose revocation b keeps broken"); err == nil || !strings.Contains(err.Error(), "no longer verifies") || e.srv.Count(a.Address()) != n {
+		t.Errorf("a send past a kept revocation of the peer's certificates that does not verify: %v; the server holds %d for a, %d before", err, e.srv.Count(a.Address()), n)
+	}
+	send(t, a, b, "from a box whose revocation b keeps broken")
+	res, err := b.Receive(ctx)
+	if err == nil || !strings.Contains(err.Error(), "no longer verifies") || e.srv.Count(b.Address()) != 1 {
+		t.Errorf("a drain past a kept revocation of the sender's certificates that does not verify: %v, delivered %d; the server holds %d", err, len(res.Delivered), e.srv.Count(b.Address()))
+	}
+}
+
 // A send names its prekey by both serials, its own and its certificate's, in
 // its query, and its body is the age file itself, as an octet stream.
 func TestASendNamesBothSerials(t *testing.T) {
