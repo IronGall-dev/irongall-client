@@ -783,6 +783,17 @@ var timeUnits = map[byte]time.Duration{'s': time.Second, 'm': time.Minute, 'h': 
 // any number of them, a fraction only on seconds and only with a digit after
 // its point, seconds named once, and the sum truncated to whole seconds, at
 // most INT_MAX of them.
+//
+// It differs from convtime in one place, kept as it is (#389): a fraction
+// below binary64's smallest normal, 2.2250738585072014e-308, so with some
+// 308 digits after its point, which strconv.ParseFloat reads as a subnormal
+// or zero, and convtime refuses wherever its libc's strtod sets ERANGE for
+// an underflow (POSIX.1-2024, strtod). Which such fractions underflow is the
+// libc's, glibc alone measured, so no code here follows one. Such a fraction
+// is under a second, which the truncation drops: what parseTime takes there
+// is the seconds the rest of the time names, every time convtime takes reads
+// as the same seconds here, and the only time parseTime reads is one the
+// box's owner types (prekey lifetime).
 func parseTime(s string) (time.Duration, error) {
 	no := fmt.Errorf("%.40q is no time: one is numbers, each with its unit (s, m, h, d or w), as in 2d1h", s)
 	if s == "" {
