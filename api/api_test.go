@@ -131,3 +131,73 @@ func members(t reflect.Type) []string {
 	}
 	return names
 }
+
+// Every path that has a GET has a HEAD that is that GET without content
+// (RFC 9110 §9.3.2; PROTOCOL.md §13): the same parameters, security and
+// statuses, each with the same header fields and no content, but the GET's
+// 206, since a HEAD's Range is ignored (§14.2). The paths are the
+// description's own, so a GET added without its HEAD fails.
+func TestEveryGetHasItsHead(t *testing.T) {
+	m := model(t)
+	for path, item := range m.Paths.PathItems.FromOldest() {
+		get, head := item.Get, item.Head
+		switch {
+		case get == nil && head == nil:
+			continue
+		case get == nil:
+			t.Errorf("%s: a HEAD with no GET", path)
+			continue
+		case head == nil:
+			t.Errorf("%s: a GET with no HEAD", path)
+			continue
+		}
+		params := func(op *v3.Operation) []string {
+			var names []string
+			for _, p := range op.Parameters {
+				names = append(names, p.In+" "+p.Name)
+			}
+			slices.Sort(names)
+			return names
+		}
+		if g, h := params(get), params(head); !slices.Equal(g, h) {
+			t.Errorf("%s: the GET takes %v, the HEAD %v", path, g, h)
+		}
+		if (get.Security == nil) != (head.Security == nil) || len(get.Security) != len(head.Security) {
+			t.Errorf("%s: the GET's security is %v, the HEAD's %v", path, get.Security, head.Security)
+		}
+		var getCodes, headCodes []string
+		for code := range get.Responses.Codes.KeysFromOldest() {
+			if code != "206" {
+				getCodes = append(getCodes, code)
+			}
+		}
+		for code, r := range head.Responses.Codes.FromOldest() {
+			headCodes = append(headCodes, code)
+			if r.Content != nil && r.Content.Len() > 0 {
+				t.Errorf("%s: the HEAD's %s has content", path, code)
+			}
+			g, ok := get.Responses.Codes.Get(code)
+			if !ok {
+				continue
+			}
+			names := func(r *v3.Response) []string {
+				var n []string
+				if r.Headers != nil {
+					for name := range r.Headers.KeysFromOldest() {
+						n = append(n, name)
+					}
+				}
+				slices.Sort(n)
+				return n
+			}
+			if gn, hn := names(g), names(r); !slices.Equal(gn, hn) {
+				t.Errorf("%s: the GET's %s carries %v, the HEAD's %v", path, code, gn, hn)
+			}
+		}
+		slices.Sort(getCodes)
+		slices.Sort(headCodes)
+		if !slices.Equal(getCodes, headCodes) {
+			t.Errorf("%s: the GET answers %v, the HEAD %v", path, getCodes, headCodes)
+		}
+	}
+}

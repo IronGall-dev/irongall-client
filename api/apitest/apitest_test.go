@@ -253,3 +253,41 @@ func TestARangedFetchIsTheDescriptions(t *testing.T) {
 		}
 	}
 }
+
+// A HEAD is checked against its own operation, whose answers carry header
+// fields and no content (RFC 9110 §9.3.2): a box's read answered with the
+// body its handler writes, which net/http drops, and a 304 to its
+// If-None-Match, pass; one without a header field the operation requires
+// fails, as it would on the GET.
+func TestAHeadIsCheckedWithoutItsContent(t *testing.T) {
+	const body = `{"identity":"c3NoLWVkMjU1MTk=","prekey":"cHJla2V5","prekey_signature":"c2ln"}` + "\n"
+	head := func(status int, cacheControl bool, hdr ...string) []string {
+		r := &reported{TB: t}
+		h := apitest.Handler(r, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Date", time.Now().UTC().Format(http.TimeFormat))
+			if cacheControl {
+				w.Header().Set("Cache-Control", "no-store")
+			}
+			w.WriteHeader(status)
+			if status == http.StatusOK {
+				_, _ = w.Write([]byte(body))
+			}
+		}))
+		req := httptest.NewRequest(http.MethodHead, "/v1/"+strings.Repeat("ab", 32), nil)
+		for i := 0; i+1 < len(hdr); i += 2 {
+			req.Header.Set(hdr[i], hdr[i+1])
+		}
+		h.ServeHTTP(httptest.NewRecorder(), req)
+		return r.errs
+	}
+	if errs := head(http.StatusOK, true); len(errs) > 0 {
+		t.Errorf("a HEAD of a box's read: %q", errs)
+	}
+	if errs := head(http.StatusNotModified, true, "If-None-Match", "*"); len(errs) > 0 {
+		t.Errorf("a HEAD's 304: %q", errs)
+	}
+	if errs := head(http.StatusOK, false); len(errs) == 0 {
+		t.Error("a HEAD of a box's read without Cache-Control passes")
+	}
+}

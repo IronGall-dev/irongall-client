@@ -43,8 +43,12 @@ info:
     - A message's ciphertext is the body itself, `application/octet-stream`,
       on a send and on a fetch (§4.5).
     - Every call evaluates `If-Match` and `If-None-Match` once it knows its
-      target's state (§13): a false one is `412`, or `304` to a `GET`. No
-      client needs either but a poll's `If-None-Match` (§5.1).
+      target's state (§13): a false one is `412`, or `304` to a `GET` or a
+      `HEAD`, a call like any other that does nothing more, and one that
+      held is held at the call's write (`409 box_changed`). No client needs
+      either but a poll's `If-None-Match` (§5.1).
+    - Every route that answers `GET` answers `HEAD`, as that `GET` without
+      content (§13).
     - An unknown route gets the router's plain `404` or `405`, with no code.
       A server may add routes inside v1, and a client reads that answer as a
       route this server does not offer (§0a).
@@ -147,6 +151,48 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/Unavailable'
+    head:
+      tags: [box]
+      operationId: headBox
+      summary: The read of a box, without content
+      description: 'The `GET` beside it, answered without content (RFC 9110 §9.3.2; `PROTOCOL.md` §13): the same status and header fields, and its preconditions read as that `GET`''s.'
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: The box's read, without content.
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
+            Content-Encoding:
+              $ref: '#/components/headers/Content-Encoding'
+            Vary:
+              $ref: '#/components/headers/Vary'
+        '304':
+          description: As the `GET`'s `304`.
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
+            Vary:
+              $ref: '#/components/headers/Vary'
+        '400':
+          $ref: '#/components/responses/HeadRefused'
+        '404':
+          $ref: '#/components/responses/HeadRefused'
+        '410':
+          $ref: '#/components/responses/HeadRefused'
+        '412':
+          $ref: '#/components/responses/HeadRefused'
+        '429':
+          $ref: '#/components/responses/HeadTooManyRequests'
+        '503':
+          $ref: '#/components/responses/HeadUnavailable'
     put:
       tags: [box]
       operationId: register
@@ -283,6 +329,40 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/Unavailable'
+    head:
+      tags: [revocation]
+      operationId: headRevocations
+      summary: The read of the revocations held, without content
+      description: 'The `GET` beside it, answered without content (RFC 9110 §9.3.2; `PROTOCOL.md` §13).'
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: The record held, without content.
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
+        '304':
+          description: As the `GET`'s `304`.
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
+        '400':
+          $ref: '#/components/responses/HeadRefused'
+        '404':
+          $ref: '#/components/responses/HeadRefused'
+        '412':
+          $ref: '#/components/responses/HeadRefused'
+        '429':
+          $ref: '#/components/responses/HeadTooManyRequests'
+        '503':
+          $ref: '#/components/responses/HeadUnavailable'
     put:
       tags: [revocation]
       operationId: revoke
@@ -433,6 +513,57 @@ paths:
         '503':
           $ref: '#/components/responses/Unavailable'
 
+    head:
+      tags: [owner]
+      operationId: headACL
+      summary: The box's ACL, without content
+      description: 'The `GET` beside it, answered without content (RFC 9110 §9.3.2; `PROTOCOL.md` §13): its `ETag` among the header fields.'
+      parameters:
+        - name: If-Match
+          in: header
+          required: false
+          description: As on the `GET`.
+          schema:
+            type: string
+        - name: If-None-Match
+          in: header
+          required: false
+          description: As on the `GET`.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The ACL as held, without content.
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
+            ETag:
+              $ref: '#/components/headers/ACLETag'
+        '304':
+          description: As the `GET`'s `304`.
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
+            ETag:
+              $ref: '#/components/headers/ACLETag'
+        '400':
+          $ref: '#/components/responses/HeadRefused'
+        '401':
+          $ref: '#/components/responses/HeadUnauthorized'
+        '404':
+          $ref: '#/components/responses/HeadRefused'
+        '410':
+          $ref: '#/components/responses/HeadRefused'
+        '412':
+          $ref: '#/components/responses/HeadRefused'
+        '429':
+          $ref: '#/components/responses/HeadTooManyRequests'
+        '503':
+          $ref: '#/components/responses/HeadUnavailable'
   /v1/{addr}/account:
     parameters:
       - $ref: '#/components/parameters/addr'
@@ -671,6 +802,74 @@ paths:
         '503':
           $ref: '#/components/responses/Unavailable'
 
+    head:
+      tags: [messages]
+      operationId: headList
+      summary: The box's list, without content
+      description: |
+        The `GET` beside it, answered without content (RFC 9110 §9.3.2;
+        `PROTOCOL.md` §13), and a poll whatever its cursor: it takes from
+        the poll rate, and neither spends the cursor it names nor hands out
+        another (§5.1).
+      parameters:
+        - name: cursor
+          in: query
+          required: false
+          description: As on the `GET`.
+          schema:
+            $ref: '#/components/schemas/Cursor'
+        - name: If-Match
+          in: header
+          required: false
+          description: As on the `GET`.
+          schema:
+            type: string
+        - name: If-None-Match
+          in: header
+          required: false
+          description: As on the `GET`.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: One page of the box's mail, without content.
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
+            Retry-After:
+              $ref: '#/components/headers/PollInterval'
+            ETag:
+              $ref: '#/components/headers/ETag'
+        '304':
+          description: As the `GET`'s `304`.
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
+            Retry-After:
+              $ref: '#/components/headers/PollInterval'
+            ETag:
+              description: As on the `GET`'s `304`.
+              required: false
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/HeadRefused'
+        '401':
+          $ref: '#/components/responses/HeadUnauthorized'
+        '404':
+          $ref: '#/components/responses/HeadRefused'
+        '410':
+          $ref: '#/components/responses/HeadRefused'
+        '412':
+          $ref: '#/components/responses/HeadRefused'
+        '429':
+          $ref: '#/components/responses/HeadTooManyRequests'
+        '503':
+          $ref: '#/components/responses/HeadUnavailable'
   /v1/{addr}/messages/{id}:
     parameters:
       - $ref: '#/components/parameters/addr'
@@ -748,6 +947,61 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '503':
           $ref: '#/components/responses/Unavailable'
+    head:
+      tags: [messages]
+      operationId: headMessage
+      summary: Whether the box holds a message, without fetching it
+      description: |
+        The `GET` beside it, answered without content (RFC 9110 §9.3.2;
+        `PROTOCOL.md` §13), and no fetch: it reads only whether the box
+        holds the message, takes no token of new mail, marks nothing
+        fetched and is one of the box's calls. It carries no
+        `Content-Length` (RFC 9110 §8.6 lets it leave one out), and its
+        `Range` is ignored, as on any method but `GET` (§14.2).
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IfNoneMatch'
+        - name: Range
+          in: header
+          required: false
+          description: Ignored (RFC 9110 §14.2).
+          schema:
+            type: string
+        - name: If-Range
+          in: header
+          required: false
+          description: Ignored, with the `Range` beside it.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The box holds the message.
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
+        '304':
+          description: As the `GET`'s `304`.
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
+        '400':
+          $ref: '#/components/responses/HeadRefused'
+        '401':
+          $ref: '#/components/responses/HeadUnauthorized'
+        '404':
+          $ref: '#/components/responses/HeadRefused'
+        '410':
+          $ref: '#/components/responses/HeadRefused'
+        '412':
+          $ref: '#/components/responses/HeadRefused'
+        '429':
+          $ref: '#/components/responses/HeadTooManyRequests'
+        '503':
+          $ref: '#/components/responses/HeadUnavailable'
     delete:
       tags: [messages]
       operationId: ack
@@ -875,6 +1129,63 @@ paths:
                       code:
                         const: rate_limited
 
+    head:
+      tags: [link]
+      operationId: headLink
+      summary: The page a box's link opens, without content
+      description: 'The `GET` beside it, answered without content (RFC 9110 §9.3.2; `PROTOCOL.md` §13).'
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: The page, without content.
+          headers:
+            Referrer-Policy:
+              required: true
+              schema:
+                const: no-referrer
+            X-Robots-Tag:
+              required: true
+              schema:
+                const: noindex
+            Content-Security-Policy:
+              description: As on the `GET`.
+              schema:
+                type: string
+            X-Content-Type-Options:
+              schema:
+                const: nosniff
+            Cache-Control:
+              description: As on the `GET`.
+              schema:
+                type: string
+        '304':
+          description: As the `GET`'s `304`.
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Cache-Control:
+              description: As on the `GET`'s `304`.
+              required: true
+              schema:
+                type: string
+        '404':
+          description: Not an address, without content.
+        '412':
+          description: '`precondition_failed`, as on the `GET`, without content.'
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+        '429':
+          description: '`rate_limited`, as on the `GET`, without content.'
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Retry-After:
+              $ref: '#/components/headers/Retry-After'
+
 components:
   securitySchemes:
     pass:
@@ -917,7 +1228,7 @@ components:
       name: If-None-Match
       in: header
       required: false
-      description: Evaluated as RFC 9110 §13.1.2 has an origin server evaluate it, after `If-Match` (`PROTOCOL.md` §13). `*` is false where the target exists; a list of tags names none here, so it holds. A false one is `304` to a `GET`, and `412` to any other method. No client needs it.
+      description: Evaluated as RFC 9110 §13.1.2 has an origin server evaluate it, after `If-Match` (`PROTOCOL.md` §13). `*` is false where the target exists; a list of tags names none here, so it holds. A false one is `304` to a `GET` or a `HEAD`, and `412` to any other method. No client needs it.
       schema:
         type: string
 
@@ -1117,7 +1428,9 @@ components:
       description: |
         `conflict` (what is held is newer, or another: with
         `prekey_serial` and `certificate_serial`, or `through`, as the call
-        has one) · `box_changed` (send it again as it is) · `stale_prekey`
+        has one) · `box_changed` (what the call writes changed while it
+        was handled, what its `If-Match` or `If-None-Match: *` held among
+        it: send it again as it is) · `stale_prekey`
         (with the current `prekey_serial` and `certificate_serial`: read the
         box again and seal the same envelope to its prekey) · `prekey_expired` (the
         box's owner must renew).
@@ -1179,7 +1492,7 @@ components:
                   code:
                     const: request_timeout
     PreconditionFailed:
-      description: '`precondition_failed`: an `If-Match` evaluated false (RFC 9110 §13.1.1), or an `If-None-Match` to any method but `GET` (§13.1.2), as every route evaluates them (`PROTOCOL.md` §13).'
+      description: '`precondition_failed`: an `If-Match` evaluated false (RFC 9110 §13.1.1), or an `If-None-Match` to any method but `GET` and `HEAD` (§13.1.2), as every route evaluates them (`PROTOCOL.md` §13).'
       headers:
         Date:
           $ref: '#/components/headers/Date'
@@ -1257,6 +1570,41 @@ components:
                     const: 503
                   code:
                     const: unavailable
+
+    HeadRefused:
+      description: 'A refusal, as the `GET` beside it is answered, without content (RFC 9110 §9.3.2): its code is in the content, which a `HEAD` does not carry, and the status alone says it.'
+      headers:
+        Date:
+          $ref: '#/components/headers/Date'
+        Cache-Control:
+          $ref: '#/components/headers/Cache-Control'
+    HeadUnauthorized:
+      description: 'The pass is refused, as on the `GET` beside it, without content.'
+      headers:
+        Date:
+          $ref: '#/components/headers/Date'
+        Cache-Control:
+          $ref: '#/components/headers/Cache-Control'
+        WWW-Authenticate:
+          $ref: '#/components/headers/WWW-Authenticate'
+    HeadTooManyRequests:
+      description: 'Past a limit, as on the `GET` beside it, without content; wait out `Retry-After`.'
+      headers:
+        Date:
+          $ref: '#/components/headers/Date'
+        Cache-Control:
+          $ref: '#/components/headers/Cache-Control'
+        Retry-After:
+          $ref: '#/components/headers/Retry-After'
+    HeadUnavailable:
+      description: 'As the `GET` beside it is answered while the server is not ready, without content.'
+      headers:
+        Date:
+          $ref: '#/components/headers/Date'
+        Cache-Control:
+          $ref: '#/components/headers/Cache-Control'
+        Retry-After:
+          $ref: '#/components/headers/Retry-After'
 
   schemas:
     Integer:
