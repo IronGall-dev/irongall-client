@@ -276,13 +276,17 @@ type command struct {
 	f    func() error
 }
 
-// finishedCommands are every exported command that takes the box's lock,
-// as a box that holds its own revocation runs them: those that would ask a
-// server or carry a pass, which are refused, and those that still run.
+// lockingCommands are every exported command that takes the box's lock, box
+// a's, with b a peer, rec a revocation record and key an adopt key, in two
+// lists by how a box that holds its own revocation meets them: those that
+// would ask a server or carry a pass, which it refuses, and those that still
+// run. Each is tried on a finished box
+// (TestABoxThatKeepsItsOwnRevocationSignsNothingMore) and while another
+// command holds the lock (TestEveryCommandWaitsForTheLock), and
 // TestEveryLockingCommandIsTriedFinished holds the two lists to the code.
-func finishedCommands(ctx context.Context, a, b *client.Box, rec *protocol.Revocations) (refused, run []command) {
+func lockingCommands(ctx context.Context, a, b *client.Box, rec *protocol.Revocations, key string) (refused, run []command) {
 	refused = []command{
-		{"Adopt", func() error { _, err := a.Adopt(ctx, "key"); return err }},
+		{"Adopt", func() error { _, err := a.Adopt(ctx, key); return err }},
 		{"Leave", func() error { return a.Leave(ctx) }},
 		{"Resolve", func() error { _, err := a.Resolve(ctx, b.Address()); return err }},
 		{"Receive", func() error { _, err := a.Receive(ctx); return err }},
@@ -382,7 +386,7 @@ func TestABoxThatKeepsItsOwnRevocationSignsNothingMore(t *testing.T) {
 		}
 		return false
 	})
-	refused, run := finishedCommands(ctx, a, b, rec)
+	refused, run := lockingCommands(ctx, a, b, rec, "key")
 	var gone *client.RevokedError
 	for _, c := range refused {
 		name, f := c.name, c.f
@@ -433,13 +437,14 @@ func TestABoxThatKeepsItsOwnRevocationSignsNothingMore(t *testing.T) {
 }
 
 // Every exported command that takes the box's lock is one of
-// finishedCommands', so a new one is tried on a finished box too.
+// lockingCommands', so a new one is tried on a finished box, and while
+// another command holds the lock, too.
 func TestEveryLockingCommandIsTriedFinished(t *testing.T) {
 	names, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
 	}
-	refused, run := finishedCommands(context.Background(), nil, nil, nil)
+	refused, run := lockingCommands(context.Background(), nil, nil, nil, "")
 	tried := func(name string) bool {
 		return slices.ContainsFunc(append(refused, run...), func(c command) bool { return c.name == name })
 	}
@@ -457,7 +462,7 @@ func TestEveryLockingCommandIsTriedFinished(t *testing.T) {
 				continue
 			}
 			if takesTheLock(fn.Body) && !tried(fn.Name.Name) {
-				t.Errorf("%s takes the box's lock and is not tried on a finished box: add it to finishedCommands", fn.Name.Name)
+				t.Errorf("%s takes the box's lock and is not tried on a finished box or while the lock is held: add it to lockingCommands", fn.Name.Name)
 			}
 		}
 	}

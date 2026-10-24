@@ -40,35 +40,22 @@ func holdState(t *testing.T, b *client.Box) func() {
 
 // Every command that writes the box holds its lock from start to end, and
 // one that finds it held waits, says so once, and runs once it is free:
-// two commands of a box never share its files (#62, #83, #96).
+// two commands of a box never share its files (#62, #83, #96). The commands
+// are lockingCommands', which TestEveryLockingCommandIsTriedFinished holds
+// to the code.
 func TestEveryCommandWaitsForTheLock(t *testing.T) {
-	ctx := context.Background()
-	commands := []struct {
-		name string
-		run  func(x *client.Box, peer *client.Box) error
-	}{
-		{"send", func(x, p *client.Box) error { _, err := x.Send(ctx, p.Address(), "waited"); return err }},
-		{"flush", func(x, _ *client.Box) error { _, err := x.Flush(ctx); return err }},
-		{"receive", func(x, _ *client.Box) error { _, err := x.Receive(ctx); return err }},
-		{"resolve", func(x, p *client.Box) error { _, err := x.Resolve(ctx, p.Address()); return err }},
-		{"ask", func(x, p *client.Box) error { _, err := x.Ask(ctx, p.Address()); return err }},
-		{"keep a revocation", func(x, p *client.Box) error {
-			rec, err := p.Revocation(t.Context())
-			if err != nil {
-				return err
-			}
-			_, _, err = x.KeepRevocation(t.Context(), rec)
-			return err
-		}},
-		// A monthly run that gave up on one collision would let the prekey expire.
-		{"rekey", func(x, _ *client.Box) error { _, err := x.Rekey(ctx, ""); return err }},
-		{"allow", func(x, p *client.Box) error { _, err := x.Allow(ctx, p.Address()); return err }},
-		{"alias", func(x, p *client.Box) error { return x.SetAlias(t.Context(), "peer", p.Address()) }},
-	}
-	for _, c := range commands {
+	refused, run := lockingCommands(context.Background(), nil, nil, nil, "")
+	for i, c := range append(refused, run...) {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv(t)
 			a, peer := e.box(protocol.Classic), e.box(protocol.Classic)
+			rec, err := peer.Revocation(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := a.SetAlias(t.Context(), "peer", peer.Address()); err != nil { // so RemoveAlias has one to remove
+				t.Fatal(err)
+			}
 			var waited atomic.Int32
 			opt := e.opts()
 			opt.Waiting = func() { waited.Add(1) }
@@ -76,9 +63,11 @@ func TestEveryCommandWaitsForTheLock(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			refused, run := lockingCommands(t.Context(), x, peer, rec, e.srv.AdoptKey("acct"))
+			f := append(refused, run...)[i].f
 			release := holdState(t, a) // another command's
 			done := make(chan error, 1)
-			go func() { done <- c.run(x, peer) }()
+			go func() { done <- f() }()
 			select {
 			case err := <-done:
 				t.Fatalf("ran while another command held the lock: %v", err)
