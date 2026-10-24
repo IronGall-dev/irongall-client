@@ -21,7 +21,7 @@ import (
 // number, which this machine's clock gives
 // ([protocol.SerialAt]). If an earlier Rekey signed one and the server did
 // not take it, that one is sent again, unchanged, until it can no longer be
-// sent (PROTOCOL.md §6.4): it has expired or does not verify by this clock,
+// sent (PROTOCOL.md §12.4): it has expired or does not verify by this clock,
 // its certificate began less than an hour before the clock or is at or below
 // a serial the identity revoked, it was made for longer than the box's
 // lifetime now allows or has no record of when it was made, this box no
@@ -67,7 +67,7 @@ func (b *Box) rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey,
 	if err != nil {
 		return p, err
 	}
-	// By the reading the server took the renewal at (PROTOCOL.md §0).
+	// By the reading the server took the renewal at (PROTOCOL.md §12.4).
 	return p, b.prune(at)
 }
 
@@ -132,7 +132,7 @@ type renewal struct {
 	req protocol.PrekeyRequest
 	// forgotten is set when the box's server holds no box at its address: it
 	// forgot it, past its record's expiry. The renewal then goes as a
-	// registration, which is how such a box comes back (PROTOCOL.md §3, §7).
+	// registration, which is how such a box comes back (PROTOCOL.md §11.7, §13).
 	forgotten bool
 }
 
@@ -140,7 +140,7 @@ type renewal struct {
 // server that forgot the box, as its registration, for every renewal (Rekey,
 // Receive's, Init's, the remedy's). A server may forget a box past its
 // record's expiry at any moment, and answer its upload 404 no_such_mailbox
-// after a read that served it (PROTOCOL.md §6.4): the box then reads itself
+// after a read that served it (PROTOCOL.md §11.9): the box then reads itself
 // once more (known, whose error, a fault of the box or its own revocation,
 // ends the renewal there), and where that read shows no box, every call
 // answered, the same statement goes as its registration (#386); otherwise it
@@ -205,9 +205,9 @@ type ownRead struct {
 // it numbers anything, keeping what verifies of the box's own revocations.
 // Every renewal asks, so the certificate it makes next is numbered above the
 // highest serial it has been shown revoked, and is never revoked as it is
-// made (PROTOCOL.md §2b), on a box restored from its identity too. A read
+// made (PROTOCOL.md §5), on a box restored from its identity too. A read
 // that showed the box its own revocation is known's error, which ends the
-// renewal here, in those words: such a box signs nothing more (§6.3; #339).
+// renewal here, in those words: such a box signs nothing more (§12.5; #339).
 //
 // A server that holds no box at this address shows nothing to number above
 // or to hold to its order: the renewal is numbered above what this box knows
@@ -216,7 +216,7 @@ type ownRead struct {
 // With unused set, for the remedy, an answer it cannot use stops nothing: no
 // answer, a served statement that does not verify, or one ordered before
 // what this box published. The renewal is numbered from what the box knows,
-// and the revocation still goes to the server (PROTOCOL.md §6.3a). A plain
+// and the revocation still goes to the server (PROTOCOL.md §12.6). A plain
 // renewal stops there: the refusal is the check.
 func (b *Box) readOwn(ctx context.Context, kt protocol.KeyType, unused bool) (*ownRead, error) {
 	out := &ownRead{kt: kt}
@@ -356,7 +356,7 @@ func noneAbove(n uint64) error {
 
 // before reports whether a statement at prekey serial n under certificate
 // cert stands before one at (seenN, seenCert) in its box's order: by
-// certificate first, then by the prekey's own serial (PROTOCOL.md §2b;
+// certificate first, then by the prekey's own serial (PROTOCOL.md §5;
 // decided on #48). A later certificate passes any serial under an earlier one.
 func before(cert, n, seenCert, seenN uint64) bool {
 	return cert < seenCert || cert == seenCert && n < seenN
@@ -423,7 +423,7 @@ func (b *Box) signedPrekey(serial uint64, kt protocol.KeyType) (p *protocol.Prek
 	}
 	// Made for longer than the box's lifetime now allows, or with no record
 	// of when: spent, as an expired one is, so a lifetime set lower holds
-	// from the next renewal whatever waited (PROTOCOL.md §6.4).
+	// from the next renewal whatever waited (PROTOCOL.md §12.4).
 	lifetime, err := b.PrekeyLifetime()
 	if err != nil {
 		return nil, false, err
@@ -498,7 +498,7 @@ const renewTime = time.Hour
 // MinPrekeyLifetime is the shortest a box's prekeys may be valid for: the
 // day Receive waits to renew one (renewAfter), an hour of slip for when recv
 // runs, renewTime, and protocol.MaxSkew for clocks, the hour a sender's may
-// read ahead of the box's (PROTOCOL.md §0, §6.4). At it, an hourly recv
+// read ahead of the box's (PROTOCOL.md §3.4, §12.4). At it, an hourly recv
 // renews in time.
 const MinPrekeyLifetime = renewAfter + time.Hour + renewTime + protocol.MaxSkew
 
@@ -506,7 +506,7 @@ const MinPrekeyLifetime = renewAfter + time.Hour + renewTime + protocol.MaxSkew
 // lifetime to be renewed while every sender whose clock a server takes still
 // takes it: Receive renews one once it is a day old, and the prekey then has
 // renewTime and protocol.MaxSkew left, the room whoever makes a time-limited
-// thing leaves (PROTOCOL.md §0).
+// thing leaves (PROTOCOL.md §3.4).
 func RecvWithin(lifetime time.Duration) time.Duration {
 	return lifetime - renewAfter - renewTime - protocol.MaxSkew
 }

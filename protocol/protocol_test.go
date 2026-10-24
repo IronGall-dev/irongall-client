@@ -106,7 +106,7 @@ func TestEnvelopeRoundTrip(t *testing.T) {
 
 // A JSON body is sent as written, compact, and refused when its reader would
 // refuse the envelope it is in: the sender and the reader hold it to one set
-// of rules (PROTOCOL.md §0b, §5 check 3).
+// of rules (PROTOCOL.md §3.3, §12.3 check 3).
 func TestAJSONBodyIsSentAsWrittenOrRefused(t *testing.T) {
 	from, to := Address{1}, Address{2}
 	now := time.Date(2026, 10, 10, 12, 0, 0, 0, time.UTC)

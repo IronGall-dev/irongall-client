@@ -231,7 +231,7 @@ func TestNoAnswerAboutARecipientPostsNothing(t *testing.T) {
 			t.Fatalf("a lookup answered %s moved the message, posted it, or revoked the address: %q", code, op.seen)
 		}
 	}
-	// A 404 whose body breaks §0b carries no code, though it says
+	// A 404 whose body breaks §3.3 carries no code, though it says
 	// not_revoked before the member that breaks it.
 	for _, f := range problemBad(t) {
 		body, _ := os.ReadFile(f) //nolint:gosec // a test vector

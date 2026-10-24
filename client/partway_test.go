@@ -30,7 +30,7 @@ import (
 // A command that learns part way that its box is finished, an answer on the
 // way showing the box its own revocation, which it keeps once it verifies,
 // says that alone and asks and signs nothing more after it (PROTOCOL.md
-// §6.3): at whatever call it learns it, by whatever answer.
+// §12.5): at whatever call it learns it, by whatever answer.
 
 // putRecord sends rec to the server behind a middleware, as another holder
 // of the record would mid-command, and fails the test unless it was taken.

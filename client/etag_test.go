@@ -52,7 +52,7 @@ func (s *statusWriter) WriteHeader(code int) {
 
 // A poll that finds the box empty keeps its ETag, and the next sends it back:
 // a 304 is answered with nothing to do, and the interval is its Retry-After
-// (PROTOCOL.md §5.1).
+// (PROTOCOL.md §12.3).
 func TestAnEmptyBoxPollsWithItsETag(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)

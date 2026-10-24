@@ -117,7 +117,7 @@ func TestAHeaderTheDescriptionDoesNotNameFails(t *testing.T) {
 	}
 }
 
-// Every number in a JSON answer is an integer as PROTOCOL.md §0b writes one,
+// Every number in a JSON answer is an integer as PROTOCOL.md §3.3 writes one,
 // in digits alone: JSON Schema counts 1.0 and 1e0 as integers, and both
 // clients refuse them. No JSON request a server takes holds a number.
 func TestEveryNumberIsAnIntegerInDigitsAlone(t *testing.T) {
@@ -178,7 +178,7 @@ func TestALinkPagesQueryIsIgnored(t *testing.T) {
 }
 
 // A route the description lacks is answered 429 only as a limit answers any
-// call (PROTOCOL.md §13: "Past a server's limit it is 429 rate_limited, as any
+// call (PROTOCOL.md §11.2: "Past a server's limit it is 429 rate_limited, as any
 // call is"): rate_limited, with whom it counted, and Retry-After in seconds.
 // Any other 429 there is reported, as the same answer is on a route the
 // description has.
@@ -216,7 +216,7 @@ func TestARouteTheDescriptionLacksTakesOnlyALimitsOwn429(t *testing.T) {
 
 // A fetch that asks for a range is answered 206 with the bytes from there on
 // and a Content-Range in its one form, or 200 with the whole body
-// (PROTOCOL.md §5.2): a 206 without one, or with one of another form, is no
+// (PROTOCOL.md §11.12): a 206 without one, or with one of another form, is no
 // answer of the description's, and neither Range nor If-Range is a header
 // the description refuses.
 func TestARangedFetchIsTheDescriptions(t *testing.T) {

@@ -19,7 +19,7 @@ import (
 // A reader whose clock steps back meets mail it has already delivered as
 // fresh again. The server keeps what it was sent and lists it once more; the
 // reader must refuse it whatever its clock read when it last pruned
-// (PROTOCOL.md §5 check 9, §0).
+// (PROTOCOL.md §12.3 check 9, §15.7).
 func TestAReplayIsRefusedAfterTheClockStepsBack(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {

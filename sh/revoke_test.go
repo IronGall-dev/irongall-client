@@ -128,7 +128,7 @@ func TestScriptTakesARevocationOnItsProofAlone(t *testing.T) {
 			t.Errorf("c/revoke.sig, by a P-256 identity, is not taken: %v", r)
 		}
 	} else {
-		t.Log("this ssh-keygen reads no P-256 key (OpenSSH built without OpenSSL), so c/revoke.sig is not tried: a known variance (PROTOCOL.md §3)")
+		t.Log("this ssh-keygen reads no P-256 key (OpenSSH built without OpenSSL), so c/revoke.sig is not tried: a known variance (PROTOCOL.md Appendix A)")
 	}
 	for _, v := range sigs {
 		if r := ra.sh(fmt.Sprintf("ig_revcheck %s %s %s", va, vdoc, abs(t, filepath.Join(vectors, v)))); r.rc != 0 {

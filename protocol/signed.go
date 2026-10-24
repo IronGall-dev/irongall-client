@@ -11,7 +11,7 @@ import (
 )
 
 // What is encrypted to a recipient's prekey is three parts, one after the
-// other (PROTOCOL.md §4.3):
+// other (PROTOCOL.md §9.2):
 //
 //	the envelope, one line of JSON ending in a line feed
 //	the signature over that line, as "ssh-keygen -Y sign" writes it

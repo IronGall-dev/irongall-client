@@ -18,7 +18,7 @@ import (
 )
 
 // A box calls a server over https, or over http only on this machine, and
-// follows no redirect (PROTOCOL.md §0): neither its pass nor the address a
+// follows no redirect (PROTOCOL.md §11.1): neither its pass nor the address a
 // lookup asks about goes in the clear, or anywhere a server points.
 
 // elsewhere is a second server, on another port of this machine, that
@@ -70,7 +70,7 @@ func isRedirect(err error, status int) bool {
 }
 
 // redirects are the statuses of a redirect, each of which a client is held
-// to, from every call it makes (PROTOCOL.md §0, Transport).
+// to, from every call it makes (PROTOCOL.md §11.1).
 var redirects = []int{http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect}
 
 // A redirect from a box's list, to another port of the same host, which Go's
@@ -224,7 +224,7 @@ func TestAServerIsCalledOverHTTPSOrOnThisMachine(t *testing.T) {
 
 // A call that got no answer it could read says which call and what kind of
 // failure, in this client's own words, and keeps net/http's error for
-// errors.Is and errors.As (PROTOCOL.md §13): a server that is not there, one
+// errors.Is and errors.As (PROTOCOL.md §11.3): a server that is not there, one
 // that never answers, a wait the caller ended, and a certificate that does
 // not verify, a server's TLS alert, and an answer that is no TLS.
 func TestACallWithNoAnswerSaysWhatKind(t *testing.T) {

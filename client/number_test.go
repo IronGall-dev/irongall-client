@@ -18,7 +18,7 @@ import (
 )
 
 // A box numbers a certificate by its own clock, and the prekey and working
-// key made with it take the same number (protocol.SerialAt, PROTOCOL.md §2b).
+// key made with it take the same number (protocol.SerialAt, PROTOCOL.md §5).
 // An identity is a key and keeps no record of what it signed, so the clock is
 // what a box restored from its identity still has. Where the rule is about
 // one machine's clock against another's, these tests give a box a clock of

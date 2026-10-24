@@ -17,7 +17,7 @@ import (
 )
 
 // A refused message is kept with what the checks established when it was
-// judged (PROTOCOL.md §5, "The verdict"), so that its owner can judge it once
+// judged (PROTOCOL.md §12.3, "The verdict"), so that its owner can judge it once
 // its key is gone: a message under a certificate that has not begun says who
 // signed it, under which certificate, beginning when, and what this
 // machine's clock read; a forged one says only whose identity it claims.

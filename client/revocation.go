@@ -232,7 +232,7 @@ func (b *Box) keepRevocation(id *protocol.Identity, sig []byte) error {
 // finished is this box's own revocation of its address, as an error. A box
 // that holds one that verifies signs nothing more as that address, no pass,
 // no mail and no certificate, whatever any server answers: a server that
-// never saw the revocation would take it all (PROTOCOL.md §6.3). It still
+// never saw the revocation would take it all (PROTOCOL.md §12.5). It still
 // asks, keeps and publishes the record, which carry no pass. A kept one that
 // no longer verifies is a fault, and stops the same.
 func (b *Box) finished() error {
@@ -300,7 +300,7 @@ func (b *Box) heldRecord(a protocol.Address) (doc, revocation, certs, certsSig [
 }
 
 // readBox reads box a from this box's server (GET /v1/<a>, PROTOCOL.md
-// §4.1), keeps what verifies of the revocations it carries, and with l marks
+// §11.8), keeps what verifies of the revocations it carries, and with l marks
 // a as answered in the command. It returns the box served, and whether this
 // box now holds a revocation of a.
 //
@@ -469,7 +469,7 @@ func (b *Box) keepRevokedCerts(a protocol.Address, doc, statement, sig []byte) e
 // its clock ([protocol.SerialAt]), so that covers every certificate made
 // before this one on any machine, whether this box knows of it or not: one a
 // lost machine made and never published is among them, unless that machine's
-// clock read ahead of this one's (PROTOCOL.md §2b); a later run covers that
+// clock read ahead of this one's (PROTOCOL.md §5); a later run covers that
 // one.
 //
 // It returns the revocation, or nil when the certificate in use has serial
@@ -529,7 +529,7 @@ type Remedy struct {
 //
 // It reads the box once at its server, for what is held of the box's own
 // revocation of its certificates. An answer it cannot use stops nothing: the
-// revocation still goes to the server (PROTOCOL.md §6.3a). It sends nothing an earlier renewal left: whoever
+// revocation still goes to the server (PROTOCOL.md §12.6). It sends nothing an earlier renewal left: whoever
 // copied the box while one waited holds its working key too.
 //
 // The revocation is published first, once, through the serial below the
@@ -544,7 +544,7 @@ type Remedy struct {
 // box was using among them: whoever holds that working key can no longer
 // spend the box's calls, and the renewal that follows spends none of the
 // box's counts, the calls a taker spent before the revocation among them
-// (PROTOCOL.md §6.3a, §6.4; IronGall-dev/irongall-server#84). While the
+// (PROTOCOL.md §10.2, §11.9; IronGall-dev/irongall-server#84). While the
 // box's server holds the revocation and not the renewal, the box takes no
 // mail there and signs none, and [Box.Receive] and [Box.Rekey] send the
 // renewal again.
@@ -628,7 +628,7 @@ func (b *Box) renewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy,
 	if err != nil {
 		return done(err)
 	}
-	// By the reading the server took the renewal at (PROTOCOL.md §0).
+	// By the reading the server took the renewal at (PROTOCOL.md §12.4).
 	return done(b.prune(at))
 }
 
@@ -650,7 +650,7 @@ func (b *Box) ownRevokes(n uint64) bool {
 // conflict, and the box reads itself once more (known), which keeps that one
 // once it verifies: it is the revocation, with no error, when it covers every
 // certificate below serial, as the box's would have; otherwise the conflict
-// is the error (PROTOCOL.md §6.3a). The revocation with an error is one the
+// is the error (PROTOCOL.md §12.6). The revocation with an error is one the
 // server took or holds, and a fault of this box at its keep after that.
 func (b *Box) revokeBelow(ctx context.Context, serial uint64) (*protocol.RevokedCertificates, error) {
 	if serial <= 1 {
@@ -717,7 +717,7 @@ func (b *Box) revokeBelow(ctx context.Context, serial uint64) (*protocol.Revoked
 var provedCodes = []protocol.Code{protocol.CodeRevoked, protocol.CodeSenderRevoked, protocol.CodeCertificateRevoked}
 
 // proved turns what a server answered about a revocation into what this box
-// has checked, by what the answer names (PROTOCOL.md §6.3, §6.3a). Every
+// has checked, by what the answer names (PROTOCOL.md §12.5). Every
 // answer of every call passes it (call), and nothing else proves one:
 //
 //   - 410 revoked names the box the call's path names. The record it carries
@@ -924,7 +924,7 @@ func served(a protocol.Address, err error) error {
 
 // publishRecord sends a checked record to this box's server. A server answers
 // a record sent for an address it holds revoked with revoked, without
-// checking the record (PROTOCOL.md §6.3): taken only once what it shows
+// checking the record (PROTOCOL.md §11.15): taken only once what it shows
 // verifies (proved).
 func (b *Box) publishRecord(ctx context.Context, a protocol.Address, rec *protocol.Revocations) error {
 	_, err := b.call(ctx, http.MethodPut, "/v1/"+a.String()+"/revocations", rec, nil, nil)

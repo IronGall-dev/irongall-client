@@ -9,7 +9,7 @@ import (
 )
 
 // Stanzas is how an age file's recipient stanzas stand to the protocol
-// (PROTOCOL.md §4.5 step 7, §5 check 1). A server takes a send with exactly
+// (PROTOCOL.md §11.10 step 7, §12.3 check 1). A server takes a send with exactly
 // one native stanza, of the recipient's current prekey's type, beside
 // grease, and refuses one with none, with two or more, or with a stanza of
 // another type; a reader may refuse a file without exactly one native
@@ -24,7 +24,7 @@ type Stanzas struct {
 
 // grease is a grease stanza's type: rage, the Rust age crate and pyrage add
 // one to every file, which age ignores. One with more than maxGreaseArgs
-// arguments is no grease (PROTOCOL.md §4.5 step 7).
+// arguments is no grease (PROTOCOL.md §11.10 step 7).
 var grease = regexp.MustCompile(`\A[!-~]{1,8}-grease\z`)
 
 const maxGreaseArgs = 4

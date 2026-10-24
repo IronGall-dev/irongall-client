@@ -3,7 +3,7 @@
 // prekey, send, list page by page, fetch and ack, each call carrying its
 // box's pass. It is NOT the irongall.dev server, and checks little of what
 // that server checks. Like every server it keeps and serves a revocation of
-// any address, with a box here or none (PROTOCOL.md §6.3).
+// any address, with a box here or none (PROTOCOL.md §11.15).
 //
 // A test plays the hostile operator two ways: with SetMiddle, a function that
 // sees every request and can rewrite it, answer it or forge the reply; and
@@ -156,7 +156,7 @@ func (s *Server) Requests() []Request {
 	return slices.Clone(s.log)
 }
 
-// MaxPage is the most messages a list's page holds (PROTOCOL.md §5.1).
+// MaxPage is the most messages a list's page holds (PROTOCOL.md §11.11).
 const MaxPage = 50
 
 // SetPage sets the most messages a list's page holds, MaxPage until a test
@@ -178,7 +178,7 @@ func (s *Server) Count(a protocol.Address) int {
 }
 
 // Forget forgets box a, as a server does once its record's expiry has
-// passed (PROTOCOL.md §7): what its identity revoked is kept, and nothing
+// passed (PROTOCOL.md §13): what its identity revoked is kept, and nothing
 // else.
 func (s *Server) Forget(a protocol.Address) {
 	s.mu.Lock()
@@ -235,7 +235,7 @@ func problem(w http.ResponseWriter, code protocol.Code, detail string, with ...f
 }
 
 // revoked answers that an address is revoked, carrying the record the
-// server holds of it, as every 410 revoked does (PROTOCOL.md §6.3).
+// server holds of it, as every 410 revoked does (PROTOCOL.md §11.3).
 func revoked(w http.ResponseWriter, identity []byte, k *revocations, detail string) {
 	rec := &protocol.Revocations{Identity: identity, Revocation: k.revoked, RevokedCertificates: k.certList, RevokedCertificatesSignature: k.certListSig}
 	problem(w, protocol.CodeRevoked, detail, func(p *protocol.Problem) { p.Record = rec })
@@ -424,14 +424,14 @@ func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 		kept = &h.revocations
 	}
 	// A revoked address takes nothing more, and nothing sent for it is
-	// checked (PROTOCOL.md §6.3): it is answered with the record held.
+	// checked (PROTOCOL.md §11.15): it is answered with the record held.
 	if kept.revoked != nil {
 		revoked(w, identity, kept, "this address is revoked")
 		return
 	}
 	// A revocation of certificates: the address goes on. The highest serial
 	// it runs through stands. Beside a revocation of the address, a lower one
-	// changes nothing, and the address's is kept (PROTOCOL.md §6.3a).
+	// changes nothing, and the address's is kept (PROTOCOL.md §11.15).
 	if len(req.RevokedCertificates) > 0 {
 		certs, err := protocol.VerifyRevokedCertificates(a, req.Identity, req.RevokedCertificates, req.RevokedCertificatesSignature)
 		switch {
@@ -726,7 +726,7 @@ func listQuery(w http.ResponseWriter, r *http.Request) (after int, ok bool) {
 }
 
 // list answers with a page of the messages after the cursor, oldest first
-// (PROTOCOL.md §5.1). A first page has an ETag, the SHA-256 of its JSON, and
+// (PROTOCOL.md §11.11). A first page has an ETag, the SHA-256 of its JSON, and
 // is 412 to an If-Match that is false and 304 to an If-None-Match that names
 // it, each read as a server reads one (protocol.IfMatch,
 // protocol.IfNoneMatch); a page after it carries none, so only an If-Match
@@ -795,7 +795,7 @@ func WriteList(w http.ResponseWriter, l protocol.MessageList) {
 // fetch answers a message's ciphertext, and nothing else: the list says who
 // sent it and when. A Range of one open-ended byte range that begins inside
 // it is answered 206 with the bytes from there on, and any other with the
-// whole body (PROTOCOL.md §5.2; protocol.RangeAsked), as irongall-server
+// whole body (PROTOCOL.md §11.12; protocol.RangeAsked), as irongall-server
 // answers them.
 func (s *Server) fetch(w http.ResponseWriter, r *http.Request, b *box) {
 	m := b.messages[r.PathValue("id")]
@@ -860,7 +860,7 @@ func (s *Server) putACL(w http.ResponseWriter, r *http.Request, b *box) {
 }
 
 // getACL answers the ACL as held, nil for none, with its ETag, its If-Match
-// and If-None-Match read as a list's (PROTOCOL.md §6.2): a false If-Match is
+// and If-None-Match read as a list's (PROTOCOL.md §11.14): a false If-Match is
 // 412, then an If-None-Match that names the tag is 304.
 func (s *Server) getACL(w http.ResponseWriter, r *http.Request, b *box) {
 	tag := aclTag(b.acl)

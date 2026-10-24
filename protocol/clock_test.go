@@ -10,7 +10,7 @@ import (
 )
 
 // Every check is exact at the verifier's own clock, and whoever makes a
-// time-limited thing leaves MaxSkew of room (PROTOCOL.md §0). MaxSkew is the
+// time-limited thing leaves MaxSkew of room (PROTOCOL.md §3.4). MaxSkew is the
 // width of the clocks a server's pass check takes. This holds the claim
 // itself, with the real checks: it finds the fastest and the slowest clock a
 // server takes a new pass from, and then has the box with the fastest clock

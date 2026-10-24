@@ -97,7 +97,7 @@ func TestAServersWordRevokesNothing(t *testing.T) {
 
 // No answer proved checks, and never believes, ends a message for good: each
 // is final only once the box holds a revocation that verifies (PROTOCOL.md
-// §6.3). Both sets are the code's own (#414 item 2).
+// §12.5). Both sets are the code's own (#414 item 2).
 func TestNoAnswerProvedIsUndeliverable(t *testing.T) {
 	t.Parallel()
 	if len(client.ProvedCodes()) == 0 || len(client.Undeliverable()) == 0 {
@@ -115,7 +115,7 @@ func TestNoAnswerProvedIsUndeliverable(t *testing.T) {
 // message stays in the outbox, the box holds no revocation of its own, and
 // the message goes once the server stops saying so. The answers are the
 // code's own (provedCodes); at 403 sender_revoked the box reads itself, once
-// (PROTOCOL.md §6.3; #414 item 2).
+// (PROTOCOL.md §12.5; #414 item 2).
 func TestAServersWordAtAPostEndsNoMessage(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -289,7 +289,7 @@ func TestMailFromARevokedSenderIsRefused(t *testing.T) {
 }
 
 // A drain reads each sender's box once, however many of its messages it
-// holds, from senders this box holds no revocation of (PROTOCOL.md §5 check
+// holds, from senders this box holds no revocation of (PROTOCOL.md §12.3 check
 // 8): the read marks the sender answered (readBox), and judge reads none it
 // has marked. Above, the sender is revoked, so judge asks nothing after its
 // first message, marked or not (#384).
@@ -313,7 +313,7 @@ func TestADrainReadsEachSendersBoxOnce(t *testing.T) {
 }
 
 // problemBad returns the answer/problem-bad-* vectors: bodies that are no
-// problem as PROTOCOL.md §0b reads one, and so no code at all.
+// problem as PROTOCOL.md §3.3 reads one, and so no code at all.
 func problemBad(t *testing.T) []string {
 	t.Helper()
 	bad, _ := filepath.Glob("../testdata/vectors/answer/problem-bad-*.json")
@@ -362,7 +362,7 @@ func TestNoAnswerAboutASenderStopsTheDrain(t *testing.T) {
 	if q, _ := os.ReadDir(filepath.Join(b.Dir(), "quarantine")); len(q) != 0 {
 		t.Fatal("a message nobody could judge was quarantined")
 	}
-	// Nor has a 2xx whose body is no box, as PROTOCOL.md §0b reads one.
+	// Nor has a 2xx whose body is no box, as PROTOCOL.md §3.3 reads one.
 	bad, _ := filepath.Glob("../testdata/vectors/answer/box-bad-*.json")
 	if len(bad) == 0 {
 		t.Fatal("no answer/box-bad-* vectors")
@@ -385,7 +385,7 @@ func TestNoAnswerAboutASenderStopsTheDrain(t *testing.T) {
 			t.Errorf("%s served as the answer: %v, %+v, %d left on the server", filepath.Base(f), err, res, e.srv.Count(b.Address()))
 		}
 	}
-	// Nor has a 404 whose body is no problem as PROTOCOL.md §0b reads one,
+	// Nor has a 404 whose body is no problem as PROTOCOL.md §3.3 reads one,
 	// though its code says not_revoked before the member that breaks it.
 	for _, f := range problemBad(t) {
 		body, _ := os.ReadFile(f) //nolint:gosec // a test vector
@@ -501,7 +501,7 @@ func TestABoxLearnsItIsRevoked(t *testing.T) {
 }
 
 // Every 410 revoked carries the record its server answered from (PROTOCOL.md
-// §6.3; #353), at a send to a revoked box, at a revoked box's poll, and at
+// §12.5; #353), at a send to a revoked box, at a revoked box's poll, and at
 // the publish of a revocation it holds already. One that verifies is taken
 // as the read's is, with no second call. Where an operator puts none in its
 // place, or another box's revocation, the box reads the box the call named,

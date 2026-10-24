@@ -64,7 +64,7 @@ const AnySender = "any"
 // declared takes mail from a box whose identity is of type t, as far as the
 // declaration says: IdentityEd25519 always, whatever was declared; any type
 // if it declared AnySender; otherwise only a type it listed. A box that
-// declared nothing takes IdentityEd25519 only (PROTOCOL.md §2).
+// declared nothing takes IdentityEd25519 only (PROTOCOL.md §7).
 func AcceptsSender(declared []string, t string) bool {
 	return t == IdentityEd25519 || slices.Contains(declared, t) || slices.Contains(declared, AnySender)
 }
@@ -94,7 +94,7 @@ type PrekeyRequest struct {
 }
 
 // BoxResponse is GET /v1/<address>, the one read of a box: everything a
-// sender needs before it posts (PROTOCOL.md §4.1). None of it is trusted
+// sender needs before it posts (PROTOCOL.md §11.8). None of it is trusted
 // until checked: the document against the address, the signature's
 // certificate against the document, the statement against the certificate,
 // and the revocation of certificates against the identity. A revoked
@@ -128,10 +128,10 @@ func (b *BoxResponse) Record() *Revocations {
 const CiphertextContentType = "application/octet-stream"
 
 // MaxCiphertext is the most bytes a message's ciphertext may be, in a send and
-// in a fetch (PROTOCOL.md §4.5): every reader takes one of any size up to it,
+// in a fetch (PROTOCOL.md §11.10): every reader takes one of any size up to it,
 // and a server's caps on a ciphertext are at most it. It is a whole number of
 // its own padding blocks (PaddedSize), so a message that fits it bare fits it
-// padded. A larger one is a new version of the protocol (§0a).
+// padded. A larger one is a new version of the protocol (§14).
 const MaxCiphertext = 16 << 20
 
 // SendQuery is the query of POST /v1/<recipient>/messages, whose body is an
@@ -166,7 +166,7 @@ func (q SendQuery) Encode() string {
 var ErrQuery = errors.New("the query does not read as this call's")
 
 // QueryError is an ErrQuery that names the parameter at fault, which a 400
-// carries in member (PROTOCOL.md §13).
+// carries in member (PROTOCOL.md §11.2).
 type QueryError struct{ Param string }
 
 func (e *QueryError) Error() string { return fmt.Sprintf("%v: %s", ErrQuery, e.Param) }
@@ -198,7 +198,7 @@ func ParseSendQuery(raw string) (SendQuery, error) {
 }
 
 // ParseQuery reads a query of the given parameters: each at most once, and
-// none other (PROTOCOL.md §13). A parameter left out is not in the map.
+// none other (PROTOCOL.md §11.2). A parameter left out is not in the map.
 func ParseQuery(raw string, params ...string) (map[string]string, error) {
 	v, err := url.ParseQuery(raw)
 	if err != nil {
@@ -245,8 +245,8 @@ type MessageList struct {
 }
 
 // PollInterval reads a list answer's Retry-After: the server's poll interval
-// in seconds, delay-seconds in digits alone, as a 429's (PROTOCOL.md §5.1,
-// §13). A list answer without one, or with one of another form, breaks its
+// in seconds, delay-seconds in digits alone, as a 429's (PROTOCOL.md §11.11,
+// §11.3). A list answer without one, or with one of another form, breaks its
 // form. More digits than a uint64 holds read as the most it holds: a reader
 // bounds the wait it takes.
 func PollInterval(v string) (uint64, error) {
@@ -274,7 +274,7 @@ type MessageInfo struct {
 }
 
 // cursorGrammar is a list's cursor: opaque and URL-safe, one or more of
-// base64url's alphabet (AEP-158; PROTOCOL.md §5.1).
+// base64url's alphabet (AEP-158; PROTOCOL.md §11.11).
 var cursorGrammar = regexp.MustCompile(`\A[A-Za-z0-9_-]+\z`)
 
 // CheckCursor checks that s is a cursor as a list may hand one out. A client
@@ -288,7 +288,7 @@ func CheckCursor(s string) error {
 
 // checkType refuses a list whose next_cursor is not a cursor (CheckCursor),
 // or that gives a message a size past MaxCiphertext, which is no
-// ciphertext's (PROTOCOL.md §4.5): either breaks the list's form, as a
+// ciphertext's (PROTOCOL.md §11.10): either breaks the list's form, as a
 // member of another type does, so it is no answer, and a reader allocates
 // nothing by a size it gives that is not held here first.
 func (l *MessageList) checkType() error {

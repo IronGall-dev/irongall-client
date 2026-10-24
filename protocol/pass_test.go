@@ -456,7 +456,7 @@ func TestPassAgainstSSHKeygen(t *testing.T) {
 	}
 }
 
-// senderForm is the one form a sender writes a pass in (PROTOCOL.md §6.1b),
+// senderForm is the one form a sender writes a pass in (PROTOCOL.md §8),
 // the only one a server took before it read passes as RFC 9110 lets it.
 var senderForm = regexp.MustCompile(`\A` + PassScheme + ` address="([0-9a-f]{64})", not_after="([0-9TZ:-]{20})", signature="([A-Za-z0-9+/]+={0,2})"\z`)
 

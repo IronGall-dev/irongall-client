@@ -17,7 +17,7 @@ import (
 // init on a box that holds its own revocation and has published nothing, a
 // box restored from its identity alone beside its revocation: the script
 // signs nothing more, no certificate and no prekey statement, and nothing
-// reaches the server with a pass (PROTOCOL.md §6.3; #256). ig_prekey is the
+// reaches the server with a pass (PROTOCOL.md §12.5; #256). ig_prekey is the
 // one path to its certificates and statements, so prekey renew is held the
 // same way.
 func TestScriptInitOfABoxThatHoldsItsOwnRevocationSignsNothing(t *testing.T) {

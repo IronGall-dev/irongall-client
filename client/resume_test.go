@@ -23,7 +23,7 @@ import (
 )
 
 // A fetch that is cut keeps what it read in the box's partial file, and the
-// next fetch of that message asks for the rest by range (PROTOCOL.md §5.2;
+// next fetch of that message asks for the rest by range (PROTOCOL.md §12.3;
 // #381). The fake answers ranges as irongall-server does, so these tests
 // meet a 206 from an honest server; a middleware plays the link that cuts
 // and the server that lies.
@@ -522,7 +522,7 @@ func TestAFetchOfAnotherMessageDropsWhatWasKept(t *testing.T) {
 }
 
 // No size a server gives is taken past the protocol's largest ciphertext
-// (PROTOCOL.md §4.5, §5.1, §5.2), whether the box keeps part of the message
+// (PROTOCOL.md §11.10, §11.11, §11.12), whether the box keeps part of the message
 // or none: a list that gives one is no answer, and a fetch's Content-Length
 // or Content-Range that is not the listed size breaks its answer's form.
 // Either way the drain stops with nothing judged or acked, the message still

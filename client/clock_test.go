@@ -18,7 +18,7 @@ import (
 
 // These tests give a box a clock of its own, set apart from the server's.
 // Every other test here shares one clock between the two, and so cannot see
-// a check that a second of difference fails (PROTOCOL.md §0).
+// a check that a second of difference fails (PROTOCOL.md §3.4).
 
 // skewed returns the options of a box whose clock is *off from the server's.
 func (e *env) skewed(off *time.Duration) client.Options {
@@ -345,7 +345,7 @@ func mustRead(t *testing.T, name string) []byte {
 // server refused it. Once its clock is right, the next init does not use that
 // certificate, which began five minutes before the clock: a reader 9 minutes
 // slow, a clock the server takes, would refuse mail under it as not begun.
-// It makes another, by the clock as it is (PROTOCOL.md §0).
+// It makes another, by the clock as it is (PROTOCOL.md §12.4).
 func TestACertificateKeptFromARefusedAttemptLeavesTheHour(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -422,7 +422,7 @@ func (j jumpAtFetch) RoundTrip(r *http.Request) (*http.Response, error) {
 // A clock that jumps 70 days ahead during a drain, after the server answered
 // its list, deletes no prekey: keys are deleted by the clock as it read when
 // the server took the drain's pass, and never by a later reading no server
-// has seen (PROTOCOL.md §0). The mail waiting for the retired key is
+// has seen (PROTOCOL.md §12.4). The mail waiting for the retired key is
 // delivered once the clock is right.
 func TestAClockThatJumpsDuringADrainDeletesNoKey(t *testing.T) {
 	t.Parallel()
@@ -460,7 +460,7 @@ func TestAClockThatJumpsDuringADrainDeletesNoKey(t *testing.T) {
 
 // And a drain deletes, by the reading at which the server answered its list,
 // a retired key whose deletion time has come: the backstop to dropRetired,
-// which keeps the newest retired key (PROTOCOL.md, the Terms' deletion time).
+// which keeps the newest retired key (PROTOCOL.md §12.4).
 func TestADrainDeletesARetiredKeyPastItsDeletionTime(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

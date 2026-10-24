@@ -54,7 +54,7 @@ func sealedTo(t *testing.T, rs ...age.Recipient) []byte {
 	return ct.Bytes()
 }
 
-// ReadStanzas sorts each stanza of a file as PROTOCOL.md §4.5 step 7 does:
+// ReadStanzas sorts each stanza of a file as PROTOCOL.md §11.10 step 7 does:
 // native by its type, grease of at most four arguments ignored, and anything
 // else another type; a file with no native stanza is one of its cases (#417
 // items 1 and 4). What is no age file is an error with nothing beside it.

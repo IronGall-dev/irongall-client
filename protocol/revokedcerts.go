@@ -21,7 +21,7 @@ func RevokedCertsNamespace(a Address) string { return RevokedCertsTag + ":" + a.
 var ErrRevokedCertificates = errors.New("not a revocation of that address's certificates")
 
 // RevokedCertificates is what an identity signs to revoke the certificates it
-// made for its address, and keep the address (PROTOCOL.md §6.3a): every
+// made for its address, and keep the address (PROTOCOL.md §10.2): every
 // certificate whose serial is Through or below. Nothing signed under one is
 // taken, whenever it was signed. Through is its own order: whoever holds one
 // keeps the highest it has verified, and one that is not higher changes

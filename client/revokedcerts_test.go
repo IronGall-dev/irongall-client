@@ -342,7 +342,7 @@ func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnError(t *testing.T) {
 }
 
 // So it is where the server shows none of the box's revocations, and what a
-// box keeps is all there is (PROTOCOL.md §6.3a): above, each command meets
+// box keeps is all there is (PROTOCOL.md §10.2): above, each command meets
 // the fault first in its keep of what the read of a's box shows, so each use
 // of the kept record is held here, the renewal's (nextNumber), the send's
 // (resolve) and the drain's (judge) (#392).

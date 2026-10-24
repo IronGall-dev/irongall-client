@@ -280,7 +280,7 @@ func heldCertsOf(t *testing.T, e *env, a *client.Box) *protocol.RevokedCertifica
 // certificate in use, made on another machine, and gives no answer to the
 // remedy's first read of it, so the remedy's record conflicts. The box reads
 // itself again, keeps the higher one, and numbers its new certificate above
-// it (PROTOCOL.md §6.3a).
+// it (PROTOCOL.md §12.6).
 func TestTheRemedyOfAForgottenBoxAsksItsRevocationsAgainAfterItsConflict(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)

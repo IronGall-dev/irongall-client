@@ -16,7 +16,7 @@ import (
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
 
-// A box says who may write to it (PROTOCOL.md §5.0, §6.2): the senders it
+// A box says who may write to it (PROTOCOL.md §12.3, §11.14): the senders it
 // allows, whose mail lands in inbox/; the senders it blocks, whose mail it
 // drops; and, in its policy, where the rest's mail lands and whether its
 // server refuses them. Mail lands by a verified sender only, after every
@@ -540,7 +540,7 @@ func (b *Box) aclWhy() (string, error) {
 // is the one it took last, which is the case for a box that has blocked
 // nobody and lets every sender reach the server: such a box sends none, and
 // its server holds none. Each one sent replaces whatever the server holds,
-// whoever wrote it, and carries no If-Match (PROTOCOL.md §6.2): the box's
+// whoever wrote it, and carries no If-Match (PROTOCOL.md §11.14): the box's
 // files are what its ACL is, so what another machine of the box sent is
 // replaced, not merged, and a precondition would only add a read and a 412
 // to end the same way. One the server answers box_changed (the box changed
@@ -599,7 +599,7 @@ func (b *Box) replacedNote() (bool, error) {
 // checkACL is syncACL with the ACL the box's server holds read first, as
 // Receive does after each renewal it makes, about once a day: another
 // writer may have put one since this box last sent its own, another machine
-// of the box, whoever holds its pass (PROTOCOL.md §6.1b) or the server
+// of the box, whoever holds its pass (PROTOCOL.md §15.5) or the server
 // itself, and syncACL,
 // which compares the box's files with what it last sent, would never see
 // it. It reads GET …/acl and compares the lists with those the box's files

@@ -17,7 +17,7 @@ import (
 // A box's identity signs certificates and revocations, of its address and of
 // its certificates: nothing else.
 // A certificate names a working key, and the working key signs what the box
-// says (PROTOCOL.md §2b).
+// says (PROTOCOL.md §5).
 
 const (
 	// CertificateKeyID is the key id of every v1 certificate.
@@ -201,7 +201,7 @@ func NewCertificate(id *Identity, identity ssh.Signer, work ssh.PublicKey, seria
 // SerialAt is the serial a client gives a certificate it makes at now, for a
 // box whose highest serial it knows of is above, or 0 if it knows of none:
 // the seconds since 1970 at its own clock, or one above that serial when the
-// clock gives nothing higher (PROTOCOL.md §2b).
+// clock gives nothing higher (PROTOCOL.md §5).
 //
 // An identity is a key, and a key keeps no record of what it signed: a box
 // restored from its identity alone knows only what a server shows it, which

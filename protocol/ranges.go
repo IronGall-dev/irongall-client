@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// A fetch that was cut resumes by range (PROTOCOL.md §5.2; RFC 9110 §14): it
+// A fetch that was cut resumes by range (PROTOCOL.md §11.12; RFC 9110 §14): it
 // asks for the bytes from N on, with Range: bytes=N- (RangeAsk), and is
 // answered 206 with the bytes from N to the end and a Content-Range that says
 // so (ContentRange), or 200 with the whole body.
@@ -15,7 +15,7 @@ import (
 func RangeAsk(from int64) string { return "bytes=" + strconv.FormatInt(from, 10) + "-" }
 
 // RangeAsked reads a fetch's Range and If-Range fields as a server answers
-// them (PROTOCOL.md §5.2): from is the first byte of the one open-ended byte
+// them (PROTOCOL.md §11.12): from is the first byte of the one open-ended byte
 // range the request asks for, "bytes=N-" with N in digits, the unit in any
 // ASCII case (RFC 9110 §14.1; LowerASCII), and ok is false for anything else, which a server
 // answers with the whole body as RFC 9110 §14.2 lets it ignore a Range: no
@@ -44,7 +44,7 @@ func RangeAsked(ranges, ifRange []string) (from int64, ok bool) {
 // ContentRange is the Content-Range of a fetch's 206 that answers the bytes
 // from byte from of a ciphertext of length bytes: "bytes <from>-<last>/<length>",
 // each number in digits with no leading zero, the one form a server writes
-// and a reader takes (PROTOCOL.md §5.2).
+// and a reader takes (PROTOCOL.md §11.12).
 func ContentRange(from, length int64) string {
 	return "bytes " + strconv.FormatInt(from, 10) + "-" + strconv.FormatInt(length-1, 10) + "/" + strconv.FormatInt(length, 10)
 }

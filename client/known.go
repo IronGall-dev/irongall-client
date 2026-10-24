@@ -51,7 +51,7 @@ type own struct {
 // revocations, GET …/revocations, where the server holds no box for it, and
 // keeps what verifies of the box's own revocations that either carries
 // (take, and a 410's record in call): what its identity revoked outlives the
-// box (PROTOCOL.md §3a, §6.3). It is the one read of the box's own state at
+// box (PROTOCOL.md §11.6, §11.15). It is the one read of the box's own state at
 // its server, and a command decides about its own box from what it returns.
 //
 // The error is a fault here, after which nothing more is kept, or the box's

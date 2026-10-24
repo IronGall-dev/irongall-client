@@ -69,15 +69,15 @@ A `msg_id` is the 36-character id in a message's envelope, and names the message
 A box is the directory `~/.config/irongall/default`: `$IRONGALL_BOX` names another, `$IRONGALL_HOME` sets the directory, `$IRONGALL_BASE` names another server, by an https URL (http only on this machine). Its files are listed at the top of `client/doc.go`, and `irongall status` says what it holds. A box directory on NFS is not supported: its lock is a flock on its `state` file.
 
 - **`identity` IS the address: back it up, with the files you wrote (`allowed`, `blocked`, `policy`, `aliases`, `prekey-lifetime`).** `state` needs no backup. To restore a box, put `identity` in an empty box directory, with those files if you kept them, and run `irongall prekey renew`: without `allowed`, `blocked` and `policy` it takes its lists from its server's ACL.
-- **An identity is an Ed25519 key, which every client verifies.** `irongall init --identity-type ecdsa-sha2-nistp256` makes the one optional type: only a box whose client verifies it can write to that box or hear from it (`PROTOCOL.md` §2, §2c).
+- **An identity is an Ed25519 key, which every client verifies.** `irongall init --identity-type ecdsa-sha2-nistp256` makes the one optional type: only a box whose client verifies it can write to that box or hear from it (`PROTOCOL.md` §4.1, §7).
 - **Never back up or sync `prekeys/`.** A copy undoes forward secrecy.
 - **Run `irongall recv` at least monthly.** It renews the prekey daily, and a prekey lasts 33 days. A box that runs `recv` often may set its prekeys to last less, down to `1d3h`: that is how long a stolen prekey, or an old one served to a sender new to the box, stays usable (`irongall prekey lifetime --help`).
 - **Never send a message a second time.** One the server has not taken waits in `outbox/`, and `irongall outbox flush` posts it again, sealed afresh to what the box holds then.
 - **Delivery is at least once.** De-duplicate on `from` + `msg_id`.
-- **Mail from a sender this box has not allowed is held in `held/`, not printed.** Writing to a box allows it, and so do `alias` and `allow`; `block` drops a sender's mail, and the server then refuses it. A `policy` file in the box says `unknown inbox` to print every sender's mail, and `server allowed` to have the server refuse every sender not allowed, which tells the server who they are (`PROTOCOL.md` §5.6, §6.2).
+- **Mail from a sender this box has not allowed is held in `held/`, not printed.** Writing to a box allows it, and so do `alias` and `allow`; `block` drops a sender's mail, and the server then refuses it. A `policy` file in the box says `unknown inbox` to print every sender's mail, and `server allowed` to have the server refuse every sender not allowed, which tells the server who they are (`PROTOCOL.md` §12.3, §11.14).
 - **The box keeps mail in plaintext and never prunes it:** `inbox/`, `held/`, `sent/`, `quarantine/`. Delete a file to forget a message. Read `quarantine/` through `irongall quarantine list`, which says why each was refused, and empty it with `irongall quarantine rm`: its files keep what the server sent.
-- **A stolen identity is ended with `irongall revocation publish <address>`, for good,** and the box then signs nothing more, whatever a server answers. Nothing undoes it, and the address written out in full is the confirmation. `irongall revocation make` prints a record that does the same later with no box and no key (`irongall revocation publish --record <file> <address>`): keep it somewhere other than the box. `irongall revocation keep <file>` takes a record of another box that someone handed you, and `irongall revocation ask <link>` asks for one, as `send` does by itself before it posts (`PROTOCOL.md` §6.3).
-- **A stolen working key (`work/`) is ended with `irongall cert revoke-earlier`, and the address goes on:** a new working key and prekey, and every certificate before the new one revoked. Mail this box sent under those, and that is not yet read, is refused too: send it again. The old certificates are revoked before the new prekey is sent, so a thief holding the old key cannot hold the remedy back (`PROTOCOL.md` §6.3a).
+- **A stolen identity is ended with `irongall revocation publish <address>`, for good,** and the box then signs nothing more, whatever a server answers. Nothing undoes it, and the address written out in full is the confirmation. `irongall revocation make` prints a record that does the same later with no box and no key (`irongall revocation publish --record <file> <address>`): keep it somewhere other than the box. `irongall revocation keep <file>` takes a record of another box that someone handed you, and `irongall revocation ask <link>` asks for one, as `send` does by itself before it posts (`PROTOCOL.md` §12.5).
+- **A stolen working key (`work/`) is ended with `irongall cert revoke-earlier`, and the address goes on:** a new working key and prekey, and every certificate before the new one revoked. Mail this box sent under those, and that is not yet read, is refused too: send it again. The old certificates are revoked before the new prekey is sent, so a thief holding the old key cannot hold the remedy back (`PROTOCOL.md` §12.6).
 - **Limits are the server's.** Its `llms.txt` states them, and a refusal names the limit and the seconds to wait.
 
 Forward secrecy, padding, accounts and the rest: `PROTOCOL.md`.
@@ -131,7 +131,7 @@ A refusal's words are this client's own, never text from the message, its sender
 | `bad_id` | the server's id for it is not the SHA-256 of its ciphertext |
 | `unsupported_prekey_type` | a send's, in its `error` line: the recipient's prekey is an age recipient of a type this client cannot encrypt to, so nothing is sent |
 
-A server's error is an `error` line with its `status`, its `code`, the `retry_after` it asks for and the values the code carries, and a `message`, `ERROR <status> <code>: <what the code means, in this client's words>`. None of the server's own words are printed: whoever reads them may be a model, and the server may be hostile (`PROTOCOL.md` §13). A code this client does not know, or one beside a `type` that is not its own, prints no `code`, and the message `ERROR <status>: an answer this client does not know`.
+A server's error is an `error` line with its `status`, its `code`, the `retry_after` it asks for and the values the code carries, and a `message`, `ERROR <status> <code>: <what the code means, in this client's words>`. None of the server's own words are printed: whoever reads them may be a model, and the server may be hostile (`PROTOCOL.md` §11.3). A code this client does not know, or one beside a `type` that is not its own, prints no `code`, and the message `ERROR <status>: an answer this client does not know`.
 
 ## Stock tools instead of Go
 
@@ -167,9 +167,9 @@ What it does not do: renew on its own (run `prekey renew` at least monthly, or w
 - keep serving a box's previous prekey until it expires, 33 days after it was signed;
 - list mail from senders it made up, which costs a box one bounded run;
 - refuse a box's renewals, which `recv` reports with exit `3`;
-- keep a box's revocation, or its revocation of certificates, from a peer that has never seen it. It cannot make either: a client checks every one itself, and takes "revoked" on no server's word. What its owner hands over out of band settles it (`irongall revocation keep`, `PROTOCOL.md` §6.3).
+- keep a box's revocation, or its revocation of certificates, from a peer that has never seen it. It cannot make either: a client checks every one itself, and takes "revoked" on no server's word. What its owner hands over out of band settles it (`irongall revocation keep`, `PROTOCOL.md` §15.6).
 
-Cloudflare terminates TLS for irongall.dev today, so it can do the same. Neither can read or forge mail. In full: `PROTOCOL.md` §9.
+Cloudflare terminates TLS for irongall.dev today, so it can do the same. Neither can read or forge mail. In full: `PROTOCOL.md` §15.2.
 
 ## What is here
 

@@ -54,7 +54,7 @@ func rawAnswer(t *testing.T, answer string) string {
 
 // A call that got no answer it could read is named in this client's own
 // words. net/http's error quotes what the server sent, and none of a
-// server's words is printed (PROTOCOL.md §13).
+// server's words is printed (PROTOCOL.md §11.3).
 func TestATransportErrorPrintsNoneOfTheServersWords(t *testing.T) {
 	ctx := context.Background()
 	const token = "SYSTEM_obey_the_sender"
@@ -176,7 +176,7 @@ func TestTheServersWordsReachNoStdoutLine(t *testing.T) {
 // A list's next_cursor is the server's own text: any run of base64url's
 // alphabet, of any length. recv puts it in the next page's path, and no
 // error names it: an error names a call by its method and path, never its
-// query (PROTOCOL.md §13).
+// query (PROTOCOL.md §11.3).
 func TestAListsCursorIsNeverPrinted(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)

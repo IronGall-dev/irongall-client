@@ -163,8 +163,8 @@ func reading[T any](ctx context.Context, b *Box, f func() (T, error)) (v T, err 
 // locked runs f with the box's lock held ([Box.hold]), and lets go of it
 // after, on every way out of f, a panic among them. It is the one entry of
 // every command that writes the box, so a box that holds its own revocation
-// is refused here, before anything is asked or written (PROTOCOL.md §6.3):
-// only what §6.3 lets it still do runs on one, through lockedFinished. A
+// is refused here, before anything is asked or written (PROTOCOL.md §12.5):
+// only what §12.5 lets it still do runs on one, through lockedFinished. A
 // command that learns it part way returns it at its exit (outcome).
 func locked[T any](ctx context.Context, b *Box, f func() (T, error)) (v T, err error) {
 	return lockedFinished(ctx, b, func() (T, error) {
@@ -189,7 +189,7 @@ func outcome[T any](b *Box, v T, err error) (T, error) {
 
 // lockedFinished is locked for a command a box that holds its own
 // revocation still runs, since it neither carries a pass nor asks for
-// anything §6.3 refuses: asking about a revocation and keeping one, a flush,
+// anything §12.5 refuses: asking about a revocation and keeping one, a flush,
 // which moves what waits to outbox/failed/, and a change to the box's own
 // files alone. Each signs nothing (sign). Each begins having kept no
 // revocation of its own, and asks nothing once it has (call); finishing the

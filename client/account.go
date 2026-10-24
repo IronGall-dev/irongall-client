@@ -26,7 +26,7 @@ func (b *Box) Adopt(ctx context.Context, key string) (string, error) {
 	})
 }
 
-// accountID is an account id as PROTOCOL.md §6.5 writes one: what Adopt
+// accountID is an account id as PROTOCOL.md §11.16 writes one: what Adopt
 // returns is checked to it, so what adopt prints names no more than that.
 var accountID = regexp.MustCompile(`\A[a-z0-9-]{1,32}\z`)
 

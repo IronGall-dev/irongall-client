@@ -7,7 +7,7 @@ import (
 )
 
 // Code is an API error's machine code, from the closed list below
-// (PROTOCOL.md §13). A code names what a client does about the error: one
+// (PROTOCOL.md §11.3). A code names what a client does about the error: one
 // call that can fail for causes a client meets differently has a code for
 // each, and where the call itself tells them apart (a too_large on an ACL is
 // entries, on a send bytes) one code serves.
@@ -32,7 +32,7 @@ const (
 	CodeUnauthorized          Code = "unauthorized"            // no pass, or one that is not this box's, for this server
 	CodePassExpired           Code = "pass_expired"            // the pass, or the certificate it is under, is not valid at the server's clock: sign another, retry
 	CodeCertificateNotCurrent Code = "certificate_not_current" // the pass or statement is under a certificate that is neither the box's current one nor above it
-	CodeCertificateRevoked    Code = "certificate_revoked"     // a certificate the box's identity revoked: which calls, PROTOCOL.md §6.1b and §13
+	CodeCertificateRevoked    Code = "certificate_revoked"     // a certificate the box's identity revoked: which calls, PROTOCOL.md §8 and §11.4
 
 	// 403
 	CodeUnknownSender    Code = "unknown_sender"     // not registered
@@ -137,7 +137,7 @@ func Codes() []Code {
 func (c Code) Known() bool { _, ok := codes[c]; return ok }
 
 // TypePrefix begins every code's Problem Details "type": a tag URI (RFC
-// 4151) that names the problem and resolves to nothing (PROTOCOL.md §13).
+// 4151) that names the problem and resolves to nothing (PROTOCOL.md §11.3).
 // The date is the day the names were made: RFC 4151 reads a month alone as
 // its first day, before irongall.dev was registered.
 const TypePrefix = "tag:irongall.dev,2026-10-17:errors/"
@@ -150,7 +150,7 @@ const ProblemContentType = "application/problem+json"
 
 // Problem is an error body: RFC 9457 Problem Details, with the extension
 // members code and hint, and one member for each value the error carries
-// (PROTOCOL.md §13). Every value in detail is also a member of its own
+// (PROTOCOL.md §11.3). Every value in detail is also a member of its own
 // (AEP-193), so a client needs nothing from detail, hint or title: they are
 // a server's words, for a person reading the body, and a client shows none
 // of them. A client says what the code means in its own words, with the
@@ -181,7 +181,7 @@ type Problem struct {
 	Unacked         *int64 `json:"unacked,omitempty"`
 	OldestExpiresAt string `json:"oldest_expires_at,omitempty"`
 	// PrekeySerial and CertificateSerial are serials of a prekey and of a
-	// certificate: which ones each code names is PROTOCOL.md §13's.
+	// certificate: which ones each code names is PROTOCOL.md §11.3's.
 	PrekeySerial      *uint64 `json:"prekey_serial,omitempty"`
 	CertificateSerial *uint64 `json:"certificate_serial,omitempty"`
 	// Through is the serial a revocation of certificates held runs through
@@ -197,7 +197,7 @@ type Problem struct {
 	Member string `json:"member,omitempty"`
 	// Record is the revocation record of the address a 410 revoked names,
 	// which the read of a box always carries, and any other call's where its
-	// server answers from the record (PROTOCOL.md §6.3). A client checks it,
+	// server answers from the record (PROTOCOL.md §11.3). A client checks it,
 	// and takes "revoked" on nothing less.
 	Record *Revocations `json:"record,omitempty"`
 }
@@ -213,7 +213,7 @@ func (p *Problem) checkType() error {
 
 // CodeAt returns the problem's code if it counts in an answer of the given
 // status: a code this version knows, under its own status, in a body whose
-// type is that code's own (PROTOCOL.md §13). Otherwise it returns "", and
+// type is that code's own (PROTOCOL.md §11.3). Otherwise it returns "", and
 // the answer is read by its status alone: a body that names its problem
 // twice and disagrees names none.
 func (p *Problem) CodeAt(status int) Code {
@@ -224,7 +224,7 @@ func (p *Problem) CodeAt(status int) Code {
 }
 
 // Quota is a limit a rate_limited names in quota_id, from the closed set
-// below (PROTOCOL.md §8, §13), as Google's QuotaFailure names one in its
+// below (PROTOCOL.md §11.5), as Google's QuotaFailure names one in its
 // quota_id. Each is counted against one subject. A server's limit outside the
 // set names none, and gives its subject alone.
 type Quota string

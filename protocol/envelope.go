@@ -34,7 +34,7 @@ const (
 	PostTime = 2 * time.Minute
 	// Retention is how long a server keeps a message after it received it:
 	// the TTL less MaxSkew, the hour whoever makes a time-limited thing
-	// leaves, and less PostTime (PROTOCOL.md §0, §7). A post's sent_at is
+	// leaves, and less PostTime (PROTOCOL.md §3.4, §13). A post's sent_at is
 	// its sender's clock at the post, which a server takes from up to
 	// MaxSkew apart from its own, so a reader whose clock a server takes
 	// refuses as stale no message the server still serves.
@@ -44,7 +44,7 @@ const (
 	// still be posted, dated afresh, since an outbox posts an entry until it
 	// was written TTL ago; the TTL that retry is fresh for; and MaxSkew, so a
 	// clock that steps back by as much as two clocks a server takes are apart
-	// reopens nothing (PROTOCOL.md §5 check 9). A step further back is the
+	// reopens nothing (PROTOCOL.md §12.3 check 9). A step further back is the
 	// floor's (client: seen-floor).
 	SeenFor = 2*TTL + MaxSkew
 )
@@ -91,7 +91,7 @@ type Envelope struct {
 	// kept on every re-encryption, so a retry is never acted on twice.
 	MsgID string
 	// Body is the message: a JSON string, or any JSON value the sender sent
-	// as one (PROTOCOL.md §4.2).
+	// as one (PROTOCOL.md §9.1).
 	Body json.RawMessage
 
 	Subject    string // optional
@@ -106,7 +106,7 @@ type Envelope struct {
 }
 
 // wireEnvelope is the JSON form. No reader depends on the order of its
-// members; they are written in the order PROTOCOL.md §4.2 lists them.
+// members; they are written in the order PROTOCOL.md §9.1 lists them.
 type wireEnvelope struct {
 	V          json.Number     `json:"v"` // written as a number; read only as one
 	From       Address         `json:"from"`
@@ -136,8 +136,8 @@ func NewEnvelope(from, to Address, body string, now time.Time) (*Envelope, error
 // NewJSONEnvelope returns an envelope whose body is a JSON value, given as a
 // JSON text: an object, an array, a number, true, false, null, or a string,
 // which is the body NewEnvelope makes of that string's text. The body is held
-// to the rules its reader holds it to inside the envelope (PROTOCOL.md §0b,
-// §5 check 3), and refused whole when it breaks one, never repaired: one JSON
+// to the rules its reader holds it to inside the envelope (PROTOCOL.md §3.3,
+// §12.3 check 3), and refused whole when it breaks one, never repaired: one JSON
 // value and nothing after it, in UTF-8, with no name twice in any object,
 // nested at most MaxDepth − 1 deep, no noncharacter, and no number past
 // binary64. It is sent compact,
@@ -145,10 +145,10 @@ func NewEnvelope(from, to Address, body string, now time.Time) (*Envelope, error
 // that the line escapes U+2028 and U+2029, as encoding/json does in every
 // string for JavaScript (RFC 8259 §12), which an envelope never is: the same
 // value, and a reader verifies the line as it decrypted it (PROTOCOL.md
-// §4.4). The script's jq writes them raw.
+// §9.2). The script's jq writes them raw.
 func NewJSONEnvelope(from, to Address, body []byte, now time.Time) (*Envelope, error) {
 	if why := checkText(body, false, MaxDepth-1); why != "" {
-		return nil, fmt.Errorf("the body is not a JSON value its reader takes (PROTOCOL.md §0b): %s", why)
+		return nil, fmt.Errorf("the body is not a JSON value its reader takes (PROTOCOL.md §3.3): %s", why)
 	}
 	v := jsontext.Value(bytes.Clone(body))
 	if err := v.Compact(); err != nil {
@@ -207,7 +207,7 @@ func (e *Envelope) Line() ([]byte, error) {
 // message passed on to a box it was not written to, or one whose from names a
 // box that did not sign it); it has a msg_id; and sent_at is no older than TTL
 // at now, and no more than MaxSkew ahead of it. A null member is one left out
-// (PROTOCOL.md §0b), but for the body, whose null is a value.
+// (PROTOCOL.md §3.3), but for the body, whose null is a value.
 //
 // Keys match exactly, as in jq and every other strict reader: "BODY" is an
 // unknown key, ignored, never the body. No key twice, so no two readers can
@@ -258,7 +258,7 @@ func OpenEnvelopeRecord(plaintext []byte, signer, me Address) (*Envelope, error)
 		}
 	}
 	w.Body = fields["body"]
-	// v is an integer member, read as every one is (PROTOCOL.md §0b): digits
+	// v is an integer member, read as every one is (PROTOCOL.md §3.3): digits
 	// alone, so 1.0 and 1e0 are no version.
 	var v uint64
 	if err := jsonv2.Unmarshal(fields["v"], &v, jsonv2.WithUnmarshalers(integers)); err != nil || v != EnvelopeVersion {
@@ -310,7 +310,7 @@ func objectFields(data []byte) (map[string]json.RawMessage, error) {
 func utf8Valid(b []byte) bool { return utf8.Valid(b) }
 
 // unmarshalString reads a JSON string, and nothing else, into dst. JSON null
-// is the same as leaving the member out (PROTOCOL.md §0b): dst is left as it
+// is the same as leaving the member out (PROTOCOL.md §3.3): dst is left as it
 // is.
 func unmarshalString(raw json.RawMessage, dst *string) error {
 	if string(raw) == "null" {

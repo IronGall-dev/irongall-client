@@ -12,7 +12,7 @@ import (
 // Every box's transport calls a server on this machine, or one named
 // localhost in any case, through no proxy, whatever the environment names,
 // and every other through the proxy the transport it was given chooses
-// (PROTOCOL.md §0; #290). Read from the transport's own Proxy, so the
+// (PROTOCOL.md §11.1; #290). Read from the transport's own Proxy, so the
 // environment, which net/http reads once a process, plays no part.
 func TestNoProxyForThisMachine(t *testing.T) {
 	t.Parallel()
@@ -33,7 +33,7 @@ func TestNoProxyForThisMachine(t *testing.T) {
 
 // The transport holds every request's URL to checkServerURL, whatever made
 // the request and whatever HTTP client the box was given: nothing goes over
-// http off this machine (PROTOCOL.md §0).
+// http off this machine (PROTOCOL.md §11.1).
 func TestEveryRequestIsHeldToTheServerRule(t *testing.T) {
 	t.Parallel()
 	for _, c := range []*http.Client{nil, {}, {Transport: roundTripper(func(*http.Request) (*http.Response, error) {

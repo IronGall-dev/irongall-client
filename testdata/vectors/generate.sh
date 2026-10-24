@@ -18,7 +18,7 @@ NOW=2026-10-10T00:00:00Z
 NOT_AFTER=2026-11-12T00:00:00Z # NOW + 33 days exactly: what a client asks for. A server takes one that ends up to an hour later
 MSG_ID=6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b
 # A certificate's validity, as ssh-keygen -V takes it. These begin a minute before NOW, where a client
-# dates its own from an hour back (PROTOCOL.md §2b): a verifier asks only that one has begun.
+# dates its own from an hour back (PROTOCOL.md §5): a verifier asks only that one has begun.
 V_OK=20261009235900Z:20261214000000Z
 V_BEGINS_NOW=20261010000000Z:20261214000000Z # begins at NOW: begun
 V_SHORT=20261009235900Z:20261020000000Z    # ends 10 days after NOW: a 33-day prekey statement outlives it
@@ -48,7 +48,7 @@ bech32() { # <human-readable part> <bytes, hex>
 armor() { printf -- '-----BEGIN SSH SIGNATURE-----\n'; bin "$1" | b64 | fold -w 70; printf -- '\n-----END SSH SIGNATURE-----\n'; }
 blob() { sed '1d;$d' "$1" | tr -d '\n' | base64 -d | od -An -v -tx1 | tr -d ' \n'; }
 # A blob in hex with S + L in place of the S at a hex offset: the other encoding of an Ed25519 signature's S, which
-# RFC 8032 §5.1.7 refuses and ssh-keygen before the cut PROTOCOL.md §3 gives takes. S and L are 32 bytes, little-endian.
+# RFC 8032 §5.1.7 refuses and ssh-keygen before the cut PROTOCOL.md Appendix A gives takes. S and L are 32 bytes, little-endian.
 plusl() { # <blob hex> <hex offset of S>
   local x=$1 o=$2 s=${1:$2:64} l=edd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010 r="" c=0 i t
   for ((i = 0; i < 64; i += 2)); do t=$((16#${s:i:2} + 16#${l:i:2} + c)); c=$((t >> 8)); r+=$(printf %02x $((t & 255))); done
@@ -146,7 +146,7 @@ sign a "irongall-prekey-v1:$A" < a/revoke.txt > revoke/bad-another-namespace.sig
 X=$(blob a/revoke.sig); armor "$(plusl "$X" $((${#X} - 64)))" > revoke/bad-s-plus-l.sig      # A's own, with L added to its S
 printf 'irongall-revoke-v1\n%s\n' "$B" | sign a "irongall-revoke-v1:$B" > revoke/bad-of-another-box.sig
 
-# Revocations of box A's certificates (PROTOCOL.md §6.3a): the tag, the address and the serial every certificate up
+# Revocations of box A's certificates (PROTOCOL.md §10.2): the tag, the address and the serial every certificate up
 # to and including which is revoked, each on a line, signed by A's identity itself in A's namespace for them. Then what
 # is not one. Each bad-* is signed by A's identity in that namespace, so only what its name says is wrong with it, but
 # for the first two.
@@ -182,7 +182,7 @@ printf 'irongall-pass-v1\n%s\nirongall.example\n2026-10-10T00:10:00Z\n' "$A" > a
 under a-work a/work-cert.pub "irongall-pass-v1:$A" < a/pass.txt > a/pass.sig
 printf 'irongall-pass address="%s", not_after="2026-10-10T00:10:00Z", signature="%s"\n' "$A" "$(b64 < a/pass.sig)" > a/pass.authorization
 
-# That pass in the forms a server reads (PROTOCOL.md §6.1b, as RFC 9110 §11 lets a recipient): each file is an
+# That pass in the forms a server reads (PROTOCOL.md §8, as RFC 9110 §11 lets a recipient): each file is an
 # Authorization value with no line feed after it. ok-* is read as the same three values as a/pass.authorization;
 # bad-* is no pass. A sender writes only ok-as-a-sender-writes-it.
 mkdir -p pass
@@ -223,7 +223,7 @@ pv bad-a-control-character-in-a-quoted-value 'irongall-pass address="\001%s", no
 pv bad-an-address-of-63-hex 'irongall-pass address="%s", not_after="%s", signature="%s"' "${A:0:63}" "$PT" "$PS"
 pv bad-not-after-not-a-time 'irongall-pass address="%s", not_after="%s", signature="%s"' "$A" 2026-13-10T00:10:00Z "$PS" # month 13, quoted, so it is read to its form
 pv bad-the-signature-with-padding-bits-set 'irongall-pass address="%s", not_after="%s", signature="%sLR=="' "$A" "$PT" "${PS:0:${#PS}-4}" # the pattern's, and no writer's: "LQ==" is that byte (RFC 4648 §3.5)
-# The longest a value may be (§6.1b: the form a client writes with a signature of the most any identity key type
+# The longest a value may be (§8: the form a client writes with a signature of the most any identity key type
 # allows, 4,096 bytes), made so with empty list elements, one for each byte that signature's base64 is longer than
 # A's, and a byte longer.
 printf -v PC '%*s' $(( (4096 + 2) / 3 * 4 - ${#PS} )) ''
@@ -265,7 +265,7 @@ okcert ok-extensions a a-work -I irongall-cert-v1 -n "$A" -z 1 -V "$V_OK"
 okcert ok-unknown-extension a a-work $(good "$A") -O extension:nobody-defines@irongall.invalid=not-read
 
 # One signature, a/prekey-1.txt.sig, in forms a verifier reads as ssh-keygen -Y verify reads them (OpenSSH's
-# sshsig_dearmor), and in a file of at most 4096 bytes in all (PROTOCOL.md §3): ok-* are taken, bad-* refused. Then
+# sshsig_dearmor), and in a file of at most 4096 bytes in all (PROTOCOL.md §3.2): ok-* are taken, bad-* refused. Then
 # what ssh-keygen takes and a verifier here refuses: more than 4096 bytes, and an Ed25519 S that is not below L.
 mkdir -p sig
 S=a/prekey-1.txt.sig; X=$(blob "$S")
@@ -298,7 +298,7 @@ sed "$(( $(wc -l < "$S") - 1 ))s/=\$//" "$S" > sig/bad-no-padding.sig
 armor "$(plusl "$X" $((${#X} - 64)))" > sig/bad-s-plus-l.sig      # the working key's S
 armor "$(plusl "$X" $((28 + 2 * 16#${X:20:8} - 64)))" > sig/bad-certificate-s-plus-l.sig      # the identity's S on the certificate, its last 32 bytes
 armor "${X}00" > sig/bad-trailing-byte-in-the-blob.sig
-# What every OpenSSH build takes, as they all read it (PROTOCOL.md §3), and what they all refuse beside each: one NUL as the
+# What every OpenSSH build takes, as they all read it (PROTOCOL.md §3.2), and what they all refuse beside each: one NUL as the
 # last byte before the END line; version 0; and one NUL at the end of a string nothing signs, which OpenSSH reads with
 # sshbuf_get_cstring and builds the signed data without. Two NULs, or version 2, are refused.
 content() { printf %s "${1:$2+8:2*16#${1:$2:8}}"; } # <hex> <hex offset of a string> → what the string holds
@@ -322,7 +322,7 @@ armor "$(restr "$X" 20 "$(restr "$k" "$c" "$(nuls "$(content "$k" "$c")" 0)")")"
 armor "$(restr "$X" 20 "$(nuls "$k" 0)")" > sig/bad-certificate-own-type-nul.sig      # the identity signed the certificate's type: OpenSSH checks its signature over the bytes as they came
 # Two more, made by protocol's TestVectorsEd25519R, since they need arithmetic on the curve: sig/ok-r-small-order.sig, whose
 # R is the neutral point, and sig/bad-r-plus-order-2.sig, whose R has a point of order 2 added. OpenSSH's own Ed25519 from
-# 10.6p1 judges both the other way (PROTOCOL.md §3).
+# 10.6p1 judges both the other way (PROTOCOL.md Appendix A).
 # A revocation's key is the identity's own, and nothing signs it: its type may end in a NUL, and a P-256 key's curve
 # too. And C's ECDSA signature with r at the most OpenSSH reads, 2,049 bytes with the zeros before it, and a byte over.
 X=$(blob a/revoke.sig)
@@ -359,7 +359,7 @@ identity_doc eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f > 
 identity_doc 0200000000000000000000000000000000000000000000000000000000000000 > identity/off-curve.doc # y = 2: x^2 = 3/(4d + 1) is no square mod p, so no point has it. ssh-keygen reads any 32 bytes as a key
 printf 'irongall-v1\nssh-ed25519 %s\n' "$(bin "$(str "$(asc ssh-ed25519)00")$(str "$(printf %s "${GOOD#* }" | base64 -d | tail -c 32 | od -An -v -tx1 | tr -d ' \n')")" | b64)" > identity/type-name-ending-in-nul.doc # A's key, its type name ending in a NUL: ssh-keygen reads it as A's key and writes it back without the NUL
 # The same for the P-256 type. With p the field's size and n the group's order: a point is 04, x, y, on the curve, each
-# coordinate below p, and nothing more (PROTOCOL.md §2). OpenSSH up to 10.2p1 also refused a coordinate of 128 bits or
+# coordinate below p, and nothing more (PROTOCOL.md §4.1). OpenSSH up to 10.2p1 also refused a coordinate of 128 bits or
 # fewer, or of n - 1 or more, and takes those from 10.3p1, as the protocol does.
 GOOD_C=$(sed -n 2p c/identity.doc); X=${POINT:0:64}; Y=${POINT:64}
 Y5=459243b9aa581806fe913bce99817ade11ca503c64d9a3c533415c083248fbcc # a square root of 5^3 - 3*5 + b mod p: (5, Y5) is on the curve
@@ -467,7 +467,7 @@ case_env accept-case-variant-key "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\
 case_env refuse-version-string "{\"v\":\"1\",\"from\":\"%s\",\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
 case_env refuse-to-uppercase "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$(printf '%s' "$B" | tr a-f A-F)"
 case_env refuse-from-null "{\"v\":1,\"from\":null,\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$B" # null is a member left out: it names no sender
-# v is an integer member, written in digits alone (PROTOCOL.md §0b). jq gives back 1e0 as 1, so the script takes that one: how jq reads a number, a difference that guards none of the five (AGENTS.md § The shell client).
+# v is an integer member, written in digits alone (PROTOCOL.md §3.3). jq gives back 1e0 as 1, so the script takes that one: how jq reads a number, a difference that guards none of the five (AGENTS.md § The shell client).
 case_env refuse-version-written-with-a-fraction "{\"v\":1.0,\"from\":\"%s\",\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
 case_env refuse-version-written-with-an-exponent "{\"v\":1e0,\"from\":\"%s\",\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
 case_env refuse-version-a-decimal-just-above-1 "{\"v\":1.00000000000000001,\"from\":\"%s\",\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
@@ -477,7 +477,7 @@ case_env refuse-sent-at-ending-in-a-nul "{$H,\"sent_at\":\"$NOW\\\\u0000\",\"msg
 case_env refuse-duplicate-key "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\",\"from\":\"%s\"}" "$B" "$B" "$A"
 case_env refuse-two-objects "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}{}" "$A" "$B"
 case_env refuse-not-utf8 "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"\xff\xfe\"}" "$A" "$B"
-# The envelope is a JSON text as PROTOCOL.md §0b reads one, the sender's body in it included (json/ has each rule alone).
+# The envelope is a JSON text as PROTOCOL.md §3.3 reads one, the sender's body in it included (json/ has each rule alone).
 E="{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":"
 case_env accept-body-nested-to-32 "$E$(printf '%.0s[' $(seq 31))$(printf '%.0s]' $(seq 31))}" "$A" "$B"
 case_env refuse-body-nested-to-33 "$E$(printf '%.0s[' $(seq 32))$(printf '%.0s]' $(seq 32))}" "$A" "$B"
@@ -498,7 +498,7 @@ ID_A=$(b64 < a/identity.doc); ID_B=$(b64 < b/identity.doc)
 line() { printf '{"v":1,"from":"%s","to":"%s","sent_at":"%s","msg_id":"%s","identity":"%s","body":"hello"}\n' "$1" "$2" "$NOW" "$MSG_ID" "$3"; } # <from> <to> <identity, base64>
 line "$A" "$B" "$ID_A" > message/a-to-b.line
 under a-work a/work-cert.pub "irongall-msg-v1:$B" < message/a-to-b.line > message/a-to-b.sig
-# Padding makes the age file a whole number of 1 KiB blocks (PROTOCOL.md §4.3a). To a post-quantum
+# Padding makes the age file a whole number of 1 KiB blocks (PROTOCOL.md §9.3). To a post-quantum
 # key a file of one chunk is its plaintext and 1,659 bytes more.
 n=$(( $(wc -c < message/a-to-b.line) + $(wc -c < message/a-to-b.sig) ))
 SEALED=$(( (1659 + n + 1023) / 1024 * 1024 ))
@@ -578,7 +578,7 @@ sed 's/$/\r/' message/a-to-b.line > "$L"; { cat "$L"; under a-work a/work-cert.p
 printf '{\n"v":1,"from":"%s","to":"%s","sent_at":"%s","msg_id":"%s","identity":"%s","body":"hello"}\n' "$A" "$B" "$NOW" "$MSG_ID" "$ID_A" > "$L"; refuse refuse-envelope-on-two-lines "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
 rm -f "$L"
 
-# JSON texts as every reader takes one (PROTOCOL.md §0b): ok-* are taken and bad-* refused, by the server, the Go client
+# JSON texts as every reader takes one (PROTOCOL.md §3.3): ok-* are taken and bad-* refused, by the server, the Go client
 # and the script alike, whatever they hold. Each breaks one rule, or none.
 mkdir -p json
 jt() { local name=$1; shift; printf "$@" > "json/$name.json"; } # <name> <printf format…>: \\ in the format is one backslash in the text
@@ -636,7 +636,7 @@ jt bad-trailing-comma '{"a":1,}'
 jt bad-single-quotes "{'a':1}"
 jt bad-vertical-tab '{"a":\v1}'
 
-# Whole answers of a server, as each client reads them (PROTOCOL.md §0b): <kind>-ok-* are taken and <kind>-bad-* are no
+# Whole answers of a server, as each client reads them (PROTOCOL.md §3.3): <kind>-ok-* are taken and <kind>-bad-* are no
 # answer, to the Go client and the script alike. A member a client does not know is ignored; one it reads is of its
 # type or null, which is as if it were left out; a byte member is base64 in its one encoding.
 mkdir -p answer
@@ -680,7 +680,7 @@ at list-bad-count-a-fraction '{"count":0.5,"messages":[],"next_cursor":null}'
 at list-bad-count-written-with-a-fraction '{"count":1.0,"messages":[],"next_cursor":null}' # an integer member is written as one
 at list-bad-count-written-with-an-exponent '{"count":1e0,"messages":[],"next_cursor":null}' # jq gives it back as 1, so the script takes it: how jq reads a number, a difference that guards none of the five (AGENTS.md § The shell client)
 at list-bad-size-a-string '{"count":1,"messages":[{"id":"%s","from":"%s","size":"2048"}],"next_cursor":null}' "$HASH" "$A"
-# A size is at most 16 MiB, the largest ciphertext (PROTOCOL.md §4.5, §5.1): a list that gives a larger one is no answer, before anything is fetched
+# A size is at most 16 MiB, the largest ciphertext (PROTOCOL.md §11.10, §12.3): a list that gives a larger one is no answer, before anything is fetched
 at list-ok-size-the-largest '{"count":1,"messages":[{"id":"%s","from":"%s","size":16777216,"received_at":"%s","expires_at":"2026-11-12T00:00:00Z"}],"next_cursor":null}' "$HASH" "$A" "$NOW"
 at list-bad-size-past-the-largest '{"count":1,"messages":[{"id":"%s","from":"%s","size":16777217,"received_at":"%s","expires_at":"2026-11-12T00:00:00Z"}],"next_cursor":null}' "$HASH" "$A" "$NOW"
 at list-bad-messages-an-object '{"count":0,"messages":{},"next_cursor":null}'
@@ -697,7 +697,7 @@ at problem-ok '{"type":"tag:irongall.dev,2026-10-17:errors/not_revoked","title":
 at problem-bad-code-twice '{"type":"tag:irongall.dev,2026-10-17:errors/not_revoked","status":404,"code":"not_revoked","code":"revoked"}'
 at problem-bad-status-a-string '{"status":"404","code":"not_revoked"}'
 at problem-bad-status-a-fraction-after-the-code '{"code":"not_revoked","status":1.5}' # a reader that kept what it read before the fault would act on the code
-# The members a problem carries beside its words (PROTOCOL.md §13), each of its type: a client reads them, never the words
+# The members a problem carries beside its words (PROTOCOL.md §11.3), each of its type: a client reads them, never the words
 at problem-ok-members '{"type":"tag:irongall.dev,2026-10-17:errors/rate_limited","title":"Rate limited","status":429,"detail":"this box has sent its 20 messages a day","code":"rate_limited","hint":"wait","limit":20,"quota_id":"sends","subject":"box","count":3,"unacked":2,"oldest_expires_at":"%s","prekey_serial":2,"certificate_serial":1792000000,"through":5,"key_types":["ssh-ed25519",null],"key_type":"ecdsa-sha2-nistp256","member":"prekey_serial"}' "$NOT_AFTER"
 at problem-bad-limit-negative '{"code":"rate_limited","status":429,"limit":-1}'
 at problem-bad-quota-id-a-number '{"code":"rate_limited","status":429,"quota_id":5,"subject":"box"}'

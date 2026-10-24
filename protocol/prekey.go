@@ -108,7 +108,7 @@ func (p *Prekey) CheckLifetime(now time.Time) error {
 // human-readable part begins "age", and is neither X25519's "age" nor the
 // hybrid's "age1pq". Nothing is wrong with such a statement: a type defined
 // later takes no new tag, so a sender refuses it as unsupported_prekey_type,
-// never as a statement that does not verify (PROTOCOL.md §0a, §2a).
+// never as a statement that does not verify (PROTOCOL.md §14, §6).
 var ErrPrekeyType = errors.New("the prekey is an age recipient of a type this client cannot encrypt to")
 
 // ParsePrekey parses a prekey statement. It must be exactly five LF-terminated
@@ -298,7 +298,7 @@ func VerifyPrekeyRecord(id *Identity, statement, signature []byte) (*Prekey, *Ce
 }
 
 // Order is where a prekey statement would stand in its box's order
-// (PROTOCOL.md §2b): its own serial, and the serial and the SHA-256 of the
+// (PROTOCOL.md §5): its own serial, and the serial and the SHA-256 of the
 // certificate its signature carries.
 type Order struct {
 	Serial     uint64
