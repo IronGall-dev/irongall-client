@@ -891,7 +891,7 @@ paths:
         - name: Range
           in: header
           required: false
-          description: '`bytes=N-`, one open-ended byte range whose N is below the ciphertext''s length, asks for the bytes from N on (RFC 9110 §14.2). Any other range, a closed one, a suffix, several or one of another unit among them, gets the whole body, `200`.'
+          description: '`bytes=N-`, one open-ended byte range whose N is below the ciphertext''s length, asks for the bytes from N on (RFC 9110 §14.2). The unit `bytes` is read in any ASCII case and no other (RFC 9110 §5.6.2). Any other range, a closed one, a suffix, several or one of another unit among them, gets the whole body, `200`.'
           schema:
             type: string
         - name: If-Range
@@ -1676,8 +1676,7 @@ components:
     BoxResponse:
       description: |
         The one read of a box (`PROTOCOL.md` §4.1). A later version may add a
-        member, as any answer may: a box's signed profile is the one named so
-        far (§12), and no server sends it yet.
+        member, as any answer may.
       type: object
       required: [identity, prekey, prekey_signature]
       dependentRequired:
@@ -1878,6 +1877,8 @@ components:
         key:
           description: An adopt key an account minted (`PROTOCOL.md` §6.5). A secret.
           type: string
+          pattern: '^iga1_[A-Za-z0-9_-]+$'
+          maxLength: 1024
     AccountResponse:
       type: object
       required: [account]
@@ -2029,3 +2030,28 @@ components:
                 const: sender_key_type
           then:
             required: [key_type]
+        - if:
+            required: [code]
+            properties:
+              code:
+                const: certificate_not_current
+          then:
+            required: [certificate_serial]
+        - if:
+            required: [quota_id]
+            properties:
+              quota_id:
+                enum: [polls, pages, calls, sends, renewals, certificates, certificate_revocations]
+          then:
+            properties:
+              subject:
+                const: box
+        - if:
+            required: [quota_id]
+            properties:
+              quota_id:
+                enum: [registrations, registrations_range, misses, sends_before_pass, requests]
+          then:
+            properties:
+              subject:
+                const: ip

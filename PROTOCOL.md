@@ -339,7 +339,7 @@ The shapes of every operation below are `api/openapi.yaml`'s. This section says 
 
 - **Bodies.** A JSON body is read as Section 3.3 reads one. A send's body is bytes (Section 11.10).
 - **Query parameters** are read as members are: a server MUST refuse a parameter its call does not take, or one given twice, `400 bad_request`, naming it in `member`. A send takes its two serials (Section 11.10) and a list its `cursor` (Section 11.11); no other call takes one.
-- **`Date`.** Every answer carries `Date`, by the clock the server's checks read.
+- **`Date`.** Every answer under `/v1/` carries `Date`, by the clock the server's checks read.
 - **No caching.** Every answer under `/v1/` carries `Cache-Control: no-store`.
 - **Compression.** The read of a box (Section 11.8) MAY be answered with gzip (RFC 9110 §8.4.1.3), and only to a request whose `Accept-Encoding` takes it. A server MUST NOT compress any other answer: a list sets values senders chose beside the box's own (BREACH, RFC 7457 §2.6).
 - **`HEAD`** is answered on every route that answers `GET`, as that `GET` without content (RFC 9110 §9.3.2): the same status and header fields, its preconditions evaluated as the `GET`'s. A list's `HEAD` is a poll whatever its cursor, and neither spends the cursor nor hands out another. A message's `HEAD` is no fetch: it reads only whether the box holds the message, spends nothing of new mail and marks nothing (Section 11.12), is one of the box's calls, carries no `Content-Length`, and ignores a `Range`.
