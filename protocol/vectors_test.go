@@ -58,7 +58,7 @@ func vectorNow(t *testing.T) time.Time {
 }
 
 // vectorKey returns a box's RFC 8032 test key from input/<box>.ed25519.
-func vectorKey(t *testing.T, box string) (ssh.Signer, ed25519.PublicKey) {
+func vectorKey(t testing.TB, box string) (ssh.Signer, ed25519.PublicKey) {
 	t.Helper()
 	s := bufio.NewScanner(bytes.NewReader(read(t, "input/"+box+".ed25519")))
 	var lines [][]byte

@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"bytes"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json/jsontext"
@@ -17,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"filippo.io/age"
+	"filippo.io/edwards25519"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -162,7 +164,9 @@ func FuzzEnvelopeSender(f *testing.F) {
 // ParseIdentity takes a document only in the one form every type shares: it
 // gives back the document's own bytes, the address is their SHA-256, the
 // key is of a type the protocol defines, and the document is that key
-// written again. A refusal gives no identity.
+// written again; and an Ed25519 key only as a canonical point not of small
+// order (edwardsKeyFault, which reads it apart from the function's own
+// check). A refusal gives no identity.
 func FuzzParseIdentity(f *testing.F) {
 	seeds(f, "identity/*.doc", "a/identity.doc", "b/identity.doc", "c/identity.doc")
 	f.Fuzz(func(t *testing.T, doc []byte) {
@@ -187,6 +191,8 @@ func FuzzParseIdentity(f *testing.F) {
 			t.Fatalf("took a key of the type %q", key.Type())
 		case written != string(doc):
 			t.Fatalf("the document %q is not its key written again, %q", doc, written)
+		case key.Type() == ssh.KeyAlgoED25519 && edwardsKeyFault(key) != "":
+			t.Fatalf("took an Ed25519 key that is %s", edwardsKeyFault(key))
 		}
 		again, err := ParseIdentity(id.Document())
 		if err != nil || again.Address() != id.Address() {
@@ -221,9 +227,15 @@ func FuzzDearmor(f *testing.F) {
 // CheckCertificate takes only a user certificate its identity signed for a
 // working key, under the key id the protocol names, with one principal, the
 // box's address, a serial from 1 to MaxSerial, no critical option, and valid
-// at now, for at most MaxCertificateLifetime. A refusal is ErrCertificate or
-// ErrCertificateTime, with no certificate beside it. Each key is tried
-// against each vector identity, at the vectors' clock and at an offset.
+// at now, for at most MaxCertificateLifetime: its signature is the identity
+// key's over the certificate's bytes (signedBytes, read apart from the
+// library's check), and its working key an Ed25519 key that is a canonical
+// point not of small order and not the identity key. A refusal is
+// ErrCertificate or ErrCertificateTime, with no certificate beside it. Each
+// key is tried against each vector identity, at the vectors' clock and at an
+// offset; the seeds hold each vector certificate, and each with its validity
+// moved a second after it was signed, which nothing but the signature
+// refuses.
 func FuzzCheckCertificate(f *testing.F) {
 	now := fuzzNow(f)
 	ids := []*Identity{fuzzIdentity(f, "a"), fuzzIdentity(f, "b"), fuzzIdentity(f, "c")}
@@ -245,6 +257,11 @@ func FuzzCheckCertificate(f *testing.F) {
 			continue
 		}
 		f.Add(key.Marshal(), int64(0))
+		if cert, ok := key.(*ssh.Certificate); ok {
+			altered := *cert
+			altered.ValidBefore--
+			f.Add(altered.Marshal(), int64(0))
+		}
 	}
 	f.Fuzz(func(t *testing.T, wire []byte, offset int64) {
 		key, err := ssh.ParsePublicKey(wire)
@@ -276,8 +293,12 @@ func FuzzCheckCertificate(f *testing.F) {
 				t.Fatal("took a critical option")
 			case !bytes.Equal(cert.SignatureKey.Marshal(), id.PublicKey().Marshal()):
 				t.Fatal("took a certificate another key signed")
+			case id.PublicKey().Verify(signedBytes(cert), cert.Signature) != nil:
+				t.Fatal("took a certificate whose signature is not the identity's over its bytes")
 			case bytes.Equal(cert.Key.Marshal(), id.PublicKey().Marshal()):
 				t.Fatal("took a certificate of the identity key itself")
+			case cert.Key.Type() != ssh.KeyAlgoED25519 || edwardsKeyFault(cert.Key) != "":
+				t.Fatalf("took a working key of type %s that is %s", cert.Key.Type(), edwardsKeyFault(cert.Key))
 			case unix < cert.ValidAfter || unix >= cert.ValidBefore || cert.ValidBefore > unix+uint64(MaxCertificateLifetime/time.Second):
 				t.Fatalf("took a certificate from %d to %d at %d", cert.ValidAfter, cert.ValidBefore, unix)
 			}
@@ -354,35 +375,63 @@ func fuzzSender(line []byte) []byte {
 	return doc
 }
 
-// VerifyRevocation and VerifyRevokedCertificates, given a document, a
-// statement and a signature, the address the document's SHA-256: each gives
-// a result only for a document that is an identity of that address, whose
-// own key signed, in that revocation's namespace, its fixed statement or a
+// VerifyRevocation and VerifyRevokedCertificates, given an address, a
+// document, a statement and a signature: each gives a result only for a
+// document that is an identity of that address, its SHA-256, whose own key
+// signed, in that revocation's namespace, its fixed statement or a
 // revocation of certificates in its exact form naming that address; and a
 // refusal is ErrRevocation, ErrRevokedCertificates or ErrIdentityType, with
-// nothing beside it. ParseRevokedCertificates takes a statement only in its
-// exact form, which it writes back as it was.
+// nothing beside it. An address of any length but 32 bytes is the
+// document's SHA-256. The seeds hold, beside the vectors, A's revocation and
+// revocation of certificates of B's address, signed by A's identity in B's
+// namespaces: all is right in them but the document's hash.
+// ParseRevokedCertificates takes a statement only in its exact form, which
+// it writes back as it was.
 func FuzzRevocationVerifiers(f *testing.F) {
 	docs := [][]byte{read(f, "a/identity.doc"), read(f, "c/identity.doc")}
 	for _, doc := range docs {
+		own := sha256.Sum256(doc)
 		for _, p := range []string{"revoke/*.sig", "c/revoke.sig"} {
 			m, _ := filepath.Glob(filepath.Join(vectors, p))
 			for _, name := range m {
 				sig, _ := os.ReadFile(name) //nolint:gosec // a vector of this repo
-				f.Add(doc, RevocationStatement(Address(sha256.Sum256(doc))), sig)
+				f.Add(own[:], doc, RevocationStatement(own), sig)
 			}
 		}
 		m, _ := filepath.Glob(filepath.Join(vectors, "revoked", "*.txt"))
 		for _, name := range m {
 			st, _ := os.ReadFile(name) //nolint:gosec // a vector of this repo
 			sig, _ := os.ReadFile(strings.TrimSuffix(name, ".txt") + ".sig")
-			f.Add(doc, st, sig)
+			f.Add(own[:], doc, st, sig)
 		}
 	}
-	f.Fuzz(func(t *testing.T, doc, statement, sig []byte) {
+	signerA, _ := vectorKey(f, "a")
+	b := Address(sha256.Sum256(read(f, "b/identity.doc")))
+	certsOfB, err := NewRevokedCertificates(b, 4)
+	if err != nil {
+		f.Fatal(err)
+	}
+	for _, c := range []struct{ statement []byte }{{RevocationStatement(b)}, {certsOfB.Statement()}} {
+		ns := RevokeNamespace(b)
+		if bytes.HasPrefix(c.statement, []byte(RevokedCertsTag)) {
+			ns = RevokedCertsNamespace(b)
+		}
+		sig, err := Sign(signerA, c.statement, ns)
+		if err != nil {
+			f.Fatal(err)
+		}
+		f.Add(b[:], read(f, "a/identity.doc"), c.statement, sig)
+	}
+	f.Fuzz(func(t *testing.T, addr, doc, statement, sig []byte) {
 		a := Address(sha256.Sum256(doc))
+		if len(addr) == len(a) {
+			a = Address(addr)
+		}
+		hashed := Address(sha256.Sum256(doc)) == a
 		id, err := VerifyRevocation(a, doc, sig)
 		switch {
+		case err == nil && !hashed:
+			t.Fatal("a revocation taken with a document that does not hash to its address")
 		case err != nil && id != nil:
 			t.Fatal("a revocation refused, with an identity beside it")
 		case err != nil && !errors.Is(err, ErrRevocation) && !errors.Is(err, ErrIdentityType):
@@ -395,6 +444,8 @@ func FuzzRevocationVerifiers(f *testing.F) {
 
 		r, err := VerifyRevokedCertificates(a, doc, statement, sig)
 		switch {
+		case err == nil && !hashed:
+			t.Fatal("a revocation of certificates taken with a document that does not hash to its address")
 		case err != nil && r != nil:
 			t.Fatal("a revocation of certificates refused, with one beside it")
 		case err != nil && !errors.Is(err, ErrRevokedCertificates) && !errors.Is(err, ErrIdentityType):
@@ -418,6 +469,49 @@ func FuzzRevocationVerifiers(f *testing.F) {
 			t.Fatalf("the statement %q reads as through %d", statement, p.Through)
 		}
 	})
+}
+
+// edwardsKeyFault says what an Ed25519 key is that a protocol key may not
+// be, read apart from ParseIdentity's own check: not a point, a point not in
+// its canonical encoding, or one of small order, which 8 times itself, by a
+// scalar multiplication rather than doublings, makes the identity. It is ""
+// for a key that is none of these.
+func edwardsKeyFault(key ssh.PublicKey) string {
+	crypto, ok := key.(ssh.CryptoPublicKey)
+	if !ok {
+		return "no key"
+	}
+	raw, ok := crypto.CryptoPublicKey().(ed25519.PublicKey)
+	if !ok {
+		return "no Ed25519 key"
+	}
+	p, err := new(edwards25519.Point).SetBytes(raw)
+	if err != nil {
+		return "no point"
+	}
+	if !bytes.Equal(p.Bytes(), raw) {
+		return "not canonically encoded"
+	}
+	var b [32]byte
+	b[0] = 8
+	eight, err := edwards25519.NewScalar().SetCanonicalBytes(b[:])
+	if err != nil {
+		panic(err)
+	}
+	if new(edwards25519.Point).ScalarMult(eight, p).Equal(edwards25519.NewIdentityPoint()) == 1 {
+		return "of small order"
+	}
+	return ""
+}
+
+// signedBytes is what a certificate's signature is over: the certificate
+// written without its signature, as the format lays it out
+// (draft-ietf-sshm-cert-01 §2.1), read apart from the library's check.
+func signedBytes(cert *ssh.Certificate) []byte {
+	c := *cert
+	c.Signature = nil
+	out := c.Marshal()
+	return out[:len(out)-4] // the signature's length, of none
 }
 
 // isCertificate reports whether a signature's key is a certificate, as a
