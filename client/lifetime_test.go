@@ -16,7 +16,7 @@ import (
 )
 
 // A box's prekeys are valid for 33 days, or for the shorter lifetime its
-// owner sets, down to a day and an hour (PROTOCOL.md §6.4). Each client
+// owner sets, down to a day and three hours (PROTOCOL.md §12.4). Each client
 // records when it signed a prekey, and the box times its renewals and the
 // early deletion of its retired prekeys by that record, never by the
 // statement's not_after, which times a retired prekey's latest deletion.
@@ -198,7 +198,7 @@ func TestALifetimeOutOfFormIsNeverTheDefault(t *testing.T) {
 }
 
 // At the shortest lifetime, the two clocks furthest apart that a server
-// takes, a box 9 minutes slow and a sender 49 fast (PROTOCOL.md §0), still
+// takes, a box 9 minutes slow and a sender 49 fast (PROTOCOL.md §15.7), still
 // meet: the box renews once its prekey is a day old, which leaves that
 // sender an hour of it and two minutes.
 func TestTheShortestLifetimeAtTheClocksFurthestApart(t *testing.T) {
@@ -231,10 +231,10 @@ func TestTheShortestLifetimeAtTheClocksFurthestApart(t *testing.T) {
 	}
 }
 
-// PROTOCOL.md §6.4: "With a lifetime L, recv must run at least every L less
+// PROTOCOL.md §12.4: "With a lifetime L, recv must run at least every L less
 // a day and an hour". At that cadence the renewal comes with an hour of the
 // prekey left by the box's clock, so a sender up to that hour fast, which a
-// server takes (§0), is never refused: at the shortest lifetime and at one a
+// server takes (§15.7), is never refused: at the shortest lifetime and at one a
 // little longer, with recv a minute short of the day the first time.
 func TestTheDocumentedCadenceLeavesRoomForAClock(t *testing.T) {
 	t.Parallel()
@@ -288,7 +288,7 @@ func TestTheDocumentedCadenceLeavesRoomForAClock(t *testing.T) {
 }
 
 // A renewal the server never took waits, signed for 33 days, and the owner
-// then sets the shortest lifetime. PROTOCOL.md §6.4: "A lifetime set lower
+// then sets the shortest lifetime. PROTOCOL.md §12.4: "A lifetime set lower
 // holds from the next recv, which renews a prekey made for longer." The one
 // that waited is spent, and a new key is made for the lifetime now set.
 func TestALowerLifetimeHoldsOverAWaitingRenewal(t *testing.T) {

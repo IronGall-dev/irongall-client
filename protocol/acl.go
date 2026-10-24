@@ -11,7 +11,7 @@ import (
 // or this.
 const AnyAddress = "*"
 
-// ACLDocument is a box's sender ACL as it travels (PROTOCOL.md §6.2): the
+// ACLDocument is a box's sender ACL as it travels (PROTOCOL.md §11.14): the
 // body of PUT /v1/<address>/acl, which replaces the box's ACL whole, and
 // the answer to GET. It carries no version: the server's ETag of it is what
 // a writer that read it names in If-Match. Allow is required, so that an ACL

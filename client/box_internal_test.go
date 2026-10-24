@@ -33,7 +33,7 @@ func TestOnlyTheDefaultClientIsBoundedByTheBox(t *testing.T) {
 // A pass names the server as an origin is written: its host, lowercase, with
 // no user before it, and its port as a number only when that is not the
 // scheme's default, so https://irongall.dev:443 and https://irongall.dev name
-// one server, as the server reads its Host (PROTOCOL.md §6.1b).
+// one server, as the server reads its Host (PROTOCOL.md §8).
 func TestAPassNamesTheServerAsAnOrigin(t *testing.T) {
 	t.Parallel()
 	for base, want := range map[string]string{
@@ -100,7 +100,7 @@ func (g greaseOnly) WrapWithLabels([]byte) ([]*age.Stanza, []string, error) {
 
 // A file without exactly one native recipient stanza reaches no key
 // agreement: the stanzas are counted before age is given any prekey
-// (decrypt, oneNative; PROTOCOL.md §5 check 1), whatever its native stanzas'
+// (decrypt, oneNative; PROTOCOL.md §12.3 check 1), whatever its native stanzas'
 // type and order, and a file with one is decrypted, one key agreement for
 // the one prekey given (#417 item 1). One with none is its own case (item 4).
 func TestNoKeyAgreementBeforeTheStanzasAreCounted(t *testing.T) {

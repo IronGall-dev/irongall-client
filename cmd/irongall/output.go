@@ -88,7 +88,7 @@ func typed(typ string, obj []byte) []byte {
 // envelope, the line inbox/<id>.json keeps, as its bytes are, which this
 // client built from the checked fields of the envelope. The envelope's
 // members are only ever inside "envelope", so one it gains later (PROTOCOL.md
-// §0a) never meets a member of the line's own (#356; PRECEDENTS.md, Part 2,
+// §14) never meets a member of the line's own (#356; PRECEDENTS.md, Part 2,
 // § 3e).
 func mail(d client.Delivery) []byte {
 	return line("mail", "id", d.ID, "envelope", raw(d.Line))

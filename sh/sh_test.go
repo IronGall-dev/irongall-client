@@ -66,7 +66,7 @@ func TestMain(m *testing.M) {
 
 // p256 reports whether the local ssh-keygen reads a P-256 key. One built
 // without OpenSSL cannot, so the script refuses every P-256 identity there:
-// a known variance of OpenSSH's builds (PROTOCOL.md §3).
+// a known variance of OpenSSH's builds (PROTOCOL.md Appendix A).
 func p256() bool {
 	doc, err := os.ReadFile(filepath.Join(vectors, "c", "identity.doc"))
 	if err != nil {
@@ -173,7 +173,7 @@ func TestVectorsIdentity(t *testing.T) {
 	t.Logf("ssh-keygen: %s", sshBuild())
 	for _, box := range []string{"a", "b", "c"} { // c's identity is a P-256 key
 		if box == "c" && !p256() {
-			t.Logf("%s reads no P-256 key, so the script refuses c/identity.doc: a known variance (PROTOCOL.md §3)", sshBuild())
+			t.Logf("%s reads no P-256 key, so the script refuses c/identity.doc: a known variance (PROTOCOL.md Appendix A)", sshBuild())
 			continue
 		}
 		a, _ := identity(t, box)
@@ -193,7 +193,7 @@ func TestVectorsIdentity(t *testing.T) {
 	// has a refusal of its own, and with status 1 otherwise. The ok- ones
 	// are taken.
 	//
-	// OpenSSH's builds disagree on those two (PROTOCOL.md §2, §3): a P-256
+	// OpenSSH's builds disagree on those two (PROTOCOL.md §4.1, Appendix A): a P-256
 	// key with a coordinate of 128 bits or fewer, or of the group's order
 	// less one or more, is taken by the Go client and by OpenSSH from 10.3p1
 	// (9bea0818), and refused up to 10.2p1, which the script's ssh-keygen
@@ -235,9 +235,9 @@ func TestVectorsIdentity(t *testing.T) {
 	case short != [2]bool{} || over != [2]bool{}:
 		t.Errorf("the P-256 coordinate vectors, as [the script, ssh-keygen] taken: short %v, over the order %v; neither the Go client's verdict nor the known variance", short, over)
 	case !p256():
-		t.Logf("%s reads no P-256 key, so the script refuses both ok- identity vectors: a known variance (PROTOCOL.md §3)", sshBuild())
+		t.Logf("%s reads no P-256 key, so the script refuses both ok- identity vectors: a known variance (PROTOCOL.md Appendix A)", sshBuild())
 	default:
-		t.Logf("%s refuses a P-256 key whose coordinate is 128 bits or shorter or at the order less one or more, as OpenSSH did up to 10.2p1, and the script with it: a known variance (PROTOCOL.md §3)", sshBuild())
+		t.Logf("%s refuses a P-256 key whose coordinate is 128 bits or shorter or at the order less one or more, as OpenSSH did up to 10.2p1, and the script with it: a known variance (PROTOCOL.md Appendix A)", sshBuild())
 	}
 	if classes[1] == 0 || classes[2] == 0 {
 		t.Errorf("the identity vectors hold no document of each class: %v", classes)
@@ -310,7 +310,7 @@ func TestVectorsCertificate(t *testing.T) {
 // Ed25519 S that is not below L. So the script reads a signature as OpenSSH
 // does, and its own checks are what refuse those.
 //
-// An Ed25519 R is where OpenSSH's builds disagree (PROTOCOL.md §3): Go's
+// An Ed25519 R is where OpenSSH's builds disagree (PROTOCOL.md Appendix A): Go's
 // crypto/ed25519, OpenSSL and OpenSSH's own code before 10.6p1 take a
 // neutral R and refuse R plus a point of order 2, and OpenSSH's own from
 // 10.6p1, libsodium's, judges both the other way. The script says what its
@@ -355,7 +355,7 @@ func TestVectorsSignatureForm(t *testing.T) {
 	switch {
 	case small == [2]bool{true, true} && plus2 == [2]bool{false, false}:
 	case small == [2]bool{false, false} && plus2 == [2]bool{true, true}:
-		t.Logf("%s judges an Ed25519 R as libsodium does (OpenSSH's own Ed25519 from 10.6p1), and the script with it: it refuses sig/ok-r-small-order.sig and takes sig/bad-r-plus-order-2.sig, a known variance (PROTOCOL.md §3)", sshBuild())
+		t.Logf("%s judges an Ed25519 R as libsodium does (OpenSSH's own Ed25519 from 10.6p1), and the script with it: it refuses sig/ok-r-small-order.sig and takes sig/bad-r-plus-order-2.sig, a known variance (PROTOCOL.md Appendix A)", sshBuild())
 	default:
 		t.Errorf("the R vectors, as [the script, ssh-keygen] taken: ok-r-small-order %v, bad-r-plus-order-2 %v; neither the Go client's verdict nor the known variance", small, plus2)
 	}
@@ -426,7 +426,7 @@ func TestVectorsPrekey(t *testing.T) {
 // envelopeFive are the envelope/ refusals the script is held to, each one
 // that would let through a forgery (a sender or recipient not the signed
 // one, a text read as two values) or a replay (a msg_id or sent_at the
-// replay set cannot key by). The others are PROTOCOL.md §0b's JSON-text rules
+// replay set cannot key by). The others are PROTOCOL.md §3.3's JSON-text rules
 // and the members' types, which the Go client holds (AGENTS.md § The shell
 // client).
 var envelopeFive = map[string]bool{
@@ -458,7 +458,7 @@ func sameLine(t *testing.T, goLine []byte, shLine string) (respelled bool, ok bo
 
 // sameValue reports whether two lines hold the same value, token for token:
 // the same members in the same order (a sender sends them in the order
-// given, PROTOCOL.md §4.2, and jq keeps it), each string the same once
+// given, PROTOCOL.md §9.1, and jq keeps it), each string the same once
 // unescaped, and each number the same decimal value, a zero's sign included.
 // That allows jq's spelling and nothing else. sameLine's reference is
 // the script's own ig_line, so this is the check that holds the script to
@@ -658,7 +658,7 @@ func TestVectorsPlain(t *testing.T) {
 			continue
 		}
 		if err != nil && signed.Sender.Type() == protocol.IdentityP256 && !p256() {
-			t.Logf("%s: %s reads no P-256 key, so the script refuses a P-256 sender: a known variance (PROTOCOL.md §3)", name, sshBuild())
+			t.Logf("%s: %s reads no P-256 key, so the script refuses a P-256 sender: a known variance (PROTOCOL.md Appendix A)", name, sshBuild())
 			codes["delivered"]++
 			continue
 		}
@@ -741,7 +741,7 @@ func TestPaddingIsTheGoClients(t *testing.T) {
 func TestAP256BoxInBothClients(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	if !p256() {
-		t.Skipf("%s reads no P-256 key, so the script runs no P-256 box: a known variance (PROTOCOL.md §3)", sshBuild())
+		t.Skipf("%s reads no P-256 key, so the script runs no P-256 box: a known variance (PROTOCOL.md Appendix A)", sshBuild())
 	}
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -805,7 +805,7 @@ func TestAP256BoxInBothClients(t *testing.T) {
 }
 
 // A box declares the identity key types its build verifies, at init and at
-// each renewal (PROTOCOL.md §2c; #358): ecdsa-sha2-nistp256 only where its
+// each renewal (PROTOCOL.md §7; #358): ecdsa-sha2-nistp256 only where its
 // ssh-keygen reads a P-256 key. A build without OpenSSL reads none, and the
 // script refuses every P-256 identity there; here an ssh-keygen that reads
 // no P-256 key stands for one.
@@ -820,7 +820,7 @@ func TestTheScriptDeclaresTheKeyTypesItsBuildVerifies(t *testing.T) {
 	here := both
 	if !p256() {
 		here = ed
-		t.Logf("%s reads no P-256 key, so the script declares ssh-ed25519 alone: a known variance (PROTOCOL.md §3)", sshBuild())
+		t.Logf("%s reads no P-256 key, so the script declares ssh-ed25519 alone: a known variance (PROTOCOL.md Appendix A)", sshBuild())
 	}
 	b := w.box()
 	n := w.empty()
@@ -901,7 +901,7 @@ func TestWithGoClient(t *testing.T) {
 	landAll(t, g)
 
 	// An API error prints its status and code, and nothing the server wrote
-	// (PROTOCOL.md §13).
+	// (PROTOCOL.md §11.3).
 	if _, err := sh(shDir, "printf x | ig_send "+strings.Repeat("0", 64)); err == nil || !strings.Contains(err.Error(), `"code":"no_such_mailbox","message":"ERROR 404 no_such_mailbox"}`) || strings.Contains(err.Error(), "no box has this address") {
 		t.Fatalf("ig_send to no box: %v", err)
 	}
@@ -1128,7 +1128,7 @@ func TestVectorsRevocation(t *testing.T) {
 	}
 	// Forms every OpenSSH build reads the same way: A's with a NUL ending its
 	// key's type, and C's (c-*) with one ending its curve and with r at the
-	// most OpenSSH reads and a byte over (PROTOCOL.md §3).
+	// most OpenSSH reads and a byte over (PROTOCOL.md §3.2).
 	oks, _ := filepath.Glob(filepath.Join(vectors, "revoke", "ok-*.sig"))
 	cs, _ := filepath.Glob(filepath.Join(vectors, "revoke", "c-*.sig"))
 	if len(oks) == 0 || len(cs) < 2 {
@@ -1145,7 +1145,7 @@ func TestVectorsRevocation(t *testing.T) {
 		}
 	}
 	if !p256() {
-		t.Logf("%s reads no P-256 key, so the script refuses every revocation of box C: a known variance (PROTOCOL.md §3), and those are not compared", sshBuild())
+		t.Logf("%s reads no P-256 key, so the script refuses every revocation of box C: a known variance (PROTOCOL.md Appendix A), and those are not compared", sshBuild())
 		kept := cases[:0]
 		for _, v := range cases {
 			if v.addr != c {
@@ -1225,7 +1225,7 @@ func TestRevocationInBothClients(t *testing.T) {
 	var gone *client.RevokedError
 
 	// A box's record, made from a script box's identity with ssh-keygen as
-	// PROTOCOL.md §6.3 shows it: the script makes and publishes none, and the
+	// PROTOCOL.md §10.3 shows it: the script makes and publishes none, and the
 	// Go client takes it.
 	record := func(dir string) *protocol.Revocations {
 		t.Helper()
@@ -1544,7 +1544,7 @@ func numberOf(t *testing.T, b *client.Box) uint64 {
 }
 
 // A JSON body the Go client sends reaches the script as the value it is
-// (PROTOCOL.md §0b). The Go client's own refusals are client/sent_test.go's.
+// (PROTOCOL.md §3.3). The Go client's own refusals are client/sent_test.go's.
 func TestAJSONBodyFromTheGoClient(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
@@ -1739,7 +1739,7 @@ ig_recv`
 
 // The script's pass names the server as the Go client's does, as an origin is
 // written: its host, lowercase, with no user before it, and its port as a
-// number only when that is not the scheme's default (PROTOCOL.md §6.1b;
+// number only when that is not the scheme's default (PROTOCOL.md §8;
 // client's TestAPassNamesTheServerAsAnOrigin holds the Go client to the same).
 func TestTheScriptsPassNamesTheServerAsAnOrigin(t *testing.T) {
 	need(t, "bash")
@@ -1762,7 +1762,7 @@ func TestTheScriptsPassNamesTheServerAsAnOrigin(t *testing.T) {
 }
 
 // Both clients call a server over https, or over http only on this machine
-// (PROTOCOL.md §0), so a pass never crosses a network in the clear. The
+// (PROTOCOL.md §11.1), so a pass never crosses a network in the clear. The
 // script refuses another before any command runs.
 func TestBothClientsCallTheSameServers(t *testing.T) {
 	need(t, "bash", "jq")
@@ -1843,7 +1843,7 @@ func TestTheScriptFollowsNoRedirect(t *testing.T) {
 }
 
 // Every other call the script makes is held to it too, for each status a
-// redirect has (PROTOCOL.md §0, Transport): the read of a recipient before a send and
+// redirect has (PROTOCOL.md §11.1): the read of a recipient before a send and
 // the post itself, which post nothing anywhere and keep nothing.
 func TestNoCallOfTheScriptFollowsARedirect(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
@@ -1951,7 +1951,7 @@ func TestAServerThatIsNotThereIsNoAnswer(t *testing.T) {
 }
 
 // A 3xx is no answer, whatever header or trailer line comes with it
-// (PROTOCOL.md §0): its status is the final answer's own status line, as
+// (PROTOCOL.md §11.1): its status is the final answer's own status line, as
 // curl read it, never a line of its header block that looks like one.
 func TestA3xxIsNoAnswerWhateverItsLines(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
@@ -1981,7 +1981,7 @@ func TestA3xxIsNoAnswerWhateverItsLines(t *testing.T) {
 	}
 }
 
-// The user's curl config changes nothing the script does (PROTOCOL.md §0):
+// The user's curl config changes nothing the script does (PROTOCOL.md §11.1):
 // -q comes first, or curl reads .curlrc.
 func TestTheScriptReadsNoCurlrc(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
@@ -2034,7 +2034,7 @@ func TestTheScriptReadsNoCurlrc(t *testing.T) {
 }
 
 // A server on this machine is called directly, never through a proxy the
-// environment names, as the Go client calls it (PROTOCOL.md §0): over http,
+// environment names, as the Go client calls it (PROTOCOL.md §11.1): over http,
 // over https, and by the name localhost. A server elsewhere still goes
 // through it, which shows the proxy is one curl uses.
 func TestTheScriptCallsThisMachineDirectly(t *testing.T) {
@@ -2096,7 +2096,7 @@ func TestTheScriptCallsThisMachineDirectly(t *testing.T) {
 // A renewal the server did not take waits, signed for 33 days, and the owner
 // then writes the shortest lifetime: the script's next renewal spends the one
 // that waited and signs a new key for the lifetime now set, as the Go client
-// does (PROTOCOL.md §6.4).
+// does (PROTOCOL.md §12.4).
 func TestTheScriptHoldsALowerLifetimeOverAWaitingRenewal(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)

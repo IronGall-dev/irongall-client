@@ -95,7 +95,7 @@ func (b *Box) Send(ctx context.Context, to protocol.Address, body string) (*Sent
 // block (protocol.PaddedSize).
 //
 // Nothing is written or sent when its reader would refuse the envelope for
-// its form (PROTOCOL.md §0b, §5 check 3): a noncharacter in the body or the
+// its form (PROTOCOL.md §3.3, §12.3 check 3): a noncharacter in the body or the
 // subject is refused here, before the outbox.
 //
 // It holds the box's lock from start to end ([Box.hold]), as every command
@@ -194,7 +194,7 @@ func (b *Box) replyWaits(peer protocol.Address, aclErr error) error {
 // to what the box holds now, as a send seals it: a seal is made for one post
 // and never kept. A message the server took whose answer was lost is posted
 // again as a new ciphertext, which the server stores and counts again and
-// its reader drops by its msg_id (PROTOCOL.md §4.5). It tries every entry;
+// its reader drops by its msg_id (PROTOCOL.md §12.2). It tries every entry;
 // one that fails never stops the others, and the error names each that
 // failed. The server is asked about each recipient once, as a send asks
 // ([Box.SendWith]).
@@ -462,7 +462,7 @@ func (b *Box) postSealed(ctx context.Context, to protocol.Address, s *sealed) (*
 	}
 	// A receipt names the ciphertext it is for, and this box knows which
 	// that is: one that names another, or whose times are not times, is no
-	// receipt, and the entry stays (PROTOCOL.md §4.5). So what send and
+	// receipt, and the entry stays (PROTOCOL.md §11.10). So what send and
 	// flush print of it is what this box computed.
 	h := sha256.Sum256(s.ciphertext)
 	_, rerr := protocol.ParseTime(r.ReceivedAt)
@@ -482,7 +482,7 @@ func (b *Box) postSealed(ctx context.Context, to protocol.Address, s *sealed) (*
 // The dating sets the envelope's sent_at, and comes last, once the
 // recipient's box is read: a post's sent_at is its sender's clock at that
 // post, as a signed request's time is when it was signed, made anew for each
-// attempt (PROTOCOL.md §4.2, §4.5), so the server keeps a message about as
+// attempt (PROTOCOL.md §9.1, §12.2), so the server keeps a message about as
 // long as its reader takes it (protocol.Retention). The line is written again
 // by the envelope's one writer (Envelope.Line), as sendWith wrote the entry:
 // the outbox is this box's own, which no other client writes. It is read back
@@ -510,7 +510,7 @@ func (b *Box) seal(ctx context.Context, to protocol.Address, stem string, l *loo
 	// A certificate this box's own identity has revoked signs no mail: every
 	// reader that holds the revocation refuses it, whatever this box's server
 	// took. That is the remedy's window while its renewal waits (PROTOCOL.md
-	// §6.3a): the entry waits too. A kept revocation that does not verify is a
+	// §12.6): the entry waits too. A kept revocation that does not verify is a
 	// fault, never "nothing revoked".
 	if held, err := b.revokedCerts(b.id.Address()); err != nil {
 		return nil, err

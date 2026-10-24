@@ -349,7 +349,7 @@ func TestScriptRenewsAgainAsSigned(t *testing.T) {
 	}
 }
 
-// A box the server forgot, past its record's expiry (PROTOCOL.md §7), with
+// A box the server forgot, past its record's expiry (PROTOCOL.md §13), with
 // its own files kept: no box is served to number above, so ig_rekey numbers
 // above what it published, registers anew, and prints no error; mail flows.
 func TestScriptRegistersAForgottenBoxAnew(t *testing.T) {

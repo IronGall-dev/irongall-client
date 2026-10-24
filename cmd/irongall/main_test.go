@@ -491,10 +491,10 @@ func TestAdopt(t *testing.T) {
 	}
 	longest := "iga1_" + strings.Repeat("A", maxAdoptKey-len("iga1_"))
 	if k, err := adoptKey(strings.NewReader(longest + "\r\n")); err != nil || k != longest {
-		t.Fatalf("a key of %d bytes, the most §6.5 allows: %v", len(longest), err)
+		t.Fatalf("a key of %d bytes, the most §11.16 allows: %v", len(longest), err)
 	}
 	if _, err := adoptKey(strings.NewReader(longest + "A")); err == nil {
-		t.Fatal("a key a byte over §6.5's bound was taken")
+		t.Fatal("a key a byte over §11.16's bound was taken")
 	}
 	srv.SetMiddle(nil)
 	out.Reset()
@@ -506,7 +506,7 @@ func TestAdopt(t *testing.T) {
 // Nothing a server writes reaches a reader as this client's words: a receipt
 // is checked against the ciphertext posted, and what send and flush print of
 // it is what the box computed; an account name is checked to its form; an
-// error is the client's own sentence (PROTOCOL.md §13, §4.5, §6.5).
+// error is the client's own sentence (PROTOCOL.md §11.3, §11.10, §11.16).
 func TestNothingTheServerWritesIsPrinted(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)

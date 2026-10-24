@@ -11,7 +11,7 @@ import (
 )
 
 // Every JSON text the protocol carries is read by one set of rules
-// (PROTOCOL.md §0b), by the server and both clients:
+// (PROTOCOL.md §3.3), by the server and both clients:
 // it is I-JSON (RFC 7493), its names match exactly, it is one value, and it
 // nests at most MaxDepth deep. The parsing is encoding/json/v2's, whose
 // defaults already refuse invalid UTF-8, a byte-order mark, a name twice and
@@ -34,7 +34,7 @@ const MaxInteger = 1<<53 - 1
 var ErrJSON = errors.New("not a JSON text as the protocol reads one")
 
 // ErrUnknownMember is a request body with a member its call does not take
-// (PROTOCOL.md §0a). Its words name the member, for the caller who sent it,
+// (PROTOCOL.md §3.3). Its words name the member, for the caller who sent it,
 // and so does [Member].
 var ErrUnknownMember = errors.New("the body has a member this call does not take")
 
@@ -66,7 +66,7 @@ func (e *memberError) Is(target error) bool {
 
 // Member is the name of the member an [ErrUnknownMember] or an
 // [ErrMemberValue] names, or "" for any other error: a server answers it as a
-// member of its own, beside the words (PROTOCOL.md §13).
+// member of its own, beside the words (PROTOCOL.md §11.3).
 func Member(err error) string {
 	if e, ok := errors.AsType[*memberError](err); ok {
 		return e.name
@@ -79,7 +79,7 @@ func Member(err error) string {
 type typeChecked interface{ checkType() error }
 
 // Unmarshal reads data, a JSON text the protocol carries, into v: the rules
-// of PROTOCOL.md §0b, then encoding/json/v2's with names matched exactly. A
+// of PROTOCOL.md §3.3, then encoding/json/v2's with names matched exactly. A
 // member v does not name is ignored, as a client ignores one in a response.
 // A byte field (Bytes) is base64 in its one encoding, or ErrNotBase64. An
 // integer field holds an integer from 0 to MaxInteger, written as one. JSON
@@ -114,7 +114,7 @@ func unmarshal(data []byte, v any, request bool) error {
 	// another JSON type or a number that is no integer of its range, is named
 	// by its name in the body: the first token of the error's JSON pointer,
 	// always a name the Go type declares, never one a sender chose
-	// (PROTOCOL.md §13; #272).
+	// (PROTOCOL.md §11.3; #272).
 	why := errNotOfItsType
 	if errors.Is(err, errNotInteger) {
 		why = errNotInteger
@@ -174,7 +174,7 @@ func checkText(data []byte, object bool, depth int) string {
 // binary64 holds (RFC 7493 §2.2: "for example, 1E400"): strconv reads it as
 // ±Inf with ErrRange, and jq writes 1e1000000000 as the largest binary64, so
 // one text would be two values. A number too small for binary64 reads as
-// zero, and is taken (PROTOCOL.md §0b).
+// zero, and is taken (PROTOCOL.md §3.3).
 func pastBinary64(n string) bool {
 	_, err := strconv.ParseFloat(n, 64)
 	return errors.Is(err, strconv.ErrRange)

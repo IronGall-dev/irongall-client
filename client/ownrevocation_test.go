@@ -169,7 +169,7 @@ func TestTheRemedyGoesOnPastARollback(t *testing.T) {
 // The box's own server holds a revocation through T and leaves it out of its
 // first read of the box, then answers the remedy's record conflict: the
 // remedy reads again, keeps T's, which covers more than its own, publishes
-// nothing more, and numbers above T (PROTOCOL.md §6.3a).
+// nothing more, and numbers above T (PROTOCOL.md §12.6).
 func TestTheRemedyAsksAgainAfterItsServerAnswersConflict(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -350,7 +350,7 @@ func signed(t *testing.T, a *client.Box) []string {
 	return names
 }
 
-// A box that holds its own revocation is finished (PROTOCOL.md §6.3). Every
+// A box that holds its own revocation is finished (PROTOCOL.md §12.5). Every
 // command that would ask a server or carry a pass is refused, with the box's
 // own RevokedError, before anything is asked. None of them signs anything,
 // by any path, and the pass the box kept is gone. A send writes nothing, and
@@ -707,7 +707,7 @@ func TestAFastClockDeletesNoKeyMailWaitsFor(t *testing.T) {
 
 // A record that carries the address's revocation beside a revocation of its
 // certificates through a lower serial than the one held: the address's is
-// kept, and the lower part changes nothing (PROTOCOL.md §6.3a).
+// kept, and the lower part changes nothing (PROTOCOL.md §11.15).
 func TestAnAddressRevocationBesideALowerRevocationOfCertificates(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

@@ -48,7 +48,7 @@ func newWorld(t *testing.T) *world {
 	w := &world{t: t, srv: fakeserver.New(t, time.Now), work: t.TempDir(), home: t.TempDir()}
 	t.Cleanup(func() {
 		// A read of a box carries no pass, of another box or its own
-		// (PROTOCOL.md §4.1): asked of every call the test made.
+		// (PROTOCOL.md §11.8): asked of every call the test made.
 		for _, r := range w.srv.Requests() {
 			if isRead(r) && r.Pass {
 				t.Errorf("a read of a box was sent a pass: %s %s", r.Method, r.Path)

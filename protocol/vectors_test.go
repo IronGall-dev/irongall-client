@@ -187,7 +187,7 @@ func TestVectorBadIdentities(t *testing.T) {
 	}
 }
 
-// A P-256 key is a point on the curve, and nothing more (PROTOCOL.md §2): the
+// A P-256 key is a point on the curve, and nothing more (PROTOCOL.md §4.1): the
 // two ok- documents are points with a coordinate that OpenSSH refused up to
 // 10.2p1, one of 128 bits or fewer and one of n - 1 or more, and every
 // implementation takes each, as OpenSSH from 10.3p1 and the Go library do.
@@ -590,7 +590,7 @@ func TestVectorSignatures(t *testing.T) {
 }
 
 // One signature in the forms sig/ holds: each ok-* is read as "ssh-keygen -Y
-// verify" reads it and verifies, and each bad-* is refused (PROTOCOL.md §3).
+// verify" reads it and verifies, and each bad-* is refused (PROTOCOL.md §3.2).
 // sh/sh_test.go holds the script to the same verdicts, and ssh-keygen too but
 // for the ones it takes and a verifier here does not.
 func TestVectorSignatureForms(t *testing.T) {
@@ -616,7 +616,7 @@ func TestVectorSignatureForms(t *testing.T) {
 // MaxSignature, what a verifier holds one to before it knows the type, is the
 // largest of them. What a box signs is held to its identity's: with that
 // bound lowered, every verifier refuses the box's signatures, a pass's
-// included, and another type's box is untouched (PROTOCOL.md §3).
+// included, and another type's box is untouched (PROTOCOL.md §3.2).
 func TestASignatureIsHeldToItsIdentitysBound(t *testing.T) {
 	most := 0
 	for _, ty := range IdentityTypes() {
@@ -704,7 +704,7 @@ func TestVectorPass(t *testing.T) {
 	}
 }
 
-// Every pass/ vector is read as its name says (PROTOCOL.md §6.1b): ok-* as
+// Every pass/ vector is read as its name says (PROTOCOL.md §8): ok-* as
 // the same three values as a/pass.authorization, written back as that pass,
 // so it verifies as that pass does, and bad-* as no pass. A sender writes
 // one of them.
@@ -977,7 +977,7 @@ func (o oddR) Sign(_ io.Reader, data []byte) (*ssh.Signature, error) {
 // signed by its working key with an R that RFC 8032's signer never makes.
 // The equation without the cofactor, as Go's crypto/ed25519 and OpenSSL
 // check it, takes a neutral R and refuses R plus a point of order 2; OpenSSH's
-// own Ed25519 from 10.6p1 judges both the other way (PROTOCOL.md §3). They
+// own Ed25519 from 10.6p1 judges both the other way (PROTOCOL.md Appendix A). They
 // are made here, the same bytes each time, and the kept files are held to
 // them: IRONGALL_WRITE_VECTORS=1 writes them.
 func TestVectorsEd25519R(t *testing.T) {

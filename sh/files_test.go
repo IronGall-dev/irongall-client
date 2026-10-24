@@ -90,7 +90,7 @@ func TestTheScriptRestoresABoxFromItsIdentityAlone(t *testing.T) {
 		// It needs no record of the numbers it used: its own is above the lost
 		// machine's where the server serves that box, and is the clock's where
 		// it serves none, so the two share one only in the same second
-		// (PROTOCOL.md §2b). It has a working key and a pass.
+		// (PROTOCOL.md §5). It has a working key and a pass.
 		n, _ := strconv.ParseUint(strings.TrimSpace(string(mustRead(t, filepath.Join(dir, "serial")))), 10, 64)
 		was, _ := strconv.ParseUint(strings.TrimSpace(string(mustRead(t, filepath.Join(lost, "serial")))), 10, 64)
 		st, _ := srv.Prekey(a)
@@ -331,7 +331,7 @@ func TestGitignoreIsMovedIntoPlace(t *testing.T) {
 }
 
 // A box its server has forgotten renews as a registration, once it has read
-// what the server holds of its revocations (PROTOCOL.md §6.4, §7). A 2xx
+// what the server holds of its revocations (PROTOCOL.md §12.4, §13). A 2xx
 // there that is no record, not JSON or not an object, stops the renewal with
 // a refusal that says so, as an answer for the box's own read does (#230): the
 // script once exited 1 with no line. A record that holds nothing lets the

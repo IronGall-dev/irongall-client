@@ -120,7 +120,7 @@ type Result struct {
 
 // Again is how long the box waits before its next Receive: the server's
 // poll interval, or a paced drain's wait when that is the later, since the
-// next Receive begins with a list, which is a poll (PROTOCOL.md §5.1, §8).
+// next Receive begins with a list, which is a poll (PROTOCOL.md §11.11, §11.5).
 // Sooner would spend the box's polls, and be refused once they are spent,
 // where the poll interval lets the server's pace of new mail refill
 // meanwhile (#117).
@@ -173,7 +173,7 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 	err := b.drain(drainCtx, asked, res)
 	// A drain refused for what a renewal mends renews, and drains again, once:
 	// a server that holds no box at this address, having forgotten it, which
-	// the renewal's registration brings back (PROTOCOL.md §3, §6.4), or one
+	// the renewal's registration brings back (PROTOCOL.md §11.7, §12.4), or one
 	// that holds the certificate in use revoked, which the refusal had this
 	// box read and keep (proved).
 	if err != nil && renewed == nil && renewErr == nil && b.mendable(err) {
@@ -217,7 +217,7 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 	}
 	// Deleted by this clock only once the server has taken a pass dated by
 	// it, and by that pass's date: a clock far ahead is stopped at its pass,
-	// and the keys that mail waits for stay (PROTOCOL.md §0).
+	// and the keys that mail waits for stay (PROTOCOL.md §12.4).
 	if !res.listedAt.None() {
 		// Only a drain that emptied the box may delete retired prekeys
 		// early; and it leaves no message a partial could be of.
@@ -365,7 +365,7 @@ func (b *Box) drainPages(ctx context.Context, asked *lookups, res *Result) error
 	cursor := ""
 	messages, fetched := 0, 0
 	// What an error names: the list's path, never a cursor, which is the
-	// server's own text (PROTOCOL.md §13).
+	// server's own text (PROTOCOL.md §11.3).
 	listed := b.boxPath("/messages")
 	for page := 0; ; page++ {
 		if page == maxDrainPages {
@@ -381,7 +381,7 @@ func (b *Box) drainPages(ctx context.Context, asked *lookups, res *Result) error
 		var hdr http.Header
 		if page == 0 {
 			// The tag of the last poll that found the box empty: a 304 then
-			// says it is empty still (PROTOCOL.md §5.1).
+			// says it is empty still (PROTOCOL.md §12.3).
 			hdr, err = b.ifNoneMatch()
 			if err != nil {
 				return err
@@ -398,8 +398,8 @@ func (b *Box) drainPages(ctx context.Context, asked *lookups, res *Result) error
 			res.listedAt = at
 			// Pruned by this clock only once the server has taken a pass
 			// dated by it, and by that pass's date: a drain that a clock far
-			// off would prune is stopped at its pass first (PROTOCOL.md §0,
-			// §5 check 9).
+			// off would prune is stopped at its pass first (PROTOCOL.md §15.7,
+			// §12.4).
 			if err := b.pruneSeen(at); err != nil {
 				return err
 			}
@@ -460,7 +460,7 @@ func (b *Box) drainPages(ctx context.Context, asked *lookups, res *Result) error
 }
 
 // pacedError is the server pacing a drain, as only the answer to a fetch
-// says it (PROTOCOL.md §5.7): a 429 fetch_paced or refetch_spent, with how
+// says it (PROTOCOL.md §11.12): a 429 fetch_paced or refetch_spent, with how
 // long to wait.
 type pacedError struct {
 	wait time.Duration
@@ -940,7 +940,7 @@ func (b *Box) ifNoneMatch() (http.Header, error) {
 // keepETag keeps the tag of a first page that found the box empty, so the
 // next poll can be answered 304, and drops any once a page holds mail: a 304
 // then says only that the box is still empty, and never hides mail
-// (PROTOCOL.md §5.1).
+// (PROTOCOL.md §12.3).
 func (b *Box) keepETag(list *protocol.MessageList, tag string) error {
 	return b.update(func(s store) error {
 		if list.Count == 0 && len(list.Messages) == 0 && entityTag.MatchString(tag) {

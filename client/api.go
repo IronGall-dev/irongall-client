@@ -31,7 +31,7 @@ const maxResponse = 16 << 20
 
 // maxReceipt bounds what is read of a post's answer once the server took it,
 // a receipt: its three members are some 130 bytes, and this leaves room for
-// members a later version adds (PROTOCOL.md §0a). It is this client's own,
+// members a later version adds (PROTOCOL.md §14). It is this client's own,
 // as maxResponse is. A refusal is read as any answer is.
 const maxReceipt = 4 << 10
 
@@ -42,7 +42,7 @@ const maxReceipt = 4 << 10
 const maxWaitSeconds = 24 * 60 * 60
 
 // ciphertext is a message's ciphertext as the whole body of a send or of a
-// fetch: the age file's exact bytes, never JSON (PROTOCOL.md §4.5, §5.2). As
+// fetch: the age file's exact bytes, never JSON (PROTOCOL.md §11.10, §11.12). As
 // what a fetch reads into, size is the length its list gives, and a body of
 // any other length is no answer; keep is the partial it reads through, which
 // holds what an earlier attempt kept and keeps what this one reads
@@ -125,7 +125,7 @@ func (b *Box) exchange(ctx context.Context, method, path string, in any, hdr htt
 	}
 	// An error names the call by its method and its path, never its query,
 	// which can carry the server's own text: a list's cursor (PROTOCOL.md
-	// §13).
+	// §11.3).
 	name, _, _ := strings.Cut(path, "?")
 	name = method + " " + name
 	resp, err := b.http.Do(req)
@@ -167,9 +167,9 @@ func (b *Box) exchange(ctx context.Context, method, path string, in any, hdr htt
 		e := &APIError{Status: resp.StatusCode}
 		// A body that is not problem+json, read as any answer is, leaves the
 		// code empty: one that breaks a rule is no answer, so nothing it got as
-		// far as is kept (PROTOCOL.md §0b). So does a code this client does
+		// far as is kept (PROTOCOL.md §3.3). So does a code this client does
 		// not know, one under a status that is not its own, or one beside a
-		// type that is not its own (§13): no branch of this client is taken on
+		// type that is not its own (§11.3): no branch of this client is taken on
 		// it, and nothing of it is shown.
 		var p protocol.Problem
 		if protocol.Unmarshal(data, &p) == nil && p.CodeAt(resp.StatusCode) != "" {
@@ -355,7 +355,7 @@ func notListed(call string, size int64) error {
 // client's own words: the call, and what kind of failure it was. net/http's
 // error quotes what the server sent (a status line, a header or trailer
 // line, a Location, the names in its certificate), and a server's words are
-// never printed (PROTOCOL.md §13), so that error is kept for errors.Is and
+// never printed (PROTOCOL.md §11.3), so that error is kept for errors.Is and
 // errors.As and is no part of Error.
 type transportError struct {
 	call, kind string
@@ -409,7 +409,7 @@ func hasOp(err error, ops ...string) bool {
 }
 
 // retryAfter is the wait a Retry-After asks for: its delay-seconds, written in
-// digits alone, as a server writes them (PROTOCOL.md §13). Anything else, an
+// digits alone, as a server writes them (PROTOCOL.md §11.3). Anything else, an
 // HTTP-date among them, asks for none. More than maxWaitSeconds is read as
 // that, and never overflows the pause it becomes.
 func retryAfter(v string) time.Duration {
@@ -424,7 +424,7 @@ func retryAfter(v string) time.Duration {
 }
 
 // passRefused reports whether c is a server refusing the pass a call carried
-// (every 401, PROTOCOL.md §13), which a new pass may cure.
+// (every 401, PROTOCOL.md §11.3), which a new pass may cure.
 func passRefused(c protocol.Code) bool {
 	switch c {
 	case protocol.CodeUnauthorized, protocol.CodePassExpired, protocol.CodeCertificateNotCurrent, protocol.CodeCertificateRevoked:
@@ -489,7 +489,7 @@ func (b *Box) ownerTaken(ctx context.Context, method, path string, hdr http.Head
 type taken = tk.Reading
 
 // lookup GETs box a from this box's server (GET /v1/<a>), with no pass: the
-// read is public, and a server reads no pass on it (PROTOCOL.md §4.1).
+// read is public, and a server reads no pass on it (PROTOCOL.md §11.8).
 func (b *Box) lookup(ctx context.Context, a protocol.Address, out any) (*http.Response, error) {
 	return b.call(ctx, http.MethodGet, "/v1/"+a.String(), nil, nil, out)
 }

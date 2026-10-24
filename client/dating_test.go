@@ -16,7 +16,7 @@ import (
 // Each post dates its envelope afresh: sent_at is the time of the post, and
 // the outbox keeps the envelope as written, for its 33 days. So a message
 // that waited 20 days in the outbox is fresh to its reader for the 33 days
-// after it was posted, as long as the server keeps it (PROTOCOL.md §4.5, §7).
+// after it was posted, as long as the server keeps it (PROTOCOL.md §12.2, §13).
 func TestAPostIsDatedAtThePost(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

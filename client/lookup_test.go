@@ -34,7 +34,7 @@ func lookups(e *env) (seen func() map[string]bool) {
 	}
 }
 
-// A box's lookups carry no pass (PROTOCOL.md §4.1, §8): the read is public,
+// A box's lookups carry no pass (PROTOCOL.md §11.8, §11.5): the read is public,
 // and a server reads none on it. Not the
 // recipient's box before a send, not a sender's in a drain, and not a box's
 // read of its own.

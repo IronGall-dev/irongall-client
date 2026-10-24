@@ -538,7 +538,7 @@ func isCertificate(sig []byte) bool {
 	return ok
 }
 
-// Unmarshal takes only a JSON text that keeps PROTOCOL.md §0b's rules, read
+// Unmarshal takes only a JSON text that keeps PROTOCOL.md §3.3's rules, read
 // here apart from its own reading: one object and nothing after it, UTF-8
 // with no surrogate or noncharacter in a name or a string, no name twice in
 // any object, nested at most MaxDepth deep, and no number past binary64. Each
@@ -627,7 +627,7 @@ func isRefusal(err error, code string) bool {
 	return errors.As(err, &e) && e.Code == code
 }
 
-// independentlyRead holds a text to PROTOCOL.md §0b's rules apart from this
+// independentlyRead holds a text to PROTOCOL.md §3.3's rules apart from this
 // package's own check, by jsontext's tokens, and says which it breaks, or ""
 // for none.
 func independentlyRead(data []byte) string {

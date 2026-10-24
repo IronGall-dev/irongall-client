@@ -14,7 +14,7 @@ import (
 )
 
 // A 401 certificate_revoked with no revocation of the box's certificates to
-// show is a server's word (PROTOCOL.md §6.1b, §6.3): the box reads itself,
+// show is a server's word (PROTOCOL.md §8, §12.5): the box reads itself,
 // shown none it signs one more pass and tries once more, as for the other
 // 401s, and then reports the refusal, nothing kept.
 func TestACertificateRevokedWithNoneShownIsTriedOnceMore(t *testing.T) {

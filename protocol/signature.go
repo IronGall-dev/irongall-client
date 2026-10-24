@@ -28,7 +28,7 @@ const (
 const MaxSignature = 4096
 
 // SignatureBound returns the most bytes an armored signature may be for a box
-// whose identity is of key type t (PROTOCOL.md §3): what the box signs, by its
+// whose identity is of key type t (PROTOCOL.md §3.2): what the box signs, by its
 // identity or by a working key under a certificate its identity signed. Each
 // type states its own, several times the largest that type makes, and a new
 // type leaves the others where they are: were one bound to rise, a block
@@ -142,7 +142,7 @@ const maxMPInt = 16384/8 + 1
 // opensshReading returns an SSHSIG blob as OpenSSH reads it (sshsig.c,
 // sshkey.c, ssh-ed25519.c, ssh-ecdsa.c and sshbuf-getput-basic.c at
 // V_10_6_P1), written again in the one form the checks after it take. Every
-// OpenSSH build reads these the same way (PROTOCOL.md §3):
+// OpenSSH build reads these the same way (PROTOCOL.md §3.2):
 //   - the version: 0 or 1, written as 1. sshsig_parse_preamble refuses only
 //     a higher one, and the version is not signed;
 //   - a string OpenSSH reads with sshbuf_get_cstring, where nothing signs
@@ -155,7 +155,7 @@ const maxMPInt = 16384/8 + 1
 //     sshbuf_get_bignum2 refuses it.
 //
 // What an identity signed in a certificate is left as it is, a NUL and all:
-// its form is §2b's, and the checks after this refuse any other. A blob that
+// its form is §5's, and the checks after this refuse any other. A blob that
 // does not parse is refused, as OpenSSH refuses it.
 func opensshReading(blob []byte) ([]byte, error) {
 	bad := errors.New("the signature is not an SSH signature as OpenSSH reads one")

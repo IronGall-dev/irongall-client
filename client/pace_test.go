@@ -16,7 +16,7 @@ import (
 )
 
 // A server that paces how much mail a box takes out (a 429 with Retry-After
-// on a fetch, PROTOCOL.md §8) stops the drain as the drain's own limits do:
+// on a fetch, PROTOCOL.md §11.5) stops the drain as the drain's own limits do:
 // what was delivered stays delivered, the rest waits on the server, the
 // Result says how long, and nothing is an error. The next drain takes the
 // rest.
@@ -138,7 +138,7 @@ func TestAWaitTheServerAsksForIsAtMostADay(t *testing.T) {
 }
 
 // A Retry-After is delay-seconds, digits alone, as a server writes it
-// (PROTOCOL.md §13): an HTTP-date, a sign or a fraction asks for no wait, and
+// (PROTOCOL.md §11.3): an HTTP-date, a sign or a fraction asks for no wait, and
 // any number of digits is read, up to a day.
 func TestARetryAfterIsDigitsAlone(t *testing.T) {
 	t.Parallel()

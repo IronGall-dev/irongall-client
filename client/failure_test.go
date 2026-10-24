@@ -268,10 +268,10 @@ func TestAPassUnderAnOlderCertificateIsReplaced(t *testing.T) {
 
 // Every code that refuses the pass a call carried has the box sign another
 // and try once more under it, never the pass refused, which the server would
-// refuse again (PROTOCOL.md §6.1b): after pass_expired the same pass is the
+// refuse again (PROTOCOL.md §8): after pass_expired the same pass is the
 // clock's sign, and the box's pass after certificate_revoked is signed anew
 // too (#408 item 3). The codes are read from the code, every one protocol
-// knows that passRefused takes, and those are every 401's (§13).
+// knows that passRefused takes, and those are every 401's (§11.3).
 func TestEveryRefusalOfThePassIsTriedUnderANewOne(t *testing.T) {
 	t.Parallel()
 	var refusing []protocol.Code

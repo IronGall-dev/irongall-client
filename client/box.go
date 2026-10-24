@@ -208,7 +208,7 @@ func (t transport) RoundTrip(r *http.Request) (*http.Response, error) {
 // newTransport is rt, or net/http's default, held to checkServerURL
 // (transport). A transport of net/http's own type calls a server on this
 // machine, or one named localhost in any case, through no proxy, whatever
-// the environment names (PROTOCOL.md §0): Go's ProxyFromEnvironment
+// the environment names (PROTOCOL.md §11.1): Go's ProxyFromEnvironment
 // exempts only the exact name localhost.
 func newTransport(rt http.RoundTripper) http.RoundTripper {
 	if rt == nil {
@@ -229,7 +229,7 @@ func newTransport(rt http.RoundTripper) http.RoundTripper {
 }
 
 // followNone is every box's redirect policy: a 3xx comes back as the answer
-// it is, an [*APIError]. The API redirects nowhere (PROTOCOL.md §0), so a
+// it is, an [*APIError]. The API redirects nowhere (PROTOCOL.md §11.1), so a
 // redirect is a server's mistake or its attack, and what one can do is send
 // the pass, or the address a lookup asks about, somewhere else: Go's own
 // policy keeps Authorization on a redirect to the same host name or a
@@ -351,7 +351,7 @@ func (b *Box) init(ctx context.Context, kt protocol.KeyType) (*Box, error) {
 	// the server holds no box for it. So a box restored from its identity
 	// alone and a registration whose answer was lost take one path, and what
 	// an earlier attempt signed is sent again only while it can be
-	// (PROTOCOL.md §6.4; #87). An identity made by this call has no history
+	// (PROTOCOL.md §12.4; #87). An identity made by this call has no history
 	// a server could hold, and nobody else holds its key to have revoked
 	// anything under it: its renewal goes as a registration with no read,
 	// which a server would count as a miss of its address.
@@ -534,7 +534,7 @@ func (b *Box) loadIdentity() error {
 // prekeyRecord is a prekey statement this box signed, as the prekeys bucket
 // keeps it by its serial: the statement, its signature, and when it was
 // signed, which is what the box times its renewals and the early deletion of
-// its retired prekeys by ([Box.made]; PROTOCOL.md §6.4), in one value, so the
+// its retired prekeys by ([Box.made]; PROTOCOL.md §12.4), in one value, so the
 // three are never out of line (#192). Its key is prekeys/<serial>.agekey.
 type prekeyRecord struct {
 	Statement protocol.Bytes `json:"statement"`
@@ -766,14 +766,14 @@ func decrypt(ct []byte, ids []age.Identity) (io.Reader, error) {
 
 // oneNative takes an age file only with exactly one native recipient stanza,
 // of a type a prekey has (protocol.PostQuantum, protocol.Classic), as every
-// server takes a send (PROTOCOL.md §4.5 step 7, §5 check 1); a grease stanza
+// server takes a send (PROTOCOL.md §11.10 step 7, §12.3 check 1); a grease stanza
 // and any other age ignores, as it does. age tries every identity on every
 // stanza, up to 1,024, so a file of 1,024 native stanzas costs a box about a
 // thousand times what an honest message does, for each prekey it keeps (#49,
 // measured; PRECEDENTS.md, Part 2, § 4), and only a server can serve one.
 // The stanzas are read and counted once, before anything is decrypted, by
 // protocol.ReadStanzas, the reading a server's check of a send shares. A
-// file with none is a case of its own (§4.5 step 7): errNoNative.
+// file with none is a case of its own (§11.10 step 7): errNoNative.
 func oneNative(ct []byte) error {
 	st, err := protocol.ReadStanzas(ct)
 	if err != nil {

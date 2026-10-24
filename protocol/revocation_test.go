@@ -39,7 +39,7 @@ func TestVectorRevocation(t *testing.T) {
 }
 
 // Revocations in forms every OpenSSH build reads the same way (PROTOCOL.md
-// §3): A's with one NUL ending its key's type, and C's, by a P-256 identity,
+// §3.2): A's with one NUL ending its key's type, and C's, by a P-256 identity,
 // with one ending its curve and with r at the 2,049 bytes OpenSSH reads, all
 // taken; and C's with r a byte longer, refused.
 func TestVectorRevocationForms(t *testing.T) {
@@ -115,7 +115,7 @@ func TestVectorBadRevocations(t *testing.T) {
 // package writes it first; a reader takes one without it, as the route says
 // what the body is, or with it anywhere among the members, and refuses one
 // that names any other type, an empty one or one of another JSON type
-// included, as a request with its member named (PROTOCOL.md §6.3).
+// included, as a request with its member named (PROTOCOL.md §10.3).
 func TestARecordNamesItsType(t *testing.T) {
 	b, err := json.Marshal(Revocations{Identity: Bytes("doc"), Revocation: Bytes("sig")})
 	if err != nil || string(b) != `{"type":"revocation_record","identity":"ZG9j","revocation_signature":"c2ln"}` {

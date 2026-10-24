@@ -1,7 +1,7 @@
 // Package taken is a reading of a box's clock that a server took: the date of
 // a pass it checked, on a call it answered, the pass's not_after less
 // protocol.PassLifetime. Every deletion by the clock is by one, and never by
-// a reading of the clock (PROTOCOL.md §0): a box whose clock is far off is
+// a reading of the clock (PROTOCOL.md §12.4): a box whose clock is far off is
 // stopped at its pass, and one whose clock jumps or steps back while a call
 // is in flight deletes nothing by where it went. A pass is the only way to a
 // Reading, so no path of the client, a new one included, deletes by a reading

@@ -89,7 +89,7 @@ func TestARefusalNeverQuotesTheMessage(t *testing.T) {
 // An API error says what its code means in this client's own words, with the
 // values the error carries once each is checked to its type: nothing a
 // server wrote is printed, since whoever reads the error may be a model and
-// the server may be hostile (PROTOCOL.md §13). A code this client does not
+// the server may be hostile (PROTOCOL.md §11.3). A code this client does not
 // know, one under a status that is not its own, or one beside a type that is
 // not its own, is not printed at all.
 func TestAnAPIErrorPrintsNoneOfTheServersWords(t *testing.T) {
@@ -415,7 +415,7 @@ func TestQuarantineKeepsNoServerTextInTheClear(t *testing.T) {
 	if qs, err := b.Quarantined(t.Context()); err != nil || len(qs) != 3 || !slices.Contains(qs, client.Quarantined{ID: old, Code: "unknown"}) {
 		t.Fatalf("Quarantined with findings planted in a file: %+v, %v", qs, err)
 	}
-	// A file is read as every JSON text is (PROTOCOL.md §0b): a name in
+	// A file is read as every JSON text is (PROTOCOL.md §3.3): a name in
 	// another case is not that member, and one given twice is no record, so
 	// neither lists a value encoding/json would have taken.
 	other := strings.Repeat("d", 64)
@@ -537,7 +537,7 @@ func TestAFetchIsTheSizeItsListGives(t *testing.T) {
 }
 
 // Every reader takes a ciphertext of any size up to the protocol's largest
-// (PROTOCOL.md §4.5, §5.2): one listed and served at exactly that size is
+// (PROTOCOL.md §11.10, §12.3): one listed and served at exactly that size is
 // read whole and judged, a verdict like any other, and the drain goes on. It
 // is no age file, so it is refused as undecryptable, kept and acked.
 func TestAFetchOfTheLargestCiphertextIsRead(t *testing.T) {
@@ -616,7 +616,7 @@ func TestAListsCursorIsURLSafe(t *testing.T) {
 }
 
 // grease is an age recipient that writes one grease stanza, as rage and
-// pyrage add to every file (PROTOCOL.md §4.5 step 7).
+// pyrage add to every file (PROTOCOL.md §11.10 step 7).
 type grease struct{}
 
 func (grease) Wrap([]byte) ([]*age.Stanza, error) {
@@ -625,7 +625,7 @@ func (grease) Wrap([]byte) ([]*age.Stanza, error) {
 
 // A file without exactly one native recipient stanza is refused as
 // undecryptable before any key agreement, as every server refuses such a
-// send (PROTOCOL.md §4.5 step 7, §5 check 1): age tries every prekey on every
+// send (PROTOCOL.md §11.10 step 7, §12.3 check 1): age tries every prekey on every
 // stanza, up to 1,024 (#49). Two native stanzas, one to the box's own prekey,
 // are refused, which age alone would decrypt; so is a file of grease alone,
 // in words of its own (#417 item 4); one native stanza with a grease stanza

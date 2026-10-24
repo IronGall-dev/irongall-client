@@ -133,7 +133,7 @@ func TestEveryPaddedSizeIsAnAgeFile(t *testing.T) {
 // A size limit that is a whole number of its own blocks is not passed by
 // padding: a message fits it padded exactly when it fits it bare. So the
 // client never needs to know the limit, and padding costs nothing at one.
-// The protocol's largest ciphertext is such a limit (PROTOCOL.md §4.5).
+// The protocol's largest ciphertext is such a limit (PROTOCOL.md §11.10).
 func TestPaddingAtALimit(t *testing.T) {
 	for _, limit := range []int{64 << 10, 10 << 20, MaxCiphertext} {
 		if PaddedSize(limit) != limit {
@@ -200,7 +200,7 @@ func TestPlaintextLandsOnABlock(t *testing.T) {
 }
 
 // What the padding is for: bodies of different lengths are one size on the
-// wire. And where the first boundaries fall, which PROTOCOL.md §4.3a states.
+// wire. And where the first boundaries fall.
 func TestShortBodiesAreOneSize(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
 	box, _, signer := passBox(t, now)

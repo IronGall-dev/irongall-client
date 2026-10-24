@@ -8,10 +8,10 @@
 //   - every request: one the description refuses must not be answered 2xx,
 //     and a query on the link page, which the page ignores, is dropped first;
 //   - every number in a JSON answer, or in a JSON request answered 2xx, is an
-//     integer written in digits alone (PROTOCOL.md §0b), where the schema
+//     integer written in digits alone (PROTOCOL.md §3.3), where the schema
 //     takes 1.0 and 1e0;
 //   - a route the description lacks gets the router's plain 404 or 405, a
-//     503 while the server is not ready, or a limit's 429 as PROTOCOL.md §13
+//     503 while the server is not ready, or a limit's 429 as PROTOCOL.md §11.2
 //     gives it to any call: rate_limited, with a Retry-After in seconds;
 //   - every error's code counts (protocol.Problem.CodeAt): one the
 //     description knows, under its own status, beside its own type;
@@ -159,7 +159,7 @@ func check(t testing.TB, v validator.Validator, r *http.Request, body *tee, rec 
 	if !ok && missing(errs) {
 		// No such route: the router's plain answer, a server that is not
 		// ready, which answers 503 to everything under /v1/, or a limit's
-		// 429, which any request may meet (PROTOCOL.md §13).
+		// 429, which any request may meet (PROTOCOL.md §11.2).
 		if rec.status == http.StatusTooManyRequests && isProblem(rec.header) {
 			// A limit's own answer and no other 429: rate_limited, whom it
 			// counted, and a Retry-After in seconds, read as the Go client
@@ -181,14 +181,14 @@ func check(t testing.TB, v validator.Validator, r *http.Request, body *tee, rec 
 		t.Errorf("apitest: %s: a request the description refuses is answered as taken: %s", where, list(errs))
 	}
 	if n := notInteger(body.buf.Bytes()); jsonBody && n != "" && rec.status < 400 && read {
-		t.Errorf("apitest: %s: a request that writes %s, no integer (PROTOCOL.md §0b), is answered as taken", where, n)
+		t.Errorf("apitest: %s: a request that writes %s, no integer (PROTOCOL.md §3.3), is answered as taken", where, n)
 	}
 	answer, ok := decoded(t, where, r, rec)
 	if !ok {
 		return
 	}
 	if n := notInteger(answer); isJSON(rec.header) && n != "" {
-		t.Errorf("apitest: %s: the answer writes %s, no integer (PROTOCOL.md §0b)\n%s", where, n, answer)
+		t.Errorf("apitest: %s: the answer writes %s, no integer (PROTOCOL.md §3.3)\n%s", where, n, answer)
 	}
 	if len(rec.header.Values("Set-Cookie")) > 0 {
 		// The validator passes a Set-Cookie on any answer, whatever it is told.
@@ -258,7 +258,7 @@ func isProblem(h http.Header) bool {
 }
 
 // delaySeconds reports whether v is a Retry-After of digits alone (PROTOCOL.md
-// §13).
+// §11.3).
 func delaySeconds(v string) bool {
 	return v != "" && strings.Trim(v, "0123456789") == ""
 }
@@ -269,7 +269,7 @@ func isJSON(h http.Header) bool {
 }
 
 // notInteger returns the first number in a JSON text that is not written as
-// PROTOCOL.md §0b writes an integer, in digits alone, or "" for none. Every
+// PROTOCOL.md §3.3 writes an integer, in digits alone, or "" for none. Every
 // number the description names is an Integer or a Serial, and JSON Schema
 // counts 1.0 and 1e0 as integers, so this is the check the schema cannot
 // make. A description that gains another kind of number fails here first.

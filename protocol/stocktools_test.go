@@ -14,7 +14,7 @@ import (
 
 // TestVectorsByToolsNotOurs checks the crypto and container vectors with
 // tools this project did not write, so that each is the standard's format and
-// not this code's reading of it (testdata/vectors/README.md, PROTOCOL.md §11):
+// not this code's reading of it (testdata/vectors/README.md, PROTOCOL.md §16):
 // age decrypts each message with its prekey's published test identity to
 // exactly its plaintext, and with the other box's not at all; head and sed split that plaintext into the line and
 // its signature; ssh-keygen reads each certificate and verifies each signature

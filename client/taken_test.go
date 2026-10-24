@@ -33,7 +33,7 @@ func (j jumpAtRenewal) RoundTrip(r *http.Request) (*http.Response, error) {
 // The renewal's twin of TestAClockThatJumpsDuringADrainDeletesNoKey (#209):
 // a clock that jumps 70 days ahead after the server took the renewal deletes
 // no prekey, since keys are deleted by the reading the server took
-// (AGENTS.md, decided on #200; PROTOCOL.md Terms). The mail waiting for the
+// (AGENTS.md, decided on #200; PROTOCOL.md §12.4). The mail waiting for the
 // retired key is delivered once the clock is right.
 func TestAClockThatJumpsDuringARenewalDeletesNoKey(t *testing.T) {
 	t.Parallel()
@@ -159,7 +159,7 @@ func TestAClockSteppedBackBeforeARenewalDeletesNoKey(t *testing.T) {
 
 // A drain that empties the box deletes the older retired prekeys by its
 // clock only as it read when the server answered the drain's list, never by
-// a later reading (PROTOCOL.md, the Terms' deletion time). Here Receive's
+// a later reading (PROTOCOL.md §12.4). Here Receive's
 // first reading is 2 hours ahead and the clock is right again before the
 // list: the key that the list's reading keeps must be kept.
 func TestDropRetiredDeletesByNoReadingLaterThanTheLists(t *testing.T) {
@@ -296,7 +296,7 @@ func (j jumpAtList) RoundTrip(r *http.Request) (*http.Response, error) {
 }
 
 // The replay set is pruned by the date of the pass the drain's list carried,
-// which the server took (PROTOCOL.md §5 check 9): a clock that jumps 70 days
+// which the server took (PROTOCOL.md §12.4): a clock that jumps 70 days
 // once the list is answered drops no line and raises no floor, so the mail
 // it would have let go stays known.
 func TestAClockThatJumpsDuringADrainPrunesNoLine(t *testing.T) {

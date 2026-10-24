@@ -133,7 +133,7 @@ func members(t reflect.Type) []string {
 }
 
 // Every path that has a GET has a HEAD that is that GET without content
-// (RFC 9110 §9.3.2; PROTOCOL.md §13): the same parameters, security and
+// (RFC 9110 §9.3.2; PROTOCOL.md §11.2): the same parameters, security and
 // statuses, each with the same header fields and no content, but the GET's
 // 206, since a HEAD's Range is ignored (§14.2). The paths are the
 // description's own, so a GET added without its HEAD fails.

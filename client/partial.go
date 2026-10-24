@@ -13,14 +13,14 @@ import (
 )
 
 // A fetch that is cut keeps what it read, and the next fetch of that message
-// asks for the rest (PROTOCOL.md §5.2; #381): the bytes go to the box's
+// asks for the rest (PROTOCOL.md §12.3; #381): the bytes go to the box's
 // partial file as they are read, the file is synced at the end of an
 // attempt that did not read them all, and only then does the box's state
 // record which message they are of and how many are synced, under
 // "partial", as "<id> <length>". A fetch trusts the file only up to the
 // length state records: whatever a crash left past it was never synced. The
 // whole, those bytes and the range, is then held to the list's size and
-// judged as a body read whole is, its id held to its SHA-256 (§5 check 9),
+// judged as a body read whole is, its id held to its SHA-256 (§12.3 check 9),
 // so bytes a server splices in are refused as any wrong ciphertext is. One
 // message's partial is kept at a time: a fetch of another starts the file
 // afresh. It goes once its message is judged or gone (drop), and a drain
@@ -223,7 +223,7 @@ func (b *Box) dropPartials() error {
 // that goes on from the bytes kept, its Content-Range the range asked of the
 // listed size, or any other 2xx as the whole body, which starts the partial
 // afresh. It reads no more than the listed size, and a byte past it to see
-// that the body ends there (PROTOCOL.md §5.2). An answer that breaks that
+// that the body ends there (PROTOCOL.md §12.3). An answer that breaks that
 // form is no answer, and drops the partial (notListed); one whose body could
 // not be read is returned as readErr, the bytes read so far kept for end.
 func (ct *ciphertext) read(name string, resp *http.Response) (readErr, err error) {
@@ -237,7 +237,7 @@ func (ct *ciphertext) read(name string, resp *http.Response) (readErr, err error
 	}
 	// The listed size is at most the protocol's largest ciphertext, which
 	// the list's form holds (protocol.MessageList), and is read whatever its
-	// size (§5.2).
+	// size (§11.10).
 	if resp.ContentLength >= 0 && resp.ContentLength != ct.size-from {
 		return nil, errors.Join(notListed(name, ct.size), p.drop())
 	}

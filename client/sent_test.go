@@ -128,7 +128,7 @@ func TestSendJSON(t *testing.T) {
 
 // What its reader would refuse for its form is refused before anything is
 // written or posted, and the recipient is not allowed for it: a JSON body
-// that breaks a rule of PROTOCOL.md §0b, and a noncharacter in a text body or
+// that breaks a rule of PROTOCOL.md §3.3, and a noncharacter in a text body or
 // a subject, which seal once refused only after the outbox kept it.
 func TestNothingIsWrittenForAMessageItsReaderRefuses(t *testing.T) {
 	t.Parallel()

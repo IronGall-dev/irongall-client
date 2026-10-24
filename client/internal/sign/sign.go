@@ -1,8 +1,8 @@
 // Package sign holds a box's keys: its identity, which signs certificates
 // and revocations and nothing else, and its working keys, which sign what the
-// box says (PROTOCOL.md §2b). Nothing else in the client signs with them
+// box says (PROTOCOL.md §5). Nothing else in the client signs with them
 // (TestOnlySignSigns), and every signature first asks whether the box holds
-// its own revocation, and is refused if it does (PROTOCOL.md §6.3): no path,
+// its own revocation, and is refused if it does (PROTOCOL.md §12.5): no path,
 // a new one included, can sign around that check.
 package sign
 

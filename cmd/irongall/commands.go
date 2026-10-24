@@ -1058,7 +1058,7 @@ wrong file goes nowhere, and no error prints the key.`,
 }
 
 // adoptKey reads an adopt key from r: one line, its line feed optional, of
-// an adopt key's form (PROTOCOL.md §6.5), "iga1_" and base64url. Anything
+// an adopt key's form (PROTOCOL.md §11.16), "iga1_" and base64url. Anything
 // else is refused in words that never quote it, since it may be the key, or
 // a secret piped in by mistake.
 func adoptKey(r io.Reader) (string, error) {
@@ -1074,7 +1074,7 @@ func adoptKey(r io.Reader) (string, error) {
 }
 
 // adoptKeyForm is an adopt key's form, and maxAdoptKey the most bytes one
-// may be (PROTOCOL.md §6.5).
+// may be (PROTOCOL.md §11.16).
 var adoptKeyForm = regexp.MustCompile(`\Aiga1_[A-Za-z0-9_-]+\z`)
 
 const maxAdoptKey = 1024

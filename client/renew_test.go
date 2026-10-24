@@ -65,7 +65,7 @@ func TestReceiveRenewsADayOldPrekey(t *testing.T) {
 	}
 }
 
-// A box its server forgot, once its record's expiry passed (PROTOCOL.md §7),
+// A box its server forgot, once its record's expiry passed (PROTOCOL.md §13),
 // comes back at its next receive: with no box served to number above, the
 // renewal is numbered above what the box published, and goes as a
 // registration. Mail reaches it again.
@@ -98,7 +98,7 @@ func TestAForgottenBoxRegistersAnewAtItsRenewal(t *testing.T) {
 
 // A box its server forgets between its renewal's read, which serves it, and
 // its upload, which the server then answers 404 no_such_mailbox (PROTOCOL.md
-// §6.4: "at any moment"): the renewal reads the box once more, and where the
+// §13: "at any moment"): the renewal reads the box once more, and where the
 // server holds no box sends the same statement as its registration, by
 // prekey renew, by the renewal recv makes, whose ACL then goes again as
 // after any registration, and by the remedy's renewal, after its revocation
@@ -774,7 +774,7 @@ func TestAServerThatFailsEveryRenewalGetsEachKeyOnce(t *testing.T) {
 	// Signed on day 2, expired on day 35, its deletion time day 68. No
 	// server has taken a pass from the box since day 65, so it is kept: a
 	// box deletes by its clock only what a server's answer dated by that
-	// clock lets it (PROTOCOL.md §0), and this box cannot tell a lost pass
+	// clock lets it (PROTOCOL.md §12.4), and this box cannot tell a lost pass
 	// from a clock far ahead.
 	stem := func(l lease) string { return filepath.Join(b.Dir(), "prekeys", strconv.FormatUint(l.p.Serial, 10)) }
 	if !exists(stem(first) + ".agekey") {

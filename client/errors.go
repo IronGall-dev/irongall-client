@@ -50,7 +50,7 @@ const (
 
 // APIError is a non-2xx answer from the server. Problem is the RFC 9457 body
 // when the server sent one with a code this client knows, for the status the
-// code has, beside the type that is the code's own (PROTOCOL.md §13);
+// code has, beside the type that is the code's own (PROTOCOL.md §11.3);
 // otherwise its code is empty.
 type APIError struct {
 	Status  int
@@ -70,7 +70,7 @@ type APIError struct {
 // client's own words, with the values the error carries once each is checked
 // to its type. Nothing the server wrote is in it: its detail, hint and title
 // are for a person reading the body, and whoever reads this may be a model
-// (PROTOCOL.md §13). A code this client does not know is not printed at all,
+// (PROTOCOL.md §11.3). A code this client does not know is not printed at all,
 // since any text can be made to fit a code's grammar.
 func (e *APIError) Error() string {
 	c := e.Problem.Code

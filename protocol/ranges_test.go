@@ -9,7 +9,7 @@ import (
 // A fetch's Range is read as one open-ended byte range, "bytes=N-", the unit
 // in any ASCII case (RFC 9110 §14.1), and nothing else: several ranges, a closed
 // one, a suffix, another unit, a form with spaces, two lines, or a Range
-// beside an If-Range are answered with the whole body (PROTOCOL.md §5.2).
+// beside an If-Range are answered with the whole body (PROTOCOL.md §11.12).
 func TestRangeAsked(t *testing.T) {
 	for _, c := range []struct {
 		ranges, ifRange []string

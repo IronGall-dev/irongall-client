@@ -16,7 +16,7 @@ import (
 // A box proves itself to a server with a pass: a short statement of who is
 // calling, which server, and until when, signed by the box's working key. It
 // says nothing of what a call does, so the pass hands a server no proof of
-// any send (PROTOCOL.md §6.1b).
+// any send (PROTOCOL.md §8).
 
 const (
 	// PassTag is line 1 of every pass statement.
@@ -38,7 +38,7 @@ const (
 	// a certificate starts MaxSkew before it is made (NewCertificate), a
 	// server takes a prekey that ends up to MaxSkew past PrekeyLifetime
 	// (MaxPrekeyLifetime), and a reader takes a sent_at up to MaxSkew ahead
-	// (OpenEnvelope). PROTOCOL.md §0.
+	// (OpenEnvelope). PROTOCOL.md §3.4.
 	MaxSkew = MaxPassLifetime
 )
 
@@ -59,7 +59,7 @@ var serverNameGrammar = regexp.MustCompile(`\A(?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])
 
 // CheckServerName checks that s can stand in a pass as the server's name: the
 // host of the server's URL, lowercase, with its port only when that is not the
-// scheme's default (PROTOCOL.md §6.1b).
+// scheme's default (PROTOCOL.md §8).
 func CheckServerName(s string) error {
 	if len(s) > 255 || !serverNameGrammar.MatchString(s) {
 		return fmt.Errorf("%w: the server's name is its host, lowercase, with its port only when that is not the scheme's default", ErrPass)
@@ -88,7 +88,7 @@ type Pass struct {
 // signed by an Ed25519 working key, under the certificate its identity
 // signed, so its size is its identity's key type's; and ParsePass refuses a
 // longer value, in any form, before it reads it, so before it knows the box
-// (PROTOCOL.md §6.1b). So the bound is the most any identity key type allows,
+// (PROTOCOL.md §8). So the bound is the most any identity key type allows,
 // and whitespace a sender adds counts toward it.
 const MaxPassAuthorization = len(PassScheme+` address="", not_after="", signature=""`) + 64 + len(TimeLayout) + (MaxSignature+2)/3*4
 
@@ -112,7 +112,7 @@ func NewPass(signer ssh.Signer, a Address, server string, now time.Time) (author
 }
 
 // Authorization is the pass in the one form a client writes it (PROTOCOL.md
-// §6.1b), whatever form it was read from, its signature too (armored): a
+// §8), whatever form it was read from, its signature too (armored): a
 // server that remembers passes remembers each by this, so one pass written
 // two ways is one pass (IronGall-dev/irongall-server#69).
 func (p *Pass) Authorization() string {
@@ -123,7 +123,7 @@ func (p *Pass) Authorization() string {
 // armored is the pass's signature as Armor writes it, from the blob a
 // verifier reads (Dearmor), with nothing in the reserved field, which
 // nothing signs (sshsig.Verify): one form for every way of writing one
-// signature that OpenSSH reads as the same (PROTOCOL.md §3). A signature
+// signature that OpenSSH reads as the same (PROTOCOL.md §3.2). A signature
 // that does not read is as it was sent; such a pass never verifies.
 func (p *Pass) armored() []byte {
 	blob, err := Dearmor(p.signature)
@@ -147,7 +147,7 @@ func (p *Pass) armored() []byte {
 }
 
 // ParsePass parses an Authorization header's value, read as RFC 9110 §11
-// lets a recipient read credentials (PROTOCOL.md §6.1b): the scheme in any
+// lets a recipient read credentials (PROTOCOL.md §8): the scheme in any
 // case and one space or more, then the three parameters, address, not_after
 // and signature, in any order, each name in any case and given once, with
 // optional whitespace around each comma and each "=", empty list elements

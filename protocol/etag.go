@@ -36,7 +36,7 @@ func IfNoneMatch(lines []string, etag string) bool {
 
 // IfMatch reports whether an If-Match field's condition is true for a page
 // whose entity-tag is etag, "" for a page that carries none, as RFC 9110
-// §13.1.1 has an origin server evaluate it, and as PROTOCOL.md §5.1 reads
+// §13.1.1 has an origin server evaluate it, and as PROTOCOL.md §11.2 reads
 // it: no field is no condition; "*" as the whole value is true, a page with
 // no tag included, since it is a current representation; a list of
 // entity-tags, each read through its closing quote (cutETag) and empty

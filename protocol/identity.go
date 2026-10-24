@@ -25,7 +25,7 @@ const (
 // The identity key types this package defines: the SSH name on line 2 of an
 // identity document. Every client verifies IdentityEd25519. Every other type
 // is optional: a box of one is reached only by clients that verify it
-// (PROTOCOL.md §2).
+// (PROTOCOL.md §4.1).
 const (
 	IdentityEd25519 = ssh.KeyAlgoED25519
 	IdentityP256    = ssh.KeyAlgoECDSA256
@@ -57,7 +57,7 @@ var identityForm = regexp.MustCompile(`\A` + IdentityTag + `\n([!-+\--~]{1,64}) 
 // type in its one encoding, and the most bytes a signature by a box of that
 // type may be (SignatureBound). Its document's form is the one every type
 // shares (identityForm), with the key in its one encoding: the base64 of the
-// wire key as it is written back once parsed (PROTOCOL.md §2). Ed25519's is 93
+// wire key as it is written back once parsed (PROTOCOL.md §4.1). Ed25519's is 93
 // bytes and P-256's 173.
 var identityTypes = map[string]struct {
 	check func(ssh.PublicKey) error
