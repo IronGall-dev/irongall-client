@@ -374,8 +374,8 @@ paths:
         `201`; a revocation of certificates taken, or one through the same
         serial again, `200`; beside a revocation of the address, one no higher
         than the one held changes nothing, and the answer is `201`. An address
-        already revoked is `410`, answered from the record before any
-        signature in the body is checked, and carrying it.
+        already revoked is `410`, answered from the record and carrying it
+        (§13, the order of refusals).
       security: []
       requestBody:
         required: true
@@ -425,13 +425,13 @@ paths:
         - name: If-Match
           in: header
           required: false
-          description: The `ETag` a `GET` answered with the ACL the writer read, so that it replaces only that one. Read as RFC 9110 §13.1.1 has an origin server evaluate it, as a list's is, and compared strongly with the tag of the ACL held, a box with none included, before the body is read; a false one is `412`, and nothing changes. Without it, the `PUT` replaces whatever is held.
+          description: The `ETag` a `GET` answered with the ACL the writer read, so that it replaces only that one. Read as RFC 9110 §13.1.1 has an origin server evaluate it, as a list's is, and compared strongly with the tag of the ACL held, a box with none included; a false one is `412`, and nothing changes. Without it, the `PUT` replaces whatever is held.
           schema:
             type: string
         - name: If-None-Match
           in: header
           required: false
-          description: Read as on every route (§13), and before the body is read. `*`, or the tag of the ACL held, compared weakly, is `412`, since a box always has an ACL, its open one when it has put none. No client needs it.
+          description: Read as on every route (§13). `*`, or the tag of the ACL held, compared weakly, is `412`, since a box always has an ACL, its open one when it has put none. No client needs it.
           schema:
             type: string
       requestBody:
@@ -470,14 +470,13 @@ paths:
       description: |
         `PROTOCOL.md` §6.2. A box with none answers
         `{"allow":["*"],"deny":[]}`, which is what none means. The answer
-        carries the ACL's `ETag`, and its preconditions are read as a list's
-        are, in RFC 9110 §13.2.2's order, once the answer without them would
-        be `200`.
+        carries the ACL's `ETag`, and its preconditions are read as on every
+        route (§13).
       parameters:
         - name: If-Match
           in: header
           required: false
-          description: Evaluated first, as RFC 9110 §13.1.1 has an origin server evaluate it, and compared strongly; a false one is `412`.
+          description: Evaluated as RFC 9110 §13.1.1 has an origin server evaluate it, and compared strongly; a false one is `412`.
           schema:
             type: string
         - name: If-None-Match
@@ -748,7 +747,7 @@ paths:
         - name: If-Match
           in: header
           required: false
-          description: Evaluated first, as RFC 9110 §13.1.1 has an origin server evaluate it, and compared strongly; a false one is `412` (§5.1). No client needs it.
+          description: Evaluated as RFC 9110 §13.1.1 has an origin server evaluate it, and compared strongly; a false one is `412` (§5.1). No client needs it.
           schema:
             type: string
         - name: If-None-Match
@@ -1221,14 +1220,14 @@ components:
       name: If-Match
       in: header
       required: false
-      description: Evaluated as RFC 9110 §13.1.1 has an origin server evaluate it, in §13.2.2's order, once the route knows its target's state (`PROTOCOL.md` §13). `*` is true where the target exists; a list of tags is false where it carries none, as here; anything else is false. A false one is `412`. No client needs it.
+      description: Evaluated as RFC 9110 §13.1.1 has an origin server evaluate it (`PROTOCOL.md` §13, the order of refusals). `*` is true where the target exists; a list of tags is false where it carries none, as here; anything else is false. A false one is `412`. No client needs it.
       schema:
         type: string
     IfNoneMatch:
       name: If-None-Match
       in: header
       required: false
-      description: Evaluated as RFC 9110 §13.1.2 has an origin server evaluate it, after `If-Match` (`PROTOCOL.md` §13). `*` is false where the target exists; a list of tags names none here, so it holds. A false one is `304` to a `GET` or a `HEAD`, and `412` to any other method. No client needs it.
+      description: Evaluated as RFC 9110 §13.1.2 has an origin server evaluate it (`PROTOCOL.md` §13, the order of refusals). `*` is false where the target exists; a list of tags names none here, so it holds. A false one is `304` to a `GET` or a `HEAD`, and `412` to any other method. No client needs it.
       schema:
         type: string
 
