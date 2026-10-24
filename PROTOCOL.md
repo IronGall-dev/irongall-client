@@ -12,6 +12,7 @@ This document specifies the formats, the meaning of each HTTP operation, and wha
 
 - **`api/openapi.yaml` is normative for the HTTP shapes:** routes, methods, request and answer members with their types, status codes, error codes and headers. This document says what each operation means, who may call it, what is checked and what each refusal means.
 - **`testdata/vectors/` holds the conformance vectors** (Section 16).
+- **`PRECEDENTS.md`** sets each design decision beside the published standards and deployed systems that make the same one.
 
 ## 2. Conventions
 
