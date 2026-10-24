@@ -98,12 +98,13 @@ type Result struct {
 	// there, which the renewal's read then kept as taken (checkACL). The drain
 	// went ahead, and the next send or Receive sends it.
 	ACLErr error
-	// ACLReplaced reports that, at this Receive's renewal, the box's server
-	// held an ACL other than the one this box last sent it, which another
-	// machine of the box, whoever holds its pass or the server itself wrote,
-	// and that the box sent its own in its place (checkACL); or that a sync
-	// since the last Receive replaced an ACL a restore adopted that held what
-	// no file of the box says, or one another writer put that a renewal's
+	// ACLReplaced reports that the read of the ACL the box's server holds,
+	// owed since a renewal recv began was taken and made by this Receive
+	// (aclAt), found an ACL other than the one this box last sent it, which
+	// another machine of the box, whoever holds its pass or the server itself
+	// wrote, and that the box sent its own in its place (checkACL); or that a
+	// sync since the last Receive replaced an ACL a restore adopted that held
+	// what no file of the box says, or one another writer put that an owed
 	// read kept and could not replace then (syncACL; #366, #377).
 	ACLReplaced bool
 	// NotMade is a statement the box's server served in its name, at the
@@ -138,8 +139,10 @@ func (r *Result) Again() time.Duration {
 // Receive, or any other command that writes the box, waits for it.
 //
 // First it renews the prekey if the current one is more than a day old, so
-// a box received at least monthly never lapses, and after a renewal it reads
-// the ACL its server holds, and replaces one it did not send (checkACL). A drain that empties the box
+// a box received at least monthly never lapses. Once that renewal is taken,
+// a read of the ACL its server holds is owed, and the first Receive that can
+// make it makes it, renewing or not, and replaces one the box did not send
+// (aclAt, checkACL). A drain that empties the box
 // then deletes the retired prekeys no mail can still need (see
 // [Box.dropRetired]): all but the newest. And once the server has answered
 // the drain's list, so has taken a pass dated by this machine's clock, the
@@ -155,10 +158,11 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 	// box's own revocation, then the drain's about each sender.
 	asked := newLookups()
 	renewed, renewErr := b.renewIfDue(ctx)
-	// After a renewal the ACL the server holds is read too, about once a
-	// day, so one that another writer put there lasts until the box's next
-	// renewal at most; at any other Receive only a change of the box's own
-	// is sent, with no read.
+	// A renewal recv began owes, once it is taken, a read of the ACL the
+	// server holds, about once a day, which this Receive makes while it is
+	// owed, whether or not it renewed, so one that another writer put there
+	// lasts until the read after the box's next renewal at most; with none
+	// owed, only a change of the box's own is sent, with no read (aclAt).
 	replaced, aclErr := b.aclAt(ctx)
 	// One Result for the command, which a second drain adds to: what the first
 	// landed and acked is said, whatever stopped it (#332). The two drains
