@@ -79,6 +79,13 @@ func Validator() (validator.Validator, error) {
 	return checker, built
 }
 
+// methods are the HTTP methods an OpenAPI path item names its operations
+// by, as a request line writes them.
+var methods = map[string]string{
+	"get": http.MethodGet, "put": http.MethodPut, "post": http.MethodPost, "delete": http.MethodDelete,
+	"options": http.MethodOptions, "head": http.MethodHead, "patch": http.MethodPatch, "trace": http.MethodTrace,
+}
+
 // Routes returns each operation the description has, as "METHOD /path",
 // sorted: what a server's own list of routes is held to, so a route added on
 // one side and not the other fails.
@@ -94,7 +101,11 @@ func Routes() ([]string, error) {
 	var routes []string
 	for path, item := range m.Model.Paths.PathItems.FromOldest() {
 		for method := range item.GetOperations().KeysFromOldest() {
-			routes = append(routes, strings.ToUpper(method)+" "+path)
+			name, ok := methods[method]
+			if !ok {
+				return nil, fmt.Errorf("%s: an operation of a method this package does not know, %q", path, method)
+			}
+			routes = append(routes, name+" "+path)
 		}
 	}
 	slices.Sort(routes)

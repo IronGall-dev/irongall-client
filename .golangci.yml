@@ -15,9 +15,10 @@ linters:
     forbidigo:
       # Replaces forbidigo's own default list, which forbids fmt.Print.
       forbid:
-        # A protocol token is ASCII, and Unicode's case folding reads
-        # characters that are no token's as ASCII letters (U+017F as s).
-        - pattern: ^strings\.EqualFold$
+        # A protocol token is ASCII, and Unicode's case mappings read
+        # characters that are no token's as ASCII letters (U+017F as s, the
+        # Kelvin sign as k), lowering and raising alike.
+        - pattern: ^(strings|bytes)\.(EqualFold|ToLower|ToUpper|ToTitle)$
           msg: compare a protocol token in any case with protocol.LowerASCII (irongall-client#405)
       analyze-types: true
   exclusions:
