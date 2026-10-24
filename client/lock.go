@@ -88,7 +88,7 @@ func (b *Box) makeState() error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	db, err := bolt.Open(tmp.Name(), 0o600, nil)
+	db, err := bolt.Open(tmp.Name(), 0o600, &bolt.Options{NoSync: !fsync})
 	if err != nil {
 		return err
 	}

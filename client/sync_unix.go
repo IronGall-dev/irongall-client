@@ -6,6 +6,9 @@ import "os"
 
 // syncDir makes a rename in dir durable.
 func syncDir(dir string) error {
+	if !fsync {
+		return nil
+	}
 	d, err := os.Open(dir) //nolint:gosec // a directory inside the box's own
 	if err != nil {
 		return err

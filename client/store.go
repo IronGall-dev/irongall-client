@@ -234,7 +234,7 @@ func (b *Box) openState(ctx context.Context, readOnly bool) (*bolt.DB, error) {
 		}
 	}
 	for {
-		db, err := bolt.Open(b.path("state"), 0o600, &bolt.Options{Timeout: lockTry, ReadOnly: readOnly, OpenFile: openWhole})
+		db, err := bolt.Open(b.path("state"), 0o600, &bolt.Options{Timeout: lockTry, ReadOnly: readOnly, OpenFile: openWhole, NoSync: !fsync})
 		if err == nil {
 			return db, nil
 		}

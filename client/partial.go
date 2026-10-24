@@ -165,7 +165,7 @@ func (p *partial) end() error {
 		return f.Close()
 	}
 	if p.err == nil {
-		if err := f.Sync(); err != nil {
+		if err := syncFile(f); err != nil {
 			p.err = &partialError{err}
 		}
 	}

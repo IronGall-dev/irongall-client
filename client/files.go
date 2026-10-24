@@ -45,7 +45,7 @@ func writeFile(name string, data []byte) error {
 		tmp.Close() //nolint:errcheck,gosec // the write error wins
 		return err
 	}
-	if err := tmp.Sync(); err != nil {
+	if err := syncFile(tmp); err != nil {
 		tmp.Close() //nolint:errcheck,gosec // the sync error wins
 		return err
 	}
