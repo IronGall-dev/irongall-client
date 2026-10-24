@@ -43,6 +43,10 @@ import (
 //	not encrypted to this box             A's message to C, stored in B's box  → refused: it does not decrypt
 //	an id that is not the hash            a message listed under another id    → refused; files are named by the hash
 func TestForgeries(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
+	}
 	ctx := context.Background()
 	refusedFor := func(t *testing.T, res *client.Result, code, why string) {
 		t.Helper()

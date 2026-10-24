@@ -18,6 +18,7 @@ import (
 // that waited 20 days in the outbox is fresh to its reader for the 33 days
 // after it was posted, as long as the server keeps it (PROTOCOL.md §4.5, §7).
 func TestAPostIsDatedAtThePost(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	r, s := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -80,6 +81,7 @@ func TestAPostIsDatedAtThePost(t *testing.T) {
 // read once, at day 33 and two hours too, since the reader keeps its line
 // 66 days and an hour (protocol.SeenFor).
 func TestARetryDatedAfreshIsDeliveredOnce(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	r, s := e.box(protocol.Classic), e.box(protocol.Classic)

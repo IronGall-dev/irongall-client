@@ -54,6 +54,7 @@ func (s *statusWriter) WriteHeader(code int) {
 // a 304 is answered with nothing to do, and the interval is its Retry-After
 // (PROTOCOL.md §5.1).
 func TestAnEmptyBoxPollsWithItsETag(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
 	var p polls
@@ -75,6 +76,7 @@ func TestAnEmptyBoxPollsWithItsETag(t *testing.T) {
 // A tag is kept only from an empty box: a page with mail drops it, so a 304
 // can never hide mail; the box's next empty poll keeps a new one.
 func TestMailDropsTheETag(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	receive(t, b)
@@ -103,6 +105,7 @@ func TestMailDropsTheETag(t *testing.T) {
 // If-None-Match is no answer, and so is a list answer without a Retry-After of
 // digits alone.
 func TestAListAnswerOutOfItsFormIsNoAnswer(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
 	for name, answer := range map[string]func(w http.ResponseWriter){
@@ -138,6 +141,7 @@ func TestAListAnswerOutOfItsFormIsNoAnswer(t *testing.T) {
 // §8.8.3), printable ASCII and short: any other is not kept. A control byte
 // never reaches the box: Go's transport refuses the answer.
 func TestAnETagOfAnotherFormIsNotKept(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
 	for _, bad := range []string{`unquoted`, `"a b"`, `"a"b"`, `"` + strings.Repeat("x", 129) + `"`, `W/unquoted`, `"é"`} {
@@ -160,6 +164,7 @@ func TestAnETagOfAnotherFormIsNotKept(t *testing.T) {
 // allows to hold a comma and a "*", is one tag to an honest server: its polls
 // are answered in full, and the mail sent after is delivered at the next.
 func TestAPlantedTagHidesNoMail(t *testing.T) {
+	t.Parallel()
 	for _, plant := range []string{`",*,"`, `"x,*,y"`, `W/"a,W/*,b"`} {
 		e := newEnv(t)
 		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -194,6 +199,7 @@ func TestAPlantedTagHidesNoMail(t *testing.T) {
 // goes, so the next poll asks for the page in full. One whose tag a proxy
 // marked weak is the answer.
 func TestA304AboutAnotherTagIsNoAnswer(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	receive(t, b)

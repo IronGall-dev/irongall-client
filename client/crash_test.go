@@ -168,6 +168,10 @@ func whole(t *testing.T, e *env, b, from *client.Box, waiting ...string) {
 // A renewal killed at each of its steps: the next drain delivers what was
 // sealed to the prekey in use before it, and the box renews again.
 func TestARenewalKilledAtEachStepLeavesTheBoxWhole(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
+	}
 	for _, step := range client.Steps("renewal") {
 		t.Run(step, func(t *testing.T) {
 			e := newEnv(t)
@@ -185,6 +189,10 @@ func TestARenewalKilledAtEachStepLeavesTheBoxWhole(t *testing.T) {
 // answer, and the next commands send the ACL again (#324). A recv brings the
 // box back where the registration was not taken.
 func TestAForgottenBoxKilledAtEachStepOfItsRegistrationSendsItsACLAgain(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
+	}
 	for _, step := range client.Steps("renewal") {
 		t.Run(step, func(t *testing.T) {
 			e := newEnv(t)
@@ -221,6 +229,10 @@ func TestAForgottenBoxKilledAtEachStepOfItsRegistrationSendsItsACLAgain(t *testi
 // and the next recv, whose pass refused has the box read itself and record a
 // renewal taken unseen (ownerTaken), leaves the read owed too.
 func TestARecvKilledAtEachStepOfItsRenewalReadsItsServersACL(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
+	}
 	const (
 		none = iota
 		before
@@ -301,6 +313,7 @@ func TestARecvKilledAtEachStepOfItsRenewalReadsItsServersACL(t *testing.T) {
 // takes nothing an earlier attempt left, passes over that number, and its
 // files go (begin; #337).
 func TestARemedyPassingOverAKilledRenewalDropsWhatItLeft(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
 	e.clock.Add(2 * time.Second)
@@ -336,6 +349,7 @@ func TestARemedyPassingOverAKilledRenewalDropsWhatItLeft(t *testing.T) {
 // not current sends it to; a later renewal the box has begun keeps its
 // number.
 func TestARenewalTakenUnseenIsRecordedAndALaterOneKeepsItsNumber(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
 	e.clock.Add(2 * time.Second)
@@ -358,6 +372,7 @@ func TestARenewalTakenUnseenIsRecordedAndALaterOneKeepsItsNumber(t *testing.T) {
 // is no renewal the server took: the box records it only once it is served
 // under the certificate the box made with it.
 func TestItsOwnStatementUnderAnotherCertificateIsNoRenewalTaken(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
 	stolen, first := worker(t, b), numberOf(t, b)
@@ -396,6 +411,10 @@ func TestItsOwnStatementUnderAnotherCertificateIsNoRenewalTaken(t *testing.T) {
 // the revocation covers the certificate in use before it, and the box comes
 // back whole.
 func TestTheRemedyKilledAtEachStepLeavesTheBoxWhole(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
+	}
 	for _, step := range append(client.Steps("revocation"), client.Steps("renewal")...) {
 		t.Run(step, func(t *testing.T) {
 			ctx := context.Background()
@@ -426,6 +445,10 @@ func TestTheRemedyKilledAtEachStepLeavesTheBoxWhole(t *testing.T) {
 // once, and the restored box's first renewal finds the two alike, so the
 // server's blocks stay (#366).
 func TestARestoreKilledAtEachStepAdoptsItsServersACL(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
+	}
 	for _, step := range append(client.Steps("renewal"), client.Steps("adoption")...) {
 		t.Run(step, func(t *testing.T) {
 			ctx := context.Background()
@@ -459,6 +482,7 @@ func TestARestoreKilledAtEachStepAdoptsItsServersACL(t *testing.T) {
 // A drain killed at each step of a delivery: the message is in the inbox
 // once, and leaves the server.
 func TestADrainKilledAtEachStepOfADeliveryDeliversOnce(t *testing.T) {
+	t.Parallel()
 	for _, step := range client.Steps("delivery") {
 		t.Run(step, func(t *testing.T) {
 			e := newEnv(t)
@@ -473,6 +497,7 @@ func TestADrainKilledAtEachStepOfADeliveryDeliversOnce(t *testing.T) {
 // A drain killed at each step of a refusal: the next drain refuses the
 // message again, keeps it once with why, and acks it.
 func TestADrainKilledAtEachStepOfARefusalKeepsItOnce(t *testing.T) {
+	t.Parallel()
 	for _, step := range client.Steps("refusal") {
 		t.Run(step, func(t *testing.T) {
 			e := newEnv(t)
@@ -501,6 +526,7 @@ func TestADrainKilledAtEachStepOfARefusalKeepsItOnce(t *testing.T) {
 // the bytes the box did not keep, so the server serves each byte of it once
 // in all; and the box keeps no partial after (#381).
 func TestADrainKilledAtEachStepOfAPartialDeliversOnce(t *testing.T) {
+	t.Parallel()
 	for _, step := range client.Steps("partial") {
 		t.Run(step, func(t *testing.T) {
 			e := newEnv(t)
@@ -547,6 +573,7 @@ func TestADrainKilledAtEachStepOfAPartialDeliversOnce(t *testing.T) {
 // A send killed at each of its steps: the next flush posts what waits, its
 // reader takes it once, and the outbox and sent/ are as a send leaves them.
 func TestASendKilledAtEachStepIsReadOnce(t *testing.T) {
+	t.Parallel()
 	for _, step := range client.Steps("post") {
 		t.Run(step, func(t *testing.T) {
 			e := newEnv(t)

@@ -22,6 +22,7 @@ import (
 // signed it, under which certificate, beginning when, and what this
 // machine's clock read; a forged one says only whose identity it claims.
 func TestAQuarantinedMessageKeepsWhatItsChecksFound(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{protocol.IdentityEd25519, protocol.IdentityP256} {
 		t.Run(kind, func(t *testing.T) { quarantinedFindings(t, kind) })
 	}
@@ -127,6 +128,7 @@ func workKey(t *testing.T, b *client.Box) ssh.Signer {
 // that passes then is delivered, and nothing of its refusal is kept, neither
 // the message in quarantine/ nor why it was refused (#211).
 func TestADeliveryLeavesNothingOfAnEarlierRefusal(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -155,6 +157,10 @@ func TestADeliveryLeavesNothingOfAnEarlierRefusal(t *testing.T) {
 // and nothing more, as for a signature that does not verify (#336); where it
 // holds none that does, both name the signer and its certificate.
 func TestARefusalNamesNoSignerTheBoxHoldsRevoked(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
+	}
 	type sent struct {
 		id     string
 		serial uint64 // the certificate it is signed under

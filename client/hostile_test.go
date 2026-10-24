@@ -40,6 +40,7 @@ func mail(t *testing.T, e *env, from, to *client.Box, envelope string) string {
 // client's own words. It never prints text the sender chose: whoever reads a
 // refusal may be a model, and any box can send mail that is refused.
 func TestARefusalNeverQuotesTheMessage(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	now := e.clock.Now().Format(protocol.TimeLayout)
@@ -92,6 +93,7 @@ func TestARefusalNeverQuotesTheMessage(t *testing.T) {
 // know, one under a status that is not its own, or one beside a type that is
 // not its own, is not printed at all.
 func TestAnAPIErrorPrintsNoneOfTheServersWords(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	answer := func(status int, body any) string {
@@ -167,6 +169,7 @@ func TestAnAPIErrorPrintsNoneOfTheServersWords(t *testing.T) {
 // that sender's signature has verified: a sender a server made up costs no
 // call at all.
 func TestMadeUpSendersLeaveNothingInPeers(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b, o := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
 	send(t, a, b, "from a real sender")
@@ -304,6 +307,7 @@ func TestADrainIsBounded(t *testing.T) {
 // client's words, status names the commands and not the files, and
 // RemoveQuarantined deletes nothing unless every id it is given is held.
 func TestQuarantineKeepsNoServerTextInTheClear(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -466,6 +470,7 @@ func protocolTime(s string) bool { _, err := protocol.ParseTime(s); return err =
 // quarantined or acked, and the message still on the server. What the list
 // says, the fetch is held to, whichever of the two is wrong.
 func TestAFetchIsTheSizeItsListGives(t *testing.T) {
+	t.Parallel()
 	same := func(ct []byte) []byte { return ct }
 	for name, c := range map[string]struct {
 		listed func(*protocol.MessageInfo)
@@ -536,6 +541,7 @@ func TestAFetchIsTheSizeItsListGives(t *testing.T) {
 // read whole and judged, a verdict like any other, and the drain goes on. It
 // is no age file, so it is refused as undecryptable, kept and acked.
 func TestAFetchOfTheLargestCiphertextIsRead(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	send(t, a, b, "listed as the largest a ciphertext may be")
@@ -573,6 +579,7 @@ func TestAFetchOfTheLargestCiphertextIsRead(t *testing.T) {
 // other cursor makes the list no answer: the drain stops, with nothing
 // fetched.
 func TestAListsCursorIsURLSafe(t *testing.T) {
+	t.Parallel()
 	const cursor = "AZaz09-_"
 	for _, c := range []struct {
 		cursor string
@@ -624,6 +631,7 @@ func (grease) Wrap([]byte) ([]*age.Stanza, error) {
 // in words of its own (#417 item 4); one native stanza with a grease stanza
 // beside it is delivered.
 func TestAFileWithoutOneNativeStanzaIsRefusedUndecrypted(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	st, _ := e.srv.Prekey(b.Address())
@@ -696,6 +704,7 @@ func TestAFileWithoutOneNativeStanzaIsRefusedUndecrypted(t *testing.T) {
 // prekeys, the retired among them, which age alone would decrypt with (#417
 // item 1).
 func TestTwoNativeStanzasOneToARetiredPrekeyAreRefused(t *testing.T) {
+	t.Parallel()
 	for _, kt := range []protocol.KeyType{protocol.Classic, protocol.PostQuantum} {
 		t.Run(string(kt), func(t *testing.T) {
 			e := newEnv(t)

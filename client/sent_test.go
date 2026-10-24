@@ -36,6 +36,7 @@ func sentRecords(t *testing.T, b *client.Box) map[string][]byte {
 // The optional fields are the sender's, and reach the recipient inside the
 // envelope: in what it delivers and in the line it prints.
 func TestSendWithFields(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	f := client.Fields{Subject: "re: <yours> & \"mine\"", InReplyTo: "11111111-2222-4333-8444-555555555555", Supersedes: "22222222-2222-4333-8444-555555555555"}
@@ -70,6 +71,7 @@ func TestSendWithFields(t *testing.T) {
 // refused before any mail is made: above all the 64-character id the server
 // gives a message, which is what send prints.
 func TestSendRefusesFieldsThatAreNotMsgIDs(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	r := send(t, a, b, "first")
@@ -103,6 +105,7 @@ func TestSendRefusesFieldsThatAreNotMsgIDs(t *testing.T) {
 // recipient delivers and in the line it prints, and so does the sender's sent/
 // record.
 func TestSendJSON(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	in := "{\"action\": \"approve\",\n \"ids\": [3, 1.50, 2e3], \"note\": \"<&>\", \"none\": null}\n"
@@ -128,6 +131,7 @@ func TestSendJSON(t *testing.T) {
 // that breaks a rule of PROTOCOL.md §0b, and a noncharacter in a text body or
 // a subject, which seal once refused only after the outbox kept it.
 func TestNothingIsWrittenForAMessageItsReaderRefuses(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	op := watch(e, nil)
@@ -166,6 +170,7 @@ func TestNothingIsWrittenForAMessageItsReaderRefuses(t *testing.T) {
 // it, and no member beside the envelope's own but the receipt (#356).
 // Nothing is left in the outbox.
 func TestSentKeepsTheEnvelopeAndTheReceipt(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	body := "kept\u0085 by   its   sender"
@@ -205,6 +210,7 @@ func TestSentKeepsTheEnvelopeAndTheReceipt(t *testing.T) {
 // Only a message the server took is in sent/: one that failed is recorded
 // when a flush delivers it, and one that can never be delivered never is.
 func TestSentHoldsOnlyWhatTheServerTook(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	ctx := context.Background()

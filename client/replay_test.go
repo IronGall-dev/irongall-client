@@ -21,6 +21,10 @@ import (
 // reader must refuse it whatever its clock read when it last pruned
 // (PROTOCOL.md §5 check 9, §0).
 func TestAReplayIsRefusedAfterTheClockStepsBack(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
+	}
 	ctx := context.Background()
 	for _, c := range []struct {
 		name        string
@@ -101,6 +105,7 @@ func TestAReplayIsRefusedAfterTheClockStepsBack(t *testing.T) {
 // pass or the box its own certificate first: the seen-set is pruned only once
 // the server has taken a pass dated by that clock.
 func TestARefusedDrainPrunesNothing(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	off := time.Duration(0)
@@ -133,6 +138,7 @@ func TestARefusedDrainPrunesNothing(t *testing.T) {
 // A floor that names no time stops the drain, with the mail left on the
 // server.
 func TestTheSeenFloor(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	r := e.box(protocol.Classic)

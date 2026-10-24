@@ -28,6 +28,7 @@ import (
 // judge.
 
 func TestRoundTrip(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.PostQuantum), e.box(protocol.Classic)
 	body := "hello <b>&é☃ — mail is data"
@@ -49,6 +50,7 @@ func TestRoundTrip(t *testing.T) {
 }
 
 func TestTransientFailureLeavesMail(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	r := send(t, a, b, "survives a failed fetch")
@@ -64,6 +66,7 @@ func TestTransientFailureLeavesMail(t *testing.T) {
 // A message delivered but not acked (the ack failed) is acked on the next
 // drain, never judged again and reported as a replay.
 func TestFailedAckIsRetriedQuietly(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	r := send(t, a, b, "delivered, ack lost")
@@ -85,6 +88,7 @@ func TestFailedAckIsRetriedQuietly(t *testing.T) {
 // The same envelope re-encrypted (as after stale_prekey) is a new ciphertext
 // with the same msg_id: acked, and not delivered again.
 func TestDuplicateRetryIsAckedNotDelivered(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	send(t, a, b, "do this once")
@@ -113,6 +117,7 @@ func TestDuplicateRetryIsAckedNotDelivered(t *testing.T) {
 // On 409 stale_prekey the client re-encrypts the SAME envelope to the newer
 // prekey: same msg_id, so the recipient can never act on it twice.
 func TestStalePrekeyReencryptsSameEnvelope(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.PostQuantum), e.box(protocol.PostQuantum)
 	forge.FailOnce(e.srv, http.MethodPost, "/v1/"+b.Address().String()+"/messages")
@@ -150,6 +155,7 @@ func TestStalePrekeyReencryptsSameEnvelope(t *testing.T) {
 // identity, and nothing else needs keeping. Open makes what every box has,
 // its .gitignore among it (#292).
 func TestRestoreFromIdentity(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	dir := t.TempDir()
@@ -196,6 +202,7 @@ func passes(e *env) *[]string {
 // out, so a server checks one signature for ten minutes of calls. It is kept
 // in the box: a new process uses the same one.
 func TestAPassIsUsedUntilItRunsOut(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	seen := passes(e)
@@ -231,6 +238,7 @@ func TestAPassIsUsedUntilItRunsOut(t *testing.T) {
 // pass under the old one. A client still holding such a pass is refused once,
 // signs another under the certificate in use, and carries on.
 func TestAPassUnderAnOlderCertificateIsReplaced(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	receive(t, b)
@@ -265,6 +273,7 @@ func TestAPassUnderAnOlderCertificateIsReplaced(t *testing.T) {
 // too (#408 item 3). The codes are read from the code, every one protocol
 // knows that passRefused takes, and those are every 401's (§13).
 func TestEveryRefusalOfThePassIsTriedUnderANewOne(t *testing.T) {
+	t.Parallel()
 	var refusing []protocol.Code
 	for _, c := range protocol.Codes() {
 		if client.PassRefused(c) != (c.Status() == http.StatusUnauthorized) {
@@ -313,6 +322,7 @@ func TestEveryRefusalOfThePassIsTriedUnderANewOne(t *testing.T) {
 // A server whose clock is ahead calls a pass run out before the box does.
 // The box signs another and tries once more, and no more than once.
 func TestAPassTheServerSaysHasRunOut(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
 	refusals := 1
@@ -398,6 +408,7 @@ func TestAKilledHolderLeavesNoLock(t *testing.T) {
 // days, and is deleted then: the forward-secrecy bound. A renewal deletes by
 // the date of its own pass, which the server took, and it signs a new one.
 func TestPruneDeletesRetiredKeys(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	send(t, a, b, "to the first key")
@@ -431,6 +442,7 @@ func TestPruneDeletesRetiredKeys(t *testing.T) {
 // the drain stops, nothing is quarantined or acked, and the mail is
 // delivered once the box is fixed.
 func TestLocalFaultLeavesMail(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name     string
 		breakBox func(t *testing.T, b *client.Box, a protocol.Address) (fix func())
@@ -473,6 +485,7 @@ func TestLocalFaultLeavesMail(t *testing.T) {
 // can never be delivered (refused for good, or older than any recipient
 // accepts) moves to outbox/failed/; one that may yet go stays.
 func TestFlushNeverStopsAtABadEntry(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
@@ -520,6 +533,7 @@ func TestFlushNeverStopsAtABadEntry(t *testing.T) {
 // written, the window a reader's replay set reaches back over past a first
 // post. It moves to outbox/failed/, with no receipt.
 func TestStaleOutboxEntryIsNotPosted(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -544,6 +558,7 @@ func TestStaleOutboxEntryIsNotPosted(t *testing.T) {
 // attempt signed for a key of the other type is never signed over: its serial
 // is passed over and its key kept.
 func TestRekeyMakesTheTypeAskedFor(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
@@ -572,6 +587,7 @@ func TestRekeyMakesTheTypeAskedFor(t *testing.T) {
 // A body that is not UTF-8 is refused before anything is sent: JSON would
 // replace its bytes.
 func TestNonUTF8BodyIsRefused(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	if _, err := a.Send(context.Background(), b.Address(), "\xff\xfe"); err == nil {

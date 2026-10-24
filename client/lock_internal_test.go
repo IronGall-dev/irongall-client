@@ -80,6 +80,7 @@ func TestAReadingThatFoundNoStateFileWaitsForNoCommand(t *testing.T) {
 // state file was gone at the reading's open: both views read one state, the
 // one with no file (#329, #382).
 func TestAReadingThatFoundNoStateFileReadsOneState(t *testing.T) {
+	t.Parallel()
 	a, r, state := twoOpens(t)
 	if err := os.Remove(state); err != nil {
 		t.Fatal(err)

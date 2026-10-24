@@ -33,6 +33,7 @@ func unknownDoc() ([]byte, protocol.Address) {
 // box on an Ed25519 one: each verifies the other. Its key file is what
 // ssh-keygen writes, so Open loads it and Rekey certifies with it.
 func TestABoxOnAP256Identity(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	o := e.opts()
 	o.IdentityType = protocol.IdentityP256
@@ -89,6 +90,7 @@ func TestABoxOnAP256Identity(t *testing.T) {
 // nothing it signed can be checked. If the document is not the sender's, that
 // is what the refusal says. Neither quotes the document.
 func TestMailFromAnIdentityOfAnUnknownType(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	doc, addr := unknownDoc()
@@ -115,6 +117,7 @@ func TestMailFromAnIdentityOfAnUnknownType(t *testing.T) {
 // verify is refused before anything is encrypted or posted, in words that
 // quote nothing of the document.
 func TestSendToAnIdentityOfAnUnknownType(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	doc, addr := unknownDoc()
@@ -150,6 +153,7 @@ func TestSendToAnIdentityOfAnUnknownType(t *testing.T) {
 // the prekey/unsupported-type vector's: a published test key under a
 // human-readable part nobody uses.
 func TestSendToAPrekeyOfATypeThisClientLacks(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	vector, err := os.ReadFile("../testdata/vectors/prekey/unsupported-type.txt")
@@ -211,6 +215,7 @@ func TestSendToAPrekeyOfATypeThisClientLacks(t *testing.T) {
 // every type this client verifies, unless it is told otherwise. "any" is
 // never what it says by itself.
 func TestABoxDeclaresTheSenderKeyTypesItVerifies(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	body := forge.Capture(e.srv, http.MethodPut, "")
 	b := e.box(protocol.Classic)
@@ -247,6 +252,7 @@ func TestABoxDeclaresTheSenderKeyTypesItVerifies(t *testing.T) {
 // the sender would hold a receipt for it. A box on an Ed25519 identity sends
 // to any box, whatever it declared.
 func TestSendToABoxThatDoesNotVerifyThisBoxsKeyType(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	ctx := context.Background()
 	with := func(mod func(*client.Options)) *client.Box {

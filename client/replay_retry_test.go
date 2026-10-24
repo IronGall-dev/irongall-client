@@ -29,6 +29,7 @@ import (
 // retry once the reader's clock is right again. The reader runs recv
 // monthly.
 func TestARetryAboveTheFloorIsDeliveredAgain(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	day := 24 * time.Hour
 	for _, c := range []struct {
@@ -111,6 +112,7 @@ func TestARetryAboveTheFloorIsDeliveredAgain(t *testing.T) {
 // copy's line is still there: SeenFor's hour, to the second. With SeenFor
 // two seconds shorter this fails.
 func TestARetryAfterAStepOfTheHour(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	day := 24 * time.Hour
 	e := newEnv(t)
@@ -179,6 +181,7 @@ func TestARetryAfterAStepOfTheHour(t *testing.T) {
 // 50m fast at the drain that prunes and 9m59s slow a second later: passes an
 // honest server takes, which the fake server checks as one does.
 func TestAStretchedRetryAtClocksAnHonestServerTakes(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	day := 24 * time.Hour
 	fast, slow := 50*time.Minute, -(9*time.Minute + 59*time.Second)
@@ -304,6 +307,7 @@ func TestAStretchedRetryAtClocksAnHonestServerTakes(t *testing.T) {
 // stays the newest retired. The rest is TestARetryAboveTheFloorIsDeliveredAgain's
 // timeline: one drain 1h32m ahead that the server takes.
 func TestADailyReaderWhoseRenewalsAreRefused(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	day := 24 * time.Hour
 	for _, refuse := range []bool{true, false} {
@@ -402,6 +406,7 @@ func TestADailyReaderWhoseRenewalsAreRefused(t *testing.T) {
 // monthly, its clock fast at the drain that prunes (its renewal refused, so
 // the retry's key stays) and slow a second later.
 func TestAFirstCopyIsNeverDatedBeforeItWasWritten(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	day := 24 * time.Hour
 	fast, slow := 50*time.Minute, -(9*time.Minute + 59*time.Second)

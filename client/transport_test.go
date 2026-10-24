@@ -78,6 +78,7 @@ var redirects = []int{http.StatusMovedPermanently, http.StatusFound, http.Status
 // server, whether the box made its HTTP client or was handed one, and the
 // client it was handed is left as it was.
 func TestARedirectIsNeverFollowed(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	for _, status := range redirects {
 		e := newEnv(t)
@@ -110,6 +111,7 @@ func TestARedirectIsNeverFollowed(t *testing.T) {
 // send, and the send itself, for each status a redirect has. A send that
 // is redirected posts nothing anywhere, and waits in the outbox.
 func TestNoCallOfABoxFollowsARedirect(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	for _, status := range redirects {
 		e := newEnv(t)
@@ -135,6 +137,7 @@ func TestNoCallOfABoxFollowsARedirect(t *testing.T) {
 // A record the box's server redirects is not taken there: the owner is told,
 // and the record goes nowhere else.
 func TestARedirectedPublishIsNotTaken(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	for _, status := range redirects {
 		e := newEnv(t)
@@ -172,6 +175,7 @@ func (rt *recorder) RoundTrip(*http.Request) (*http.Response, error) {
 // refused before anything is sent or made: no request, and no box
 // directory.
 func TestAServerIsCalledOverHTTPSOrOnThisMachine(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	const refusal = "is not a server this client calls"
 	// Publish needs no box, so only the check of each call holds it.
@@ -224,6 +228,7 @@ func TestAServerIsCalledOverHTTPSOrOnThisMachine(t *testing.T) {
 // that never answers, a wait the caller ended, and a certificate that does
 // not verify, a server's TLS alert, and an answer that is no TLS.
 func TestACallWithNoAnswerSaysWhatKind(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
 	to := e.box(protocol.Classic)

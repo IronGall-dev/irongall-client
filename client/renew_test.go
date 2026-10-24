@@ -40,6 +40,7 @@ func servedSerial(t *testing.T, e *env, b *client.Box) uint64 {
 // type, and not again until the new one is a day old: a box received at
 // least monthly never lapses, and a busy one renews at most daily.
 func TestReceiveRenewsADayOldPrekey(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
 	first := numberOf(t, b)
@@ -69,6 +70,7 @@ func TestReceiveRenewsADayOldPrekey(t *testing.T) {
 // renewal is numbered above what the box published, and goes as a
 // registration. Mail reaches it again.
 func TestAForgottenBoxRegistersAnewAtItsRenewal(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
 	if _, err := b.Block(context.Background(), c.Address()); err != nil || e.srv.ACL(b.Address()) == nil {
@@ -103,6 +105,7 @@ func TestAForgottenBoxRegistersAnewAtItsRenewal(t *testing.T) {
 // (#386). Control: a box forgotten before the read, which the read's answer
 // alone sends as a registration.
 func TestARenewalWhoseUploadMeetsABoxForgottenSinceItsReadRegistersIt(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	for _, c := range []struct {
 		name, how string
@@ -201,6 +204,7 @@ func TestARenewalWhoseUploadMeetsABoxForgottenSinceItsReadRegistersIt(t *testing
 // registration goes (#386). A negative answer and no answer are different
 // things.
 func TestARenewalWhoseUploadIs404RegistersOnlyOnAReadThatShowsNoBox(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		name  string
 		again func(w http.ResponseWriter, r *http.Request, next http.Handler)
@@ -256,6 +260,7 @@ func TestARenewalWhoseUploadIs404RegistersOnlyOnAReadThatShowsNoBox(t *testing.T
 // remedy return the new prekey with no error, the server's answer being no
 // fault of the box, and recv keeps no failed renewal (#402 item 1).
 func TestAnUploadAnswered404WhoseReadAgainServesItIsTaken(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	for _, how := range []string{"prekey renew", "recv", "cert revoke-earlier"} {
 		t.Run(how, func(t *testing.T) {
@@ -453,6 +458,7 @@ func TestARenewalWhoseReadAgainEndsSendsNoRegistration(t *testing.T) {
 // restored box whose server does not answer its read. Control: the restore
 // at a server that still serves the box.
 func TestARestoredBoxRegistersWhereItsServerForgotIt(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	for _, forgotten := range []bool{false, true} {
 		e := newEnv(t)
@@ -491,6 +497,7 @@ func TestARestoredBoxRegistersWhereItsServerForgotIt(t *testing.T) {
 // again an hour later, not at every poll: by any process of the box, which
 // says within the hour why the last one failed (#10).
 func TestReceiveRetriesAFailedRenewalHourly(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	var puts atomic.Int32
@@ -538,6 +545,7 @@ func TestReceiveRetriesAFailedRenewalHourly(t *testing.T) {
 // and a box whose clock steps back would otherwise renew nothing until the
 // clock caught up, as its prekey ran out.
 func TestAFailureDatedAheadHoldsBackNoRenewal(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	var off time.Duration
 	b, err := client.Init(context.Background(), t.TempDir(), e.skewed(&off), protocol.Classic)
@@ -570,6 +578,7 @@ func TestAFailureDatedAheadHoldsBackNoRenewal(t *testing.T) {
 // hour), every retired prekey but the newest is deleted, key and statement.
 // Mail encrypted to the newest retired one still decrypts.
 func TestReceiveKeepsOnePriorPrekey(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	ctx := context.Background()
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -615,6 +624,7 @@ func TestReceiveKeepsOnePriorPrekey(t *testing.T) {
 // A box received monthly deletes its older prekeys at the check-in that
 // renews: a key is gone by the second renewal after it was retired.
 func TestMonthlyBoxDeletesAtTheRenewingCheckIn(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
 	key1 := prekeyFile(b, numberOf(t, b), ".agekey")
@@ -660,6 +670,7 @@ func uploads(e *env, b *client.Box) *[]protocol.PrekeyRequest {
 // never signed again: the same key with a later not_after would be a second
 // lease on it. When the server takes it, those bytes are what it publishes.
 func TestAFailedRenewalIsSentAgainUnchanged(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
 	kept := uploads(e, b)
@@ -693,6 +704,7 @@ func TestAFailedRenewalIsSentAgainUnchanged(t *testing.T) {
 // the box signs a new key at the next serial, and deletes a passed-over key
 // 33 days after its not_after, as it does any retired one.
 func TestAServerThatFailsEveryRenewalGetsEachKeyOnce(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	kept := uploads(e, b)
@@ -789,6 +801,7 @@ func TestAServerThatFailsEveryRenewalGetsEachKeyOnce(t *testing.T) {
 // it, at the same serial, with a working key and certificate made then, never
 // the attempt's, whose certificate began when it ran (#197).
 func TestAKeyNeverSignedIsUsed(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
 	forge.FailOnce(e.srv, http.MethodPut, "/prekey")
@@ -820,6 +833,7 @@ func TestAKeyNeverSignedIsUsed(t *testing.T) {
 // one an hour there and not one at every Receive (#328). Control: a box its
 // server forgot twice comes back at its first recv each time.
 func TestARenewalThatMendsNothingWaitsAnHour(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
@@ -867,6 +881,7 @@ func TestARenewalThatMendsNothingWaitsAnHour(t *testing.T) {
 // and was acked before the refusal is in the command's Result, beside what
 // the drain after the renewal delivered (#332).
 func TestADrainMendedPartWaySaysWhatItsFirstPassDelivered(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	for _, body := range []string{"one", "two", "three"} {

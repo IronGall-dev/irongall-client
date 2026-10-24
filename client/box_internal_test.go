@@ -21,6 +21,7 @@ import (
 // on a slow link whatever moved (#381). A client given is used as it is,
 // its own timeouts its choice.
 func TestOnlyTheDefaultClientIsBoundedByTheBox(t *testing.T) {
+	t.Parallel()
 	if b, err := newBox(t.TempDir(), Options{}); err != nil || !b.stall || b.http.Timeout != 0 {
 		t.Fatalf("the default HTTP client: bounded by the box %v, Timeout %v", b.stall, b.http.Timeout)
 	}
@@ -34,6 +35,7 @@ func TestOnlyTheDefaultClientIsBoundedByTheBox(t *testing.T) {
 // scheme's default, so https://irongall.dev:443 and https://irongall.dev name
 // one server, as the server reads its Host (PROTOCOL.md §6.1b).
 func TestAPassNamesTheServerAsAnOrigin(t *testing.T) {
+	t.Parallel()
 	for base, want := range map[string]string{
 		"https://irongall.dev":              "irongall.dev",
 		"https://irongall.dev:443":          "irongall.dev",
@@ -64,6 +66,7 @@ func TestAPassNamesTheServerAsAnOrigin(t *testing.T) {
 // Init with an identity type this client does not make writes nothing: the
 // type is held where every box is made, before any directory is (#223).
 func TestAnIdentityTypeIsHeldBeforeAnythingIsWritten(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "box")
 	if _, err := Init(context.Background(), dir, Options{Base: "https://irongall.dev", IdentityType: "ssh-rsa"}, protocol.Classic); err == nil {
 		t.Fatal("a box was made with an identity type this client does not make")
@@ -101,6 +104,7 @@ func (g greaseOnly) WrapWithLabels([]byte) ([]*age.Stanza, []string, error) {
 // type and order, and a file with one is decrypted, one key agreement for
 // the one prekey given (#417 item 1). One with none is its own case (item 4).
 func TestNoKeyAgreementBeforeTheStanzasAreCounted(t *testing.T) {
+	t.Parallel()
 	x, err := age.GenerateX25519Identity()
 	if err != nil {
 		t.Fatal(err)

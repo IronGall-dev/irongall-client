@@ -202,6 +202,7 @@ func (counted) Close() error { return nil }
 // than a receipt's size: one longer is an answer that breaks its form, and
 // what is past it is never read (#403 item 3).
 func TestAPostsAnswerIsReadNoFurtherThanAReceipt(t *testing.T) {
+	t.Parallel()
 	read := 0
 	b := slowBox(t, func(r *http.Request) (*http.Response, error) {
 		if _, err := io.ReadAll(r.Body); err != nil {
@@ -240,6 +241,7 @@ func TestAFetchsProblemIsBoundedWhole(t *testing.T) {
 // flight neither holds a call with no byte moving past requestTimeout nor
 // cuts one whose bytes move (#403 item 4).
 func TestTheStallCountsOnTheMonotonicClock(t *testing.T) {
+	t.Parallel()
 	_, s := newStall(context.Background())
 	defer s.stop()
 	if s.base == s.base.Round(0) {

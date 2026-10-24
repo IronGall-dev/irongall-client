@@ -66,6 +66,7 @@ func publishAt(t *testing.T, base string, rec *protocol.Revocations) {
 // remedy on another machine): the renewal reads it from its server's answer
 // and numbers above it at the first attempt.
 func TestARenewalNumbersAboveARevocationItDidNotHold(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a := e.box(protocol.Classic)
@@ -84,6 +85,7 @@ func TestARenewalNumbersAboveARevocationItDidNotHold(t *testing.T) {
 // ahead. The box restored from its identity on a machine whose clock is
 // right holds no such revocation: its first renewal asks, and is taken.
 func TestARestoredBoxRenewsAboveAFastRemedy(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a := e.box(protocol.Classic)
@@ -110,6 +112,7 @@ func TestARestoredBoxRenewsAboveAFastRemedy(t *testing.T) {
 // Its own server failing only the read of the box: the remedy revokes and
 // renews there all the same.
 func TestTheRemedyGoesOnWhenItsServerDoesNotAnswerTheRead(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a := e.box(protocol.Classic)
@@ -135,6 +138,7 @@ func TestTheRemedyGoesOnWhenItsServerDoesNotAnswerTheRead(t *testing.T) {
 // Its own server serves a statement ordered before what the box published (a
 // rollback): a plain renewal refuses, and the remedy goes on.
 func TestTheRemedyGoesOnPastARollback(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a := e.box(protocol.Classic)
@@ -167,6 +171,7 @@ func TestTheRemedyGoesOnPastARollback(t *testing.T) {
 // remedy reads again, keeps T's, which covers more than its own, publishes
 // nothing more, and numbers above T (PROTOCOL.md §6.3a).
 func TestTheRemedyAsksAgainAfterItsServerAnswersConflict(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a := e.box(protocol.Classic)
@@ -194,6 +199,7 @@ func TestTheRemedyAsksAgainAfterItsServerAnswersConflict(t *testing.T) {
 // stops the remedy: nothing is published again and nothing is renewed, since
 // a renewal under a certificate the server holds revoked would be refused.
 func TestTheRemedyStopsAtAConflictThatShowsNothing(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a := e.box(protocol.Classic)
@@ -222,6 +228,7 @@ func TestTheRemedyStopsAtAConflictThatShowsNothing(t *testing.T) {
 // nothing does: it does not cover the certificate in use, so nothing is taken
 // as revoked and nothing is renewed (#337).
 func TestTheRemedyStopsAtAConflictThatShowsALowerRecord(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a := e.box(protocol.Classic)
@@ -251,6 +258,7 @@ func TestTheRemedyStopsAtAConflictThatShowsALowerRecord(t *testing.T) {
 // One remedy reads its server's box once: the read carries both the
 // statement it serves and what it holds of the box's revocations.
 func TestTheRemedyReadsItsBoxOnce(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a := e.box(protocol.Classic)
@@ -351,6 +359,7 @@ func signed(t *testing.T, a *client.Box) []string {
 // holds) published again, and a change to the box's own files alone. No
 // call in all of it carries a pass.
 func TestABoxThatKeepsItsOwnRevocationSignsNothingMore(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -440,6 +449,7 @@ func TestABoxThatKeepsItsOwnRevocationSignsNothingMore(t *testing.T) {
 // lockingCommands', so a new one is tried on a finished box, and while
 // another command holds the lock, too.
 func TestEveryLockingCommandIsTriedFinished(t *testing.T) {
+	t.Parallel()
 	names, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
@@ -502,6 +512,7 @@ func takesTheLock(body *ast.BlockStmt) bool {
 // is where a server that answers it holds no box shows the revocation at the
 // box's read of its revocations.
 func TestARenewalThatMeetsItsOwnRevocationSignsNothing(t *testing.T) {
+	t.Parallel()
 	for _, at := range []string{"the read of the box", "the read of its revocations"} {
 		t.Run(at, func(t *testing.T) {
 			ctx := context.Background()
@@ -543,6 +554,7 @@ func TestARenewalThatMeetsItsOwnRevocationSignsNothing(t *testing.T) {
 // record, runs init: it signs nothing, no certificate and no prekey
 // statement, and calls no server (#256).
 func TestInitOfABoxThatHoldsItsOwnRevocationSignsNothing(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a := e.box(protocol.Classic)
@@ -582,6 +594,7 @@ func TestInitOfABoxThatHoldsItsOwnRevocationSignsNothing(t *testing.T) {
 // A box whose revocation its own server holds, opened against a server that
 // never saw it: it registers nothing there and sends nothing.
 func TestABoxRevokedAtItsServerSignsNothingAtAnother(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a := e.box(protocol.Classic)
@@ -622,6 +635,7 @@ func TestABoxRevokedAtItsServerSignsNothingAtAnother(t *testing.T) {
 // box's pass and mail under that certificate still, and was down for the
 // renewal: only the box's own hold keeps the mail back.
 func TestASendInTheRemedysWindowWaitsForTheRenewal(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, reader := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -663,6 +677,7 @@ func TestASendInTheRemedysWindowWaitsForTheRenewal(t *testing.T) {
 // waits for: here the mail was sealed to a prekey retired since, and the
 // drain at a clock 70 days ahead is refused before its list.
 func TestAFastClockDeletesNoKeyMailWaitsFor(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -694,6 +709,7 @@ func TestAFastClockDeletesNoKeyMailWaitsFor(t *testing.T) {
 // certificates through a lower serial than the one held: the address's is
 // kept, and the lower part changes nothing (PROTOCOL.md §6.3a).
 func TestAnAddressRevocationBesideALowerRevocationOfCertificates(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, s := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -722,6 +738,7 @@ func TestAnAddressRevocationBesideALowerRevocationOfCertificates(t *testing.T) {
 // any other answer, no_such_mailbox among them, is no answer, and the box's
 // question about itself fails rather than taking it as none held.
 func TestARevocationsReadAnsweredOutOfFormIsNoAnswer(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a := e.box(protocol.Classic)

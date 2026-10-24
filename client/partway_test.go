@@ -60,6 +60,7 @@ func finishedOwn(err error) bool {
 // proved again (proved), and a server that answers so at every read gets one
 // (#353).
 func TestARevokedReadWhoseRecordDoesNotVerifyIsNotReadAgain(t *testing.T) {
+	t.Parallel()
 	for _, of := range []string{"a peer", "itself"} {
 		t.Run(of, func(t *testing.T) {
 			ctx := context.Background()
@@ -104,6 +105,10 @@ func TestARevokedReadWhoseRecordDoesNotVerifyIsNotReadAgain(t *testing.T) {
 // proof's own reads of the box go out. A box shown none that verifies holds
 // none, and its command is not REVOKED: a server's word revokes nothing.
 func TestEveryCommandShownItsOwnRevocationAtEachCall(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
+	}
 	for _, c := range partwayCases() {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
@@ -731,6 +736,7 @@ func partwayCases() []partwayCase {
 // shown also revokes the certificate it signs under, so a later entry's seal
 // would refuse before any call and leave it waiting (#414 item 1).
 func TestAFlushThatLearnsItsOwnRevocationMovesEveryLaterEntry(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)

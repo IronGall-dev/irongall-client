@@ -39,6 +39,7 @@ func lookups(e *env) (seen func() map[string]bool) {
 // recipient's box before a send, not a sender's in a drain, and not a box's
 // read of its own.
 func TestLookupsCarryNoPass(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -66,6 +67,7 @@ func TestLookupsCarryNoPass(t *testing.T) {
 // it, with no check. A revocation published there again is taken as done
 // once the record it then asks for verifies, and is not otherwise.
 func TestARevocationPublishedToARevokedBox(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a := e.box(protocol.Classic)

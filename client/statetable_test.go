@@ -42,7 +42,13 @@ var update = flag.Bool("update", false, "write testdata/statetable.golden from t
 // published by another holder of the identity and not kept by the box; then
 // three rows more: the address revoked at the server, the box finished (it
 // holds its own revocation), and no box at all.
+//
+// It runs alone: its "silent" cells close their servers, and a port a closed
+// server freed could be another test's server before the command calls it.
 func TestStateTable(t *testing.T) {
+	if testing.Short() {
+		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
+	}
 	type cell struct{ key, line string }
 	var (
 		mu    sync.Mutex

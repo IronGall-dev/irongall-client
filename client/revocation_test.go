@@ -67,6 +67,7 @@ func isRevoked(err error, a protocol.Address, own bool) bool {
 // revoked nothing: the message stays in the outbox and goes when the server
 // lets it.
 func TestAServersWordRevokesNothing(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	for _, where := range []struct{ name, method, suffix string }{
 		{"at the read of the box", http.MethodGet, ""},
@@ -98,6 +99,7 @@ func TestAServersWordRevokesNothing(t *testing.T) {
 // is final only once the box holds a revocation that verifies (PROTOCOL.md
 // §6.3). Both sets are the code's own (#414 item 2).
 func TestNoAnswerProvedIsUndeliverable(t *testing.T) {
+	t.Parallel()
 	if len(client.ProvedCodes()) == 0 || len(client.Undeliverable()) == 0 {
 		t.Fatalf("proved checks %v, and %v end a message", client.ProvedCodes(), client.Undeliverable())
 	}
@@ -115,6 +117,7 @@ func TestNoAnswerProvedIsUndeliverable(t *testing.T) {
 // code's own (provedCodes); at 403 sender_revoked the box reads itself, once
 // (PROTOCOL.md §6.3; #414 item 2).
 func TestAServersWordAtAPostEndsNoMessage(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	for _, c := range client.ProvedCodes() {
 		t.Run(string(c), func(t *testing.T) {
@@ -160,6 +163,7 @@ func TestAServersWordAtAPostEndsNoMessage(t *testing.T) {
 // someone: none of it is the identity's own signature over that address's
 // statement, so none of it revokes.
 func TestWhatIsNotARevocationRevokesNothing(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
@@ -209,6 +213,7 @@ func TestWhatIsNotARevocationRevokesNothing(t *testing.T) {
 // the revocation is kept, and a server that later serves the box as if
 // nothing had happened is not asked and not believed.
 func TestARevocationIsCheckedAndSticks(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -246,6 +251,7 @@ func TestARevocationIsCheckedAndSticks(t *testing.T) {
 // a server that later hides the revocation and delivers that sender's mail is
 // not believed.
 func TestMailFromARevokedSenderIsRefused(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	send(t, a, b, "delivered before anyone revoked")
@@ -288,6 +294,7 @@ func TestMailFromARevokedSenderIsRefused(t *testing.T) {
 // has marked. Above, the sender is revoked, so judge asks nothing after its
 // first message, marked or not (#384).
 func TestADrainReadsEachSendersBoxOnce(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	to, a, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
 	for range 3 {
@@ -337,6 +344,7 @@ func misstatused(w http.ResponseWriter, status int, code protocol.Code) {
 // fine. The drain stops, the message stays where it is, and the next drain
 // asks again.
 func TestNoAnswerAboutASenderStopsTheDrain(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	send(t, a, b, "waits for an answer")
@@ -419,6 +427,7 @@ func TestNoAnswerAboutASenderStopsTheDrain(t *testing.T) {
 // A revocation handed over by a person is worth what one from a server is:
 // it proves itself. That is the answer to a server that hides one.
 func TestARevocationHandedOver(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
@@ -461,6 +470,7 @@ func TestARevocationHandedOver(t *testing.T) {
 // A box that is revoked learns it the same way, by the proof: it then knows
 // it is finished, and says so. One whose server only says so knows better.
 func TestABoxLearnsItIsRevoked(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -498,6 +508,10 @@ func TestABoxLearnsItIsRevoked(t *testing.T) {
 // once, and takes it as revoked only because what that read carries
 // verifies.
 func TestA410CarriesTheRecord(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
+	}
 	ctx := context.Background()
 	type call struct{ method, path string }
 	for _, at := range []struct {
@@ -618,6 +632,7 @@ func TestA410CarriesTheRecord(t *testing.T) {
 // Revoking is checked before it is sent, takes no key but the record, and
 // doing it twice changes nothing.
 func TestRevokeTakesOnlyARecordThatVerifies(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)

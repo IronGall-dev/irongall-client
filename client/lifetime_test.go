@@ -38,6 +38,7 @@ func madeOf(t *testing.T, b *client.Box, n uint64) string {
 // A prekey is made for the box's lifetime, and its record says when: the
 // default, the shortest and one between.
 func TestAPrekeyIsMadeForTheBoxsLifetime(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
@@ -71,6 +72,7 @@ func TestAPrekeyIsMadeForTheBoxsLifetime(t *testing.T) {
 // month old at once, and renew it at every receive. Senders reach the box
 // throughout.
 func TestAShortLivedPrekeyIsRenewedOnceADayOld(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -102,6 +104,7 @@ func TestAShortLivedPrekeyIsRenewedOnceADayOld(t *testing.T) {
 // A lifetime set lower holds from the next receive, which renews a prekey
 // made for longer; one set higher waits for the day-old renewal.
 func TestALowerLifetimeHoldsFromTheNextReceive(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
 	lifetimeOf(t, b, 2*24*time.Hour)
@@ -122,6 +125,7 @@ func TestALowerLifetimeHoldsFromTheNextReceive(t *testing.T) {
 // receive, and while the newest retired prekey has none, every retired key
 // is kept until its deletion time.
 func TestAPrekeyWithNoRecordIsRenewedAndItsKeysKept(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
 	k1 := numberOf(t, b)
@@ -150,6 +154,7 @@ func TestAPrekeyWithNoRecordIsRenewedAndItsKeysKept(t *testing.T) {
 // status says why. One that names one, with or without its line feed, is
 // read.
 func TestALifetimeOutOfFormIsNeverTheDefault(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	for _, raw := range []string{"", "\n", "abc\n", "0\n", "89999\n", "90000\n", "93599\n", "93600\n", "97199\n", "2851201\n", "090000\n", " 90000\n", "90000 \n", "90000\n\n", "90000\r\n", "9e4\n", "+90000\n", "1d1h\n", "99999999999\n"} {
 		e := newEnv(t)
@@ -197,6 +202,7 @@ func TestALifetimeOutOfFormIsNeverTheDefault(t *testing.T) {
 // meet: the box renews once its prekey is a day old, which leaves that
 // sender an hour of it and two minutes.
 func TestTheShortestLifetimeAtTheClocksFurthestApart(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	slow, fast := -9*time.Minute, 49*time.Minute
@@ -231,6 +237,10 @@ func TestTheShortestLifetimeAtTheClocksFurthestApart(t *testing.T) {
 // server takes (§0), is never refused: at the shortest lifetime and at one a
 // little longer, with recv a minute short of the day the first time.
 func TestTheDocumentedCadenceLeavesRoomForAClock(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
+	}
 	ctx := context.Background()
 	for _, c := range []struct {
 		life      time.Duration
@@ -282,6 +292,7 @@ func TestTheDocumentedCadenceLeavesRoomForAClock(t *testing.T) {
 // holds from the next recv, which renews a prekey made for longer." The one
 // that waited is spent, and a new key is made for the lifetime now set.
 func TestALowerLifetimeHoldsOverAWaitingRenewal(t *testing.T) {
+	t.Parallel()
 	for _, via := range []string{"recv", "prekey renew"} {
 		t.Run(via, func(t *testing.T) {
 			e := newEnv(t)

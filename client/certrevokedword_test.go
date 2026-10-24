@@ -18,6 +18,7 @@ import (
 // shown none it signs one more pass and tries once more, as for the other
 // 401s, and then reports the refusal, nothing kept.
 func TestACertificateRevokedWithNoneShownIsTriedOnceMore(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
 	own := "/v1/" + b.Address().String()

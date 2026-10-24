@@ -71,6 +71,7 @@ func servedCertificate(t *testing.T, e *env, b *client.Box) uint64 {
 // the box says it with that serial, a certificate it does not hold (#263,
 // IronGall-dev/irongall-server#66).
 func TestAPassUnderAnotherCertificateIsToldTheOneTheServerTakes(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
 	e.clock.Add(2 * time.Second)
@@ -89,6 +90,7 @@ func TestAPassUnderAnotherCertificateIsToldTheOneTheServerTakes(t *testing.T) {
 // that reads behind the last number, a renewal takes one above it: a serial
 // never goes back, whatever the clock does.
 func TestABoxNumbersByItsClock(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	var off time.Duration
@@ -147,6 +149,7 @@ func TestABoxNumbersByItsClock(t *testing.T) {
 // and what the machine's taker signs with that key is refused by whoever
 // holds the revocation.
 func TestARestoredBoxRevokesWhatTheLostMachineNeverPublished(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	lost, reader := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -203,6 +206,7 @@ func TestARestoredBoxRevokesWhatTheLostMachineNeverPublished(t *testing.T) {
 // would have to refuse here until the clock caught up, with the taken
 // working key the box's own all the while.
 func TestALostMachinesFastClockDoesNotDelayTheRemedy(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	fast := 40 * time.Minute
@@ -240,6 +244,7 @@ func TestALostMachinesFastClockDoesNotDelayTheRemedy(t *testing.T) {
 // from what it was shown, it would have taken a serial used before, and its
 // revocation would have stopped below the certificate in use at the time.
 func TestARestoredBoxShownAnOlderRecordNumbersAboveItAll(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
@@ -277,6 +282,7 @@ func TestARestoredBoxShownAnOlderRecordNumbersAboveItAll(t *testing.T) {
 // cannot know what another machine made for its identity, and by the clock
 // all of it is numbered below. The address goes on.
 func TestRevokeEarlierNamesEverySerialBelowTheOneInUse(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -300,6 +306,7 @@ func TestRevokeEarlierNamesEverySerialBelowTheOneInUse(t *testing.T) {
 // certificate above it, and the box goes on; one through the highest serial
 // there is leaves no certificate to make, and the box says so.
 func TestARenewalIsNumberedAboveTheBoxsOwnRevocation(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)

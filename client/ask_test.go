@@ -129,6 +129,7 @@ func helpsTheThief(e *env, a *client.Box, statement, signature []byte, hide bool
 // refuses the statement under the revoked certificate: nothing is posted.
 // What the sender learned stands when the server later hides it.
 func TestASenderAsksBeforeItSends(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a := e.box(protocol.Classic)
@@ -194,6 +195,7 @@ func TestASenderAsksBeforeItSends(t *testing.T) {
 // is posted and nothing is sealed, and the message waits. Whatever code the
 // failed lookup carries is never read as an answer about the message.
 func TestNoAnswerAboutARecipientPostsNothing(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -335,6 +337,7 @@ func postFails(e *env, a *client.Box) {
 // ordered before a renewal the box has recorded since, and never to an
 // address since revoked.
 func TestAMessageThatWaitedIsSealedAtThePost(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -410,6 +413,7 @@ func TestAMessageThatWaitedIsSealedAtThePost(t *testing.T) {
 // here one that takes any post, as a server need not answer stale_prekey
 // (#91: a seal kept from before the renewal was posted as it was).
 func TestAMessageThatWaitedGoesUnderTheRenewalTheBoxRecorded(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -450,6 +454,7 @@ func TestAMessageThatWaitedGoesUnderTheRenewalTheBoxRecorded(t *testing.T) {
 // certificate the remedy revoked, recorded as sent, and refused by its
 // reader (#112).
 func TestAMessageThatWaitedThroughTheRemedyIsSignedUnderTheNewCertificate(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -478,6 +483,7 @@ func TestAMessageThatWaitedThroughTheRemedyIsSignedUnderTheNewCertificate(t *tes
 // counts as new mail, and which its reader drops by its msg_id. Delivered
 // once; the cost of the lost answer is one more send.
 func TestALostAnswerCostsASendAndDeliversOnce(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -519,6 +525,7 @@ func TestALostAnswerCostsASendAndDeliversOnce(t *testing.T) {
 // the server holds of its revocations, and so does a flush, for each message
 // that waits.
 func TestASendReadsTheBoxOnceForEachPost(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
@@ -558,6 +565,7 @@ func TestASendReadsTheBoxOnceForEachPost(t *testing.T) {
 // verdict a duplicate gets carries what its checks found, and Receive never
 // panics on it (#264).
 func TestADuplicateUnderAWrongIDIsRefusedNotAPanic(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -631,6 +639,7 @@ func TestADuplicateUnderAWrongIDIsRefusedNotAPanic(t *testing.T) {
 // file name, which nothing holds to the envelope (#270): an entry renamed to
 // another msg_id is sent, said and kept under its own.
 func TestASentMsgIDIsTheEnvelopes(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -692,6 +701,7 @@ func record(t *testing.T, e *env, a *client.Box) *protocol.Revocations {
 // server is. The highest serial it runs through stands, and a record with a
 // part that does not verify is refused whole.
 func TestAskingAtAnyTimeAndARevocationHandedOver(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)

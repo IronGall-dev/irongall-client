@@ -21,6 +21,7 @@ import (
 // Result says how long, and nothing is an error. The next drain takes the
 // rest.
 func TestAPacedDrainStopsAndResumes(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	for _, body := range []string{"1", "2", "3"} {
@@ -60,6 +61,7 @@ func TestAPacedDrainStopsAndResumes(t *testing.T) {
 // a drain that ended quietly on it would hide that a sender went unchecked
 // (#116).
 func TestOnlyAPacedFetchEndsADrainQuietly(t *testing.T) {
+	t.Parallel()
 	fetch := func(r *http.Request) bool {
 		return r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/messages/")
 	}
@@ -103,6 +105,7 @@ func TestOnlyAPacedFetchEndsADrainQuietly(t *testing.T) {
 // writes: a list's Retry-After or a 429's past what a time.Duration holds once
 // wrapped to a negative pause, or a short one, and polled without end.
 func TestAWaitTheServerAsksForIsAtMostADay(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
 	const huge = "9223372037" // seconds: one past what a time.Duration holds
@@ -138,6 +141,7 @@ func TestAWaitTheServerAsksForIsAtMostADay(t *testing.T) {
 // (PROTOCOL.md §13): an HTTP-date, a sign or a fraction asks for no wait, and
 // any number of digits is read, up to a day.
 func TestARetryAfterIsDigitsAlone(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
 	for value, want := range map[string]time.Duration{

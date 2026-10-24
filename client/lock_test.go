@@ -44,6 +44,10 @@ func holdState(t *testing.T, b *client.Box) func() {
 // are lockingCommands', which TestEveryLockingCommandIsTriedFinished holds
 // to the code.
 func TestEveryCommandWaitsForTheLock(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
+	}
 	refused, run := lockingCommands(context.Background(), nil, nil, nil, "")
 	for i, c := range append(refused, run...) {
 		t.Run(c.name, func(t *testing.T) {
@@ -91,6 +95,10 @@ func TestEveryCommandWaitsForTheLock(t *testing.T) {
 // makers race: Open's, and a command's own once the file is gone after its
 // box was opened (#327).
 func TestTheStateFileIsMadeAtTheFirstCommand(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
+	}
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
 	for _, maker := range []string{"Open", "a command"} {
@@ -156,6 +164,7 @@ func TestTheStateFileIsMadeAtTheFirstCommand(t *testing.T) {
 // database in it in place, which a cut can leave faulting every process
 // after (#323). Once it is deleted, the next command makes it.
 func TestAnEmptyStateFileIsRefusedAndLeftAsItIs(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
@@ -326,6 +335,7 @@ func waits(b, c *client.Box, rec *protocol.Revocations, opt client.Options) map[
 // (locked, lockedFinished, lockedDo, lockedFinishedDo, reading), and a Box
 // method that calls one of those on its own box, whatever it does first.
 func TestEveryEntryThatWaitsIsTriedWithItsContext(t *testing.T) {
+	t.Parallel()
 	names, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
@@ -451,6 +461,9 @@ func writtenNothing(t *testing.T, b, c *client.Box) {
 // A wait for the box's lock ends with the caller's context, at every entry
 // that waits, and what it would have written is not written (#330).
 func TestAWaitForTheLockEndsWithItsContext(t *testing.T) {
+	if testing.Short() {
+		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
+	}
 	client.SetLockPatience(t, 3*time.Second) // a wait that ignores its context fails at this, not at two minutes
 	e := newEnv(t)
 	b, c := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -471,6 +484,9 @@ func TestAWaitForTheLockEndsWithItsContext(t *testing.T) {
 // slot before the state file, so the slot's is the wait timed: holdState,
 // above, times only the file's (#380).
 func TestAWaitForTheSlotEndsWithItsContext(t *testing.T) {
+	if testing.Short() {
+		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
+	}
 	client.SetLockPatience(t, 3*time.Second) // a wait that ignores its context ends at this, refused, not at two minutes
 	e := newEnv(t)
 	b, c := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -539,6 +555,10 @@ func TestAWaitingCommandGoesBeforeReadingsThatOverlap(t *testing.T) {
 // certificates at once keep the higher (#83): with no lock, both read before
 // either wrote, and the last rename won whatever its serial.
 func TestTwoProcessesKeepTheHigherSerial(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
+	}
 	e := newEnv(t)
 	a := e.box(protocol.Classic)
 	key, err := os.ReadFile(filepath.Join(a.Dir(), "identity"))

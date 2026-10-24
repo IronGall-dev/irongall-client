@@ -25,6 +25,7 @@ import (
 // acked, kept in held/, never delivered. allow delivers what it held, and
 // the sender's next mail lands in inbox/.
 func TestMailFromASenderNotAllowedIsHeld(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
@@ -70,6 +71,7 @@ func TestMailFromASenderNotAllowedIsHeld(t *testing.T) {
 // Writing to a box allows it, so its reply lands in inbox/; so does naming
 // it, and un-naming it is not blocking it.
 func TestWritingOrNamingAPeerAllowsIt(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b, c := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
 	send(t, b, a, "hello")
@@ -108,6 +110,7 @@ func TestWritingOrNamingAPeerAllowsIt(t *testing.T) {
 // sender's client moves the message to outbox/failed/. Blocking wins over
 // allowing.
 func TestBlockDropsASendersMailHereAndAtTheServer(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
@@ -151,6 +154,7 @@ func TestBlockDropsASendersMailHereAndAtTheServer(t *testing.T) {
 // Mail from a blocked sender that the server still delivers, its ACL not
 // yet taken, is dropped by the box itself, and the drain says so.
 func TestABoxDropsMailFromASenderItBlockedWhateverItsServerDoes(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
 	send(t, a, b, "sent before the block")
@@ -180,6 +184,7 @@ func TestABoxDropsMailFromASenderItBlockedWhateverItsServerDoes(t *testing.T) {
 // "unknown inbox" lands every sender's mail in inbox/, as a box did before
 // it could hold any.
 func TestAPolicyCanLandEverySendersMailInInbox(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
 	if err := os.WriteFile(filepath.Join(b.Dir(), "policy"), []byte("# every sender\nunknown inbox\n"), 0o600); err != nil {
@@ -195,6 +200,7 @@ func TestAPolicyCanLandEverySendersMailInInbox(t *testing.T) {
 // allowed, and learns who those are: a send to a new address tells it
 // before the message is posted, so the reply is not refused.
 func TestUnderServerAllowedTheServerRefusesTheRest(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b, stranger := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
@@ -246,6 +252,7 @@ func TestUnderServerAllowedTheServerRefusesTheRest(t *testing.T) {
 // box, sends the ACL its files say in one PUT, with no If-Match and no read
 // first, and keeps the server's answer.
 func TestAnACLReplacesWhatTheServerHolds(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
@@ -284,6 +291,7 @@ func TestAnACLReplacesWhatTheServerHolds(t *testing.T) {
 // about it, neither a drain nor a send. A renewal that finds the box's own
 // reads it and sends nothing (IronGall-dev/irongall-client#360).
 func TestARenewalReplacesAnACLAnotherWriterPut(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
@@ -342,6 +350,7 @@ func TestARenewalReplacesAnACLAnotherWriterPut(t *testing.T) {
 // recv reports by the mark checkACL keeps beside it. Control: the PUT taken,
 // replaced and reported at the renewal.
 func TestARenewalWhosePUTIsNotTakenLeavesTheBoxsACLPending(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	for _, other := range []struct {
 		name string
@@ -435,6 +444,7 @@ func TestARenewalWhosePUTIsNotTakenLeavesTheBoxsACLPending(t *testing.T) {
 // none taken from the box, the box's own lists changed, or an ACL a restore
 // adopted that holds what no file of the box says.
 func TestWhatChangedInAnACLNotTakenIsSaid(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	for _, c := range []struct{ name, what string }{
 		{"none taken", "this box's server holds no ACL this box sent"},
@@ -582,6 +592,7 @@ func TestAnACLReadNotMadeIsOwedToTheNextRecv(t *testing.T) {
 // then, and the registration drops the mark with the ACL kept (sendRenewal;
 // #377).
 func TestARegistrationDropsTheMarkOfAnotherWritersACL(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	b, c, d := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
@@ -619,6 +630,7 @@ func TestARegistrationDropsTheMarkOfAnotherWritersACL(t *testing.T) {
 // restored with one of its lists beside the identity adopts nothing: its
 // files are its ACL, and its first renewal puts it.
 func TestARestoredBoxAdoptsItsServersACL(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	lost := func(t *testing.T, e *env) (b, blocked, allowed *client.Box, own *protocol.ACL) {
 		t.Helper()
@@ -713,6 +725,7 @@ func TestARestoredBoxAdoptsItsServersACL(t *testing.T) {
 // whether a later recv's sync sends it, a send's sync, or the renewal of the
 // recv that restored the box (#366).
 func TestARestoredBoxReportsWhatItDidNotAdopt(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	for _, held := range []struct {
 		name string
@@ -760,6 +773,7 @@ func TestARestoredBoxReportsWhatItDidNotAdopt(t *testing.T) {
 // handled the request) is sent it again, as it is: the write is not lost to
 // a race.
 func TestAnACLIsSentAgainWhenTheBoxChanged(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
@@ -786,6 +800,7 @@ func TestAnACLIsSentAgainWhenTheBoxChanged(t *testing.T) {
 // A policy or a list that cannot be read stops the drain before anything is
 // acked, and status says so: it is never read as the default.
 func TestAPolicyThatCannotBeReadStopsTheDrain(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
 	send(t, a, b, "waits")
@@ -812,6 +827,7 @@ func TestAPolicyThatCannotBeReadStopsTheDrain(t *testing.T) {
 // RebuildAllowed adds back what aliases and sent/ show, for an allowed file
 // that was lost, and keeps what the file lists.
 func TestRebuildAllowed(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b, c, d := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
 	send(t, b, a, "to a")
@@ -836,6 +852,7 @@ func TestRebuildAllowed(t *testing.T) {
 // A sender the box blocks is never allowed: allow is refused, naming the
 // block, and its held mail stays where it is (#179).
 func TestAllowingABlockedSenderDoesNothing(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
@@ -860,6 +877,7 @@ func TestAllowingABlockedSenderDoesNothing(t *testing.T) {
 // the send posts and says the ACL was not taken; with one taken under server
 // allowed, a send to a peer it does not allow waits.
 func TestASendWaitsOnTheACLOnlyWhenTheReplyWouldBeRefused(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b, c, d := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
@@ -898,6 +916,7 @@ func TestASendWaitsOnTheACLOnlyWhenTheReplyWouldBeRefused(t *testing.T) {
 // its policy file: it stops no drain and no send (#181). One after an address
 // on its line is still no address.
 func TestACommentInTheAddressListsStopsNothing(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)

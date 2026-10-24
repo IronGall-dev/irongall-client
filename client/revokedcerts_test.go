@@ -44,6 +44,7 @@ func mailAs(t *testing.T, e *env, from, to *client.Box, signer ssh.Signer, body 
 // included, and whatever a thief signs with the old key afterwards. The
 // address goes on: the box writes and is written to.
 func TestRevokeEarlierEndsWhatAnOldWorkingKeySigns(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -100,6 +101,7 @@ func TestRevokeEarlierEndsWhatAnOldWorkingKeySigns(t *testing.T) {
 // what that one's working key signs after it. Read before, the serial left
 // that certificate unrevoked (#391).
 func TestRevokeEarlierAfterARenewalTakenUnseenRevokesTheCertificateBeforeIt(t *testing.T) {
+	t.Parallel()
 	for _, killed := range []bool{false, true} {
 		name := "the renewal recorded"
 		if killed {
@@ -141,6 +143,7 @@ func TestRevokeEarlierAfterARenewalTakenUnseenRevokesTheCertificateBeforeIt(t *t
 // a reader has verified stands: what a server shows that a working key
 // signed, or that is a lower one of the identity's own, changes nothing.
 func TestOnlyTheIdentitysHighestRevocationCounts(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -230,6 +233,7 @@ func TestOnlyTheIdentitysHighestRevocationCounts(t *testing.T) {
 // nothing: the box's next certificate passes it, at the server and at every
 // sender that had pinned the thief's.
 func TestALaterCertificateOutranksAnyPrekeySerial(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -290,6 +294,7 @@ func TestALaterCertificateOutranksAnyPrekeySerial(t *testing.T) {
 // stops a renewal, and a peer's a send to it and a drain of its mail, which
 // stays on the server (#69).
 func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnError(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -342,6 +347,7 @@ func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnError(t *testing.T) {
 // of the kept record is held here, the renewal's (nextNumber), the send's
 // (resolve) and the drain's (judge) (#392).
 func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnErrorWhereTheServerShowsNone(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -399,6 +405,7 @@ func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnErrorWhereTheServerSh
 // A send names its prekey by both serials, its own and its certificate's, in
 // its query, and its body is the age file itself, as an octet stream.
 func TestASendNamesBothSerials(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	if _, err := b.Rekey(context.Background(), ""); err != nil {

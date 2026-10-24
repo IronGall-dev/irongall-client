@@ -15,6 +15,7 @@ import (
 // An alias is the box's own name for a peer: Destination takes it where it
 // takes an address, and a send to it reaches that peer.
 func TestAliasNamesAPeer(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
 	for name, to := range map[string]*client.Box{"zed": c, "bob": b} {
@@ -60,6 +61,7 @@ func TestAliasNamesAPeer(t *testing.T) {
 // A name is never moved: it keeps the address it was given until it is
 // removed, so no send goes to another peer under an old name.
 func TestAliasIsNeverMoved(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
 	if err := a.SetAlias(t.Context(), "bob", b.Address()); err != nil {
@@ -83,6 +85,7 @@ func TestAliasIsNeverMoved(t *testing.T) {
 // An alias is 1 to 32 of a-z, 0-9, '.', '_' and '-', starting with a letter
 // or a digit: never an address, and never a link.
 func TestAliasGrammar(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	for _, name := range []string{"", "Bob", "-x", ".x", "a b", "a/b", "é", b.Address().String(), b.Link(), strings.Repeat("a", 33), "bob\n"} {
@@ -111,6 +114,7 @@ func TestAliasGrammar(t *testing.T) {
 // a line that is not "<name> <address>" names nothing and is kept, and a name
 // with two addresses names neither.
 func TestAliasFileEditedByHand(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
 	file := filepath.Join(a.Dir(), "aliases")

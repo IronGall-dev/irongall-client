@@ -36,6 +36,7 @@ func (j jumpAtRenewal) RoundTrip(r *http.Request) (*http.Response, error) {
 // (AGENTS.md, decided on #200; PROTOCOL.md Terms). The mail waiting for the
 // retired key is delivered once the clock is right.
 func TestAClockThatJumpsDuringARenewalDeletesNoKey(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -74,6 +75,7 @@ func TestAClockThatJumpsDuringARenewalDeletesNoKey(t *testing.T) {
 // before the jump. The two messages were sealed to the prekey it retires and
 // signed under the sender's certificate, which the remedy does not revoke.
 func TestAClockThatJumpsDuringTheRemedyDeletesNoKey(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -120,6 +122,7 @@ func (j rightAtFirstCall) RoundTrip(r *http.Request) (*http.Response, error) {
 // the right clock, so no key mail waits for is deleted, and the mail sealed to
 // the retired prekey is delivered.
 func TestAClockSteppedBackBeforeARenewalDeletesNoKey(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -160,6 +163,7 @@ func TestAClockSteppedBackBeforeARenewalDeletesNoKey(t *testing.T) {
 // first reading is 2 hours ahead and the clock is right again before the
 // list: the key that the list's reading keeps must be kept.
 func TestDropRetiredDeletesByNoReadingLaterThanTheLists(t *testing.T) {
+	t.Parallel()
 	for _, ahead := range []time.Duration{0, 2 * time.Hour} {
 		ctx := context.Background()
 		e := newEnv(t)
@@ -203,6 +207,7 @@ func TestDropRetiredDeletesByNoReadingLaterThanTheLists(t *testing.T) {
 // later. The sender sends every second from 3 seconds before the second recv
 // to 3 seconds after it, and once while the renewal's read is answered.
 func TestARenewalAtRecvWithinWhoseReadTakesSeconds(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	h := time.Hour
 	slow, fast := -(10*time.Minute - time.Second), 50*time.Minute
@@ -295,6 +300,7 @@ func (j jumpAtList) RoundTrip(r *http.Request) (*http.Response, error) {
 // once the list is answered drops no line and raises no floor, so the mail
 // it would have let go stays known.
 func TestAClockThatJumpsDuringADrainPrunesNoLine(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)

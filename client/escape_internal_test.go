@@ -12,6 +12,7 @@ import (
 // escapes them, lowercase and a surrogate pair above U+FFFF; a character
 // beside each range is kept as it is; and the value is the same.
 func TestEscapeUnseenEscapesWhatNobodySees(t *testing.T) {
+	t.Parallel()
 	esc := func(r rune) string {
 		if r > 0xFFFF {
 			hi, lo := utf16.EncodeRune(r)

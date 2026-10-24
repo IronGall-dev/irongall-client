@@ -33,6 +33,10 @@ func (e *env) skewed(off *time.Duration) client.Options {
 // a certificate just made reaches it and is delivered, its own mail is
 // delivered, and it renews.
 func TestABoxWhoseClockIsOffByLessThanThePassAllows(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
+	}
 	ctx := context.Background()
 	for _, off := range []time.Duration{-9 * time.Minute, -2 * time.Minute, -time.Second, time.Second, 30 * time.Second, 3 * time.Minute, 49 * time.Minute} {
 		e := newEnv(t)
@@ -65,6 +69,7 @@ func TestABoxWhoseClockIsOffByLessThanThePassAllows(t *testing.T) {
 // 9 slow, are 58 minutes apart, and still exchange mail under certificates
 // made that moment: the hour every maker leaves is the width of that window.
 func TestTheTwoClocksFurthestApart(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	fast, slow := 49*time.Minute, -9*time.Minute
@@ -90,6 +95,7 @@ func TestTheTwoClocksFurthestApart(t *testing.T) {
 // this machine's clock reads, and where to check the clock, which is never
 // the server. A refusal that is not the pass's gets no such sentence.
 func TestABoxWhoseClockIsTooFarOffIsToldSo(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	for _, c := range []struct {
 		off  time.Duration
@@ -127,6 +133,7 @@ func TestABoxWhoseClockIsTooFarOffIsToldSo(t *testing.T) {
 // is, and sends its reader to a time source of their own: a clock set by a
 // server's lie would make an ended certificate valid again.
 func TestTheDateOnAnAnswerIsNeverAnOrder(t *testing.T) {
+	t.Parallel()
 	now := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
 	lie := now.Add(-40 * 24 * time.Hour)
 	problem := func(code protocol.Code) protocol.Problem { return protocol.Problem{Code: code, Detail: "words"} }
@@ -164,6 +171,7 @@ func TestTheDateOnAnAnswerIsNeverAnOrder(t *testing.T) {
 // signed in its place has run out by the server's clock. The mail is
 // delivered when the clock is right.
 func TestABoxWhoseClockGoesBackFetchesNothing(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	var off time.Duration
@@ -205,6 +213,7 @@ func TestABoxWhoseClockGoesBackFetchesNothing(t *testing.T) {
 // refuse it as future and ack it. It waits in the outbox, as its envelope
 // alone, until the clock passes that time, and then goes.
 func TestAnEnvelopeDatedAheadWaitsInTheOutbox(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	for _, c := range []struct {
 		name     string
@@ -262,6 +271,7 @@ func TestAnEnvelopeDatedAheadWaitsInTheOutbox(t *testing.T) {
 // it recorded (noteServed), so with the clock right init has nothing left to
 // do, and the key stays: the mail that waited is still read.
 func TestInitNeverDropsAKeyMailMayBeWaitingFor(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	var off time.Duration
@@ -337,6 +347,7 @@ func mustRead(t *testing.T, name string) []byte {
 // slow, a clock the server takes, would refuse mail under it as not begun.
 // It makes another, by the clock as it is (PROTOCOL.md §0).
 func TestACertificateKeptFromARefusedAttemptLeavesTheHour(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	off, dir := 55*time.Minute, t.TempDir()
@@ -364,6 +375,7 @@ func TestACertificateKeptFromARefusedAttemptLeavesTheHour(t *testing.T) {
 // refused, is not sent again once the clock is right. Its number is spent,
 // and the renewal is made again at a later one.
 func TestARenewalKeptFromARefusedAttemptLeavesTheHour(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	var off time.Duration
@@ -413,6 +425,7 @@ func (j jumpAtFetch) RoundTrip(r *http.Request) (*http.Response, error) {
 // has seen (PROTOCOL.md §0). The mail waiting for the retired key is
 // delivered once the clock is right.
 func TestAClockThatJumpsDuringADrainDeletesNoKey(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -449,6 +462,7 @@ func TestAClockThatJumpsDuringADrainDeletesNoKey(t *testing.T) {
 // a retired key whose deletion time has come: the backstop to dropRetired,
 // which keeps the newest retired key (PROTOCOL.md, the Terms' deletion time).
 func TestADrainDeletesARetiredKeyPastItsDeletionTime(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	b := e.box(protocol.Classic)

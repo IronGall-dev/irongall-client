@@ -86,6 +86,9 @@ func largest(t *testing.T, e *env, b *client.Box, pause func() time.Duration, se
 // only for the bytes the box did not keep. The bounds are the test's own,
 // seconds, through the package's seams (SetLockPatience, Options.DrainTime).
 func TestADrainHoldsTheLockForItsTimeAndTheNextGoesOnFromIt(t *testing.T) {
+	if testing.Short() {
+		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
+	}
 	const patience, drainTime = 2 * time.Second, 6 * time.Second
 	client.SetLockPatience(t, patience)
 	e := newEnv(t)

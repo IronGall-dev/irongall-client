@@ -40,6 +40,7 @@ func finishedBox(t *testing.T) *Box {
 // signatures is its RevokedError. TestAFinishedBoxSignsNothing holds sign to
 // the finished it is given; this holds the box to giving its own (#339).
 func TestEverySignerTheBoxHandsOutAsksItsFinished(t *testing.T) {
+	t.Parallel()
 	b := finishedBox(t)
 	work, _, err := b.currentWorker()
 	if err != nil {
@@ -84,6 +85,7 @@ func TestEverySignerTheBoxHandsOutAsksItsFinished(t *testing.T) {
 // certificate, before any key is written: the working key and its
 // certificate come first, then the age key (#339).
 func TestAPrekeyOnAFinishedBoxWritesNoKey(t *testing.T) {
+	t.Parallel()
 	b := finishedBox(t)
 	files := func() int {
 		p, _ := filepath.Glob(b.path("prekeys", "*"))
@@ -104,6 +106,7 @@ func TestAPrekeyOnAFinishedBoxWritesNoKey(t *testing.T) {
 // revocation before any request (call), and a read of another box is not
 // that box's revocation (readBox). The next command begins with none.
 func TestACommandThatKeptItsOwnRevocationAsksNothingMore(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	b, err := Init(ctx, t.TempDir(), Options{Base: srv.URL}, protocol.Classic)

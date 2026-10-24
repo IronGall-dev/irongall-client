@@ -36,6 +36,7 @@ func posted(e *env, b protocol.Address) *[][]byte {
 // outbox never held any; and the line and the record carry no identity
 // document either.
 func TestSendPadsEveryMessage(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		kt     protocol.KeyType
 		first  int // the smallest block's size for this key type
@@ -97,6 +98,7 @@ func TestSendPadsEveryMessage(t *testing.T) {
 // sender's lookup and its post, as the server stands in for by serving the
 // statement it held before, once.
 func TestAReencryptionToTheOtherKeyTypeIsPaddedAgain(t *testing.T) {
+	t.Parallel()
 	for _, c := range []struct {
 		from, to      protocol.KeyType
 		before, after int
@@ -153,6 +155,7 @@ func TestAReencryptionToTheOtherKeyTypeIsPaddedAgain(t *testing.T) {
 // An outbox entry that is not an envelope from this box to that address is
 // never sealed: the sender reads it as its recipient would.
 func TestSealRefusesAnEntryItsRecipientWould(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b, other := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
 	ctx := context.Background()

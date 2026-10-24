@@ -15,6 +15,7 @@ import (
 // tests, which kill a process at each listed step, kill one at every step
 // there is.
 func TestStepsAreTheCode(t *testing.T) {
+	t.Parallel()
 	listed := map[string]bool{}
 	for _, names := range steps {
 		for _, n := range names {

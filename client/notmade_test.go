@@ -22,6 +22,7 @@ import (
 // renewal goes above it, of the box's own type, never the served one's (#61).
 // A read that serves the box's own statement clears it.
 func TestAStatementTheBoxDidNotMakeIsSaid(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	b := e.box(protocol.PostQuantum)
@@ -68,6 +69,7 @@ func TestAStatementTheBoxDidNotMakeIsSaid(t *testing.T) {
 // taken: Rekey and the remedy return the new prekey with the fault, and the
 // box holds it as the one it published (#110).
 func TestAFaultAfterARenewalWasTakenLeavesItTaken(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	for _, c := range []struct {
@@ -106,6 +108,7 @@ func TestAFaultAfterARenewalWasTakenLeavesItTaken(t *testing.T) {
 // since expired, registers with a new one (#87): one that can no longer be
 // sent is spent, as a renewal's is.
 func TestAnInitWhoseFirstStatementExpiredRegisters(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	dir := t.TempDir()

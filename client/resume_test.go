@@ -145,6 +145,7 @@ func cutOnce(t *testing.T, e *env, a, b *client.Box, f *fetches) (string, []byte
 // next asks for the rest alone: the message is delivered once, the server
 // serves each byte of it once, and nothing of it is kept after.
 func TestACutFetchGoesOnFromWhatItKept(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	f := &fetches{b: b}
@@ -172,6 +173,7 @@ func TestACutFetchGoesOnFromWhatItKept(t *testing.T) {
 // the ciphertext the id names: it is refused as a wrong body read whole is,
 // with the same code, kept in quarantine/ and acked, and the partial goes.
 func TestBytesSplicedIntoARangeAreRefusedAsAWrongCiphertext(t *testing.T) {
+	t.Parallel()
 	flip := func(ct []byte, at int) []byte {
 		out := slices.Clone(ct)
 		out[at] ^= 0x01
@@ -221,6 +223,10 @@ func TestBytesSplicedIntoARangeAreRefusedAsAWrongCiphertext(t *testing.T) {
 // form: the drain stops, nothing is judged or acked, and the partial goes,
 // so the next fetch asks for the whole.
 func TestA206ThatIsNotTheRangeAskedBreaksItsForm(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
+	}
 	for _, c := range []struct {
 		name string
 		// answer writes the 206 to a fetch of ct whose Range asked from n.
@@ -301,6 +307,7 @@ func partial(w http.ResponseWriter, body []byte, contentRange ...string) {
 // §14.2 lets a server ignore a Range: the partial starts afresh, and the
 // message is delivered from the whole.
 func TestA200ToARangedFetchStartsAfresh(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	f := &fetches{b: b}
@@ -435,6 +442,7 @@ func TestAFetchIsCutWhenItStallsAndNotWhileItMoves(t *testing.T) {
 // synced: bytes past that, which a crash can leave unsynced, are cut off,
 // and the next fetch asks from the recorded length.
 func TestAPartialIsTakenOnlyAsFarAsStateRecordsIt(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	f := &fetches{b: b}
@@ -483,6 +491,7 @@ func TestAPartialGoesOnceItsMessageIsJudged(t *testing.T) {
 // message cut is fetched whole after, and delivered, never judged on the
 // other's bytes.
 func TestAFetchOfAnotherMessageDropsWhatWasKept(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	f := &fetches{b: b}
@@ -523,6 +532,10 @@ func TestAFetchOfAnotherMessageDropsWhatWasKept(t *testing.T) {
 // case asks for more than a ciphertext's bytes where a regression would
 // allocate them: a size like 1 << 40 there has the host find a TiB.
 func TestNoSizeAServerGivesIsTakenPastTheLargestCiphertext(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
+	}
 	type answer func(w http.ResponseWriter, honest *httptest.ResponseRecorder, size int64)
 	header := func(name string, value func(kept, size int64) string) answer {
 		return func(w http.ResponseWriter, h *httptest.ResponseRecorder, size int64) {

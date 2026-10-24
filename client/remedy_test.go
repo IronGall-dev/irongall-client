@@ -31,6 +31,7 @@ import (
 // box takes no mail meanwhile, and its next drain sends the renewal that
 // waited, after which the box receives again.
 func TestTheRemedyWhenTheRenewalIsRefused(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, reader := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -98,6 +99,7 @@ func TestTheRemedyWhenTheRenewalIsRefused(t *testing.T) {
 // numbered from the new certificate, and waits on nothing the server says of
 // the renewal, which a taker spending the box's calls could hold back.
 func TestTheRemedyRevokesWhateverTheRenewalMeets(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a := e.box(protocol.Classic)
@@ -125,6 +127,7 @@ func TestTheRemedyRevokesWhateverTheRenewalMeets(t *testing.T) {
 // A renewal refused all the same is sent again at the box's next renewal,
 // as the one it waited for.
 func TestTheRemedySendsItsRenewalOnce(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a := e.box(protocol.Classic)
@@ -162,6 +165,7 @@ func TestTheRemedySendsItsRenewalOnce(t *testing.T) {
 // its working key. The remedy never sends it: it makes a new working key and
 // certificate above it, and revokes the waiting one with the rest.
 func TestTheRemedySendsNoRenewalThatWaited(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a, reader := e.box(protocol.Classic), e.box(protocol.Classic)
@@ -201,6 +205,7 @@ func TestTheRemedySendsNoRenewalThatWaited(t *testing.T) {
 // a revocation through a serial above the box's certificate in use, and a
 // box whose revocation the server took with the answer lost.
 func TestTheRemedyAsksForItsOwnRevocationFirst(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	a := e.box(protocol.Classic)
@@ -277,6 +282,7 @@ func heldCertsOf(t *testing.T, e *env, a *client.Box) *protocol.RevokedCertifica
 // itself again, keeps the higher one, and numbers its new certificate above
 // it (PROTOCOL.md §6.3a).
 func TestTheRemedyOfAForgottenBoxAsksItsRevocationsAgainAfterItsConflict(t *testing.T) {
+	t.Parallel()
 	e := newEnv(t)
 	a := e.box(protocol.Classic)
 	T := numberOf(t, a) + 7200

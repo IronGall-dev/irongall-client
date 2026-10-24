@@ -15,6 +15,7 @@ import (
 // (PROTOCOL.md §0; #290). Read from the transport's own Proxy, so the
 // environment, which net/http reads once a process, plays no part.
 func TestNoProxyForThisMachine(t *testing.T) {
+	t.Parallel()
 	proxy, _ := url.Parse("http://proxy.example:3128")
 	given := &http.Transport{Proxy: func(*http.Request) (*url.URL, error) { return proxy, nil }}
 	tr := newTransport(given).(transport).next.(*http.Transport)
@@ -34,6 +35,7 @@ func TestNoProxyForThisMachine(t *testing.T) {
 // the request and whatever HTTP client the box was given: nothing goes over
 // http off this machine (PROTOCOL.md §0).
 func TestEveryRequestIsHeldToTheServerRule(t *testing.T) {
+	t.Parallel()
 	for _, c := range []*http.Client{nil, {}, {Transport: roundTripper(func(*http.Request) (*http.Response, error) {
 		t.Error("a request the box refuses reached the transport it was given")
 		return nil, http.ErrHandlerTimeout
@@ -62,6 +64,7 @@ func (f roundTripper) RoundTrip(r *http.Request) (*http.Response, error) { retur
 // server's is, and a dial's failure through a proxy, which net/http wraps
 // in a proxyconnect error, is no connection.
 func TestTheKindOfNoAnswerIsReadFromTheWholeChain(t *testing.T) {
+	t.Parallel()
 	refused := errors.New("connection refused")
 	for _, c := range []struct {
 		err  error
