@@ -45,32 +45,10 @@ jobs:
       - name: tools
         run: |
           go version; ssh -V; jq --version; curl --version | head -1; bash --version | head -1
-      - name: gofmt
-        run: |
-          out=$(gofmt -l .)
-          [ -z "$out" ] || { echo "::error::not gofmt'd:"; echo "$out"; exit 1; }
-      - name: vet
-        run: go vet ./...
-      - name: test
-        # A test skips when a tool it runs is missing, and prints ok. Here every
-        # tool is present, so a skip fails the job, but for the one listed below.
-        run: |
-          set +e
-          go test -count=1 -timeout 20m -json ./... | tee "$RUNNER_TEMP/test.json" | jq -rj --unbuffered 'select(.Action == "output") | .Output'
-          status=${PIPESTATUS[0]}
-          set -e
-          jq -rs '[.[] | select(.Test != null)] | group_by([.Package, .Test])[] | select(any(.Action == "skip"))
-            | "\(.[0].Package) \(.[0].Test): " + ([.[] | select(.Action == "output") | .Output
-              | select(test("^ +[^ ]+\\.go:[0-9]+: ")) | sub("^ +"; "") | rtrimstr("\n")] | join(" "))' \
-            "$RUNNER_TEMP/test.json" > "$RUNNER_TEMP/skips"
-          echo "Skipped:"; cat "$RUNNER_TEMP/skips"
-          if grep -v -F -e 'run by the crash tests, in a process of its own' "$RUNNER_TEMP/skips"; then
-            echo "::error::the tests above skipped, and this runner has every tool they need"
-            exit 1
-          fi
-          exit "$status"
-      - name: race
-        run: go test -race -count=1 -run 'SharedByGoroutines' ./client
+      - name: check
+        # gofmt, vet, every test (a skip fails the job, since this runner has
+        # every tool), and the race test: scripts/check.sh, which a laptop runs too.
+        run: scripts/check.sh full
 
   lint:
     runs-on: ubuntu-26.04
@@ -98,7 +76,7 @@ jobs:
         with:
           go-version: stable
           check-latest: true
-      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+      - run: scripts/check.sh vuln
 
   fuzz:
     # Every fuzz target, each alone: briefly on a push, longer once a day, from
@@ -157,9 +135,7 @@ jobs:
           cache-dependency-path: |
             irongall-client/go.sum
             irongall-server/go.sum
-      - name: vet and test
+      - name: check
+        # irongall-server's own scripts/check.sh: its tests and test/interop.sh, against this commit
         working-directory: irongall-server
-        run: go vet ./... && go test -count=1 ./...
-      - name: interop
-        working-directory: irongall-server
-        run: test/interop.sh
+        run: scripts/check.sh full

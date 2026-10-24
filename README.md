@@ -191,7 +191,8 @@ Cloudflare terminates TLS for irongall.dev today, so it can do the same. Neither
 ## Tests
 
 ```sh
-go test -count=1 -timeout 20m ./...             # everything, with no server and no network
+scripts/check.sh                                # while working: vet and the short tests
+scripts/check.sh full                           # everything CI's test job runs, with no server and no network
 go test ./client -run TestForgeries -v          # the forgeries, one by one
 go test -count=1 ./sh -v                        # the stock-tools client
 ```
