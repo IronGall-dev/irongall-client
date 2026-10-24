@@ -26,7 +26,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 - A *line* ends in LF (0x0A). A text "of N lines" is exactly N lines: no CR, and nothing after the last LF.
 - `‖` is concatenation. `str(x)` is a uint32 big-endian length followed by the bytes of `x` (RFC 4251 §5).
 - An **address** is written as 64 lowercase hexadecimal characters, wherever it appears: a path, a statement, an envelope, a namespace.
-- A **time** is RFC 3339 in UTC to the second, exactly `YYYY-MM-DDTHH:MM:SSZ`.
+- A **time** is RFC 3339 in UTC to the second, exactly `YYYY-MM-DDTHH:MM:SSZ`. What ends at a time has ended at that second: it is valid while a clock reads before it.
 - A **serial** is a decimal integer from 1 to 2^53 − 1 with no leading zero. 2^53 − 1 is the largest integer every JSON reader holds exactly (Section 3.3).
 - **base64** is standard base64 (RFC 4648 §4) in its one encoding: padded, with no character outside the alphabet (a line break included), and the unused bits of its last character zero, so that encoding the bytes again gives the same text. Two places differ, and say so: the armour of a signature (Section 3.2) and an adopt key (Section 11.16).
 - In a namespace or a statement, `<A>` is the address of the box that signs it.
@@ -75,7 +75,7 @@ and the signature is a PEM-armoured (`SSH SIGNATURE`) blob:
 
 where `hash` is `sha512` or `sha256`. A verifier MUST accept both. The signing key is the certificate for what a working key signs (Section 5), and the bare identity key for what an identity signs.
 
-A verifier MUST read a signature as OpenSSH's `sshsig.c`, and the key and signature code beneath it, reads one, with the two additional checks below. Where OpenSSH's builds differ, the rules below decide, and where they say nothing, the reading of OpenSSH 10.3p1 or later linked to an OpenSSL that has Ed25519; Appendix A lists where a build differs from them.
+A verifier MUST read a signature as OpenSSH's `sshsig.c`, and the key and signature code beneath it, reads one, with the two additional checks below. Where OpenSSH's builds differ, the rules below decide, and where they say nothing, the reading of OpenSSH 10.3p1 linked to an OpenSSL that has Ed25519; Appendix A lists where a build differs from them.
 
 - **Armour.** The BEGIN line, ending in LF or CRLF; then the base64, in which space, tab, LF, VT, FF and CR are skipped wherever they stand, and which is otherwise in its one encoding; then LF and the END line. Nothing after the END line is read. One NUL MAY be the last byte before that LF; any other NUL or byte outside the alphabet in the base64 is refused.
 - **Blob.** Its version is 0 or 1. A string read where no signature covers it (the namespace, the hash name, each signature's key type, and a bare key's type and curve) MAY end in one NUL, which is not part of it; a NUL before its last byte is refused. The signed data is built from those strings without the NUL. What an identity signed inside a certificate is read byte for byte (Section 5). An ECDSA signature's r and s are each at most 2,049 bytes.
@@ -182,7 +182,7 @@ irongall-prekey-v1
 ```
 
 - **Serial:** a serial. Under one certificate, each statement's is higher than the last's.
-- **Key:** an age recipient of a type its Bech32 human-readable part names (BIP 173, as age writes a recipient: lowercase, its checksum valid, its data whole bytes): `age1pq` for `mlkem768x25519`, `age` for `X25519`. A client makes a post-quantum prekey unless its owner asks for X25519. A prekey type added later is an addition inside v1 (Section 14).
+- **Key:** an age recipient of a type its Bech32 human-readable part names (BIP 173, as age writes a recipient: lowercase, its checksum valid, its data whole bytes, and with no limit on its length, as age has it): `age1pq` for `mlkem768x25519`, `age` for `X25519`. A key whose X25519 point, or whose post-quantum key's X25519 half, is of small order breaks the statement. A client makes a post-quantum prekey unless its owner asks for X25519. A prekey type added later is an addition inside v1 (Section 14).
 - **`not_after`:** a time. A client signs a statement to end 33 days after it makes it, or sooner, down to a day and three hours (Section 12.4). A server takes a statement that ends at most 33 days and an hour after its own clock reads. A statement MUST NOT end after its certificate does.
 - **A sender MUST NOT encrypt to a prekey past its `not_after`.** There is no grace period.
 - **A sender MUST keep, for each box, the highest certificate serial and prekey serial it has seen on the box's statements, and refuse an earlier statement** (Section 5, ordering).
@@ -214,7 +214,7 @@ irongall-pass-v1
 ```
 
 - **The server name** is the host of the box's URL for its server, written as an origin is (RFC 6454 §6.2): lowercase, with no user information, and with its port only when the port is not the scheme's default. `https://irongall.dev:443` and `https://irongall.dev` name `irongall.dev`; `http://127.0.0.1:8080` names `127.0.0.1:8080`. A server MUST write the `Host` of a request the same way, and drop a port of 443 or 80 alike, so that checking a pass never depends on the scheme a request came by.
-- **A client writes it as** `Authorization: irongall-pass address="<A>", not_after="<not_after>", signature="<base64 of the signature>"`, in exactly that form, on one `Authorization` line. A request with two `Authorization` lines carries no pass.
+- **A client writes it as** `Authorization: irongall-pass address="<A>", not_after="<not_after>", signature="<base64 of the armoured signature>"`, in exactly that form, on one `Authorization` line. A request with two `Authorization` lines carries no pass.
 - **A server reads it as RFC 9110 §11 lets a recipient read credentials:** the scheme in any ASCII case, then one space or more; the three parameters in any order, each name in any ASCII case and given once, and no other parameter; optional whitespace around each comma and each `=`, and empty list elements skipped (RFC 9110 §5.6.1.2); each value a token or a quoted-string, and a quoted-string holding a backslash refused. Each value is then held to its form: the address, a time, and the base64 of the signature. The signature is verified over the statement built from those values, never over the header's text. A server MUST refuse a value longer than the form a client writes with a signature of the largest bound any identity key type has (Section 3.2), whitespace included, `401 unauthorized`, before it hashes, parses or verifies it.
 - **Lifetime.** A client signs a pass to end 10 minutes after it signs it. A server takes a pass that has not ended and ends at most an hour after its own clock reads.
 - **A client keeps its pass for every call until it is about to end.** A client MUST NOT use a kept pass with more than 10 minutes left: its clock has gone back since it signed it. A server MAY remember a pass it has verified, by one written form of it: every form a verifier reads as the same pass is one (Section 3.2).
@@ -272,7 +272,7 @@ U1NIU0lH…
 A reader MUST take the parts apart so:
 
 1. **The signature is verified over line 1 exactly as decrypted,** and the envelope's members are read from those same bytes, never from anything rebuilt.
-2. **Each part has one place, and nothing is searched for.** Line 2 MUST be the signature's BEGIN line. The block ends at the first END line, which MUST be followed by LF; any other byte there, or none, refuses the message, and no later END line is looked for. What follows is never parsed and never shown.
+2. **Each part has one place, and nothing is searched for.** Line 2 MUST be the signature's BEGIN line, ending in LF. The block ends at the first END line, which MUST be followed by LF; any other byte there, or none, refuses the message, and no later END line is looked for. What follows is never parsed and never shown.
 3. **One signature, one identity:** it is verified against the identity the envelope carries, and the verdict is the verification's result alone.
 
 The namespace binds the signature to its recipient: a message signed for one box does not verify in another's namespace.
@@ -283,7 +283,7 @@ Every message is padded so that its ciphertext is a whole number of blocks.
 
 - **A block** is the smallest power of two that is at least 1/16 of the ciphertext's size, and at least 1 KiB.
 - **The padding is `.` bytes after the signature's END line, to the end,** as many as make the ciphertext the next whole number of blocks, and none for one already on a block. It is not signed.
-- **The ciphertext is what is measured.** age's file size is a fixed function of the recipient type and the plaintext's length (C2SP age), so a sender computes the padding before encrypting, and MUST refuse to send a file that is not the size it computed.
+- **The ciphertext is what is measured.** An age file of one native stanza and no other, of a plaintext of L bytes, is H + 16 + L + 16 × max(1, ⌈L / 65,536⌉) bytes: the header, H, 168 bytes for an `X25519` stanza and 1,627 for `mlkem768x25519`; the payload's nonce; the plaintext; and a tag for each 64 KiB chunk. A sender computes the padding from that before encrypting, and MUST refuse to send a file that is not the size it computed.
 - **Padding is made at the seal,** for the prekey sealed to: a message sealed again to a prekey of another type is padded again.
 - **A server does not check padding.** A size limit a server sets MUST be a whole number of its own blocks, as every power of two is, so that a message fits a limit padded exactly when it fits it bare.
 
@@ -317,15 +317,15 @@ The identity revokes every certificate it made up to and including a serial, and
 A record carries what an identity revoked, and proves itself: anyone holding the address checks it with nothing else.
 
 ```json
-{"type":"revocation_record","identity":"<base64 of D>","revocation_signature":"<base64>","revoked_certificates":<serial>,"revoked_certificates_signature":"<base64>"}
+{"type":"revocation_record","identity":"<base64 of D>","revocation_signature":"<base64>","revoked_certificates":"<base64>","revoked_certificates_signature":"<base64>"}
 ```
 
-- **`type`** is `"revocation_record"`. Every writer writes it, a server in its answers and a client in what it sends, keeps and prints. A reader takes a record without it, and MUST refuse one that names another type (a server with `400 bad_request`, `member` `type`).
+- **`type`** is `"revocation_record"`. Every writer writes it, a server in its answers (`api/openapi.yaml` requires it there) and a client in what it sends, keeps and prints. A reader takes a record without it, and MUST refuse one that names another type (a server with `400 bad_request`, `member` `type`).
 - **`identity`** is the identity document, which MUST hash to the address and pass its key checks (Section 4.1).
 - **`revocation_signature`**, if present, is the revocation of the address (Section 10.1), its armoured signature in base64.
-- **`revoked_certificates`** with **`revoked_certificates_signature`**, if present, is the revocation of certificates (Section 10.2): its serial, and the signature over its statement.
+- **`revoked_certificates`** with **`revoked_certificates_signature`**, if present, is the revocation of certificates (Section 10.2): its statement's three lines, and the armoured signature over them, each in base64. The statement MUST be exactly that form, its line 2 the address.
 - **The members are in any order.** A record carries at least one of the two revocations.
-- **A record is worth the same from a server or from a file.** A verifier rebuilds each statement from the address and the serial, and verifies each signature under the document's key.
+- **A record is worth the same from a server or from a file.** A verifier rebuilds the revocation of the address from the address, holds the revocation of certificates to its form, and verifies each signature under the document's key.
 
 ## 11. The HTTP API
 
@@ -385,7 +385,7 @@ What each code means, and what a client does on it:
 | 404 | `no_such_message` | the message was acked or has expired: it is gone |
 | 404 | `not_revoked` | the server holds no revocation of the address (Section 11.15) |
 | 408 | `request_timeout` | the body did not arrive in time: send it again |
-| 409 | `conflict` | what is held is newer, or other: a registration that is not an identical retry; a renewal not later than the current statement (`prekey_serial`, `certificate_serial` name what it must pass); a revocation of certificates through a serial lower than the one held (`through` names the one held); a send whose id another sender holds |
+| 409 | `conflict` | what is held is newer, or other: a registration that is not an identical retry; a renewal under the current certificate at a prekey serial not higher (`prekey_serial` names the serial it must pass); a revocation of certificates through a serial lower than the one held (`through` names the one held); a send whose id another sender holds |
 | 409 | `box_changed` | the box changed while the request was handled, or a condition it carried no longer held at its write: send it again as it is |
 | 409 | `stale_prekey` | a newer prekey exists: read the box again and seal the same envelope (`prekey_serial`, `certificate_serial` name the current one) |
 | 409 | `prekey_expired` | the recipient's prekey has ended, or is under a revoked certificate: its owner must renew |
@@ -448,6 +448,7 @@ Every call names a box, and this is what each does in each state.
 | **active** | an identical retry, `200`; otherwise `409 conflict` | `200`, stays `active` | served | of the address → `revoked`, `201`, its mail deleted; of certificates, `200` |
 | **revoked** | `410 revoked` | `410 revoked` | `410 revoked` | `410 revoked`, answered from the record |
 
+- **A send answers its sender's state** as `403 unknown_sender` or `403 sender_revoked` (Section 11.10, step 1), and its recipient's as this table does.
 - **There is no delete of a box.** A box leaves a server for good by its identity's revocation, pauses with its ACL (Section 11.14), and is forgotten once it stops renewing.
 - **There is no pending state:** a registration carries a pass minutes old, so a box is active from its first call.
 - **A box is forgotten once nothing valid for it is left** (Section 13): it has stopped renewing, its certificate has ended and its last prekey's mail has expired. It is then unknown, and registers anew, its ACL and its account gone. What its identity revoked is kept.
@@ -592,7 +593,7 @@ A box may belong to one account at its server. The protocol fixes how a box join
 
 - **Identity:** the pinned one, or at first contact the served one; a pin always wins. The served identity MUST hash to the address and pass Section 4.1, as a server holds it at registration. One of a type the client does not verify is refused, and nothing is sealed. It is pinned only once its prekey statement has verified, and a later read never replaces it.
 - **A verifier built on `ssh-keygen`** uses an `allowed_signers` file of exactly one line, `<address> cert-authority <key>`, built for each verification from the identity it has hash-checked, never from a server's text.
-- **The prekey statement:** its signature, under a certificate of that identity (Section 5), in its own namespace, line 2 the recipient's address, not past its `not_after`, and not earlier than what the sender has seen (Section 6). The serials are recorded only after every check passes.
+- **The prekey statement:** its signature, under a certificate of that identity that passes every rule of Section 5, and every rule of Section 6: its form and namespace, line 2 the recipient's address, its key, its `not_after` not passed and not after its certificate's end, and the statement not earlier than what the sender has seen. The serials are recorded only after every check passes.
 - **Revocations:** what the read carries of a revocation of the recipient's address or certificates is kept once it verifies (Section 12.5). Nothing is posted to an address the sender holds a revocation of, and such an address is refused before any call; a statement under a revoked certificate is refused.
 - **No answer is not "none held."** If the read fails, or serves no box (`404 no_such_mailbox`, or `410 revoked` with nothing that verifies), nothing is sealed or posted, and the message waits in the outbox. A failed read's code is no answer about the message.
 - **What the read shows, or leaves out, is the server's word and is kept nowhere,** so the next post reads again.
@@ -603,8 +604,8 @@ A box may belong to one account at its server. The protocol fixes how a box join
 - **A seal is made for one post and never kept.** Each post, the first and every retry, reads the box as above, then dates the envelope (`sent_at` the sender's clock, every other member as it was), seals it to the statement the read passed, signed by the working key in use, and posts it. A message that waited thus goes to what the sender holds at its post.
 - **A post is dated after the read, and never before its entry was written.** An entry dated ahead of the clock at its dating waits until the clock passes that time.
 - **An entry is posted for 33 days from when it was written,** by the clock at each dating, and never after, so no copy of a message is dated more than 33 days after the first.
-- **On `409 stale_prekey`, the sender reads the box again and seals the same envelope** within the same send.
-- **A send refused for a limit waits in the outbox** and is posted again after `Retry-After`: `rate_limited`, `pair_full`, `mailbox_full`, `mailbox_busy`. **`sender_not_allowed` is final:** only the recipient can change its ACL, so the message is never posted again.
+- **On `409 stale_prekey`, the sender posts the same envelope again** within the same send: the box read, the envelope dated and sealed anew, as above.
+- **A refusal no later post of the message can pass is final:** `bad_address`, `too_large`, `conflict` and `sender_not_allowed` (only the recipient can change its ACL); the message is never posted again. **Any other refusal leaves it in the outbox,** posted again after `Retry-After` where the answer gives one.
 - **A box MUST NOT sign mail under a certificate it holds revoked** (Section 10.2): the entry waits until its renewal is taken.
 - **A `410 revoked`, to the read or to the send, is checked, never believed** (Section 12.5).
 - **A post whose answer is lost costs a send.** The server stored it; the retry is a new ciphertext, which the server stores and counts as new mail, and the recipient delivers the message once (Section 12.3, check 10).
@@ -615,15 +616,15 @@ A client drains every page of its list (Section 11.11). For each entry it fetche
 
 **The checks, in this order.** Only a message that passes all of them is accepted.
 
-1. **Decryption** with every retained prekey. A reader MAY refuse as `undecryptable`, before any key agreement, a file without exactly one native stanza, which no server takes as a send (Section 11.10, step 7).
-2. **The layout** (Section 9.2): the envelope line, then a signature block from line 2 to the first END line, followed by LF.
-3. **The envelope is one JSON object** as Section 3.3 reads one; its body is held to the same rules and passed on as it is.
-4. **The sender's identity document,** from the envelope's `identity`: base64, the form of Section 4.1, and a key that passes its checks. `from` MUST be its hash. A well-formed document of a type the reader does not verify, whose hash is `from`, is refused as `unsupported_key_type`.
-5. **The signature,** over line 1 exactly as decrypted, in the namespace `irongall-msg-v1:<this box>`, by a working key under a certificate of that identity that holds now (Section 5).
-6. **The rest of the envelope,** in this order: a body, and every member of its type (`from` and `to` addresses); `v` the integer 1; `to` this box; `msg_id` in its form; and `sent_at` no older than 33 days and not before the box's floor (both `stale`, check 9), and no more than an hour ahead of this box's clock (`future`).
+1. **Decryption** with every retained prekey (`undecryptable`). A reader MAY refuse as `undecryptable`, before any key agreement, a file without exactly one native stanza, which no server takes as a send (Section 11.10, step 7).
+2. **The layout** (Section 9.2): the envelope line, then a signature block from line 2 to the first END line, followed by LF (`bad_message`).
+3. **The envelope is one JSON object** as Section 3.3 reads one; its body is held to the same rules and passed on as it is (`bad_envelope`).
+4. **The sender's identity document,** from the envelope's `identity`: base64, the form of Section 4.1, and a key that passes its checks (`bad_identity`). `from` MUST be its hash (`reattributed`). A well-formed document of a type the reader does not verify, whose hash is `from`, is refused as `unsupported_key_type`.
+5. **The signature,** over line 1 exactly as decrypted, in the namespace `irongall-msg-v1:<this box>`, by a working key under a certificate of that identity that holds now (Section 5) (`bad_signature`).
+6. **The rest of the envelope,** in this order: a body, and every member of its type (`from` and `to` addresses); `v` the integer 1; `to` this box (`reattributed`); `msg_id` in its form (each other failure `bad_envelope`); and `sent_at` no older than 33 days and not before the box's floor (both `stale`, check 9), and no more than an hour ahead of this box's clock (`future`).
 7. **The listed `from` is the sender that verified** (`reattributed` otherwise).
 8. **Revocation:** the box holds no revocation of the sender (Section 12.5). The reader asks by one read of the sender's box (Section 11.8), once for each sender in a drain, after that sender's signature has verified. A revocation that verifies refuses the message as `revoked`, and every later one from that address, whenever it was signed. A box served with no revocation, no such box, or `410 revoked` with nothing that verifies is an answer that none is held. Any other result is no answer: the drain stops, and the message stays on the server. The same read carries the sender's revocation of certificates: mail under a revoked certificate is refused as `certificate_revoked`.
-9. **Replay:** the SHA-256 of the ciphertext, computed by the reader, is not in the replay set. A listed `id` that differs from it is refused (`bad_id`). The set keeps each message's hash, with its `sent_at`, `from` and `msg_id`, until `sent_at` + 66 days and an hour. **A prune that drops a line first raises the box's floor to its cutoff,** in the same write or before it, and a `sent_at` before the floor, or less than 33 days above it, is `stale` whatever the clock reads.
+9. **Replay:** the SHA-256 of the ciphertext, computed by the reader, is not in the replay set (`replay`). A listed `id` that differs from it is refused (`bad_id`). The set keeps each message's hash, with its `sent_at`, `from` and `msg_id`, until `sent_at` + 66 days and an hour. **A prune that drops a line first raises the box's floor to its cutoff,** the date of the pass it prunes by (Section 12.4) less 66 days and an hour, in the same write or before it; a prune that drops nothing leaves the floor, and a `sent_at` before the floor, or less than 33 days above it, is `stale` whatever the clock reads.
 10. **Retry:** `(from, msg_id)` is not in the replay set. A match is a copy of a message already delivered: it is acked and not delivered again.
 
 **Who a sender is is never asked of the server:** the message carries what proves it, and the sender's identity is pinned only once every check has passed.
@@ -666,7 +667,7 @@ A client drains every page of its list (Section 11.11). For each entry it fetche
 
 ### 12.5. Revocation at a client
 
-- **A client takes "revoked" only with a revocation that verifies.** A `410 revoked`, a `403 sender_revoked` or a `401 certificate_revoked` is a server's word. A client verifies the record a `410` carries; it reads the box (Section 11.8) only after a `403 sender_revoked`, or a `410` that carries no record or one that does not verify. A record that verifies is final. Without one, the call has failed and nothing more: no state changes, and a message stays in the outbox. What a server shows that does not verify counts as nothing shown.
+- **A client takes "revoked" only with a revocation that verifies.** A `410 revoked`, a `403 sender_revoked` or a `401 certificate_revoked` is a server's word. A client verifies the record a `410` carries; it reads the box (Section 11.8) only after a `403 sender_revoked`, its own box, or a `410` that carries no record or one that does not verify, unless that read is what answered. A record that verifies is final. Without one, the call has failed and nothing more: no state changes, and a message stays in the outbox. What a server shows that does not verify counts as nothing shown.
 - **On `401 certificate_revoked`, a client reads its own box before it tries again.** A revocation there that verifies and covers the certificate it signs under is final: no second pass is signed for the call, and the box renews instead. With none, it signs one more pass, as for any `401`.
 - **A box asks about revocations, and publishes its own, at its own server alone:** of the recipient by the read before every post, of each sender once in a drain, and whenever its owner says. Where its server holds no box for it, a box reads its own with `GET …/revocations`.
 - **What it has verified about an address, from any source and at any time, it keeps for good,** and checks every send and every read against, with no call to anyone. A record handed over is checked and kept as a served one is. "None held" is kept nowhere.
@@ -716,7 +717,7 @@ What version 1 fixes, and where each can grow inside it:
 | Fixed | Grows by |
 |---|---|
 | The signed statements, byte for byte (Sections 4.1, 6, 8, 10); a certificate's type, key id, principal and validity (Section 5) | a new format under a new tag; a new identity or prekey key type; a certificate extension, which a reader ignores |
-| The namespaces, `irongall-<purpose>-v1:<A>` | a new purpose |
+| The namespaces, `irongall-<purpose>-v1:<address>` | a new purpose |
 | A signature's form, and its bound for each key type (Section 3.2) | a new key type, with a bound of its own |
 | What is encrypted: the envelope's line, the signature block, the padding (Section 9) | the envelope's optional members; `v` changes only for a breaking change |
 | JSON as Section 3.3 reads it; a byte member's one encoding; a message's ciphertext as a send's body | nothing |
