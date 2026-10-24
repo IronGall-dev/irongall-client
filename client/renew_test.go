@@ -308,6 +308,47 @@ func TestAnUploadAnswered404WhoseReadAgainServesItIsTaken(t *testing.T) {
 	}
 }
 
+// An upload the server took, and a fault of the box at the write that records
+// it, is a renewal taken all the same, by the reading the server took: the
+// box's state could not hold what the fault did not write (tookRenewal;
+// #110). Rekey returns the prekey with the fault, and the box's next read of
+// itself records it, so the next renewal goes above it (#402 item 1).
+func TestAFaultRecordingARenewalTheServerTookLeavesItTaken(t *testing.T) {
+	ctx := context.Background()
+	full := &os.PathError{Op: "write", Path: "state", Err: syscall.ENOSPC}
+	e := newEnv(t)
+	b := e.box(protocol.Classic)
+	old := numberOf(t, b)
+	e.clock.Add(2 * time.Second)
+	var armed, fired atomic.Bool
+	client.SetStep(func(name string) {
+		if name == "renewal taken" {
+			armed.Store(true)
+		}
+	})
+	t.Cleanup(func() { client.SetStep(nil) })
+	client.SetWriteFault(t, func() error {
+		if armed.CompareAndSwap(true, false) {
+			fired.Store(true)
+			return full
+		}
+		return nil
+	})
+	p, err := b.Rekey(ctx, "")
+	client.SetStep(nil)
+	if !fired.Load() {
+		t.Fatal("the fault never fired")
+	}
+	if p == nil || !errors.Is(err, syscall.ENOSPC) || servedSerial(t, e, b) != p.Serial || numberOf(t, b) != old {
+		t.Fatalf("a renewal taken whose record failed: %+v, %v; the box records %d (was %d), the server serves %d", p, err, numberOf(t, b), old, servedSerial(t, e, b))
+	}
+	e.clock.Add(2 * time.Second)
+	again, err := b.Rekey(ctx, "")
+	if err != nil || again == nil || again.Serial <= p.Serial || numberOf(t, b) != again.Serial {
+		t.Fatalf("the next renewal: %+v, %v; the box records %d", again, err, numberOf(t, b))
+	}
+}
+
 // A renewal whose upload meets a box forgotten since its read, and whose
 // read of itself again shows no box and ends there: at a fault of the box
 // itself, at the write that keeps what the read of its revocations showed (a
