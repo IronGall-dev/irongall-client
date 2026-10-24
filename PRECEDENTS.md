@@ -532,6 +532,12 @@ None of the three was a flaw in the layout: each was a verifier that read an obj
 
 **The precedent for three outcomes** (read 2026-10-24; § Sources). Go's `database/sql/driver` has a driver tell a failure that changed nothing from one that may have: "To prevent duplicate operations, ErrBadConn should NOT be returned if there's a possibility that the database server might have performed the operation. Even if the server sends back an error, you shouldn't return ErrBadConn." (`driver.go`, Go 1.27.3). The MongoDB Go driver labels a commit whose outcome it cannot know, apart from one that failed: "UnknownTransactionCommitResult is an error label for unknown transaction commit results." (`x/mongo/driver/errors.go` at `v2.9.2`), added where "we got a retryable error or MaxTimeMSExpired error" on a commit (`x/mongo/driver/operation.go`), and `WithTransaction` retries the commit on it (`mongo/session.go`).
 
+## 2. What the server counts, on a listener of its own
+
+**Ours** (irongall-server's `ARCHITECTURE.md` § Metrics): what the server does and refuses is counted for its operator, on a listener apart from the API and off unless set, so a limit is tuned and an attack on a box seen without reading logs, which carry no caller's address.
+
+**The precedent** (read 2026-10-19). Prometheus' advice is "The short answer is to instrument everything.", and of a service that answers requests, "The key metrics in such a system are the number of performed queries, errors, and latency"; "Every time there is a failure, a counter should be incremented" beside the attempts (`prometheus/docs`, `docs/practices/instrumentation.md` at `410443d27b`). Let's Encrypt's Boulder serves each service's metrics the same way, Prometheus' `client_golang` with the Go and process collectors on a listener apart from its API, and none when it is unset (`cmd/shell.go`, `newStatsRegistry`, at `cf6406dd86`).
+
 ---
 
 # Sources
