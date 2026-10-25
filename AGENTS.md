@@ -67,7 +67,7 @@ Each commit carries your human's sign-off, made with `git commit -s` (the Develo
 
 ### Releases
 
-- **A release is an annotated tag `v0.<minor>.<patch>`, signed by a key in `.github/allowed_signers` (`git tag -s`), on a commit of `main` that CI passed:** `.github/workflows/release.yml` checks all three and releases nothing else, so push the tag once that commit's CI run is green, or re-run the release after it is. No tag is `v1.0.0` or above, the protocol freeze included, until the maintainer decides one is. A dependency moves in a commit before the tag (§ Every client), never in the release.
+- **A release is an annotated tag `v0.<minor>.<patch>`, signed by a key in `.github/allowed_signers` (`git tag -s`), on a commit of `main` that CI passed:** `.github/workflows/release.yml` checks all three and releases nothing else. **`scripts/release.sh` makes the tag:** it prints the next patch for `origin/main` and refuses what the workflow would (a commit already released or not yet passed, a tag that skips ahead or reaches `v1`), and with `--execute` signs the tag, verifies it against `allowed_signers` and pushes it. No tag is `v1.0.0` or above, the protocol freeze included, until the maintainer decides one is. A dependency moves in a commit before the tag (§ Every client), never in the release.
 - **A release tag is signed with the maintainer's key, by him or by Custos on his standing word** (§ The maintainer's own commits); adding a key to `allowed_signers` is his commit. A patch is released when a build lands; a new minor is his to choose. A platform joins `.goreleaser.yaml` once CI runs the client on it (#346).
 
 ### The maintainer's own commits
