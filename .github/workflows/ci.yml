@@ -33,12 +33,13 @@ defaults:
 jobs:
   test:
     # Ubuntu on two OpenSSH releases for the script and the cross-tests, 9.6p1
-    # and 10.2p1; and macOS on Apple silicon and Intel, the two Macs a release
-    # is built for, where scripts/check.sh leaves ./sh out (its header says why).
+    # and 10.2p1, and on arm64; and macOS on Apple silicon and Intel: each
+    # system and architecture a release is built for. On macOS
+    # scripts/check.sh leaves ./sh out (its header says why).
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, ubuntu-26.04, macos-26, macos-26-intel]
+        os: [ubuntu-24.04, ubuntu-26.04, ubuntu-26.04-arm, macos-26, macos-26-intel]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     steps:
