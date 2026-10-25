@@ -19,12 +19,12 @@ NOT_AFTER=2026-11-12T00:00:00Z # NOW + 33 days exactly: what a client asks for. 
 MSG_ID=6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b
 # A certificate's validity, as ssh-keygen -V takes it. These begin a minute before NOW, where a client
 # dates its own from an hour back (PROTOCOL.md §5): a verifier asks only that one has begun.
-V_OK=20261009235900Z:20261214000000Z
-V_BEGINS_NOW=20261010000000Z:20261214000000Z # begins at NOW: begun
+V_OK=20261009235900Z:20261213000000Z # ends 64 days after NOW: what a client asks for
+V_BEGINS_NOW=20261010000000Z:20261213000000Z # begins at NOW: begun
 V_SHORT=20261009235900Z:20261020000000Z    # ends 10 days after NOW: a 33-day prekey statement outlives it
 V_ENDED=20260801000000Z:20261010000000Z    # ends at NOW
-V_NOT_BEGUN=20261010000001Z:20261214000000Z
-V_TOO_LONG=20261009235900Z:20261215000001Z # ends 66 days and a second after NOW
+V_NOT_BEGUN=20261010000001Z:20261213000000Z
+V_TOO_LONG=20261009235900Z:20261213010001Z # ends 64 days, an hour and a second after NOW: a second past what a verifier takes
 
 # Hex helpers. Binary goes through hex strings, never through shell variables.
 asc() { printf '%s' "$1" | od -An -tx1 | tr -d ' \n'; }

@@ -36,7 +36,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 - **Box:** a mailbox: an address, its keys and its mail. Never a machine.
 - **Identity key:** a box's long-term signing key, of a key type Section 4 defines. It signs certificates (Section 5) and revocations (Section 10), and nothing else.
 - **Identity document `D`:** the two-line text that carries the identity's public key (Section 4.1). **Address `H`:** the SHA-256 of `D` (Section 4.2). One identity key has exactly one address.
-- **Working key:** an Ed25519 key that the identity certifies for at most 66 days. It signs everything else a box signs: prekey statements, mail and passes.
+- **Working key:** an Ed25519 key that the identity certifies for at most 64 days and an hour. It signs everything else a box signs: prekey statements, mail and passes.
 - **Certificate:** the OpenSSH user certificate by which the identity certifies a working key (Section 5).
 - **Prekey:** a box's current age encryption key. **Prekey statement:** its publication, signed by the working key (Section 6). A prekey is **retired** once the server takes a later statement.
 - **Renewal:** the publication of a new prekey statement (Section 11.9).
@@ -99,7 +99,7 @@ Every JSON text the protocol carries is read by these rules, by a server and by 
 
 ### 3.4. Clocks
 
-Every check of a time is exact at the clock of whoever makes the check, with no allowance. Whoever makes a time-limited object leaves an hour of room for clocks that differ, in the way each object's section states: a certificate's start (Section 5), a prekey statement's ceiling at a server (Section 6), a pass's lifetime (Section 8), a reader's limit on `sent_at` (Section 12.3, check 6), a renewal's timing (Section 12.4), and the server's keep of mail (Section 13).
+Every check of a time is exact at the clock of whoever makes the check, with no allowance. Whoever makes a time-limited object leaves an hour of room for clocks that differ, in the way each object's section states: a certificate's start and its ceiling at a verifier (Section 5), a prekey statement's ceiling at a server (Section 6), a pass's lifetime (Section 8), a reader's limit on `sent_at` (Section 12.3, check 6), a renewal's timing (Section 12.4), and the server's keep of mail (Section 13).
 
 ## 4. Identity and address
 
@@ -140,7 +140,7 @@ An address is shared as the link `https://<server>/to/<address>`.
 
 ## 5. The working key and its certificate
 
-The identity signs certificates and revocations, and nothing else. Every other signature a box makes is its working key's, under a certificate the identity signed. A box that holds its identity makes its own certificates; a box whose identity is held elsewhere is given each certificate by whoever holds the identity.
+The identity signs certificates and revocations, and nothing else. Every other signature a box makes is its working key's, under a certificate the identity signed. A box that holds its identity makes its own certificates; a box whose identity is held elsewhere is given each certificate by whoever holds the identity (Section 12.7).
 
 A certificate is an OpenSSH user certificate, and a verifier MUST check every row of this table:
 
@@ -151,17 +151,17 @@ A certificate is an OpenSSH user certificate, and a verifier MUST check every ro
 | Serial | a serial (Section 2.2), numbered as below |
 | Key id | exactly `irongall-cert-v1` |
 | Principals | exactly one: the box's address |
-| Validity | `valid after` ≤ now < `valid before` ≤ now + 66 days, at the verifier's clock, in whole seconds |
+| Validity | `valid after` ≤ now < `valid before` ≤ now + 64 days and an hour, at the verifier's clock, in whole seconds |
 | Critical options | none. A verifier MUST refuse a certificate with any (draft-ietf-sshm-cert-01 §2.1.1) |
 | Extensions | ignored, each, but a verifier MUST refuse a certificate whose extensions are not in one encoding: each name once, in lexical order, and each value empty or one string that is not empty. A maker writes none |
 | Reserved | ignored, whatever it holds. A maker writes it empty |
 | Signed by | the key in the identity document, byte for byte |
 
-Example: `ssh-keygen -s identity -I irongall-cert-v1 -n "$A" -z "$SERIAL" -V -1h:+65d -O clear work.pub`.
+Example: `ssh-keygen -s identity -I irongall-cert-v1 -n "$A" -z "$SERIAL" -V -1h:+64d -O clear work.pub`.
 
 - **A signature by a working key carries its certificate** as the SSHSIG's signing key. A verifier MUST take the certificate from the signature, check it against the identity it holds for the address, and then verify the signature under it. A verifier MUST refuse such a signature by the bare working key or by the identity.
 - **A certificate is checked at the verifier's clock, and only once the identity's signature on it has verified.**
-- **A maker dates a certificate from an hour before it makes it, and asks for 65 days.** A verifier takes up to 66.
+- **A maker dates a certificate from an hour before it makes it, and asks for 64 days.** A verifier takes up to 64 days and an hour.
 - **A box MUST NOT sign mail under a certificate with 33 days or less left,** so that the certificate outlasts the TTL of what it signed.
 - **Every certificate certifies a new working key.**
 - **Serials.** The maker numbers a certificate by its own clock, in seconds since 1970-01-01T00:00:00Z, or one above the highest serial it knows of for the box when its clock gives nothing higher: the served certificate's, what the box published or signed, and the highest serial the identity has revoked (Section 10.2). A box's first certificate is numbered the same way. A verifier MUST NOT read a serial as a time, or bound it by its clock: it compares two serials, and the higher is later. Two certificates of one identity can share a serial (made in one second, or each one above the same serial); a verifier that meets two takes either, and pins nothing beyond the serial.
@@ -310,7 +310,7 @@ The identity revokes every certificate it made up to and including a serial, and
 - **It revokes every certificate of the address whose serial is at or below its own, and the highest one verified stands.** A verifier keeps the highest it has verified. One through a lower serial changes nothing, whenever it arrives. There is no way to revoke fewer.
 - **What a revoked certificate loses, at a verifier that holds the revocation:** a reader refuses mail signed under it, whenever it was signed (`certificate_revoked`); a sender refuses a prekey statement under it; a server takes no pass and no statement under it, and answers a send to a box whose current statement is under it `409 prekey_expired`. A box MUST NOT sign mail under a certificate it holds revoked. The address goes on.
 - **A box MUST NOT make a certificate its identity has revoked:** its next certificate is numbered above the highest serial it holds revoked or its server shows it (Section 5). One through 2^53 − 1 leaves no certificate to make.
-- **How long one is kept is not fixed here.** Every certificate it covers ends within 66 days of being made.
+- **How long one is kept is not fixed here.** Every certificate it covers ends within 64 days and an hour of being made.
 
 ### 10.3. The revocation record
 
@@ -586,6 +586,7 @@ A box may belong to one account at its server. The protocol fixes how a box join
 - **A client MUST NOT adopt a server's `Date` as its clock, nor tell its owner to set the clock by it.** When a refusal is for a time, it reports the difference between the two, as the server's word, pointing its owner to a time source the owner trusts: a box checks everything against its own clock, and a clock set by a lying server would make an ended certificate valid again and stale mail fresh.
 - **A key that reads mail decrypts the messages a client fetches (Section 12.3), and nothing else a server sends.**
 - **One command of a box at a time.** A client MUST hold a box's lock for the whole of every command that writes the box, so a box has one consumer, and a command that finds it held waits.
+- **One box, one place.** A box runs in one place at a time, where its working keys, prekeys and state are kept. A machine that is to run beside it is a box of its own, with its own identity and address; one restored from the identity alone takes the box's place (Section 12.4).
 
 ### 12.2. Sending
 
@@ -656,13 +657,18 @@ A client drains every page of its list (Section 11.11). For each entry it fetche
 - **Each renewal is a new prekey.** A client that holds its identity SHOULD make a new working key and certificate with each, numbered by its clock (Section 5), after it reads its own box: what the read carries of its identity's revocation of certificates is kept, and the next certificate is numbered above it.
 - **A box MUST check its own certificate at its own clock before it signs under it:** a box whose clock has gone back past its certificate's start is stopped there.
 - **Lifetime.** A prekey is valid for 33 days, or for a shorter lifetime its owner sets, down to a day and three hours. A client renews while at least two hours of its prekey are left, an hour for the renewal's own calls and the hour of room for clocks (Section 3.4), and times its renewals and the early deletion of its retired prekeys by its own record of when it signed each prekey, never by the statement's `not_after`: a prekey with no record is renewed at once, and every retired key is kept while the newest has none.
-- **A serial is signed once.** A renewal the server did not take is sent again exactly as it was signed. A client signs a new key, at a later number, only once that statement has ended, or was made for longer than the lifetime now allows, or has no record of when it was made, or is at or below a serial its identity has revoked, or is under a certificate that began less than an hour before the box's clock, or another key type is wanted. The key passed over is kept and deleted as a retired one.
+- **A serial is signed once.** A renewal the server did not take is sent again exactly as it was signed. A client signs a new key, at a later number, only once that statement has ended, or was made for longer than the lifetime now allows, or has no record of when it was made, or is at or below a serial its identity has revoked, or is under a certificate that began less than an hour before the box's clock, or another key type is wanted, or its server holds a statement no earlier than it (below). The key passed over is kept and deleted as a retired one.
+- **A renewal answered `409 conflict`, or `401 certificate_not_current` under the second pass Section 8 allows, is final for its statement:** the server holds a statement no earlier than it, and takes only a later one (Section 11.9). The box reads itself (Section 11.8): its own statement served is a renewal taken whose answer was lost; any other is a statement it did not make, and whether the box renews again is the rule below.
 - **A client MUST NOT use a kept certificate that began less than an hour before its clock:** it was made while the clock read ahead. The statement and working key made with it are made again, by the clock as it reads: for the same prekey at a box's first registration, and at a later number at a renewal.
-- **Deletion.** A retired prekey is deleted at its deletion time: at the latest its statement's `not_after` plus the TTL. A drain that stopped at a bound deletes no retired prekey. A client MAY delete earlier all but the newest retired prekey, after a drain that empties the box, by a list the server took under a pass dated more than an hour after the newest retired prekey was made. While a renewal waits, a box holds two working keys: the one under its current certificate, which signs its passes, and the one the waiting statement is signed with. The working key before a renewal is deleted once that renewal is taken.
+- **Deletion.** A retired prekey is deleted at its deletion time: at the latest its statement's `not_after` plus the TTL. A drain that stopped at a bound deletes no retired prekey. A client MAY delete earlier all but the newest retired prekey, after a drain that empties the box, by a list the server took under a pass dated more than an hour after the newest retired prekey was made. While a renewal under a new certificate waits, a box holds two working keys: the one under its current certificate, which signs its passes, and the one the waiting statement is signed with. The working key before such a renewal is deleted once it is taken.
 - **A client deletes keys, and prunes its replay set, by its clock only once a server has taken a pass dated by that clock, and by that pass's date** (its `not_after` less ten minutes), never by a reading of the clock: a drain's once its list is answered, a renewal's once it is taken. While a renewal is untaken, every retired key is kept.
 - **A box its server has forgotten** sends its renewal as a registration (Section 11.7), numbered above what it published. A box restored from its identity alone, with no prekey of its own to keep the type of, makes a post-quantum prekey unless its owner says otherwise.
 - **The prekey's type MAY change at any renewal,** with no change of address.
-- **A box whose read of itself shows a statement it did not make** MUST say so to its owner: it may be a thief's.
+- **A box whose read of itself shows a statement it did not make** MUST say so to its owner, with what it recommends:
+  - **Under a certificate of a working key the box did not make,** its identity has certified someone else's key. The box SHOULD recommend that its owner revoke the address (Section 10.1): a revocation of certificates cannot end it, since whoever holds the identity makes a later certificate as easily (Section 15.5).
+  - **Under a certificate of the box's own working key,** that key is in another's hands. Where the identity is kept beside the box's other keys, a copy of them holds the identity too, and the box SHOULD recommend revoking the address; otherwise, the remedy of Section 12.6.
+
+  A box that has published a statement of its own MUST NOT renew above one it did not make unless its owner asks. One that has published none, restored from its identity alone, is served its lost machine's statement so, and its first renewal takes the box over. A box MUST NOT sign mail under a certificate of its own working key that such a statement shows another holds: the remedy, or the revocation of the address, takes that mail with it, so the outbox waits for the box's next certificate.
 - **A box that does not renew** is sent nothing once its prekey's `not_after` passes (`409 prekey_expired` to its senders), signs no mail once its certificate has 33 days or less left, and can poll while its certificate lasts. Once that has ended its server takes no pass from it, and a renewal is the one call that brings it back while the server keeps it.
 
 ### 12.5. Revocation at a client
@@ -678,13 +684,24 @@ A client drains every page of its list (Section 11.11). For each entry it fetche
 
 ### 12.6. The remedy for a taken working key
 
-Run where the identity is. It revokes, then renews, in that order.
+For a working key taken without the identity that certified it; a taken identity is ended by revoking its address (Section 10.1). Run where the identity is. It revokes, then renews, in that order.
 
 1. **Read what is held,** at the box's own server, and keep what verifies of the box's revocation of its certificates. An answer it cannot use does not stop the remedy.
 2. **Revoke every certificate below the number its clock gives,** through the serial one below it, or sign again one through a higher serial that is held already, and publish it once (Section 11.15). A `409 conflict` means the server holds a higher one: the client reads the box again, keeps that one once it verifies, and renews above it. A conflict that shows none that verifies and covers the certificates stops the remedy there, with nothing renewed.
 3. **Then renew,** under a new working key and a certificate numbered one above the revocation's serial, and send nothing an earlier renewal left: whoever copied the box while it waited holds that renewal's working key. Until the server takes the new prekey the box signs no mail.
 
 A box whose own revocation covers the certificate it uses renews at its next drain.
+
+### 12.7. A box whose identity is held elsewhere
+
+The identity's holder makes the box's certificates and its revocations; the box keeps everything else (Section 12.1).
+
+- **The box makes each working key and keeps it; the identity's holder certifies only its public half.** The box gives the holder the public key and the lowest serial the certificate may have: one above the highest the box knows of for itself (Section 5). The holder numbers the certificate by Section 5, at that serial or above. The box holds the certificate to every rule of Section 5, to a serial no lower than the one it gave and to the key it made, and then renews under it (Section 11.9); one that began less than an hour before the box's clock (Section 12.4) it uses only once that hour has passed. A prekey never leaves the box, and the holder holds no key that reads mail.
+- **Between certificates the box renews under its current one:** each renewal a new prekey at a higher prekey serial, each statement ending no later than the certificate (Section 6). With less left on the certificate than the shortest prekey lifetime (Section 12.4), it makes no renewal under it.
+- **From 33 days left on its certificate the box signs no mail** (Section 5): what it sends waits in its outbox, which posts an entry for 33 days from when it was written (Section 12.2), and its renewals and drains go on. **Once the certificate has ended** its server takes no pass under it, and nothing goes on until the holder gives it a later one: the renewal under that one is taken while the server keeps the box (Sections 11.9, 13), and registers the box anew once the server has forgotten it (Section 12.4).
+- **Wherever Sections 12.5 and 12.6 have a box renew under a new certificate,** this one waits for its holder to give it one. A certificate the holder gives it is its owner's ask (Section 12.4).
+- **A renewal answered `409 conflict` or `401 certificate_not_current`** is final for its statement (Section 12.4), and the box signs no statement at a higher prekey serial to pass the one served: whoever holds the same working key can sign at any serial, and only a later certificate passes it. A `409` whose read shows a statement the box did not make is under its own working key's certificate, which another holds: the box signs no mail under it (Section 12.4) and recommends the remedy. After such a `401` it waits for a certificate above the serial the answer names.
+- **Both revocations are the holder's** (Section 10). **The remedy (Section 12.6) is split:** the holder runs steps 1 and 2; the box then makes a new working key, never one made before the revocation, the holder certifies it above the revocation's serial, and the box renews under it (step 3).
 
 ## 13. What a server stores, and for how long
 
@@ -765,7 +782,7 @@ IronGall protects a message's content from everyone but its recipient, and its s
 
 - **A stolen identity key is the worst case.** Its thief can certify a working key of its own, publish prekeys and read new mail until the owner revokes the address (Section 10.1), which ends the address for good: recovery is a new address, announced out of band. A thief that holds the identity can also revoke, which gains it nothing.
 - **A lost identity key can be revoked only by a record made in advance** (Section 12.5). Without one, the address stops taking mail once its prekey ends, and its correspondents are told the new address out of band.
-- **A stolen working key** signs as the box until its certificate ends, at most 66 days after the certificate was made, if a server delivers the mail. A renewal takes it from the server at once, and from every sender that has seen the newer certificate. A revocation of its certificate ends it everywhere the revocation is seen (Section 12.6). A certificate cannot be shorter: it is checked at the reader's clock and must outlast mail that may wait 33 days, and nothing vouches for when a signature was made. Mail the owner sent under a revoked certificate and not yet read is refused with the thief's.
+- **A stolen working key** signs as the box until its certificate ends, at most 64 days and an hour after the certificate was made, if a server delivers the mail. A renewal under a new certificate takes it from the server at once, and from every sender that has seen the newer certificate. A revocation of its certificate ends it everywhere the revocation is seen (Section 12.6). A certificate cannot be much shorter: it signs mail for 31 days, the longest month, so that a certificate made each month by an identity held elsewhere carries the box's mail until the next, and it must outlast the last of that mail by the 33 days it may wait, since it is checked at the reader's clock and nothing vouches for when a signature was made. Mail the owner sent under a revoked certificate and not yet read is refused with the thief's.
 - **A stolen pass,** for the minutes it has left and at that server only, gives the box's metadata and its ciphertext; control of its availability (irrecoverable deletion of unacked mail, leaving its account, its ACL, with which it can pause the box until its owner writes the next); and posting in its name, which verifies at no recipient. It never gives plaintext, signs no mail and no prekey, and cannot end the address. Hence a pass of ten minutes, kept in a directory only the owner reads.
 - **A stolen prekey** reads all mail encrypted to it, until the box renews. A sender that has seen no newer serial can still be served the old statement until its `not_after`, so a box that renews often MAY set a shorter lifetime (Section 12.4).
 

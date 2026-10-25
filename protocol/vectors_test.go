@@ -339,7 +339,7 @@ func TestVectorsReservedField(t *testing.T) {
 		t.Fatal(err)
 	}
 	after, _ := time.Parse(time.RFC3339, "2026-10-09T23:59:00Z") // as generate.sh's V_OK
-	before, _ := time.Parse(time.RFC3339, "2026-12-14T00:00:00Z")
+	before, _ := time.Parse(time.RFC3339, "2026-12-13T00:00:00Z")
 	cert := &ssh.Certificate{
 		Key:             work.PublicKey(),
 		Serial:          1,

@@ -157,7 +157,7 @@ func TestCertificateRules(t *testing.T) {
 		{name: "as ssh-keygen writes it"},
 		{name: "begins this second", change: func(c *ssh.Certificate) { c.ValidAfter = unix }},
 		{name: "ends next second", change: func(c *ssh.Certificate) { c.ValidBefore = unix + 1 }},
-		{name: "ends in exactly 66 days", change: func(c *ssh.Certificate) { c.ValidBefore = unix + lifetime }},
+		{name: "ends in exactly 64 days and an hour", change: func(c *ssh.Certificate) { c.ValidBefore = unix + lifetime }},
 
 		{name: "a host certificate", change: func(c *ssh.Certificate) { c.CertType = ssh.HostCert }, want: ErrCertificate},
 		{name: "another key id", change: func(c *ssh.Certificate) { c.KeyId = "work" }, want: ErrCertificate},
@@ -179,7 +179,7 @@ func TestCertificateRules(t *testing.T) {
 		{name: "the identity key as the working key", change: func(c *ssh.Certificate) { c.Key = b.identity.PublicKey() }, want: ErrCertificate},
 		{name: "a P-256 working key", change: func(c *ssh.Certificate) { c.Key = p256Key }, want: ErrCertificate},
 		{name: "a small-order working key", change: func(c *ssh.Certificate) { c.Key = smallOrder }, want: ErrCertificate},
-		{name: "ends in 66 days and a second", change: func(c *ssh.Certificate) { c.ValidBefore = unix + lifetime + 1 }, want: ErrCertificate},
+		{name: "ends in 64 days, an hour and a second", change: func(c *ssh.Certificate) { c.ValidBefore = unix + lifetime + 1 }, want: ErrCertificate},
 		{name: "never ends", change: func(c *ssh.Certificate) { c.ValidBefore = ssh.CertTimeInfinity }, want: ErrCertificate},
 		{name: "altered after it was signed", after: func(c *ssh.Certificate) { c.Serial++ }, want: ErrCertificate},
 
@@ -282,7 +282,7 @@ func TestCertificateAgainstSSHKeygen(t *testing.T) {
 	now := time.Now()
 
 	// ssh-keygen's certificate and signature, checked here.
-	must(nil, "-q", "-s", "identity", "-I", CertificateKeyID, "-n", a, "-z", "7", "-V", "+65d", "-O", "clear", "work.pub")
+	must(nil, "-q", "-s", "identity", "-I", CertificateKeyID, "-n", a, "-z", "7", "-V", "+64d", "-O", "clear", "work.pub")
 	sig := must(msg, "-Y", "sign", "-n", ns, "-f", "work-cert.pub")
 	cert, err := VerifyCertified(id, msg, sig, ns, now)
 	if err != nil {
@@ -297,12 +297,12 @@ func TestCertificateAgainstSSHKeygen(t *testing.T) {
 	if err := os.Rename(filepath.Join(dir, "work-cert.pub"), filepath.Join(dir, "clear-cert.pub")); err != nil {
 		t.Fatal(err)
 	}
-	must(nil, "-q", "-s", "identity", "-I", CertificateKeyID, "-n", a, "-z", "8", "-V", "+65d", "work.pub")
+	must(nil, "-q", "-s", "identity", "-I", CertificateKeyID, "-n", a, "-z", "8", "-V", "+64d", "work.pub")
 	sig = must(msg, "-Y", "sign", "-n", ns, "-f", "work-cert.pub")
 	if _, err := VerifyCertified(id, msg, sig, ns, now); err != nil {
 		t.Errorf("a certificate with ssh-keygen's default extensions: %v", err)
 	}
-	must(nil, "-q", "-s", "identity", "-I", CertificateKeyID, "-n", a, "-z", "9", "-V", "+65d", "-O", "clear", "-O", "force-command=true", "work.pub")
+	must(nil, "-q", "-s", "identity", "-I", CertificateKeyID, "-n", a, "-z", "9", "-V", "+64d", "-O", "clear", "-O", "force-command=true", "work.pub")
 	sig = must(msg, "-Y", "sign", "-n", ns, "-f", "work-cert.pub")
 	if _, err := VerifyCertified(id, msg, sig, ns, now); !errors.Is(err, ErrCertificate) {
 		t.Errorf("a certificate with a critical option: %v", err)
