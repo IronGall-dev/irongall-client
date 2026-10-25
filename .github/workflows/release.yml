@@ -40,21 +40,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: the tag
-        # Signed by a key the repo names, an annotated tag (checkout can leave
-        # the tag pointing at its commit, so it is fetched again as pushed),
-        # on main, and a commit whose CI run passed.
+        # scripts/tagcheck.sh: annotated, signed by a key the repo names, on
+        # main, and a commit whose CI run passed. Checkout can leave the tag
+        # pointing at its commit, so it is fetched again as pushed.
         if: github.ref_type == 'tag'
         env:
           TAG: ${{ github.ref_name }}
           GH_TOKEN: ${{ github.token }}
         run: |
           git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
-          test "$(git cat-file -t "refs/tags/$TAG")" = tag
-          git -c gpg.ssh.allowedSignersFile=.github/allowed_signers verify-tag "$TAG"
-          commit=$(git rev-parse "refs/tags/$TAG^{commit}")
-          git merge-base --is-ancestor "$commit" origin/main
-          passed=$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$commit" --status success --json databaseId --jq length)
-          test "$passed" -gt 0
+          scripts/tagcheck.sh "$TAG"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: stable

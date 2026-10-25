@@ -73,9 +73,9 @@ main() {
   # The key's passphrase is in the macOS keychain (ssh-add --apple-use-keychain).
   if [ "$(uname -s)" = Darwin ]; then ssh-add -q --apple-load-keychain 2> /dev/null || true; fi
   git tag -s "$next" -m "dromas $next" "$commit"
-  if ! git -c gpg.ssh.allowedSignersFile=.github/allowed_signers verify-tag "$next"; then
+  if ! scripts/tagcheck.sh "$next"; then
     git tag -d "$next" > /dev/null
-    fail "$next does not verify against .github/allowed_signers: deleted, nothing pushed"
+    fail "$next is not a tag release.yml would build: deleted, nothing pushed"
   fi
   if ! git push -q origin "refs/tags/$next"; then
     git tag -d "$next" > /dev/null
