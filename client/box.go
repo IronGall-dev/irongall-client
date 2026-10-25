@@ -306,9 +306,8 @@ func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*B
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	// MkdirAll leaves an existing directory's mode alone; the box's is 0700.
-	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // a directory: 0700 is owner-only
-		return nil, err
+	if err := private(dir); err != nil {
+		return nil, fmt.Errorf("the box's directory, made its owner's alone: %w", err)
 	}
 	if err := b.makeDirs(); err != nil {
 		return nil, err
