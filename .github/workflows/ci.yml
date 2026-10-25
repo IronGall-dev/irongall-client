@@ -32,11 +32,13 @@ defaults:
 
 jobs:
   test:
-    # Two OpenSSH releases for the script and the cross-tests: 9.6p1 and 10.2p1.
+    # Ubuntu on two OpenSSH releases for the script and the cross-tests, 9.6p1
+    # and 10.2p1; and macOS on Apple silicon and Intel, the two Macs a release
+    # is built for, where scripts/check.sh leaves ./sh out (its header says why).
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, ubuntu-26.04]
+        os: [ubuntu-24.04, ubuntu-26.04, macos-26, macos-26-intel]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     steps:
