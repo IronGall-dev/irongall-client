@@ -16,7 +16,7 @@ import (
 	"time"
 	"unicode/utf16"
 
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // hexID is a message id as the server names it: the lowercase hex SHA-256 of
@@ -765,7 +765,7 @@ func keptLineOf(env *protocol.Envelope) ([]byte, error) {
 // variation selectors. A model reads each of these as text, and a person sees
 // none, so a body could carry an instruction past whoever looks. Escaped, it
 // is in plain sight, and a JSON reader still gets every character
-// (PRECEDENTS.md, Part 2). irongall.sh's ig_line escapes the same list.
+// (PRECEDENTS.md, Part 2). dromas.sh's dr_line escapes the same list.
 func escapeUnseen(line []byte) []byte {
 	var b strings.Builder
 	for _, r := range string(line) {
@@ -797,7 +797,7 @@ func escaped(r rune) bool {
 }
 
 // defaultIgnorable is Unicode 18.0's Default_Ignorable_Code_Point, range for
-// range (DerivedCoreProperties-18.0.0.txt). irongall.sh's ig_line holds the
+// range (DerivedCoreProperties-18.0.0.txt). dromas.sh's dr_line holds the
 // same list.
 var defaultIgnorable = [][2]rune{
 	{0x00AD, 0x00AD}, {0x034F, 0x034F}, {0x061C, 0x061C}, {0x115F, 0x1160}, {0x17B4, 0x17B5},

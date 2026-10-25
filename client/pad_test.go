@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
-	"github.com/IronGall-dev/irongall-client/internal/forge"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/internal/fakeserver"
+	"github.com/dromas-dev/dromas-client/internal/forge"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // posted records the ciphertext of every send to box b that reaches the

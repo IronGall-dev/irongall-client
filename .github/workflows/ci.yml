@@ -149,28 +149,28 @@ jobs:
         run: git ls-files --others --exclude-standard -- '*testdata/fuzz/*' | xargs -r tail -n +1
 
   server:
-    # irongall-server builds against this checkout (its go.mod replaces the
-    # client module with ../irongall-client), so a change here is a change there.
+    # dromas-server builds against this checkout (its go.mod replaces the
+    # client module with ../dromas-client), so a change here is a change there.
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          path: irongall-client
+          path: dromas-client
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: IronGall-dev/irongall-server
-          path: irongall-server
+          repository: dromas-dev/dromas-server
+          path: dromas-server
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: stable
           check-latest: true
           cache-dependency-path: |
-            irongall-client/go.sum
-            irongall-server/go.sum
+            dromas-client/go.sum
+            dromas-server/go.sum
       - name: check
-        # irongall-server's own scripts/check.sh: its tests and test/interop.sh, against this commit
-        working-directory: irongall-server
+        # dromas-server's own scripts/check.sh: its tests and test/interop.sh, against this commit
+        working-directory: dromas-server
         run: scripts/check.sh full

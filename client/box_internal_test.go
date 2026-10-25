@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"filippo.io/age"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // With no HTTP client given, requests are bounded by requestTimeout (stall),
@@ -32,27 +32,27 @@ func TestOnlyTheDefaultClientIsBoundedByTheBox(t *testing.T) {
 
 // A pass names the server as an origin is written: its host, lowercase, with
 // no user before it, and its port as a number only when that is not the
-// scheme's default, so https://irongall.dev:443 and https://irongall.dev name
+// scheme's default, so https://dromas.dev:443 and https://dromas.dev name
 // one server, as the server reads its Host (PROTOCOL.md §8).
 func TestAPassNamesTheServerAsAnOrigin(t *testing.T) {
 	t.Parallel()
 	for base, want := range map[string]string{
-		"https://irongall.dev":              "irongall.dev",
-		"https://irongall.dev:443":          "irongall.dev",
-		"https://IronGall.dev:0443/":        "irongall.dev",
-		"https://someone@irongall.dev:8443": "irongall.dev:8443",
-		"https://irongall.dev:80":           "irongall.dev:80",
-		"http://irongall:8080":              "irongall:8080",
-		"http://irongall:80":                "irongall",
-		"http://irongall:":                  "irongall",
-		"http://[::1]:8080":                 "[::1]:8080",
-		"https://[::1]:443":                 "[::1]",
+		"https://dromas.dev":              "dromas.dev",
+		"https://dromas.dev:443":          "dromas.dev",
+		"https://Dromas.dev:0443/":        "dromas.dev",
+		"https://someone@dromas.dev:8443": "dromas.dev:8443",
+		"https://dromas.dev:80":           "dromas.dev:80",
+		"http://dromas:8080":              "dromas:8080",
+		"http://dromas:80":                "dromas",
+		"http://dromas:":                  "dromas",
+		"http://[::1]:8080":               "[::1]:8080",
+		"https://[::1]:443":               "[::1]",
 	} {
 		if got, err := (&Box{base: strings.TrimRight(base, "/")}).serverName(); err != nil || got != want {
 			t.Errorf("%s: the pass names %q, %v; want %q", base, got, err, want)
 		}
 	}
-	if got, err := (&Box{base: "https://irongall.dev:65536"}).serverName(); err == nil {
+	if got, err := (&Box{base: "https://dromas.dev:65536"}).serverName(); err == nil {
 		t.Errorf("a port that is no port: named %q", got)
 	}
 	// A host is lowercased in ASCII alone: one whose K is the Kelvin sign,
@@ -68,7 +68,7 @@ func TestAPassNamesTheServerAsAnOrigin(t *testing.T) {
 func TestAnIdentityTypeIsHeldBeforeAnythingIsWritten(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "box")
-	if _, err := Init(context.Background(), dir, Options{Base: "https://irongall.dev", IdentityType: "ssh-rsa"}, protocol.Classic); err == nil {
+	if _, err := Init(context.Background(), dir, Options{Base: "https://dromas.dev", IdentityType: "ssh-rsa"}, protocol.Classic); err == nil {
 		t.Fatal("a box was made with an identity type this client does not make")
 	}
 	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {

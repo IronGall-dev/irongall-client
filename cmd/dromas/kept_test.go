@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/client"
-	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/client"
+	"github.com/dromas-dev/dromas-client/internal/fakeserver"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // unseen reports whether s holds a raw tag character, a BiDi control or a
@@ -71,8 +71,8 @@ func TestOnlyRecvsOwnLineIsShown(t *testing.T) {
 	if err != nil || len(res.Delivered) != 3 || len(res.Held) != 1 {
 		t.Fatalf("%+v %v", res, err)
 	}
-	t.Setenv("IRONGALL_HOME", b.Dir())
-	t.Setenv("IRONGALL_BASE", srv.URL)
+	t.Setenv("DROMAS_HOME", b.Dir())
+	t.Setenv("DROMAS_BASE", srv.URL)
 	for _, d := range res.Delivered {
 		kept := must(t, filepath.Join(b.Dir(), "inbox", d.ID+".json"))
 		var out bytes.Buffer
@@ -163,8 +163,8 @@ func TestShowHoldsTheFileToTheLineRecvKept(t *testing.T) {
 	}
 	held := filepath.Join(b.Dir(), "held", res.Held[0].ID+".json")
 	line := must(t, held)
-	t.Setenv("IRONGALL_HOME", b.Dir())
-	t.Setenv("IRONGALL_BASE", srv.URL)
+	t.Setenv("DROMAS_HOME", b.Dir())
+	t.Setenv("DROMAS_BASE", srv.URL)
 	id := res.Held[0].ID
 	inbox := filepath.Join(b.Dir(), "inbox", id+".json")
 	for _, c := range []struct{ name, kept string }{

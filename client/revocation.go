@@ -10,7 +10,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // RefusedRevoked is why mail from a revoked address is refused: this box
@@ -33,7 +33,7 @@ type RevokedError struct {
 
 func (e *RevokedError) Error() string {
 	if e.Own {
-		return "REVOKED: this box's own address is revoked, for good, and the revocation verifies. It can send and receive nothing more: make a new box (irongall init) and give its address to those who write to this one"
+		return "REVOKED: this box's own address is revoked, for good, and the revocation verifies. It can send and receive nothing more: make a new box (dromas init) and give its address to those who write to this one"
 	}
 	return "REVOKED: " + e.Address.String() + " is revoked, for good, and the revocation verifies: ask its owner for their new address"
 }
@@ -405,7 +405,7 @@ func (b *Box) revokedCerts(a protocol.Address) (*protocol.RevokedCertificates, e
 
 // CertificatesRecord is the record of this box's own revocation of its
 // certificates that it keeps, the one it published or was shown, or nil: what
-// irongall cert publish-revoked sends again.
+// dromas cert publish-revoked sends again.
 func (b *Box) CertificatesRecord(ctx context.Context) (*protocol.Revocations, error) {
 	return reading(ctx, b, b.certificatesRecord)
 }
@@ -460,7 +460,7 @@ func (b *Box) keepRevokedCerts(a protocol.Address, doc, statement, sig []byte) e
 // RevokeEarlier revokes every certificate this box's identity made before
 // the one in use: it signs a revocation of them, publishes it, and keeps it.
 // [Box.RenewAndRevoke] is the whole remedy for a box whose working key may
-// have been taken, and is what "irongall cert revoke-earlier" runs; this
+// have been taken, and is what "dromas cert revoke-earlier" runs; this
 // is its second half alone, for a box that has renewed already.
 //
 // It revokes through the serial below the one in use, as the box holds it
@@ -544,7 +544,7 @@ type Remedy struct {
 // box was using among them: whoever holds that working key can no longer
 // spend the box's calls, and the renewal that follows spends none of the
 // box's counts, the calls a taker spent before the revocation among them
-// (PROTOCOL.md §10.2, §11.9; IronGall-dev/irongall-server#84). While the
+// (PROTOCOL.md §10.2, §11.9; dromas-dev/dromas-server#84). While the
 // box's server holds the revocation and not the renewal, the box takes no
 // mail there and signs none, and [Box.Receive] and [Box.Rekey] send the
 // renewal again.
@@ -592,7 +592,7 @@ func (b *Box) renewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy,
 	// stops here: a server that holds a higher one would refuse a renewal under
 	// it, and nothing here tells how high it runs.
 	if code(r.NotRevoked) == protocol.CodeConflict {
-		r.NotRenewed = refuse("the server holds a revocation of this box's certificates higher than the one it signed, and showed none that verifies: nothing is renewed above it. irongall revocation ask <this box's address> reads it again, and irongall cert revoke-earlier tries again")
+		r.NotRenewed = refuse("the server holds a revocation of this box's certificates higher than the one it signed, and showed none that verifies: nothing is renewed above it. dromas revocation ask <this box's address> reads it again, and dromas cert revoke-earlier tries again")
 		return done(nil)
 	}
 	// Numbered once the revocation is final: above whatever a server showed
@@ -792,7 +792,7 @@ func (b *Box) proved(ctx context.Context, method, path string, err error) error 
 		if n, perr := b.publishedSerial(); perr != nil || !b.ownRevokes(n) {
 			return fmt.Errorf("%w; it showed no revocation of this box's certificates that verifies and covers the one it uses", err)
 		}
-		return refuse("this box's identity has revoked the certificate it signs under, as its server shows, so it is taken nowhere it is held: irongall recv or irongall prekey renew publishes a new one")
+		return refuse("this box's identity has revoked the certificate it signs under, as its server shows, so it is taken nowhere it is held: dromas recv or dromas prekey renew publishes a new one")
 	}
 	held, lerr := b.lookupRevocation(ctx, who, nil)
 	if lerr != nil {

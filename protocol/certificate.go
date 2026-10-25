@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/sshsig"
+	"github.com/dromas-dev/dromas-client/sshsig"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -21,7 +21,7 @@ import (
 
 const (
 	// CertificateKeyID is the key id of every v1 certificate.
-	CertificateKeyID = "irongall-cert-v1"
+	CertificateKeyID = "dromas-cert-v1"
 	// CertificateLifetime is how long a client makes a certificate good for:
 	// the 31 days it signs mail for (SignsMail), the longest month, so a
 	// certificate made each month carries a box's mail until the next, and
@@ -204,7 +204,7 @@ func (c *Certificate) Marshal() []byte { return c.cert.Marshal() }
 
 // NewCertificate makes the certificate of serial for the working key work,
 // signed by identity, the signer for id's key. It is what
-// "ssh-keygen -s identity -I irongall-cert-v1 -n <address> -z <serial> -V -1h:+64d -O clear work.pub"
+// "ssh-keygen -s identity -I dromas-cert-v1 -n <address> -z <serial> -V -1h:+64d -O clear work.pub"
 // writes: valid from MaxSkew before now to CertificateLifetime after now. It
 // starts in the past so that a verifier whose clock is behind this one takes
 // it at once; ssh-keygen's own default, a minute or two back, is not enough

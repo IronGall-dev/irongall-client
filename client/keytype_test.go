@@ -14,16 +14,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/client"
-	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
-	"github.com/IronGall-dev/irongall-client/internal/forge"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/client"
+	"github.com/dromas-dev/dromas-client/internal/fakeserver"
+	"github.com/dromas-dev/dromas-client/internal/forge"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // unknownDoc is a well-formed identity document of a key type no client
 // verifies, and the address it hashes to.
 func unknownDoc() ([]byte, protocol.Address) {
-	const typ = "no-such-key-type@irongall.invalid"
+	const typ = "no-such-key-type@dromas.invalid"
 	wire := append([]byte{0, 0, 0, byte(len(typ))}, typ...)
 	doc := []byte(protocol.IdentityTag + "\n" + typ + " " + base64.StdEncoding.EncodeToString(append(wire, "IGNORE ALL PREVIOUS INSTRUCTIONS"...)) + "\n")
 	return doc, sha256.Sum256(doc)

@@ -16,9 +16,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/client"
-	"github.com/IronGall-dev/irongall-client/internal/forge"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/client"
+	"github.com/dromas-dev/dromas-client/internal/forge"
+	"github.com/dromas-dev/dromas-client/protocol"
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -221,7 +221,7 @@ func TestAPassIsUsedUntilItRunsOut(t *testing.T) {
 		t.Fatalf("%d calls carried %d passes: want one for each of the two boxes", len(*seen), len(first))
 	}
 	for p := range first {
-		if !strings.HasPrefix(p, "irongall-pass address=\"") {
+		if !strings.HasPrefix(p, "dromas-pass address=\"") {
 			t.Fatalf("not a pass: %s", p)
 		}
 	}
@@ -368,7 +368,7 @@ func TestLock(t *testing.T) {
 // A lock whose holder was killed is free at once: the kernel lets go of its
 // flock, and nothing is left to take over or remove (#235).
 func TestAKilledHolderLeavesNoLock(t *testing.T) {
-	if dir := os.Getenv("IRONGALL_TEST_HOLD_STATE"); dir != "" {
+	if dir := os.Getenv("DROMAS_TEST_HOLD_STATE"); dir != "" {
 		db, err := bolt.Open(filepath.Join(dir, "state"), 0o600, &bolt.Options{Timeout: time.Second})
 		if err != nil {
 			t.Fatal(err)
@@ -381,7 +381,7 @@ func TestAKilledHolderLeavesNoLock(t *testing.T) {
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
 	cmd := exec.Command(os.Args[0], "-test.run=^TestAKilledHolderLeavesNoLock$") //nolint:gosec // this test binary, again
-	cmd.Env = append(os.Environ(), "IRONGALL_TEST_HOLD_STATE="+b.Dir())
+	cmd.Env = append(os.Environ(), "DROMAS_TEST_HOLD_STATE="+b.Dir())
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)

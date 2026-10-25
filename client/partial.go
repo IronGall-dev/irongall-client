@@ -9,7 +9,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // A fetch that is cut keeps what it read, and the next fetch of that message

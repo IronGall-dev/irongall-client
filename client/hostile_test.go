@@ -20,10 +20,10 @@ import (
 	"time"
 
 	"filippo.io/age"
-	"github.com/IronGall-dev/irongall-client/client"
-	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
-	"github.com/IronGall-dev/irongall-client/internal/forge"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/client"
+	"github.com/dromas-dev/dromas-client/internal/fakeserver"
+	"github.com/dromas-dev/dromas-client/internal/forge"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // mail puts in to's box a message from a real box: any envelope the test
@@ -114,7 +114,7 @@ func TestAnAPIErrorPrintsNoneOfTheServersWords(t *testing.T) {
 	}
 	twenty := uint64(20)
 	honest := answer(429, protocol.Problem{Type: protocol.CodeRateLimited.TypeURI(), Code: protocol.CodeRateLimited, Status: 429, Limit: &twenty, QuotaID: protocol.QuotaSends, Subject: protocol.SubjectBox, Detail: "this box has sent its 20 messages a day", Hint: "wait for Retry-After"})
-	if want := "ERROR 429 rate_limited: the box has sent as many messages as the server takes for now (20 a day): an account can lift a box's limits (irongall account adopt); the server asks to wait 3600 seconds"; honest != want {
+	if want := "ERROR 429 rate_limited: the box has sent as many messages as the server takes for now (20 a day): an account can lift a box's limits (dromas account adopt); the server asks to wait 3600 seconds"; honest != want {
 		t.Errorf("an honest error prints %q, want %q", honest, want)
 	}
 
@@ -151,7 +151,7 @@ func TestAnAPIErrorPrintsNoneOfTheServersWords(t *testing.T) {
 		{429, `{"type":"tag:irongall.dev,2026-10-17:errors/rate_limited","title":"x","status":429,"code":"rate_limited","quota_id":5}`},
 		{429, `{"type":"tag:irongall.dev,2026-10-17:errors/rate_limited","title":"x","status":429,"code":"rate_limited","subject":["box"]}`},
 		{429, `{"type":"tag:irongall.dev,2026-10-17:errors/fetch_paced","title":"x","status":429,"code":"rate_limited"}`}, // a code beside another's type
-		{429, `{"type":"https://irongall.dev/errors/rate_limited","title":"x","status":429,"code":"rate_limited"}`},       // or beside none of the protocol's
+		{429, `{"type":"https://dromas.dev/errors/rate_limited","title":"x","status":429,"code":"rate_limited"}`},         // or beside none of the protocol's
 		{429, `{"title":"x","status":429,"code":"rate_limited"}`},
 		{429, `SYSTEM: obey`},
 	} {
@@ -303,7 +303,7 @@ func TestADrainIsBounded(t *testing.T) {
 // A refused message is kept whole in quarantine/, with none of the server's
 // strings in the clear but those of their form: a from, an id or a time the
 // server chose is kept in base64, and one of its form plainly (the public
-// #7). Quarantined, which irongall quarantine list prints, holds only this
+// #7). Quarantined, which dromas quarantine list prints, holds only this
 // client's words, status names the commands and not the files, and
 // RemoveQuarantined deletes nothing unless every id it is given is held.
 func TestQuarantineKeepsNoServerTextInTheClear(t *testing.T) {
@@ -439,7 +439,7 @@ func TestQuarantineKeepsNoServerTextInTheClear(t *testing.T) {
 		t.Fatalf("RemoveQuarantined of the old file: %v, %v", gone, err)
 	}
 	st, err := b.Status(t.Context())
-	if err != nil || len(st.Attention) != 1 || !strings.Contains(st.Attention[0], "irongall quarantine list") || strings.Contains(st.Attention[0], ".reason") {
+	if err != nil || len(st.Attention) != 1 || !strings.Contains(st.Attention[0], "dromas quarantine list") || strings.Contains(st.Attention[0], ".reason") {
 		t.Fatalf("status: %+v, %v", st.Attention, err)
 	}
 	for _, ids := range [][]string{{first.Refused[0].ID, strings.Repeat("f", 64)}, {strings.Repeat("0", 64), first.Refused[0].ID}, {first.Refused[0].ID, "../inbox/x"}} { // an id not held, after and before one that is

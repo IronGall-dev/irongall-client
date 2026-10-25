@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/client"
-	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
-	"github.com/IronGall-dev/irongall-client/internal/forge"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/client"
+	"github.com/dromas-dev/dromas-client/internal/fakeserver"
+	"github.com/dromas-dev/dromas-client/internal/forge"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // RenewAndRevoke is the remedy for a box whose working key may have been
@@ -121,7 +121,7 @@ func TestTheRemedyRevokesWhateverTheRenewalMeets(t *testing.T) {
 }
 
 // The remedy sends its renewal once, and waits out no Retry-After
-// (IronGall-dev/irongall-server#84): once the server holds the revocation,
+// (dromas-dev/dromas-server#84): once the server holds the revocation,
 // the renewal that replaces the revoked certificate spends none of the box's
 // counts, so the calls a taker spent before it cannot hold the renewal back.
 // A renewal refused all the same is sent again at the box's next renewal,

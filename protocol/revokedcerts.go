@@ -10,7 +10,7 @@ import (
 )
 
 // RevokedCertsTag is line 1 of a revocation of certificates.
-const RevokedCertsTag = "irongall-revoke-certs-v1"
+const RevokedCertsTag = "dromas-revoke-certs-v1"
 
 // RevokedCertsNamespace is the namespace of box a's revocation of its
 // certificates.

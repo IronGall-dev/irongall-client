@@ -11,7 +11,7 @@ package taken
 import (
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // Reading is a reading of the box's clock a server took. Its zero value is

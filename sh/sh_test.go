@@ -1,4 +1,4 @@
-// Package sh_test runs irongall.sh, the stock-tools client, from go test:
+// Package sh_test runs dromas.sh, the stock-tools client, from go test:
 // against the fake server, which a test makes forge, a shell per command
 // (world_test.go); its verdicts on the test vectors against the Go client's;
 // and the two clients exchanging mail.
@@ -29,10 +29,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/client"
-	"github.com/IronGall-dev/irongall-client/internal/agetool"
-	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/client"
+	"github.com/dromas-dev/dromas-client/internal/agetool"
+	"github.com/dromas-dev/dromas-client/internal/fakeserver"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 const vectors = "../testdata/vectors"
@@ -42,7 +42,7 @@ func need(t *testing.T, tools ...string) {
 	t.Helper()
 	for _, tool := range tools {
 		if _, err := exec.LookPath(tool); err != nil {
-			t.Skipf("%s is not on PATH: irongall.sh needs bash, age, ssh-keygen, curl, jq, iconv and coreutils", tool)
+			t.Skipf("%s is not on PATH: dromas.sh needs bash, age, ssh-keygen, curl, jq, iconv and coreutils", tool)
 		}
 	}
 }
@@ -124,10 +124,10 @@ func linkIn(t *testing.T, out string) string {
 	return l.Link
 }
 
-// bash runs commands after sourcing irongall.sh, with env added.
+// bash runs commands after sourcing dromas.sh, with env added.
 func bash(t *testing.T, env []string, commands string) (string, error) {
 	t.Helper()
-	cmd := exec.Command("bash", "-c", ". "+abs(t, "irongall.sh")+"\n"+commands)
+	cmd := exec.Command("bash", "-c", ". "+abs(t, "dromas.sh")+"\n"+commands)
 	cmd.Env = append(os.Environ(), env...)
 	var out, errs bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errs
@@ -138,7 +138,7 @@ func bash(t *testing.T, env []string, commands string) (string, error) {
 	return out.String(), err
 }
 
-// vectorNow is the vectors' now, as ig_now gives it.
+// vectorNow is the vectors' now, as dr_now gives it.
 func vectorNow(t *testing.T) (time.Time, string) {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(vectors, "now"))
@@ -149,7 +149,7 @@ func vectorNow(t *testing.T) (time.Time, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return now, fmt.Sprintf("ig_now(){ echo %d; }\n", now.Unix())
+	return now, fmt.Sprintf("dr_now(){ echo %d; }\n", now.Unix())
 }
 
 // identity returns a vector box's address and the path of its identity
@@ -164,7 +164,7 @@ func identity(t *testing.T, box string) (string, string) {
 }
 
 // scratch is a directory for the script's scratch files, as its box's is.
-func scratch(t *testing.T) []string { return []string{"IG_HOME=" + t.TempDir()} }
+func scratch(t *testing.T) []string { return []string{"DR_HOME=" + t.TempDir()} }
 
 // The script's verdict on every vector is the one the vectors name, as the
 // Go client's is (protocol/vectors_test.go).
@@ -177,10 +177,10 @@ func TestVectorsIdentity(t *testing.T) {
 			continue
 		}
 		a, _ := identity(t, box)
-		if _, err := bash(t, nil, fmt.Sprintf("ig_idcheck %s %s", abs(t, filepath.Join(vectors, box, "identity.doc")), a)); err != nil {
+		if _, err := bash(t, nil, fmt.Sprintf("dr_idcheck %s %s", abs(t, filepath.Join(vectors, box, "identity.doc")), a)); err != nil {
 			t.Errorf("%s/identity.doc refused: %v", box, err)
 		}
-		if _, err := bash(t, nil, fmt.Sprintf("ig_idcheck %s %s", abs(t, filepath.Join(vectors, box, "identity.doc")), strings.Repeat("0", 64))); err == nil {
+		if _, err := bash(t, nil, fmt.Sprintf("dr_idcheck %s %s", abs(t, filepath.Join(vectors, box, "identity.doc")), strings.Repeat("0", 64))); err == nil {
 			t.Errorf("%s/identity.doc accepted for another address", box)
 		}
 	}
@@ -207,7 +207,7 @@ func TestVectorsIdentity(t *testing.T) {
 		name := filepath.Base(d)
 		doc, _ := os.ReadFile(d) //nolint:gosec // a test vector
 		_, gerr := protocol.ParseIdentity(doc)
-		_, err := bash(t, nil, "ig_idcheck "+abs(t, d))
+		_, err := bash(t, nil, "dr_idcheck "+abs(t, d))
 		if strings.HasPrefix(name, "ok-") {
 			if gerr != nil {
 				t.Errorf("%s: the Go client refuses it: %v", name, gerr)
@@ -255,7 +255,7 @@ func TestVectorsCertificate(t *testing.T) {
 	b, bDoc := identity(t, "b")
 	stmt := abs(t, filepath.Join(vectors, "a/prekey-1.txt"))
 	certified := func(addr, doc, sig string) (string, error) {
-		return bash(t, scratch(t), setNow+fmt.Sprintf("ig_certified %s %s irongall-prekey-v1:%s %s %s", addr, doc, a, abs(t, sig), stmt))
+		return bash(t, scratch(t), setNow+fmt.Sprintf("dr_certified %s %s dromas-prekey-v1:%s %s %s", addr, doc, a, abs(t, sig), stmt))
 	}
 	if out, err := certified(a, aDoc, filepath.Join(vectors, "a/prekey-1.txt.sig")); err != nil || !strings.HasPrefix(out, "1 ") {
 		t.Fatalf("a/prekey-1.txt.sig under A's certificate: %q %v", out, err)
@@ -295,9 +295,9 @@ func TestVectorsCertificate(t *testing.T) {
 	// their form, so the script's own reading of the fields is what refuses
 	// them.
 	for _, name := range []string{"bad-extension-twice", "bad-extension-value-an-empty-string", "bad-key-id", "bad-serial-zero"} {
-		verify := fmt.Sprintf(`printf '%%s cert-authority %%s\n' %s "$(sed -n 2p %s)" > "$IG/s" && ssh-keygen -Y verify -f "$IG/s" -I %s -n irongall-prekey-v1:%s -s %s -O verify-time=20261010000000Z < %s`,
+		verify := fmt.Sprintf(`printf '%%s cert-authority %%s\n' %s "$(sed -n 2p %s)" > "$DR/s" && ssh-keygen -Y verify -f "$DR/s" -I %s -n dromas-prekey-v1:%s -s %s -O verify-time=20261010000000Z < %s`,
 			a, aDoc, a, a, abs(t, filepath.Join(vectors, "cert", name+".sig")), stmt)
-		if _, err := bash(t, scratch(t), "mkdir -p \"$IG\"; "+verify); err != nil {
+		if _, err := bash(t, scratch(t), "mkdir -p \"$DR\"; "+verify); err != nil {
 			t.Errorf("control: ssh-keygen -Y verify refuses %s by itself: %v", name, err)
 		}
 	}
@@ -331,8 +331,8 @@ func TestVectorsSignatureForm(t *testing.T) {
 	for _, sig := range sigs {
 		name := filepath.Base(sig)
 		ok := strings.HasPrefix(name, "ok-")
-		_, err := bash(t, scratch(t), setNow+fmt.Sprintf(`mkdir -p "$IG"; ig_certified %s %s irongall-prekey-v1:%s %s %s`, a, aDoc, a, abs(t, sig), stmt))
-		verify := fmt.Sprintf(`mkdir -p "$IG"; printf '%%s cert-authority %%s\n' %s "$(sed -n 2p %s)" > "$IG/s" && ssh-keygen -Y verify -f "$IG/s" -I %s -n irongall-prekey-v1:%s -s %s -O verify-time=20261010000000Z < %s`,
+		_, err := bash(t, scratch(t), setNow+fmt.Sprintf(`mkdir -p "$DR"; dr_certified %s %s dromas-prekey-v1:%s %s %s`, a, aDoc, a, abs(t, sig), stmt))
+		verify := fmt.Sprintf(`mkdir -p "$DR"; printf '%%s cert-authority %%s\n' %s "$(sed -n 2p %s)" > "$DR/s" && ssh-keygen -Y verify -f "$DR/s" -I %s -n dromas-prekey-v1:%s -s %s -O verify-time=20261010000000Z < %s`,
 			a, aDoc, a, a, abs(t, sig), stmt)
 		_, kerr := bash(t, scratch(t), verify)
 		if name == "ok-r-small-order.sig" || name == "bad-r-plus-order-2.sig" {
@@ -367,7 +367,7 @@ func TestVectorsPrekey(t *testing.T) {
 	a, aDoc := identity(t, "a")
 	b, bDoc := identity(t, "b")
 	check := func(stmt, sig, addr, doc string) (serial string, notAfter int64, err error) {
-		out, err := bash(t, scratch(t), setNow+fmt.Sprintf("ig_prekeycheck %s %s %s %s", abs(t, stmt), abs(t, sig), addr, doc))
+		out, err := bash(t, scratch(t), setNow+fmt.Sprintf("dr_prekeycheck %s %s %s %s", abs(t, stmt), abs(t, sig), addr, doc))
 		if err != nil {
 			return "", 0, fmt.Errorf("%w %s", err, out)
 		}
@@ -404,7 +404,7 @@ func TestVectorsPrekey(t *testing.T) {
 			if err == nil {
 				t.Errorf("%s: accepted", name)
 			}
-		case name == "expired": // valid, but no sender encrypts to it (ig_resolve)
+		case name == "expired": // valid, but no sender encrypts to it (dr_resolve)
 			if err != nil || na > now.Unix() {
 				t.Errorf("%s: want valid and expired: %d %v", name, na, err)
 			}
@@ -440,7 +440,7 @@ var envelopeFive = map[string]bool{
 
 // sameLine holds the script's delivered line to the Go client's, byte for
 // byte, or, where jq spells a number or a string otherwise, to the Go
-// client's line in jq's spelling, which ig_line writes from it: the one
+// client's line in jq's spelling, which dr_line writes from it: the one
 // difference the two may have, which guards none of the five (AGENTS.md § The
 // shell client). It reports whether the spelling differed.
 func sameLine(t *testing.T, goLine []byte, shLine string) (respelled bool, ok bool) {
@@ -452,7 +452,7 @@ func sameLine(t *testing.T, goLine []byte, shLine string) (respelled bool, ok bo
 	if err := os.WriteFile(f, goLine, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	spelled, err := bash(t, nil, "ig_line "+f)
+	spelled, err := bash(t, nil, "dr_line "+f)
 	return true, err == nil && spelled == shLine
 }
 
@@ -461,8 +461,8 @@ func sameLine(t *testing.T, goLine []byte, shLine string) (respelled bool, ok bo
 // given, PROTOCOL.md §9.1, and jq keeps it), each string the same once
 // unescaped, and each number the same decimal value, a zero's sign included.
 // That allows jq's spelling and nothing else. sameLine's reference is
-// the script's own ig_line, so this is the check that holds the script to
-// the Go client where ig_line itself went wrong for both: read as binary64,
+// the script's own dr_line, so this is the check that holds the script to
+// the Go client where dr_line itself went wrong for both: read as binary64,
 // 9007199254740993 and 9007199254740992 would be one value.
 func sameValue(goLine []byte, shLine string) bool {
 	a, b := jsontext.NewDecoder(bytes.NewReader(goLine)), jsontext.NewDecoder(strings.NewReader(shLine))
@@ -511,7 +511,7 @@ func TestVectorsEnvelope(t *testing.T) {
 	}
 	for _, f := range files {
 		name := strings.TrimSuffix(filepath.Base(f), ".json")
-		line, err := bash(t, nil, setNow+fmt.Sprintf("ig_envcheck %s %s %s && ig_line %s", abs(t, f), a, b, abs(t, f)))
+		line, err := bash(t, nil, setNow+fmt.Sprintf("dr_envcheck %s %s %s && dr_line %s", abs(t, f), a, b, abs(t, f)))
 		switch {
 		case strings.HasPrefix(name, "accept-"):
 			if err != nil {
@@ -549,7 +549,7 @@ func TestVectorsEnvelope(t *testing.T) {
 }
 
 // answerBytes names each kind of answer's byte members, which the script
-// reads with ig_bytes.
+// reads with dr_bytes.
 var answerBytes = map[string]string{
 	"box":    "identity prekey prekey_signature revoked_certificates revoked_certificates_signature",
 	"record": "identity revocation_signature revoked_certificates revoked_certificates_signature",
@@ -577,7 +577,7 @@ var answerRead = map[string]bool{
 }
 
 // The script reads every answer/ vector the Go client takes, a whole answer of
-// a server of each kind: with ig_shape, and each byte member with ig_bytes,
+// a server of each kind: with dr_shape, and each byte member with dr_bytes,
 // and refuses each of answerRead.
 func TestVectorsAnswer(t *testing.T) {
 	need(t, scriptTools...)
@@ -594,9 +594,9 @@ func TestVectorsAnswer(t *testing.T) {
 	var script strings.Builder
 	for _, f := range files {
 		kind, _, _ := strings.Cut(filepath.Base(f), "-")
-		fmt.Fprintf(&script, "{ ig_shape %s %s", abs(t, f), kind)
+		fmt.Fprintf(&script, "{ dr_shape %s %s", abs(t, f), kind)
 		for _, m := range strings.Fields(answerBytes[kind]) {
-			fmt.Fprintf(&script, " && ig_bytes %s %s %s", abs(t, f), m, filepath.Join(dir, m))
+			fmt.Fprintf(&script, " && dr_bytes %s %s %s", abs(t, f), m, filepath.Join(dir, m))
 		}
 		script.WriteString("; } && echo 0 || echo 1\n")
 	}
@@ -644,7 +644,7 @@ func TestVectorsPlain(t *testing.T) {
 		name := strings.TrimSuffix(filepath.Base(f), ".txt")
 		pt, _ := os.ReadFile(f) //nolint:gosec // a test vector
 		signed, gerr := protocol.OpenSigned(pt, B, now)
-		out, err := bash(t, scratch(t), setNow+fmt.Sprintf(`mkdir -p "$IG" && cp %s "$IG/msg.T" && ig_open %s "$IG/msg" && ig_line "$IG/msg.P"`, abs(t, f), b))
+		out, err := bash(t, scratch(t), setNow+fmt.Sprintf(`mkdir -p "$DR" && cp %s "$DR/msg.T" && dr_open %s "$DR/msg" && dr_line "$DR/msg.P"`, abs(t, f), b))
 		if gerr != nil {
 			var refused *protocol.EnvelopeError
 			if !errors.As(gerr, &refused) {
@@ -717,7 +717,7 @@ func TestPaddingIsTheGoClients(t *testing.T) {
 			fmt.Fprintf(&args, "%d ", n)
 			fmt.Fprintf(&want, "%d %d %d\n", n, len(pt)-n, sealed)
 		}
-		got, err := bash(t, nil, fmt.Sprintf(`for n in %s; do echo "$n $(ig_padding $n %s)"; done`, args.String(), key))
+		got, err := bash(t, nil, fmt.Sprintf(`for n in %s; do echo "$n $(dr_padding $n %s)"; done`, args.String(), key))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -748,7 +748,7 @@ func TestAP256BoxInBothClients(t *testing.T) {
 	kt := protocol.PostQuantum
 	sh := func(dir, commands string) string {
 		t.Helper()
-		out, err := bash(t, []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}, commands)
+		out, err := bash(t, []string{"DR_HOME=" + dir, "DR_BASE=" + srv.URL}, commands)
 		if err != nil {
 			t.Fatalf("%s: %v", commands, err)
 		}
@@ -763,8 +763,8 @@ func TestAP256BoxInBothClients(t *testing.T) {
 		return a
 	}
 	shP256, shEd := t.TempDir(), t.TempDir()
-	sp := addr(sh(shP256, `ssh-keygen -q -t ecdsa -b 256 -N '' -C '' -f "$IG/identity" < /dev/null && ig_init`))
-	se := addr(sh(shEd, "ig_init"))
+	sp := addr(sh(shP256, `ssh-keygen -q -t ecdsa -b 256 -N '' -C '' -f "$DR/identity" < /dev/null && dr_init`))
+	se := addr(sh(shEd, "dr_init"))
 	doc, _ := os.ReadFile(filepath.Join(shP256, "identity.doc")) //nolint:gosec // the test's own directory
 	if id, err := protocol.ParseIdentity(doc); err != nil || id.Type() != protocol.IdentityP256 || id.Address() != sp {
 		t.Fatalf("the script's P-256 box: %v", err)
@@ -781,24 +781,24 @@ func TestAP256BoxInBothClients(t *testing.T) {
 	landAll(t, ge)
 
 	// The script's P-256 box and the Go client's Ed25519 one.
-	sh(shP256, "printf 'from the script on P-256' | ig_send "+ge.Link())
+	sh(shP256, "printf 'from the script on P-256' | dr_send "+ge.Link())
 	if res, err := ge.Receive(ctx); err != nil || len(res.Delivered) != 1 || res.Delivered[0].Envelope.From != sp {
 		t.Fatalf("the Go client received %+v, %v", res, err)
 	}
 	if _, err := ge.Send(ctx, sp, "to the script on P-256"); err != nil {
 		t.Fatal(err)
 	}
-	if out := sh(shP256, "ig_recv"); !strings.Contains(out, `"body":"to the script on P-256"`) {
-		t.Fatalf("ig_recv: %q", out)
+	if out := sh(shP256, "dr_recv"); !strings.Contains(out, `"body":"to the script on P-256"`) {
+		t.Fatalf("dr_recv: %q", out)
 	}
 	// The Go client's P-256 box and the script's Ed25519 one.
 	if _, err := gp.Send(ctx, se, "from Go on P-256"); err != nil {
 		t.Fatal(err)
 	}
-	if out := sh(shEd, "ig_recv"); !strings.Contains(out, `"body":"from Go on P-256"`) || !strings.Contains(out, gp.Address().String()) {
-		t.Fatalf("ig_recv: %q", out)
+	if out := sh(shEd, "dr_recv"); !strings.Contains(out, `"body":"from Go on P-256"`) || !strings.Contains(out, gp.Address().String()) {
+		t.Fatalf("dr_recv: %q", out)
 	}
-	sh(shEd, "printf 'to Go on P-256' | ig_send "+gp.Link())
+	sh(shEd, "printf 'to Go on P-256' | dr_send "+gp.Link())
 	if res, err := gp.Receive(ctx); err != nil || len(res.Delivered) != 1 || res.Delivered[0].Envelope.From != se {
 		t.Fatalf("the Go client's P-256 box received %+v, %v", res, err)
 	}
@@ -813,7 +813,7 @@ func TestTheScriptDeclaresTheKeyTypesItsBuildVerifies(t *testing.T) {
 	w := newWorld(t)
 	declared := func(b *sbox) string {
 		t.Helper()
-		return strings.TrimSpace(b.must(`ig_look "$(cat "$IG/address")" | jq -c .sender_key_types`))
+		return strings.TrimSpace(b.must(`dr_look "$(cat "$DR/address")" | jq -c .sender_key_types`))
 	}
 	noP256 := `ssh-keygen(){ local k; if [ "$1" = -l ]; then k=$(cat); case $k in "ecdsa-sha2-nistp256 "*) return 255 ;; esac; command ssh-keygen "$@" <<< "$k"; else command ssh-keygen "$@"; fi; }` + "\n"
 	both, ed := `["ssh-ed25519","ecdsa-sha2-nistp256"]`, `["ssh-ed25519"]`
@@ -824,13 +824,13 @@ func TestTheScriptDeclaresTheKeyTypesItsBuildVerifies(t *testing.T) {
 	}
 	b := w.box()
 	n := w.empty()
-	n.must(noP256 + "ig_init")
+	n.must(noP256 + "dr_init")
 	n.addr = mustAddress(t, n.dir)
 	if got, gotN := declared(b), declared(n); got != here || gotN != ed {
 		t.Errorf("init declares %s here and %s on a build that reads no P-256 key, want %s and %s", got, gotN, here, ed)
 	}
-	b.must(noP256 + "ig_rekey")
-	n.must("ig_rekey")
+	b.must(noP256 + "dr_rekey")
+	n.must("dr_rekey")
 	if got, gotN := declared(b), declared(n); got != ed || gotN != here {
 		t.Errorf("a renewal declares %s on a build that reads no P-256 key and %s here, want %s and %s", got, gotN, ed, here)
 	}
@@ -845,11 +845,11 @@ func TestTheScriptsSendABoxDeniesFails(t *testing.T) {
 	kt := protocol.PostQuantum
 	shDir := t.TempDir()
 	sh := func(commands string) (string, error) {
-		return bash(t, []string{"IG_HOME=" + shDir, "IG_BASE=" + srv.URL}, commands)
+		return bash(t, []string{"DR_HOME=" + shDir, "DR_BASE=" + srv.URL}, commands)
 	}
-	out, err := sh("ig_init")
+	out, err := sh("dr_init")
 	if err != nil {
-		t.Fatalf("ig_init: %v", err)
+		t.Fatalf("dr_init: %v", err)
 	}
 	shAddr, err := protocol.ParseAddress(strings.TrimPrefix(linkIn(t, out), srv.URL+protocol.LinkPath))
 	if err != nil {
@@ -865,9 +865,9 @@ func TestTheScriptsSendABoxDeniesFails(t *testing.T) {
 	if !srv.ACL(g.Address()).Deny.Has(shAddr) {
 		t.Fatal("the Go box's block never reached the server")
 	}
-	_, err = sh("printf 'to a box that blocked this one' | ig_send " + g.Link())
+	_, err = sh("printf 'to a box that blocked this one' | dr_send " + g.Link())
 	if err == nil || !strings.Contains(err.Error(), "sender_not_allowed") || !strings.Contains(err.Error(), "nothing is sent") {
-		t.Fatalf("ig_send to a box that denies it: %v", err)
+		t.Fatalf("dr_send to a box that denies it: %v", err)
 	}
 	if sent, _ := filepath.Glob(filepath.Join(shDir, "sent", "*")); exists(filepath.Join(shDir, "outbox")) || len(sent) != 0 {
 		t.Fatal("a refused send left something")
@@ -883,16 +883,16 @@ func TestWithGoClient(t *testing.T) {
 	kt := protocol.PostQuantum
 	shDir, goDir := t.TempDir(), t.TempDir()
 	sh := func(dir, commands string) (string, error) {
-		return bash(t, []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}, commands)
+		return bash(t, []string{"DR_HOME=" + dir, "DR_BASE=" + srv.URL}, commands)
 	}
-	out, err := sh(shDir, "ig_init")
+	out, err := sh(shDir, "dr_init")
 	if err != nil {
-		t.Fatalf("ig_init: %v", err)
+		t.Fatalf("dr_init: %v", err)
 	}
 	shLink := linkIn(t, out)
 	shAddr, err := protocol.ParseAddress(strings.TrimPrefix(shLink, srv.URL+protocol.LinkPath))
 	if err != nil || shLink != srv.URL+protocol.LinkPath+shAddr.String() {
-		t.Fatalf("ig_init printed %q, not the box's link", out)
+		t.Fatalf("dr_init printed %q, not the box's link", out)
 	}
 	g, err := client.Init(ctx, goDir, client.Options{Base: srv.URL}, kt)
 	if err != nil {
@@ -902,14 +902,14 @@ func TestWithGoClient(t *testing.T) {
 
 	// An API error prints its status and code, and nothing the server wrote
 	// (PROTOCOL.md §11.3).
-	if _, err := sh(shDir, "printf x | ig_send "+strings.Repeat("0", 64)); err == nil || !strings.Contains(err.Error(), `"code":"no_such_mailbox","message":"ERROR 404 no_such_mailbox"}`) || strings.Contains(err.Error(), "no box has this address") {
-		t.Fatalf("ig_send to no box: %v", err)
+	if _, err := sh(shDir, "printf x | dr_send "+strings.Repeat("0", 64)); err == nil || !strings.Contains(err.Error(), `"code":"no_such_mailbox","message":"ERROR 404 no_such_mailbox"}`) || strings.Contains(err.Error(), "no box has this address") {
+		t.Fatalf("dr_send to no box: %v", err)
 	}
 	// A hostile server's words are not printed at all, and an answer that is
 	// not one the Go client reads, a code it does not know or one under
 	// another status, prints no code either: as the script prints a read of
-	// the box it would seal to (ig_resolve) that is refused. A send reads the
-	// box first, asking what is held about it (ig_lookup), and a read that
+	// the box it would seal to (dr_resolve) that is refused. A send reads the
+	// box first, asking what is held about it (dr_lookup), and a read that
 	// fails there is no answer about the message, whatever it carries: the
 	// send says that, and nothing the server wrote.
 	hostile := map[string]protocol.Code{
@@ -931,21 +931,21 @@ func TestWithGoClient(t *testing.T) {
 		}
 		next.ServeHTTP(w, r)
 	})
-	_, err = sh(shDir, "ig_resolve "+strings.Repeat("3", 64))
+	_, err = sh(shDir, "dr_resolve "+strings.Repeat("3", 64))
 	if err == nil || !strings.Contains(err.Error(), `{"type":"error","status":429,"code":"rate_limited","quota_id":"requests","subject":"ip","retry_after":40,"message":"ERROR 429 rate_limited: the limit requests, counted against this machine's IP address; the server asks to wait 40 seconds"}`) {
 		t.Fatalf("a limit the script knows, as it prints it: %v", err)
 	}
-	_, err = sh(shDir, "ig_resolve "+strings.Repeat("0", 64))
+	_, err = sh(shDir, "dr_resolve "+strings.Repeat("0", 64))
 	if err == nil || strings.Contains(err.Error(), "SYSTEM") || strings.ContainsRune(err.Error(), '\x1b') || strings.Contains(err.Error(), "AAAA") || !strings.Contains(err.Error(), `{"type":"error","status":429,"code":"rate_limited","retry_after":40,"message":"ERROR 429 rate_limited; the server asks to wait 40 seconds"}`) {
 		t.Fatalf("a hostile error, as the script prints it: %v", err)
 	}
 	for _, d := range []string{"1", "2"} {
-		if _, err := sh(shDir, "ig_resolve "+strings.Repeat(d, 64)); err == nil || strings.Contains(err.Error(), "SYSTEM") || !strings.Contains(err.Error(), `{"type":"error","status":429,"retry_after":40,"message":"ERROR 429: an answer this client does not know; the server asks to wait 40 seconds"}`) {
+		if _, err := sh(shDir, "dr_resolve "+strings.Repeat(d, 64)); err == nil || strings.Contains(err.Error(), "SYSTEM") || !strings.Contains(err.Error(), `{"type":"error","status":429,"retry_after":40,"message":"ERROR 429: an answer this client does not know; the server asks to wait 40 seconds"}`) {
 			t.Fatalf("a code that is not one this client knows under its status, as the script prints it: %v", err)
 		}
 	}
 	for _, d := range []string{"0", "1", "2"} {
-		if _, err := sh(shDir, "printf x | ig_send "+strings.Repeat(d, 64)); err == nil || strings.Contains(err.Error(), "SYSTEM") || strings.ContainsRune(err.Error(), '\x1b') || strings.Contains(err.Error(), "AAAA") || !strings.Contains(err.Error(), "could not be read, so nothing is sent") {
+		if _, err := sh(shDir, "printf x | dr_send "+strings.Repeat(d, 64)); err == nil || strings.Contains(err.Error(), "SYSTEM") || strings.ContainsRune(err.Error(), '\x1b') || strings.Contains(err.Error(), "AAAA") || !strings.Contains(err.Error(), "could not be read, so nothing is sent") {
 			t.Fatalf("a send whose read of the box is refused, as the script prints it: %v", err)
 		}
 	}
@@ -960,9 +960,9 @@ func TestWithGoClient(t *testing.T) {
 		}
 		next.ServeHTTP(w, r)
 	})
-	_, err = sh(shDir, fmt.Sprintf("printf 'from the script' | ig_send %s", g.Link()))
+	_, err = sh(shDir, fmt.Sprintf("printf 'from the script' | dr_send %s", g.Link()))
 	if sent, _ := filepath.Glob(filepath.Join(shDir, "sent", "*")); err == nil || !strings.Contains(err.Error(), "does not name the ciphertext this box posted") || len(sent) != 0 {
-		t.Fatalf("ig_send with a receipt for another ciphertext: %v, sent/ %v", err, sent)
+		t.Fatalf("dr_send with a receipt for another ciphertext: %v, sent/ %v", err, sent)
 	}
 	srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		if r.Method == http.MethodPost {
@@ -971,16 +971,16 @@ func TestWithGoClient(t *testing.T) {
 		}
 		next.ServeHTTP(w, r)
 	})
-	_, err = sh(shDir, fmt.Sprintf("printf 'from the script' | ig_send %s", g.Link()))
+	_, err = sh(shDir, fmt.Sprintf("printf 'from the script' | dr_send %s", g.Link()))
 	if sent, _ := filepath.Glob(filepath.Join(shDir, "sent", "*")); err == nil || !strings.Contains(err.Error(), "its times are not times") || len(sent) != 0 {
-		t.Fatalf("ig_send with a receipt whose time is not a time: %v, sent/ %v", err, sent)
+		t.Fatalf("dr_send with a receipt whose time is not a time: %v, sent/ %v", err, sent)
 	}
 	srv.SetMiddle(nil)
-	if _, err := sh(shDir, fmt.Sprintf("printf 'from the script' | ig_send %s", g.Link())); err != nil {
-		t.Fatalf("ig_send to an honest server: %v", err)
+	if _, err := sh(shDir, fmt.Sprintf("printf 'from the script' | dr_send %s", g.Link())); err != nil {
+		t.Fatalf("dr_send to an honest server: %v", err)
 	}
 	if sent, _ := filepath.Glob(filepath.Join(shDir, "sent", g.Address().String()+".*")); len(sent) != 1 {
-		t.Fatalf("ig_send to an honest server: sent/ %v", sent)
+		t.Fatalf("dr_send to an honest server: sent/ %v", sent)
 	}
 	res, err := g.Receive(ctx)
 	if err != nil || len(res.Delivered) != 1 || string(res.Delivered[0].Envelope.Body) != `"from the script"` {
@@ -990,9 +990,9 @@ func TestWithGoClient(t *testing.T) {
 	if _, err := g.Send(ctx, shAddr, "from Go"); err != nil {
 		t.Fatal(err)
 	}
-	out, err = sh(shDir, "ig_recv")
+	out, err = sh(shDir, "dr_recv")
 	if err != nil || !strings.Contains(out, `"body":"from Go"`) {
-		t.Fatalf("ig_recv: %q %v", out, err)
+		t.Fatalf("dr_recv: %q %v", out, err)
 	}
 
 	// The same body is the same size on the wire from either client, and a
@@ -1007,8 +1007,8 @@ func TestWithGoClient(t *testing.T) {
 		next.ServeHTTP(w, r)
 	})
 	for _, body := range []string{"yes", "no", strings.Repeat("the same from both. ", 150)} {
-		if _, err := sh(shDir, fmt.Sprintf("printf %%s '%s' | ig_send %s", body, g.Address())); err != nil {
-			t.Fatalf("ig_send: %v", err)
+		if _, err := sh(shDir, fmt.Sprintf("printf %%s '%s' | dr_send %s", body, g.Address())); err != nil {
+			t.Fatalf("dr_send: %v", err)
 		}
 		if _, err := g.Send(ctx, shAddr, body); err != nil {
 			t.Fatal(err)
@@ -1026,16 +1026,16 @@ func TestWithGoClient(t *testing.T) {
 	if res, err := g.Receive(ctx); err != nil || len(res.Delivered) != 3 {
 		t.Fatalf("the Go client received %+v, %v", res, err)
 	}
-	if out, err := sh(shDir, "ig_recv"); err != nil || strings.Count(out, "\n") != 3 || strings.Contains(out, `"identity"`) {
-		t.Fatalf("ig_recv: %q %v", out, err)
+	if out, err := sh(shDir, "dr_recv"); err != nil || strings.Count(out, "\n") != 3 || strings.Contains(out, `"identity"`) {
+		t.Fatalf("dr_recv: %q %v", out, err)
 	}
 
 	// The script renews its box, and both keep exchanging mail.
-	if _, err := sh(shDir, "ig_rekey"); err != nil {
-		t.Fatalf("ig_rekey: %v", err)
+	if _, err := sh(shDir, "dr_rekey"); err != nil {
+		t.Fatalf("dr_rekey: %v", err)
 	}
-	if _, err := sh(shDir, fmt.Sprintf("printf 'after the rekey' | ig_send %s", g.Address())); err != nil {
-		t.Fatalf("ig_send after the rekey: %v", err)
+	if _, err := sh(shDir, fmt.Sprintf("printf 'after the rekey' | dr_send %s", g.Address())); err != nil {
+		t.Fatalf("dr_send after the rekey: %v", err)
 	}
 	if res, err := g.Receive(ctx); err != nil || len(res.Delivered) != 1 || string(res.Delivered[0].Envelope.Body) != `"after the rekey"` {
 		t.Fatalf("the Go client received %+v, %v", res, err)
@@ -1048,7 +1048,7 @@ func TestWithGoClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err = sh(shDir, "ig_recv")
+	out, err = sh(shDir, "dr_recv")
 	var line struct {
 		Envelope struct {
 			MsgID      string `json:"msg_id"`
@@ -1058,7 +1058,7 @@ func TestWithGoClient(t *testing.T) {
 		}
 	}
 	if err != nil || json.Unmarshal([]byte(out), &line) != nil || line.Envelope.Subject != f.Subject || line.Envelope.InReplyTo != f.InReplyTo || line.Envelope.Supersedes != f.Supersedes {
-		t.Fatalf("ig_recv printed %q, %v", out, err)
+		t.Fatalf("dr_recv printed %q, %v", out, err)
 	}
 	sameButReceipt(t, filepath.Join(goDir, "sent", shAddr.String()+"."+line.Envelope.MsgID+".json"), []byte(out), r.ID)
 }
@@ -1167,7 +1167,7 @@ func TestVectorsRevocation(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, goErr := protocol.VerifyRevocation(addr(v.addr), doc, sig)
-		_, shErr := bash(t, scratch(t), fmt.Sprintf(`mkdir -p "$IG"; ig_revcheck %s %s %s`, v.addr, v.doc, abs(t, filepath.Join(vectors, v.sig))))
+		_, shErr := bash(t, scratch(t), fmt.Sprintf(`mkdir -p "$DR"; dr_revcheck %s %s %s`, v.addr, v.doc, abs(t, filepath.Join(vectors, v.sig))))
 		if (goErr == nil) != (shErr == nil) {
 			t.Errorf("%s as a revocation of %s…: the Go client says %v, the script %v", v.sig, v.addr[:8], goErr, shErr)
 		}
@@ -1181,7 +1181,7 @@ func TestVectorsRevocation(t *testing.T) {
 	// Control: the working key's signature is one ssh-keygen takes once the
 	// identity is named a certificate authority, so it is the signers line
 	// that refuses it and not a bad signature.
-	verify := fmt.Sprintf(`mkdir -p "$IG"; printf '%%s cert-authority %%s\n' %s "$(sed -n 2p %s)" > "$IG/s" && ssh-keygen -Y verify -f "$IG/s" -I %s -n irongall-revoke-v1:%s -s %s -O verify-time=20261010000000Z < %s`,
+	verify := fmt.Sprintf(`mkdir -p "$DR"; printf '%%s cert-authority %%s\n' %s "$(sed -n 2p %s)" > "$DR/s" && ssh-keygen -Y verify -f "$DR/s" -I %s -n dromas-revoke-v1:%s -s %s -O verify-time=20261010000000Z < %s`,
 		a, aDoc, a, a, abs(t, filepath.Join(vectors, "revoke/bad-by-a-working-key.sig")), abs(t, filepath.Join(vectors, "a/revoke.txt")))
 	if _, err := bash(t, scratch(t), verify); err != nil {
 		t.Errorf("control: ssh-keygen refuses the working key's signature even under a cert-authority line, so the vector tests nothing: %v", err)
@@ -1198,14 +1198,14 @@ func TestRevocationInBothClients(t *testing.T) {
 	opt := client.Options{Base: srv.URL}
 	kt := protocol.PostQuantum
 	sh := func(dir, commands string) (string, error) {
-		return bash(t, []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}, commands)
+		return bash(t, []string{"DR_HOME=" + dir, "DR_BASE=" + srv.URL}, commands)
 	}
 	scriptBox := func() (string, protocol.Address) {
 		t.Helper()
 		dir := t.TempDir()
-		out, err := sh(dir, "ig_init")
+		out, err := sh(dir, "dr_init")
 		if err != nil {
-			t.Fatalf("ig_init: %v", err)
+			t.Fatalf("dr_init: %v", err)
 		}
 		a, err := protocol.ParseAddress(strings.TrimPrefix(linkIn(t, out), srv.URL+protocol.LinkPath))
 		if err != nil {
@@ -1229,7 +1229,7 @@ func TestRevocationInBothClients(t *testing.T) {
 	// Go client takes it.
 	record := func(dir string) *protocol.Revocations {
 		t.Helper()
-		out, err := sh(dir, `A=$(cat "$IG/address"); printf 'irongall-revoke-v1\n%s\n' "$A" | ssh-keygen -q -Y sign -n "irongall-revoke-v1:$A" -f "$IG/identity" > "$IG/r.sig" && jq -cn --arg i "$(ig_b64 "$IG/identity.doc")" --arg s "$(ig_b64 "$IG/r.sig")" '{type:"revocation_record", identity:$i, revocation_signature:$s}'`)
+		out, err := sh(dir, `A=$(cat "$DR/address"); printf 'dromas-revoke-v1\n%s\n' "$A" | ssh-keygen -q -Y sign -n "dromas-revoke-v1:$A" -f "$DR/identity" > "$DR/r.sig" && jq -cn --arg i "$(dr_b64 "$DR/identity.doc")" --arg s "$(dr_b64 "$DR/r.sig")" '{type:"revocation_record", identity:$i, revocation_signature:$s}'`)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1252,7 +1252,7 @@ func TestRevocationInBothClients(t *testing.T) {
 	// the proof, checks it, and refuses the mail that box had sent it.
 	s2, s2Addr := scriptBox()
 	g2 := goBox()
-	if _, err := sh(s2, "printf 'sent before the revocation' | ig_send "+g2.Address().String()); err != nil {
+	if _, err := sh(s2, "printf 'sent before the revocation' | dr_send "+g2.Address().String()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.Revoke(ctx, opt, record(s2)); err != nil {
@@ -1269,7 +1269,7 @@ func TestRevocationInBothClients(t *testing.T) {
 	// And the other way: the Go client revokes, and the script refuses.
 	s3, _ := scriptBox()
 	g3 := goBox()
-	s3Addr, err := sh(s3, `cat "$IG/address"`)
+	s3Addr, err := sh(s3, `cat "$DR/address"`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1287,11 +1287,11 @@ func TestRevocationInBothClients(t *testing.T) {
 	if _, err := client.Revoke(ctx, opt, rec); err != nil {
 		t.Fatal(err)
 	}
-	out, err := sh(s3, "ig_recv 2>&1")
+	out, err := sh(s3, "dr_recv 2>&1")
 	if err != nil || !strings.Contains(out, `"code":"revoked"`) || strings.Contains(out, `"body"`) {
 		t.Fatalf("the script's drain of mail from a box the Go client revoked: %q %v", out, err)
 	}
-	if _, err := sh(s3, "printf x | ig_send "+g3.Address().String()); err == nil || !strings.Contains(err.Error(), "REVOKED") {
+	if _, err := sh(s3, "printf x | dr_send "+g3.Address().String()); err == nil || !strings.Contains(err.Error(), "REVOKED") {
 		t.Fatalf("the script sent to it: %v", err)
 	}
 }
@@ -1346,7 +1346,7 @@ func TestVectorsRevokedCertificates(t *testing.T) {
 			t.Fatal(err)
 		}
 		got, goErr := protocol.VerifyRevokedCertificates(addr(v.addr), doc, text, signature)
-		out, shErr := bash(t, scratch(t), fmt.Sprintf(`mkdir -p "$IG"; ig_certscheck %s %s %s %s`, v.addr, v.doc, abs(t, statement), abs(t, sig)))
+		out, shErr := bash(t, scratch(t), fmt.Sprintf(`mkdir -p "$DR"; dr_certscheck %s %s %s %s`, v.addr, v.doc, abs(t, statement), abs(t, sig)))
 		if (goErr == nil) != (shErr == nil) {
 			t.Errorf("%s with %s as a revocation of %s…'s certificates: the Go client says %v, the script %v", v.statement, v.sig, v.addr[:8], goErr, shErr)
 			continue
@@ -1394,14 +1394,14 @@ func TestVectorsRevokedCertificates(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(kept, "identity.doc"), read(aDoc), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	env := []string{"IG_HOME=" + box}
+	env := []string{"DR_HOME=" + box}
 	for _, c := range []struct {
 		name  string
 		certs *protocol.RevokedCertificates
 	}{{"ok-through-4", four}, {"ok-through-the-highest", &protocol.RevokedCertificates{Through: protocol.MaxSerial}}} {
 		keep(read(filepath.Join(vectors, "revoked", c.name+".txt")), read(filepath.Join(vectors, "revoked", c.name+".sig")))
 		for _, serial := range []uint64{1, 3, 4, 5, protocol.MaxSerial - 1, protocol.MaxSerial} {
-			out, err := bash(t, env, fmt.Sprintf(`ig_certrevoked %s %d; echo $?`, a, serial))
+			out, err := bash(t, env, fmt.Sprintf(`dr_certrevoked %s %d; echo $?`, a, serial))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -1410,27 +1410,27 @@ func TestVectorsRevokedCertificates(t *testing.T) {
 				want = "0"
 			}
 			if strings.TrimSpace(out) != want {
-				t.Errorf("%s, serial %d: the Go client says revoked is %v, and the script's ig_certrevoked returned %s", c.name, serial, c.certs.Revokes(serial), strings.TrimSpace(out))
+				t.Errorf("%s, serial %d: the Go client says revoked is %v, and the script's dr_certrevoked returned %s", c.name, serial, c.certs.Revokes(serial), strings.TrimSpace(out))
 			}
 		}
 	}
 	// A kept one that no longer verifies is a fault, never "not revoked":
 	// one under another's signature, and a file that holds none.
 	keep(read(filepath.Join(vectors, "revoked", "ok-through-4.txt")), read(filepath.Join(vectors, "revoked", "ok-through-the-highest.sig")))
-	if out, err := bash(t, env, fmt.Sprintf(`ig_certrevoked %s 3; echo $?`, a)); err != nil || strings.TrimSpace(out) != "3" {
-		t.Errorf("a kept revocation under another's signature: ig_certrevoked returned %q %v, want 3", out, err)
+	if out, err := bash(t, env, fmt.Sprintf(`dr_certrevoked %s 3; echo $?`, a)); err != nil || strings.TrimSpace(out) != "3" {
+		t.Errorf("a kept revocation under another's signature: dr_certrevoked returned %q %v, want 3", out, err)
 	}
 	if err := os.WriteFile(filepath.Join(kept, "revoked-certs.json"), []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := bash(t, env, fmt.Sprintf(`ig_certrevoked %s 3; echo $?`, a)); err != nil || strings.TrimSpace(out) != "3" {
-		t.Errorf("a kept file that holds no revocation of certificates: ig_certrevoked returned %q %v, want 3", out, err)
+	if out, err := bash(t, env, fmt.Sprintf(`dr_certrevoked %s 3; echo $?`, a)); err != nil || strings.TrimSpace(out) != "3" {
+		t.Errorf("a kept file that holds no revocation of certificates: dr_certrevoked returned %q %v, want 3", out, err)
 	}
 
 	// Control: the working key's signature is one ssh-keygen takes once the
 	// identity is named a certificate authority, so it is the signers line
 	// that refuses it and not a bad signature.
-	verify := fmt.Sprintf(`mkdir -p "$IG"; printf '%%s cert-authority %%s\n' %s "$(sed -n 2p %s)" > "$IG/s" && ssh-keygen -Y verify -f "$IG/s" -I %s -n %s:%s -s %s -O verify-time=20261010000000Z < %s`,
+	verify := fmt.Sprintf(`mkdir -p "$DR"; printf '%%s cert-authority %%s\n' %s "$(sed -n 2p %s)" > "$DR/s" && ssh-keygen -Y verify -f "$DR/s" -I %s -n %s:%s -s %s -O verify-time=20261010000000Z < %s`,
 		a, aDoc, a, protocol.RevokedCertsTag, a, abs(t, filepath.Join(vectors, "revoked/bad-by-a-working-key.sig")), abs(t, filepath.Join(vectors, "revoked/bad-by-a-working-key.txt")))
 	if _, err := bash(t, scratch(t), verify); err != nil {
 		t.Errorf("control: ssh-keygen refuses the working key's signature even under a cert-authority line, so the vector tests nothing: %v", err)
@@ -1449,11 +1449,11 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 	kt := protocol.PostQuantum
 	dir := t.TempDir()
 	sh := func(commands string) (string, error) {
-		return bash(t, []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}, commands)
+		return bash(t, []string{"DR_HOME=" + dir, "DR_BASE=" + srv.URL}, commands)
 	}
-	out, err := sh("ig_init")
+	out, err := sh("dr_init")
 	if err != nil {
-		t.Fatalf("ig_init: %v", err)
+		t.Fatalf("dr_init: %v", err)
 	}
 	script, err := protocol.ParseAddress(strings.TrimPrefix(linkIn(t, out), srv.URL+protocol.LinkPath))
 	if err != nil {
@@ -1483,7 +1483,7 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 	if _, err := g.Send(ctx, script, "under the second certificate"); err != nil {
 		t.Fatal(err)
 	}
-	out, err = sh("ig_recv 2>&1")
+	out, err = sh("dr_recv 2>&1")
 	if err != nil || strings.Count(out, `"code":"certificate_revoked"`) != 1 || !strings.Contains(out, `"body":"under the second certificate"`) || strings.Contains(out, "under the first certificate") {
 		t.Fatalf("the script's drain of mail from a box that revoked its first certificate: %q %v", out, err)
 	}
@@ -1507,10 +1507,10 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 	// The script writes to the Go box under its second certificate, and the
 	// Go box reads it: the send named both serials, or the server would
 	// have called the prekey stale without end.
-	if _, err := sh("printf 'to the box at its second certificate' | ig_send " + gAddr); err != nil {
+	if _, err := sh("printf 'to the box at its second certificate' | dr_send " + gAddr); err != nil {
 		t.Fatalf("the script's send to a box that moved to a later certificate: %v", err)
 	}
-	if out, err := sh(fmt.Sprintf(`cat "$IG/peers/%s/serial" "$IG/peers/%s/cert-serial"`, gAddr, gAddr)); err != nil || out != fmt.Sprintf("%d\n%d\n", numberOf(t, g), numberOf(t, g)) {
+	if out, err := sh(fmt.Sprintf(`cat "$DR/peers/%s/serial" "$DR/peers/%s/cert-serial"`, gAddr, gAddr)); err != nil || out != fmt.Sprintf("%d\n%d\n", numberOf(t, g), numberOf(t, g)) {
 		t.Fatalf("what the script recorded of the box's statement: %q %v", out, err)
 	}
 	res, err := g.Receive(ctx)
@@ -1519,13 +1519,13 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 	}
 
 	// The script's box renews, and the Go client follows it.
-	if _, err := sh("ig_rekey"); err != nil {
-		t.Fatalf("ig_rekey: %v", err)
+	if _, err := sh("dr_rekey"); err != nil {
+		t.Fatalf("dr_rekey: %v", err)
 	}
 	if _, err := g.Send(ctx, script, "to the script's box at its second certificate"); err != nil {
 		t.Fatalf("the Go client's send to a script box that renewed: %v", err)
 	}
-	out, err = sh("ig_recv 2>&1")
+	out, err = sh("dr_recv 2>&1")
 	if err != nil || !strings.Contains(out, `"body":"to the script's box at its second certificate"`) {
 		t.Fatalf("the script's drain after its renewal: %q %v", out, err)
 	}
@@ -1552,9 +1552,9 @@ func TestAJSONBodyFromTheGoClient(t *testing.T) {
 	kt := protocol.PostQuantum
 	dir := t.TempDir()
 	sh := func(commands string) (string, error) {
-		return bash(t, []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}, commands)
+		return bash(t, []string{"DR_HOME=" + dir, "DR_BASE=" + srv.URL}, commands)
 	}
-	if _, err := sh("ig_init"); err != nil {
+	if _, err := sh("dr_init"); err != nil {
 		t.Fatal(err)
 	}
 	s, err := protocol.ParseAddress(strings.TrimSpace(string(mustRead(t, filepath.Join(dir, "address")))))
@@ -1574,11 +1574,11 @@ func TestAJSONBodyFromTheGoClient(t *testing.T) {
 		}
 		return v
 	}
-	scriptGot := func() []any { // the bodies of the mail lines ig_recv prints
+	scriptGot := func() []any { // the bodies of the mail lines dr_recv prints
 		t.Helper()
-		out, err := sh("ig_recv")
+		out, err := sh("dr_recv")
 		if err != nil {
-			t.Fatalf("ig_recv: %v", err)
+			t.Fatalf("dr_recv: %v", err)
 		}
 		var bodies []any
 		for l := range strings.Lines(out) {
@@ -1587,7 +1587,7 @@ func TestAJSONBodyFromTheGoClient(t *testing.T) {
 				Envelope struct{ Body json.RawMessage }
 			}
 			if err := json.Unmarshal([]byte(l), &line); err != nil || line.Type != "mail" {
-				t.Fatalf("ig_recv printed %q", out)
+				t.Fatalf("dr_recv printed %q", out)
 			}
 			bodies = append(bodies, value(line.Envelope.Body))
 		}
@@ -1613,7 +1613,7 @@ func landAll(t *testing.T, b *client.Box) {
 	}
 }
 
-// irongall.sh run as a command takes the Go client's command line for the
+// dromas.sh run as a command takes the Go client's command line for the
 // commands it has, and gives help as the Go client does: asked for, on stdout
 // with exit 0, and --help after a command runs nothing, as -h does, which
 // says on stderr that --help is the flag; a bare group, or a command it does
@@ -1625,8 +1625,8 @@ func TestTheCommandLine(t *testing.T) {
 	home := t.TempDir()
 	run := func(stdin string, args ...string) (string, string, int) {
 		t.Helper()
-		cmd := exec.Command("bash", append([]string{abs(t, "irongall.sh")}, args...)...)
-		cmd.Env = append(os.Environ(), "IG_HOME="+home, "IG_BASE="+srv.URL)
+		cmd := exec.Command("bash", append([]string{abs(t, "dromas.sh")}, args...)...)
+		cmd.Env = append(os.Environ(), "DR_HOME="+home, "DR_BASE="+srv.URL)
 		cmd.Stdin = strings.NewReader(stdin)
 		var out, errs bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &out, &errs
@@ -1646,9 +1646,9 @@ func TestTheCommandLine(t *testing.T) {
 	}
 	landAll(t, g)
 	for want, lines := range map[string][][]string{
-		"bash irongall.sh init ":         {{"help"}, {"-h"}, {"--help"}},
-		"bash irongall.sh send ":         {{"help", "send"}, {"send", g.Link(), "-h"}, {"send", g.Link(), "--help"}},
-		"bash irongall.sh prekey renew ": {{"help", "prekey"}, {"prekey", "help"}, {"prekey", "renew", "--help"}},
+		"bash dromas.sh init ":         {{"help"}, {"-h"}, {"--help"}},
+		"bash dromas.sh send ":         {{"help", "send"}, {"send", g.Link(), "-h"}, {"send", g.Link(), "--help"}},
+		"bash dromas.sh prekey renew ": {{"help", "prekey"}, {"prekey", "help"}, {"prekey", "renew", "--help"}},
 	} {
 		for _, line := range lines {
 			pointer := ""
@@ -1656,7 +1656,7 @@ func TestTheCommandLine(t *testing.T) {
 				pointer = "Flag shorthand -h has been deprecated, use --help\n"
 			}
 			if out, errs, code := run("", line...); code != 0 || errs != pointer || !strings.HasPrefix(out, want) {
-				t.Errorf("irongall.sh %v: %d %q\n%s", line, code, errs, out)
+				t.Errorf("dromas.sh %v: %d %q\n%s", line, code, errs, out)
 			}
 		}
 	}
@@ -1664,11 +1664,11 @@ func TestTheCommandLine(t *testing.T) {
 	// have, a word a command does not take, or the wrong number of them.
 	for _, line := range [][]string{nil, {"alias"}, {"alias", "add", "bob", g.Link()}, {"revocation", "publish", g.Address().String()}, {"outbox", "flush"}, {"nosuch"}, {"help", "nosuch"}, {"rekey"},
 		{"send"}, {"send", g.Link(), "body", "more"}, {"send", "--subject", "x", g.Link()}, {"send", g.Link(), "--json"}, {"recv", "--headers"}, {"addr", "x"}, {"init", "--classic"}, {"prekey", "renew", "--now"}} {
-		if out, errs, code := run("never sent", line...); code != 2 || out != "" || !strings.HasPrefix(errs, `{"type":"usage_error",`) || strings.Count(errs, "\n") != 1 || !strings.Contains(errs, `"help":"bash irongall.sh help`) {
-			t.Errorf("irongall.sh %v: %d %q, stderr %q", line, code, out, errs)
+		if out, errs, code := run("never sent", line...); code != 2 || out != "" || !strings.HasPrefix(errs, `{"type":"usage_error",`) || strings.Count(errs, "\n") != 1 || !strings.Contains(errs, `"help":"bash dromas.sh help`) {
+			t.Errorf("dromas.sh %v: %d %q, stderr %q", line, code, out, errs)
 		}
 	}
-	if _, errs, _ := run("", "send"); errs != `{"type":"usage_error","usage":"bash irongall.sh send <link> [file]","help":"bash irongall.sh help send","message":"irongall.sh send takes 1 to 2 arguments, and was given 0"}`+"\n" {
+	if _, errs, _ := run("", "send"); errs != `{"type":"usage_error","usage":"bash dromas.sh send <link> [file]","help":"bash dromas.sh help send","message":"dromas.sh send takes 1 to 2 arguments, and was given 0"}`+"\n" {
 		t.Errorf("a wrong number of arguments: %q", errs)
 	}
 	if res, err := g.Receive(ctx); err != nil || len(res.Delivered) != 0 {
@@ -1698,8 +1698,8 @@ func TestASendDuringADrainHidesNoRevocation(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	ctx, srv := context.Background(), fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
-	env := []string{"IG_HOME=" + t.TempDir(), "IG_BASE=" + srv.URL, "IG_LOCK_WAIT=2"}
-	out, err := bash(t, env, "ig_init --no-pq")
+	env := []string{"DR_HOME=" + t.TempDir(), "DR_BASE=" + srv.URL, "DR_LOCK_WAIT=2"}
+	out, err := bash(t, env, "dr_init --no-pq")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1726,9 +1726,9 @@ func TestASendDuringADrainHidesNoRevocation(t *testing.T) {
 		t.Fatal(err)
 	}
 	sendErr := filepath.Join(t.TempDir(), "send.err")
-	hook := `eval "orig_take() $(declare -f ig_take | tail -n +2)"
-ig_take(){ bash -c '. ` + abs(t, "irongall.sh") + `; printf x | ig_send ` + c.Address().String() + `' > /dev/null 2>> ` + sendErr + `; orig_take "$@"; }
-ig_recv`
+	hook := `eval "orig_take() $(declare -f dr_take | tail -n +2)"
+dr_take(){ bash -c '. ` + abs(t, "dromas.sh") + `; printf x | dr_send ` + c.Address().String() + `' > /dev/null 2>> ` + sendErr + `; orig_take "$@"; }
+dr_recv`
 	if out, _ := bash(t, env, hook); strings.Contains(out, g.Address().String()) {
 		t.Error("mail from a revoked sender delivered")
 	}
@@ -1744,18 +1744,18 @@ ig_recv`
 func TestTheScriptsPassNamesTheServerAsAnOrigin(t *testing.T) {
 	need(t, "bash")
 	for base, want := range map[string]string{
-		"https://irongall.dev":              "irongall.dev",
-		"https://irongall.dev:443":          "irongall.dev",
-		"https://IronGall.dev:0443/":        "irongall.dev",
-		"https://someone@irongall.dev:8443": "irongall.dev:8443",
-		"https://irongall.dev:80":           "irongall.dev:80",
-		"http://irongall:8080":              "irongall:8080",
-		"http://irongall:80":                "irongall",
-		"http://irongall:":                  "irongall",
-		"http://[::1]:8080":                 "[::1]:8080",
-		"https://[::1]:443":                 "[::1]",
+		"https://dromas.dev":              "dromas.dev",
+		"https://dromas.dev:443":          "dromas.dev",
+		"https://Dromas.dev:0443/":        "dromas.dev",
+		"https://someone@dromas.dev:8443": "dromas.dev:8443",
+		"https://dromas.dev:80":           "dromas.dev:80",
+		"http://dromas:8080":              "dromas:8080",
+		"http://dromas:80":                "dromas",
+		"http://dromas:":                  "dromas",
+		"http://[::1]:8080":               "[::1]:8080",
+		"https://[::1]:443":               "[::1]",
 	} {
-		if got, err := bash(t, nil, "ig_server '"+base+"'"); err != nil || got != want+"\n" {
+		if got, err := bash(t, nil, "dr_server '"+base+"'"); err != nil || got != want+"\n" {
 			t.Errorf("%s: the pass names %q, %v; want %q", base, got, err, want)
 		}
 	}
@@ -1768,15 +1768,15 @@ func TestBothClientsCallTheSameServers(t *testing.T) {
 	need(t, "bash", "jq")
 	const refusal = "is not a server this client calls"
 	for _, u := range []string{
-		"https://irongall.dev", "HTTPS://irongall.dev", "https://10.0.0.1:8443", "https://someone@irongall.dev",
+		"https://dromas.dev", "HTTPS://dromas.dev", "https://10.0.0.1:8443", "https://someone@dromas.dev",
 		"http://127.0.0.1:8080", "http://127.255.0.9", "http://[::1]:8080", "http://[::1]", "http://someone@127.0.0.1:1",
-		"http://example.com", "http://irongall:8080", "http://10.0.0.1:8080", "http://127.0.0.256", "http://127.01.0.1",
+		"http://example.com", "http://dromas:8080", "http://10.0.0.1:8080", "http://127.0.0.256", "http://127.01.0.1",
 		"http://127.0.0.1.example", "http://localhost.example", "http://localhost:1", "http://LOCALHOST", "http://[::2]:8080", "http://[::ffff:127.0.0.1]:8080",
-		"ftp://irongall.dev", "irongall.dev", "https://", "http://",
+		"ftp://dromas.dev", "dromas.dev", "https://", "http://",
 	} {
 		_, err := client.Open(t.TempDir(), client.Options{Base: u})
 		goTakes := err == nil || !strings.Contains(err.Error(), refusal)
-		_, shErr := bash(t, []string{"U=" + u}, `ig_tls "$U"`)
+		_, shErr := bash(t, []string{"U=" + u}, `dr_tls "$U"`)
 		if goTakes != (shErr == nil) {
 			t.Errorf("%q as the box's server: the Go client %v, the script %v", u, err, shErr)
 		}
@@ -1784,15 +1784,15 @@ func TestBothClientsCallTheSameServers(t *testing.T) {
 			t.Errorf("%q: the script's refusal: %v", u, shErr)
 		}
 	}
-	// Each call is held to it too, as the Go client's are: ig_api calls no
+	// Each call is held to it too, as the Go client's are: dr_api calls no
 	// curl for a server out of form, whoever named it.
-	if _, err := bash(t, []string{"IG_HOME=" + t.TempDir()}, `curl(){ echo "curl was called" >&2; return 7; }; IG_BASE=http://example.com ig_api GET /v1/x`); err == nil || !strings.Contains(err.Error(), refusal) || strings.Contains(err.Error(), "curl was called") {
-		t.Errorf("ig_api to a server over http elsewhere: %v", err)
+	if _, err := bash(t, []string{"DR_HOME=" + t.TempDir()}, `curl(){ echo "curl was called" >&2; return 7; }; DR_BASE=http://example.com dr_api GET /v1/x`); err == nil || !strings.Contains(err.Error(), refusal) || strings.Contains(err.Error(), "curl was called") {
+		t.Errorf("dr_api to a server over http elsewhere: %v", err)
 	}
-	cmd := exec.Command("bash", abs(t, "irongall.sh"), "addr")
-	cmd.Env = append(os.Environ(), "IG_HOME="+t.TempDir(), "IG_BASE=http://example.com")
+	cmd := exec.Command("bash", abs(t, "dromas.sh"), "addr")
+	cmd.Env = append(os.Environ(), "DR_HOME="+t.TempDir(), "DR_BASE=http://example.com")
 	if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), refusal) {
-		t.Errorf("irongall.sh addr with a server over http elsewhere: %v %q", err, out)
+		t.Errorf("dromas.sh addr with a server over http elsewhere: %v %q", err, out)
 	}
 }
 
@@ -1814,9 +1814,9 @@ func TestTheScriptFollowsNoRedirect(t *testing.T) {
 	}))
 	t.Cleanup(other.Close)
 	dir := t.TempDir()
-	env := []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}
-	if _, err := bash(t, env, "ig_init"); err != nil {
-		t.Fatalf("ig_init: %v", err)
+	env := []string{"DR_HOME=" + dir, "DR_BASE=" + srv.URL}
+	if _, err := bash(t, env, "dr_init"); err != nil {
+		t.Fatalf("dr_init: %v", err)
 	}
 	for _, status := range []int{http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect} {
 		srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -1830,7 +1830,7 @@ func TestTheScriptFollowsNoRedirect(t *testing.T) {
 			}
 			next.ServeHTTP(w, r)
 		})
-		_, err := bash(t, env, "ig_recv")
+		_, err := bash(t, env, "dr_recv")
 		if err == nil || !strings.Contains(err.Error(), `"status":`+strconv.Itoa(status)) || !strings.Contains(err.Error(), "a redirect, which this client never follows") {
 			t.Errorf("a drain answered %d: %v", status, err)
 		}
@@ -1861,9 +1861,9 @@ func TestNoCallOfTheScriptFollowsARedirect(t *testing.T) {
 	t.Cleanup(other.Close)
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
-	env := []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}
-	if _, err := bash(t, env, "ig_init"); err != nil {
-		t.Fatalf("ig_init: %v", err)
+	env := []string{"DR_HOME=" + dir, "DR_BASE=" + srv.URL}
+	if _, err := bash(t, env, "dr_init"); err != nil {
+		t.Fatalf("dr_init: %v", err)
 	}
 	r, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, kt)
 	if err != nil {
@@ -1889,7 +1889,7 @@ func TestNoCallOfTheScriptFollowsARedirect(t *testing.T) {
 				}
 				next.ServeHTTP(w, q)
 			})
-			_, err := bash(t, env, "printf 'never posted' | ig_send "+r.Link())
+			_, err := bash(t, env, "printf 'never posted' | dr_send "+r.Link())
 			if err == nil || !strings.Contains(err.Error(), `"status":`+strconv.Itoa(status)) || !strings.Contains(err.Error(), "a redirect, which this client never follows") {
 				t.Errorf("%d on %s: %v", status, call.name, err)
 			}
@@ -1917,8 +1917,8 @@ func TestAnAnswerWithNoBodyPutsOnlyJSONOnStderr(t *testing.T) {
 	for _, status := range []int{http.StatusNotModified, http.StatusNotFound, http.StatusServiceUnavailable} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(status) }))
 		t.Cleanup(srv.Close)
-		cmd := exec.Command("bash", "-c", ". "+abs(t, "irongall.sh")+"\nig_api GET /v1/x")
-		cmd.Env = append(os.Environ(), "IG_HOME="+t.TempDir(), "IG_BASE="+srv.URL)
+		cmd := exec.Command("bash", "-c", ". "+abs(t, "dromas.sh")+"\ndr_api GET /v1/x")
+		cmd.Env = append(os.Environ(), "DR_HOME="+t.TempDir(), "DR_BASE="+srv.URL)
 		var errs bytes.Buffer
 		cmd.Stderr = &errs
 		_ = cmd.Run()
@@ -1944,7 +1944,7 @@ func TestAServerThatIsNotThereIsNoAnswer(t *testing.T) {
 	}
 	base := "http://" + l.Addr().String()
 	_ = l.Close()
-	_, err = bash(t, []string{"IG_HOME=" + t.TempDir(), "IG_BASE=" + base}, "ig_api GET /v1/x")
+	_, err = bash(t, []string{"DR_HOME=" + t.TempDir(), "DR_BASE=" + base}, "dr_api GET /v1/x")
 	if err == nil || !strings.Contains(err.Error(), `{"type":"error","message":"no answer from `+base+`"}`) || strings.Contains(err.Error(), "curl") || strings.Contains(err.Error(), `"status":`) {
 		t.Errorf("a server that is not there: %v", err)
 	}
@@ -1956,8 +1956,8 @@ func TestAServerThatIsNotThereIsNoAnswer(t *testing.T) {
 func TestA3xxIsNoAnswerWhateverItsLines(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
-	env := []string{"IG_HOME=" + t.TempDir(), "IG_BASE=" + srv.URL}
-	if _, err := bash(t, env, "ig_init"); err != nil {
+	env := []string{"DR_HOME=" + t.TempDir(), "DR_BASE=" + srv.URL}
+	if _, err := bash(t, env, "dr_init"); err != nil {
 		t.Fatal(err)
 	}
 	list := `{"messages":[],"count":0}`
@@ -1975,7 +1975,7 @@ func TestA3xxIsNoAnswerWhateverItsLines(t *testing.T) {
 			_ = bw.Flush()
 			_ = conn.Close()
 		})
-		if out, err := bash(t, env, "ig_recv"); err == nil || !strings.Contains(err.Error(), `"status":`+c.status+`,`) {
+		if out, err := bash(t, env, "dr_recv"); err == nil || !strings.Contains(err.Error(), `"status":`+c.status+`,`) {
 			t.Errorf("%s: a drain answered %s: %q, %v", c.name, c.status, out, err)
 		}
 	}
@@ -2005,8 +2005,8 @@ func TestTheScriptReadsNoCurlrc(t *testing.T) {
 		_, _ = w.Write([]byte(`{"messages":[]}`))
 	}))
 	t.Cleanup(other.Close)
-	env := []string{"IG_HOME=" + t.TempDir(), "IG_BASE=" + srv.URL, curlrc("location-trusted")}
-	if _, err := bash(t, env, "ig_init"); err != nil {
+	env := []string{"DR_HOME=" + t.TempDir(), "DR_BASE=" + srv.URL, curlrc("location-trusted")}
+	if _, err := bash(t, env, "dr_init"); err != nil {
 		t.Fatal(err)
 	}
 	srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -2016,7 +2016,7 @@ func TestTheScriptReadsNoCurlrc(t *testing.T) {
 		}
 		next.ServeHTTP(w, r)
 	})
-	_, err := bash(t, env, "ig_recv")
+	_, err := bash(t, env, "dr_recv")
 	mu.Lock()
 	if err == nil || len(got) > 0 {
 		t.Errorf("location-trusted: recv %v; the other server got %q", err, got)
@@ -2027,8 +2027,8 @@ func TestTheScriptReadsNoCurlrc(t *testing.T) {
 	u, _ := url.Parse(fakeserver.New(t, time.Now).URL)
 	front := httptest.NewTLSServer(httputil.NewSingleHostReverseProxy(u))
 	t.Cleanup(front.Close)
-	env = []string{"IG_HOME=" + t.TempDir(), "IG_BASE=" + front.URL, curlrc("insecure")}
-	if out, err := bash(t, env, "ig_init && ig_recv"); err == nil {
+	env = []string{"DR_HOME=" + t.TempDir(), "DR_BASE=" + front.URL, curlrc("insecure")}
+	if out, err := bash(t, env, "dr_init && dr_recv"); err == nil {
 		t.Errorf("insecure: a server whose certificate nobody signed made a box and drained it: %q", out)
 	}
 }
@@ -2064,11 +2064,11 @@ func TestTheScriptCallsThisMachineDirectly(t *testing.T) {
 		t.Fatal(err)
 	}
 	register := func(base string) (string, error) {
-		env := []string{"IG_HOME=" + t.TempDir(), "IG_BASE=" + base, "CURL_CA_BUNDLE=" + ca, "no_proxy=", "NO_PROXY="}
+		env := []string{"DR_HOME=" + t.TempDir(), "DR_BASE=" + base, "CURL_CA_BUNDLE=" + ca, "no_proxy=", "NO_PROXY="}
 		for _, v := range []string{"http_proxy", "https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"} {
 			env = append(env, v+"="+proxy.URL)
 		}
-		return bash(t, env, "ig_init")
+		return bash(t, env, "dr_init")
 	}
 	for _, base := range []string{srv.URL, front.URL} {
 		out, err := register(base)
@@ -2081,13 +2081,13 @@ func TestTheScriptCallsThisMachineDirectly(t *testing.T) {
 	if g := taken(); len(g) > 0 {
 		t.Errorf("localhost: the proxy got %q", g)
 	}
-	_, err := register("https://irongall.invalid")
+	_, err := register("https://dromas.invalid")
 	g := taken()
 	if err == nil || len(g) == 0 {
 		t.Errorf("a server elsewhere: %v; the proxy got %q", err, g)
 	}
 	for _, l := range g {
-		if !strings.HasPrefix(l, "CONNECT irongall.invalid:443 ") {
+		if !strings.HasPrefix(l, "CONNECT dromas.invalid:443 ") {
 			t.Errorf("a server elsewhere: the proxy got %q", l)
 		}
 	}
@@ -2101,9 +2101,9 @@ func TestTheScriptHoldsALowerLifetimeOverAWaitingRenewal(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
-	env := []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}
-	if _, err := bash(t, env, "ig_init"); err != nil {
-		t.Fatalf("ig_init: %v", err)
+	env := []string{"DR_HOME=" + dir, "DR_BASE=" + srv.URL}
+	if _, err := bash(t, env, "dr_init"); err != nil {
+		t.Fatalf("dr_init: %v", err)
 	}
 	srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/prekey") {
@@ -2112,15 +2112,15 @@ func TestTheScriptHoldsALowerLifetimeOverAWaitingRenewal(t *testing.T) {
 		}
 		next.ServeHTTP(w, r)
 	})
-	if _, err := bash(t, env, "sleep 1; ig_rekey"); err == nil {
+	if _, err := bash(t, env, "sleep 1; dr_rekey"); err == nil {
 		t.Fatal("the renewal went through")
 	}
 	if err := os.WriteFile(filepath.Join(dir, "prekey-lifetime"), []byte("97200\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	srv.SetMiddle(nil)
-	if _, err := bash(t, env, "ig_rekey"); err != nil {
-		t.Fatalf("ig_rekey: %v", err)
+	if _, err := bash(t, env, "dr_rekey"); err != nil {
+		t.Fatalf("dr_rekey: %v", err)
 	}
 	// Read from the script box's own files: its serial, and that prekey's
 	// record of when it was signed and its statement.

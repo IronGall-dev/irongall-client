@@ -1,10 +1,10 @@
-# The IronGall Protocol, version 1
+# The Dromas Protocol, version 1
 
 **Status: draft.** Nothing here is final until version 1 is declared stable. What must be settled first is this repository's issues in the milestone `M1: protocol freeze`.
 
 ## 1. Introduction
 
-IronGall is end-to-end encrypted, sender-authenticated mail between programs, through a store-and-forward server. A mailbox, a *box*, is named by its *address*, the hash of its identity key's public document, so an address authenticates the key it names and needs no directory. A sender encrypts to the recipient's *prekey*, which the recipient's *working key* signed under a certificate from the recipient's identity, and signs the message inside the encryption. The server stores ciphertext. It holds no private key, no plaintext and no signature over any message.
+Dromas is end-to-end encrypted, sender-authenticated mail between programs, through a store-and-forward server. A mailbox, a *box*, is named by its *address*, the hash of its identity key's public document, so an address authenticates the key it names and needs no directory. A sender encrypts to the recipient's *prekey*, which the recipient's *working key* signed under a certificate from the recipient's identity, and signs the message inside the encryption. The server stores ciphertext. It holds no private key, no plaintext and no signature over any message.
 
 The server is not trusted for confidentiality or for authenticity: every check that protects a message is a client's. Section 15 states what a hostile server can and cannot do.
 
@@ -115,7 +115,7 @@ Every check of a time is exact at the clock of whoever makes the check, with no 
 The identity document `D` is two lines of ASCII: the tag, then one SSH public key as `<key type> <base64 of the wire key>`, with no comment:
 
 ```
-irongall-v1
+dromas-v1
 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI<43 characters>
 ```
 
@@ -123,8 +123,8 @@ The key MUST be of a type this section defines, in its one encoding, and MUST pa
 
 | Key type | Document | What fixes its one encoding | Key checks |
 |---|---|---|---|
-| `ssh-ed25519` | 93 bytes | the key's length, 32 (RFC 8709 §4) | a canonical point, not of small order |
-| `ecdsa-sha2-nistp256` | 173 bytes | the curve's name, `nistp256`, and an uncompressed point | the point on the curve, not the point at infinity, each coordinate below the field's size |
+| `ssh-ed25519` | 91 bytes | the key's length, 32 (RFC 8709 §4) | a canonical point, not of small order |
+| `ecdsa-sha2-nistp256` | 171 bytes | the curve's name, `nistp256`, and an uncompressed point | the point on the curve, not the point at infinity, each coordinate below the field's size |
 
 - **Every client MUST verify `ssh-ed25519`,** and a client MUST NOT make an identity of any other type unless its owner asks for one. Every other type is OPTIONAL: a client verifies it or not, and a server registers it or not (Section 11.7). A box of an optional type can be written to, and heard from, only by boxes whose clients verify that type (Section 7).
 - **The form is the same for every key type, defined here or not:** the tag line; a key type's name (RFC 4251 §6: printable ASCII with no comma, at most 64 characters); one space; the base64 of an SSH wire key that begins with that same name; LF. A reader MUST refuse a well-formed document of a type it does not verify as `unsupported_key_type`, never as malformed: a document that breaks the form, or does not hash to its address, is evidence of tampering, and one of a type the reader lacks is not.
@@ -156,7 +156,7 @@ A certificate is an OpenSSH user certificate, and a verifier MUST check every ro
 | Type | a user certificate |
 | Certified key | the working key: `ssh-ed25519`, held to that type's key checks (Section 4.1), and never the identity key |
 | Serial | a serial (Section 2.2), numbered as below |
-| Key id | exactly `irongall-cert-v1` |
+| Key id | exactly `dromas-cert-v1` |
 | Principals | exactly one: the box's address |
 | Validity | `valid after` ≤ now < `valid before` ≤ now + 64 days and an hour, at the verifier's clock, in whole seconds |
 | Critical options | none. A verifier MUST refuse a certificate with any (draft-ietf-sshm-cert-01 §2.1.1) |
@@ -164,7 +164,7 @@ A certificate is an OpenSSH user certificate, and a verifier MUST check every ro
 | Reserved | ignored, whatever it holds. A maker writes it empty |
 | Signed by | the key in the identity document, byte for byte |
 
-Example: `ssh-keygen -s identity -I irongall-cert-v1 -n "$A" -z "$SERIAL" -V -1h:+64d -O clear work.pub`.
+Example: `ssh-keygen -s identity -I dromas-cert-v1 -n "$A" -z "$SERIAL" -V -1h:+64d -O clear work.pub`.
 
 - **A signature by a working key carries its certificate** as the SSHSIG's signing key. A verifier MUST take the certificate from the signature, check it against the identity it holds for the address, and then verify the signature under it. A verifier MUST refuse such a signature by the bare working key or by the identity.
 - **A certificate is checked at the verifier's clock, and only once the identity's signature on it has verified.**
@@ -178,10 +178,10 @@ Example: `ssh-keygen -s identity -I irongall-cert-v1 -n "$A" -z "$SERIAL" -V -1h
 
 ## 6. The prekey statement
 
-Five lines, signed by the box's working key under its certificate, in the namespace `irongall-prekey-v1:<A>`:
+Five lines, signed by the box's working key under its certificate, in the namespace `dromas-prekey-v1:<A>`:
 
 ```
-irongall-prekey-v1
+dromas-prekey-v1
 <A>
 <serial>
 <age recipient>
@@ -211,17 +211,17 @@ A box declares the identity key types its client verifies, so that a sender of a
 
 A box proves itself to its server, on every call it makes as itself, with a pass it signs for itself. The server issues nothing for it and stores nothing.
 
-The pass is four lines, signed by the working key under its certificate, in the namespace `irongall-pass-v1:<A>`:
+The pass is four lines, signed by the working key under its certificate, in the namespace `dromas-pass-v1:<A>`:
 
 ```
-irongall-pass-v1
+dromas-pass-v1
 <A>
 <server name>
 <not_after>
 ```
 
-- **The server name** is the host of the box's URL for its server, written as an origin is (RFC 6454 §6.2): lowercase, with no user information, and with its port only when the port is not the scheme's default. `https://irongall.dev:443` and `https://irongall.dev` name `irongall.dev`; `http://127.0.0.1:8080` names `127.0.0.1:8080`. A server MUST write the `Host` of a request the same way, and drop a port of 443 or 80 alike, so that checking a pass never depends on the scheme a request came by.
-- **A client writes it as** `Authorization: irongall-pass address="<A>", not_after="<not_after>", signature="<base64 of the armoured signature>"`, in exactly that form, on one `Authorization` line. A request with two `Authorization` lines carries no pass.
+- **The server name** is the host of the box's URL for its server, written as an origin is (RFC 6454 §6.2): lowercase, with no user information, and with its port only when the port is not the scheme's default. `https://dromas.dev:443` and `https://dromas.dev` name `dromas.dev`; `http://127.0.0.1:8080` names `127.0.0.1:8080`. A server MUST write the `Host` of a request the same way, and drop a port of 443 or 80 alike, so that checking a pass never depends on the scheme a request came by.
+- **A client writes it as** `Authorization: dromas-pass address="<A>", not_after="<not_after>", signature="<base64 of the armoured signature>"`, in exactly that form, on one `Authorization` line. A request with two `Authorization` lines carries no pass.
 - **A server reads it as RFC 9110 §11 lets a recipient read credentials:** the scheme in any ASCII case, then one space or more; the three parameters in any order, each name in any ASCII case and given once, and no other parameter; optional whitespace around each comma and each `=`, and empty list elements skipped (RFC 9110 §5.6.1.2); each value a token or a quoted-string, and a quoted-string holding a backslash refused. Each value is then held to its form: the address, a time, and the base64 of the signature. The signature is verified over the statement built from those values, never over the header's text. A server MUST refuse a value longer than the form a client writes with a signature of the largest bound any identity key type has (Section 3.2), whitespace included, `401 unauthorized`, before it hashes, parses or verifies it.
 - **Lifetime.** A client signs a pass to end 10 minutes after it signs it. A server takes a pass that has not ended and ends at most an hour after its own clock reads.
 - **A client keeps its pass for every call until it is about to end.** A client MUST NOT use a kept pass with more than 10 minutes left: its clock has gone back since it signed it. A server MAY remember a pass it has verified, by one written form of it: every form a verifier reads as the same pass is one (Section 3.2).
@@ -258,9 +258,9 @@ The envelope is one line of compact JSON, its LF included, and is what the sende
 
 ### 9.2. The signed plaintext
 
-The sender signs the envelope's line with its working key, in the namespace `irongall-msg-v1:<recipient>`:
+The sender signs the envelope's line with its working key, in the namespace `dromas-msg-v1:<recipient>`:
 
-    ssh-keygen -q -Y sign -n "irongall-msg-v1:$B" -f work-cert.pub < P > P.sig
+    ssh-keygen -q -Y sign -n "dromas-msg-v1:$B" -f work-cert.pub < P > P.sig
 
 What is encrypted is, in order:
 
@@ -305,16 +305,16 @@ The signed plaintext and its padding are encrypted to the recipient's prekey wit
 
 A box's identity can end its address for good, and nothing else can.
 
-- **The statement is fixed text:** `irongall-revoke-v1`, LF, the address, LF. It has no date, no reason and no number: a verifier builds it from the address, and a copy signed at any time is the same statement.
-- **It is signed by the identity key,** in the namespace `irongall-revoke-v1:<A>`, with the bare identity as the signing key. A working key's signature over the same statement, under a certificate of that identity, is not a revocation: a verifier's `allowed_signers` line names the identity's key with no `cert-authority`.
+- **The statement is fixed text:** `dromas-revoke-v1`, LF, the address, LF. It has no date, no reason and no number: a verifier builds it from the address, and a copy signed at any time is the same statement.
+- **It is signed by the identity key,** in the namespace `dromas-revoke-v1:<A>`, with the bare identity as the signing key. A working key's signature over the same statement, under a certificate of that identity, is not a revocation: a verifier's `allowed_signers` line names the identity's key with no `cert-authority`.
 - **It reaches back, and nothing undoes it.** Once a verifier has verified a revocation, it takes nothing signed for that address, whenever it was signed, sends it nothing, and keeps the revocation for good. No later answer and no later record undoes it.
 
 ### 10.2. Revocation of certificates
 
 The identity revokes every certificate it made up to and including a serial, and keeps its address.
 
-- **The statement is three lines:** `irongall-revoke-certs-v1`, the address, a serial.
-- **It is signed by the identity key,** in the namespace `irongall-revoke-certs-v1:<A>`. A working key's signature is refused.
+- **The statement is three lines:** `dromas-revoke-certs-v1`, the address, a serial.
+- **It is signed by the identity key,** in the namespace `dromas-revoke-certs-v1:<A>`. A working key's signature is refused.
 - **It revokes every certificate of the address whose serial is at or below its own, and the highest one verified stands.** A verifier keeps the highest it has verified. One through a lower serial changes nothing, whenever it arrives. There is no way to revoke fewer.
 - **What a revoked certificate loses, at a verifier that holds the revocation:** a reader refuses mail signed under it, whenever it was signed (`certificate_revoked`); a sender refuses a prekey statement under it; a server takes no pass and no statement under it, and answers a send to a box whose current statement is under it `409 prekey_expired`. A box MUST NOT sign mail under a certificate it holds revoked. The address goes on.
 - **A box MUST NOT make a certificate its identity has revoked:** its next certificate is numbered above the highest serial it holds revoked or its server shows it (Section 5). One through 2^53 − 1 leaves no certificate to make.
@@ -364,7 +364,7 @@ The shapes of every operation below are `api/openapi.yaml`'s. This section says 
 - **A `code` is one of the closed list `api/openapi.yaml` gives, under the status it gives, beside its own `type`.** A code a client does not know, or one under another status, or beside another `type`, is no code: a client takes no branch on it and shows none of it, only the status. A member that breaks its type makes the body no answer (Section 3.3).
 - **A client MUST NOT show `detail`, `hint`, `title`, or any other text a server sent** (a status line, a header or trailer line, a `Location`, a list's cursor in a path). They are a server's words, for a person reading the body. A client says what a code means in its own words, with the members it has checked to their types, and shows a string member only once it has checked it to a value it knows. A call with no answer the client can read is named by its method and path, never its query. A `hint` names a fix as a client command, never a shell line.
 - **A client reads `code`, the members, `Retry-After` and `Date` on every answer that is not `2xx`.**
-- **`401`** carries `WWW-Authenticate` with the scheme `irongall-pass` (Section 8).
+- **`401`** carries `WWW-Authenticate` with the scheme `dromas-pass` (Section 8).
 - **`Retry-After`,** on a `429` and a `503`, and on every list answer (Section 11.11), is delay-seconds, digits alone. A client reads an HTTP-date there as no wait.
 - **A code names what a client does about the error:** one call that can fail for causes a client meets differently has a code for each.
 
@@ -473,7 +473,7 @@ The server checks:
 3. `identity` hashes to the address and has the form of an identity document (Section 4.1) → otherwise `identity_mismatch`.
 4. **The key's type and the key.** A type this protocol does not define → `unsupported_key_type`. The key in its one encoding → otherwise `identity_mismatch`. The type's key checks → otherwise `bad_key`. A server registers `ssh-ed25519` and whichever other defined types its operator chooses, and answers the rest `unsupported_key_type`, naming its list.
 5. **A registration never changes a registered box.** One the server holds is answered from its record: an active box, and the request byte-identical to its current identity, prekey statement and signature → `200 {}` once its pass (step 7) is verified under the box's current certificate, or `401 certificate_revoked` if the identity has revoked that certificate; anything else → `409 conflict`. A revoked address → `410 revoked` with its record, box or none. Any other registration is counted against its address (Section 11.5, `registrations`).
-6. **The prekey statement and its signature:** the statement's form (Section 6); line 2 is the address; a valid age recipient on line 4, of small order neither in its X25519 point nor in a post-quantum key's X25519 half; the signing key a certificate of that identity in every rule of Section 5; the namespace `irongall-prekey-v1:<A>`; the statement's `not_after` after now and at most 33 days and an hour after now; the statement not outliving its certificate → otherwise `bad_key`, or `prekey_time` where what fails is the certificate's time or the statement's `not_after`, a certificate that began less than 10 minutes before the server's clock among them. A certificate the identity revoked, by what the server keeps of the address → `401 certificate_revoked`.
+6. **The prekey statement and its signature:** the statement's form (Section 6); line 2 is the address; a valid age recipient on line 4, of small order neither in its X25519 point nor in a post-quantum key's X25519 half; the signing key a certificate of that identity in every rule of Section 5; the namespace `dromas-prekey-v1:<A>`; the statement's `not_after` after now and at most 33 days and an hour after now; the statement not outliving its certificate → otherwise `bad_key`, or `prekey_time` where what fails is the certificate's time or the statement's `not_after`, a certificate that began less than 10 minutes before the server's clock among them. A certificate the identity revoked, by what the server keeps of the address → `401 certificate_revoked`.
 7. **The pass** (Section 8): this box's, for this server, not ended, under the certificate of step 6 → otherwise a `401`. The certificate shows the identity chose this working key, and a pass minutes old shows its holder is present: nobody can register an identity they do not hold, and a statement that leaked cannot be registered by whoever found it.
 8. **A new box** is stored `active` → `201 {}`. A box registered meanwhile by another request is answered as step 5 answers.
 9. **The server keeps the statement's certificate and its serial.** It takes a pass only under that certificate, and a later statement only under it or under a certificate of a higher serial.
@@ -579,7 +579,7 @@ A box may belong to one account at its server. The protocol fixes how a box join
 - **`PUT /v1/<A>/account`,** with the pass, with `key`, an adopt key → `200` with `account`, the account's id. One use of the key is spent, unless the box is already in that account. A box in another account moves.
 - **`DELETE /v1/<A>/account`,** with the pass → `204`, in an account or not. An account can drop a box from its side too.
 - **Joining or leaving changes nothing about the box's mail.**
-- **An adopt key** is `iga1_` followed by base64url without padding (RFC 4648 §5), at most 1,024 bytes in all. What it encodes is the server's own: a client holds a key to that form and reads nothing else of it, and MUST NOT take one as a command-line argument, where process lists and transcripts keep it. A key this server did not make, or that is spent, expired or revoked → `403 adopt_key_refused`.
+- **An adopt key** is `dra1_` followed by base64url without padding (RFC 4648 §5), at most 1,024 bytes in all. What it encodes is the server's own: a client holds a key to that form and reads nothing else of it, and MUST NOT take one as a command-line argument, where process lists and transcripts keep it. A key this server did not make, or that is spent, expired or revoked → `403 adopt_key_refused`.
 - **An account id** is 1 to 32 of `a`–`z`, `0`–`9` and `-`.
 - **An account's caps on a ciphertext** stay at most 16 MiB.
 
@@ -629,7 +629,7 @@ A client drains every page of its list (Section 11.11). For each entry it fetche
 2. **The layout** (Section 9.2): the envelope line, then a signature block from line 2 to the first END line, followed by LF (`bad_message`).
 3. **The envelope is one JSON object** as Section 3.3 reads one; its body is held to the same rules and passed on as it is (`bad_envelope`).
 4. **The sender's identity document,** from the envelope's `identity`: base64, the form of Section 4.1, and a key that passes its checks (`bad_identity`). `from` MUST be its hash (`reattributed`). A well-formed document of a type the reader does not verify, whose hash is `from`, is refused as `unsupported_key_type`.
-5. **The signature,** over line 1 exactly as decrypted, in the namespace `irongall-msg-v1:<this box>`, by a working key under a certificate of that identity that holds now (Section 5) (`bad_signature`).
+5. **The signature,** over line 1 exactly as decrypted, in the namespace `dromas-msg-v1:<this box>`, by a working key under a certificate of that identity that holds now (Section 5) (`bad_signature`).
 6. **The rest of the envelope,** in this order: a body, and every member of its type (`from` and `to` addresses); `v` the integer 1; `to` this box (`reattributed`); `msg_id` in its form (each other failure `bad_envelope`); and `sent_at` no older than 33 days and not before the box's floor (both `stale`, check 9), and no more than an hour ahead of this box's clock (`future`).
 7. **The listed `from` is the sender that verified** (`reattributed` otherwise).
 8. **Revocation:** the box holds no revocation of the sender (Section 12.5). The reader asks by one read of the sender's box (Section 11.8), once for each sender in a drain, after that sender's signature has verified. A revocation that verifies refuses the message as `revoked`, and every later one from that address, whenever it was signed. A box served with no revocation, no such box, or `410 revoked` with nothing that verifies is an answer that none is held. Any other result is no answer: the drain stops, and the message stays on the server. The same read carries the sender's revocation of certificates: mail under a revoked certificate is refused as `certificate_revoked`.
@@ -734,7 +734,7 @@ Until version 1 is declared stable, nothing is final. From that declaration:
 - **Signed statements match their format exactly:** the identity document, the prekey statement, the pass, and the two revocations. A new format takes a new tag. Each namespace is versioned on its own.
 - **A new member is optional.**
 - **A server MAY add a route.** A client reads a plain `404` or `405` as a route that server does not offer (Section 11.2).
-- **`irongall-revoke-v1` stays valid for good,** so a revocation signed in advance keeps working.
+- **`dromas-revoke-v1` stays valid for good,** so a revocation signed in advance keeps working.
 - **A new identity key type is an addition inside v1:** the identity document has one form for every type (Section 4.1), so a type defined later takes no new tag, and a box declares the types its client verifies (Section 7).
 - **A new prekey type is an addition inside v1** the same way (Section 6).
 
@@ -743,7 +743,7 @@ What version 1 fixes, and where each can grow inside it:
 | Fixed | Grows by |
 |---|---|
 | The signed statements, byte for byte (Sections 4.1, 6, 8, 10); a certificate's type, key id, principal and validity (Section 5) | a new format under a new tag; a new identity or prekey key type; a certificate extension, which a reader ignores |
-| The namespaces, `irongall-<purpose>-v1:<address>` | a new purpose |
+| The namespaces, `dromas-<purpose>-v1:<address>` | a new purpose |
 | A signature's form, and its bound for each key type (Section 3.2) | a new key type, with a bound of its own |
 | What is encrypted: the envelope's line, the signature block, the padding (Section 9) | the envelope's optional members; `v` changes only for a breaking change |
 | JSON as Section 3.3 reads it; a byte member's one encoding; a message's ciphertext as a send's body | nothing |
@@ -756,7 +756,7 @@ What version 1 fixes, and where each can grow inside it:
 
 ### 15.1. Threat model
 
-IronGall protects a message's content from everyone but its recipient, and its sender's identity from forgery by anyone, the server included. It does not hide from the server who writes to whom.
+Dromas protects a message's content from everyone but its recipient, and its sender's identity from forgery by anyone, the server included. It does not hide from the server who writes to whom.
 
 - **The adversaries:** the server's operator, and whoever terminates TLS for it, who see everything stored and in transit; a network attacker, who sees TLS; a registered sender; many cheap identities; and a compromised or prompt-injected box.
 - **The assets, in order:** a message's content; its sender's authenticity; the authenticity of a box's keys; availability; metadata.

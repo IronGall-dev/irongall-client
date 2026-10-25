@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/client"
-	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
-	"github.com/IronGall-dev/irongall-client/internal/forge"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/client"
+	"github.com/dromas-dev/dromas-client/internal/fakeserver"
+	"github.com/dromas-dev/dromas-client/internal/forge"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // A box asks what the server holds about an address before it posts to it,
@@ -465,7 +465,7 @@ func TestAMessageThatWaitedThroughTheRemedyIsSignedUnderTheNewCertificate(t *tes
 	}
 	e.srv.SetMiddle(nil)
 	e.clock.Add(2 * time.Second)
-	r, err := b.RenewAndRevoke(ctx, "") // irongall cert revoke-earlier
+	r, err := b.RenewAndRevoke(ctx, "") // dromas cert revoke-earlier
 	if err != nil || r.Revoked == nil || !r.Revoked.Revokes(first) || r.Revoked.Revokes(numberOf(t, b)) {
 		t.Fatalf("remedy: %+v, %v", r, err)
 	}

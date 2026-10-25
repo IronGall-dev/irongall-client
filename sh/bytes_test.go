@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/client"
-	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/client"
+	"github.com/dromas-dev/dromas-client/internal/fakeserver"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // The script runs in the C locale, so its patterns and tools read bytes, as
@@ -23,7 +23,7 @@ import (
 // vector tests and TestPatternsReadBytes run again under each, built with
 // localedef, after a control shows the locale bites a bare shell.
 func TestTheScriptReadsBytesInEveryLocale(t *testing.T) {
-	if os.Getenv("IG_TEST_LOCALE") != "" {
+	if os.Getenv("DR_TEST_LOCALE") != "" {
 		t.Skip("already inside a locale")
 	}
 	need(t, append(scriptTools, "localedef", "grep")...)
@@ -35,7 +35,7 @@ func TestTheScriptReadsBytesInEveryLocale(t *testing.T) {
 		if out, err := exec.Command("localedef", "-i", loc.source, "-f", "UTF-8", filepath.Join(dir, loc.name)).CombinedOutput(); err != nil {
 			t.Skipf("localedef cannot build %s here: %v %s", loc.name, err, out)
 		}
-		env := append(os.Environ(), "LOCPATH="+dir, "LC_ALL="+loc.name, "IG_TEST_LOCALE="+loc.name)
+		env := append(os.Environ(), "LOCPATH="+dir, "LC_ALL="+loc.name, "DR_TEST_LOCALE="+loc.name)
 		control := exec.Command("bash", "-c", loc.bites)
 		control.Env = env
 		if err := control.Run(); err != nil {
@@ -54,21 +54,21 @@ func TestTheScriptReadsBytesInEveryLocale(t *testing.T) {
 // refused, on stdout and stderr with JSON lines only.
 func TestPatternsReadBytes(t *testing.T) {
 	need(t, scriptTools...)
-	if _, err := bash(t, nil, "ig_hex "+strings.Repeat("a", 63)+"١"); err == nil {
-		t.Error("ig_hex takes a digit that is not ASCII")
+	if _, err := bash(t, nil, "dr_hex "+strings.Repeat("a", 63)+"١"); err == nil {
+		t.Error("dr_hex takes a digit that is not ASCII")
 	}
 	home := t.TempDir()
 	if err := os.WriteFile(filepath.Join(home, "seen-floor"), []byte("1١\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := bash(t, []string{"IG_HOME=" + home}, "ig_floor"); err == nil {
-		t.Errorf("ig_floor takes a floor of 1١: %q", out)
+	if out, err := bash(t, []string{"DR_HOME=" + home}, "dr_floor"); err == nil {
+		t.Errorf("dr_floor takes a floor of 1١: %q", out)
 	}
 	_, setNow := vectorNow(t)
 	a, aDoc := identity(t, "a")
 	st := filepath.Join(vectors, "prekey", "bad-serial-a-digit-not-ascii.txt")
-	cmd := exec.Command("bash", "-c", ". "+abs(t, "irongall.sh")+"\n"+setNow+"ig_prekeycheck "+abs(t, st)+" "+abs(t, st+".sig")+" "+a+" "+aDoc)
-	cmd.Env = append(os.Environ(), "IG_HOME="+t.TempDir())
+	cmd := exec.Command("bash", "-c", ". "+abs(t, "dromas.sh")+"\n"+setNow+"dr_prekeycheck "+abs(t, st)+" "+abs(t, st+".sig")+" "+a+" "+aDoc)
+	cmd.Env = append(os.Environ(), "DR_HOME="+t.TempDir())
 	var errs strings.Builder
 	cmd.Stderr = &errs
 	if out, err := cmd.Output(); err == nil || !strings.Contains(string(out), "prekey serial is malformed") || errs.Len() != 0 {
@@ -94,8 +94,8 @@ func TestAReceiptIsComparedAsBytes(t *testing.T) {
 	}
 	landAll(t, to)
 	dir := t.TempDir()
-	env := []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}
-	if _, err := bash(t, env, "ig_init"); err != nil {
+	env := []string{"DR_HOME=" + dir, "DR_BASE=" + srv.URL}
+	if _, err := bash(t, env, "dr_init"); err != nil {
 		t.Fatal(err)
 	}
 	for _, e := range []struct{ member, suffix string }{{"id", ""}, {"id", "\n"}, {"id", "\x00"}, {"received_at", "\n"}, {"expires_at", "\n"}} {
@@ -117,7 +117,7 @@ func TestAReceiptIsComparedAsBytes(t *testing.T) {
 		})
 		_ = os.RemoveAll(filepath.Join(dir, "sent"))
 		_, gerr := g.Send(ctx, to.Address(), "hi")
-		out, serr := bash(t, env, "printf hi | ig_send "+to.Address().String())
+		out, serr := bash(t, env, "printf hi | dr_send "+to.Address().String())
 		sent, _ := filepath.Glob(filepath.Join(dir, "sent", "*.json"))
 		honest, want := e.suffix == "", 0
 		if honest {

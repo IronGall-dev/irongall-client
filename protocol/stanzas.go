@@ -31,7 +31,7 @@ const maxGreaseArgs = 4
 
 // ReadStanzas reads the recipient stanzas of the age file ciphertext, and
 // sorts each once, before anything is decrypted: the one reading of them a
-// reader and a server make (irongall-client's oneNative, and a server's
+// reader and a server make (dromas-client's oneNative, and a server's
 // check of a send). The header is read by age itself, once (age.Decrypt,
 // given only an identity that keeps the stanzas it is given and matches
 // none, which ends at the header), so they are the stanzas age would try. A

@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/internal/forge"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/internal/forge"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // The script's box renewed, pruned, restored and drained against a server
@@ -81,11 +81,11 @@ func TestScriptRenews(t *testing.T) {
 	writeFile(t, stolen, []byte(b.read(fmt.Sprintf("work/%d", b1))))
 	writeFile(t, stolen+"-cert.pub", []byte(b.read(fmt.Sprintf("work/%d-cert.pub", b1))))
 	work1 := b.read(fmt.Sprintf("work/%d.pub", b1))
-	key1 := strings.TrimSpace(b.must(fmt.Sprintf(`age-keygen -y "$IG/prekeys/%d.agekey"`, b1)))
-	b.must("ig_rekey")
+	key1 := strings.TrimSpace(b.must(fmt.Sprintf(`age-keygen -y "$DR/prekeys/%d.agekey"`, b1)))
+	b.must("dr_rekey")
 	b2 := b.num()
 	if p, c := w.served(b); b2 <= b1 || p != b2 || c != b2 || b.read("pass") == pass {
-		t.Errorf("ig_rekey: number %d after %d, served %d under %d, a new pass %v", b2, b1, p, c, b.read("pass") != pass)
+		t.Errorf("dr_rekey: number %d after %d, served %d under %d, a new pass %v", b2, b1, p, c, b.read("pass") != pass)
 	}
 	st2, _ := w.srv.Prekey(b.addr)
 	if keyOf(string(st2)) == key1 {
@@ -114,7 +114,7 @@ func TestScriptRenews(t *testing.T) {
 	}
 	w.serving(b, first)
 	n := len(w.srv.Requests())
-	if r := b.sh("ig_rekey"); r.rc == 0 || !strings.Contains(r.err, "rollback") || slices.Contains(w.calls(n), "PUT /v1/"+b.addr.String()+"/prekey") {
+	if r := b.sh("dr_rekey"); r.rc == 0 || !strings.Contains(r.err, "rollback") || slices.Contains(w.calls(n), "PUT /v1/"+b.addr.String()+"/prekey") {
 		t.Errorf("a rollback of the box's own prekey: %v, %q", r, w.calls(n))
 	}
 	w.once(b, first)
@@ -140,38 +140,38 @@ func TestScriptDeletesARetiredPrekey(t *testing.T) {
 	key1 := filepath.Join(w.work, "key1.agekey")
 	writeFile(t, key1, []byte(b.read(fmt.Sprintf("prekeys/%d.agekey", b1))))
 	b.recv()
-	b.must("ig_rekey")
+	b.must("dr_rekey")
 	b2 := b.num()
 	decrypts := func(key string) bool { return b.sh(fmt.Sprintf("age -d -i %s < %s > /dev/null", key, ct)).rc == 0 }
 	if !decrypts(key1) || !decrypts(b.file(fmt.Sprintf("prekeys/%d.agekey", b1))) {
 		t.Fatal("control: mail to the retired key does not decrypt while it is kept")
 	}
 	b.dated(b1, time.Now().Add(-34*24*time.Hour))
-	b.must(fmt.Sprintf("ig_prune %d", time.Now().Add(-48*time.Hour).Unix()))
+	b.must(fmt.Sprintf("dr_prune %d", time.Now().Add(-48*time.Hour).Unix()))
 	if !b.has(fmt.Sprintf("prekeys/%d.agekey", b1)) {
-		t.Error("ig_prune by a reading of the clock before the key's deletion time deleted it")
+		t.Error("dr_prune by a reading of the clock before the key's deletion time deleted it")
 	}
-	b.must(fmt.Sprintf("ig_prune %d", time.Now().Unix()))
+	b.must(fmt.Sprintf("dr_prune %d", time.Now().Unix()))
 	if b.has(fmt.Sprintf("prekeys/%d.agekey", b1)) || !b.has(fmt.Sprintf("prekeys/%d.agekey", b2)) {
-		t.Errorf("ig_prune past not_after and 33 days: %q", b.files("prekeys"))
+		t.Errorf("dr_prune past not_after and 33 days: %q", b.files("prekeys"))
 	}
 	if decrypts(b.file(fmt.Sprintf("prekeys/%d.agekey", b2))) {
 		t.Error("mail to the deleted key still decrypts with the box's keys")
 	}
 	held := b.read(fmt.Sprintf("prekeys/%d.txt", b2))
 	b.dated(b2, time.Now().Add(-34*24*time.Hour))
-	b.must(fmt.Sprintf("ig_prune %d", time.Now().Unix()))
+	b.must(fmt.Sprintf("dr_prune %d", time.Now().Unix()))
 	if !b.has(fmt.Sprintf("prekeys/%d.agekey", b2)) {
-		t.Error("ig_prune deleted the newest key")
+		t.Error("dr_prune deleted the newest key")
 	}
 	writeFile(t, b.file(fmt.Sprintf("prekeys/%d.txt", b2)), []byte(held))
-	// ig_recv prunes, by the reading at which the server answered its list.
+	// dr_recv prunes, by the reading at which the server answered its list.
 	p := w.box()
 	p1 := p.newest()
-	p.must("ig_rekey")
+	p.must("dr_rekey")
 	p.dated(p1, time.Now().Add(-34*24*time.Hour))
 	if d := p.recv(); d.rc != 0 || p.has(fmt.Sprintf("prekeys/%d.agekey", p1)) || !p.has(fmt.Sprintf("prekeys/%d.agekey", p.newest())) {
-		t.Errorf("ig_recv did not delete a retired key past its deletion time: %v, %q", d, p.files("prekeys"))
+		t.Errorf("dr_recv did not delete a retired key past its deletion time: %v, %q", d, p.files("prekeys"))
 	}
 }
 
@@ -182,7 +182,7 @@ func TestScriptDrainsEveryPageAndHoldsTheLock(t *testing.T) {
 	w := newWorld(t)
 	a, b := w.box(), w.box()
 	old := b.read("pass")
-	b.must("ig_rekey") // the pass kept from before is under a certificate the server no longer takes
+	b.must("dr_rekey") // the pass kept from before is under a certificate the server no longer takes
 	for i := 1; i <= 3; i++ {
 		a.mustSend(b, fmt.Sprintf("page %d", i))
 	}
@@ -203,27 +203,27 @@ func TestScriptDrainsEveryPageAndHoldsTheLock(t *testing.T) {
 	if err := os.Mkdir(b.file("lock"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if r := b.sh("IG_LOCK_WAIT=1 ig_recv"); r.rc == 0 || !strings.Contains(r.err, "waiting for this box's lock") || !strings.Contains(r.err, "held its lock") {
+	if r := b.sh("DR_LOCK_WAIT=1 dr_recv"); r.rc == 0 || !strings.Contains(r.err, "waiting for this box's lock") || !strings.Contains(r.err, "held its lock") {
 		t.Errorf("a command while another holds the lock: %v", r)
 	}
 	before, _ := w.served(b)
-	if r := b.sh(`(sleep 2; rmdir "$IG/lock") & ig_rekey; rc=$?; wait; exit $rc`); r.rc != 0 {
-		t.Errorf("ig_rekey while a drain holds the lock: %v", r)
+	if r := b.sh(`(sleep 2; rmdir "$DR/lock") & dr_rekey; rc=$?; wait; exit $rc`); r.rc != 0 {
+		t.Errorf("dr_rekey while a drain holds the lock: %v", r)
 	}
 	if after, _ := w.served(b); after <= before {
-		t.Error("ig_rekey did not renew once the lock was free")
+		t.Error("dr_rekey did not renew once the lock was free")
 	}
-	if r := b.sh(`rc=0; IG_HOME=$IG bash -c '. "$1"; hold(){ [ -d "$IG/lock" ] || exit 9; kill -TERM $$; sleep 5; }; ig_lock hold' _ ` + abs(t, "irongall.sh") + ` 2> /dev/null || rc=$?; echo $rc`); r.out != "143\n" || exists(b.file("lock")) {
+	if r := b.sh(`rc=0; DR_HOME=$DR bash -c '. "$1"; hold(){ [ -d "$DR/lock" ] || exit 9; kill -TERM $$; sleep 5; }; dr_lock hold' _ ` + abs(t, "dromas.sh") + ` 2> /dev/null || rc=$?; echo $rc`); r.out != "143\n" || exists(b.file("lock")) {
 		t.Errorf("a command killed while it holds the lock: %v", r)
 	}
 	a.mustSend(b, "kept")
 	q := b.files("quarantine")
 	held := filepath.Join(w.work, "held")
-	b.must(`mkdir ` + held + `; mv "$IG"/prekeys/*.agekey ` + held)
+	b.must(`mkdir ` + held + `; mv "$DR"/prekeys/*.agekey ` + held)
 	if d := b.recv(); d.rc == 0 || w.srv.Count(b.addr) != 1 || !slices.Equal(b.files("quarantine"), q) || !strings.Contains(d.said, "no prekeys") {
 		t.Errorf("a drain with the box's prekeys gone: %v", d)
 	}
-	b.must(`mv ` + held + `/*.agekey "$IG/prekeys/"`)
+	b.must(`mv ` + held + `/*.agekey "$DR/prekeys/"`)
 	if d := b.recv(); !slices.Equal(d.bodies(), []string{"kept"}) || w.srv.Count(b.addr) != 0 {
 		t.Errorf("the drain once the box is fixed: %v", d)
 	}
@@ -279,10 +279,10 @@ func TestScriptKeepsWhatWasSent(t *testing.T) {
 			t.Errorf("%s: %q", name, a.read(name))
 		}
 		id, _ := s.Receipt["id"].(string)
-		if got := strings.TrimSpace(a.must(`jq -c .receipt "$IG/` + name + `"`)); got != receipts[id] {
+		if got := strings.TrimSpace(a.must(`jq -c .receipt "$DR/` + name + `"`)); got != receipts[id] {
 			t.Errorf("%s's receipt %s is not the server's, %s", name, got, receipts[id])
 		}
-		if got, want := a.must(`jq -c .envelope "$IG/`+name+`"`), b.must(`jq -c . "$IG/inbox/`+id+`.json"`); got != want {
+		if got, want := a.must(`jq -c .envelope "$DR/`+name+`"`), b.must(`jq -c . "$DR/inbox/`+id+`.json"`); got != want {
 			t.Errorf("%s is not the line its reader delivered, and the receipt: %q, %q", name, got, want)
 		}
 	}
@@ -304,14 +304,14 @@ func TestScriptRenewsAgainAsSigned(t *testing.T) {
 		}
 		next.ServeHTTP(rw, r)
 	})
-	if r := b.sh("ig_rekey"); r.rc == 0 {
+	if r := b.sh("dr_rekey"); r.rc == 0 {
 		t.Fatal("a renewal the server refused succeeded")
 	}
 	first, n := b.read("rekey.json"), b.newest()
 	if n <= s0 {
 		t.Fatalf("the refused renewal took no new number: %d after %d", n, s0)
 	}
-	if r := b.sh("ig_rekey"); r.rc == 0 || !b.has(fmt.Sprintf("prekeys/%d.txt.sig", n)) || b.read("rekey.json") != first {
+	if r := b.sh("dr_rekey"); r.rc == 0 || !b.has(fmt.Sprintf("prekeys/%d.txt.sig", n)) || b.read("rekey.json") != first {
 		t.Errorf("the renewal sent again is not the one signed: %v", r)
 	}
 	if !b.has(fmt.Sprintf("work/%d", s0)) || !b.has(fmt.Sprintf("work/%d", n)) || b.num() != s0 {
@@ -323,18 +323,18 @@ func TestScriptRenewsAgainAsSigned(t *testing.T) {
 	}
 	held := b.read(fmt.Sprintf("prekeys/%d.txt", n))
 	b.dated(n, time.Now().Add(-time.Minute))
-	if r := b.sh("ig_rekey"); r.rc == 0 {
+	if r := b.sh("dr_rekey"); r.rc == 0 {
 		t.Fatal("a renewal the server refused succeeded")
 	}
 	m := b.newest()
-	key := func(n uint64) string { return b.must(fmt.Sprintf(`age-keygen -y "$IG/prekeys/%d.agekey"`, n)) }
+	key := func(n uint64) string { return b.must(fmt.Sprintf(`age-keygen -y "$DR/prekeys/%d.agekey"`, n)) }
 	if m <= n || !b.has(fmt.Sprintf("prekeys/%d.txt.sig", m)) || !b.has(fmt.Sprintf("prekeys/%d.agekey", n)) || key(n) == key(m) {
 		t.Errorf("once that statement expired: %q", b.files("prekeys"))
 	}
 	writeFile(t, b.file(fmt.Sprintf("prekeys/%d.txt", n)), []byte(held))
 	signed := b.read(fmt.Sprintf("prekeys/%d.txt", m))
 	w.honest()
-	b.must("ig_rekey")
+	b.must("dr_rekey")
 	if st, _ := w.srv.Prekey(b.addr); !bytes.Equal(st, []byte(signed)) || b.num() != m {
 		t.Errorf("the renewal taken is not the one signed first after the passed-over one: serial %d, %d", b.num(), m)
 	}
@@ -350,14 +350,14 @@ func TestScriptRenewsAgainAsSigned(t *testing.T) {
 }
 
 // A box the server forgot, past its record's expiry (PROTOCOL.md §13), with
-// its own files kept: no box is served to number above, so ig_rekey numbers
+// its own files kept: no box is served to number above, so dr_rekey numbers
 // above what it published, registers anew, and prints no error; mail flows.
 func TestScriptRegistersAForgottenBoxAnew(t *testing.T) {
 	w := newWorld(t)
 	a, b := w.box(), w.box()
 	w.srv.Forget(b.addr)
 	n0, calls := b.num(), len(w.srv.Requests())
-	if r := b.sh("ig_rekey"); r.rc != 0 || r.err != "" || b.num() <= n0 || !slices.Contains(w.calls(calls), "PUT /v1/"+b.addr.String()) {
+	if r := b.sh("dr_rekey"); r.rc != 0 || r.err != "" || b.num() <= n0 || !slices.Contains(w.calls(calls), "PUT /v1/"+b.addr.String()) {
 		t.Fatalf("a box the server forgot: %v, number %d after %d", r, b.num(), n0)
 	}
 	if p, _ := w.served(b); p != b.num() {

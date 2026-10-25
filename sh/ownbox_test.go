@@ -15,21 +15,21 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/IronGall-dev/irongall-client/client"
-	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/client"
+	"github.com/dromas-dev/dromas-client/internal/fakeserver"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // The script's box is a directory of its own, by its own variables: its
 // default is not the Go client's, nor is a directory the Go client's
-// IRONGALL_HOME names, and it refuses a directory holding the Go client's
+// DROMAS_HOME names, and it refuses a directory holding the Go client's
 // state file, at init and at every command that writes the box, writing
 // nothing there (#331).
 func TestTheScriptRunsABoxOfItsOwnOnly(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	home := t.TempDir()
-	out, err := bash(t, []string{"HOME=" + home, "IG_HOME=", "IG_BOX=", "XDG_CONFIG_HOME=", "IRONGALL_HOME=" + filepath.Join(home, "go-box")}, `printf '%s' "$IG"`)
-	if err != nil || out != filepath.Join(home, ".config", "irongall-sh", "default") {
+	out, err := bash(t, []string{"HOME=" + home, "DR_HOME=", "DR_BOX=", "XDG_CONFIG_HOME=", "DROMAS_HOME=" + filepath.Join(home, "go-box")}, `printf '%s' "$DR"`)
+	if err != nil || out != filepath.Join(home, ".config", "dromas-sh", "default") {
 		t.Fatalf("the script's default box: %q, %v", out, err)
 	}
 
@@ -44,8 +44,8 @@ func TestTheScriptRunsABoxOfItsOwnOnly(t *testing.T) {
 		return names
 	}
 	before, calls := files(), len(srv.Requests())
-	for _, cmd := range []string{"ig_init --no-pq", "ig_rekey", "ig_recv"} {
-		if out, err := bash(t, []string{"IG_HOME=" + g.Dir(), "IG_BASE=" + srv.URL}, cmd); err == nil || !strings.Contains(err.Error(), "state file") {
+	for _, cmd := range []string{"dr_init --no-pq", "dr_rekey", "dr_recv"} {
+		if out, err := bash(t, []string{"DR_HOME=" + g.Dir(), "DR_BASE=" + srv.URL}, cmd); err == nil || !strings.Contains(err.Error(), "state file") {
 			t.Errorf("%s in a Go box: %q, %v", cmd, out, err)
 		}
 	}
@@ -118,8 +118,8 @@ func TestTheScriptKeepsItsOwnRevocationFromA410(t *testing.T) {
 		t.Run(at, func(t *testing.T) {
 			srv := fakeserver.New(t, time.Now)
 			dir := t.TempDir()
-			env := []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}
-			if out, err := bash(t, env, "ig_init --no-pq"); err != nil {
+			env := []string{"DR_HOME=" + dir, "DR_BASE=" + srv.URL}
+			if out, err := bash(t, env, "dr_init --no-pq"); err != nil {
 				t.Fatalf("init: %q, %v", out, err)
 			}
 			rec := scriptRevocation(t, dir)
@@ -134,7 +134,7 @@ func TestTheScriptKeepsItsOwnRevocationFromA410(t *testing.T) {
 					putRevocation(t, next, rec)
 				}
 			})
-			cmd := "ig_rekey"
+			cmd := "dr_rekey"
 			switch at {
 			case "its renewal's read":
 				if _, err := client.Publish(context.Background(), client.Options{Base: srv.URL}, rec); err != nil {
@@ -148,7 +148,7 @@ func TestTheScriptKeepsItsOwnRevocationFromA410(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(restored, "identity"), mustRead(t, filepath.Join(dir, "identity")), 0o600); err != nil {
 					t.Fatal(err)
 				}
-				dir, env, cmd = restored, []string{"IG_HOME=" + restored, "IG_BASE=" + srv.URL}, "ig_init --no-pq"
+				dir, env, cmd = restored, []string{"DR_HOME=" + restored, "DR_BASE=" + srv.URL}, "dr_init --no-pq"
 			}
 			passes.Store(0)
 			out, err := bash(t, env, cmd)
@@ -164,7 +164,7 @@ func TestTheScriptKeepsItsOwnRevocationFromA410(t *testing.T) {
 			// Pointed at a server that never saw the revocation: nothing is
 			// asked there and nothing signed.
 			other := fakeserver.New(t, time.Now)
-			if _, err := bash(t, []string{"IG_HOME=" + dir, "IG_BASE=" + other.URL}, "ig_rekey"); err == nil || len(other.Requests()) != 0 {
+			if _, err := bash(t, []string{"DR_HOME=" + dir, "DR_BASE=" + other.URL}, "dr_rekey"); err == nil || len(other.Requests()) != 0 {
 				t.Errorf("at another server: %v, %d calls", err, len(other.Requests()))
 			}
 		})

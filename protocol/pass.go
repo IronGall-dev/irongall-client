@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/sshsig"
+	"github.com/dromas-dev/dromas-client/sshsig"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -20,9 +20,9 @@ import (
 
 const (
 	// PassTag is line 1 of every pass statement.
-	PassTag = "irongall-pass-v1"
+	PassTag = "dromas-pass-v1" //nolint:gosec // G101: a protocol tag, public, no credential
 	// PassScheme is the Authorization scheme a pass travels under.
-	PassScheme = "irongall-pass"
+	PassScheme = "dromas-pass"
 	// PassLifetime is how long a client makes a pass good for.
 	PassLifetime = 10 * time.Minute
 	// MaxPassLifetime is the longest a pass may still have to run when a
@@ -114,7 +114,7 @@ func NewPass(signer ssh.Signer, a Address, server string, now time.Time) (author
 // Authorization is the pass in the one form a client writes it (PROTOCOL.md
 // §8), whatever form it was read from, its signature too (armored): a
 // server that remembers passes remembers each by this, so one pass written
-// two ways is one pass (IronGall-dev/irongall-server#69).
+// two ways is one pass (dromas-dev/dromas-server#69).
 func (p *Pass) Authorization() string {
 	return PassScheme + ` address="` + p.Address.String() + `", not_after="` + p.NotAfter.UTC().Format(TimeLayout) +
 		`", signature="` + base64.StdEncoding.EncodeToString(p.armored()) + `"`

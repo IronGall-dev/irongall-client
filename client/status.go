@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // Status is what a box can say of itself from its own files, with no call to
@@ -93,7 +93,7 @@ func (b *Box) status() (*Status, error) {
 		*n = len(names)
 	}
 	if d, err := b.PrekeyLifetime(); err != nil {
-		s.Attention = append(s.Attention, fmt.Sprintf("the box's prekey lifetime cannot be read, so it renews no prekey until that is put right (irongall prekey lifetime sets it): %v", err))
+		s.Attention = append(s.Attention, fmt.Sprintf("the box's prekey lifetime cannot be read, so it renews no prekey until that is put right (dromas prekey lifetime sets it): %v", err))
 	} else {
 		s.PrekeyLifetime = int64(d / time.Second)
 	}
@@ -101,24 +101,24 @@ func (b *Box) status() (*Status, error) {
 	cur, perr := b.prekeyStatement(serial)
 	switch {
 	case err != nil || perr != nil:
-		s.Attention = append(s.Attention, "this box holds no prekey it published: irongall prekey renew publishes one, and senders are refused until then")
+		s.Attention = append(s.Attention, "this box holds no prekey it published: dromas prekey renew publishes one, and senders are refused until then")
 	default:
 		s.PrekeySerial, s.PrekeyNotAfter = serial, cur.NotAfter.UTC().Format(protocol.TimeLayout)
 		if made, err := b.made(serial); err == nil {
 			s.PrekeyMade = made.Format(protocol.TimeLayout)
 		}
 		if cur.Expired(b.now()) {
-			s.Attention = append(s.Attention, fmt.Sprintf("the prekey expired at %s: senders are refused until irongall recv or irongall prekey renew renews it", s.PrekeyNotAfter))
+			s.Attention = append(s.Attention, fmt.Sprintf("the prekey expired at %s: senders are refused until dromas recv or dromas prekey renew renews it", s.PrekeyNotAfter))
 		}
 	}
 	if _, cert, werr := b.currentWorker(); werr != nil {
 		if err == nil && perr == nil {
-			s.Attention = append(s.Attention, "this box holds no working key it can sign with, or its certificate has ended: it cannot poll or send until irongall prekey renew makes new ones")
+			s.Attention = append(s.Attention, "this box holds no working key it can sign with, or its certificate has ended: it cannot poll or send until dromas prekey renew makes new ones")
 		}
 	} else {
 		s.CertificateSerial, s.CertificateNotAfter = cert.Serial(), cert.NotAfter().Format(protocol.TimeLayout)
 		if !cert.SignsMail(b.now()) {
-			s.Attention = append(s.Attention, fmt.Sprintf("the certificate ends at %s, too soon to sign mail: sends are refused until irongall recv or irongall prekey renew renews it", s.CertificateNotAfter))
+			s.Attention = append(s.Attention, fmt.Sprintf("the certificate ends at %s, too soon to sign mail: sends are refused until dromas recv or dromas prekey renew renews it", s.CertificateNotAfter))
 		}
 	}
 	// A statement signed for a serial above the published one is a renewal
@@ -140,7 +140,7 @@ func (b *Box) status() (*Status, error) {
 			since = made.Format(protocol.TimeLayout)
 			s.RenewalPendingSince = since
 		}
-		s.Attention = append(s.Attention, fmt.Sprintf("a new prekey signed at %s was never seen published: the server refused it or did not answer; irongall recv sends it again", since))
+		s.Attention = append(s.Attention, fmt.Sprintf("a new prekey signed at %s was never seen published: the server refused it or did not answer; dromas recv sends it again", since))
 	}
 	if s.PrekeyNotMade, err = b.notMade(); err != nil {
 		return nil, err
@@ -149,13 +149,13 @@ func (b *Box) status() (*Status, error) {
 		s.Attention = append(s.Attention, s.PrekeyNotMade.Words())
 	}
 	if s.Quarantine > 0 {
-		s.Attention = append(s.Attention, fmt.Sprintf("%d refused in quarantine/ (%s): each failed a check and was never delivered; irongall quarantine list says which, and irongall quarantine rm deletes them", s.Quarantine, b.quarantineCodes()))
+		s.Attention = append(s.Attention, fmt.Sprintf("%d refused in quarantine/ (%s): each failed a check and was never delivered; dromas quarantine list says which, and dromas quarantine rm deletes them", s.Quarantine, b.quarantineCodes()))
 	}
 	if s.Held > 0 {
-		s.Attention = append(s.Attention, fmt.Sprintf("%d held in held/ from senders this box has not allowed: irongall held lists them by sender; irongall peer allow <address> delivers a sender's to inbox/, and irongall peer block <address> deletes them", s.Held))
+		s.Attention = append(s.Attention, fmt.Sprintf("%d held in held/ from senders this box has not allowed: dromas held lists them by sender; dromas peer allow <address> delivers a sender's to inbox/, and dromas peer block <address> deletes them", s.Held))
 	}
 	if s.Outbox > 0 {
-		s.Attention = append(s.Attention, fmt.Sprintf("%d in outbox/ not delivered yet: irongall outbox flush sends them again", s.Outbox))
+		s.Attention = append(s.Attention, fmt.Sprintf("%d in outbox/ not delivered yet: dromas outbox flush sends them again", s.Outbox))
 	}
 	if s.OutboxFailed > 0 {
 		s.Attention = append(s.Attention, fmt.Sprintf("%d in outbox/failed/ can never be delivered: delete a file to drop it", s.OutboxFailed))

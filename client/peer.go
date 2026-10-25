@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // Resolve fetches a peer's identity and current prekey and verifies them. It

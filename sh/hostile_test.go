@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/internal/fakeserver"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // What a refusal says, what a hostile server costs a drain, and padding
@@ -70,7 +70,7 @@ func TestScriptRefusesInItsOwnWords(t *testing.T) {
 	n := len(w.srv.Requests())
 	for range 3 {
 		m := &sbox{w: w, dir: filepath.Join(t.TempDir(), "made")}
-		m.must(`mkdir -p "$IG"; ssh-keygen -q -t ed25519 -N '' -C '' -f "$IG/identity"; printf 'irongall-v1\n%s\n' "$(cut -d' ' -f1,2 "$IG/identity.pub")" > "$IG/identity.doc"; sha256sum < "$IG/identity.doc" | cut -c1-64 > "$IG/address"`)
+		m.must(`mkdir -p "$DR"; ssh-keygen -q -t ed25519 -N '' -C '' -f "$DR/identity"; printf 'dromas-v1\n%s\n' "$(cut -d' ' -f1,2 "$DR/identity.pub")" > "$DR/identity.doc"; sha256sum < "$DR/identity.doc" | cut -c1-64 > "$DR/address"`)
 		m.addr = mustAddress(t, m.dir)
 		l := m.line(b.addr, "00000000-0000-4000-8000-000000000000", "from a sender the server made up", 0)
 		w.inject(b, m.addr, "", l, w.signWith(filepath.Join(op.dir, "work-cert.pub"), b.addr, l))
@@ -166,13 +166,13 @@ func matches(pattern, s string) bool {
 // digits alone, of at most a day.
 func TestScriptReadsAProblemsCodeAndWait(t *testing.T) {
 	b := &sbox{w: newWorld(t), dir: t.TempDir()}
-	out := b.must(`p(){ printf '%s\n%s\n\n' "$1" "$2" > "$IG/error.meta"; printf %s "$3" > "$IG/error.json"; }
-p 429 0017 '{"type":"tag:irongall.dev,2026-10-17:errors/rate_limited","status":429,"code":"rate_limited"}'; echo "1 $(ig_code) $(ig_wait)"
-p 429 0017 '{"type":"https://irongall.dev/errors/rate_limited","status":429,"code":"rate_limited"}'; echo "2 $(ig_code)"
-p 429 0017 '{"type":"tag:irongall.dev,2026-10-17:errors/fetch_paced","status":429,"code":"rate_limited"}'; echo "3 $(ig_code)"
-p 429 'Fri, 31 Dec 2027 23:59:59 GMT' '{}'; echo "4 $(ig_wait)"
-p 429 +17 '{}'; echo "5 $(ig_wait)"
-p 429 123456789012345678901234567890 '{}'; echo "6 $(ig_wait)"`)
+	out := b.must(`p(){ printf '%s\n%s\n\n' "$1" "$2" > "$DR/error.meta"; printf %s "$3" > "$DR/error.json"; }
+p 429 0017 '{"type":"tag:irongall.dev,2026-10-17:errors/rate_limited","status":429,"code":"rate_limited"}'; echo "1 $(dr_code) $(dr_wait)"
+p 429 0017 '{"type":"https://dromas.dev/errors/rate_limited","status":429,"code":"rate_limited"}'; echo "2 $(dr_code)"
+p 429 0017 '{"type":"tag:irongall.dev,2026-10-17:errors/fetch_paced","status":429,"code":"rate_limited"}'; echo "3 $(dr_code)"
+p 429 'Fri, 31 Dec 2027 23:59:59 GMT' '{}'; echo "4 $(dr_wait)"
+p 429 +17 '{}'; echo "5 $(dr_wait)"
+p 429 123456789012345678901234567890 '{}'; echo "6 $(dr_wait)"`)
 	if out != "1 rate_limited 17\n2 \n3 \n4 \n5 \n6 86400\n" {
 		t.Errorf("a problem's code and Retry-After, as the script reads them: %q", out)
 	}
@@ -207,7 +207,7 @@ func TestScriptPads(t *testing.T) {
 			next.ServeHTTP(rw, r)
 		})
 	}
-	first := 3072 // the envelope with its identity document, and the 846-byte signature, to a post-quantum prekey
+	first := 3072 // the envelope with its identity document, and the 842-byte signature, to a post-quantum prekey
 	if !strings.HasPrefix(keyOf(string(prekeyOf(w, q))), "age1pq1") {
 		first = 2048
 	}
@@ -245,19 +245,19 @@ func TestScriptPads(t *testing.T) {
 		t.Errorf("not each large body arrived whole: %v", got)
 	}
 	// The arithmetic at a boundary, and past 16 KiB.
-	if out := p.must(`for c in "824 age1x" "825 age1x" "823 age1x" "389 age1pq1x" "390 age1pq1x" "16000 age1x" "16200 age1x" "65530 age1x" "70000 age1x"; do ig_padding $c; done`); out !=
+	if out := p.must(`for c in "824 age1x" "825 age1x" "823 age1x" "389 age1pq1x" "390 age1pq1x" "16000 age1x" "16200 age1x" "65530 age1x" "70000 age1x"; do dr_padding $c; done`); out !=
 		"0 1024\n1023 2048\n1 1024\n0 2048\n1023 3072\n184 16384\n2032 18432\n7982 73728\n3512 73728\n" {
-		t.Errorf("ig_padding: %q", out)
+		t.Errorf("dr_padding: %q", out)
 	}
 	// After 409 stale_prekey the same envelope is padded again, for the newer prekey.
 	earlier := w.prekey(q)
-	q.must("ig_rekey --no-pq")
+	q.must("dr_rekey --no-pq")
 	w.once(q, earlier)
 	if r := p.send(q.addr.String(), "sealed twice"); r.rc != 0 || !strings.Contains(r.err, "stale_prekey") || w.srv.Count(q.addr) != 1 {
 		t.Fatalf("the send handed Q's earlier prekey: %v", r)
 	}
 	w.honest()
-	if size := q.must(`ig_owner GET "/v1/$(cat "$IG/address")/messages" | jq .messages[0].size`); size != "2048\n" {
+	if size := q.must(`dr_owner GET "/v1/$(cat "$DR/address")/messages" | jq .messages[0].size`); size != "2048\n" {
 		t.Errorf("a re-encryption after stale_prekey, to an X25519 prekey, is %q bytes", size)
 	}
 	if d := q.recv(); !slices.Equal(d.bodies(), []string{"sealed twice"}) {
@@ -266,13 +266,13 @@ func TestScriptPads(t *testing.T) {
 	// The sender reads its envelope as the recipient will, and checks the size of what age wrote.
 	n := w.posts(q.addr)
 	writeFile(t, p.file("other.P"), envelope(t, p.addr, w.operator().addr, []byte(p.read("identity.doc")), "33333333-2222-4333-8444-555555555555", "for another box", 0))
-	if r := p.sh("ig_seal " + q.addr.String() + ` "$IG/other"`); r.rc == 0 || !strings.Contains(r.err, "is not one this box made for that address: reattributed") {
+	if r := p.sh("dr_seal " + q.addr.String() + ` "$DR/other"`); r.rc == 0 || !strings.Contains(r.err, "is not one this box made for that address: reattributed") {
 		t.Errorf("an envelope that names another recipient: %v", r)
 	}
-	if r := p.sh(`age(){ command age "$@" && printf x; }; printf 'a size that tells' | ig_send ` + q.addr.String()); r.rc == 0 || !strings.Contains(r.err, "is not the 2048 bytes its padding was made for") || w.posts(q.addr) != n {
+	if r := p.sh(`age(){ command age "$@" && printf x; }; printf 'a size that tells' | dr_send ` + q.addr.String()); r.rc == 0 || !strings.Contains(r.err, "is not the 2048 bytes its padding was made for") || w.posts(q.addr) != n {
 		t.Errorf("an age file that is not the size the padding was made for: %v", r)
 	}
-	if r := p.sh(igNow(33*24*time.Hour) + "printf 'too late to sign' | ig_send " + q.addr.String()); r.rc == 0 || !strings.Contains(r.err, "ends within 33 days") || w.posts(q.addr) != n {
+	if r := p.sh(igNow(33*24*time.Hour) + "printf 'too late to sign' | dr_send " + q.addr.String()); r.rc == 0 || !strings.Contains(r.err, "ends within 33 days") || w.posts(q.addr) != n {
 		t.Errorf("mail signed under a certificate with 33 days or less left: %v", r)
 	}
 }

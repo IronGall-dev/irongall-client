@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/client"
-	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
-	"github.com/IronGall-dev/irongall-client/internal/forge"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/client"
+	"github.com/dromas-dev/dromas-client/internal/fakeserver"
+	"github.com/dromas-dev/dromas-client/internal/forge"
+	"github.com/dromas-dev/dromas-client/protocol"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -69,7 +69,7 @@ func servedCertificate(t *testing.T, e *env, b *client.Box) uint64 {
 // A box whose identity renewed on another machine: its pass is under another
 // certificate than the one its server takes, which the refusal names, and
 // the box says it with that serial, a certificate it does not hold (#263,
-// IronGall-dev/irongall-server#66).
+// dromas-dev/dromas-server#66).
 func TestAPassUnderAnotherCertificateIsToldTheOneTheServerTakes(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)

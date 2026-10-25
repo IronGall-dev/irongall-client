@@ -39,21 +39,21 @@ func TestPassRoundTrip(t *testing.T) {
 	now := time.Date(2026, 10, 12, 21, 30, 15, 500, time.UTC)
 	b, cert, signer := passBox(t, now)
 	a := b.id.Address()
-	header, notAfter, err := NewPass(signer, a, "irongall.dev", now)
+	header, notAfter, err := NewPass(signer, a, "dromas.dev", now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := time.Date(2026, 10, 12, 21, 40, 15, 0, time.UTC); !notAfter.Equal(want) {
 		t.Errorf("runs out at %v, want %v", notAfter, want)
 	}
-	if !strings.HasPrefix(header, `irongall-pass address="`+a.String()+`", not_after="2026-10-12T21:40:15Z", signature="`) {
+	if !strings.HasPrefix(header, `dromas-pass address="`+a.String()+`", not_after="2026-10-12T21:40:15Z", signature="`) {
 		t.Errorf("header %q", header)
 	}
 	pass, err := ParsePass(header)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := pass.Verify(b.id, "irongall.dev", now)
+	got, err := pass.Verify(b.id, "dromas.dev", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,10 +62,10 @@ func TestPassRoundTrip(t *testing.T) {
 	}
 	// Good to the last second, for a server whose clock is up to
 	// MaxPassLifetime less PassLifetime behind the box's.
-	if _, err := pass.Verify(b.id, "irongall.dev", notAfter.Add(-time.Second)); err != nil {
+	if _, err := pass.Verify(b.id, "dromas.dev", notAfter.Add(-time.Second)); err != nil {
 		t.Errorf("a second before it runs out: %v", err)
 	}
-	if _, err := pass.Verify(b.id, "irongall.dev", notAfter.Add(-MaxPassLifetime)); err != nil {
+	if _, err := pass.Verify(b.id, "dromas.dev", notAfter.Add(-MaxPassLifetime)); err != nil {
 		t.Errorf("exactly %v before it runs out: %v", MaxPassLifetime, err)
 	}
 
@@ -76,15 +76,15 @@ func TestPassRoundTrip(t *testing.T) {
 		at     time.Time
 		want   error
 	}{
-		"run out":                {b.id, "irongall.dev", notAfter, ErrPassExpired},
-		"long after":             {b.id, "irongall.dev", notAfter.Add(24 * time.Hour), ErrPassExpired},
-		"too far ahead":          {b.id, "irongall.dev", notAfter.Add(-MaxPassLifetime - time.Second), ErrPass},
+		"run out":                {b.id, "dromas.dev", notAfter, ErrPassExpired},
+		"long after":             {b.id, "dromas.dev", notAfter.Add(24 * time.Hour), ErrPassExpired},
+		"too far ahead":          {b.id, "dromas.dev", notAfter.Add(-MaxPassLifetime - time.Second), ErrPass},
 		"another server":         {b.id, "example.org", now, ErrPass},
-		"the same host, a port":  {b.id, "irongall.dev:8443", now, ErrPass},
-		"another box's identity": {other.id, "irongall.dev", now, ErrPass},
+		"the same host, a port":  {b.id, "dromas.dev:8443", now, ErrPass},
+		"another box's identity": {other.id, "dromas.dev", now, ErrPass},
 		"no server name":         {b.id, "", now, ErrPass},
-		"a name in capitals":     {b.id, "IronGall.dev", now, ErrPass},
-		"a name with a path":     {b.id, "irongall.dev/v1", now, ErrPass},
+		"a name in capitals":     {b.id, "Dromas.dev", now, ErrPass},
+		"a name with a path":     {b.id, "dromas.dev/v1", now, ErrPass},
 	} {
 		if _, err := pass.Verify(tc.id, tc.server, tc.at); !errors.Is(err, tc.want) {
 			t.Errorf("%s: got %v, want %v", name, err, tc.want)
@@ -92,20 +92,20 @@ func TestPassRoundTrip(t *testing.T) {
 	}
 
 	// A signature made for something else is no pass: the namespace differs.
-	stmt := PassStatement(a, "irongall.dev", notAfter)
+	stmt := PassStatement(a, "dromas.dev", notAfter)
 	for name, ns := range map[string]string{"a message": MessageNamespace(a), "a prekey": PrekeyNamespace(a)} {
 		sig, err := Sign(signer, stmt, ns)
 		if err != nil {
 			t.Fatal(err)
 		}
 		forged := &Pass{Address: a, NotAfter: notAfter, signature: sig}
-		if _, err := forged.Verify(b.id, "irongall.dev", now); !errors.Is(err, ErrPass) {
+		if _, err := forged.Verify(b.id, "dromas.dev", now); !errors.Is(err, ErrPass) {
 			t.Errorf("a signature in the namespace of %s: %v", name, err)
 		}
 	}
 	// Nor is one by the working key without its certificate, or by the identity.
 	for name, s := range map[string]ssh.Signer{"the bare working key": b.work, "the identity": b.identity} {
-		h, _, err := NewPass(s, a, "irongall.dev", now)
+		h, _, err := NewPass(s, a, "dromas.dev", now)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -113,19 +113,19 @@ func TestPassRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := p.Verify(b.id, "irongall.dev", now); !errors.Is(err, ErrCertificate) {
+		if _, err := p.Verify(b.id, "dromas.dev", now); !errors.Is(err, ErrCertificate) {
 			t.Errorf("a pass signed by %s: %v", name, err)
 		}
 	}
 	// A later not_after than the one signed.
 	later := *pass
 	later.NotAfter = notAfter.Add(time.Minute)
-	if _, err := later.Verify(b.id, "irongall.dev", now); !errors.Is(err, ErrPass) {
+	if _, err := later.Verify(b.id, "dromas.dev", now); !errors.Is(err, ErrPass) {
 		t.Errorf("a not_after that was not signed: %v", err)
 	}
 	// A pass that is good, under a certificate that has ended, is refused for the certificate.
 	b2, _, signer2 := passBox(t, now.Add(-CertificateLifetime+2*time.Hour+5*time.Minute))
-	h2, _, err := NewPass(signer2, b2.id.Address(), "irongall.dev", now)
+	h2, _, err := NewPass(signer2, b2.id.Address(), "dromas.dev", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,10 +133,10 @@ func TestPassRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p2.Verify(b2.id, "irongall.dev", now); err != nil {
+	if _, err := p2.Verify(b2.id, "dromas.dev", now); err != nil {
 		t.Errorf("five minutes before its certificate ends: %v", err)
 	}
-	if _, err := p2.Verify(b2.id, "irongall.dev", now.Add(5*time.Minute)); !errors.Is(err, ErrCertificateTime) {
+	if _, err := p2.Verify(b2.id, "dromas.dev", now.Add(5*time.Minute)); !errors.Is(err, ErrCertificateTime) {
 		t.Errorf("at the moment its certificate ends: %v", err)
 	}
 }
@@ -164,7 +164,7 @@ func TestPassVerifyUnder(t *testing.T) {
 		signer ssh.Signer
 	}{"ssh-ed25519": {ed, edCert, edSigner}, "ecdsa-sha2-nistp256": {p256, pCert, pSigner}} {
 		a := b.box.id.Address()
-		header, notAfter, err := NewPass(b.signer, a, "irongall.dev", now)
+		header, notAfter, err := NewPass(b.signer, a, "dromas.dev", now)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -173,7 +173,7 @@ func TestPassVerifyUnder(t *testing.T) {
 			t.Fatal(err)
 		}
 		sum := sha256.Sum256(b.cert.Marshal())
-		under, err := pass.VerifyUnder(sum, "irongall.dev", now)
+		under, err := pass.VerifyUnder(sum, "dromas.dev", now)
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
 		}
@@ -183,7 +183,7 @@ func TestPassVerifyUnder(t *testing.T) {
 			t.Fatalf("%s: the certificate VerifyUnder returned: %v", name, err)
 		}
 		// What Verify takes, VerifyUnder takes, and the certificate is the same one.
-		if got, err := pass.Verify(b.box.id, "irongall.dev", now); err != nil || sha256.Sum256(got.Marshal()) != sum {
+		if got, err := pass.Verify(b.box.id, "dromas.dev", now); err != nil || sha256.Sum256(got.Marshal()) != sum {
 			t.Fatalf("%s: Verify: %v", name, err)
 		}
 		// A later certificate of the same identity for the same key: the pass is not under it.
@@ -191,12 +191,12 @@ func TestPassVerifyUnder(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := pass.VerifyUnder(sha256.Sum256(later.Marshal()), "irongall.dev", now); !errors.Is(err, ErrCertificate) {
+		if _, err := pass.VerifyUnder(sha256.Sum256(later.Marshal()), "dromas.dev", now); !errors.Is(err, ErrCertificate) {
 			t.Errorf("%s: under another certificate: %v", name, err)
 		}
 		// A pass that names another box, signed by this box's working key
 		// under this box's certificate: the certificate is for this box.
-		elsewhere, _, err := NewPass(b.signer, newCertBox(t).id.Address(), "irongall.dev", now)
+		elsewhere, _, err := NewPass(b.signer, newCertBox(t).id.Address(), "dromas.dev", now)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -204,16 +204,16 @@ func TestPassVerifyUnder(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := ep.VerifyUnder(sum, "irongall.dev", now); !errors.Is(err, ErrPass) {
+		if _, err := ep.VerifyUnder(sum, "dromas.dev", now); !errors.Is(err, ErrPass) {
 			t.Errorf("%s: a pass naming another box, under this box's certificate: %v", name, err)
 		}
 		if _, err := pass.VerifyUnder(sum, "example.org", now); !errors.Is(err, ErrPass) {
 			t.Errorf("%s: for another server: %v", name, err)
 		}
-		if _, err := pass.VerifyUnder(sum, "irongall.dev", notAfter); !errors.Is(err, ErrPassExpired) {
+		if _, err := pass.VerifyUnder(sum, "dromas.dev", notAfter); !errors.Is(err, ErrPassExpired) {
 			t.Errorf("%s: at the moment it runs out: %v", name, err)
 		}
-		if _, err := pass.VerifyUnder(sum, "irongall.dev", notAfter.Add(-MaxPassLifetime-time.Second)); !errors.Is(err, ErrPass) {
+		if _, err := pass.VerifyUnder(sum, "dromas.dev", notAfter.Add(-MaxPassLifetime-time.Second)); !errors.Is(err, ErrPass) {
 			t.Errorf("%s: more than an hour ahead: %v", name, err)
 		}
 		// The same statement signed by another key, in a signature that
@@ -221,7 +221,7 @@ func TestPassVerifyUnder(t *testing.T) {
 		// not verify. A signature does not cover the key it names, so the
 		// certificate can be put in place of the signer's own.
 		other := newCertBox(t)
-		bare, err := Sign(other.work, PassStatement(a, "irongall.dev", notAfter), PassNamespace(a))
+		bare, err := Sign(other.work, PassStatement(a, "dromas.dev", notAfter), PassNamespace(a))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -238,15 +238,15 @@ func TestPassVerifyUnder(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := fp.VerifyUnder(sum, "irongall.dev", now); !errors.Is(err, ErrPass) {
+		if _, err := fp.VerifyUnder(sum, "dromas.dev", now); !errors.Is(err, ErrPass) {
 			t.Errorf("%s: a pass another key signed, carrying the certificate: %v", name, err)
 		}
-		if _, err := fp.Verify(b.box.id, "irongall.dev", now); !errors.Is(err, ErrPass) {
+		if _, err := fp.Verify(b.box.id, "dromas.dev", now); !errors.Is(err, ErrPass) {
 			t.Errorf("%s: Verify took a pass another key signed, carrying the certificate: %v", name, err)
 		}
 		// A certificate that has ended: a pass signed under it a moment before it ends, checked a moment after.
 		end := b.cert.NotAfter()
-		late, _, err := NewPass(b.signer, a, "irongall.dev", end.Add(-time.Minute))
+		late, _, err := NewPass(b.signer, a, "dromas.dev", end.Add(-time.Minute))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -254,7 +254,7 @@ func TestPassVerifyUnder(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := lp.VerifyUnder(sum, "irongall.dev", end); !errors.Is(err, ErrCertificateTime) {
+		if _, err := lp.VerifyUnder(sum, "dromas.dev", end); !errors.Is(err, ErrCertificateTime) {
 			t.Errorf("%s: after the certificate ended: %v", name, err)
 		}
 	}
@@ -263,7 +263,7 @@ func TestPassVerifyUnder(t *testing.T) {
 func TestParsePass(t *testing.T) {
 	a := strings.Repeat("0123456789abcdef", 4)
 	sig := base64.StdEncoding.EncodeToString([]byte("-----BEGIN SSH SIGNATURE-----\nAAAA\n-----END SSH SIGNATURE-----\n"))
-	good := `irongall-pass address="` + a + `", not_after="2026-10-12T21:40:15Z", signature="` + sig + `"`
+	good := `dromas-pass address="` + a + `", not_after="2026-10-12T21:40:15Z", signature="` + sig + `"`
 	p, err := ParsePass(good)
 	if err != nil {
 		t.Fatal(err)
@@ -274,14 +274,14 @@ func TestParsePass(t *testing.T) {
 	// What RFC 9110 §11 lets a recipient read is read as the same values
 	// (testdata/vectors/pass/ has each form against a real signature).
 	for name, form := range map[string]string{
-		"the scheme in capitals":      strings.Replace(good, "irongall-pass", "IronGall-Pass", 1),
+		"the scheme in capitals":      strings.Replace(good, "dromas-pass", "Dromas-Pass", 1),
 		"a name in capitals":          strings.Replace(good, "not_after=", "NOT_AFTER=", 1),
 		"no space after a comma":      strings.Replace(good, `", not_after`, `",not_after`, 1),
-		"another order":               `irongall-pass not_after="2026-10-12T21:40:15Z", address="` + a + `", signature="` + sig + `"`,
-		"whitespace around = and ,":   `irongall-pass address =` + "\t" + `"` + a + `" ,not_after= "2026-10-12T21:40:15Z"` + "\t,\t" + `signature ="` + sig + `"`,
-		"spaces after the scheme":     strings.Replace(good, "irongall-pass ", "irongall-pass   ", 1),
+		"another order":               `dromas-pass not_after="2026-10-12T21:40:15Z", address="` + a + `", signature="` + sig + `"`,
+		"whitespace around = and ,":   `dromas-pass address =` + "\t" + `"` + a + `" ,not_after= "2026-10-12T21:40:15Z"` + "\t,\t" + `signature ="` + sig + `"`,
+		"spaces after the scheme":     strings.Replace(good, "dromas-pass ", "dromas-pass   ", 1),
 		"the address as a token":      strings.Replace(good, `"`+a+`"`, a, 1),
-		"empty list elements":         `irongall-pass , ,address="` + a + `",,not_after="2026-10-12T21:40:15Z", signature="` + sig + `",`,
+		"empty list elements":         `dromas-pass , ,address="` + a + `",,not_after="2026-10-12T21:40:15Z", signature="` + sig + `",`,
 		"whitespace around the value": " " + good + "\t",
 	} {
 		q, err := ParsePass(form)
@@ -293,15 +293,15 @@ func TestParsePass(t *testing.T) {
 	}
 	for name, bad := range map[string]string{
 		"empty":                      "",
-		"a bearer token":             "Bearer igt1_" + strings.Repeat("A", 50),
-		"the scheme alone":           "irongall-pass",
-		"a tab after the scheme":     strings.Replace(good, "irongall-pass ", "irongall-pass\t", 1),
+		"a bearer token":             "Bearer drt1_" + strings.Repeat("A", 50),
+		"the scheme alone":           "dromas-pass",
+		"a tab after the scheme":     strings.Replace(good, "dromas-pass ", "dromas-pass\t", 1),
 		"a name twice":               good + `, Address="` + a + `"`,
 		"a backslash":                strings.Replace(good, `address="`, `address="`+"\\", 1),
 		"a control character":        strings.Replace(good, `signature="`, `signature="`+"\x01", 1),
 		"a quote not closed":         strings.TrimSuffix(good, `"`),
-		"no parameter":               "irongall-pass ,",
-		"a parameter missing":        `irongall-pass address="` + a + `", not_after="2026-10-12T21:40:15Z"`,
+		"no parameter":               "dromas-pass ,",
+		"a parameter missing":        `dromas-pass address="` + a + `", not_after="2026-10-12T21:40:15Z"`,
 		"a space in the signature":   strings.Replace(good, sig, sig[:4]+" "+sig[4:], 1),
 		"a line break in the base64": strings.Replace(good, sig, sig[:4]+"\n"+sig[4:], 1),
 		"an extra parameter":         good + `, extra="1"`,
@@ -324,7 +324,7 @@ func TestParsePass(t *testing.T) {
 	// for its length, before the grammar or the base64 is read. (A signature
 	// of a byte or two more has base64 of the same length: Dearmor refuses it.)
 	withSig := func(n int) string {
-		return `irongall-pass address="` + a + `", not_after="2026-10-12T21:40:15Z", signature="` + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{'.'}, n)) + `"`
+		return `dromas-pass address="` + a + `", not_after="2026-10-12T21:40:15Z", signature="` + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{'.'}, n)) + `"`
 	}
 	if v := withSig(MaxSignature); len(v) != MaxPassAuthorization {
 		t.Errorf("a pass with a signature of %d bytes is %d bytes long, and MaxPassAuthorization is %d", MaxSignature, len(v), MaxPassAuthorization)
@@ -337,12 +337,12 @@ func TestParsePass(t *testing.T) {
 }
 
 func TestCheckServerName(t *testing.T) {
-	for _, s := range []string{"irongall.dev", "irongall:8080", "127.0.0.1:8013", "localhost", "[::1]:8080", "a-b.example.org:443"} {
+	for _, s := range []string{"dromas.dev", "dromas:8080", "127.0.0.1:8013", "localhost", "[::1]:8080", "a-b.example.org:443"} {
 		if err := CheckServerName(s); err != nil {
 			t.Errorf("%q: %v", s, err)
 		}
 	}
-	for _, s := range []string{"", "IronGall.dev", "https://irongall.dev", "irongall.dev/", "irongall.dev:", "irongall.dev:123456", "irongall dev", "irongall.dev\n", "-irongall.dev", "irongall.dev.:80x", strings.Repeat("a", 256)} {
+	for _, s := range []string{"", "Dromas.dev", "https://dromas.dev", "dromas.dev/", "dromas.dev:", "dromas.dev:123456", "dromas dev", "dromas.dev\n", "-dromas.dev", "dromas.dev.:80x", strings.Repeat("a", 256)} {
 		if err := CheckServerName(s); !errors.Is(err, ErrPass) {
 			t.Errorf("%q: %v", s, err)
 		}
@@ -404,14 +404,14 @@ func TestPassAgainstSSHKeygen(t *testing.T) {
 	notAfter := now.UTC().Truncate(time.Second).Add(PassLifetime)
 
 	// printf and ssh-keygen make a pass; it verifies here.
-	stmt := "irongall-pass-v1\n" + a.String() + "\nirongall.dev\n" + notAfter.Format(TimeLayout) + "\n"
-	sig := must([]byte(stmt), "-Y", "sign", "-n", "irongall-pass-v1:"+a.String(), "-f", "work-cert.pub")
-	header := `irongall-pass address="` + a.String() + `", not_after="` + notAfter.Format(TimeLayout) + `", signature="` + base64.StdEncoding.EncodeToString(sig) + `"`
+	stmt := "dromas-pass-v1\n" + a.String() + "\ndromas.dev\n" + notAfter.Format(TimeLayout) + "\n"
+	sig := must([]byte(stmt), "-Y", "sign", "-n", "dromas-pass-v1:"+a.String(), "-f", "work-cert.pub")
+	header := `dromas-pass address="` + a.String() + `", not_after="` + notAfter.Format(TimeLayout) + `", signature="` + base64.StdEncoding.EncodeToString(sig) + `"`
 	pass, err := ParsePass(header)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pass.Verify(id, "irongall.dev", now); err != nil {
+	if _, err := pass.Verify(id, "dromas.dev", now); err != nil {
 		t.Fatalf("a pass made with printf and ssh-keygen: %v", err)
 	}
 
@@ -432,7 +432,7 @@ func TestPassAgainstSSHKeygen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ours, oursNotAfter, err := NewPass(signer, a, "irongall.dev", now)
+	ours, oursNotAfter, err := NewPass(signer, a, "dromas.dev", now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -448,10 +448,10 @@ func TestPassAgainstSSHKeygen(t *testing.T) {
 	}
 	write("ours.sig", p.signature)
 	write("signers", []byte(a.String()+" cert-authority "+string(read("identity.pub"))))
-	rebuilt := "irongall-pass-v1\n" + a.String() + "\nirongall.dev\n" + oursNotAfter.Format(TimeLayout) + "\n"
-	must([]byte(rebuilt), "-Y", "verify", "-f", "signers", "-I", a.String(), "-n", "irongall-pass-v1:"+a.String(), "-s", "ours.sig")
+	rebuilt := "dromas-pass-v1\n" + a.String() + "\ndromas.dev\n" + oursNotAfter.Format(TimeLayout) + "\n"
+	must([]byte(rebuilt), "-Y", "verify", "-f", "signers", "-I", a.String(), "-n", "dromas-pass-v1:"+a.String(), "-s", "ours.sig")
 	// The control: for another server's name the same signature fails.
-	if _, err := run([]byte(strings.Replace(rebuilt, "irongall.dev", "example.org", 1)), "-Y", "verify", "-f", "signers", "-I", a.String(), "-n", "irongall-pass-v1:"+a.String(), "-s", "ours.sig"); err == nil {
+	if _, err := run([]byte(strings.Replace(rebuilt, "dromas.dev", "example.org", 1)), "-Y", "verify", "-f", "signers", "-I", a.String(), "-n", "dromas-pass-v1:"+a.String(), "-s", "ours.sig"); err == nil {
 		t.Error("ssh-keygen verified the pass for another server's name")
 	}
 }
@@ -505,7 +505,7 @@ func FuzzParsePass(f *testing.F) {
 // whitespace, CRLF after the BEGIN line, a NUL before the END line, text
 // after it, SSHSIG version 0, a NUL ending the namespace and bytes in the
 // reserved field, which nothing signs. A server remembers a pass by its
-// Authorization, so each costs it one check (IronGall-dev/irongall-server#69).
+// Authorization, so each costs it one check (dromas-dev/dromas-server#69).
 // A signature that differs in a bit is another pass.
 func TestAPassWrittenAnotherWayIsOnePass(t *testing.T) {
 	header := strings.TrimSuffix(string(read(t, "a/pass.authorization")), "\n")
@@ -581,7 +581,7 @@ func TestAPassWrittenAnotherWayIsOnePass(t *testing.T) {
 // (#405).
 func TestLowerASCIILowersAToZAlone(t *testing.T) {
 	for in, want := range map[string]string{
-		"IronGall-Pass":  "irongall-pass",
+		"Dromas-Pass":    "dromas-pass",
 		"BYTES":          "bytes",
 		"byteſ":          "byteſ",
 		"KEY":            "Key",

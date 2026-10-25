@@ -17,8 +17,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	tk "github.com/IronGall-dev/irongall-client/client/internal/taken"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	tk "github.com/dromas-dev/dromas-client/client/internal/taken"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // maxResponse bounds what is read of any answer but a fetch's: a list, the

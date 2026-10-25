@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // Code is the error's code, if err is an [APIError], for a test that knows

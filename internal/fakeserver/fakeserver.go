@@ -1,7 +1,7 @@
-// Package fakeserver is an in-memory irongall server for the client's tests:
+// Package fakeserver is an in-memory dromas server for the client's tests:
 // honest, and just enough of the API for a client to register, renew its
 // prekey, send, list page by page, fetch and ack, each call carrying its
-// box's pass. It is NOT the irongall.dev server, and checks little of what
+// box's pass. It is NOT the dromas.dev server, and checks little of what
 // that server checks. Like every server it keeps and serves a revocation of
 // any address, with a box here or none (PROTOCOL.md §11.15).
 //
@@ -30,8 +30,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/api/apitest"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/api/apitest"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // Server is a running fake server.
@@ -795,7 +795,7 @@ func WriteList(w http.ResponseWriter, l protocol.MessageList) {
 // fetch answers a message's ciphertext, and nothing else: the list says who
 // sent it and when. A Range of one open-ended byte range that begins inside
 // it is answered 206 with the bytes from there on, and any other with the
-// whole body (PROTOCOL.md §11.12; protocol.RangeAsked), as irongall-server
+// whole body (PROTOCOL.md §11.12; protocol.RangeAsked), as dromas-server
 // answers them.
 func (s *Server) fetch(w http.ResponseWriter, r *http.Request, b *box) {
 	m := b.messages[r.PathValue("id")]
@@ -919,7 +919,7 @@ func (s *Server) ack(w http.ResponseWriter, r *http.Request, b *box) {
 func (s *Server) AdoptKey(account string) string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
-	k := "iga1_" + hex.EncodeToString(b[:])
+	k := "dra1_" + hex.EncodeToString(b[:])
 	s.mu.Lock()
 	s.keys[k] = account
 	s.mu.Unlock()

@@ -14,9 +14,9 @@ import (
 	"filippo.io/age"
 	"golang.org/x/crypto/ssh"
 
-	"github.com/IronGall-dev/irongall-client/client"
-	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/client"
+	"github.com/dromas-dev/dromas-client/internal/fakeserver"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // A statement the box's server serves in its name that it did not make is
@@ -263,7 +263,7 @@ func TestARenewalGoesPastItsOwnRecordWhateverItsDates(t *testing.T) {
 		})
 		e.clock.Add(25 * time.Hour)
 		res, _ := b.Receive(ctx)
-		if res == nil || res.Renewed != nil || res.RenewErr == nil || !strings.Contains(res.RenewErr.Error(), "irongall cert revoke-earlier") {
+		if res == nil || res.Renewed != nil || res.RenewErr == nil || !strings.Contains(res.RenewErr.Error(), "dromas cert revoke-earlier") {
 			t.Fatalf("recv over a record that does not verify: %+v", res)
 		}
 		if _, err := b.RenewAndRevoke(ctx, ""); err != nil {

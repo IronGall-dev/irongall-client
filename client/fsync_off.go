@@ -1,4 +1,4 @@
-//go:build irongall_nofsync
+//go:build dromas_nofsync
 
 package client
 

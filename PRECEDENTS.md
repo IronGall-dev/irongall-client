@@ -1,39 +1,39 @@
 # PRECEDENTS — every design decision beside who else does it
 
-**Why each choice in irongall is the usual one, or where it is not, and why.** Part 1 sets irongall beside whole systems. Part 2 sets each decision beside the established systems and published standards that make it, with their numbers, and says where irongall differs and why. Part 3 does the same for the reference server's own build choices, which are no part of the protocol. `§` is a section of `PROTOCOL.md`.
+**Why each choice in dromas is the usual one, or where it is not, and why.** Part 1 sets dromas beside whole systems. Part 2 sets each decision beside the established systems and published standards that make it, with their numbers, and says where dromas differs and why. Part 3 does the same for the reference server's own build choices, which are no part of the protocol. `§` is a section of `PROTOCOL.md`.
 
 **Rules for this file:**
 - **A row is added the day a big decision on the wire or in the security model is made,** with the decision. A client's own behaviour (its command line, its files, its lock) carries its precedent beside the code that does it.
-- **A row holds the decision in a line with its section, each precedent with its numbers and its source, and where irongall differs and why.** Nothing else: not how the decision was reached, not the spec restated, not what a standard is, which its reader knows.
+- **A row holds the decision in a line with its section, each precedent with its numbers and its source, and where dromas differs and why.** Nothing else: not how the decision was reached, not the spec restated, not what a standard is, which its reader knows.
 - **Every claim about another system says how it is known**, in one of three ways: `read <date>`, with the source, when it was read at its source that day · `review 2026-10-10`, when it comes from the design reviews of that day and the sources they cited (§ Sources), and has not been read again since · `from memory`, when it has not been looked up. A number is never quoted from memory as if it were read. A quotation is its source's words, a shorter one a part of them, and is kept only where the words are the norm. If a row is wrong, an issue is welcome.
 - **A precedent is industry practice:** a major public API, a published standard, a widely deployed protocol.
 - **This is the one place a comparison is kept.** `PROTOCOL.md` carries none, and points here.
 
 ---
 
-# Part 1 — irongall beside whole systems
+# Part 1 — dromas beside whole systems
 
 ## 1a. Secure messaging systems
 
-**In one line:** irongall is roughly Signal without the ratchets or sealed sender, plus self-certifying addresses and signatures that can be shown to others: a modern, post-quantum, verified-sender PGP. *(review 2026-10-10.)*
+**In one line:** dromas is roughly Signal without the ratchets or sealed sender, plus self-certifying addresses and signatures that can be shown to others: a modern, post-quantum, verified-sender PGP. *(review 2026-10-10.)*
 
 | System | Identity and key distribution | Encryption | Forward secrecy / post-compromise / post-quantum | Sender authentication | Hidden from the server |
 |---|---|---|---|---|---|
 | **Signal** | Phone number or username + identity key, from Signal's directory; safety numbers out of band | PQXDH, then the Double Ratchet; since October 2025 SPQR adds an ML-KEM-768 ratchet | yes / yes / yes | Implicit in the ratchet; deniable | Contents; the sender (sealed sender) |
 | **WhatsApp** | Signal-style, plus key transparency (AKD, 2023) | Signal protocol | yes / yes / not documented | Implicit; deniable | Contents |
-| **iMessage** | Device keys signed by a Contact Key Verification account key (2023) | PQ3 (2024): Kyber-1024, then a Kyber-768 ratchet | yes / yes / yes | Every message signed by a Secure Enclave P-256 device key: the closest deployed analogue of irongall's signed prekey plus a signature on each message | Contents |
+| **iMessage** | Device keys signed by a Contact Key Verification account key (2023) | PQ3 (2024): Kyber-1024, then a Kyber-768 ratchet | yes / yes / yes | Every message signed by a Secure Enclave P-256 device key: the closest deployed analogue of dromas's signed prekey plus a signature on each message | Contents |
 | **Proton Mail** | Email address; keys served by Proton, private keys stored there under the user's password | OpenPGP | no / no / opt-in since 2026-05-05 | OpenPGP signatures, which can be shown to others | Body and attachments; NOT subject or addresses |
-| **MLS** (RFC 9420) | Credentials sign one-time KeyPackages, but for a "last resort" one: irongall's reusable prekey | TreeKEM groups | yes / yes / by suite | Signatures inside the group | Contents; the sender within the group |
+| **MLS** (RFC 9420) | Credentials sign one-time KeyPackages, but for a "last resort" one: dromas's reusable prekey | TreeKEM groups | yes / yes / by suite | Signatures inside the group | Contents; the sender within the group |
 | **SimpleX** | No user identifiers: one-way queues whose addresses are capabilities, exchanged out of band | Double Ratchet + sntrup761 (default for direct chats since v5.7, 2024) + a NaCl layer per queue | yes / yes / yes | Implicit; deniable | Contents, sender, recipient, and their link |
 | **Nostr DMs** (NIP-17) | A secp256k1 key is the identity | NIP-44, with a signed "seal" inside an ephemeral-key "gift wrap" (NIP-59) | no / no / no | A signature INSIDE the encryption | Contents; the sender |
 | **Noise one-way X** (rev 34, 2018; 1b) | None: accepting a key is "up to the application" (§14) | `e, es, s, ss`, then AEAD | sender compromise only (§7.7) / no / no | Static-static DH: recipient-only, open to key-compromise impersonation, deniable, replayable | Contents; the sender's static key (§7.8) |
-| **irongall** | A self-certifying address (the identity's hash) + a prekey signed under the identity's certificate: no directory to trust | age; ML-KEM-768 + X25519 by default, X25519 alone by choice | bounded by how often a box checks in (about two days for one read daily) / no / yes | Ed25519 by a certified working key, inside the encryption: checked by the recipient, unseen by the server, names its recipient, can be shown to others | Contents only, by design |
+| **dromas** | A self-certifying address (the identity's hash) + a prekey signed under the identity's certificate: no directory to trust | age; ML-KEM-768 + X25519 by default, X25519 alone by choice | bounded by how often a box checks in (about two days for one read daily) / no / yes | Ed25519 by a certified working key, inside the encryption: checked by the recipient, unseen by the server, names its recipient, can be shown to others | Contents only, by design |
 
-**Where irongall stands**
+**Where dromas stands**
 
 | Dimension | Verdict | Why |
 |---|---|---|
-| Getting the right key | **Ahead** of directory-based messengers; **level** with key-as-identity systems | Signal, WhatsApp, iMessage and Proton serve keys from their own directory and add safety numbers or key transparency against substitution. An irongall address IS the fingerprint, as in Nostr, did:key, Tor onion addresses and SimpleX's links. What irongall adds is that rotation and a change of key type never move the address |
+| Getting the right key | **Ahead** of directory-based messengers; **level** with key-as-identity systems | Signal, WhatsApp, iMessage and Proton serve keys from their own directory and add safety numbers or key transparency against substitution. A dromas address IS the fingerprint, as in Nostr, did:key, Tor onion addresses and SimpleX's links. What dromas adds is that rotation and a change of key type never move the address |
 | Content encryption | **On par** with Signal and iMessage; **ahead** of Proton | A post-quantum hybrid by default, through a reviewed format |
 | Sender authentication | **Stronger for audit; not deniable** | Provable to others, and the server holds no signature (Part 2, § 3). iMessage also signs; Signal, WhatsApp, SimpleX and Noise's one-way patterns are deniable. Right for bots acting on mail; a privacy cost elsewhere |
 | Forward secrecy, post-compromise security | **Behind** the ratcheting messengers; **level** with every non-interactive scheme; **ahead** of Proton and PGP | Per-message forward secrecy needs interaction, which no non-interactive scheme has (Noise one-way, HPKE, PGP); no self-healing, which is too much state for stateless bot mail |
@@ -44,7 +44,7 @@
 
 *(review 2026-10-10, against Noise rev 34 §7.4, §7.7, §7.8, §13 and §14, and PQNoise.)*
 
-- **irongall is N made post-quantum** (age's HPKE with the X-Wing KEM) **plus an outer Ed25519 signature:** sender authentication others can check and that resists key-compromise impersonation, which no one-way pattern reaches (source property 2); destination property 2, replayable, which the recipient's seen-set handles; forward secrecy against a recipient's compromise, bounded by rotation.
+- **dromas is N made post-quantum** (age's HPKE with the X-Wing KEM) **plus an outer Ed25519 signature:** sender authentication others can check and that resists key-compromise impersonation, which no one-way pattern reaches (source property 2); destination property 2, replayable, which the recipient's seen-set handles; forward secrecy against a recipient's compromise, bounded by rotation.
 - **X and K are not for stored bot mail:** a leaked prekey would let anyone forge any sender to that box; they are deniable; rev 34 has no post-quantum, and PQNoise shows an authenticated one-way K or X cannot be built from KEMs alone, so a post-quantum design needs a signature anyway; no stock command-line tool; and §14 keeps a Noise static key inside Noise.
 - **The one deployed store-and-forward use found,** Bitchat's courier path (Noise X), states it has no forward secrecy.
 - **Taken from Noise:** §13's padding, after the signature; payloads that ignore what they do not know; the vocabulary of security properties.
@@ -53,17 +53,17 @@
 
 *(review 2026-10-10. The survey kept no links, and but for the Moltbook row none of it has been read again: each row is to be checked before it is leaned on.)*
 
-| System | Model | End-to-end encrypted | Sender authentication | Relation to irongall |
+| System | Model | End-to-end encrypted | Sender authentication | Relation to dromas |
 |---|---|---|---|---|
-| **A2A v1.0** (Linux Foundation / AAIF, March 2026) | Synchronous RPC; the callee hosts HTTPS | No (TLS) | Transport (OAuth, mTLS); Agent Card JWS optional | **Complementary:** it cannot connect agents with no endpoint; an Agent Card extension could advertise an irongall address |
+| **A2A v1.0** (Linux Foundation / AAIF, March 2026) | Synchronous RPC; the callee hosts HTTPS | No (TLS) | Transport (OAuth, mTLS); Agent Card JWS optional | **Complementary:** it cannot connect agents with no endpoint; an Agent Card extension could advertise a dromas address |
 | **MCP** (spec 2026-07-28, AAIF) | Agent-to-tool RPC | No | OAuth (remote); none (stdio) | **A distribution channel**: a local stdio server |
-| **DIDComm v2.1 + Pickup 3.0** | Store-and-forward through mediators | Yes (JWE) | authcrypt: recipient-only, repudiable | **Closest prior art:** irongall adds senders a server can verify and nobody can repudiate, and stock tools |
+| **DIDComm v2.1 + Pickup 3.0** | Store-and-forward through mediators | Yes (JWE) | authcrypt: recipient-only, repudiable | **Closest prior art:** dromas adds senders a server can verify and nobody can repudiate, and stock tools |
 | **AgentMail; Agentverse Mailbox; mcp_agent_mail** | Store-and-forward agent mail | **No**: the operator reads it | API keys / signed envelopes / project names | The bar for getting started (one call, MCP, a CLI, Skills) |
 | **XMTP; SLIM (MLS); ANP** | End-to-end encrypted networks or fabrics | Yes (MLS) | MLS credentials / DIDs | Heavier: stateful SDKs, groups, live sessions |
 | **SimpleX; Nostr NIP-17; Matrix; XMPP/OMEMO** | Store-and-forward | Yes | Deniable, or hidden from the relay | None lets the relay limit verified senders; all need a stateful client |
 | **Moltbook** (exposure reported by Wiz, 2026-02-02) | Platform DMs | **None** | Platform keys | **Evidence for the premise:** agents' private messages exposed, some carrying third-party API keys. News reports read 2026-10-12 ([SecurityBrief](https://securitybrief.co.uk/story/moltbook-vibe-coded-flaw-exposed-ai-chats-keys)) differ on counts, so none is given |
 
-Noise: 1b. **What the survey found:** nothing else offers an end-to-end encrypted, sender-verified, store-and-forward mailbox over HTTP with stock tools and no stateful SDK. irongall leaves out groups, discovery, deniability, metadata privacy and push on purpose.
+Noise: 1b. **What the survey found:** nothing else offers an end-to-end encrypted, sender-verified, store-and-forward mailbox over HTTP with stock tools and no stateful SDK. dromas leaves out groups, discovery, deniability, metadata privacy and push on purpose.
 
 ---
 
@@ -95,10 +95,10 @@ Noise: 1b. **What the survey found:** nothing else offers an end-to-end encrypte
 
 | Who | What they do | How it is known |
 |---|---|---|
-| **OpenSSH certificates** | A CA key certifies a key with principals, a serial and validity; irongall uses the format unchanged, made by `ssh-keygen -s` | `draft-ietf-sshm-cert` (from `draft-miller-ssh-cert`, which replaced `PROTOCOL.certkeys` in 2025); measured on OpenSSH 8.1p1 and 10.2p1, 2026-10-12 |
+| **OpenSSH certificates** | A CA key certifies a key with principals, a serial and validity; dromas uses the format unchanged, made by `ssh-keygen -s` | `draft-ietf-sshm-cert` (from `draft-miller-ssh-cert`, which replaced `PROTOCOL.certkeys` in 2025); measured on OpenSSH 8.1p1 and 10.2p1, 2026-10-12 |
 | **OpenPGP** | A primary key certifies signing and encryption subkeys, so it can stay offline | from memory |
 | **Matrix cross-signing** | A master key signs the device-signing and user-signing keys | from memory |
-| **Signal, MLS** | A long-lived identity signs short-lived keys (signed prekeys, KeyPackages): irongall's prekey, one level down | review 2026-10-10 |
+| **Signal, MLS** | A long-lived identity signs short-lived keys (signed prekeys, KeyPackages): dromas's prekey, one level down | review 2026-10-10 |
 | **Short-lived certificates in place of revocation** | The web waives revocation at 10 days or less, 7 from 2026-03-15 (§ 3b) | read 2026-10-13 |
 
 **Where ours differs, and why:**
@@ -197,11 +197,11 @@ None was a flaw in the layout: each was a verifier that read an object different
 | **DKIM** (RFC 6376 §3.5) | Verifiers "MAY ignore signatures that have a timestamp in the future", and "MAY add a 'fudge factor'" at expiry | none set | read 2026-10-13: [RFC 6376](https://www.rfc-editor.org/rfc/rfc6376) |
 | **GitHub Apps** | The maker backdates `iat` | 60 seconds | § 1 |
 
-**Where ours sits:** exact checks with the room in what is made are X.509's and OpenSSH's shape, and nobody above checks exactly at both ends. An hour is what Let's Encrypt, OpenMLS and BIND backdate, each making things strangers verify; 30 seconds to 5 minutes (Vault, Kubernetes, OpenSSH) is for one operator's machines, and irongall's boxes are strangers to each other. The pass's 10 minutes slow is twice Kerberos's 5; a `sent_at` an hour ahead is Mastodon's margin.
+**Where ours sits:** exact checks with the room in what is made are X.509's and OpenSSH's shape, and nobody above checks exactly at both ends. An hour is what Let's Encrypt, OpenMLS and BIND backdate, each making things strangers verify; 30 seconds to 5 minutes (Vault, Kubernetes, OpenSSH) is for one operator's machines, and dromas's boxes are strangers to each other. The pass's 10 minutes slow is twice Kerberos's 5; a `sent_at` an hour ahead is Mastodon's margin.
 
 **Where ours differs, and why:**
 - **No leeway at any verifier,** where JWT and Kerberos put theirs: every check is one comparison with no number in it to disagree on.
-- **A refusal for a time is final, quarantined and acked,** where SMTP would call it transient (a 4yz is for what "can be successful if repeated without any change", RFC 5321 §4.2.1, queued and retried, §4.5.4.1; greylisting delays on purpose, RFC 6647): a client with right clocks makes no such mail (§15.7), so what is left is a wrong clock or a hand-made certificate, and irongall does not try to deliver past a party that misbehaves: the reader keeps its findings for its owner to judge (§12.3). Read 2026-10-19: [RFC 5321](https://www.rfc-editor.org/rfc/rfc5321), [RFC 6647](https://www.rfc-editor.org/rfc/rfc6647).
+- **A refusal for a time is final, quarantined and acked,** where SMTP would call it transient (a 4yz is for what "can be successful if repeated without any change", RFC 5321 §4.2.1, queued and retried, §4.5.4.1; greylisting delays on purpose, RFC 6647): a client with right clocks makes no such mail (§15.7), so what is left is a wrong clock or a hand-made certificate, and dromas does not try to deliver past a party that misbehaves: the reader keeps its findings for its owner to judge (§12.3). Read 2026-10-19: [RFC 5321](https://www.rfc-editor.org/rfc/rfc5321), [RFC 6647](https://www.rfc-editor.org/rfc/rfc6647).
 
 **Not read:** smallstep's default backdate.
 
@@ -293,7 +293,7 @@ None was a flaw in the layout: each was a verifier that read an object different
 - **No list, no version, no way to revoke fewer,** where CRLs and KRLs are rising-numbered lists that a later one can shrink, giving two holders two verdicts; one serial cannot cover less than a lower one. The cost, sparing an earlier certificate while revoking a later, nothing here needs: a box holds one certificate at its server, and its next is numbered above every one revoked (§5).
 - **No date on a revoked certificate,** for the same reason: everything it signed is lost, its owner's unread mail too, which is sent again.
 - **Nothing is ever dropped from it,** where a CRL drops expired entries: one serial is fixed in size, replaced by a higher, kept for good.
-- **Neither client writes a revocation unasked,** where GnuPG and Sequoia write one beside every key. Theirs covers a forgotten passphrase (our reading: neither says why); an irongall identity has none, so a copy beside it is lost and stolen with it, and a liability once the identity moves elsewhere. A passphrase is planned (#50), and with it their default applies. GnuPG's import guard is here the address written in full.
+- **Neither client writes a revocation unasked,** where GnuPG and Sequoia write one beside every key. Theirs covers a forgotten passphrase (our reading: neither says why); a dromas identity has none, so a copy beside it is lost and stolen with it, and a liability once the identity moves elsewhere. A passphrase is planned (#50), and with it their default applies. GnuPG's import guard is here the address written in full.
 - **No answer stops a drain and holds a send; "none held" does neither:** neither of the web's two. A browser could not afford to refuse without an answer; a box can, since the server it waits on is the one its mail passes through. It is OpenSSH's rule for an unreadable file.
 - **One source, the box's own server,** where Sequoia lists five keyservers and GnuPG ships none. A second server guards only against one withholding a record it holds, and only if the revoked box's owner and its reader chose the same one; none could be a default, since a lookup tells it whom its asker writes to. The box's server already fails closed, as OpenSSH's `RevokedKeys` and OpenSSL's `-crl_check` do (RFC 5280 leaves it to the relying party). What remains is §15.6, a hostile server withholding a revocation of a box it hosts; the norm against it is key transparency (WhatsApp's, Apple's, CONIKS, from memory), which this protocol does not have.
 - **What costs a server is counted against its caller's address, and a flood of what it answers from memory on one budget** (§11.5), as keys.openpgp.org limits lookups and Let's Encrypt's per-endpoint limits run 5 to 1,000 a second (Part 2, § 4, Limits). Records kept for addresses with no box are not bounded yet (#139).
@@ -325,7 +325,7 @@ None was a flaw in the layout: each was a verifier that read an object different
 - **A `PUT` answers no `ETag`,** as RFC 9110 §9.3.4 requires: the server sorts and dedupes entries, so what it holds may not be what was sent.
 - **Too many entries is `413`,** where S3 answers its count limits `400`: the entries bound the record's size.
 - **No `DELETE`:** none means `{"allow":["*"],"deny":[]}`, as an S3 bucket always has an ACL.
-- **The ACL sheds load and protects no reader:** Matrix's binds every server in a room; irongall's binds only the untrusted server, which by ignoring it can do only what it could already: drop mail, or deliver mail the box would hold. The client's hold is what a reader relies on.
+- **The ACL sheds load and protects no reader:** Matrix's binds every server in a room; dromas's binds only the untrusted server, which by ignoring it can do only what it could already: drop mail, or deliver mail the box would hold. The client's hold is what a reader relies on.
 
 ## 3d. Errors: AEP-193's shape, and none of a server's words in front of a reader
 
@@ -407,7 +407,7 @@ None was a flaw in the layout: each was a verifier that read an object different
 |---|---|---|
 | Standard primitives unmodified, our composition: age v1, Ed25519, SHA-256, HMAC-SHA-256, HKDF | The C2SP age specification; RFC 8032; RFC 2104; RFC 5869 | review 2026-10-10 |
 | The vectors are the contract, and standard-format ones are checked by that standard's tools | C2SP CCTV's age testkit, for "any age implementation"; B's and C's prekeys are its published test identities | read 2026-10-20 |
-| A namespace per purpose naming its box, `irongall-<purpose>-v1:<address>` | SSHSIG namespaces (`PROTOCOL.sshsig`). **Ours names no domain,** where `ssh-keygen(1)` advises `NAMESPACE@YOUR.DOMAIN`: the purpose and address already disambiguate, and an identity belongs to no server (§11.15) | review 2026-10-10; `ssh-keygen.1` at openssh-portable `325d965d`, read 2026-10-17 |
+| A namespace per purpose naming its box, `dromas-<purpose>-v1:<address>` | SSHSIG namespaces (`PROTOCOL.sshsig`). **Ours names no domain,** where `ssh-keygen(1)` advises `NAMESPACE@YOUR.DOMAIN`: the purpose and address already disambiguate, and an identity belongs to no server (§11.15) | review 2026-10-10; `ssh-keygen.1` at openssh-portable `325d965d`, read 2026-10-17 |
 | A signature is read as OpenSSH reads it: armour whitespace skipped, nothing after END, `reserved` skipped and signed empty, version 0 or 1, one trailing NUL taken where no signature covers it | `sshsig_dearmor`, `sshsig_wrap_verify` and their parsers (`sshbuf_dup_string`, `sshbuf_get_cstring`, `sshsig_parse_preamble`); `PROTOCOL.sshsig` ignores a non-empty reserved field and rejects higher versions. RFC 4251 §5's no-NUL rule binds writers, and every OpenSSH build reads one | `sshsig.c` and `PROTOCOL.sshsig`, read 2026-10-14; the parsers at `V_10_6_P1` and RFC 4251, read 2026-10-15; `sig/` and `revoke/` vectors, measured with OpenSSH 10.2p1 and 10.6p1 |
 | **A deviation:** a signature is bounded per key type (4,096 bytes for both today), at every verifier, a server's included | `sshsig_dearmor` sets none. A server keeps and serves signatures for good, so with no bound the bytes a signer chose (after the END line, in `reserved`, in a certificate's nonce) are what it stores: the OpenPGP keyservers bounded no signatures attached to a key, and in 2019 keys flooded with tens of thousands broke the clients that fetched them; keys.openpgp.org serves no third-party signatures. A bound per key type lets a later type with larger signatures take its own, and no two verifiers hold one type to different bounds | `sshsig.c`, read 2026-10-14; the keyservers from memory |
 | **A deviation:** the Go client takes a file only with exactly one native stanza, `X25519` or `mlkem768x25519`, as every server takes a send, and refuses any other as `undecryptable` before any key agreement (§11.10 step 7, §12.3 check 1) | **age** takes up to 1,024 stanzas and tries every identity on each (`filippo.io/age` v1.3.2, `maxRecipientStanzas = 1024`). Measured, one arm64 core, 2026-10-22: refusing a 1,024-stanza file cost a two-prekey box 202 ms (X25519) or 262 ms (ML-KEM-768 + X25519), against 0.22 ms or 0.28 ms to decrypt an honest file and 0.17 ms to verify it; a 66-prekey box, the most one renewing daily keeps when no drain empties it, 6.6 s or 8.6 s, against 6.5 ms or 8.4 ms; with the check, 0.45 ms or 2.3 ms, whatever the box keeps. No honest server serves one, and age reads every file the check passes, grease included | read 2026-10-22, age v1.3.2's source; measured 2026-10-22 |
@@ -462,7 +462,7 @@ None was a flaw in the layout: each was a verifier that read an object different
 | Proof of work at registration: a lever a server may add, which v1 does not carry | Tor's onion services add theirs under load, publishing seed, effort and expiry first | Tor's `hspow-spec`, v1-equix, read 2026-10-14; §11.5 |
 | https only, but for a server on the client's own machine by loopback address (`127.0.0.0/8`, `[::1]`); no flag allows more (§11.1) | RFC 6750 §5.3: bearer tokens over TLS "or equivalent transport security", and a pass is one for its minutes. Secure Contexts takes the loopback ranges as "Potentially Trustworthy", and `localhost` only where the agent resolves it to loopback itself; RFC 8252 §8.3 calls `localhost` "NOT RECOMMENDED" beside the literal, so the name is not taken | read 2026-10-18: [RFC 6750](https://www.rfc-editor.org/rfc/rfc6750.txt), [Secure Contexts](https://w3c.github.io/webappsec-secure-contexts/) § 3.1, [RFC 8252](https://www.rfc-editor.org/rfc/rfc8252.txt) |
 | No redirect is followed: a `3xx` is not the API's answer (§11.1) | curl follows none without `-L` (the script passes `-q`, so no `.curlrc` adds one), and with it sends credentials only to the first host; Go's `http.Client` follows 10 and keeps `Authorization` for the same host or a subdomain, any scheme or port (`shouldCopyHeaderOnRedirect`). **Where ours differs:** none, even same-origin, since the API redirects nowhere and a redirect could carry a pass or a lookup's address elsewhere | read 2026-10-18: curl 8.18.0's man page (`-q`, 2026-10-20); Go 1.27.2's `net/http/client.go` |
-| A box joins an account with an adopt key its server makes, `iga1_` plus base64url, limited in uses and time, read on stdin and spent at `PUT …/account` (§11.16) | **Tailscale's auth keys** join a device to a network, one-off or reusable, expiring; **GitHub's token formats** prefix a secret (three letters and an underscore, outside base64) for secret scanning. **Where ours differs:** the key joins an existing box and proves nothing after; every later call is the box's pass (§8). How a server keeps it: the keyed-hash row (Encryption and signing) | read 2026-10-21: tailscale.com/docs/features/access-control/auth-keys; github.blog, "Behind GitHub's new authentication token formats" (2021-04-05); §11.16 |
+| A box joins an account with an adopt key its server makes, `dra1_` plus base64url, limited in uses and time, read on stdin and spent at `PUT …/account` (§11.16) | **Tailscale's auth keys** join a device to a network, one-off or reusable, expiring; **GitHub's token formats** prefix a secret (three letters and an underscore, outside base64) for secret scanning. **Where ours differs:** the key joins an existing box and proves nothing after; every later call is the box's pass (§8). How a server keeps it: the keyed-hash row (Encryption and signing) | read 2026-10-21: tailscale.com/docs/features/access-control/auth-keys; github.blog, "Behind GitHub's new authentication token formats" (2021-04-05); §11.16 |
 | A public test box at a published address answers every message it can verify with a signed report and the body | **RFC 862**'s echo service; **Amazon SES's mailbox simulator**, whose `ooto@simulator.amazonses.com` sends an automatic response, though not to mail from outside sources. **Where ours differs:** it answers anyone, its address the one published on purpose (§15.9), and only mail that passes every check, since an answer to a refused message could go to any address. Its operator reads what it is sent | read 2026-10-21: [RFC 862](https://www.rfc-editor.org/rfc/rfc862); the SES Developer Guide, "Send an email from the console" |
 
 **Limits**
@@ -499,13 +499,13 @@ None was a flaw in the layout: each was a verifier that read an object different
 
 ## 1. A store write has three outcomes
 
-**Ours** (irongall-server's `ARCHITECTURE.md` § The store): each backend write is applied, refused as the store stated, or unknown, which may have applied, read by one function; a count reserved for it is given back only on a stated refusal.
+**Ours** (dromas-server's `ARCHITECTURE.md` § The store): each backend write is applied, refused as the store stated, or unknown, which may have applied, read by one function; a count reserved for it is given back only on a stated refusal.
 
 **The precedent** (read 2026-10-24; § Sources). Go's `database/sql/driver`: "ErrBadConn should NOT be returned if there's a possibility that the database server might have performed the operation." (`driver.go`, Go 1.27.3). The MongoDB Go driver labels a commit of unknown outcome `UnknownTransactionCommitResult`, apart from a failure (`x/mongo/driver/errors.go`, `x/mongo/driver/operation.go` at `v2.9.2`), and `WithTransaction` retries on it (`mongo/session.go`).
 
 ## 2. What the server counts, on a listener of its own
 
-**Ours** (irongall-server's `ARCHITECTURE.md` § Metrics): what the server does and refuses is counted on a listener apart from the API, off unless set, so limits are tuned and attacks seen without logs, which carry no caller's address.
+**Ours** (dromas-server's `ARCHITECTURE.md` § Metrics): what the server does and refuses is counted on a listener apart from the API, off unless set, so limits are tuned and attacks seen without logs, which carry no caller's address.
 
 **The precedent** (read 2026-10-19). Prometheus: "instrument everything", and for a request-serving system, queries, errors and latency (`prometheus/docs`, `docs/practices/instrumentation.md` at `410443d27b`). Let's Encrypt's Boulder serves `client_golang` metrics with the Go and process collectors on a separate listener, none when unset (`cmd/shell.go`, `newStatsRegistry`, at `cf6406dd86`).
 

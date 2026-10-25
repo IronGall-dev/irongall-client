@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // A box says who may write to it (PROTOCOL.md §12.3, §11.14): the senders it

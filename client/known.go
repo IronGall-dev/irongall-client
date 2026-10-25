@@ -11,7 +11,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // ownAt is what this box's server holds of it, as one read shows.
@@ -209,9 +209,9 @@ func (b *Box) notMade() (nm *NotMade, err error) {
 // either case, revoking the address (PROTOCOL.md §12.4).
 func (nm *NotMade) Words() string {
 	head := fmt.Sprintf("at its read of itself at %s, this box's server served a prekey statement in its name, serial %d under certificate %d, that this box did not make", nm.At, nm.Serial, nm.CertificateSerial)
-	tail := "recv renews nothing above it. irongall revocation publish, with the address in full, ends the address for good, and its correspondents need a new one; irongall prekey renew renews above the statement instead, for an owner who knows whose it is. The box's next read of itself that serves its own clears this"
+	tail := "recv renews nothing above it. dromas revocation publish, with the address in full, ends the address for good, and its correspondents need a new one; dromas prekey renew renews above the statement instead, for an owner who knows whose it is. The box's next read of itself that serves its own clears this"
 	if nm.OwnCertificate {
-		return head + ", under this box's own certificate: whoever made it holds this box's working key, so they copied this box's directory, which holds its identity too. Revoke the address, unless you know the identity was not copied, when irongall cert revoke-earlier ends every certificate before a new one instead. " + tail
+		return head + ", under this box's own certificate: whoever made it holds this box's working key, so they copied this box's directory, which holds its identity too. Revoke the address, unless you know the identity was not copied, when dromas cert revoke-earlier ends every certificate before a new one instead. " + tail
 	}
 	return head + ", under a certificate this box did not make either: this box's identity certified someone else's working key. Unless it is the owner's own, from the machine this box was restored from, the identity is in other hands, and only revoking the address ends that: whoever holds the identity makes a later certificate as easily as this box. " + tail
 }

@@ -81,7 +81,7 @@ func TestCertificateRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	msg, ns := []byte("hello irongall\n"), MessageNamespace(b.id.Address())
+	msg, ns := []byte("hello dromas\n"), MessageNamespace(b.id.Address())
 	sig, err := Sign(signer, msg, ns)
 	if err != nil {
 		t.Fatal(err)
@@ -96,7 +96,7 @@ func TestCertificateRoundTrip(t *testing.T) {
 
 	// The signature holds for that message, that namespace and that identity only.
 	other := newCertBox(t)
-	if _, err := VerifyCertified(b.id, []byte("hello irongal1\n"), sig, ns, now); err == nil {
+	if _, err := VerifyCertified(b.id, []byte("hello droma5\n"), sig, ns, now); err == nil {
 		t.Error("verified an altered message")
 	}
 	if _, err := VerifyCertified(b.id, msg, sig, PrekeyNamespace(b.id.Address()), now); err == nil {
@@ -169,12 +169,12 @@ func TestCertificateRules(t *testing.T) {
 		{name: "the address in capitals", change: func(c *ssh.Certificate) { c.ValidPrincipals = []string{strings.ToUpper(b.id.Address().String())} }, want: ErrCertificate},
 		{name: "an extension OpenSSH defines", change: func(c *ssh.Certificate) { c.Extensions = map[string]string{"permit-pty": ""} }},
 		{name: "an extension nobody defines, with a value", change: func(c *ssh.Certificate) {
-			c.Extensions = map[string]string{"nobody-defines@irongall.invalid": "a value", "permit-pty": ""}
+			c.Extensions = map[string]string{"nobody-defines@dromas.invalid": "a value", "permit-pty": ""}
 		}},
 		{name: "reserved bytes", change: func(c *ssh.Certificate) { c.Reserved = []byte("not read") }},
 		{name: "a critical option", change: func(c *ssh.Certificate) { c.CriticalOptions = map[string]string{"force-command": "/bin/true"} }, want: ErrCertificate},
 		{name: "source-address, which the library leaves to its caller", change: func(c *ssh.Certificate) { c.CriticalOptions = map[string]string{"source-address": "127.0.0.1/32"} }, want: ErrCertificate},
-		{name: "a critical option nobody defines", change: func(c *ssh.Certificate) { c.CriticalOptions = map[string]string{"nobody-defines@irongall.invalid": ""} }, want: ErrCertificate},
+		{name: "a critical option nobody defines", change: func(c *ssh.Certificate) { c.CriticalOptions = map[string]string{"nobody-defines@dromas.invalid": ""} }, want: ErrCertificate},
 		{name: "signed by another key", signer: other.identity, want: ErrCertificate},
 		{name: "the identity key as the working key", change: func(c *ssh.Certificate) { c.Key = b.identity.PublicKey() }, want: ErrCertificate},
 		{name: "a P-256 working key", change: func(c *ssh.Certificate) { c.Key = p256Key }, want: ErrCertificate},
@@ -278,7 +278,7 @@ func TestCertificateAgainstSSHKeygen(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := id.Address().String()
-	msg, ns := []byte("hello irongall\n"), MessageNamespace(id.Address())
+	msg, ns := []byte("hello dromas\n"), MessageNamespace(id.Address())
 	now := time.Now()
 
 	// ssh-keygen's certificate and signature, checked here.

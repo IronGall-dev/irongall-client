@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regenerates the irongall v1 test vectors with stock tools only: bash, od, base64, fold,
+# Regenerates the dromas v1 test vectors with stock tools only: bash, od, base64, fold,
 # sha256sum and ssh-keygen, plus age >= 1.3 for the two ciphertexts.
 # Everything is deterministic (Ed25519 signatures are), except what is made once and kept:
 # each certificate (ssh-keygen puts a random nonce in one, and an ECDSA signature differs each
@@ -73,9 +73,9 @@ p256_wire() { printf '%s' "$(str "$(asc ecdsa-sha2-nistp256)")$(str "$(asc "${2:
 # signed number, so one whose first bit is set takes a leading 00.
 openssh_p256_key() { local d=$1; [[ $d =~ ^[89a-f] ]] && d=00$d; keyfile "$(p256_wire "04$2")" "$(str "$d")" "$3"; } # <scalar hex> <point hex> <file>
 # An identity document for a raw 32-byte Ed25519 key in hex, valid or not.
-identity_doc() { printf 'irongall-v1\nssh-ed25519 %s\n' "$(bin "$(str "$(asc ssh-ed25519)")$(str "$1")" | b64)"; }
+identity_doc() { printf 'dromas-v1\nssh-ed25519 %s\n' "$(bin "$(str "$(asc ssh-ed25519)")$(str "$1")" | b64)"; }
 # An identity document for a P-256 point in hex, valid or not: <the point, hex> [curve name].
-p256_doc() { printf 'irongall-v1\necdsa-sha2-nistp256 %s\n' "$(bin "$(p256_wire "$@")" | b64)"; }
+p256_doc() { printf 'dromas-v1\necdsa-sha2-nistp256 %s\n' "$(bin "$(p256_wire "$@")" | b64)"; }
 
 KEYS=$(mktemp -d) # private keys live only here, and only while this runs
 cleanup() { local k; for k in a b c a-work b-work a-work-2 c-work; do rm -f "$KEYS/$k" "$KEYS/$k.pub" "$KEYS/$k-cert.pub"; done; rmdir "$KEYS"; }
@@ -90,7 +90,7 @@ for box in a b a-work b-work a-work-2 c-work; do
   [ "$(cut -d' ' -f2 "$KEYS/$box.pub")" = "$(bin "$(str "$(asc ssh-ed25519)")$(str "$pub")" | b64)" ] || { echo "the $box key file does not hold the RFC 8032 key" >&2; exit 1; }
 done
 for box in a b; do
-  printf 'irongall-v1\n%s\n' "$(cut -d' ' -f1,2 "$KEYS/$box.pub")" > "$box/identity.doc"
+  printf 'dromas-v1\n%s\n' "$(cut -d' ' -f1,2 "$KEYS/$box.pub")" > "$box/identity.doc"
   sha256sum < "$box/identity.doc" | cut -c1-64 > "$box/address"
 done
 A=$(cat a/address); B=$(cat b/address)
@@ -100,7 +100,7 @@ A=$(cat a/address); B=$(cat b/address)
 openssh_p256_key "$scalar" "$POINT" "$KEYS/c"
 ssh-keygen -y -f "$KEYS/c" > "$KEYS/c.pub"
 [ "$(cut -d' ' -f2 "$KEYS/c.pub")" = "$(bin "$(p256_wire "04$POINT")" | b64)" ] || { echo "the c key file does not hold the RFC 6979 key" >&2; exit 1; }
-printf 'irongall-v1\n%s\n' "$(cut -d' ' -f1,2 "$KEYS/c.pub")" > c/identity.doc
+printf 'dromas-v1\n%s\n' "$(cut -d' ' -f1,2 "$KEYS/c.pub")" > c/identity.doc
 sha256sum < c/identity.doc | cut -c1-64 > c/address
 C=$(cat c/address)
 
@@ -109,10 +109,10 @@ cert() { # <kept file> <signing key> <certified key> <ssh-keygen options…>
   local keep=$1 ca=$2 key=$3; shift 3
   [ -e "$keep" ] || { ssh-keygen -q -s "$KEYS/$ca" "$@" "$KEYS/$key.pub" && cut -d' ' -f1,2 "$KEYS/$key-cert.pub" > "$keep"; }
 }
-good() { echo -I irongall-cert-v1 -n "$1" -z "${2:-1}" -V "${3:-$V_OK}" -O clear; } # <address> [serial] [validity] → the options of a certificate every check passes
+good() { echo -I dromas-cert-v1 -n "$1" -z "${2:-1}" -V "${3:-$V_OK}" -O clear; } # <address> [serial] [validity] → the options of a certificate every check passes
 sign() { ssh-keygen -q -Y sign -n "$2" -f "$KEYS/$1" "${@:3}"; } # <key> <namespace> [-O …] < message > signature, by a bare key: an identity's, for a revocation
 under() { cp "$2" "$KEYS/$1-cert.pub"; ssh-keygen -q -Y sign -n "$3" -f "$KEYS/$1-cert.pub" "${@:4}"; } # <working key> <certificate> <namespace> [-O …] < message > signature under that certificate
-statement() { printf 'irongall-prekey-v1\n%s\n%s\n%s\n%s\n' "$@"; } # <address> <serial> <recipient> <not_after>
+statement() { printf 'dromas-prekey-v1\n%s\n%s\n%s\n%s\n' "$@"; } # <address> <serial> <recipient> <not_after>
 
 # Each box's working key, certified by its identity.
 cert a/work-cert.pub a a-work $(good "$A")
@@ -124,43 +124,43 @@ for k in b-1.pq c-1.classic; do [ "$(age-keygen -y "input/$k.key")" = "$(cat "in
 statement "$A" 1 "$(cat input/a-1.pq)" "$NOT_AFTER" > a/prekey-1.txt
 statement "$A" 2 "$(cat input/a-2.classic)" "$NOT_AFTER" > a/prekey-2.txt
 statement "$B" 1 "$(cat input/b-1.pq)" "$NOT_AFTER" > b/prekey-1.txt
-for f in a/prekey-1 a/prekey-2; do under a-work a/work-cert.pub "irongall-prekey-v1:$A" < "$f.txt" > "$f.txt.sig"; done
-under a-work a/work-cert.pub "irongall-prekey-v1:$A" -O hashalg=sha256 < a/prekey-1.txt > a/prekey-1.txt.sha256.sig
-under b-work b/work-cert.pub "irongall-prekey-v1:$B" < b/prekey-1.txt > b/prekey-1.txt.sig
+for f in a/prekey-1 a/prekey-2; do under a-work a/work-cert.pub "dromas-prekey-v1:$A" < "$f.txt" > "$f.txt.sig"; done
+under a-work a/work-cert.pub "dromas-prekey-v1:$A" -O hashalg=sha256 < a/prekey-1.txt > a/prekey-1.txt.sha256.sig
+under b-work b/work-cert.pub "dromas-prekey-v1:$B" < b/prekey-1.txt > b/prekey-1.txt.sig
 statement "$C" 1 "$(cat input/c-1.classic)" "$NOT_AFTER" > c/prekey-1.txt
-under c-work c/work-cert.pub "irongall-prekey-v1:$C" < c/prekey-1.txt > c/prekey-1.txt.sig
-printf 'irongall-revoke-v1\n%s\n' "$A" > a/revoke.txt
-sign a "irongall-revoke-v1:$A" < a/revoke.txt > a/revoke.sig
+under c-work c/work-cert.pub "dromas-prekey-v1:$C" < c/prekey-1.txt > c/prekey-1.txt.sig
+printf 'dromas-revoke-v1\n%s\n' "$A" > a/revoke.txt
+sign a "dromas-revoke-v1:$A" < a/revoke.txt > a/revoke.sig
 
 # Revocations. A's again with the other hash SSHSIG allows, and C's, by a P-256 identity: an ECDSA
 # signature differs each time it is made, so C's is made once and kept. Then signatures every
 # implementation must refuse as a revocation of box A: by a working key under A's own certificate, by
 # another box's identity, in another namespace, and A's signature over the revocation of another box.
 mkdir -p revoke
-sign a "irongall-revoke-v1:$A" -O hashalg=sha256 < a/revoke.txt > a/revoke.sha256.sig
-printf 'irongall-revoke-v1\n%s\n' "$C" > c/revoke.txt
-[ -e c/revoke.sig ] || sign c "irongall-revoke-v1:$C" < c/revoke.txt > c/revoke.sig
-under a-work a/work-cert.pub "irongall-revoke-v1:$A" < a/revoke.txt > revoke/bad-by-a-working-key.sig
-sign b "irongall-revoke-v1:$A" < a/revoke.txt > revoke/bad-by-another-identity.sig
-sign a "irongall-prekey-v1:$A" < a/revoke.txt > revoke/bad-another-namespace.sig
+sign a "dromas-revoke-v1:$A" -O hashalg=sha256 < a/revoke.txt > a/revoke.sha256.sig
+printf 'dromas-revoke-v1\n%s\n' "$C" > c/revoke.txt
+[ -e c/revoke.sig ] || sign c "dromas-revoke-v1:$C" < c/revoke.txt > c/revoke.sig
+under a-work a/work-cert.pub "dromas-revoke-v1:$A" < a/revoke.txt > revoke/bad-by-a-working-key.sig
+sign b "dromas-revoke-v1:$A" < a/revoke.txt > revoke/bad-by-another-identity.sig
+sign a "dromas-prekey-v1:$A" < a/revoke.txt > revoke/bad-another-namespace.sig
 X=$(blob a/revoke.sig); armor "$(plusl "$X" $((${#X} - 64)))" > revoke/bad-s-plus-l.sig      # A's own, with L added to its S
-printf 'irongall-revoke-v1\n%s\n' "$B" | sign a "irongall-revoke-v1:$B" > revoke/bad-of-another-box.sig
+printf 'dromas-revoke-v1\n%s\n' "$B" | sign a "dromas-revoke-v1:$B" > revoke/bad-of-another-box.sig
 
 # Revocations of box A's certificates (PROTOCOL.md §10.2): the tag, the address and the serial every certificate up
 # to and including which is revoked, each on a line, signed by A's identity itself in A's namespace for them. Then what
 # is not one. Each bad-* is signed by A's identity in that namespace, so only what its name says is wrong with it, but
 # for the first two.
 mkdir -p revoked
-through() { printf 'irongall-revoke-certs-v1\n%s\n%s\n' "$2" "$3" > "revoked/$1.txt"; }   # <name> <address> <serial>
-thsig() { sign a "irongall-revoke-certs-v1:$A" < "revoked/$1.txt" > "revoked/$1.sig"; }
+through() { printf 'dromas-revoke-certs-v1\n%s\n%s\n' "$2" "$3" > "revoked/$1.txt"; }   # <name> <address> <serial>
+thsig() { sign a "dromas-revoke-certs-v1:$A" < "revoked/$1.txt" > "revoked/$1.sig"; }
 through ok-through-4 "$A" 4; thsig ok-through-4
 through ok-through-the-highest "$A" 9007199254740991; thsig ok-through-the-highest      # 2^53 - 1, the highest serial
-sign a "irongall-revoke-certs-v1:$A" -O hashalg=sha256 < revoked/ok-through-4.txt > revoked/ok-through-4.sha256.sig
-cp revoked/ok-through-4.txt revoked/bad-by-a-working-key.txt; under a-work a/work-cert.pub "irongall-revoke-certs-v1:$A" < revoked/bad-by-a-working-key.txt > revoked/bad-by-a-working-key.sig
-cp revoked/ok-through-4.txt revoked/bad-another-namespace.txt; sign a "irongall-revoke-v1:$A" < revoked/bad-another-namespace.txt > revoked/bad-another-namespace.sig
+sign a "dromas-revoke-certs-v1:$A" -O hashalg=sha256 < revoked/ok-through-4.txt > revoked/ok-through-4.sha256.sig
+cp revoked/ok-through-4.txt revoked/bad-by-a-working-key.txt; under a-work a/work-cert.pub "dromas-revoke-certs-v1:$A" < revoked/bad-by-a-working-key.txt > revoked/bad-by-a-working-key.sig
+cp revoked/ok-through-4.txt revoked/bad-another-namespace.txt; sign a "dromas-revoke-v1:$A" < revoked/bad-another-namespace.txt > revoked/bad-another-namespace.sig
 through bad-another-address "$B" 4; thsig bad-another-address
 cp revoked/ok-through-4.txt revoked/bad-s-plus-l.txt; X=$(blob revoked/ok-through-4.sig); armor "$(plusl "$X" $((${#X} - 64)))" > revoked/bad-s-plus-l.sig      # a good one, its signature with L added to S
-printf 'irongall-revoke-certs-v1\n%s\n' "$A" > revoked/bad-no-serial.txt; thsig bad-no-serial
+printf 'dromas-revoke-certs-v1\n%s\n' "$A" > revoked/bad-no-serial.txt; thsig bad-no-serial
 through bad-serial-zero "$A" 0; thsig bad-serial-zero
 through bad-serial-leading-zero "$A" 04; thsig bad-serial-leading-zero
 through bad-serial-19-digits "$A" 1000000000000000000; thsig bad-serial-19-digits
@@ -168,19 +168,19 @@ through bad-serial-above-2-53 "$A" 9007199254740992; thsig bad-serial-above-2-53
 through bad-a-range "$A" 1-4; thsig bad-a-range
 through bad-a-sign "$A" +4; thsig bad-a-sign
 through bad-trailing-space "$A" "4 "; thsig bad-trailing-space
-printf 'irongall-revoke-certs-v1\n%s\n4\n6\n' "$A" > revoked/bad-a-second-serial.txt; thsig bad-a-second-serial
-printf 'irongall-revoke-certs-v1\n%s\n4\n\n' "$A" > revoked/bad-blank-line.txt; thsig bad-blank-line
-printf 'irongall-revoked-certs-v1\n%s\n1\n1-4\n' "$A" > revoked/bad-a-list.txt; thsig bad-a-list      # the list a certificate was revoked by until 2026-10-14
-printf 'irongall-revoke-certs-v1\r\n%s\r\n4\r\n' "$A" > revoked/bad-crlf.txt; thsig bad-crlf
-printf 'irongall-revoke-certs-v1\n%s\n4' "$A" > revoked/bad-no-final-newline.txt; thsig bad-no-final-newline
-printf 'irongall-revoke-certs-v2\n%s\n4\n' "$A" > revoked/bad-another-tag.txt; thsig bad-another-tag
+printf 'dromas-revoke-certs-v1\n%s\n4\n6\n' "$A" > revoked/bad-a-second-serial.txt; thsig bad-a-second-serial
+printf 'dromas-revoke-certs-v1\n%s\n4\n\n' "$A" > revoked/bad-blank-line.txt; thsig bad-blank-line
+printf 'dromas-revoked-certs-v1\n%s\n1\n1-4\n' "$A" > revoked/bad-a-list.txt; thsig bad-a-list      # the list a certificate was revoked by until 2026-10-14
+printf 'dromas-revoke-certs-v1\r\n%s\r\n4\r\n' "$A" > revoked/bad-crlf.txt; thsig bad-crlf
+printf 'dromas-revoke-certs-v1\n%s\n4' "$A" > revoked/bad-no-final-newline.txt; thsig bad-no-final-newline
+printf 'dromas-revoke-certs-v2\n%s\n4\n' "$A" > revoked/bad-another-tag.txt; thsig bad-another-tag
 through bad-address-in-uppercase "$(tr a-f A-F <<< "$A")" 4; thsig bad-address-in-uppercase
-printf 'irongall-revoke-certs-v1\n%s\n4\0\n' "$A" > revoked/bad-nul.txt; thsig bad-nul      # a NUL, which a shell variable drops: a reader that tests the variable alone takes it
+printf 'dromas-revoke-certs-v1\n%s\n4\0\n' "$A" > revoked/bad-nul.txt; thsig bad-nul      # a NUL, which a shell variable drops: a reader that tests the variable alone takes it
 
-# A pass of box A for a server it calls irongall.example, good for ten minutes from NOW, and the header it travels in.
-printf 'irongall-pass-v1\n%s\nirongall.example\n2026-10-10T00:10:00Z\n' "$A" > a/pass.txt
-under a-work a/work-cert.pub "irongall-pass-v1:$A" < a/pass.txt > a/pass.sig
-printf 'irongall-pass address="%s", not_after="2026-10-10T00:10:00Z", signature="%s"\n' "$A" "$(b64 < a/pass.sig)" > a/pass.authorization
+# A pass of box A for a server it calls dromas.example, good for ten minutes from NOW, and the header it travels in.
+printf 'dromas-pass-v1\n%s\ndromas.example\n2026-10-10T00:10:00Z\n' "$A" > a/pass.txt
+under a-work a/work-cert.pub "dromas-pass-v1:$A" < a/pass.txt > a/pass.sig
+printf 'dromas-pass address="%s", not_after="2026-10-10T00:10:00Z", signature="%s"\n' "$A" "$(b64 < a/pass.sig)" > a/pass.authorization
 
 # That pass in the forms a server reads (PROTOCOL.md §8, as RFC 9110 §11 lets a recipient): each file is an
 # Authorization value with no line feed after it. ok-* is read as the same three values as a/pass.authorization;
@@ -188,62 +188,62 @@ printf 'irongall-pass address="%s", not_after="2026-10-10T00:10:00Z", signature=
 mkdir -p pass
 PT=2026-10-10T00:10:00Z PS=$(b64 < a/pass.sig)
 pv() { local name=$1; shift; printf "$@" > "pass/$name.authorization"; } # <name> <printf format…>: \\ in the format is one backslash
-pv ok-as-a-sender-writes-it 'irongall-pass address="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
-pv ok-the-scheme-in-capitals 'IRONGALL-PASS address="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
-pv ok-the-scheme-in-mixed-case 'IronGall-Pass address="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
-pv ok-the-names-in-capitals 'irongall-pass ADDRESS="%s", Not_After="%s", SIGNATURE="%s"' "$A" "$PT" "$PS"
-pv ok-another-order 'irongall-pass signature="%s", address="%s", not_after="%s"' "$PS" "$A" "$PT"
-pv ok-no-space-after-a-comma 'irongall-pass address="%s",not_after="%s",signature="%s"' "$A" "$PT" "$PS"
-pv ok-spaces-around-commas-and-equals 'irongall-pass address = "%s" , not_after= "%s" ,signature ="%s"' "$A" "$PT" "$PS"
-pv ok-tabs-around-commas-and-equals 'irongall-pass address\t=\t"%s"\t,\tnot_after="%s",\tsignature="%s"' "$A" "$PT" "$PS"
-pv ok-spaces-after-the-scheme 'irongall-pass   address="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
-pv ok-the-address-as-a-token 'irongall-pass address=%s, not_after="%s", signature="%s"' "$A" "$PT" "$PS"
-pv ok-empty-list-elements 'irongall-pass ,address="%s",, not_after="%s" , ,signature="%s",' "$A" "$PT" "$PS"
-pv ok-a-tab-before-an-empty-element 'irongall-pass \t,address="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS" # 1*SP, then OWS "," (RFC 9110 §11.4, §5.6.1.2)
-pv bad-a-tab-after-the-scheme 'irongall-pass\taddress="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
-pv bad-the-scheme-with-a-long-s 'irongall-pa\xc5\xbf\xc5\xbf address="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS" # a token is ASCII: U+017F folds to s only by Unicode's rules (RFC 9110 §5.6.2)
-pv bad-another-scheme 'irongall-pass-v1 address="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
-pv bad-no-parameters 'irongall-pass'
-pv bad-a-token68 'irongall-pass %s' "$PS"
-pv bad-a-parameter-twice 'irongall-pass address="%s", address="%s", not_after="%s", signature="%s"' "$A" "$A" "$PT" "$PS"
-pv bad-a-parameter-twice-in-another-case 'irongall-pass address="%s", ADDRESS="%s", not_after="%s", signature="%s"' "$A" "$A" "$PT" "$PS"
-pv bad-a-parameter-it-has-not 'irongall-pass address="%s", not_after="%s", signature="%s", server="irongall.example"' "$A" "$PT" "$PS"
-pv bad-a-parameter-missing 'irongall-pass address="%s", not_after="%s"' "$A" "$PT"
-pv bad-a-backslash-in-a-quoted-value 'irongall-pass address="\\%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS" # a quoted-pair, which RFC 9110 reads as the character after it
-pv bad-a-quoted-value-not-closed 'irongall-pass address="%s", not_after="%s", signature="%s' "$A" "$PT" "$PS"
-pv bad-not-after-as-a-token 'irongall-pass address="%s", not_after=%s, signature="%s"' "$A" "$PT" "$PS" # ":" is not a token's
-pv bad-a-space-in-the-signature 'irongall-pass address="%s", not_after="%s", signature="%s %s"' "$A" "$PT" "${PS:0:8}" "${PS:8}"
-pv bad-the-address-in-capitals 'irongall-pass address="%s", not_after="%s", signature="%s"' "$(tr a-f A-F <<< "$A")" "$PT" "$PS"
-pv bad-a-semicolon-between-parameters 'irongall-pass address="%s"; not_after="%s"; signature="%s"' "$A" "$PT" "$PS"
-pv bad-a-line-feed-at-the-end 'irongall-pass address="%s", not_after="%s", signature="%s"\n' "$A" "$PT" "$PS"
-pv bad-a-quoted-name 'irongall-pass "address"="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
-pv bad-no-equals-sign 'irongall-pass address "%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
-pv bad-a-value-neither-a-token-nor-quoted 'irongall-pass address=@%s, not_after="%s", signature="%s"' "$A" "$PT" "$PS"
-pv bad-a-control-character-in-a-quoted-value 'irongall-pass address="\001%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
-pv bad-an-address-of-63-hex 'irongall-pass address="%s", not_after="%s", signature="%s"' "${A:0:63}" "$PT" "$PS"
-pv bad-not-after-not-a-time 'irongall-pass address="%s", not_after="%s", signature="%s"' "$A" 2026-13-10T00:10:00Z "$PS" # month 13, quoted, so it is read to its form
-pv bad-the-signature-with-padding-bits-set 'irongall-pass address="%s", not_after="%s", signature="%sLR=="' "$A" "$PT" "${PS:0:${#PS}-4}" # the pattern's, and no writer's: "LQ==" is that byte (RFC 4648 §3.5)
+pv ok-as-a-sender-writes-it 'dromas-pass address="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
+pv ok-the-scheme-in-capitals 'DROMAS-PASS address="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
+pv ok-the-scheme-in-mixed-case 'Dromas-Pass address="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
+pv ok-the-names-in-capitals 'dromas-pass ADDRESS="%s", Not_After="%s", SIGNATURE="%s"' "$A" "$PT" "$PS"
+pv ok-another-order 'dromas-pass signature="%s", address="%s", not_after="%s"' "$PS" "$A" "$PT"
+pv ok-no-space-after-a-comma 'dromas-pass address="%s",not_after="%s",signature="%s"' "$A" "$PT" "$PS"
+pv ok-spaces-around-commas-and-equals 'dromas-pass address = "%s" , not_after= "%s" ,signature ="%s"' "$A" "$PT" "$PS"
+pv ok-tabs-around-commas-and-equals 'dromas-pass address\t=\t"%s"\t,\tnot_after="%s",\tsignature="%s"' "$A" "$PT" "$PS"
+pv ok-spaces-after-the-scheme 'dromas-pass   address="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
+pv ok-the-address-as-a-token 'dromas-pass address=%s, not_after="%s", signature="%s"' "$A" "$PT" "$PS"
+pv ok-empty-list-elements 'dromas-pass ,address="%s",, not_after="%s" , ,signature="%s",' "$A" "$PT" "$PS"
+pv ok-a-tab-before-an-empty-element 'dromas-pass \t,address="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS" # 1*SP, then OWS "," (RFC 9110 §11.4, §5.6.1.2)
+pv bad-a-tab-after-the-scheme 'dromas-pass\taddress="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
+pv bad-the-scheme-with-a-long-s 'dromas-pa\xc5\xbf\xc5\xbf address="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS" # a token is ASCII: U+017F folds to s only by Unicode's rules (RFC 9110 §5.6.2)
+pv bad-another-scheme 'dromas-pass-v1 address="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
+pv bad-no-parameters 'dromas-pass'
+pv bad-a-token68 'dromas-pass %s' "$PS"
+pv bad-a-parameter-twice 'dromas-pass address="%s", address="%s", not_after="%s", signature="%s"' "$A" "$A" "$PT" "$PS"
+pv bad-a-parameter-twice-in-another-case 'dromas-pass address="%s", ADDRESS="%s", not_after="%s", signature="%s"' "$A" "$A" "$PT" "$PS"
+pv bad-a-parameter-it-has-not 'dromas-pass address="%s", not_after="%s", signature="%s", server="dromas.example"' "$A" "$PT" "$PS"
+pv bad-a-parameter-missing 'dromas-pass address="%s", not_after="%s"' "$A" "$PT"
+pv bad-a-backslash-in-a-quoted-value 'dromas-pass address="\\%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS" # a quoted-pair, which RFC 9110 reads as the character after it
+pv bad-a-quoted-value-not-closed 'dromas-pass address="%s", not_after="%s", signature="%s' "$A" "$PT" "$PS"
+pv bad-not-after-as-a-token 'dromas-pass address="%s", not_after=%s, signature="%s"' "$A" "$PT" "$PS" # ":" is not a token's
+pv bad-a-space-in-the-signature 'dromas-pass address="%s", not_after="%s", signature="%s %s"' "$A" "$PT" "${PS:0:8}" "${PS:8}"
+pv bad-the-address-in-capitals 'dromas-pass address="%s", not_after="%s", signature="%s"' "$(tr a-f A-F <<< "$A")" "$PT" "$PS"
+pv bad-a-semicolon-between-parameters 'dromas-pass address="%s"; not_after="%s"; signature="%s"' "$A" "$PT" "$PS"
+pv bad-a-line-feed-at-the-end 'dromas-pass address="%s", not_after="%s", signature="%s"\n' "$A" "$PT" "$PS"
+pv bad-a-quoted-name 'dromas-pass "address"="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
+pv bad-no-equals-sign 'dromas-pass address "%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
+pv bad-a-value-neither-a-token-nor-quoted 'dromas-pass address=@%s, not_after="%s", signature="%s"' "$A" "$PT" "$PS"
+pv bad-a-control-character-in-a-quoted-value 'dromas-pass address="\001%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
+pv bad-an-address-of-63-hex 'dromas-pass address="%s", not_after="%s", signature="%s"' "${A:0:63}" "$PT" "$PS"
+pv bad-not-after-not-a-time 'dromas-pass address="%s", not_after="%s", signature="%s"' "$A" 2026-13-10T00:10:00Z "$PS" # month 13, quoted, so it is read to its form
+pv bad-the-signature-with-padding-bits-set 'dromas-pass address="%s", not_after="%s", signature="%sLR=="' "$A" "$PT" "${PS:0:${#PS}-4}" # the pattern's, and no writer's: "LQ==" is that byte (RFC 4648 §3.5)
 # The longest a value may be (§8: the form a client writes with a signature of the most any identity key type
 # allows, 4,096 bytes), made so with empty list elements, one for each byte that signature's base64 is longer than
 # A's, and a byte longer.
 printf -v PC '%*s' $(( (4096 + 2) / 3 * 4 - ${#PS} )) ''
-pv ok-as-long-as-a-pass-can-be 'irongall-pass address="%s", not_after="%s", signature="%s"%s' "$A" "$PT" "$PS" "${PC// /,}"
-pv bad-a-byte-longer-than-a-pass-can-be 'irongall-pass address="%s", not_after="%s", signature="%s"%s,' "$A" "$PT" "$PS" "${PC// /,}"
+pv ok-as-long-as-a-pass-can-be 'dromas-pass address="%s", not_after="%s", signature="%s"%s' "$A" "$PT" "$PS" "${PC// /,}"
+pv bad-a-byte-longer-than-a-pass-can-be 'dromas-pass address="%s", not_after="%s", signature="%s"%s,' "$A" "$PT" "$PS" "${PC// /,}"
 
 # Certificates every implementation must refuse for box A at ./now, each with a signature made under
 # it over a/prekey-1.txt in A's prekey namespace: the signature itself is good, the certificate is not.
 badcert() { # <name> <signing key> <certified key> <ssh-keygen options…>
   local name=$1 key=$3
   cert "cert/$name.pub" "${@:2}"
-  under "$key" "cert/$name.pub" "irongall-prekey-v1:$A" < a/prekey-1.txt > "cert/$name.sig"
+  under "$key" "cert/$name.pub" "dromas-prekey-v1:$A" < a/prekey-1.txt > "cert/$name.sig"
 }
 badcert bad-critical-option a a-work $(good "$A") -O force-command=true
 # Extensions are ignored, each in its one encoding: a name once, in lexical order, and a value nothing or one string that
 # is not empty, as Go's x/crypto/ssh reads them. ssh-keygen writes a name twice when told to, and a value of one empty string.
-badcert bad-extension-twice a a-work $(good "$A") -O extension:nobody-defines@irongall.invalid -O extension:nobody-defines@irongall.invalid
-badcert bad-extension-value-an-empty-string a a-work $(good "$A") -O extension:nobody-defines@irongall.invalid=
-badcert bad-key-id a a-work -I irongall-cert-v2 -n "$A" -z 1 -V "$V_OK" -O clear
-badcert bad-two-principals a a-work -I irongall-cert-v1 -n "$A,$B" -z 1 -V "$V_OK" -O clear
+badcert bad-extension-twice a a-work $(good "$A") -O extension:nobody-defines@dromas.invalid -O extension:nobody-defines@dromas.invalid
+badcert bad-extension-value-an-empty-string a a-work $(good "$A") -O extension:nobody-defines@dromas.invalid=
+badcert bad-key-id a a-work -I dromas-cert-v2 -n "$A" -z 1 -V "$V_OK" -O clear
+badcert bad-two-principals a a-work -I dromas-cert-v1 -n "$A,$B" -z 1 -V "$V_OK" -O clear
 badcert bad-principal-another-box a a-work $(good "$B")
 badcert bad-serial-zero a a-work $(good "$A" 0)
 badcert bad-serial-above-2-53 a a-work $(good "$A" 9007199254740992)
@@ -261,8 +261,8 @@ okcert ok-valid-from-0 a a-work $(good "$A" 1 "always:${V_OK#*:}")      # begins
 # without -O clear, and one nobody defines, with a value, so the slot stays in use (RFC 9170). And one more, made by
 # protocol's TestVectorsReservedField, since ssh-keygen writes the reserved field empty: cert/ok-reserved-field, whose
 # reserved field holds bytes, which a verifier ignores as well.
-okcert ok-extensions a a-work -I irongall-cert-v1 -n "$A" -z 1 -V "$V_OK"
-okcert ok-unknown-extension a a-work $(good "$A") -O extension:nobody-defines@irongall.invalid=not-read
+okcert ok-extensions a a-work -I dromas-cert-v1 -n "$A" -z 1 -V "$V_OK"
+okcert ok-unknown-extension a a-work $(good "$A") -O extension:nobody-defines@dromas.invalid=not-read
 
 # One signature, a/prekey-1.txt.sig, in forms a verifier reads as ssh-keygen -Y verify reads them (OpenSSH's
 # sshsig_dearmor), and in a file of at most 4096 bytes in all (PROTOCOL.md §3.2): ok-* are taken, bad-* refused. Then
@@ -291,10 +291,11 @@ sed '$d' "$S" > sig/bad-no-end-line.sig
 sed '$s/^/ /' "$S" > sig/bad-end-line-indented.sig
 sed '2s/^./!/' "$S" > sig/bad-not-base64.sig
 { head -n 1 "$S"; printf '\0'; tail -n +2 "$S"; } > sig/bad-nul.sig
-t=$(sed -n 'x;$p' "$S"); t=${t%=}; c=${t: -1}; B64=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/; i=${B64%%"$c"*}      # the last base64 line, its one = gone
-[ $(( ${#i} % 4 )) -eq 0 ] || { echo "the last character already has a padding bit set" >&2; exit 1; }
-sed "$(( $(wc -l < "$S") - 1 ))s/$c=\$/${B64:${#i}+1:1}=/" "$S" > sig/bad-padding-bits.sig      # one of the unused bits of the last character set
-sed "$(( $(wc -l < "$S") - 1 ))s/=\$//" "$S" > sig/bad-no-padding.sig
+t=$(sed -n 'x;$p' "$S"); p=${t##*[!=]}; t=${t%"$p"}; c=${t: -1}; B64=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/; i=${B64%%"$c"*}      # the last base64 line: its padding p, one = or two, and the character before it
+# Before one = the last character has 2 unused bits, before two 4: none may be set yet, and setting the lowest sets one of them.
+[ -n "$p" ] && [ $(( ${#i} % (${#p} == 1 ? 4 : 16) )) -eq 0 ] || { echo "the last base64 line has no padding, or its last character already has a padding bit set" >&2; exit 1; }
+sed "$(( $(wc -l < "$S") - 1 ))s/$c$p\$/${B64:${#i}+1:1}$p/" "$S" > sig/bad-padding-bits.sig      # one of the unused bits of the last character set
+sed "$(( $(wc -l < "$S") - 1 ))s/=*\$//" "$S" > sig/bad-no-padding.sig
 armor "$(plusl "$X" $((${#X} - 64)))" > sig/bad-s-plus-l.sig      # the working key's S
 armor "$(plusl "$X" $((28 + 2 * 16#${X:20:8} - 64)))" > sig/bad-certificate-s-plus-l.sig      # the identity's S on the certificate, its last 32 bytes
 armor "${X}00" > sig/bad-trailing-byte-in-the-blob.sig
@@ -338,13 +339,13 @@ done
 
 # Identity documents every implementation must reject, but ok-*, which every one takes.
 GOOD=$(sed -n 2p a/identity.doc)
-printf 'irongall-v1\n%s comment\n' "$GOOD" > identity/comment.doc
-printf 'irongall-v1\r\n%s\r\n' "$GOOD" > identity/crlf.doc
-printf 'irongall-v1\n%s' "$GOOD" > identity/no-final-newline.doc
-printf 'irongall-v1\n%s\n \n' "$GOOD" > identity/padded.doc
-printf 'irongall-v2\n%s\n' "$GOOD" > identity/wrong-tag.doc
-printf 'irongall-v1\nssh-rsa %s\n' "$(cut -d' ' -f2 "$KEYS/a.pub")" > identity/key-type-mismatch.doc
-printf 'irongall-v1\nssh-ed25519 %s\n' "$(bin "$(str "$(asc ssh-ed25519)")00000021$(printf %s "${GOOD#* }" | base64 -d | tail -c 32 | od -An -v -tx1 | tr -d ' \n')" | b64)" > identity/length-field.doc # A's key, its length written 33: no key OpenSSH reads, and its 26th character is not A to P
+printf 'dromas-v1\n%s comment\n' "$GOOD" > identity/comment.doc
+printf 'dromas-v1\r\n%s\r\n' "$GOOD" > identity/crlf.doc
+printf 'dromas-v1\n%s' "$GOOD" > identity/no-final-newline.doc
+printf 'dromas-v1\n%s\n \n' "$GOOD" > identity/padded.doc
+printf 'dromas-v2\n%s\n' "$GOOD" > identity/wrong-tag.doc
+printf 'dromas-v1\nssh-rsa %s\n' "$(cut -d' ' -f2 "$KEYS/a.pub")" > identity/key-type-mismatch.doc
+printf 'dromas-v1\nssh-ed25519 %s\n' "$(bin "$(str "$(asc ssh-ed25519)")00000021$(printf %s "${GOOD#* }" | base64 -d | tail -c 32 | od -An -v -tx1 | tr -d ' \n')" | b64)" > identity/length-field.doc # A's key, its length written 33: no key OpenSSH reads, and its 26th character is not A to P
 identity_doc f0ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f > identity/non-canonical.doc # y = p + 3: a large-order point, encoded non-canonically
 identity_doc 0100000000000000000000000000000000000000000000000000000000000080 > identity/negative-zero.doc
 identity_doc 0100000000000000000000000000000000000000000000000000000000000000 > identity/small-order-1.doc
@@ -357,13 +358,13 @@ identity_doc c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac037a > 
 identity_doc c7176a703d4dd84fba3c0b760d10670f2a2053fa2c39ccc64ec7fd7792ac03fa > identity/small-order-8d.doc
 identity_doc eeffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff7f > identity/small-order-non-canonical.doc # y = p + 1
 identity_doc 0200000000000000000000000000000000000000000000000000000000000000 > identity/off-curve.doc # y = 2: x^2 = 3/(4d + 1) is no square mod p, so no point has it. ssh-keygen reads any 32 bytes as a key
-printf 'irongall-v1\nssh-ed25519 %s\n' "$(bin "$(str "$(asc ssh-ed25519)00")$(str "$(printf %s "${GOOD#* }" | base64 -d | tail -c 32 | od -An -v -tx1 | tr -d ' \n')")" | b64)" > identity/type-name-ending-in-nul.doc # A's key, its type name ending in a NUL: ssh-keygen reads it as A's key and writes it back without the NUL
+printf 'dromas-v1\nssh-ed25519 %s\n' "$(bin "$(str "$(asc ssh-ed25519)00")$(str "$(printf %s "${GOOD#* }" | base64 -d | tail -c 32 | od -An -v -tx1 | tr -d ' \n')")" | b64)" > identity/type-name-ending-in-nul.doc # A's key, its type name ending in a NUL: ssh-keygen reads it as A's key and writes it back without the NUL
 # The same for the P-256 type. With p the field's size and n the group's order: a point is 04, x, y, on the curve, each
 # coordinate below p, and nothing more (PROTOCOL.md §4.1). OpenSSH up to 10.2p1 also refused a coordinate of 128 bits or
 # fewer, or of n - 1 or more, and takes those from 10.3p1, as the protocol does.
 GOOD_C=$(sed -n 2p c/identity.doc); X=${POINT:0:64}; Y=${POINT:64}
 Y5=459243b9aa581806fe913bce99817ade11ca503c64d9a3c533415c083248fbcc # a square root of 5^3 - 3*5 + b mod p: (5, Y5) is on the curve
-printf 'irongall-v1\n%s comment\n' "$GOOD_C" > identity/p256-comment.doc
+printf 'dromas-v1\n%s comment\n' "$GOOD_C" > identity/p256-comment.doc
 p256_doc "0$((2 + (0x${Y: -1} & 1)))$X" > identity/p256-compressed.doc # 02 or 03 by y's last bit, then x: the same key, in the encoding the format does not take
 p256_doc "04$POINT" nistp384 > identity/p256-curve-name-mismatch.doc
 p256_doc "04${POINT}00" > identity/p256-trailing-byte.doc
@@ -372,17 +373,17 @@ p256_doc "04ffffffff00000001000000000000000000000001000000000000000000000004$Y5"
 p256_doc "00" > identity/p256-point-at-infinity.doc # the point at infinity, as SEC1 writes it: one zero byte
 p256_doc "040000000000000000000000000000000000000000000000000000000000000005$Y5" > identity/ok-p256-short-coordinate.doc # x = 5: on the curve, so taken; OpenSSH refused it up to 10.2p1
 p256_doc "04ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632554484f0c0fda434ef0a808458914f328715d7a545e198ac7eee31dffe861b5d23f" > identity/ok-p256-coordinate-over-order.doc # x = n + 3, the first from n - 1 up that is on the curve; likewise
-printf 'irongall-v1\necdsa-sha2-nistp256 %s\n' "$(bin "$(str "$(asc ecdsa-sha2-nistp256)")$(str "$(asc nistp256)00")$(str "04$POINT")" | b64)" > identity/p256-curve-name-ending-in-nul.doc # C's key, its curve name ending in a NUL: ssh-keygen reads it as C's key and writes it back without the NUL
+printf 'dromas-v1\necdsa-sha2-nistp256 %s\n' "$(bin "$(str "$(asc ecdsa-sha2-nistp256)")$(str "$(asc nistp256)00")$(str "04$POINT")" | b64)" > identity/p256-curve-name-ending-in-nul.doc # C's key, its curve name ending in a NUL: ssh-keygen reads it as C's key and writes it back without the NUL
 # A well-formed document of a key type no client verifies: a name, and a wire key that begins with that name.
-NOTYPE=no-such-key-type@irongall.invalid
-printf 'irongall-v1\n%s %s\n' "$NOTYPE" "$(bin "$(str "$(asc "$NOTYPE")")$(str "$(asc 'not a key')")" | b64)" > identity/unsupported-type.doc
+NOTYPE=no-such-key-type@dromas.invalid
+printf 'dromas-v1\n%s %s\n' "$NOTYPE" "$(bin "$(str "$(asc "$NOTYPE")")$(str "$(asc 'not a key')")" | b64)" > identity/unsupported-type.doc
 # A NUL byte, which a shell variable drops and a C string ends at. Each of the first four is as long as a good
 # document: one line feed is gone and the NUL is in its place, or elsewhere.
-printf 'irongall-v1\n%s\0' "$GOOD" > identity/nul-for-the-final-newline.doc
+printf 'dromas-v1\n%s\0' "$GOOD" > identity/nul-for-the-final-newline.doc
 printf 'iron\0gall-v1\n%s' "$GOOD" > identity/nul-in-the-tag.doc
-printf 'irongall-v1\n%s\0%s' "${GOOD:0:40}" "${GOOD:40}" > identity/nul-in-the-key.doc
-printf 'irongall-v1\n%s\0' "$GOOD_C" > identity/p256-nul-for-the-final-newline.doc
-printf 'irongall-v1\n%s\0' "$(sed -n 2p identity/unsupported-type.doc)" > identity/nul-in-an-unknown-type.doc
+printf 'dromas-v1\n%s\0%s' "${GOOD:0:40}" "${GOOD:40}" > identity/nul-in-the-key.doc
+printf 'dromas-v1\n%s\0' "$GOOD_C" > identity/p256-nul-for-the-final-newline.doc
+printf 'dromas-v1\n%s\0' "$(sed -n 2p identity/unsupported-type.doc)" > identity/nul-in-an-unknown-type.doc
 
 # Prekey statements of box A. bad-*: signature or format must be refused. expired-*: valid, but
 # expired at ./now, so a sender must not encrypt to it. longest: valid, and the longest a server
@@ -390,51 +391,51 @@ printf 'irongall-v1\n%s\0' "$(sed -n 2p identity/unsupported-type.doc)" > identi
 # expired, but a server must refuse to publish it. Each is signed by A in A's prekey namespace
 # unless its name says otherwise.
 PQ=$(cat input/a-1.pq)
-bad() { local name=$1; shift; printf "$@" > "prekey/$name.txt"; under a-work a/work-cert.pub "irongall-prekey-v1:$A" < "prekey/$name.txt" > "prekey/$name.txt.sig"; }
-cp a/prekey-1.txt prekey/bad-wrong-namespace.txt; under a-work a/work-cert.pub "irongall-msg-v1:$A" < a/prekey-1.txt > prekey/bad-wrong-namespace.txt.sig
-cp a/prekey-1.txt prekey/bad-signed-by-b.txt; under b-work b/work-cert.pub "irongall-prekey-v1:$A" < a/prekey-1.txt > prekey/bad-signed-by-b.txt.sig
-cp a/prekey-1.txt prekey/bad-signed-by-the-identity.txt; sign a "irongall-prekey-v1:$A" < a/prekey-1.txt > prekey/bad-signed-by-the-identity.txt.sig
-cp a/prekey-1.txt prekey/bad-signed-by-a-bare-working-key.txt; sign a-work "irongall-prekey-v1:$A" < a/prekey-1.txt > prekey/bad-signed-by-a-bare-working-key.txt.sig
+bad() { local name=$1; shift; printf "$@" > "prekey/$name.txt"; under a-work a/work-cert.pub "dromas-prekey-v1:$A" < "prekey/$name.txt" > "prekey/$name.txt.sig"; }
+cp a/prekey-1.txt prekey/bad-wrong-namespace.txt; under a-work a/work-cert.pub "dromas-msg-v1:$A" < a/prekey-1.txt > prekey/bad-wrong-namespace.txt.sig
+cp a/prekey-1.txt prekey/bad-signed-by-b.txt; under b-work b/work-cert.pub "dromas-prekey-v1:$A" < a/prekey-1.txt > prekey/bad-signed-by-b.txt.sig
+cp a/prekey-1.txt prekey/bad-signed-by-the-identity.txt; sign a "dromas-prekey-v1:$A" < a/prekey-1.txt > prekey/bad-signed-by-the-identity.txt.sig
+cp a/prekey-1.txt prekey/bad-signed-by-a-bare-working-key.txt; sign a-work "dromas-prekey-v1:$A" < a/prekey-1.txt > prekey/bad-signed-by-a-bare-working-key.txt.sig
 # A statement may not outlive the certificate it is signed under: this one's certificate ends in 10 days.
 cert prekey/bad-outlives-its-certificate.cert.pub a a-work-2 $(good "$A" 2 "$V_SHORT")
-cp a/prekey-1.txt prekey/bad-outlives-its-certificate.txt; under a-work-2 prekey/bad-outlives-its-certificate.cert.pub "irongall-prekey-v1:$A" < a/prekey-1.txt > prekey/bad-outlives-its-certificate.txt.sig
-bad bad-names-another-box 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$B" "$PQ" "$NOT_AFTER"
-bad bad-serial-zero 'irongall-prekey-v1\n%s\n0\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
-bad bad-serial-leading-zero 'irongall-prekey-v1\n%s\n01\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
-bad bad-serial-19-digits 'irongall-prekey-v1\n%s\n1000000000000000000\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
-bad bad-serial-above-2-53 'irongall-prekey-v1\n%s\n9007199254740992\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER" # an answer names a serial as a JSON number, and 2^53 - 1 is the most one holds exactly
-bad bad-serial-negative 'irongall-prekey-v1\n%s\n-1\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
-bad bad-never 'irongall-prekey-v1\n%s\n1\n%s\nnever\n' "$A" "$PQ"
-bad bad-time-lowercase-z 'irongall-prekey-v1\n%s\n1\n%s\n2026-11-11T00:00:00z\n' "$A" "$PQ"
-bad bad-time-fraction 'irongall-prekey-v1\n%s\n1\n%s\n2026-11-11T00:00:00.5Z\n' "$A" "$PQ"
-bad bad-time-offset 'irongall-prekey-v1\n%s\n1\n%s\n2026-11-11T00:00:00+00:00\n' "$A" "$PQ"
-bad bad-tag 'irongall-prekey-v2\n%s\n1\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
-bad bad-address-uppercase 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$(printf '%s' "$A" | tr a-f A-F)" "$PQ" "$NOT_AFTER"
-bad bad-four-lines 'irongall-prekey-v1\n%s\n1\n%s\n' "$A" "$PQ"
-bad bad-six-lines 'irongall-prekey-v1\n%s\n1\n%s\n%s\n\n' "$A" "$PQ" "$NOT_AFTER"
-bad bad-crlf 'irongall-prekey-v1\r\n%s\r\n1\r\n%s\r\n%s\r\n' "$A" "$PQ" "$NOT_AFTER"
-bad bad-no-final-newline 'irongall-prekey-v1\n%s\n1\n%s\n%s' "$A" "$PQ" "$NOT_AFTER"
+cp a/prekey-1.txt prekey/bad-outlives-its-certificate.txt; under a-work-2 prekey/bad-outlives-its-certificate.cert.pub "dromas-prekey-v1:$A" < a/prekey-1.txt > prekey/bad-outlives-its-certificate.txt.sig
+bad bad-names-another-box 'dromas-prekey-v1\n%s\n1\n%s\n%s\n' "$B" "$PQ" "$NOT_AFTER"
+bad bad-serial-zero 'dromas-prekey-v1\n%s\n0\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
+bad bad-serial-leading-zero 'dromas-prekey-v1\n%s\n01\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
+bad bad-serial-19-digits 'dromas-prekey-v1\n%s\n1000000000000000000\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
+bad bad-serial-above-2-53 'dromas-prekey-v1\n%s\n9007199254740992\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER" # an answer names a serial as a JSON number, and 2^53 - 1 is the most one holds exactly
+bad bad-serial-negative 'dromas-prekey-v1\n%s\n-1\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
+bad bad-never 'dromas-prekey-v1\n%s\n1\n%s\nnever\n' "$A" "$PQ"
+bad bad-time-lowercase-z 'dromas-prekey-v1\n%s\n1\n%s\n2026-11-11T00:00:00z\n' "$A" "$PQ"
+bad bad-time-fraction 'dromas-prekey-v1\n%s\n1\n%s\n2026-11-11T00:00:00.5Z\n' "$A" "$PQ"
+bad bad-time-offset 'dromas-prekey-v1\n%s\n1\n%s\n2026-11-11T00:00:00+00:00\n' "$A" "$PQ"
+bad bad-tag 'dromas-prekey-v2\n%s\n1\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
+bad bad-address-uppercase 'dromas-prekey-v1\n%s\n1\n%s\n%s\n' "$(printf '%s' "$A" | tr a-f A-F)" "$PQ" "$NOT_AFTER"
+bad bad-four-lines 'dromas-prekey-v1\n%s\n1\n%s\n' "$A" "$PQ"
+bad bad-six-lines 'dromas-prekey-v1\n%s\n1\n%s\n%s\n\n' "$A" "$PQ" "$NOT_AFTER"
+bad bad-crlf 'dromas-prekey-v1\r\n%s\r\n1\r\n%s\r\n%s\r\n' "$A" "$PQ" "$NOT_AFTER"
+bad bad-no-final-newline 'dromas-prekey-v1\n%s\n1\n%s\n%s' "$A" "$PQ" "$NOT_AFTER"
 # A NUL in each line, which a reader that takes a line through a shell variable drops; and a serial with a digit that is not
 # ASCII (U+0661), which [0-9] takes in some locales.
-bad bad-nul-in-the-tag 'irongall-prekey-v1\x00\n%s\n1\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
-bad bad-nul-in-the-address 'irongall-prekey-v1\n%s\x00%s\n1\n%s\n%s\n' "${A:0:32}" "${A:32}" "$PQ" "$NOT_AFTER"
-bad bad-nul-in-the-serial 'irongall-prekey-v1\n%s\n1\x002\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
-bad bad-nul-in-the-recipient 'irongall-prekey-v1\n%s\n1\n%s\x00%s\n%s\n' "$A" "${PQ:0:16}" "${PQ:16}" "$NOT_AFTER"
-bad bad-nul-in-not-after 'irongall-prekey-v1\n%s\n1\n%s\n%s\x00%s\n' "$A" "$PQ" "${NOT_AFTER:0:10}" "${NOT_AFTER:10}"
-bad bad-serial-a-digit-not-ascii 'irongall-prekey-v1\n%s\n1\xd9\xa1\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
-bad bad-recipient-uppercase-pq 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$(printf '%s' "$PQ" | tr a-z A-Z)" "$NOT_AFTER"
-bad bad-recipient-uppercase-classic 'irongall-prekey-v1\n%s\n2\n%s\n%s\n' "$A" "$(tr a-z A-Z < input/a-2.classic)" "$NOT_AFTER"
-bad bad-recipient-not-age 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$GOOD" "$NOT_AFTER"
-bad bad-recipient-small-order-pq 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$(cat input/small-order.pq)" "$NOT_AFTER"
-bad bad-recipient-small-order-classic 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$(cat input/small-order.classic)" "$NOT_AFTER"
-bad expired 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$PQ" "$NOW"
-bad longest 'irongall-prekey-v1\n%s\n1\n%s\n2026-11-12T01:00:00Z\n' "$A" "$PQ"
-bad too-long 'irongall-prekey-v1\n%s\n1\n%s\n2026-11-12T01:00:01Z\n' "$A" "$PQ"
+bad bad-nul-in-the-tag 'dromas-prekey-v1\x00\n%s\n1\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
+bad bad-nul-in-the-address 'dromas-prekey-v1\n%s\x00%s\n1\n%s\n%s\n' "${A:0:32}" "${A:32}" "$PQ" "$NOT_AFTER"
+bad bad-nul-in-the-serial 'dromas-prekey-v1\n%s\n1\x002\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
+bad bad-nul-in-the-recipient 'dromas-prekey-v1\n%s\n1\n%s\x00%s\n%s\n' "$A" "${PQ:0:16}" "${PQ:16}" "$NOT_AFTER"
+bad bad-nul-in-not-after 'dromas-prekey-v1\n%s\n1\n%s\n%s\x00%s\n' "$A" "$PQ" "${NOT_AFTER:0:10}" "${NOT_AFTER:10}"
+bad bad-serial-a-digit-not-ascii 'dromas-prekey-v1\n%s\n1\xd9\xa1\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
+bad bad-recipient-uppercase-pq 'dromas-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$(printf '%s' "$PQ" | tr a-z A-Z)" "$NOT_AFTER"
+bad bad-recipient-uppercase-classic 'dromas-prekey-v1\n%s\n2\n%s\n%s\n' "$A" "$(tr a-z A-Z < input/a-2.classic)" "$NOT_AFTER"
+bad bad-recipient-not-age 'dromas-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$GOOD" "$NOT_AFTER"
+bad bad-recipient-small-order-pq 'dromas-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$(cat input/small-order.pq)" "$NOT_AFTER"
+bad bad-recipient-small-order-classic 'dromas-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$(cat input/small-order.classic)" "$NOT_AFTER"
+bad expired 'dromas-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$PQ" "$NOW"
+bad longest 'dromas-prekey-v1\n%s\n1\n%s\n2026-11-12T01:00:00Z\n' "$A" "$PQ"
+bad too-long 'dromas-prekey-v1\n%s\n1\n%s\n2026-11-12T01:00:01Z\n' "$A" "$PQ"
 # A well-formed age recipient of a type nobody defines, so no client has it: RFC 7748 §6.1's published X25519 test key
 # (Alice's public key) under the human-readable part age1nosuchtype. Good in every other way, so a sender refuses it as
 # unsupported_prekey_type, never as a statement that does not verify.
 [ "$(bech32 age b77249f1180299c3eb1399abb0cced137e6923bf34ce8b2d8d50c374feafa915)" = "$(cat input/a-2.classic)" ] || { echo "bech32 does not write input/a-2.classic's key as age wrote it" >&2; exit 1; }
-bad unsupported-type 'irongall-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$(bech32 age1nosuchtype 8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a)" "$NOT_AFTER"
+bad unsupported-type 'dromas-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$(bech32 age1nosuchtype 8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a)" "$NOT_AFTER"
 
 # Envelopes, judged as a message whose signature by A verified, received by box B, at ./now.
 case_env() { local name=$1; shift; printf "$@" > "envelope/$name.json"; }
@@ -497,7 +498,7 @@ case_env refuse-byte-order-mark "\xef\xbb\xbf{$H,\"sent_at\":\"$NOW\",\"msg_id\"
 ID_A=$(b64 < a/identity.doc); ID_B=$(b64 < b/identity.doc)
 line() { printf '{"v":1,"from":"%s","to":"%s","sent_at":"%s","msg_id":"%s","identity":"%s","body":"hello"}\n' "$1" "$2" "$NOW" "$MSG_ID" "$3"; } # <from> <to> <identity, base64>
 line "$A" "$B" "$ID_A" > message/a-to-b.line
-under a-work a/work-cert.pub "irongall-msg-v1:$B" < message/a-to-b.line > message/a-to-b.sig
+under a-work a/work-cert.pub "dromas-msg-v1:$B" < message/a-to-b.line > message/a-to-b.sig
 # Padding makes the age file a whole number of 1 KiB blocks (PROTOCOL.md §9.3). To a post-quantum
 # key a file of one chunk is its plaintext and 1,659 bytes more.
 n=$(( $(wc -c < message/a-to-b.line) + $(wc -c < message/a-to-b.sig) ))
@@ -507,7 +508,7 @@ SEALED=$(( (1659 + n + 1023) / 1024 * 1024 ))
 [ "$(wc -c < message/a-to-b.age)" -eq "$SEALED" ] || { echo "message/a-to-b.age is not the $SEALED bytes its padding was made for" >&2; exit 1; }
 # The same from A to C, to C's X25519 prekey: to an X25519 key a file of one chunk is its plaintext and 200 bytes more.
 line "$A" "$C" "$ID_A" > message/a-to-c.line
-under a-work a/work-cert.pub "irongall-msg-v1:$C" < message/a-to-c.line > message/a-to-c.sig
+under a-work a/work-cert.pub "dromas-msg-v1:$C" < message/a-to-c.line > message/a-to-c.sig
 n=$(( $(wc -c < message/a-to-c.line) + $(wc -c < message/a-to-c.sig) ))
 SEALED_C=$(( (200 + n + 1023) / 1024 * 1024 ))
 { cat message/a-to-c.line message/a-to-c.sig; head -c $((SEALED_C - 200 - n)) /dev/zero | tr '\0' .; } > message/a-to-c.plain
@@ -522,12 +523,12 @@ done
 GOOD_SIG=message/a-to-b.sig
 cat message/a-to-b.line "$GOOD_SIG" > plain/accept-no-padding.txt
 cp message/a-to-b.plain plain/accept-padded.txt
-{ cat message/a-to-b.line "$GOOD_SIG"; cat message/a-to-b.line; under b-work b/work-cert.pub "irongall-msg-v1:$B" < message/a-to-b.line; echo "nothing after the first END line is read"; } > plain/accept-anything-after-the-signature.txt
+{ cat message/a-to-b.line "$GOOD_SIG"; cat message/a-to-b.line; under b-work b/work-cert.pub "dromas-msg-v1:$B" < message/a-to-b.line; echo "nothing after the first END line is read"; } > plain/accept-anything-after-the-signature.txt
 printf '{"v":1,"from":"%s","to":"%s","sent_at":"%s","msg_id":"%s","identity":"%s","body":{"task":"ping"},"subject":"hi","in_reply_to":"%s","supersedes":"%s","later":true}\n' "$A" "$B" "$NOW" "$MSG_ID" "$ID_A" "$MSG_ID" "$MSG_ID" > plain/every-field.line
-{ cat plain/every-field.line; under a-work a/work-cert.pub "irongall-msg-v1:$B" < plain/every-field.line; } > plain/accept-every-field.txt
+{ cat plain/every-field.line; under a-work a/work-cert.pub "dromas-msg-v1:$B" < plain/every-field.line; } > plain/accept-every-field.txt
 rm plain/every-field.line
 printf '{"v":1,"from":"%s","to":"%s","sent_at":"%s","msg_id":"%s","identity":"%s","body":{"b":{"z":1,"a":2},"n":9007199254740993,"m":-0}}\n' "$A" "$B" "$NOW" "$MSG_ID" "$ID_A" > plain/more-precise.line # delivered as it is (envelope/accept-body-more-precise-than-binary64)
-{ cat plain/more-precise.line; under a-work a/work-cert.pub "irongall-msg-v1:$B" < plain/more-precise.line; } > plain/accept-body-more-precise-than-binary64.txt
+{ cat plain/more-precise.line; under a-work a/work-cert.pub "dromas-msg-v1:$B" < plain/more-precise.line; } > plain/accept-body-more-precise-than-binary64.txt
 rm plain/more-precise.line
 refuse() { # <name> <line file> <signature command…>: the line, then the signature the command makes over it
   local name=$1 l=$2; shift 2
@@ -535,10 +536,10 @@ refuse() { # <name> <line file> <signature command…>: the line, then the signa
 }
 L=$(mktemp)
 # The signature.
-refuse refuse-signed-for-another-box message/a-to-b.line under a-work a/work-cert.pub "irongall-msg-v1:$A"
-refuse refuse-signed-by-the-identity message/a-to-b.line sign a "irongall-msg-v1:$B"
-refuse refuse-signed-by-a-bare-working-key message/a-to-b.line sign a-work "irongall-msg-v1:$B"
-refuse refuse-certificate-ended message/a-to-b.line under a-work cert/bad-ended.pub "irongall-msg-v1:$B"
+refuse refuse-signed-for-another-box message/a-to-b.line under a-work a/work-cert.pub "dromas-msg-v1:$A"
+refuse refuse-signed-by-the-identity message/a-to-b.line sign a "dromas-msg-v1:$B"
+refuse refuse-signed-by-a-bare-working-key message/a-to-b.line sign a-work "dromas-msg-v1:$B"
+refuse refuse-certificate-ended message/a-to-b.line under a-work cert/bad-ended.pub "dromas-msg-v1:$B"
 sed 's/"body":"hello"/"body":"hellp"/' message/a-to-b.line > "$L"; cat "$L" "$GOOD_SIG" > plain/refuse-line-changed-after-signing.txt
 # The signature block is read as ssh-keygen reads a signature (sig/), and is at most 4096 bytes from its BEGIN line through its END line.
 { cat message/a-to-b.line; sed "2s/\$/ \r/; 3s/^/"$'\t'"/" "$GOOD_SIG"; } > plain/accept-whitespace-in-the-signature.txt
@@ -546,22 +547,22 @@ sed 's/"body":"hello"/"body":"hellp"/' message/a-to-b.line > "$L"; cat "$L" "$GO
 # A sender whose identity is of the optional type: delivered by a client that verifies ecdsa-sha2-nistp256, and refused
 # with unsupported_key_type by one that does not. Then one of a type nobody verifies: refused so if the document is
 # the sender's, and as reattributed if it is not.
-line "$C" "$B" "$(b64 < c/identity.doc)" > "$L"; refuse accept-p256-sender "$L" under c-work c/work-cert.pub "irongall-msg-v1:$B"
-line "$(sha256sum < identity/unsupported-type.doc | cut -c1-64)" "$B" "$(b64 < identity/unsupported-type.doc)" > "$L"; refuse refuse-unsupported-key-type "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
-line "$A" "$B" "$(b64 < identity/unsupported-type.doc)" > "$L"; refuse refuse-from-is-not-the-identity-of-an-unknown-type "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
+line "$C" "$B" "$(b64 < c/identity.doc)" > "$L"; refuse accept-p256-sender "$L" under c-work c/work-cert.pub "dromas-msg-v1:$B"
+line "$(sha256sum < identity/unsupported-type.doc | cut -c1-64)" "$B" "$(b64 < identity/unsupported-type.doc)" > "$L"; refuse refuse-unsupported-key-type "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
+line "$A" "$B" "$(b64 < identity/unsupported-type.doc)" > "$L"; refuse refuse-from-is-not-the-identity-of-an-unknown-type "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
 # Who it is from. The first is the forgery an identity member invites: A's document beside a
 # certificate that B's identity signed. The signature is good and the certificate is B's own.
-refuse refuse-another-box-s-identity-document message/a-to-b.line under b-work b/work-cert.pub "irongall-msg-v1:$B"
-line "$B" "$B" "$ID_A" > "$L"; refuse refuse-from-is-not-the-identity "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
-printf '{"v":1,"from":"%s","to":"%s","sent_at":"%s","msg_id":"%s","body":"hello"}\n' "$A" "$B" "$NOW" "$MSG_ID" > "$L"; refuse refuse-no-identity "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
-line "$A" "$B" "not base64" > "$L"; refuse refuse-identity-not-base64 "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
-line "$A" "$B" "$ID_A\\n" > "$L"; refuse refuse-identity-ending-in-a-line-feed "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B" # a JSON escape: the document's base64 and a line feed
-line "$A" "$B" "$ID_A\\u0000" > "$L"; refuse refuse-identity-ending-in-a-nul "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
-printf '{"v":1,"from":null,"to":"%s","sent_at":"%s","msg_id":"%s","identity":"%s","body":"hello"}\n' "$B" "$NOW" "$MSG_ID" "$ID_A" > "$L"; refuse refuse-from-null "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B" # null is a member left out: it names no sender
-line "$(sha256sum < identity/small-order-1.doc | cut -c1-64)" "$B" "$(b64 < identity/small-order-1.doc)" > "$L"; refuse refuse-identity-of-small-order "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
-line "$(sha256sum < identity/off-curve.doc | cut -c1-64)" "$B" "$(b64 < identity/off-curve.doc)" > "$L"; refuse refuse-identity-off-curve "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
-line "$(sha256sum < identity/length-field.doc | cut -c1-64)" "$B" "$(b64 < identity/length-field.doc)" > "$L"; refuse refuse-identity-with-its-length-written-33 "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B" # A's key bytes, in a document that breaks its form
-line "$A" "$A" "$ID_A" > "$L"; refuse refuse-to-another-box "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
+refuse refuse-another-box-s-identity-document message/a-to-b.line under b-work b/work-cert.pub "dromas-msg-v1:$B"
+line "$B" "$B" "$ID_A" > "$L"; refuse refuse-from-is-not-the-identity "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
+printf '{"v":1,"from":"%s","to":"%s","sent_at":"%s","msg_id":"%s","body":"hello"}\n' "$A" "$B" "$NOW" "$MSG_ID" > "$L"; refuse refuse-no-identity "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
+line "$A" "$B" "not base64" > "$L"; refuse refuse-identity-not-base64 "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
+line "$A" "$B" "$ID_A\\n" > "$L"; refuse refuse-identity-ending-in-a-line-feed "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B" # a JSON escape: the document's base64 and a line feed
+line "$A" "$B" "$ID_A\\u0000" > "$L"; refuse refuse-identity-ending-in-a-nul "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
+printf '{"v":1,"from":null,"to":"%s","sent_at":"%s","msg_id":"%s","identity":"%s","body":"hello"}\n' "$B" "$NOW" "$MSG_ID" "$ID_A" > "$L"; refuse refuse-from-null "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B" # null is a member left out: it names no sender
+line "$(sha256sum < identity/small-order-1.doc | cut -c1-64)" "$B" "$(b64 < identity/small-order-1.doc)" > "$L"; refuse refuse-identity-of-small-order "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
+line "$(sha256sum < identity/off-curve.doc | cut -c1-64)" "$B" "$(b64 < identity/off-curve.doc)" > "$L"; refuse refuse-identity-off-curve "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
+line "$(sha256sum < identity/length-field.doc | cut -c1-64)" "$B" "$(b64 < identity/length-field.doc)" > "$L"; refuse refuse-identity-with-its-length-written-33 "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B" # A's key bytes, in a document that breaks its form
+line "$A" "$A" "$ID_A" > "$L"; refuse refuse-to-another-box "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
 # The layout. Each part has one place, and nothing is searched for.
 head -c -1 message/a-to-b.line > plain/refuse-no-line-feed.txt
 cp message/a-to-b.line plain/refuse-no-signature.txt
@@ -574,8 +575,8 @@ cat "$GOOD_SIG" message/a-to-b.line > plain/refuse-signature-first.txt
 { cat message/a-to-b.line; printf -- '-----BEGIN SSH\0 SIGNATURE-----\n'; tail -n +2 "$GOOD_SIG"; } > plain/refuse-begin-line-holding-a-nul.txt
 { cat message/a-to-b.line; printf -- '\0'; cat "$GOOD_SIG"; } > plain/refuse-begin-line-preceded-by-a-nul.txt
 { cat message/a-to-b.line; head -c -1 "$GOOD_SIG"; printf '.\n'; tail -n 1 "$GOOD_SIG"; } > plain/refuse-end-line-followed-by-a-byte-and-a-later-one.txt      # the block ends at the first END line, whatever follows later
-sed 's/$/\r/' message/a-to-b.line > "$L"; { cat "$L"; under a-work a/work-cert.pub "irongall-msg-v1:$B" < "$L" | sed 's/$/\r/'; } > plain/refuse-crlf.txt
-printf '{\n"v":1,"from":"%s","to":"%s","sent_at":"%s","msg_id":"%s","identity":"%s","body":"hello"}\n' "$A" "$B" "$NOW" "$MSG_ID" "$ID_A" > "$L"; refuse refuse-envelope-on-two-lines "$L" under a-work a/work-cert.pub "irongall-msg-v1:$B"
+sed 's/$/\r/' message/a-to-b.line > "$L"; { cat "$L"; under a-work a/work-cert.pub "dromas-msg-v1:$B" < "$L" | sed 's/$/\r/'; } > plain/refuse-crlf.txt
+printf '{\n"v":1,"from":"%s","to":"%s","sent_at":"%s","msg_id":"%s","identity":"%s","body":"hello"}\n' "$A" "$B" "$NOW" "$MSG_ID" "$ID_A" > "$L"; refuse refuse-envelope-on-two-lines "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
 rm -f "$L"
 
 # JSON texts as every reader takes one (PROTOCOL.md §3.3): ok-* are taken and bad-* refused, by the server, the Go client
@@ -643,8 +644,11 @@ mkdir -p answer
 at() { local name=$1; shift; printf "$@" > "answer/$name.json"; }
 REV=$(b64 < a/revoke.sig); RC=$(b64 < revoked/ok-through-4.txt); RCS=$(b64 < revoked/ok-through-4.sig); P1=$(b64 < a/prekey-1.txt); P1S=$(b64 < a/prekey-1.txt.sig); HASH=$(sha256sum < message/a-to-b.age | cut -c1-64)
 wrap() { printf '%s' "$1" | fold -w 64 | sed 's/$/\\n/' | tr -d '\n' | sed 's/\\n$//'; } # base64 with a JSON \n escape after each 64 characters
-NOPAD=${REV%%=*}; LASTBITS=$(printf '%s' "$REV" | sed 's/A==$/B==/; s/Q==$/R==/; s/g==$/h==/; s/w==$/x==/') # the revocation is 403 bytes: two = of padding, and 4 unused bits
-[ "$NOPAD" != "$REV" ] && [ "$LASTBITS" != "$REV" ] || { echo "a/revoke.sig is not base64 with padding and unused bits, which the bad answers need" >&2; exit 1; }
+# The answers whose signature member is base64 out of its one encoding take a signature whose base64 has padding: a/revoke.sig
+# (399 bytes) and a/prekey-1.txt.sig (846) are written with none, so they take revoked/ok-through-4.sig, 407 bytes: one = of
+# padding, and 2 unused bits, the lowest of which LASTBITS sets.
+NOPAD=${RCS%%=*}; c=${NOPAD: -1}; i=${B64%%"$c"*}; LASTBITS=${NOPAD%?}${B64:${#i}+1:1}${RCS#"$NOPAD"}
+[ "$NOPAD" != "$RCS" ] && [ $(( ${#i} % 4 )) -eq 0 ] || { echo "revoked/ok-through-4.sig is not base64 with padding and unused bits, which the bad answers need" >&2; exit 1; }
 at record-ok-revocation-signature '{"identity":"%s","revocation_signature":"%s"}' "$ID_A" "$REV"
 at record-ok-null-members '{"identity":null,"revocation_signature":null,"revoked_certificates":null,"revoked_certificates_signature":null}'
 at record-ok-unknown-member '{"identity":"%s","revocation_signature":"%s","later":[1,{"x":true}]}' "$ID_A" "$REV"
@@ -669,7 +673,7 @@ at box-ok '{"identity":"%s","prekey":"%s","prekey_signature":"%s"}' "$ID_A" "$P1
 at box-ok-sender-key-types '{"identity":"%s","prekey":"%s","prekey_signature":"%s","sender_key_types":["ecdsa-sha2-nistp256"]}' "$ID_A" "$P1" "$P1S"
 at box-ok-revoked-certificates '{"identity":"%s","prekey":"%s","prekey_signature":"%s","revoked_certificates":"%s","revoked_certificates_signature":"%s"}' "$ID_A" "$P1" "$P1S" "$RC" "$RCS" # the revocation of its certificates the server holds, beside the box
 at box-bad-sender-key-types-a-string '{"identity":"%s","prekey":"%s","prekey_signature":"%s","sender_key_types":"any"}' "$ID_A" "$P1" "$P1S"
-at box-bad-signature-unpadded '{"identity":"%s","prekey":"%s","prekey_signature":"%s"}' "$ID_A" "$P1" "${P1S%%=*}"
+at box-bad-signature-unpadded '{"identity":"%s","prekey":"%s","prekey_signature":"%s"}' "$ID_A" "$P1" "$NOPAD"
 at box-bad-prekey-a-number '{"identity":"%s","prekey":1,"prekey_signature":"%s"}' "$ID_A" "$P1S"
 at box-bad-revoked-certificates-a-number '{"identity":"%s","prekey":"%s","prekey_signature":"%s","revoked_certificates":4}' "$ID_A" "$P1" "$P1S"
 at list-ok '{"count":1,"messages":[{"id":"%s","from":"%s","size":%s,"received_at":"%s","expires_at":"2026-11-12T00:00:00Z"}],"next_cursor":null}' "$HASH" "$A" "$(wc -c < message/a-to-b.age)" "$NOW"

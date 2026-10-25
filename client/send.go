@@ -18,7 +18,7 @@ import (
 	"unicode/utf8"
 
 	"filippo.io/age"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // Fields are an envelope's optional fields: the sender's own words about a
@@ -159,7 +159,7 @@ func (b *Box) sendWith(ctx context.Context, to protocol.Address, env *protocol.E
 		return nil, b.undelivered(stem, gone)
 	}
 	if err := b.replyWaits(to, aclErr); err != nil {
-		return nil, fmt.Errorf("%w: nothing is posted, so that no reply is refused; kept in the outbox, irongall outbox flush sends it", err)
+		return nil, fmt.Errorf("%w: nothing is posted, so that no reply is refused; kept in the outbox, dromas outbox flush sends it", err)
 	}
 	s, err := b.post(ctx, to, stem, newLookups())
 	if s != nil {
@@ -306,7 +306,7 @@ func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked 
 	// a failed one carries, the entry stays.
 	var unread *lookupError
 	if errors.As(err, &unread) {
-		return nil, fmt.Errorf("the box %s could not be read, so nothing is posted: %w (kept in the outbox: retry with irongall outbox flush)", to, err)
+		return nil, fmt.Errorf("the box %s could not be read, so nothing is posted: %w (kept in the outbox: retry with dromas outbox flush)", to, err)
 	}
 	if err != nil {
 		// A server's "revoked" without the revocation in hand is a call that
@@ -314,7 +314,7 @@ func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked 
 		// entry then waits for the renewal, as a seal under a certificate the
 		// box holds revoked does.
 		if !slices.Contains(undeliverable, code(err)) {
-			return nil, fmt.Errorf("%w (kept in the outbox: retry with irongall outbox flush)", err)
+			return nil, fmt.Errorf("%w (kept in the outbox: retry with dromas outbox flush)", err)
 		}
 		return nil, b.undelivered(stem, err)
 	}
@@ -323,7 +323,7 @@ func (b *Box) post(ctx context.Context, to protocol.Address, stem string, asked 
 	// posts it again, and its reader drops the copy by its msg_id.
 	sent, err := b.recordSent(stem, posted, r)
 	if err != nil {
-		return nil, fmt.Errorf("sent, but not recorded in sent/ (still in the outbox: irongall outbox flush posts it again, and its reader drops the copy): %w", err)
+		return nil, fmt.Errorf("sent, but not recorded in sent/ (still in the outbox: dromas outbox flush posts it again, and its reader drops the copy): %w", err)
 	}
 	step("sent kept")
 	if err := removeIfExists(stem + ".P"); err != nil {
@@ -515,7 +515,7 @@ func (b *Box) seal(ctx context.Context, to protocol.Address, stem string, l *loo
 	if held, err := b.revokedCerts(b.id.Address()); err != nil {
 		return nil, err
 	} else if held != nil && held.Revokes(cert.Serial()) {
-		return nil, refuse("this box's identity has revoked the certificate it signs under, so mail signed now would be refused: irongall recv or irongall prekey renew publishes the new one first")
+		return nil, refuse("this box's identity has revoked the certificate it signs under, so mail signed now would be refused: dromas recv or dromas prekey renew publishes the new one first")
 	}
 	// Nor does a certificate whose working key another holds, as a statement
 	// this box did not make under it shows (PROTOCOL.md §12.4): its owner's
@@ -524,12 +524,12 @@ func (b *Box) seal(ctx context.Context, to protocol.Address, stem string, l *loo
 	if nm, err := b.notMade(); err != nil {
 		return nil, err
 	} else if nm != nil && nm.OwnCertificate && nm.CertificateSerial == cert.Serial() {
-		return nil, refuse("someone else holds the working key of the certificate this box signs under, as a statement its server serves in its name shows, so mail signed now would go with that certificate: irongall status says what to do, and the mail waits for the box's next certificate")
+		return nil, refuse("someone else holds the working key of the certificate this box signs under, as a statement its server serves in its name shows, so mail signed now would go with that certificate: dromas status says what to do, and the mail waits for the box's next certificate")
 	}
 	// Mail may wait 33 days to be read, and its certificate must still be
 	// valid then.
 	if !cert.SignsMail(b.now()) {
-		return nil, refuse("this box's certificate ends within %d days, too soon to sign mail that may wait that long: irongall prekey renew makes a new one, as irongall recv does daily", protocol.TTL/(24*time.Hour))
+		return nil, refuse("this box's certificate ends within %d days, too soon to sign mail that may wait that long: dromas prekey renew makes a new one, as dromas recv does daily", protocol.TTL/(24*time.Hour))
 	}
 	pk, under, err := b.resolve(ctx, to, l)
 	if err != nil {

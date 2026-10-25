@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // A send's body in the script: read once, from the file named or stdin, as
@@ -15,7 +15,7 @@ import (
 // words when it is not one it sends.
 
 // sendBox is a box directory holding vector a's identity, enough for
-// ig_send told it holds the lock, and the addresses of vectors a and b.
+// dr_send told it holds the lock, and the addresses of vectors a and b.
 func sendBox(t *testing.T) (dir string, a, b protocol.Address) {
 	t.Helper()
 	dir = t.TempDir()
@@ -37,12 +37,12 @@ func sendBox(t *testing.T) (dir string, a, b protocol.Address) {
 	return dir, a, b
 }
 
-// keepPost is ig_post replaced, for a test that runs ig_send: the envelope
+// keepPost is dr_post replaced, for a test that runs dr_send: the envelope
 // it would post, copied to $OUT, and nothing posted.
-const keepPost = "IG_HELD=$IG; ig_post(){ cp \"$2.P\" \"$OUT\"; mv \"$2.P\" \"$2.sent\"; }\n"
+const keepPost = "DR_HELD=$DR; dr_post(){ cp \"$2.P\" \"$OUT\"; mv \"$2.P\" \"$2.sent\"; }\n"
 
-// ig_send sends the body it checked, read once (#255): a body from a pipe
-// is sent, not as "" and not refused; and one named $IG/body.txt, the file a
+// dr_send sends the body it checked, read once (#255): a body from a pipe
+// is sent, not as "" and not refused; and one named $DR/body.txt, the file a
 // body on stdin is kept in, is not emptied first.
 func TestTheScriptReadsTheBodyOnce(t *testing.T) {
 	need(t, scriptTools...)
@@ -61,12 +61,12 @@ func TestTheScriptReadsTheBodyOnce(t *testing.T) {
 		}
 	}
 	for i, c := range []struct{ name, command, want string }{
-		{"a pipe", `ig_send "$B" <(printf hello)`, `"hello"`},
-		{"stdin", `printf hello | ig_send "$B"`, `"hello"`},
-		{"the box's own body.txt", `printf kept > "$IG/body.txt"; ig_send "$B" "$IG/body.txt"`, `"kept"`},
+		{"a pipe", `dr_send "$B" <(printf hello)`, `"hello"`},
+		{"stdin", `printf hello | dr_send "$B"`, `"hello"`},
+		{"the box's own body.txt", `printf kept > "$DR/body.txt"; dr_send "$B" "$DR/body.txt"`, `"kept"`},
 	} {
 		o := filepath.Join(out, fmt.Sprint(i))
-		_, err := bash(t, []string{"IG_HOME=" + dir, "OUT=" + o, "B=" + b.String()}, keepPost+c.command)
+		_, err := bash(t, []string{"DR_HOME=" + dir, "OUT=" + o, "B=" + b.String()}, keepPost+c.command)
 		sent(c.name, o, c.want, err)
 	}
 }
@@ -87,7 +87,7 @@ func TestARefusedBodyIsOneErrorLine(t *testing.T) {
 			t.Fatal(err)
 		}
 		o := filepath.Join(t.TempDir(), "sent")
-		_, err := bash(t, []string{"IG_HOME=" + dir, "OUT=" + o, "B=" + b.String(), "F=" + body}, keepPost+"ig_send "+c.args)
+		_, err := bash(t, []string{"DR_HOME=" + dir, "OUT=" + o, "B=" + b.String(), "F=" + body}, keepPost+"dr_send "+c.args)
 		errs := ""
 		if err != nil {
 			_, errs, _ = strings.Cut(err.Error(), ": ")
@@ -101,7 +101,7 @@ func TestARefusedBodyIsOneErrorLine(t *testing.T) {
 		}
 		for _, f := range []string{"send.P", "body.new"} {
 			if _, err := os.Stat(filepath.Join(dir, f)); err == nil {
-				t.Errorf("%s: $IG/%s is left in the box", c.name, f)
+				t.Errorf("%s: $DR/%s is left in the box", c.name, f)
 			}
 		}
 	}
@@ -113,11 +113,11 @@ func TestASendWhoseEnvelopeIsNotBuiltLeavesNothing(t *testing.T) {
 	need(t, scriptTools...)
 	dir, _, b := sendBox(t)
 	o := filepath.Join(t.TempDir(), "sent")
-	_, err := bash(t, []string{"IG_HOME=" + dir, "OUT=" + o, "B=" + b.String(), "PATH=" + dyingJQ(t, "-cn", "--rawfile", "body") + ":" + os.Getenv("PATH")}, keepPost+`printf hi | ig_send "$B"`)
+	_, err := bash(t, []string{"DR_HOME=" + dir, "OUT=" + o, "B=" + b.String(), "PATH=" + dyingJQ(t, "-cn", "--rawfile", "body") + ":" + os.Getenv("PATH")}, keepPost+`printf hi | dr_send "$B"`)
 	if err == nil || exists(o) || !strings.HasSuffix(err.Error(), `: {"type":"error","message":"the envelope could not be built: nothing is sent"}`) {
 		t.Errorf("a send whose envelope jq died: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "send.P")); err == nil {
-		t.Error("$IG/send.P is left in the box")
+		t.Error("$DR/send.P is left in the box")
 	}
 }

@@ -12,8 +12,8 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/internal/fakeserver"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // finishedBox is a box that holds its own revocation, with nothing else
@@ -62,7 +62,7 @@ func TestEverySignerTheBoxHandsOutAsksItsFinished(t *testing.T) {
 		"Certify":             func() error { _, err := b.identity.Certify(b.id, k.PublicKey(), 1, time.Now()); return err },
 		"Revocation":          func() error { _, err := b.identity.Revocation(b.id.Address()); return err },
 		"RevokedCertificates": func() error { _, err := b.identity.RevokedCertificates(certs); return err },
-		"Signature":           func() error { _, err := work.Signature([]byte("x"), "irongall-test"); return err },
+		"Signature":           func() error { _, err := work.Signature([]byte("x"), "dromas-test"); return err },
 		"Pass":                func() error { _, _, err := work.Pass(b.id.Address(), "example.org", time.Now()); return err },
 	}
 	var gone *RevokedError

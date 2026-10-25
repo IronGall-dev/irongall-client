@@ -14,27 +14,27 @@ import (
 	"strings"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/client"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/client"
+	"github.com/dromas-dev/dromas-client/protocol"
 	"github.com/spf13/cobra"
 )
 
 // tree is every command: the everyday ones at the top level, and a group for
 // each thing that has more than one thing done to it.
 func (e *cli) tree() *cobra.Command {
-	root := e.group("irongall", "", "",
+	root := e.group("dromas", "", "",
 		e.initCmd(), e.addrCmd(), e.sendCmd(), e.recvCmd(), e.showCmd(), e.statusCmd(), e.heldCmd(),
 		e.group("peer", "who may write to this box: allow, block, list",
-			`Mail from a sender this box has not allowed is held in held/ (irongall held
+			`Mail from a sender this box has not allowed is held in held/ (dromas held
 lists it), and mail from a sender it blocked is dropped. Sending to a box, or
-naming it with irongall alias add, allows it too. The box's policy file says
+naming it with dromas alias add, allows it too. The box's policy file says
 where mail from a sender not allowed lands, and whom its server takes mail
-from: irongall help has it.`,
+from: dromas help has it.`,
 			e.allowCmd(), e.blockCmd(), e.peerListCmd()),
 		e.group("alias", "names for peers, which send takes in place of a link: add, rm, list",
 			`An alias is this box's own name for a peer, kept in its aliases file as
 "<name> <address>" lines, which a person may write too. A name
-allows its peer, as irongall peer allow does, and is never moved: to change
+allows its peer, as dromas peer allow does, and is never moved: to change
 one, remove it and add it again.`,
 			e.aliasAddCmd(), e.aliasRmCmd(), e.aliasListCmd()),
 		e.group("outbox", "mail not yet delivered: flush",
@@ -49,9 +49,9 @@ with each of its strings in base64 that is not of its form.`,
 			e.quarantineListCmd(), e.quarantineRmCmd()),
 		e.group("prekey", "the key senders encrypt to: renew, lifetime",
 			`A prekey is valid for 33 days, or the shorter lifetime this box is set to,
-under a working key and a certificate made with it. irongall recv renews it
+under a working key and a certificate made with it. dromas recv renews it
 once it is a day old, so run recv at least monthly, and the box never lapses;
-irongall prekey lifetime --help says how often for a shorter lifetime.`,
+dromas prekey lifetime --help says how often for a shorter lifetime.`,
 			e.renewCmd(), e.lifetimeCmd()),
 		e.group("cert", "this box's certificates: revoke-earlier, publish-revoked",
 			`This box's identity certifies a working key with each prekey, and the working
@@ -75,8 +75,8 @@ address's certificates, and checks what it sends and receives against them.`,
 		_, _ = io.WriteString(e.stdout, helpText(c))
 	})
 	root.SetHelpCommand(command("help [<command>]", "print this help, or a command's",
-		`irongall help <command> and irongall <command> --help print a command's
-help, and irongall <group> help a group's.`,
+		`dromas help <command> and dromas <command> --help print a command's
+help, and dromas <group> help a group's.`,
 		cobra.ArbitraryArgs, func(_ *cobra.Command, args []string) error {
 			t, rest, err := root.Find(args)
 			switch {
@@ -143,7 +143,7 @@ func (e *cli) sendCmd() *cobra.Command {
 	c := command("send [flags] <link, address or alias> [file]", "send a message: the body from a file, or stdin",
 		`Send one message to a link, a bare 64-hex address or an alias, with the body
 from the file, or from stdin, and print the server's id for it and its msg_id.
-It waits in outbox/ until a server takes it (irongall outbox flush posts it
+It waits in outbox/ until a server takes it (dromas outbox flush posts it
 again), and is then kept in sent/ with the server's receipt. Sending to a box
 allows it.
 
@@ -205,7 +205,7 @@ keeping it in held/.
 With --headers, a "mail_headers" line takes each "mail" line's place: its
 "envelope" has the fields this client checked with none of the text the
 sender chose, no body and no subject, and the line has the body's size. Each
-message is kept in inbox/ as ever, and irongall show <id> prints its "mail"
+message is kept in inbox/ as ever, and dromas show <id> prints its "mail"
 line, so a reader can decide by sender before it reads what the sender wrote.
 
 One drain runs for at most --drain-time, holding the box's lock: there it
@@ -282,7 +282,7 @@ sender and the time the server gave, each only when it has its form.`,
 func (e *cli) quarantineRmCmd() *cobra.Command {
 	var all bool
 	c := command("rm [flags] [<id>...]", "delete refused mail from quarantine/",
-		`Delete each message named, by the id irongall quarantine list prints, or with
+		`Delete each message named, by the id dromas quarantine list prints, or with
 --all every one, and print a "removed" line for each. Nothing is deleted when
 an id is not one, or names no message quarantine/ keeps.`,
 		func(c *cobra.Command, args []string) error {
@@ -294,7 +294,7 @@ an id is not one, or names no message quarantine/ keeps.`,
 			}
 			for _, id := range args {
 				if !client.IsID(id) {
-					return wrong(c, "%s takes messages' ids, 64 lowercase hex, as irongall quarantine list prints them", c.CommandPath())
+					return wrong(c, "%s takes messages' ids, 64 lowercase hex, as dromas quarantine list prints them", c.CommandPath())
 				}
 			}
 			return nil
@@ -350,7 +350,7 @@ func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration, headers 
 			}
 			for _, h := range res.Held {
 				lines = append(lines, line("held", "id", h.ID, "from", h.Envelope.From, "message",
-					"from a sender this box has not allowed: kept in held/ (irongall held lists it, and irongall peer allow delivers it)"))
+					"from a sender this box has not allowed: kept in held/ (dromas held lists it, and dromas peer allow delivers it)"))
 			}
 			for _, id := range res.Blocked {
 				lines = append(lines, line("dropped", "id", id, "message", "from a sender this box blocked: dropped"))
@@ -364,7 +364,7 @@ func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration, headers 
 			}
 			if res.RenewErr != nil {
 				renewErr = res.RenewErr
-				lines = append(lines, line("renewal_failed", failure(fmt.Errorf("the prekey is due for renewal and was not renewed: recv tries again within the hour, and irongall status says whether it went through: %w", res.RenewErr))...))
+				lines = append(lines, line("renewal_failed", failure(fmt.Errorf("the prekey is due for renewal and was not renewed: recv tries again within the hour, and dromas status says whether it went through: %w", res.RenewErr))...))
 			}
 			notMade = res.NotMade
 			if res.NotMade != nil {
@@ -372,7 +372,7 @@ func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration, headers 
 			}
 			aclErr = res.ACLErr
 			if res.ACLErr != nil {
-				lines = append(lines, line("acl_not_sent", failure(fmt.Errorf("the next recv sends this box's ACL, and irongall status says whether it went through: %w", res.ACLErr))...))
+				lines = append(lines, line("acl_not_sent", failure(fmt.Errorf("the next recv sends this box's ACL, and dromas status says whether it went through: %w", res.ACLErr))...))
 			}
 			if res.ACLReplaced {
 				replaced = true
@@ -443,8 +443,8 @@ func (e *cli) heldCmd() *cobra.Command {
 		`List the mail held/ keeps, from senders this box has not allowed: a
 "held_sender" line for each sender, with its address, the ids, and the first
 and last sent_at. held/<id>.json is the message recv's "mail" line would have
-carried. irongall peer allow delivers a sender's held mail to inbox/, and
-irongall peer block deletes it.`,
+carried. dromas peer allow delivers a sender's held mail to inbox/, and
+dromas peer block deletes it.`,
 		nargs(0, 0), func(*cobra.Command, []string) error {
 			b, err := e.box()
 			if err != nil {
@@ -473,7 +473,7 @@ no sender, adds back every address an alias names or sent/ shows, for an
 allowed file that was lost.`,
 		func(c *cobra.Command, args []string) error {
 			if rebuild && len(args) > 0 {
-				return wrong(c, "irongall peer allow --rebuild takes no sender: it adds back every address an alias names or sent/ shows")
+				return wrong(c, "dromas peer allow --rebuild takes no sender: it adds back every address an alias names or sent/ shows")
 			}
 			if rebuild {
 				return nil
@@ -671,7 +671,7 @@ func (e *cli) aclNotSent(err error) error {
 	if err == nil {
 		return nil
 	}
-	if werr := e.out(line("acl_not_sent", failure(fmt.Errorf("the box's server takes the reply under the ACL it last took: the next send or recv sends this box's, and irongall status says whether it went through: %w", err))...)); werr != nil {
+	if werr := e.out(line("acl_not_sent", failure(fmt.Errorf("the box's server takes the reply under the ACL it last took: the next send or recv sends this box's, and dromas status says whether it went through: %w", err))...)); werr != nil {
 		return werr
 	}
 	return &needsALook{}
@@ -777,7 +777,7 @@ lower holds from the next recv, which renews a prekey made for longer.`,
 			}
 			var warning any
 			if d < shortLifetime {
-				warning = fmt.Sprintf("WARNING: a lifetime under %s risks a single missed daily check-in leaving this box unable to receive messages. At %s, run irongall recv at least every %s.", formatTime(shortLifetime), formatTime(d), formatTime(client.RecvWithin(d)))
+				warning = fmt.Sprintf("WARNING: a lifetime under %s risks a single missed daily check-in leaving this box unable to receive messages. At %s, run dromas recv at least every %s.", formatTime(shortLifetime), formatTime(d), formatTime(client.RecvWithin(d)))
 			}
 			return e.out(line("prekey_lifetime", "seconds", int64(d/time.Second), "lifetime", formatTime(d), "message", warning))
 		})
@@ -941,7 +941,7 @@ func (e *cli) remedied(own protocol.Address, r *client.Remedy, err error) error 
 			return err
 		}
 	}
-	dark := fmt.Sprintf("Every certificate before %d is revoked, the one this box was using among them, so it sends no mail, and its server takes none for it, until the new prekey is taken: irongall prekey renew sends it again, and so does irongall recv", r.Below)
+	dark := fmt.Sprintf("Every certificate before %d is revoked, the one this box was using among them, so it sends no mail, and its server takes none for it, until the new prekey is taken: dromas prekey renew sends it again, and so does dromas recv", r.Below)
 	// What a line printed above has not said, the prekey's first.
 	var said error
 	switch {
@@ -951,11 +951,11 @@ func (e *cli) remedied(own protocol.Address, r *client.Remedy, err error) error 
 		}
 	case r.NotRenewed == nil && r.NotRevoked == nil:
 	case r.NotRenewed == nil:
-		said = fmt.Errorf("the new prekey is published, and the earlier certificates are NOT revoked: %w. irongall cert revoke-earlier revokes them", r.NotRevoked)
+		said = fmt.Errorf("the new prekey is published, and the earlier certificates are NOT revoked: %w. dromas cert revoke-earlier revokes them", r.NotRevoked)
 	case r.NotRevoked == nil:
 		said = fmt.Errorf("the new prekey is NOT published: %w. %s", r.NotRenewed, dark)
 	default:
-		said = fmt.Errorf("the new prekey is NOT published: %w, and nothing is revoked: %v. irongall cert revoke-earlier tries both again", r.NotRenewed, r.NotRevoked)
+		said = fmt.Errorf("the new prekey is NOT published: %w, and nothing is revoked: %v. dromas cert revoke-earlier tries both again", r.NotRenewed, r.NotRevoked)
 	}
 	// Then the fault of this box after what a server took, in every case.
 	switch {
@@ -972,7 +972,7 @@ func (e *cli) publishRevokedCmd() *cobra.Command {
 		`Send a record that carries a revocation of certificates, and none of an
 address, to the server, and keep it: the file named, or with none the one
 this box keeps of its own certificates, when a server did not take it. A
-record that ends an address is refused: irongall revocation publish takes
+record that ends an address is refused: dromas revocation publish takes
 that one, with the address in full.`,
 		nargs(0, 1), func(c *cobra.Command, args []string) error {
 			b, err := e.box()
@@ -985,7 +985,7 @@ that one, with the address in full.`,
 			} else {
 				rec, err = b.CertificatesRecord(c.Context())
 				if err == nil && rec == nil {
-					err = errors.New("this box holds no revocation of its certificates: irongall cert revoke-earlier makes one")
+					err = errors.New("this box holds no revocation of its certificates: dromas cert revoke-earlier makes one")
 				}
 			}
 			if err != nil {
@@ -994,7 +994,7 @@ that one, with the address in full.`,
 			// What ends an address goes out only with that address written
 			// in full, as its confirmation.
 			if len(rec.Revocation) > 0 {
-				return errors.New("the record carries a revocation of its address, which nothing undoes: nothing was published. irongall revocation publish --record <file> <address> publishes one, with the address in full as the confirmation")
+				return errors.New("the record carries a revocation of its address, which nothing undoes: nothing was published. dromas revocation publish --record <file> <address> publishes one, with the address in full as the confirmation")
 			}
 			a, _, err := b.KeepRevocation(c.Context(), rec)
 			if err != nil {
@@ -1037,7 +1037,7 @@ func (e *cli) adoptCmd() *cobra.Command {
 	return command("adopt", "join the account an adopt key names: the key on stdin",
 		`Join the account an adopt key names, which can lift this box's limits. The key
 is read from stdin, never from the command line, where ps, a shell's history
-and an agent's transcript would keep it: irongall account adopt < key.txt.
+and an agent's transcript would keep it: dromas account adopt < key.txt.
 What is read is held to an adopt key's form before anything is sent, so a
 wrong file goes nowhere, and no error prints the key.`,
 		nargs(0, 0), func(c *cobra.Command, _ []string) error {
@@ -1058,7 +1058,7 @@ wrong file goes nowhere, and no error prints the key.`,
 }
 
 // adoptKey reads an adopt key from r: one line, its line feed optional, of
-// an adopt key's form (PROTOCOL.md §11.16), "iga1_" and base64url. Anything
+// an adopt key's form (PROTOCOL.md §11.16), "dra1_" and base64url. Anything
 // else is refused in words that never quote it, since it may be the key, or
 // a secret piped in by mistake.
 func adoptKey(r io.Reader) (string, error) {
@@ -1068,14 +1068,14 @@ func adoptKey(r io.Reader) (string, error) {
 	}
 	key := strings.TrimSuffix(strings.TrimSuffix(string(b), "\n"), "\r")
 	if len(key) > maxAdoptKey || !adoptKeyForm.MatchString(key) {
-		return "", errors.New("stdin does not hold an adopt key, one line of \"iga1_\" and base64url: nothing is sent, and what was read is not shown")
+		return "", errors.New("stdin does not hold an adopt key, one line of \"dra1_\" and base64url: nothing is sent, and what was read is not shown")
 	}
 	return key, nil
 }
 
 // adoptKeyForm is an adopt key's form, and maxAdoptKey the most bytes one
 // may be (PROTOCOL.md §11.16).
-var adoptKeyForm = regexp.MustCompile(`\Aiga1_[A-Za-z0-9_-]+\z`)
+var adoptKeyForm = regexp.MustCompile(`\Adra1_[A-Za-z0-9_-]+\z`)
 
 const maxAdoptKey = 1024
 
@@ -1098,8 +1098,8 @@ func (e *cli) makeCmd() *cobra.Command {
 		`Print this box's revocation record, one "revocation_record" line, and publish
 nothing. Whoever publishes that record ends this address for good, with no
 key: keep it where only you can read it, somewhere other than this box, for
-the day the box is lost (umask 077; irongall revocation make > <file>). The
-line is the record as every server takes it: irongall revocation publish
+the day the box is lost (umask 077; dromas revocation make > <file>). The
+line is the record as every server takes it: dromas revocation publish
 --record publishes it, and so does a PUT of it to
 <server>/v1/<address>/revocations.`,
 		nargs(0, 0), func(c *cobra.Command, _ []string) error {
@@ -1123,11 +1123,11 @@ line is the record as every server takes it: irongall revocation publish
 
 func (e *cli) publishCmd() *cobra.Command {
 	var record string
-	const how = "irongall revocation publish takes the 64-character address, in full: it is the confirmation, and a revocation cannot be undone"
+	const how = "dromas revocation publish takes the 64-character address, in full: it is the confirmation, and a revocation cannot be undone"
 	c := command("publish [flags] <address>", "revoke this box's address, FOR GOOD",
 		`Revoke this box's address, FOR GOOD: nothing undoes it. The address written
 out in full is the confirmation. --record <file> publishes a record made
-earlier by irongall revocation make, and needs no box here. It goes to the
+earlier by dromas revocation make, and needs no box here. It goes to the
 server, and the command fails unless the server took it: run it again.`,
 		func(c *cobra.Command, args []string) error {
 			if len(args) != 1 {
@@ -1155,7 +1155,7 @@ server, and the command fails unless the server took it: run it again.`,
 					return openErr
 				}
 				if b.Address() != a {
-					return errors.New("that is not this box's address: nothing was published. irongall revocation publish takes this box's own address, or a record of another with --record")
+					return errors.New("that is not this box's address: nothing was published. dromas revocation publish takes this box's own address, or a record of another with --record")
 				}
 				if rec, err = b.Revocation(c.Context()); err != nil {
 					return err
@@ -1179,14 +1179,14 @@ server, and the command fails unless the server took it: run it again.`,
 			}
 			return e.out(line("revoked", "address", a, "message", "published to the server"))
 		})
-	c.Flags().StringVar(&record, "record", "", "publish the record in this `file`, made earlier by irongall revocation make, in place of signing one with this box's identity")
+	c.Flags().StringVar(&record, "record", "", "publish the record in this `file`, made earlier by dromas revocation make, in place of signing one with this box's identity")
 	return c
 }
 
 func (e *cli) keepCmd() *cobra.Command {
 	return command("keep <file>", "keep a revocation someone handed you",
 		`Take a revocation of another box that someone handed you (a record as
-irongall revocation make prints), check it, and keep it: this box then sends
+dromas revocation make prints), check it, and keep it: this box then sends
 that address nothing and takes nothing from it. A record may carry a
 revocation of the box's certificates, which is kept the same way.`,
 		nargs(1, 1), func(c *cobra.Command, args []string) error {
@@ -1236,7 +1236,7 @@ func (e *cli) sayHeld(a protocol.Address, held *client.Held) error {
 	case held.Certificates != nil:
 		return e.out(line("certificates_revoked", "address", a, "through", held.Certificates.Through))
 	}
-	return e.out(line("not_revoked", "address", a, "message", "no revocation shown. That is the server's word, and it can keep a record back: a record from the box's owner settles it (irongall revocation keep <file>)."))
+	return e.out(line("not_revoked", "address", a, "message", "no revocation shown. That is the server's word, and it can keep a record back: a record from the box's owner settles it (dromas revocation keep <file>)."))
 }
 
 // sent is the line for a message the server took.
@@ -1259,7 +1259,7 @@ func notMadeLine(nm *client.NotMade) []byte {
 	return line("prekey_not_made", "serial", nm.Serial, "certificate_serial", nm.CertificateSerial, "own_certificate", nm.OwnCertificate, "at", nm.At, "message", nm.Words())
 }
 
-// readRecord reads a revocation record: the JSON irongall revocation make
+// readRecord reads a revocation record: the JSON dromas revocation make
 // prints. What it holds is checked by whoever uses it.
 func readRecord(name string) (*protocol.Revocations, error) {
 	f, err := os.Open(name) //nolint:gosec // a file the caller named
@@ -1273,7 +1273,7 @@ func readRecord(name string) (*protocol.Revocations, error) {
 	}
 	var rec protocol.Revocations
 	if len(data) > maxRecord || protocol.Unmarshal(data, &rec) != nil || len(rec.Identity) == 0 || (len(rec.Revocation) == 0 && len(rec.RevokedCertificates) == 0) {
-		return nil, errors.New("the file is not a revocation record: one is a line of JSON with \"identity\" and \"revocation_signature\", as irongall revocation make prints, or with a revocation of its certificates")
+		return nil, errors.New("the file is not a revocation record: one is a line of JSON with \"identity\" and \"revocation_signature\", as dromas revocation make prints, or with a revocation of its certificates")
 	}
 	return &rec, nil
 }

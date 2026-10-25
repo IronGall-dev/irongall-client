@@ -12,7 +12,7 @@ import (
 
 // The clock: every check is exact at the clock of whoever makes it, and what
 // a box makes leaves an hour of room. The server keeps the machine's clock;
-// a box's is ig_now (test.sh's §16 until 2026-10-21).
+// a box's is dr_now (test.sh's §16 until 2026-10-21).
 
 // at is a box on a clock off from the machine's.
 type at struct {
@@ -45,10 +45,10 @@ func TestScriptAtTheEdgesOfAClock(t *testing.T) {
 	w := newWorld(t)
 	for _, off := range []time.Duration{-9 * time.Minute, 49 * time.Minute} {
 		s := at{w.empty(), off}
-		s.must("ig_init")
+		s.must("dr_init")
 		s.addr = mustAddress(t, s.dir)
 		var serial, start, end int64
-		if _, err := fmt.Sscan(s.must(fmt.Sprintf(`ig_cert "$IG/prekeys/%d.txt.sig" "$IG/identity.doc" %s`, s.num(), s.addr)), &serial, &start, &end); err != nil || s.now()-start < 3600 || s.now()-start > 3660 {
+		if _, err := fmt.Sscan(s.must(fmt.Sprintf(`dr_cert "$DR/prekeys/%d.txt.sig" "$DR/identity.doc" %s`, s.num(), s.addr)), &serial, &start, &end); err != nil || s.now()-start < 3600 || s.now()-start > 3660 {
 			t.Errorf("%v: the certificate does not start an hour before it was made: %d, %v", off, start, err)
 		}
 		f := w.box()
@@ -56,10 +56,10 @@ func TestScriptAtTheEdgesOfAClock(t *testing.T) {
 		if d := s.recv(); d.rc != 0 || !slices.Equal(d.bodies(), []string{"to the box whose clock is off"}) {
 			t.Errorf("%v: it reads: %v", off, d)
 		}
-		if r := s.sh("printf 'from the box whose clock is off' | ig_send " + f.addr.String()); r.rc != 0 {
+		if r := s.sh("printf 'from the box whose clock is off' | dr_send " + f.addr.String()); r.rc != 0 {
 			t.Errorf("%v: it sends: %v", off, r)
 		}
-		if r := s.sh("ig_rekey"); r.rc != 0 {
+		if r := s.sh("dr_rekey"); r.rc != 0 {
 			t.Errorf("%v: it renews: %v", off, r)
 		}
 		if d := f.recv(); d.rc != 0 || !slices.Equal(d.bodies(), []string{"from the box whose clock is off"}) {
@@ -67,7 +67,7 @@ func TestScriptAtTheEdgesOfAClock(t *testing.T) {
 		}
 	}
 	slow := at{w.empty(), -11 * time.Minute}
-	r := slow.sh("ig_init")
+	r := slow.sh("dr_init")
 	if r.rc == 0 || !strings.Contains(r.err, "pass_expired") || !strings.Contains(r.err, "the server dates its answer 20") || strings.Contains(r.err, "has run out") ||
 		!regexp.MustCompile(`this machine's clock reads .*Check this machine's clock against a time source you trust, not against the server`).MatchString(r.err) || strings.Contains(strings.ToLower(r.err), "set this machine's clock") {
 		t.Errorf("a box 11 minutes slow: %v", r)
@@ -85,13 +85,13 @@ func TestScriptAfterAClockAhead(t *testing.T) {
 		code  string
 	}{{61 * time.Minute, "bad_key"}, {55 * time.Minute, "pass_expired"}} {
 		b := at{w.empty(), c.ahead}
-		if r := b.sh("ig_init"); r.rc == 0 || !strings.Contains(r.err, c.code) {
+		if r := b.sh("dr_init"); r.rc == 0 || !strings.Contains(r.err, c.code) {
 			t.Fatalf("a box %v fast registered: %v", c.ahead, r)
 		}
 		f1 := b.newest()
 		k1, a1 := b.read(fmt.Sprintf("work/%d.pub", f1)), b.read(fmt.Sprintf("prekeys/%d.agekey", f1))
 		right := at{b.sbox, 0}
-		right.must("ig_init")
+		right.must("dr_init")
 		b.addr = mustAddress(t, b.dir)
 		if b.read(fmt.Sprintf("work/%d.pub", f1)) == k1 || b.read(fmt.Sprintf("prekeys/%d.agekey", f1)) != a1 || b.num() != f1 {
 			t.Errorf("%v: with the clock right, not a new first certificate for the same prekey at %d: serial %d", c.ahead, f1, b.num())
@@ -101,14 +101,14 @@ func TestScriptAfterAClockAhead(t *testing.T) {
 			ahead.off = 2 * time.Hour
 		}
 		s0, t0 := b.num(), ahead.now()
-		if r := ahead.sh("ig_rekey"); r.rc == 0 {
+		if r := ahead.sh("dr_rekey"); r.rc == 0 {
 			t.Fatalf("a renewal signed %v ahead was taken", ahead.off)
 		}
 		m := b.newest()
 		if m <= s0 || c.ahead > time.Hour && int64(m) < t0 {
 			t.Errorf("%v: the renewal left no statement numbered by that clock: %d after %d, at %d", ahead.off, m, s0, t0)
 		}
-		right.must("ig_rekey")
+		right.must("dr_rekey")
 		if p, _ := w.served(b.sbox); b.num() != m+1 || p != m+1 {
 			t.Errorf("%v: the renewal with the clock right is not one above the spent one, %d: %d, served %d", ahead.off, m, b.num(), p)
 		}
@@ -122,12 +122,12 @@ func TestScriptNumbersByTheClock(t *testing.T) {
 	b := w.box()
 	n1 := b.num()
 	fast := at{b, 90 * time.Second}
-	fast.must("ig_rekey")
+	fast.must("dr_rekey")
 	n2 := b.num()
 	if _, c := w.served(b); int64(n2) > fast.now() || int64(n2) < fast.now()-30 || n2 <= n1+60 || c != n2 {
 		t.Errorf("a renewal 90 seconds on: %d after %d, the certificate served %d", n2, n1, c)
 	}
-	at{b, -90 * time.Second}.must("ig_rekey")
+	at{b, -90 * time.Second}.must("dr_rekey")
 	if p, c := w.served(b); b.num() != n2+1 || p != n2+1 || c != n2+1 {
 		t.Errorf("a renewal with the clock behind its last number: %d after %d, served %d under %d", b.num(), n2, p, c)
 	}
@@ -139,14 +139,14 @@ func TestScriptNumbersByTheClock(t *testing.T) {
 func TestScriptSendsAndReadsByItsClock(t *testing.T) {
 	w := newWorld(t)
 	p, q := w.box(), w.box()
-	if r := (at{p, 2 * time.Hour}).sh("printf 'dated two hours ahead' | ig_send " + q.addr.String()); r.rc == 0 || !strings.Contains(r.err, "pass_expired") || !p.bare() {
+	if r := (at{p, 2 * time.Hour}).sh("printf 'dated two hours ahead' | dr_send " + q.addr.String()); r.rc == 0 || !strings.Contains(r.err, "pass_expired") || !p.bare() {
 		t.Errorf("a send from a clock two hours fast: %v", r)
 	}
 	if d := q.recv(); len(d.mail) != 0 || strings.Contains(d.said, "future") || w.srv.Count(q.addr) != 0 {
 		t.Errorf("its reader was sent something: %v", d)
 	}
-	p.must("ig_pass > /dev/null")
-	if kept := p.read("pass"); (at{p, -30 * time.Minute}).must("ig_pass") == kept {
+	p.must("dr_pass > /dev/null")
+	if kept := p.read("pass"); (at{p, -30 * time.Minute}).must("dr_pass") == kept {
 		t.Error("the kept pass was used after the clock went back")
 	}
 	l := p.line(q.addr, "00000000-0000-4000-8000-0000000000f1", "dated ahead", -3700*time.Second)
@@ -180,7 +180,7 @@ func TestScriptKeepsItsReplaySetByItsClock(t *testing.T) {
 		t.Errorf("a recv refused for a clock 70 days fast pruned: %v", d)
 	}
 	old := fmt.Sprintf("%064d", 7)
-	q.must(fmt.Sprintf(`printf '%%s %%s %%s %%s\n' %s %d %s 00000000-0000-4000-8000-0000000000f3 >> "$IG/seen"`, old, time.Now().Add(-67*24*time.Hour).Unix(), p.addr))
+	q.must(fmt.Sprintf(`printf '%%s %%s %%s %%s\n' %s %d %s 00000000-0000-4000-8000-0000000000f3 >> "$DR/seen"`, old, time.Now().Add(-67*24*time.Hour).Unix(), p.addr))
 	t0 := time.Now().Add(-66*24*time.Hour - time.Hour).Unix()
 	q.recv()
 	f, err := strconv.ParseInt(strings.TrimSpace(q.read("seen-floor")), 10, 64)
@@ -199,7 +199,7 @@ func TestScriptKeepsItsReplaySetByItsClock(t *testing.T) {
 	if d := q.recv(); d.rc == 0 || len(d.mail) != 0 || !strings.Contains(d.said, "seen-floor names no time") || w.srv.Count(q.addr) != 1 {
 		t.Errorf("a seen-floor that names no time: %v", d)
 	}
-	q.must(`rm "$IG/seen-floor"`)
+	q.must(`rm "$DR/seen-floor"`)
 	if d := q.recv(); !slices.Equal(d.bodies(), []string{"a floor that names no time"}) {
 		t.Errorf("the drain once the floor is gone: %v", d)
 	}

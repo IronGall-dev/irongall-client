@@ -19,7 +19,7 @@ import (
 //
 // It names its own type, RecordType, in its member type, so that one JSON
 // text is the record a person keeps, the body a server takes, the answer it
-// gives, and the line irongall revocation make prints. Every writer writes
+// gives, and the line dromas revocation make prints. Every writer writes
 // it, in no set order (PROTOCOL.md §10.3); MarshalJSON writes it first, as
 // the client prints every line's type. A reader takes a record without it,
 // as the route says what the body is, and refuses one that names any other

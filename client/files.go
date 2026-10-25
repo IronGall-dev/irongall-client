@@ -8,12 +8,12 @@ import (
 )
 
 // Dir returns the state directory of the box to use, as the stock recipe
-// finds it: $IRONGALL_HOME if set, otherwise
-// ${XDG_CONFIG_HOME:-$HOME/.config}/irongall/${IRONGALL_BOX:-default}, the
+// finds it: $DROMAS_HOME if set, otherwise
+// ${XDG_CONFIG_HOME:-$HOME/.config}/dromas/${DROMAS_BOX:-default}, the
 // XDG Base Directory Specification's home for configuration. It is never the
 // working directory, which for a coding agent is a git repository.
 func Dir() (string, error) {
-	if d := os.Getenv("IRONGALL_HOME"); d != "" {
+	if d := os.Getenv("DROMAS_HOME"); d != "" {
 		return d, nil
 	}
 	base := os.Getenv("XDG_CONFIG_HOME")
@@ -24,11 +24,11 @@ func Dir() (string, error) {
 		}
 		base = filepath.Join(home, ".config")
 	}
-	box := os.Getenv("IRONGALL_BOX")
+	box := os.Getenv("DROMAS_BOX")
 	if box == "" {
 		box = "default"
 	}
-	return filepath.Join(base, "irongall", box), nil
+	return filepath.Join(base, "dromas", box), nil
 }
 
 // writeFile writes a file with mode 0600 through a temporary file and a

@@ -7,7 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 
-	"github.com/IronGall-dev/irongall-client/sshsig"
+	"github.com/dromas-dev/dromas-client/sshsig"
 	"golang.org/x/crypto/ssh"
 )
 

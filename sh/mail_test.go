@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
-	"github.com/IronGall-dev/irongall-client/internal/forge"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/internal/fakeserver"
+	"github.com/dromas-dev/dromas-client/internal/forge"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // The script's box made, sending and reading, against a server that forges
@@ -69,7 +69,7 @@ func (w *world) signWith(cert string, to protocol.Address, line []byte) []byte {
 		w.t.Fatal(err)
 	}
 	b := &sbox{w: w, dir: w.work}
-	return []byte(b.must(fmt.Sprintf("ssh-keygen -q -Y sign -n irongall-msg-v1:%s -f %s < %s", to, cert, f)))
+	return []byte(b.must(fmt.Sprintf("ssh-keygen -q -Y sign -n dromas-msg-v1:%s -f %s < %s", to, cert, f)))
 }
 
 // sign signs line for to with b's working key in use.
@@ -116,15 +116,15 @@ func (w *world) boxLine(b *sbox) string {
 // no token; init again changes nothing, and an unknown option is refused.
 func TestScriptInit(t *testing.T) {
 	w := newWorld(t)
-	if r := w.empty().sh("ig_recv"); r.rc == 0 || !strings.Contains(r.err, "no box in") {
+	if r := w.empty().sh("dr_recv"); r.rc == 0 || !strings.Contains(r.err, "no box in") {
 		t.Errorf("recv where there is no box: %v", r)
 	}
 	a := w.empty()
-	out := a.must("ig_init")
+	out := a.must("dr_init")
 	t0 := time.Now().Unix()
 	a.addr = mustAddress(t, a.dir)
 	if out != w.boxLine(a) {
-		t.Errorf("ig_init printed %q", out)
+		t.Errorf("dr_init printed %q", out)
 	}
 	if sha256.Sum256([]byte(a.read("identity.doc"))) != a.addr {
 		t.Error("the address is not the identity document's hash")
@@ -142,17 +142,17 @@ func TestScriptInit(t *testing.T) {
 		}
 	}
 	var serial, start, end int64
-	if _, err := fmt.Sscan(a.must(fmt.Sprintf(`ig_cert "$IG/prekeys/%d.txt.sig" "$IG/identity.doc" %s`, n, a.addr)), &serial, &start, &end); err != nil || serial != int64(n) ||
+	if _, err := fmt.Sscan(a.must(fmt.Sprintf(`dr_cert "$DR/prekeys/%d.txt.sig" "$DR/identity.doc" %s`, n, a.addr)), &serial, &start, &end); err != nil || serial != int64(n) ||
 		end-time.Now().Unix() <= 64*86400-60 || end-time.Now().Unix() > 64*86400 {
 		t.Errorf("the prekey statement is not under a certificate numbered %d that is good for 64 days: %d %d %d, %v", n, serial, start, end, err)
 	}
-	if a.has("token") || !strings.HasPrefix(a.read("pass"), `irongall-pass address="`+a.addr.String()+`", not_after="`) {
+	if a.has("token") || !strings.HasPrefix(a.read("pass"), `dromas-pass address="`+a.addr.String()+`", not_after="`) {
 		t.Errorf("the box keeps a token, or no pass it signed: %q", a.read("pass"))
 	}
-	if out := a.must("ig_init"); out != w.boxLine(a) {
-		t.Errorf("ig_init again: %q", out)
+	if out := a.must("dr_init"); out != w.boxLine(a) {
+		t.Errorf("dr_init again: %q", out)
 	}
-	if r := a.sh("ig_init classic"); r.rc == 0 || !strings.Contains(r.err, "unknown option classic") {
+	if r := a.sh("dr_init classic"); r.rc == 0 || !strings.Contains(r.err, "unknown option classic") {
 		t.Errorf("an unknown option, the old classic: %v", r)
 	}
 }
@@ -168,8 +168,8 @@ func TestScriptSendsAndReads(t *testing.T) {
 	if r := a.send(w.srv.URL+"/to/"+b.addr.String(), "second, \"quoted\" <tags> & ünïcode\n"); r.rc != 0 {
 		t.Fatalf("the second send, to B's link: %v", r)
 	}
-	if out := a.must("ig_addr"); out != w.boxLine(a) {
-		t.Errorf("ig_addr: %q", out)
+	if out := a.must("dr_addr"); out != w.boxLine(a) {
+		t.Errorf("dr_addr: %q", out)
 	}
 	for _, l := range []string{"https://elsewhere.example/to/" + b.addr.String(), w.srv.URL + ".example/to/" + b.addr.String()} {
 		if r := a.send(l, "x"); r.rc == 0 || !strings.Contains(r.err, "a link to another server: this box's server is "+w.srv.URL) {
@@ -226,14 +226,14 @@ func TestScriptSendsAndReads(t *testing.T) {
 
 // A retry, sealed again to a new ciphertext with the same msg_id, is
 // delivered once. (That the server stores a byte-identical post once is
-// irongall-server's to test.)
+// dromas-server's to test.)
 func TestScriptDeliversARetryOnce(t *testing.T) {
 	w := newWorld(t)
 	a, b := w.box(), w.box()
 	if err := os.WriteFile(a.file("retry.P"), a.line(b.addr, "11111111-2222-4333-8444-555555555555", "once", 0), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	post := fmt.Sprintf(`ig_seal %s "$IG/retry" && ig_owner POST "/v1/%s/messages?$(cat "$IG/seal.query")" "$IG/seal.age" > /dev/null`, b.addr, b.addr)
+	post := fmt.Sprintf(`dr_seal %s "$DR/retry" && dr_owner POST "/v1/%s/messages?$(cat "$DR/seal.query")" "$DR/seal.age" > /dev/null`, b.addr, b.addr)
 	a.must(post + "\n" + post)
 	if w.srv.Count(b.addr) != 2 {
 		t.Fatalf("two seals of one envelope are %d ciphertexts", w.srv.Count(b.addr))
@@ -292,7 +292,7 @@ func TestScriptRefusesForgedMail(t *testing.T) {
 		return slices.Concat(l, w.signWith(opCert, b.addr, l))
 	}
 	w.inject(b, a.addr, "", forged(a))
-	r := b.sh("ig_recv")
+	r := b.sh("dr_recv")
 	refusals++
 	if !strings.Contains(r.out, `"code":"bad_signature","message":"it is not signed for this box by a working key the sender's identity certified"}`) || r.err != "" || w.srv.Count(b.addr) != 0 || pinned() != a.read("identity.doc") {
 		t.Errorf("mail in A's name under the operator's certificate: %v", r)
@@ -321,7 +321,7 @@ func TestScriptRefusesForgedMail(t *testing.T) {
 	if b.has("peers/" + op.addr.String()) {
 		t.Error("a from with a newline pinned the operator")
 	}
-	if out := b.must(`grep -rqs '^\*' "$IG/peers" "$IG/signers" && echo planted || true`); out != "" {
+	if out := b.must(`grep -rqs '^\*' "$DR/peers" "$DR/signers" && echo planted || true`); out != "" {
 		t.Error("a signer line was built from a from the server made up")
 	}
 	// A's genuine ciphertext, listed as C's, then A's again: under its own id, and a new one.
@@ -433,12 +433,12 @@ func (w *world) prekey(b *sbox) stmt {
 // notAfter, signed with the key file signer as ssh-keygen signs one.
 func (w *world) statement(b *sbox, serial uint64, key, notAfter, signer string) stmt {
 	w.t.Helper()
-	st := fmt.Appendf(nil, "irongall-prekey-v1\n%s\n%d\n%s\n%s\n", b.addr, serial, key, notAfter)
+	st := fmt.Appendf(nil, "dromas-prekey-v1\n%s\n%d\n%s\n%s\n", b.addr, serial, key, notAfter)
 	f := filepath.Join(w.t.TempDir(), "st")
 	if err := os.WriteFile(f, st, 0o600); err != nil {
 		w.t.Fatal(err)
 	}
-	sig := []byte((&sbox{w: w, dir: w.work}).must(fmt.Sprintf("ssh-keygen -q -Y sign -n irongall-prekey-v1:%s -f %s < %s", b.addr, signer, f)))
+	sig := []byte((&sbox{w: w, dir: w.work}).must(fmt.Sprintf("ssh-keygen -q -Y sign -n dromas-prekey-v1:%s -f %s < %s", b.addr, signer, f)))
 	return stmt{st, sig}
 }
 
@@ -488,11 +488,11 @@ func TestScriptChecksTheBoxItIsServed(t *testing.T) {
 	// operator that serves it as a box is refused it, so one key never gets a
 	// second address.
 	e := &sbox{w: w, dir: filepath.Join(w.work, "E")}
-	e.must(`mkdir -p "$IG"; cd "$IG"; ssh-keygen -q -t ed25519 -N '' -C '' -f identity; printf 'irongall-v1\n%s\n \n' "$(cut -d' ' -f1,2 identity.pub)" > identity.doc; sha256sum < identity.doc | cut -c1-64 > address
-ssh-keygen -q -t ed25519 -N '' -C '' -f work; ssh-keygen -q -s identity -I irongall-cert-v1 -n "$(cat address)" -z 1 -V "$(date -u -d '1 hour ago' +%Y%m%d%H%M%SZ):$(date -u -d '64 days' +%Y%m%d%H%M%SZ)" -O clear work.pub
+	e.must(`mkdir -p "$DR"; cd "$DR"; ssh-keygen -q -t ed25519 -N '' -C '' -f identity; printf 'dromas-v1\n%s\n \n' "$(cut -d' ' -f1,2 identity.pub)" > identity.doc; sha256sum < identity.doc | cut -c1-64 > address
+ssh-keygen -q -t ed25519 -N '' -C '' -f work; ssh-keygen -q -s identity -I dromas-cert-v1 -n "$(cat address)" -z 1 -V "$(date -u -d '1 hour ago' +%Y%m%d%H%M%SZ):$(date -u -d '64 days' +%Y%m%d%H%M%SZ)" -O clear work.pub
 age-keygen -o agekey 2> /dev/null`)
 	e.addr = mustAddress(t, e.dir)
-	eSt := w.statement(e, 1, strings.TrimSpace(e.must(`age-keygen -y "$IG/agekey"`)), notAfter(), e.file("work-cert.pub"))
+	eSt := w.statement(e, 1, strings.TrimSpace(e.must(`age-keygen -y "$DR/agekey"`)), notAfter(), e.file("work-cert.pub"))
 	eDoc := []byte(e.read("identity.doc"))
 	w.srv.SetMiddle(func(rw http.ResponseWriter, r *http.Request, next http.Handler) {
 		if x, ok := forge.ReadOf(r); ok && x == e.addr {

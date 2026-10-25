@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // Rekey publishes a NEW prekey, of type kt, or of the current prekey's type
@@ -89,7 +89,7 @@ func (b *Box) renew(ctx context.Context, kt protocol.KeyType, asked bool) (*prot
 		return nil, taken{}, err
 	}
 	if st.notMade && !asked {
-		return nil, taken{}, refuse("this box's server serves a prekey statement in its name that this box did not make, and recv renews nothing above one: irongall status says what to do, and irongall prekey renew renews above it, for its owner to run")
+		return nil, taken{}, refuse("this box's server serves a prekey statement in its name that this box did not make, and recv renews nothing above one: dromas status says what to do, and dromas prekey renew renews above it, for its owner to run")
 	}
 	return b.renewFrom(ctx, st)
 }
@@ -262,13 +262,13 @@ func (b *Box) readOwn(ctx context.Context, kt protocol.KeyType, unused bool) (*o
 		var err error
 		switch {
 		case o.bad != nil:
-			err = refuse("this box's current prekey, as served: %v. irongall cert revoke-earlier renews past it, revoking every certificate before the new one", o.bad)
+			err = refuse("this box's current prekey, as served: %v. dromas cert revoke-earlier renews past it, revoking every certificate before the new one", o.bad)
 		// A box's statements are ordered by certificate first, then by
 		// serial, and this box gives a renewal's certificate and prekey one
 		// number. So what it published is (published, published), and the
 		// server may serve nothing ordered before it.
 		case before(o.cert.Serial(), o.statement.Serial, published, published):
-			err = refuse("rollback: the server serves this box's prekey serial %d under certificate %d, before serial %d, which this box published. irongall cert revoke-earlier renews past it, revoking every certificate before the new one", o.statement.Serial, o.cert.Serial(), published)
+			err = refuse("rollback: the server serves this box's prekey serial %d under certificate %d, before serial %d, which this box published. dromas cert revoke-earlier renews past it, revoking every certificate before the new one", o.statement.Serial, o.cert.Serial(), published)
 		default:
 			out.known = max(o.cert.Serial(), published)
 			// A box that has published nothing, restored from its identity
@@ -712,7 +712,7 @@ func (b *Box) renewDue() bool {
 // prekey reached the server before the renewal that retired it, or with a
 // send already in progress: such a drain collected all of it. The newest
 // retired prekey is kept regardless. After this, mail encrypted to a deleted
-// prekey is unrecoverable from the box's keys. irongall.sh does not do this;
+// prekey is unrecoverable from the box's keys. dromas.sh does not do this;
 // it keeps every retired prekey until prune's deletion time.
 func (b *Box) dropRetired(at taken) error {
 	cur, err := b.publishedSerial()

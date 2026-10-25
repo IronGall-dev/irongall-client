@@ -17,7 +17,7 @@ import (
 
 const (
 	// PrekeyTag is line 1 of every v1 prekey statement.
-	PrekeyTag = "irongall-prekey-v1"
+	PrekeyTag = "dromas-prekey-v1"
 	// PrekeyLifetime is how long a client makes a prekey statement valid for:
 	// 31 days, the longest month, plus a day a renewal may wait and a day of
 	// slip, so a box checked at least monthly never lapses.

@@ -1,4 +1,4 @@
-module github.com/IronGall-dev/irongall-client
+module github.com/dromas-dev/dromas-client
 
 go 1.27.0
 

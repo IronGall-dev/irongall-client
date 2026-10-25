@@ -17,14 +17,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/client"
-	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/client"
+	"github.com/dromas-dev/dromas-client/internal/fakeserver"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // A fetch that is cut keeps what it read in the box's partial file, and the
 // next fetch of that message asks for the rest by range (PROTOCOL.md §12.3;
-// #381). The fake answers ranges as irongall-server does, so these tests
+// #381). The fake answers ranges as dromas-server does, so these tests
 // meet a 206 from an honest server; a middleware plays the link that cuts
 // and the server that lies.
 

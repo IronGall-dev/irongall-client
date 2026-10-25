@@ -10,8 +10,8 @@ import (
 	"slices"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/client"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/client"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // Every command prints JSON lines: one object a line, whose first member,
@@ -98,7 +98,7 @@ func mail(d client.Delivery) []byte {
 // its envelope with the checked fields but its body and subject, and the
 // size of its body in bytes, as the envelope carries it. in_reply_to and
 // supersedes are the sender's words, which a reader holds only to being
-// strings, so each is here only when it has a msg_id's form; irongall show
+// strings, so each is here only when it has a msg_id's form; dromas show
 // prints them as sent.
 func mailHeaders(d client.Delivery) []byte {
 	env := d.Envelope

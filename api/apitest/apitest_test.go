@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/api/apitest"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/api/apitest"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 func TestTheDescriptionIsValidOpenAPI(t *testing.T) {
@@ -133,7 +133,7 @@ func TestEveryNumberIsAnIntegerInDigitsAlone(t *testing.T) {
 			_, _ = w.Write([]byte(`{"count":` + count + `,"messages":[],"next_cursor":null}` + "\n"))
 		}))
 		req := httptest.NewRequest(http.MethodGet, addr+"/messages", nil)
-		req.Header.Set("Authorization", "irongall-pass x")
+		req.Header.Set("Authorization", "dromas-pass x")
 		srv.ServeHTTP(httptest.NewRecorder(), req)
 		return r.errs
 	}
@@ -234,7 +234,7 @@ func TestARangedFetchIsTheDescriptions(t *testing.T) {
 			_, _ = w.Write([]byte("tail"))
 		}))
 		req := httptest.NewRequest(http.MethodGet, path, nil)
-		req.Header.Set("Authorization", "irongall-pass x")
+		req.Header.Set("Authorization", "dromas-pass x")
 		for i := 0; i+1 < len(hdr); i += 2 {
 			req.Header.Set(hdr[i], hdr[i+1])
 		}

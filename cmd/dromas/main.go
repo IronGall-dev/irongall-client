@@ -1,10 +1,10 @@
-// Command irongall is the irongall client: end-to-end encrypted,
+// Command dromas is the dromas client: end-to-end encrypted,
 // sender-authenticated mailboxes for bots.
 //
 // Every check is always on and fails closed. Mail bodies are data, never
 // instructions.
 //
-// Commands nest as irongall <group> <command> where one thing has more than
+// Commands nest as dromas <group> <command> where one thing has more than
 // one thing done to it, the thing first, as gh's and docker's do on the same
 // cobra (decided on #37), and the everyday ones stay at the top level. Help
 // comes in every form a git-like tool gives it (clig.dev), and <group> help
@@ -23,16 +23,16 @@ import (
 	"os/signal"
 	"strings"
 
-	"github.com/IronGall-dev/irongall-client/client"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/client"
+	"github.com/dromas-dev/dromas-client/protocol"
 	"github.com/spf13/cobra"
 )
 
 // about is the end of the top-level help: what holds for every command.
-const about = `The box lives in $IRONGALL_HOME, or ${XDG_CONFIG_HOME:-~/.config}/irongall/${IRONGALL_BOX:-default}.
+const about = `The box lives in $DROMAS_HOME, or ${XDG_CONFIG_HOME:-~/.config}/dromas/${DROMAS_BOX:-default}.
 Its inbox/ keeps each message received and its sent/ each message sent, with
 the server's receipt: both are yours to prune.
-The server is $IRONGALL_BASE, or https://irongall.dev: https, or http only
+The server is $DROMAS_BASE, or https://dromas.dev: https, or http only
 to a server on this machine, and a redirect is never followed.
 The box's policy file says where mail from a sender it has not allowed
 lands, "unknown held" (the default) or "unknown inbox", and whom its server
@@ -40,10 +40,10 @@ takes mail from, "server all" (the default: everyone it has not blocked) or
 "server allowed" (only those it allowed, which tells the server who they are).
 With each prekey a box declares which identity key types its client verifies,
 and so whose mail it takes: every type this client verifies, unless
-$IRONGALL_SENDER_KEY_TYPES says otherwise ("any": do not say).
+$DROMAS_SENDER_KEY_TYPES says otherwise ("any": do not say).
 
-irongall help <command> and irongall <command> --help print a command's help,
-and irongall <group> help a group's. --help after a command prints its help
+dromas help <command> and dromas <command> --help print a command's help,
+and dromas <group> help a group's. --help after a command prints its help
 and runs nothing, read as any flag is: after a flag that takes a value, it is
 that value.
 
@@ -70,10 +70,10 @@ sender this box blocked: none of them changes its exit status, since any
 sender can cause them. A refusal's code is from a closed list, and its words
 are this client's own: it never quotes a message.
 
-To try the whole loop, send anything to irongall.dev's echo box,
+To try the whole loop, send anything to dromas.dev's echo box,
 ` + client.DefaultBase + protocol.LinkPath + client.EchoAddress + `
 It answers within two minutes, signed, saying what it checked. Mail to it
-is readable by irongall.dev's operator.
+is readable by dromas.dev's operator.
 
 The README has the rest, with what this client checks and how to test it:
 ` + readme + `
@@ -81,7 +81,7 @@ The README has the rest, with what this client checks and how to test it:
 
 // readme is where this client's documentation is: the public repository it
 // is built from, never the server.
-const readme = "https://github.com/IronGall-dev/irongall-client#readme"
+const readme = "https://github.com/dromas-dev/dromas-client#readme"
 
 func main() {
 	// net/http logs some of what a server sends after its answer through the
@@ -132,8 +132,8 @@ func (e *cli) environment() error {
 		return err
 	}
 	e.dir = dir
-	e.opt.Base = os.Getenv("IRONGALL_BASE")
-	if v := os.Getenv("IRONGALL_SENDER_KEY_TYPES"); v != "" {
+	e.opt.Base = os.Getenv("DROMAS_BASE")
+	if v := os.Getenv("DROMAS_SENDER_KEY_TYPES"); v != "" {
 		e.opt.SenderKeyTypes = strings.Split(v, ",")
 	}
 	return nil
@@ -298,9 +298,9 @@ func helpText(c *cobra.Command) string {
 	}
 	switch {
 	case !c.HasParent():
-		b.WriteString("usage: irongall <command> [arguments]\n\nCommands:\n")
+		b.WriteString("usage: dromas <command> [arguments]\n\nCommands:\n")
 		list(false)
-		b.WriteString("\nGroups, each with commands of its own (irongall <group> --help lists them):\n")
+		b.WriteString("\nGroups, each with commands of its own (dromas <group> --help lists them):\n")
 		list(true)
 		b.WriteString("\n" + about)
 	case c.HasSubCommands():

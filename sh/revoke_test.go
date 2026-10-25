@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
-	"github.com/IronGall-dev/irongall-client/internal/forge"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/internal/fakeserver"
+	"github.com/dromas-dev/dromas-client/internal/forge"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // Revocation in the script: of an address and of its certificates, what a
@@ -30,8 +30,8 @@ const top = 9007199254740991
 // left in $W/<name>.rev.sig.
 func (b *sbox) revocation(name string) []byte {
 	b.w.t.Helper()
-	return []byte(b.must(`a=$(cat "$IG/address"); printf 'irongall-revoke-v1\n%s\n' "$a" | ssh-keygen -q -Y sign -n "irongall-revoke-v1:$a" -f "$IG/identity" > "$W/` + name + `.rev.sig" &&
-jq -cn --arg i "$(ig_b64 "$IG/identity.doc")" --arg s "$(ig_b64 "$W/` + name + `.rev.sig")" '{type:"revocation_record", identity:$i, revocation_signature:$s}'`))
+	return []byte(b.must(`a=$(cat "$DR/address"); printf 'dromas-revoke-v1\n%s\n' "$a" | ssh-keygen -q -Y sign -n "dromas-revoke-v1:$a" -f "$DR/identity" > "$W/` + name + `.rev.sig" &&
+jq -cn --arg i "$(dr_b64 "$DR/identity.doc")" --arg s "$(dr_b64 "$W/` + name + `.rev.sig")" '{type:"revocation_record", identity:$i, revocation_signature:$s}'`))
 }
 
 // revoke publishes b's revocation at its server, as the Go client's
@@ -40,7 +40,7 @@ func (b *sbox) revoke() {
 	b.w.t.Helper()
 	rec := filepath.Join(b.w.work, "own.rev.json")
 	writeFile(b.w.t, rec, b.revocation("own"))
-	b.must(`ig_api PUT "/v1/$(cat "$IG/address")/revocations" ` + rec + ` > /dev/null && cp "$W/own.rev.sig" "$IG/revoked.sig"`)
+	b.must(`dr_api PUT "/v1/$(cat "$DR/address")/revocations" ` + rec + ` > /dev/null && cp "$W/own.rev.sig" "$DR/revoked.sig"`)
 }
 
 // certs is a revocation of b's certificates through serial, signed with the
@@ -49,8 +49,8 @@ func (b *sbox) revoke() {
 // .sig, the record $W/<name>.json.
 func (b *sbox) certs(name string, serial uint64, signer string) string {
 	b.w.t.Helper()
-	b.must(fmt.Sprintf(`a=$(cat "$IG/address"); printf 'irongall-revoke-certs-v1\n%%s\n%%s\n' "$a" %d > "$W/%[2]s.certs"; ssh-keygen -q -Y sign -n "irongall-revoke-certs-v1:$a" -f %[3]s < "$W/%[2]s.certs" > "$W/%[2]s.sig"
-jq -cn --arg i "$(ig_b64 "$IG/identity.doc")" --arg l "$(ig_b64 "$W/%[2]s.certs")" --arg g "$(ig_b64 "$W/%[2]s.sig")" '{identity:$i, revoked_certificates:$l, revoked_certificates_signature:$g}' > "$W/%[2]s.json"`, serial, name, signer))
+	b.must(fmt.Sprintf(`a=$(cat "$DR/address"); printf 'dromas-revoke-certs-v1\n%%s\n%%s\n' "$a" %d > "$W/%[2]s.certs"; ssh-keygen -q -Y sign -n "dromas-revoke-certs-v1:$a" -f %[3]s < "$W/%[2]s.certs" > "$W/%[2]s.sig"
+jq -cn --arg i "$(dr_b64 "$DR/identity.doc")" --arg l "$(dr_b64 "$W/%[2]s.certs")" --arg g "$(dr_b64 "$W/%[2]s.sig")" '{identity:$i, revoked_certificates:$l, revoked_certificates_signature:$g}' > "$W/%[2]s.json"`, serial, name, signer))
 	return filepath.Join(b.w.work, name+".json")
 }
 
@@ -58,7 +58,7 @@ jq -cn --arg i "$(ig_b64 "$IG/identity.doc")" --arg l "$(ig_b64 "$W/%[2]s.certs"
 // signature is the authority.
 func (b *sbox) publish(record string) {
 	b.w.t.Helper()
-	b.must(`ig_api PUT "/v1/$(cat "$IG/address")/revocations" ` + record + ` > /dev/null`)
+	b.must(`dr_api PUT "/v1/$(cat "$DR/address")/revocations" ` + record + ` > /dev/null`)
 }
 
 // saysRevoked answers every read of box b 410 revoked, carrying record, or
@@ -124,14 +124,14 @@ func TestScriptTakesARevocationOnItsProofAlone(t *testing.T) {
 	vdoc := abs(t, filepath.Join(vectors, "a", "identity.doc"))
 	sigs := []string{"a/revoke.sig", "a/revoke.sha256.sig"}
 	if p256() {
-		if r := ra.sh(fmt.Sprintf("ig_revcheck %s %s %s", strings.TrimSpace(mustReadString(t, filepath.Join(vectors, "c", "address"))), abs(t, filepath.Join(vectors, "c", "identity.doc")), abs(t, filepath.Join(vectors, "c", "revoke.sig")))); r.rc != 0 {
+		if r := ra.sh(fmt.Sprintf("dr_revcheck %s %s %s", strings.TrimSpace(mustReadString(t, filepath.Join(vectors, "c", "address"))), abs(t, filepath.Join(vectors, "c", "identity.doc")), abs(t, filepath.Join(vectors, "c", "revoke.sig")))); r.rc != 0 {
 			t.Errorf("c/revoke.sig, by a P-256 identity, is not taken: %v", r)
 		}
 	} else {
 		t.Log("this ssh-keygen reads no P-256 key (OpenSSH built without OpenSSL), so c/revoke.sig is not tried: a known variance (PROTOCOL.md Appendix A)")
 	}
 	for _, v := range sigs {
-		if r := ra.sh(fmt.Sprintf("ig_revcheck %s %s %s", va, vdoc, abs(t, filepath.Join(vectors, v)))); r.rc != 0 {
+		if r := ra.sh(fmt.Sprintf("dr_revcheck %s %s %s", va, vdoc, abs(t, filepath.Join(vectors, v)))); r.rc != 0 {
 			t.Errorf("vector %s is not taken as A's revocation: %v", v, r)
 		}
 	}
@@ -141,9 +141,9 @@ func TestScriptTakesARevocationOnItsProofAlone(t *testing.T) {
 	}
 	vb := strings.TrimSpace(mustReadString(t, filepath.Join(vectors, "b", "address")))
 	for _, v := range append(bad, "b") {
-		cmd := fmt.Sprintf("ig_revcheck %s %s %s", va, vdoc, abs(t, v))
+		cmd := fmt.Sprintf("dr_revcheck %s %s %s", va, vdoc, abs(t, v))
 		if v == "b" { // A's revocation for another box, and under another identity
-			cmd = fmt.Sprintf("ig_revcheck %s %s %[3]s || ig_revcheck %[4]s %[5]s %[3]s", vb, vdoc, abs(t, filepath.Join(vectors, sigs[0])), va, abs(t, filepath.Join(vectors, "b", "identity.doc")))
+			cmd = fmt.Sprintf("dr_revcheck %s %s %[3]s || dr_revcheck %[4]s %[5]s %[3]s", vb, vdoc, abs(t, filepath.Join(vectors, sigs[0])), va, abs(t, filepath.Join(vectors, "b", "identity.doc")))
 		}
 		if r := ra.sh(cmd); r.rc == 0 {
 			t.Errorf("%s is taken as a revocation: %v", v, r)
@@ -153,17 +153,17 @@ func TestScriptTakesARevocationOnItsProofAlone(t *testing.T) {
 	writeFile(t, rbRec, rb.revocation("rb"))
 	untyped := filepath.Join(w.work, "rb-untyped.json")
 	rb.must(`jq -c 'del(.type)' ` + rbRec + ` > ` + untyped)
-	if out := rb.must("ig_record " + rbRec + "; ig_record " + untyped); out != strings.Repeat(rb.addr.String()+"\n", 2) {
+	if out := rb.must("dr_record " + rbRec + "; dr_record " + untyped); out != strings.Repeat(rb.addr.String()+"\n", 2) {
 		t.Errorf("a record, and one that names no type: %q", out)
 	}
 	// A working key's signature over the same statement: good under its
 	// certificate, and no revocation. (That the server refuses it is
-	// irongall-server's to test.)
+	// dromas-server's to test.)
 	wk := filepath.Join(w.work, "wk.json")
-	rb.must(fmt.Sprintf(`printf 'irongall-revoke-v1\n%%s\n' %[1]s | ssh-keygen -q -Y sign -n irongall-revoke-v1:%[1]s -f "$IG/work/%[2]d-cert.pub" > "$W/wk.sig"
-ig_certified %[1]s "$IG/identity.doc" irongall-revoke-v1:%[1]s "$W/wk.sig" <(printf 'irongall-revoke-v1\n%%s\n' %[1]s) > /dev/null
-jq -cn --arg i "$(ig_b64 "$IG/identity.doc")" --arg s "$(ig_b64 "$W/wk.sig")" '{identity:$i, revocation_signature:$s}' > %[3]s`, rb.addr, rb.num(), wk))
-	if r := rb.sh("ig_record " + wk); r.rc == 0 {
+	rb.must(fmt.Sprintf(`printf 'dromas-revoke-v1\n%%s\n' %[1]s | ssh-keygen -q -Y sign -n dromas-revoke-v1:%[1]s -f "$DR/work/%[2]d-cert.pub" > "$W/wk.sig"
+dr_certified %[1]s "$DR/identity.doc" dromas-revoke-v1:%[1]s "$W/wk.sig" <(printf 'dromas-revoke-v1\n%%s\n' %[1]s) > /dev/null
+jq -cn --arg i "$(dr_b64 "$DR/identity.doc")" --arg s "$(dr_b64 "$W/wk.sig")" '{identity:$i, revocation_signature:$s}' > %[3]s`, rb.addr, rb.num(), wk))
+	if r := rb.sh("dr_record " + wk); r.rc == 0 {
 		t.Errorf("a working key's signature is read as a record: %v", r)
 	}
 	// The operator says RB is revoked, and shows nothing, or what is not its
@@ -246,7 +246,7 @@ jq -cn --arg i "$(ig_b64 "$IG/identity.doc")" --arg s "$(ig_b64 "$W/wk.sig")" '{
 // keptCerts is the revocation of certificates a box keeps of address a, as
 // its statement.
 func (b *sbox) keptCerts(a protocol.Address) string {
-	return b.must(`jq -r .revoked_certificates "$IG/peers/` + a.String() + `/revoked-certs.json" | base64 -d`)
+	return b.must(`jq -r .revoked_certificates "$DR/peers/` + a.String() + `/revoked-certs.json" | base64 -d`)
 }
 
 // A revocation of certificates is the identity's own signature over exact
@@ -258,25 +258,25 @@ func TestScriptReadsARevocationOfCertificates(t *testing.T) {
 	va := strings.TrimSpace(mustReadString(t, filepath.Join(vectors, "a", "address")))
 	vec := func(n string) string { return abs(t, filepath.Join(vectors, n)) }
 	ok4, okTop := vec("revoked/ok-through-4"), vec("revoked/ok-through-the-highest")
-	if out := p.must(fmt.Sprintf("ig_certscheck %[1]s %[2]s %[3]s.txt %[3]s.sig; ig_certscheck %[1]s %[2]s %[3]s.txt %[3]s.sha256.sig; ig_certscheck %[1]s %[2]s %[4]s.txt %[4]s.sig", va, vec("a/identity.doc"), ok4, okTop)); out != "4\n4\n9007199254740991\n" {
+	if out := p.must(fmt.Sprintf("dr_certscheck %[1]s %[2]s %[3]s.txt %[3]s.sig; dr_certscheck %[1]s %[2]s %[3]s.txt %[3]s.sha256.sig; dr_certscheck %[1]s %[2]s %[4]s.txt %[4]s.sig", va, vec("a/identity.doc"), ok4, okTop)); out != "4\n4\n9007199254740991\n" {
 		t.Errorf("the vectors that are a revocation of certificates: %q", out)
 	}
 	bad, _ := filepath.Glob(filepath.Join(vectors, "revoked", "bad-*.txt"))
 	for _, v := range bad {
-		if r := p.sh(fmt.Sprintf("ig_certscheck %s %s %s %s", va, vec("a/identity.doc"), abs(t, v), abs(t, strings.TrimSuffix(v, ".txt")+".sig"))); r.rc == 0 {
+		if r := p.sh(fmt.Sprintf("dr_certscheck %s %s %s %s", va, vec("a/identity.doc"), abs(t, v), abs(t, strings.TrimSuffix(v, ".txt")+".sig"))); r.rc == 0 {
 			t.Errorf("%s is taken as a revocation of A's certificates", filepath.Base(v))
 		}
 	}
 	vb := strings.TrimSpace(mustReadString(t, filepath.Join(vectors, "b", "address")))
-	if r := p.sh(fmt.Sprintf("ig_certscheck %[1]s %[2]s %[3]s.txt %[3]s.sig || ig_certscheck %[4]s %[2]s %[3]s.txt %[3]s.sig", vb, vec("b/identity.doc"), ok4, va)); r.rc == 0 {
+	if r := p.sh(fmt.Sprintf("dr_certscheck %[1]s %[2]s %[3]s.txt %[3]s.sig || dr_certscheck %[4]s %[2]s %[3]s.txt %[3]s.sig", vb, vec("b/identity.doc"), ok4, va)); r.rc == 0 {
 		t.Error("A's revocation of certificates is taken for another box, or under another identity")
 	}
-	out := p.must(fmt.Sprintf(`d="$IG/peers/%[1]s"; mkdir -p "$d"; cp %[2]s "$d/identity.doc"
-rec(){ jq -cn --arg i "$(ig_b64 %[2]s)" --arg l "$(ig_b64 "$1")" --arg g "$(ig_b64 "$2")" '{identity:$i, revoked_certificates:$l, revoked_certificates_signature:$g}' > "$d/revoked-certs.json"; }
-rec %[3]s.txt %[3]s.sig; for n in 1 3 4 5 9007199254740991; do ig_certrevoked %[1]s $n; echo -n "$? "; done
-rec %[4]s.txt %[4]s.sig; ig_certrevoked %[1]s 9007199254740991; echo -n "$? "
-rec %[3]s.txt %[4]s.sig; ig_certrevoked %[1]s 2; echo -n "$? "
-echo '{}' > "$d/revoked-certs.json"; ig_certrevoked %[1]s 2; echo "$?"`, va, vec("a/identity.doc"), ok4, okTop))
+	out := p.must(fmt.Sprintf(`d="$DR/peers/%[1]s"; mkdir -p "$d"; cp %[2]s "$d/identity.doc"
+rec(){ jq -cn --arg i "$(dr_b64 %[2]s)" --arg l "$(dr_b64 "$1")" --arg g "$(dr_b64 "$2")" '{identity:$i, revoked_certificates:$l, revoked_certificates_signature:$g}' > "$d/revoked-certs.json"; }
+rec %[3]s.txt %[3]s.sig; for n in 1 3 4 5 9007199254740991; do dr_certrevoked %[1]s $n; echo -n "$? "; done
+rec %[4]s.txt %[4]s.sig; dr_certrevoked %[1]s 9007199254740991; echo -n "$? "
+rec %[3]s.txt %[4]s.sig; dr_certrevoked %[1]s 2; echo -n "$? "
+echo '{}' > "$d/revoked-certs.json"; dr_certrevoked %[1]s 2; echo "$?"`, va, vec("a/identity.doc"), ok4, okTop))
 	if out != "0 0 0 1 1 0 3 3\n" {
 		t.Errorf("a kept revocation through 4, through the highest, under another's signature, and one that holds none: %q", out)
 	}
@@ -313,7 +313,7 @@ func TestScriptAfterAWorkingKeyIsTaken(t *testing.T) {
 	thiefs := w.statement(cb, top, op.recipient(), notAfter(), taken+"-cert.pub")
 	body, _ := json.Marshal(protocol.PrekeyRequest{Prekey: thiefs.st, PrekeySignature: thiefs.sig})
 	writeFile(t, filepath.Join(w.work, "top.json"), body)
-	cb.must(fmt.Sprintf(`h=$(ig_pass %d) && ig_api PUT "/v1/$(cat "$IG/address")/prekey" "$W/top.json" -H "Authorization: $h" > /dev/null; rm -f "$IG/pass.new"`, n1))
+	cb.must(fmt.Sprintf(`h=$(dr_pass %d) && dr_api PUT "/v1/$(cat "$DR/address")/prekey" "$W/top.json" -H "Authorization: $h" > /dev/null; rm -f "$DR/pass.new"`, n1))
 	if p, _ := w.served(cb); p != top {
 		t.Fatalf("the thief's prekey was not taken: %d", p)
 	}
@@ -329,7 +329,7 @@ func TestScriptAfterAWorkingKeyIsTaken(t *testing.T) {
 	w.honest()
 	// The owner renews as ever: the next certificate passes the thief's
 	// statement, and senders follow.
-	cb.must("ig_rekey")
+	cb.must("dr_rekey")
 	n2 := cb.num()
 	if p, c := w.served(cb); n2 <= n1 || n2 >= top || p != n2 || c != n2 {
 		t.Errorf("a renewal past the top serial: %d, served %d under %d", n2, p, c)
@@ -351,10 +351,10 @@ func TestScriptAfterAWorkingKeyIsTaken(t *testing.T) {
 	}
 	// A revocation the working key signs is none; the identity's, through
 	// the first certificate, is published with no pass. (What the server
-	// takes of either is irongall-server's to test.)
+	// takes of either is dromas-server's to test.)
 	cb.certs("CBw", n1, cb.file(fmt.Sprintf("work/%d-cert.pub", n2)))
-	cb.must(fmt.Sprintf(`ig_certified %s "$IG/identity.doc" irongall-revoke-certs-v1:%[1]s "$W/CBw.sig" "$W/CBw.certs" > /dev/null`, cb.addr))
-	if r := cb.sh(fmt.Sprintf(`ig_certscheck %s "$IG/identity.doc" "$W/CBw.certs" "$W/CBw.sig"`, cb.addr)); r.rc == 0 {
+	cb.must(fmt.Sprintf(`dr_certified %s "$DR/identity.doc" dromas-revoke-certs-v1:%[1]s "$W/CBw.sig" "$W/CBw.certs" > /dev/null`, cb.addr))
+	if r := cb.sh(fmt.Sprintf(`dr_certscheck %s "$DR/identity.doc" "$W/CBw.certs" "$W/CBw.sig"`, cb.addr)); r.rc == 0 {
 		t.Errorf("a revocation of certificates the working key signed is taken: %v", r)
 	}
 	cb.publish(cb.certs("CB2", n1, cb.file("identity")))
@@ -399,7 +399,7 @@ func TestScriptAfterAWorkingKeyIsTaken(t *testing.T) {
 	w.honest()
 	cb.mustSend(ca, "held while the kept revocation is broken")
 	kept := ca.read(peer + "revoked-certs.json")
-	ca.must(fmt.Sprintf(`jq -cn --arg i "$(ig_b64 "$IG/%sidentity.doc")" --arg l "$(ig_b64 "$W/CB1.certs")" --arg g "$(ig_b64 "$W/CB2.sig")" '{identity:$i, revoked_certificates:$l, revoked_certificates_signature:$g}' > "$IG/%[1]srevoked-certs.json"`, peer))
+	ca.must(fmt.Sprintf(`jq -cn --arg i "$(dr_b64 "$DR/%sidentity.doc")" --arg l "$(dr_b64 "$W/CB1.certs")" --arg g "$(dr_b64 "$W/CB2.sig")" '{identity:$i, revoked_certificates:$l, revoked_certificates_signature:$g}' > "$DR/%[1]srevoked-certs.json"`, peer))
 	q := len(ca.files("quarantine"))
 	if d := ca.recv(); d.rc == 0 || len(d.mail) != 0 || w.srv.Count(ca.addr) != 1 || len(ca.files("quarantine")) != q || !strings.Contains(d.said, "does not verify") {
 		t.Errorf("a kept revocation swapped for one that does not verify: %v", d)
@@ -418,15 +418,15 @@ func TestScriptUnderItsOwnRevokedCertificate(t *testing.T) {
 	ca, cd, ce := w.box(), w.box(), w.box()
 	nd := cd.num()
 	cd.publish(cd.certs("CD1", nd, cd.file("identity")))
-	if out := cd.must(`ig_recv > /dev/null 2>&1 && echo drained; ig_code`); out != "certificate_revoked\n" {
+	if out := cd.must(`dr_recv > /dev/null 2>&1 && echo drained; dr_code`); out != "certificate_revoked\n" {
 		t.Errorf("a drain under a revoked certificate: %q", out)
 	}
 	forge.Hides(t, w.srv) // so that the answer this sender meets is the server's own
-	if out := ca.must(`printf 'to a box whose certificate is revoked' | ig_send ` + cd.addr.String() + ` > /dev/null 2>&1 && echo sent; ig_code`); out != "prekey_expired\n" || !ca.bare() {
+	if out := ca.must(`printf 'to a box whose certificate is revoked' | dr_send ` + cd.addr.String() + ` > /dev/null 2>&1 && echo sent; dr_code`); out != "prekey_expired\n" || !ca.bare() {
 		t.Errorf("a send to a box whose certificate is revoked: %q", out)
 	}
 	w.honest()
-	cd.must("ig_rekey")
+	cd.must("dr_rekey")
 	if _, c := w.served(cd); c <= nd {
 		t.Errorf("CD renewed under %d", c)
 	}
@@ -436,15 +436,15 @@ func TestScriptUnderItsOwnRevokedCertificate(t *testing.T) {
 	}
 	x := ce.num() + 1000000 // a slip of a digit
 	ce.publish(ce.certs("CE1", x, ce.file("identity")))
-	if out := ce.must(`ig_lookup "$(cat "$IG/address")"; echo "$? $(ig_certskept "$(cat "$IG/address")")"`); out != fmt.Sprintf("1 %d\n", x) {
+	if out := ce.must(`dr_lookup "$(cat "$DR/address")"; echo "$? $(dr_certskept "$(cat "$DR/address")")"`); out != fmt.Sprintf("1 %d\n", x) {
 		t.Errorf("CE's lookup of its own revocation of certificates: %q", out)
 	}
-	ce.must("ig_rekey")
+	ce.must("dr_rekey")
 	if _, c := w.served(ce); ce.num() != x+1 || c != x+1 {
 		t.Errorf("a renewal above a revocation far ahead of the clock: %d, served %d", ce.num(), c)
 	}
 	ce.publish(ce.certs("CE2", top, ce.file("identity")))
-	if r := ce.sh(`ig_lookup "$(cat "$IG/address")"; ig_rekey`); r.rc == 0 || !strings.Contains(r.err, "revoked its certificates through the highest serial there is") {
+	if r := ce.sh(`dr_lookup "$(cat "$DR/address")"; dr_rekey`); r.rc == 0 || !strings.Contains(r.err, "revoked its certificates through the highest serial there is") {
 		t.Errorf("a renewal with no serial left: %v", r)
 	}
 }
@@ -461,7 +461,7 @@ func TestScriptMakesNoCertificateAboveTheHighest(t *testing.T) {
 		return cf.has(fmt.Sprintf("prekeys/%d.agekey", uint64(top)+1)) || cf.has(fmt.Sprintf("work/%d-cert.pub", uint64(top)+1))
 	}
 	writeFile(t, cf.file(fmt.Sprintf("prekeys/%d.txt.sig", uint64(top))), []byte("not a signature\n"))
-	if r := cf.sh("ig_rekey"); r.rc == 0 || !strings.Contains(r.err, "certificate serial is the highest there is") || cf.num() != n || above() {
+	if r := cf.sh("dr_rekey"); r.rc == 0 || !strings.Contains(r.err, "certificate serial is the highest there is") || cf.num() != n || above() {
 		t.Errorf("a renewal past an attempt at the highest serial: %v", r)
 	}
 	if err := os.Remove(cf.file(fmt.Sprintf("prekeys/%d.txt.sig", uint64(top)))); err != nil {
@@ -469,7 +469,7 @@ func TestScriptMakesNoCertificateAboveTheHighest(t *testing.T) {
 	}
 	writeFile(t, cf.file("serial"), fmt.Appendln(nil, uint64(top)))
 	w.failing(cf, protocol.CodeNoSuchMailbox)
-	if r := cf.sh("ig_rekey"); r.rc == 0 || !strings.Contains(r.err, "certificate serial is the highest there is") || above() {
+	if r := cf.sh("dr_rekey"); r.rc == 0 || !strings.Contains(r.err, "certificate serial is the highest there is") || above() {
 		t.Errorf("a renewal from the highest serial, published: %v", r)
 	}
 }
@@ -520,7 +520,7 @@ func TestScriptAsksBeforeItPosts(t *testing.T) {
 	// thief goes on serving the old statement.
 	n1 := sb.num()
 	old := w.prekey(sb)
-	sb.must("ig_rekey")
+	sb.must("dr_rekey")
 	sb.publish(sb.certs("SB1", n1, sb.file("identity")))
 	certs := mustReadString(t, filepath.Join(w.work, "SB1.certs"))
 	peer := "peers/" + sb.addr.String() + "/"
@@ -550,7 +550,7 @@ func TestScriptAsksBeforeItPosts(t *testing.T) {
 		t.Errorf("SE's send, the server honest, went under %q", se.read(peer+"cert-serial"))
 	}
 	// What a box was shown once holds after the server hides it.
-	if out := sd.must(`ig_lookup ` + sb.addr.String() + `; echo $?`); out != "1\n" || sd.keptCerts(sb.addr) != certs {
+	if out := sd.must(`dr_lookup ` + sb.addr.String() + `; echo $?`); out != "1\n" || sd.keptCerts(sb.addr) != certs {
 		t.Errorf("SD's lookup: %q", out)
 	}
 	w.reading(sb.addr, func(br *protocol.BoxResponse) {
@@ -586,13 +586,13 @@ func TestScriptUnderItsOwnRevocations(t *testing.T) {
 		t.Fatal("the box holds the revocation it published by hand")
 	}
 	time.Sleep(time.Second)
-	s1.must("ig_rekey")
-	if out := s1.must(`ig_certskept "$(cat "$IG/address")"`); s1.num() <= x || out != fmt.Sprintln(x) {
+	s1.must("dr_rekey")
+	if out := s1.must(`dr_certskept "$(cat "$DR/address")"`); s1.num() <= x || out != fmt.Sprintln(x) {
 		t.Errorf("a renewal under a revocation through a serial ten years ahead, which the box never held: %d against %d, kept %q", s1.num(), x, out)
 	}
 	s1.mustSend(s4, "sealed to a prekey about to retire")
 	time.Sleep(time.Second)
-	s4.must("ig_rekey")
+	s4.must("dr_rekey")
 	keys := func() int { k, _ := filepath.Glob(s4.file("prekeys/*.agekey")); return len(k) }
 	k0 := keys()
 	if d := (at{s4, 70 * 24 * time.Hour}).recv(); d.rc == 0 || keys() != k0 {
@@ -607,7 +607,7 @@ func TestScriptUnderItsOwnRevocations(t *testing.T) {
 		t.Errorf("a seal under a certificate the box's own identity revoked: %v", r)
 	}
 	time.Sleep(time.Second)
-	s3.must("ig_rekey")
+	s3.must("dr_rekey")
 	if r := s3.send(s4.addr.String(), "signed under a certificate its identity revoked"); r.rc != 0 || !strings.HasPrefix(r.out, `{"type":"sent",`) {
 		t.Errorf("the send once the renewal is taken: %v", r)
 	}
@@ -619,7 +619,7 @@ func TestScriptUnderItsOwnRevocations(t *testing.T) {
 	if r := s2.send(s3.addr.String(), "from a revoked address"); r.rc == 0 || !strings.Contains(r.err, "REVOKED: this box's own address is revoked") || !s2.bare() {
 		t.Errorf("a send from a box that holds its own revocation: %v", r)
 	}
-	if out := s2.must(`ig_recv > /dev/null 2>&1 && echo drained; ig_rekey > /dev/null 2>&1 && echo renewed; ig_pass > /dev/null 2>&1 && echo signed; true`); out != "" || len(w.srv.Requests()) != n {
+	if out := s2.must(`dr_recv > /dev/null 2>&1 && echo drained; dr_rekey > /dev/null 2>&1 && echo renewed; dr_pass > /dev/null 2>&1 && echo signed; true`); out != "" || len(w.srv.Requests()) != n {
 		t.Errorf("a box that holds its own revocation: %q, calls %q", out, w.calls(n))
 	}
 }

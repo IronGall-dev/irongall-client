@@ -9,15 +9,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/client"
-	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/client"
+	"github.com/dromas-dev/dromas-client/internal/fakeserver"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // init on a box that holds its own revocation and has published nothing, a
 // box restored from its identity alone beside its revocation: the script
 // signs nothing more, no certificate and no prekey statement, and nothing
-// reaches the server with a pass (PROTOCOL.md §12.5; #256). ig_prekey is the
+// reaches the server with a pass (PROTOCOL.md §12.5; #256). dr_prekey is the
 // one path to its certificates and statements, so prekey renew is held the
 // same way.
 func TestScriptInitOfABoxThatHoldsItsOwnRevocationSignsNothing(t *testing.T) {
@@ -48,8 +48,8 @@ func TestScriptInitOfABoxThatHoldsItsOwnRevocationSignsNothing(t *testing.T) {
 		}
 		next.ServeHTTP(w, r)
 	})
-	env := []string{"IG_HOME=" + dir, "IG_BASE=" + srv.URL}
-	for _, cmd := range []string{"ig_init --no-pq", "ig_renew"} {
+	env := []string{"DR_HOME=" + dir, "DR_BASE=" + srv.URL}
+	for _, cmd := range []string{"dr_init --no-pq", "dr_renew"} {
 		out, err := bash(t, env, cmd)
 		made, _ := filepath.Glob(filepath.Join(dir, "work", "*"))
 		stmts, _ := filepath.Glob(filepath.Join(dir, "prekeys", "*"))

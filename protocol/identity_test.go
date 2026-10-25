@@ -67,7 +67,7 @@ func TestAnIdentityOfATypeThisClientLacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const made = "no-such-key-type@irongall.invalid"
+	const made = "no-such-key-type@dromas.invalid"
 	madeWire := append(sshString(made), 1, 2, 3)
 	long := strings.Repeat("x", 64)
 	lacks := map[string][]byte{
@@ -85,6 +85,13 @@ func TestAnIdentityOfATypeThisClientLacks(t *testing.T) {
 	}
 	tooLong := strings.Repeat("x", 65)
 	b64 := base64.StdEncoding.EncodeToString(madeWire)
+	// The two cases of padding need a key whose base64 has some, whatever the
+	// length of the made-up name.
+	padded := madeWire
+	for len(padded)%3 == 0 {
+		padded = append(padded, 0)
+	}
+	b64Padded := base64.StdEncoding.EncodeToString(padded)
 	notDocuments := map[string][]byte{
 		"a name the wire key does not begin with": docOf(made, rsaPub.Marshal()),
 		"a name of 65 characters":                 docOf(tooLong, sshString(tooLong)),
@@ -94,9 +101,9 @@ func TestAnIdentityOfATypeThisClientLacks(t *testing.T) {
 		"no final newline":                        []byte(IdentityTag + "\n" + made + " " + b64),
 		"CRLF":                                    []byte(IdentityTag + "\r\n" + made + " " + b64 + "\r\n"),
 		"a third line":                            []byte(IdentityTag + "\n" + made + " " + b64 + "\n\n"),
-		"another tag":                             []byte("irongall-v2\n" + made + " " + b64 + "\n"),
-		"a character after the padding":           []byte(IdentityTag + "\n" + made + " " + b64[:len(b64)-1] + "B\n"),
-		"base64 without its padding":              []byte(IdentityTag + "\n" + made + " " + strings.TrimRight(base64.StdEncoding.EncodeToString(append(madeWire, 0)), "=") + "\n"),
+		"another tag":                             []byte("dromas-v2\n" + made + " " + b64 + "\n"),
+		"a character after the padding":           []byte(IdentityTag + "\n" + made + " " + b64Padded + "B\n"),
+		"base64 without its padding":              []byte(IdentityTag + "\n" + made + " " + strings.TrimRight(b64Padded, "=") + "\n"),
 		"no key":                                  []byte(IdentityTag + "\n" + made + " \n"),
 		"nothing":                                 nil,
 	}
@@ -120,7 +127,7 @@ func TestP256DocumentForm(t *testing.T) {
 	for range 200 {
 		b := p256Box(t)
 		doc := b.id.Document()
-		if len(doc) != 173 || b.id.Type() != IdentityP256 {
+		if len(doc) != 171 || b.id.Type() != IdentityP256 {
 			t.Fatalf("a P-256 document of %d bytes, type %s", len(doc), b.id.Type())
 		}
 		got, err := ParseIdentity(doc)
@@ -142,7 +149,7 @@ func TestEd25519DocumentForm(t *testing.T) {
 			t.Fatal(err)
 		}
 		id, err := NewIdentity(pub)
-		if err != nil || len(id.Document()) != 93 {
+		if err != nil || len(id.Document()) != 91 {
 			t.Fatalf("an Ed25519 document does not parse: %v", err)
 		}
 		seen[pub[0]>>4] = true
@@ -171,7 +178,7 @@ func TestAP256IdentityCertifies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	msg, ns := []byte("a statement\n"), "irongall-test-v1:"+b.id.Address().String()
+	msg, ns := []byte("a statement\n"), "dromas-test-v1:"+b.id.Address().String()
 	sig, err := Sign(signer, msg, ns)
 	if err != nil {
 		t.Fatal(err)

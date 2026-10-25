@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/IronGall-dev/irongall-client/api"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/api"
+	"github.com/dromas-dev/dromas-client/protocol"
 	"github.com/pb33f/libopenapi"
 	v3 "github.com/pb33f/libopenapi/datamodel/high/v3"
 )

@@ -1,10 +1,10 @@
 openapi: 3.1.0
 info:
-  title: irongall
+  title: dromas
   version: v1-pre-stable
-  summary: The HTTP layer of the irongall protocol, v1, before it is declared stable.
+  summary: The HTTP layer of the dromas protocol, v1, before it is declared stable.
   description: |
-    The HTTP shapes of an irongall server: its routes, methods, parameters,
+    The HTTP shapes of a dromas server: its routes, methods, parameters,
     request and answer members with their JSON types, statuses, error codes
     and headers. This file is normative for those shapes.
 
@@ -1104,15 +1104,15 @@ components:
   securitySchemes:
     pass:
       type: http
-      scheme: irongall-pass
+      scheme: dromas-pass
       description: |
         A pass the box signs for itself with its working key (`PROTOCOL.md`
         §8). A client writes it in exactly this form:
-        `Authorization: irongall-pass address="<address>", not_after="<RFC 3339 UTC>", signature="<base64 of the SSHSIG>"`.
+        `Authorization: dromas-pass address="<address>", not_after="<RFC 3339 UTC>", signature="<base64 of the SSHSIG>"`.
         A server reads it as RFC 9110 §11 lets a recipient: the scheme and
         the names in any case, the three parameters in any order, whitespace
         around each comma and `=`, each value a token or a quoted-string. A
-        `401` carries `WWW-Authenticate: irongall-pass`.
+        `401` carries `WWW-Authenticate: dromas-pass`.
 
   parameters:
     addr:
@@ -1189,11 +1189,11 @@ components:
         type: string
         pattern: '^"[\x21\x23-\x7e]*"$'
     WWW-Authenticate:
-      description: The scheme a call must use, `irongall-pass`, with any auth-params a server adds (RFC 9110 §11.6.1).
+      description: The scheme a call must use, `dromas-pass`, with any auth-params a server adds (RFC 9110 §11.6.1).
       required: true
       schema:
         type: string
-        pattern: '^irongall-pass( .*)?$'
+        pattern: '^dromas-pass( .*)?$'
     Location:
       description: The message the send made, `/v1/<recipient>/messages/<id>` (RFC 9110 §15.3.2).
       required: true
@@ -1672,12 +1672,12 @@ components:
           description: The identity document.
           $ref: '#/components/schemas/Bytes'
         revocation_signature:
-          description: The identity's SSHSIG over `irongall-revoke-v1\n<address>\n`, armored.
+          description: The identity's SSHSIG over `dromas-revoke-v1\n<address>\n`, armored.
           anyOf:
             - $ref: '#/components/schemas/Bytes'
             - type: 'null'
         revoked_certificates:
-          description: The statement `irongall-revoke-certs-v1\n<address>\n<serial>\n`.
+          description: The statement `dromas-revoke-certs-v1\n<address>\n<serial>\n`.
           anyOf:
             - $ref: '#/components/schemas/Bytes'
             - type: 'null'
@@ -1712,10 +1712,10 @@ components:
           description: The identity document.
           $ref: '#/components/schemas/Bytes'
         revocation_signature:
-          description: The identity's SSHSIG over `irongall-revoke-v1\n<address>\n`, armored.
+          description: The identity's SSHSIG over `dromas-revoke-v1\n<address>\n`, armored.
           $ref: '#/components/schemas/Bytes'
         revoked_certificates:
-          description: The statement `irongall-revoke-certs-v1\n<address>\n<serial>\n`.
+          description: The statement `dromas-revoke-certs-v1\n<address>\n<serial>\n`.
           anyOf:
             - $ref: '#/components/schemas/Bytes'
             - type: 'null'
@@ -1763,7 +1763,7 @@ components:
         key:
           description: An adopt key (`PROTOCOL.md` §11.16). A secret.
           type: string
-          pattern: '^iga1_[A-Za-z0-9_-]+$'
+          pattern: '^dra1_[A-Za-z0-9_-]+$'
           maxLength: 1024
     AccountResponse:
       type: object

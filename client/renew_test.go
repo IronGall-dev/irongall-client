@@ -19,10 +19,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/client"
-	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
-	"github.com/IronGall-dev/irongall-client/internal/forge"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/client"
+	"github.com/dromas-dev/dromas-client/internal/fakeserver"
+	"github.com/dromas-dev/dromas-client/internal/forge"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // servedSerial is the serial of the prekey the server serves for b.
@@ -452,7 +452,7 @@ func TestARenewalWhoseReadAgainEndsSendsNoRegistration(t *testing.T) {
 }
 
 // A box restored from its identity alone (README: "put it alone in an empty
-// box directory and run irongall prekey renew") at a server that forgot it:
+// box directory and run dromas prekey renew") at a server that forgot it:
 // nothing is served to take a key type from and nothing was published, so it
 // registers with init's default, post-quantum. The same in the remedy, on a
 // restored box whose server does not answer its read. Control: the restore

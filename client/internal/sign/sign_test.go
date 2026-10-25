@@ -17,7 +17,7 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // Nothing in the module signs but this package: no other file outside
@@ -56,7 +56,7 @@ func TestOnlySignSigns(t *testing.T) {
 			return err
 		}
 		for _, im := range f.Imports {
-			if im.Path.Value == `"github.com/IronGall-dev/irongall-client/internal/forge"` {
+			if im.Path.Value == `"github.com/dromas-dev/dromas-client/internal/forge"` {
 				t.Errorf("%s: imports internal/forge, which only a test may", rel)
 			}
 		}
@@ -104,7 +104,7 @@ func TestAFinishedBoxSignsNothing(t *testing.T) {
 		"Certify":             func() error { _, err := id.Certify(nil, key.PublicKey(), 1, time.Now()); return err },
 		"Revocation":          func() error { _, err := id.Revocation(a); return err },
 		"RevokedCertificates": func() error { _, err := id.RevokedCertificates(nil); return err },
-		"Signature":           func() error { _, err := work.Signature([]byte("x"), "irongall-test"); return err },
+		"Signature":           func() error { _, err := work.Signature([]byte("x"), "dromas-test"); return err },
 		"Pass":                func() error { _, _, err := work.Pass(a, "example.org", time.Now()); return err },
 	}
 	for name, f := range tried {

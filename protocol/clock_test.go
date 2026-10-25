@@ -19,7 +19,7 @@ import (
 func TestWhatABoxWithTheFastestClockMakesIsTakenByTheSlowest(t *testing.T) {
 	b := newCertBox(t)
 	server := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
-	const name = "irongall.example"
+	const name = "dromas.example"
 	taken := func(off time.Duration) bool { // is a box whose clock is off by this much taken by the server?
 		at := server.Add(off)
 		cert, err := NewCertificate(b.id, b.identity, b.work.PublicKey(), 1, at)

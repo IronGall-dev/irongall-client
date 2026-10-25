@@ -22,7 +22,7 @@ git push --force-with-lease         # then update the pull request
 
 A contribution to this repo is made under this repo's licence, Apache-2.0 (`LICENSE`). There is no contributor licence agreement.
 
-The server, [irongall-server](https://github.com/IronGall-dev/irongall-server), is Apache-2.0 too.
+The server, [dromas-server](https://github.com/dromas-dev/dromas-server), is Apache-2.0 too.
 
 ## Where a change goes
 

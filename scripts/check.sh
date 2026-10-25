@@ -7,7 +7,7 @@
 #   scripts/check.sh push    full, then golangci-lint and govulncheck: before a push
 #   scripts/check.sh vuln    govulncheck alone, at the version pinned here
 #
-# The tests build with -tags irongall_nofsync, so no write is flushed to the
+# The tests build with -tags dromas_nofsync, so no write is flushed to the
 # disk (client/fsync.go): a test kills a process, never the machine. -short
 # skips the long tests, each of which says so; CI never passes it. On macOS
 # ./sh is left to CI: the script is held to GNU's and uutils' tools (README §
@@ -18,7 +18,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 govulncheck=golang.org/x/vuln/cmd/govulncheck@v1.9.0
-tags=irongall_nofsync
+tags=dromas_nofsync
 darwin=
 [ "$(uname -s)" = Darwin ] && darwin=1
 if [ -n "$darwin" ] && command -v brew > /dev/null; then
@@ -26,7 +26,7 @@ if [ -n "$darwin" ] && command -v brew > /dev/null; then
     if [ -d "$d" ]; then PATH="$d:$PATH"; fi
   done
 fi
-unset IRONGALL_HOME IRONGALL_BOX IG_HOME IG_BOX # no test may meet a real box
+unset DROMAS_HOME DROMAS_BOX DR_HOME DR_BOX # no test may meet a real box
 
 # A test skips when a tool it runs is missing. A runner with every tool skips
 # nothing, so a skip fails `full`, but for these.

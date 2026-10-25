@@ -139,7 +139,10 @@ func (c Code) Known() bool { _, ok := codes[c]; return ok }
 // TypePrefix begins every code's Problem Details "type": a tag URI (RFC
 // 4151) that names the problem and resolves to nothing (PROTOCOL.md §11.3).
 // The date is the day the names were made: RFC 4151 reads a month alone as
-// its first day, before irongall.dev was registered.
+// its first day, before irongall.dev was registered. The authority is
+// irongall.dev, the protocol's name when they were made, and stays so: a tag's
+// date is a day its authority was held at 00:00 UTC, never a future one (RFC
+// 4151 §2.2), and a tag is a name, never a location.
 const TypePrefix = "tag:irongall.dev,2026-10-17:errors/"
 
 // TypeURI returns the Problem Details "type" for the code.

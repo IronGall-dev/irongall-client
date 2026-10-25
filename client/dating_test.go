@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // Each post dates its envelope afresh: sent_at is the time of the post, and

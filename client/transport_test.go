@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/client"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/client"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // A box calls a server over https, or over http only on this machine, and
@@ -184,9 +184,9 @@ func TestAServerIsCalledOverHTTPSOrOnThisMachine(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, u := range []string{
-		"http://example.com", "http://irongall:8080", "http://10.0.0.1:8080", "http://172.28.0.2:8080",
+		"http://example.com", "http://dromas:8080", "http://10.0.0.1:8080", "http://172.28.0.2:8080",
 		"http://127.0.0.1.example", "http://localhost.example", "http://localhost:8080", "http://LOCALHOST", "http://[::2]:8080", "http://[::ffff:127.0.0.1]:8080",
-		"http://0:0:0:0:0:0:0:1", "ftp://irongall.dev", "irongall.dev", "https://", "http://", "",
+		"http://0:0:0:0:0:0:0:1", "ftp://dromas.dev", "dromas.dev", "https://", "http://", "",
 	} {
 		rt := &recorder{}
 		dir := filepath.Join(t.TempDir(), "box")
@@ -211,7 +211,7 @@ func TestAServerIsCalledOverHTTPSOrOnThisMachine(t *testing.T) {
 		}
 	}
 	for _, u := range []string{
-		"https://irongall.dev", "HTTPS://irongall.dev", "https://10.0.0.1:8443",
+		"https://dromas.dev", "HTTPS://dromas.dev", "https://10.0.0.1:8443",
 		"http://127.0.0.1:1", "http://127.255.0.9", "http://[::1]:1", "http://someone@127.0.0.1:1",
 	} {
 		rt := &recorder{}

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // RefusedError is a check that failed. The operation stopped there: nothing
@@ -102,9 +102,9 @@ func (e *APIError) words() string {
 	case protocol.CodeIdentityMismatch:
 		return "the server finds that the identity document does not hash to the address, or is not in its one form"
 	case protocol.CodeBadKey:
-		return "the server refused a key, certificate or prekey statement this box sent, as malformed or not verifying: irongall prekey renew signs a new statement, and a box that cannot register needs a new identity (irongall init)"
+		return "the server refused a key, certificate or prekey statement this box sent, as malformed or not verifying: dromas prekey renew signs a new statement, and a box that cannot register needs a new identity (dromas init)"
 	case protocol.CodePrekeyNotNew:
-		return "the server has seen that prekey before, and every prekey is a new key: irongall prekey renew makes one"
+		return "the server has seen that prekey before, and every prekey is a new key: dromas prekey renew makes one"
 	case protocol.CodePrekeyTime:
 		return "the server finds the prekey statement, or the certificate it is under, not valid at its clock"
 	case protocol.CodeUnsupportedKeyType:
@@ -112,7 +112,7 @@ func (e *APIError) words() string {
 		if t := knownTypes(p.KeyTypes); t != "" {
 			s += "; it registers " + t
 		}
-		return s + ". irongall init makes an ssh-ed25519 identity unless told otherwise"
+		return s + ". dromas init makes an ssh-ed25519 identity unless told otherwise"
 	case protocol.CodeNotAge:
 		return "the server does not read the ciphertext as an age file: a bug in this client, or in the server"
 	case protocol.CodeWrongRecipientType:
@@ -128,11 +128,11 @@ func (e *APIError) words() string {
 		if p.CertificateSerial != nil {
 			s += fmt.Sprintf(", serial %d", *p.CertificateSerial)
 		}
-		return s + ", as after a restore or a renewal on another machine, and the one this box signs under may be revoked too: irongall prekey renew certifies a new working key above it"
+		return s + ", as after a restore or a renewal on another machine, and the one this box signs under may be revoked too: dromas prekey renew certifies a new working key above it"
 	case protocol.CodeCertificateRevoked:
-		return "the server holds the certificate this box signs under as one its identity revoked: irongall prekey renew certifies a new working key above it"
+		return "the server holds the certificate this box signs under as one its identity revoked: dromas prekey renew certifies a new working key above it"
 	case protocol.CodeUnknownSender:
-		return "the server does not know this box: it is not registered there, or was forgotten there (irongall init registers a box, and irongall prekey renew registers one again)"
+		return "the server does not know this box: it is not registered there, or was forgotten there (dromas init registers a box, and dromas prekey renew registers one again)"
 	case protocol.CodeSenderRevoked:
 		return "the server answers that this box is revoked: this client takes that only from a revocation that verifies"
 	case protocol.CodeSenderNotAllowed:
@@ -192,7 +192,7 @@ func (e *APIError) words() string {
 		}
 		return s
 	case protocol.CodeMailboxBusy:
-		return "the recipient's box has taken as much new mail as it takes for now: irongall outbox flush posts it again"
+		return "the recipient's box has taken as much new mail as it takes for now: dromas outbox flush posts it again"
 	case protocol.CodeUnavailable:
 		return "the server is not ready to answer"
 	}
@@ -222,7 +222,7 @@ func rateLimited(p *protocol.Problem) string {
 	if s, ok := quotaWords[p.QuotaID]; ok {
 		switch p.QuotaID {
 		case protocol.QuotaSends:
-			return s + limit(p, " (%d a day)") + ": an account can lift a box's limits (irongall account adopt)"
+			return s + limit(p, " (%d a day)") + ": an account can lift a box's limits (dromas account adopt)"
 		case protocol.QuotaRenewals, protocol.QuotaCertificates, protocol.QuotaCertificateRevocations:
 			return s + limit(p, " (%d a day)")
 		}

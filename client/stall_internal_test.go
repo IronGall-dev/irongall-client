@@ -26,7 +26,7 @@ func shortBound(t *testing.T) {
 // transport plays, bounded as the default client is (stall).
 func slowBox(t *testing.T, rt roundTripper) *Box {
 	t.Helper()
-	b, err := newBox(t.TempDir(), Options{Base: "https://irongall.dev", HTTPClient: &http.Client{Transport: rt}})
+	b, err := newBox(t.TempDir(), Options{Base: "https://dromas.dev", HTTPClient: &http.Client{Transport: rt}})
 	if err != nil {
 		t.Fatal(err)
 	}

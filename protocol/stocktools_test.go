@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/IronGall-dev/irongall-client/internal/agetool"
+	"github.com/dromas-dev/dromas-client/internal/agetool"
 )
 
 // TestVectorsByToolsNotOurs checks the crypto and container vectors with
@@ -150,29 +150,29 @@ func TestVectorsByToolsNotOurs(t *testing.T) {
 		ns := func(tag, box string) string { return tag + ":" + address(t, box) }
 		for _, box := range []string{"a", "b", "c"} {
 			under := signers(box+"-ca", box, true)
-			verify(t, under, box, ns("irongall-prekey-v1", box), box+"/prekey-1.txt", box+"/prekey-1.txt.sig")
+			verify(t, under, box, ns("dromas-prekey-v1", box), box+"/prekey-1.txt", box+"/prekey-1.txt.sig")
 		}
 		underA := signers("a-ca", "a", true)
-		verify(t, underA, "a", ns("irongall-prekey-v1", "a"), "a/prekey-2.txt", "a/prekey-2.txt.sig")
-		verify(t, underA, "a", ns("irongall-prekey-v1", "a"), "a/prekey-1.txt", "a/prekey-1.txt.sha256.sig")
-		verify(t, underA, "a", ns("irongall-pass-v1", "a"), "a/pass.txt", "a/pass.sig")
-		verify(t, underA, "a", ns("irongall-msg-v1", "b"), "message/a-to-b.line", "message/a-to-b.sig")
-		verify(t, underA, "a", ns("irongall-msg-v1", "c"), "message/a-to-c.line", "message/a-to-c.sig")
+		verify(t, underA, "a", ns("dromas-prekey-v1", "a"), "a/prekey-2.txt", "a/prekey-2.txt.sig")
+		verify(t, underA, "a", ns("dromas-prekey-v1", "a"), "a/prekey-1.txt", "a/prekey-1.txt.sha256.sig")
+		verify(t, underA, "a", ns("dromas-pass-v1", "a"), "a/pass.txt", "a/pass.sig")
+		verify(t, underA, "a", ns("dromas-msg-v1", "b"), "message/a-to-b.line", "message/a-to-b.sig")
+		verify(t, underA, "a", ns("dromas-msg-v1", "c"), "message/a-to-c.line", "message/a-to-c.sig")
 		for _, c := range globIn(t, dir, "cert/ok-*.pub") {
 			if _, err := run(t, nil, "ssh-keygen", "-L", "-f", c); err != nil {
 				t.Errorf("ssh-keygen -L %s: %v", c, err)
 			}
-			verify(t, underA, "a", ns("irongall-prekey-v1", "a"), "a/prekey-1.txt", strings.TrimSuffix(c, ".pub")+".sig")
+			verify(t, underA, "a", ns("dromas-prekey-v1", "a"), "a/prekey-1.txt", strings.TrimSuffix(c, ".pub")+".sig")
 		}
 		// What the identity signs itself is verified under its bare key.
 		for _, box := range []string{"a", "c"} {
 			bare := signers(box+"-bare", box, false)
-			verify(t, bare, box, ns("irongall-revoke-v1", box), box+"/revoke.txt", box+"/revoke.sig")
+			verify(t, bare, box, ns("dromas-revoke-v1", box), box+"/revoke.txt", box+"/revoke.sig")
 		}
 		bareA := signers("a-bare", "a", false)
-		verify(t, bareA, "a", ns("irongall-revoke-v1", "a"), "a/revoke.txt", "a/revoke.sha256.sig")
+		verify(t, bareA, "a", ns("dromas-revoke-v1", "a"), "a/revoke.txt", "a/revoke.sha256.sig")
 		for _, s := range globIn(t, dir, "revoked/ok-*.sig") {
-			verify(t, bareA, "a", ns("irongall-revoke-certs-v1", "a"), strings.TrimSuffix(strings.TrimSuffix(s, ".sig"), ".sha256")+".txt", s)
+			verify(t, bareA, "a", ns("dromas-revoke-certs-v1", "a"), strings.TrimSuffix(strings.TrimSuffix(s, ".sig"), ".sha256")+".txt", s)
 		}
 	})
 }
@@ -184,11 +184,11 @@ func TestTheStockToolNamespacesAreTheSpecs(t *testing.T) {
 	var a Address
 	copy(a[:], bytes.Repeat([]byte{1}, len(a)))
 	for _, c := range []struct{ got, tag string }{
-		{PrekeyNamespace(a), "irongall-prekey-v1"},
-		{MessageNamespace(a), "irongall-msg-v1"},
-		{RevokeNamespace(a), "irongall-revoke-v1"},
-		{PassNamespace(a), "irongall-pass-v1"},
-		{RevokedCertsNamespace(a), "irongall-revoke-certs-v1"},
+		{PrekeyNamespace(a), "dromas-prekey-v1"},
+		{MessageNamespace(a), "dromas-msg-v1"},
+		{RevokeNamespace(a), "dromas-revoke-v1"},
+		{PassNamespace(a), "dromas-pass-v1"},
+		{RevokedCertsNamespace(a), "dromas-revoke-certs-v1"},
 	} {
 		if c.got != c.tag+":"+a.String() {
 			t.Errorf("%s is not %s:<address>", c.got, c.tag)

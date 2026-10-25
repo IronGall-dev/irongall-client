@@ -181,7 +181,7 @@ func FuzzParseIdentity(f *testing.F) {
 			return
 		}
 		key := id.PublicKey()
-		written := "irongall-v1\n" + key.Type() + " " + base64.StdEncoding.EncodeToString(key.Marshal()) + "\n"
+		written := "dromas-v1\n" + key.Type() + " " + base64.StdEncoding.EncodeToString(key.Marshal()) + "\n"
 		switch {
 		case !bytes.Equal(id.Document(), doc):
 			t.Fatalf("the document is %q, given %q", id.Document(), doc)

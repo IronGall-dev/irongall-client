@@ -15,16 +15,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
-	"github.com/IronGall-dev/irongall-client/internal/forge"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/internal/fakeserver"
+	"github.com/dromas-dev/dromas-client/internal/forge"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // The script's boxes against internal/fakeserver, one shell per command, as
 // agents run it: each test stands up the server and the boxes it needs, and
 // plays the hostile operator with a middleware (forge, SetMiddle) or the
 // operator's powers over storage. What the server itself enforces is
-// irongall-server's to test.
+// dromas-server's to test.
 
 // world is a fake server, the script's boxes on it, and a directory for the
 // files a test makes beside them.
@@ -87,11 +87,11 @@ func (w *world) empty() *sbox {
 	return b
 }
 
-// box is a box made by ig_init, registered at the world's server.
+// box is a box made by dr_init, registered at the world's server.
 func (w *world) box() *sbox {
 	w.t.Helper()
 	b := w.empty()
-	b.must("ig_init")
+	b.must("dr_init")
 	b.addr = mustAddress(w.t, b.dir)
 	return b
 }
@@ -104,14 +104,14 @@ type ran struct {
 
 func (r ran) String() string { return fmt.Sprintf("exit %d, stdout %q, stderr %q", r.rc, r.out, r.err) }
 
-// sh runs commands in a fresh shell that has sourced irongall.sh, as box b,
+// sh runs commands in a fresh shell that has sourced dromas.sh, as box b,
 // in the world's work directory. $W is that directory and $SRV the server's
 // URL.
 func (b *sbox) sh(commands string) ran {
 	b.w.t.Helper()
-	cmd := exec.Command("bash", "-c", ". "+abs(b.w.t, "irongall.sh")+"\n"+commands)
+	cmd := exec.Command("bash", "-c", ". "+abs(b.w.t, "dromas.sh")+"\n"+commands)
 	cmd.Dir = b.w.work
-	cmd.Env = append(os.Environ(), "IG_HOME="+b.dir, "IG_BASE="+b.w.srv.URL, "W="+b.w.work, "SRV="+b.w.srv.URL)
+	cmd.Env = append(os.Environ(), "DR_HOME="+b.dir, "DR_BASE="+b.w.srv.URL, "W="+b.w.work, "SRV="+b.w.srv.URL)
 	var out, errs bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errs
 	r := ran{}
@@ -183,7 +183,7 @@ func (b *sbox) send(to string, body string) ran {
 	if err := f.Close(); err != nil {
 		b.w.t.Fatal(err)
 	}
-	return b.sh("ig_send " + to + " " + f.Name())
+	return b.sh("dr_send " + to + " " + f.Name())
 }
 
 // mustSend is send, failing the test unless it is sent.
@@ -194,7 +194,7 @@ func (b *sbox) mustSend(to *sbox, body string) {
 	}
 }
 
-// drain is one ig_recv: each mail line, and every other line, from stdout
+// drain is one dr_recv: each mail line, and every other line, from stdout
 // and stderr both, a refused line written "REFUSED <id>: <code>: <words>".
 type drain struct {
 	mail []string
@@ -206,10 +206,10 @@ func (d drain) String() string {
 	return fmt.Sprintf("exit %d, mail %q, said %q", d.rc, d.mail, d.said)
 }
 
-// recv runs ig_recv, as cmd if one is given (a clock set before it).
+// recv runs dr_recv, as cmd if one is given (a clock set before it).
 func (b *sbox) recv(prefix ...string) drain {
 	b.w.t.Helper()
-	r := b.sh(strings.Join(prefix, "") + "ig_recv")
+	r := b.sh(strings.Join(prefix, "") + "dr_recv")
 	d := drain{rc: r.rc}
 	var said []string
 	for l := range strings.Lines(r.out) {
@@ -257,10 +257,10 @@ func (w *world) operator() *operator {
 	w.opOnce.Do(func() {
 		o := &operator{dir: filepath.Join(w.work, "op")}
 		b := &sbox{w: w, dir: o.dir}
-		b.must(`mkdir -p "$IG"; cd "$IG"
-ssh-keygen -q -t ed25519 -N '' -C '' -f identity; printf 'irongall-v1\n%s\n' "$(cut -d' ' -f1,2 identity.pub)" > identity.doc; sha256sum < identity.doc | cut -c1-64 > address
+		b.must(`mkdir -p "$DR"; cd "$DR"
+ssh-keygen -q -t ed25519 -N '' -C '' -f identity; printf 'dromas-v1\n%s\n' "$(cut -d' ' -f1,2 identity.pub)" > identity.doc; sha256sum < identity.doc | cut -c1-64 > address
 ssh-keygen -q -t ed25519 -N '' -C '' -f work
-ssh-keygen -q -s identity -I irongall-cert-v1 -n "$(cat address)" -z 1 -V "$(date -u -d '1 hour ago' +%Y%m%d%H%M%SZ):$(date -u -d '64 days' +%Y%m%d%H%M%SZ)" -O clear work.pub
+ssh-keygen -q -s identity -I dromas-cert-v1 -n "$(cat address)" -z 1 -V "$(date -u -d '1 hour ago' +%Y%m%d%H%M%SZ):$(date -u -d '64 days' +%Y%m%d%H%M%SZ)" -O clear work.pub
 age-keygen -o agekey 2> /dev/null; age-keygen -y agekey > recipient`)
 		o.addr = mustAddress(w.t, o.dir)
 		w.op = o

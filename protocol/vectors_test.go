@@ -21,7 +21,7 @@ import (
 
 	"filippo.io/age"
 	"filippo.io/edwards25519"
-	"github.com/IronGall-dev/irongall-client/sshsig"
+	"github.com/dromas-dev/dromas-client/sshsig"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -111,7 +111,7 @@ func TestVectorIdentities(t *testing.T) {
 func TestVectorP256Identity(t *testing.T) {
 	now := vectorNow(t)
 	c := vectorIdentity(t, "c")
-	if c.Type() != IdentityP256 || len(c.Document()) != 173 {
+	if c.Type() != IdentityP256 || len(c.Document()) != 171 {
 		t.Errorf("c: a %s identity of %d bytes", c.Type(), len(c.Document()))
 	}
 	if got, want := c.Address().String(), strings.TrimSpace(string(read(t, "c/address"))); got != want {
@@ -326,7 +326,7 @@ func TestVectorCertificates(t *testing.T) {
 // ssh-keygen writes the field empty, so they are made here, the same bytes
 // each time: the nonce is a hash of the vector's name, and Ed25519 signs
 // deterministically. The kept files are held to them, and
-// IRONGALL_WRITE_VECTORS=1 writes them.
+// DROMAS_WRITE_VECTORS=1 writes them.
 func TestVectorsReservedField(t *testing.T) {
 	a := vectorIdentity(t, "a")
 	identity, _ := vectorKey(t, "a")
@@ -350,7 +350,7 @@ func TestVectorsReservedField(t *testing.T) {
 		ValidBefore:     uint64(before.Unix()), //nolint:gosec // a time in 2026
 		Reserved:        []byte("not read"),
 	}
-	nonce := sha512.Sum512([]byte("irongall vector: cert/ok-reserved-field"))
+	nonce := sha512.Sum512([]byte("dromas vector: cert/ok-reserved-field"))
 	if err := cert.SignCert(bytes.NewReader(nonce[:32]), identity); err != nil {
 		t.Fatal(err)
 	}
@@ -363,7 +363,7 @@ func TestVectorsReservedField(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, b := range map[string][]byte{"cert/ok-reserved-field.pub": ssh.MarshalAuthorizedKey(cert), "cert/ok-reserved-field.sig": sig} {
-		if os.Getenv("IRONGALL_WRITE_VECTORS") != "" {
+		if os.Getenv("DROMAS_WRITE_VECTORS") != "" {
 			if err := os.WriteFile(filepath.Join(vectors, name), b, 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -628,7 +628,7 @@ func TestASignatureIsHeldToItsIdentitysBound(t *testing.T) {
 	if most != MaxSignature || SignatureBound(IdentityEd25519) != 4096 || SignatureBound(IdentityP256) != 4096 {
 		t.Errorf("the bounds are %d and %d, the most %d, and MaxSignature %d", SignatureBound(IdentityEd25519), SignatureBound(IdentityP256), most, MaxSignature)
 	}
-	if SignatureBound("no-such-key-type@irongall.invalid") != 0 {
+	if SignatureBound("no-such-key-type@dromas.invalid") != 0 {
 		t.Error("a key type not defined here has a bound")
 	}
 
@@ -642,8 +642,8 @@ func TestASignatureIsHeldToItsIdentitysBound(t *testing.T) {
 	verdicts := func() []error {
 		_, e1 := VerifyCertified(a, read(t, "a/prekey-1.txt"), read(t, "a/prekey-1.txt.sig"), PrekeyNamespace(a.Address()), now)
 		e2 := Verify(a, read(t, "a/revoke.txt"), read(t, "a/revoke.sig"), RevokeNamespace(a.Address()))
-		_, e3 := pass.Verify(a, "irongall.example", now)
-		_, e4 := pass.VerifyUnder(onRecord, "irongall.example", now)
+		_, e3 := pass.Verify(a, "dromas.example", now)
+		_, e4 := pass.VerifyUnder(onRecord, "dromas.example", now)
 		_, e5 := VerifyCertified(c, read(t, "c/prekey-1.txt"), read(t, "c/prekey-1.txt.sig"), PrekeyNamespace(c.Address()), now)
 		return []error{e1, e2, e3, e4, e5}
 	}
@@ -655,7 +655,7 @@ func TestASignatureIsHeldToItsIdentitysBound(t *testing.T) {
 	ed := identityTypes[IdentityEd25519]
 	defer func() { identityTypes[IdentityEd25519] = ed }()
 	lowered := ed
-	lowered.bound = 400 // below every signature here: A's revocation, the smallest, is 403 bytes
+	lowered.bound = 396 // below every signature here: A's revocation, the smallest, is 399 bytes
 	identityTypes[IdentityEd25519] = lowered
 	got := verdicts()
 	for i, err := range got[:4] {
@@ -674,7 +674,7 @@ func TestASignatureIsHeldToItsIdentitysBound(t *testing.T) {
 func TestVectorPass(t *testing.T) {
 	now := vectorNow(t)
 	a, b := vectorIdentity(t, "a"), vectorIdentity(t, "b")
-	const server = "irongall.example"
+	const server = "dromas.example"
 	header := strings.TrimSuffix(string(read(t, "a/pass.authorization")), "\n")
 	got, notAfter, err := NewPass(vectorWorker(t, "a"), a.Address(), server, now)
 	if err != nil {
@@ -738,7 +738,7 @@ func TestVectorPassForms(t *testing.T) {
 		case p.Authorization() != header:
 			t.Errorf("%s: written back as %q", name, p.Authorization())
 		default:
-			if _, err := p.Verify(a, "irongall.example", now); err != nil {
+			if _, err := p.Verify(a, "dromas.example", now); err != nil {
 				t.Errorf("%s: %v", name, err)
 			}
 		}
@@ -951,7 +951,7 @@ func (o oddR) Sign(_ io.Reader, data []byte) (*ssh.Signature, error) {
 	}
 	r, R := edwards25519.NewScalar(), edwards25519.NewIdentityPoint()
 	if o.order2 {
-		w := sha512.Sum512([]byte("irongall vector: R plus the point of order 2"))
+		w := sha512.Sum512([]byte("dromas vector: R plus the point of order 2"))
 		if _, err := r.SetUniformBytes(w[:]); err != nil {
 			return nil, err
 		}
@@ -979,7 +979,7 @@ func (o oddR) Sign(_ io.Reader, data []byte) (*ssh.Signature, error) {
 // check it, takes a neutral R and refuses R plus a point of order 2; OpenSSH's
 // own Ed25519 from 10.6p1 judges both the other way (PROTOCOL.md Appendix A). They
 // are made here, the same bytes each time, and the kept files are held to
-// them: IRONGALL_WRITE_VECTORS=1 writes them.
+// them: DROMAS_WRITE_VECTORS=1 writes them.
 func TestVectorsEd25519R(t *testing.T) {
 	a := vectorIdentity(t, "a")
 	seed, err := hex.DecodeString(strings.Fields(string(read(t, "input/a-work.ed25519")))[0])
@@ -1002,7 +1002,7 @@ func TestVectorsEd25519R(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if os.Getenv("IRONGALL_WRITE_VECTORS") != "" {
+		if os.Getenv("DROMAS_WRITE_VECTORS") != "" {
 			if err := os.WriteFile(filepath.Join(vectors, v.name), sig, 0o600); err != nil {
 				t.Fatal(err)
 			}

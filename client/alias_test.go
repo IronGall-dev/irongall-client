@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/IronGall-dev/irongall-client/client"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/client"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // An alias is the box's own name for a peer: Destination takes it where it

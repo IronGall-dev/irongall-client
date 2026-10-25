@@ -1,4 +1,4 @@
-// Package protocol holds the irongall v1 formats every client and the server
+// Package protocol holds the dromas v1 formats every client and the server
 // share: addresses, identity documents, signed prekey statements, signature
 // namespaces, the message envelope, and the error codes.
 //

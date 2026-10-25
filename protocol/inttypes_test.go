@@ -45,7 +45,7 @@ func TestWireIntegersHaveAFixedWidth(t *testing.T) {
 	}
 	info := &types.Info{Types: map[ast.Expr]types.TypeAndValue{}}
 	conf := types.Config{Importer: importer.ForCompiler(fset, "source", nil)}
-	if _, err := conf.Check("github.com/IronGall-dev/irongall-client/protocol", fset, files, info); err != nil {
+	if _, err := conf.Check("github.com/dromas-dev/dromas-client/protocol", fset, files, info); err != nil {
 		t.Fatal(err)
 	}
 	members := 0

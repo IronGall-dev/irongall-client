@@ -15,10 +15,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/client"
-	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
-	"github.com/IronGall-dev/irongall-client/internal/forge"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/client"
+	"github.com/dromas-dev/dromas-client/internal/fakeserver"
+	"github.com/dromas-dev/dromas-client/internal/forge"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // Mail from a sender the box has not allowed passes every check and is held:
@@ -289,7 +289,7 @@ func TestAnACLReplacesWhatTheServerHolds(t *testing.T) {
 // whoever holds its pass, is read at the box's next renewal and replaced by
 // the box's own, which Receive reports; until then nothing asks the server
 // about it, neither a drain nor a send. A renewal that finds the box's own
-// reads it and sends nothing (IronGall-dev/irongall-client#360).
+// reads it and sends nothing (dromas-dev/dromas-client#360).
 func TestARenewalReplacesAnACLAnotherWriterPut(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

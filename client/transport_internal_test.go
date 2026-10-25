@@ -21,7 +21,7 @@ func TestNoProxyForThisMachine(t *testing.T) {
 	tr := newTransport(given).(transport).next.(*http.Transport)
 	for host, direct := range map[string]bool{
 		"localhost": true, "LOCALHOST": true, "LocalHost": true, "127.0.0.1": true, "127.1.2.3": true, "[::1]": true,
-		"irongall.dev": false, "localhost.example": false, "128.0.0.1": false,
+		"dromas.dev": false, "localhost.example": false, "128.0.0.1": false,
 	} {
 		r, _ := http.NewRequest(http.MethodGet, "https://"+host+":8443/v1/x", nil)
 		got, err := tr.Proxy(r)
@@ -40,16 +40,16 @@ func TestEveryRequestIsHeldToTheServerRule(t *testing.T) {
 		t.Error("a request the box refuses reached the transport it was given")
 		return nil, http.ErrHandlerTimeout
 	})}} {
-		b, err := newBox(t.TempDir(), Options{Base: "https://irongall.dev", HTTPClient: c})
+		b, err := newBox(t.TempDir(), Options{Base: "https://dromas.dev", HTTPClient: c})
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = b.http.Get("http://irongall.dev/v1/x")
+		_, err = b.http.Get("http://dromas.dev/v1/x")
 		if err == nil || !strings.Contains(err.Error(), "is not a server this client calls") {
 			t.Errorf("a request over http off this machine: %v", err)
 		}
 	}
-	if _, err := newBox("", Options{Base: "http://irongall.dev"}); err == nil {
+	if _, err := newBox("", Options{Base: "http://dromas.dev"}); err == nil {
 		t.Error("a box was made for a server over http off this machine")
 	}
 }
@@ -70,11 +70,11 @@ func TestTheKindOfNoAnswerIsReadFromTheWholeChain(t *testing.T) {
 		err  error
 		want string
 	}{
-		{&url.Error{Op: "Get", URL: "https://irongall.dev/v1/x", Err: &net.OpError{Op: "remote error", Err: errors.New("tls: bad certificate")}}, "TLS failed"},
-		{&url.Error{Op: "Get", URL: "https://irongall.dev/v1/x", Err: &net.OpError{Op: "local error", Err: errors.New("tls: bad record MAC")}}, "TLS failed"},
-		{&url.Error{Op: "Get", URL: "https://irongall.dev/v1/x", Err: &net.OpError{Op: "dial", Net: "tcp", Err: refused}}, "could not connect"},
-		{&url.Error{Op: "Get", URL: "https://irongall.dev/v1/x", Err: &net.OpError{Op: "proxyconnect", Net: "tcp", Err: &net.OpError{Op: "dial", Net: "tcp", Err: refused}}}, "could not connect"},
-		{&url.Error{Op: "Get", URL: "https://irongall.dev/v1/x", Err: &net.OpError{Op: "read", Net: "tcp", Err: refused}}, "no answer that is HTTP"},
+		{&url.Error{Op: "Get", URL: "https://dromas.dev/v1/x", Err: &net.OpError{Op: "remote error", Err: errors.New("tls: bad certificate")}}, "TLS failed"},
+		{&url.Error{Op: "Get", URL: "https://dromas.dev/v1/x", Err: &net.OpError{Op: "local error", Err: errors.New("tls: bad record MAC")}}, "TLS failed"},
+		{&url.Error{Op: "Get", URL: "https://dromas.dev/v1/x", Err: &net.OpError{Op: "dial", Net: "tcp", Err: refused}}, "could not connect"},
+		{&url.Error{Op: "Get", URL: "https://dromas.dev/v1/x", Err: &net.OpError{Op: "proxyconnect", Net: "tcp", Err: &net.OpError{Op: "dial", Net: "tcp", Err: refused}}}, "could not connect"},
+		{&url.Error{Op: "Get", URL: "https://dromas.dev/v1/x", Err: &net.OpError{Op: "read", Net: "tcp", Err: refused}}, "no answer that is HTTP"},
 	} {
 		var te *transportError
 		if !errors.As(noAnswer("GET /v1/x", "no answer that is HTTP", c.err), &te) || te.kind != c.want {

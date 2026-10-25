@@ -15,7 +15,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // IsID reports whether s is a message's id as this box names it: the
@@ -321,7 +321,7 @@ func (b *Box) RemoveQuarantined(ctx context.Context, ids []string) ([]string, er
 		}
 		for _, id := range ids {
 			if !IsID(id) {
-				return nil, errors.New("not a message's id: 64 lowercase hex, as irongall quarantine list prints it")
+				return nil, errors.New("not a message's id: 64 lowercase hex, as dromas quarantine list prints it")
 			}
 			if _, err := os.Stat(b.path("quarantine", id+".json")); err != nil {
 				return nil, fmt.Errorf("quarantine/ holds no message %s: nothing is deleted", id)

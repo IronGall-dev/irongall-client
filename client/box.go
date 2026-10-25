@@ -24,27 +24,27 @@ import (
 	"time"
 
 	"filippo.io/age"
-	"github.com/IronGall-dev/irongall-client/client/internal/sign"
-	tk "github.com/IronGall-dev/irongall-client/client/internal/taken"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/client/internal/sign"
+	tk "github.com/dromas-dev/dromas-client/client/internal/taken"
+	"github.com/dromas-dev/dromas-client/protocol"
 	bolt "go.etcd.io/bbolt"
 	"golang.org/x/crypto/ssh"
 )
 
 // DefaultBase is the server every box talks to unless told otherwise.
-const DefaultBase = "https://irongall.dev"
+const DefaultBase = "https://dromas.dev"
 
-// EchoAddress is the echo box irongall.dev runs (cmd/irongall-echo): send
+// EchoAddress is the echo box dromas.dev runs (cmd/dromas-echo): send
 // it anything, and it answers with a signed reply saying what it checked and
 // carrying the body back. Its prekey is post-quantum. Mail to it is readable
-// by irongall.dev's operator, who runs it.
-const EchoAddress = "21804ec172dd0dbdca3d9a6d461799130324b42fa708b3bb727e18e0bfc07e59"
+// by dromas.dev's operator, who runs it.
+const EchoAddress = "82be51e181471140db80904d4992a99383028c1fbc92e1f53614341def8c2225"
 
-// EchoAddressNoPQ is irongall.dev's second echo box, whose prekey is X25519
-// only: the one a sender on age 1.2 can reach (sh/irongall.sh; this client
+// EchoAddressNoPQ is dromas.dev's second echo box, whose prekey is X25519
+// only: the one a sender on age 1.2 can reach (sh/dromas.sh; this client
 // reaches both). It answers as EchoAddress does, and mail to it is as
-// readable by irongall.dev's operator.
-const EchoAddressNoPQ = "7f87929a91aa19bd2ca3a833d33d66c2b2f09dc83b9e2987a6af66d12a9c6b4b"
+// readable by dromas.dev's operator.
+const EchoAddressNoPQ = "518a0a89c533354f0d5a890599722a86d01b9b2d8c87549bb24c3276e819048c"
 
 // requestTimeout bounds a request of the default HTTP client (stall): the
 // bytes of a ciphertext it sends or fetches, by how long they may go with
@@ -749,7 +749,7 @@ func (b *Box) prekeyIdentities() ([]age.Identity, error) {
 		all = append(all, ids...)
 	}
 	if len(all) == 0 {
-		return nil, errors.New("this box holds no prekeys: publish a new one with irongall prekey renew")
+		return nil, errors.New("this box holds no prekeys: publish a new one with dromas prekey renew")
 	}
 	return all, nil
 }

@@ -18,9 +18,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/IronGall-dev/irongall-client/client"
-	"github.com/IronGall-dev/irongall-client/internal/fakeserver"
-	"github.com/IronGall-dev/irongall-client/protocol"
+	"github.com/dromas-dev/dromas-client/client"
+	"github.com/dromas-dev/dromas-client/internal/fakeserver"
+	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // A crash is a box's process killed between two of the steps at which a
@@ -34,7 +34,7 @@ import (
 
 // crashChild is the environment variable a copy of this binary reads to run
 // one command of a box and die at one step.
-const crashChild = "IRONGALL_TEST_CRASH"
+const crashChild = "DROMAS_TEST_CRASH"
 
 // crashOrder is what the copy runs: the step it dies at, the box's directory,
 // its server's URL, its clock in Unix seconds, the command, and for a send,

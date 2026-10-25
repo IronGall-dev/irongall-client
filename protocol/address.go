@@ -11,7 +11,7 @@ type Address [32]byte
 
 // LinkPath is where a server serves a page for each address: an address is
 // shared as the link <server>/to/<address>, which tells whoever opens it
-// what irongall is. A client takes the address from the link and never
+// what dromas is. A client takes the address from the link and never
 // fetches the page.
 const LinkPath = "/to/"
 

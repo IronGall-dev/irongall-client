@@ -16,7 +16,7 @@ import (
 
 const (
 	// IdentityTag is line 1 of every v1 identity document.
-	IdentityTag = "irongall-v1"
+	IdentityTag = "dromas-v1"
 	// IdentityDocumentSize is the exact size of an ssh-ed25519 identity
 	// document. Another key type's document has another size, as exact.
 	IdentityDocumentSize = 93
@@ -57,20 +57,20 @@ var identityForm = regexp.MustCompile(`\A` + IdentityTag + `\n([!-+\--~]{1,64}) 
 // type in its one encoding, and the most bytes a signature by a box of that
 // type may be (SignatureBound). Its document's form is the one every type
 // shares (identityForm), with the key in its one encoding: the base64 of the
-// wire key as it is written back once parsed (PROTOCOL.md §4.1). Ed25519's is 93
-// bytes and P-256's 173.
+// wire key as it is written back once parsed (PROTOCOL.md §4.1). Ed25519's is 91
+// bytes and P-256's 171.
 var identityTypes = map[string]struct {
 	check func(ssh.PublicKey) error
 	bound int
 }{
-	// Its largest signature is 850 bytes, a prekey statement's.
+	// Its largest signature is 846 bytes, a prekey statement's.
 	IdentityEd25519: {
 		check: func(k ssh.PublicKey) error {
 			return checkEd25519(k.(ssh.CryptoPublicKey).CryptoPublicKey().(ed25519.PublicKey))
 		},
 		bound: 4096,
 	},
-	// Its largest signature is 947 bytes, a prekey statement's. Its key has
+	// Its largest signature is 939 bytes, a prekey statement's. Its key has
 	// no check of its own: the library refuses a point off the curve,
 	// compressed, at infinity or with a coordinate not below the field's
 	// size, and that is all OpenSSH from 10.3p1 holds a point to.
@@ -102,7 +102,7 @@ type Identity struct {
 func ParseIdentity(doc []byte) (*Identity, error) {
 	m := identityForm.FindSubmatch(doc)
 	if m == nil {
-		return nil, fmt.Errorf("%w: it is \"irongall-v1\", LF, one SSH public key with no comment, LF (look for a comment, CRLF, or a missing final newline)", ErrIdentityFormat)
+		return nil, fmt.Errorf("%w: it is \"dromas-v1\", LF, one SSH public key with no comment, LF (look for a comment, CRLF, or a missing final newline)", ErrIdentityFormat)
 	}
 	name, b64 := string(m[1]), string(m[2])
 	wire, err := base64.StdEncoding.Strict().DecodeString(b64)

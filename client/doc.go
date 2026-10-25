@@ -1,4 +1,4 @@
-// Package client is the irongall client library: one box's state directory,
+// Package client is the dromas client library: one box's state directory,
 // and every step of the protocol a box takes, done once so that every client
 // built on it behaves the same.
 //
@@ -14,7 +14,7 @@
 //	identity.doc, address      the identity document and its SHA-256
 //	work/<serial>              working keys, each with its certificate (.pub, -cert.pub): they sign what the box says
 //	prekeys/<serial>.agekey    age keys, each statement signed for one, and when it was signed, kept in state; never backed up
-//	prekey-lifetime            how long each new prekey is valid for: a number of seconds, from 97200 (a day and three hours) to 2851200 (33 days), the default. Yours to write, or irongall prekey lifetime's
+//	prekey-lifetime            how long each new prekey is valid for: a number of seconds, from 97200 (a day and three hours) to 2851200 (33 days), the default. Yours to write, or dromas prekey lifetime's
 //	outbox/, outbox/failed/    envelopes awaiting a receipt, sealed afresh at every post and never kept sealed; ones that can never be delivered
 //	inbox/, quarantine/        accepted mail; refused mail, never delivered, as served, each of the server's strings in base64 that is not of its form (keepRefused): why it was refused, and what the checks established when they judged it, are in state
 //	held/                      accepted mail from senders this box has not allowed, as inbox/ keeps it: allow moves a sender's to inbox/, block deletes it
