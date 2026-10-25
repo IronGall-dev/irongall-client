@@ -1,0 +1,72 @@
+# The dromas command's releases: on a pushed tag v*, the tag must be signed by
+# a key in .github/allowed_signers and sit on a commit of main that CI passed;
+# then GoReleaser builds it (.goreleaser.yaml) and publishes the archives and
+# checksums.txt as the tag's GitHub release, and every file the checksums name
+# is attested (gh attestation verify <file> -R dromas-dev/dromas-client).
+# A tag that fails a check releases nothing. By hand, the same build as a
+# snapshot, published nowhere. Actions are pinned by commit, each with its
+# release beside it, and GoReleaser by its version.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  release:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: the tag
+        # Signed by a key the repo names, an annotated tag (checkout can leave
+        # the tag pointing at its commit, so it is fetched again as pushed),
+        # on main, and a commit whose CI run passed.
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+          test "$(git cat-file -t "refs/tags/$TAG")" = tag
+          git -c gpg.ssh.allowedSignersFile=.github/allowed_signers verify-tag "$TAG"
+          commit=$(git rev-parse "refs/tags/$TAG^{commit}")
+          git merge-base --is-ancestor "$commit" origin/main
+          passed=$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --commit "$commit" --status success --json databaseId --jq length)
+          test "$passed" -gt 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          check-latest: true
+      - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
+        with:
+          distribution: goreleaser
+          version: v2.19.0
+          args: ${{ github.ref_type == 'tag' && 'release --clean' || 'release --snapshot --clean' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        if: github.ref_type == 'tag'
+        with:
+          subject-checksums: ./dist/checksums.txt

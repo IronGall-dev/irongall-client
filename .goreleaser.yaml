@@ -1,0 +1,49 @@
+# The dromas command's releases, which .github/workflows/release.yml makes
+# from a signed tag: a static binary for each system and architecture below,
+# archived with the licence and README, and checksums.txt, whose files the
+# workflow attests. Built from the tagged module as Go's module proxy serves
+# it (gomod.proxy), so a release is what go install …@<tag> builds, and with
+# GoReleaser's settings for a reproducible build. Windows and the BSDs join
+# when CI runs the client on them (#346). goreleaser release --snapshot
+# --clean builds it all into dist/ and publishes nothing.
+version: 2
+
+project_name: dromas
+
+gomod:
+  proxy: true
+
+builds:
+  - id: dromas
+    main: ./cmd/dromas
+    binary: dromas
+    env:
+      - CGO_ENABLED=0
+    goos: [linux, darwin]
+    goarch: [amd64, arm64]
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    builds_info: &info
+      owner: root
+      group: root
+      mtime: "{{ .CommitDate }}"
+    files:
+      - src: LICENSE
+        info: *info
+      - src: README.md
+        info: *info
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
