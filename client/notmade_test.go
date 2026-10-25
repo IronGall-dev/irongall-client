@@ -190,3 +190,88 @@ func TestAnInitWhoseFirstStatementExpiredRegisters(t *testing.T) {
 		t.Fatalf("the server serves %d, the box published %d", servedSerial(t, e, b), numberOf(t, b))
 	}
 }
+
+// A box reads its own record at its server by every rule but its
+// certificate's dates (PROTOCOL.md §12.4): a record its server took under a
+// rule since changed, a certificate made for 65 days, one begun two hours
+// back or one valid from 1970, is never one its box cannot renew past.
+// recv renews past each as past any record of its own. A record that does
+// not verify at all stops the renewal, saying the way out, and the remedy,
+// which goes on past what it cannot use, is that way.
+func TestARenewalGoesPastItsOwnRecordWhateverItsDates(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name          string
+		after, before func(now uint64) uint64
+	}{
+		{"made for 65 days", func(n uint64) uint64 { return n - 3600 }, func(n uint64) uint64 { return n + 65*86400 }},
+		{"begun two hours back", func(n uint64) uint64 { return n - 7200 }, func(n uint64) uint64 { return n + 64*86400 }},
+		{"valid from 1970", func(uint64) uint64 { return 0 }, func(n uint64) uint64 { return n + 64*86400 }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t)
+			b := e.box(protocol.PostQuantum)
+			n := numberOf(t, b)
+			unix := uint64(e.clock.Now().Unix())
+			cert := &ssh.Certificate{
+				Key: workKey(t, b).PublicKey(), Serial: n, CertType: ssh.UserCert, KeyId: protocol.CertificateKeyID,
+				ValidPrincipals: []string{b.Address().String()}, ValidAfter: c.after(unix), ValidBefore: c.before(unix),
+			}
+			if err := cert.SignCert(rand.Reader, identityKey(t, b)); err != nil {
+				t.Fatal(err)
+			}
+			signer, err := ssh.NewCertSigner(cert, workKey(t, b))
+			if err != nil {
+				t.Fatal(err)
+			}
+			st, _ := e.srv.Prekey(b.Address())
+			sig, err := protocol.Sign(signer, st, protocol.PrekeyNamespace(b.Address()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+				if r.Method == http.MethodGet && r.URL.Path == boxPath(b) {
+					fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: b.Identity().Document(), Prekey: st, PrekeySignature: sig})
+					return
+				}
+				next.ServeHTTP(w, r)
+			})
+			e.clock.Add(25 * time.Hour)
+			res, err := b.Receive(context.Background())
+			if err != nil || res.Renewed == nil || res.RenewErr != nil || res.NotMade != nil {
+				t.Fatalf("recv over its own record under a certificate %s: %+v, %v", c.name, res, err)
+			}
+		})
+	}
+	t.Run("a record that does not verify", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+		e := newEnv(t)
+		b, other := e.box(protocol.PostQuantum), e.box(protocol.PostQuantum)
+		st, _ := e.srv.Prekey(b.Address())
+		forged, err := protocol.Sign(worker(t, other), st, protocol.PrekeyNamespace(b.Address()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if r.Method == http.MethodGet && r.URL.Path == boxPath(b) {
+				fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: b.Identity().Document(), Prekey: st, PrekeySignature: forged})
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+		e.clock.Add(25 * time.Hour)
+		res, _ := b.Receive(ctx)
+		if res == nil || res.Renewed != nil || res.RenewErr == nil || !strings.Contains(res.RenewErr.Error(), "irongall cert revoke-earlier") {
+			t.Fatalf("recv over a record that does not verify: %+v", res)
+		}
+		if _, err := b.RenewAndRevoke(ctx, ""); err != nil {
+			t.Fatalf("the remedy past a record that does not verify: %v", err)
+		}
+		e.srv.SetMiddle(nil)
+		if st, err := b.Status(ctx); err != nil || len(st.Attention) != 0 {
+			t.Fatalf("status after the remedy: %+v, %v", st, err)
+		}
+	})
+}

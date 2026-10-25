@@ -66,6 +66,43 @@ type Certificate struct {
 // does not know is ignored, and none is known here either; and what the
 // reserved field holds is ignored.
 func CheckCertificate(id *Identity, key ssh.PublicKey, now time.Time) (*Certificate, error) {
+	cert, err := certificateForm(id, key)
+	if err != nil {
+		return nil, err
+	}
+	// ssh.CertTimeInfinity, the largest value, is past every bound here.
+	unix := uint64(max(now.Unix(), 0))
+	if unix < cert.ValidAfter {
+		return nil, ErrCertificateNotBegun
+	}
+	if unix >= cert.ValidBefore {
+		return nil, ErrCertificateEnded
+	}
+	if cert.ValidBefore > unix+uint64(MaxCertificateLifetime/time.Second) {
+		return nil, fmt.Errorf("%w: it ends more than 64 days and an hour from now", ErrCertificate)
+	}
+	return &Certificate{cert: cert}, nil
+}
+
+// CheckCertificateRecord checks key as CheckCertificate does, by every rule
+// but its dates: that the identity id certified the working key, with every
+// field in its form. It is what a box asks of its own record at its server
+// (PROTOCOL.md §12.4): which serial it stands at, and whether its identity
+// signed it. A certificate's dates bind what is signed under it, never a
+// renewal past it, so a record its server took is never one its box cannot
+// renew past for a date: one made for longer than the rule now allows, or
+// begun earlier than a client dates one, or ended.
+func CheckCertificateRecord(id *Identity, key ssh.PublicKey) (*Certificate, error) {
+	cert, err := certificateForm(id, key)
+	if err != nil {
+		return nil, err
+	}
+	return &Certificate{cert: cert}, nil
+}
+
+// certificateForm checks every rule of a certificate that is not a date
+// (CheckCertificate), the identity's signature on it among them.
+func certificateForm(id *Identity, key ssh.PublicKey) (*ssh.Certificate, error) {
 	cert, ok := key.(*ssh.Certificate)
 	if !ok {
 		return nil, fmt.Errorf("%w: the signing key is not a certificate", ErrCertificate)
@@ -104,23 +141,17 @@ func CheckCertificate(id *Identity, key ssh.PublicKey, now time.Time) (*Certific
 	if cert.ValidAfter > 1<<62 {
 		return nil, fmt.Errorf("%w: it begins at no time", ErrCertificate)
 	}
+	// One that never ends (ssh.CertTimeInfinity) is no certificate of this
+	// protocol, whose verifier takes none that ends past a bound (§5): read as
+	// a record, it would end at no time a box can name.
+	if cert.ValidBefore > 1<<62 {
+		return nil, fmt.Errorf("%w: it ends at no time", ErrCertificate)
+	}
 	checker := ssh.CertChecker{Clock: func() time.Time { return time.Unix(int64(cert.ValidAfter), 0) }} //nolint:gosec // bounded above
 	if err := checker.CheckCert(id.Address().String(), cert); err != nil {
 		return nil, fmt.Errorf("%w: the identity's signature on it does not verify", ErrCertificate)
 	}
-
-	// ssh.CertTimeInfinity, the largest value, is past every bound here.
-	unix := uint64(max(now.Unix(), 0))
-	if unix < cert.ValidAfter {
-		return nil, ErrCertificateNotBegun
-	}
-	if unix >= cert.ValidBefore {
-		return nil, ErrCertificateEnded
-	}
-	if cert.ValidBefore > unix+uint64(MaxCertificateLifetime/time.Second) {
-		return nil, fmt.Errorf("%w: it ends more than 64 days and an hour from now", ErrCertificate)
-	}
-	return &Certificate{cert: cert}, nil
+	return cert, nil
 }
 
 // checkWorkingKey holds a certified key to the identity's own key checks, and
@@ -153,7 +184,7 @@ func (c *Certificate) Serial() uint64 { return c.cert.Serial }
 
 // NotAfter returns the first moment the certificate is no longer valid.
 func (c *Certificate) NotAfter() time.Time {
-	return time.Unix(int64(c.cert.ValidBefore), 0).UTC() //nolint:gosec // CheckCertificate bounded it to MaxCertificateLifetime from a clock reading
+	return time.Unix(int64(c.cert.ValidBefore), 0).UTC() //nolint:gosec // certificateForm bounded it to 2^62
 }
 
 // SignsMail reports whether mail may still be signed under the certificate at
@@ -230,6 +261,11 @@ func (c *Certificate) Signer(work ssh.Signer) (ssh.Signer, error) {
 // the signature is verified under it. It returns the certificate, so a caller
 // that keeps the highest serial it has seen can compare.
 func VerifyCertified(id *Identity, message, signature []byte, namespace string, now time.Time) (*Certificate, error) {
+	return verifyCertified(id, message, signature, namespace, func(key ssh.PublicKey) (*Certificate, error) { return CheckCertificate(id, key, now) })
+}
+
+// verifyCertified is VerifyCertified with the certificate held to check.
+func verifyCertified(id *Identity, message, signature []byte, namespace string, check func(ssh.PublicKey) (*Certificate, error)) (*Certificate, error) {
 	if err := withinBound(signature, id.Type()); err != nil {
 		return nil, err
 	}
@@ -241,7 +277,7 @@ func VerifyCertified(id *Identity, message, signature []byte, namespace string, 
 	if err != nil {
 		return nil, err
 	}
-	cert, err := CheckCertificate(id, key, now)
+	cert, err := check(key)
 	if err != nil {
 		return nil, err
 	}

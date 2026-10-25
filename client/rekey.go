@@ -262,13 +262,13 @@ func (b *Box) readOwn(ctx context.Context, kt protocol.KeyType, unused bool) (*o
 		var err error
 		switch {
 		case o.bad != nil:
-			err = refuse("this box's current prekey, as served: %v", o.bad)
+			err = refuse("this box's current prekey, as served: %v. irongall cert revoke-earlier renews past it, revoking every certificate before the new one", o.bad)
 		// A box's statements are ordered by certificate first, then by
 		// serial, and this box gives a renewal's certificate and prekey one
 		// number. So what it published is (published, published), and the
 		// server may serve nothing ordered before it.
 		case before(o.cert.Serial(), o.statement.Serial, published, published):
-			err = refuse("rollback: the server serves this box's prekey serial %d under certificate %d, before serial %d, which this box published", o.statement.Serial, o.cert.Serial(), published)
+			err = refuse("rollback: the server serves this box's prekey serial %d under certificate %d, before serial %d, which this box published. irongall cert revoke-earlier renews past it, revoking every certificate before the new one", o.statement.Serial, o.cert.Serial(), published)
 		default:
 			out.known = max(o.cert.Serial(), published)
 			// A box that has published nothing, restored from its identity

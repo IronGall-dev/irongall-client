@@ -370,3 +370,60 @@ func TestSerialAt(t *testing.T) {
 		}
 	}
 }
+
+// A box's own record is judged by every rule of a certificate but its dates
+// (CheckCertificateRecord; PROTOCOL.md §12.4): what CheckCertificate refuses
+// at now for a date, it takes; what it refuses for anything else, it refuses.
+func TestARecordIsJudgedByEveryRuleButItsDates(t *testing.T) {
+	b, other := newCertBox(t), newCertBox(t)
+	now := time.Date(2026, 10, 25, 1, 0, 0, 0, time.UTC)
+	unix := uint64(now.Unix())
+	for _, tc := range []struct {
+		name   string
+		change func(*ssh.Certificate)
+		signer ssh.Signer
+		record bool // whether a record is taken
+	}{
+		{name: "made for 65 days", change: func(c *ssh.Certificate) { c.ValidBefore = unix + 65*86400 }, record: true},
+		{name: "begun two hours back", change: func(c *ssh.Certificate) { c.ValidAfter = unix - 7200 }, record: true},
+		{name: "valid from 1970", change: func(c *ssh.Certificate) { c.ValidAfter = 0 }, record: true},
+		{name: "ended long ago", change: func(c *ssh.Certificate) { c.ValidAfter, c.ValidBefore = 1, 2 }, record: true},
+		{name: "not begun", change: func(c *ssh.Certificate) { c.ValidAfter = unix + 60 }, record: true},
+		{name: "never ends", change: func(c *ssh.Certificate) { c.ValidBefore = ssh.CertTimeInfinity }},
+		{name: "ends before it begins", change: func(c *ssh.Certificate) { c.ValidBefore = c.ValidAfter }},
+		{name: "another key id", change: func(c *ssh.Certificate) { c.KeyId = "work" }},
+		{name: "signed by another key", signer: other.identity},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cert := b.rawCert(now)
+			if tc.change != nil {
+				tc.change(cert)
+			}
+			signer := tc.signer
+			if signer == nil {
+				signer = b.identity
+			}
+			if err := cert.SignCert(rand.Reader, signer); err != nil {
+				t.Fatal(err)
+			}
+			key, err := ssh.ParsePublicKey(cert.Marshal())
+			if err != nil {
+				t.Fatal(err)
+			}
+			// Each case is refused for a date where the record was judged
+			// before: at now, or at its own start.
+			_, atNow := CheckCertificate(b.id, key, now)
+			_, atStart := CheckCertificate(b.id, key, time.Unix(int64(cert.ValidAfter), 0)) //nolint:gosec // a time in this test
+			if atNow == nil && atStart == nil {
+				t.Fatal("taken at now and at its start: this case is no test of the record")
+			}
+			_, err = CheckCertificateRecord(b.id, key)
+			if tc.record && err != nil {
+				t.Fatalf("a record refused: %v", err)
+			}
+			if !tc.record && !errors.Is(err, ErrCertificate) {
+				t.Fatalf("a record taken that breaks a rule that is no date: %v", err)
+			}
+		})
+	}
+}

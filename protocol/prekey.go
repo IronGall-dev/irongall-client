@@ -253,7 +253,12 @@ func bech32HRP(s string) (string, bool) {
 // and comes with the statement and its certificate, for a caller to hold to
 // its own rules first (#167).
 func VerifyPrekey(id *Identity, statement, signature []byte, now time.Time) (*Prekey, *Certificate, error) {
-	cert, err := VerifyCertified(id, statement, signature, PrekeyNamespace(id.Address()), now)
+	return verifyPrekey(id, statement, signature, func(key ssh.PublicKey) (*Certificate, error) { return CheckCertificate(id, key, now) })
+}
+
+// verifyPrekey is VerifyPrekey with the certificate held to check.
+func verifyPrekey(id *Identity, statement, signature []byte, check func(ssh.PublicKey) (*Certificate, error)) (*Prekey, *Certificate, error) {
+	cert, err := verifyCertified(id, statement, signature, PrekeyNamespace(id.Address()), check)
 	switch {
 	case errors.Is(err, ErrCertificateTime):
 		// Its own words, and still the error it was to errors.Is: a caller
@@ -283,18 +288,16 @@ func VerifyPrekey(id *Identity, statement, signature []byte, now time.Time) (*Pr
 	return p, cert, nil
 }
 
-// VerifyPrekeyRecord verifies a prekey statement as VerifyPrekey does, at the
-// moment its certificate began and not at now. It answers whether the
-// identity ever certified the key that signed the statement, which is what a
-// box asks of its own record: a box that was away for longer than a
-// certificate lasts still has to read its serial to publish the next one.
-// Nobody judging another box's prekey uses it.
+// VerifyPrekeyRecord verifies a prekey statement as VerifyPrekey does, by
+// every rule but its certificate's dates (CheckCertificateRecord). It answers
+// whether the identity certified the key that signed the statement, and at
+// which serials it stands, which is what a box asks of its own record
+// (PROTOCOL.md §12.4): a box that was away for longer than a certificate
+// lasts, or whose record its server took under a rule since changed, still
+// has to read its serial to publish the next one. Nobody judging another
+// box's prekey uses it.
 func VerifyPrekeyRecord(id *Identity, statement, signature []byte) (*Prekey, *Certificate, error) {
-	began, err := CertificateBegan(signature)
-	if err != nil {
-		return nil, nil, errors.New("the prekey is not signed by a working key its identity certified")
-	}
-	return VerifyPrekey(id, statement, signature, began)
+	return verifyPrekey(id, statement, signature, func(key ssh.PublicKey) (*Certificate, error) { return CheckCertificateRecord(id, key) })
 }
 
 // Order is where a prekey statement would stand in its box's order
