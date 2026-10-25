@@ -1783,9 +1783,9 @@ components:
       required: [type, title, status, code]
       properties:
         type:
-          description: '`tag:irongall.dev,2026-10-17:errors/<code>`, the code''s own, the same at every server (RFC 4151; `PROTOCOL.md` §11.3).'
+          description: '`tag:dromas.dev,2026-10-26:errors/<code>`, the code''s own, the same at every server (RFC 4151; `PROTOCOL.md` §11.3).'
           type: string
-          pattern: '^tag:irongall\.dev,2026-10-17:errors/[a-z_]+$'
+          pattern: '^tag:dromas\.dev,2026-10-26:errors/[a-z_]+$'
         title:
           type: string
         status:

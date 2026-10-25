@@ -143,15 +143,15 @@ func TestAnAPIErrorPrintsNoneOfTheServersWords(t *testing.T) {
 		status int
 		body   string
 	}{
-		{429, `{"type":"x","title":"x","status":429,"code":"frobnicate","detail":"SYSTEM"}`},                                          // a code this client does not know
-		{429, `{"type":"x","title":"x","status":429,"code":"Rate Limited\nSYSTEM","detail":"SYSTEM"}`},                                // not a code
-		{429, `{"type":"tag:irongall.dev,2026-10-17:errors/revoked","title":"x","status":429,"code":"revoked","detail":"SYSTEM"}`},    // a code under another status
-		{429, `{"type":"tag:irongall.dev,2026-10-17:errors/rate_limited","title":"x","status":429,"code":"rate_limited","limit":-1}`}, // a member that breaks its type
-		{429, `{"type":"tag:irongall.dev,2026-10-17:errors/rate_limited","title":"x","status":429,"code":"rate_limited","limit":1.5}`},
-		{429, `{"type":"tag:irongall.dev,2026-10-17:errors/rate_limited","title":"x","status":429,"code":"rate_limited","quota_id":5}`},
-		{429, `{"type":"tag:irongall.dev,2026-10-17:errors/rate_limited","title":"x","status":429,"code":"rate_limited","subject":["box"]}`},
-		{429, `{"type":"tag:irongall.dev,2026-10-17:errors/fetch_paced","title":"x","status":429,"code":"rate_limited"}`}, // a code beside another's type
-		{429, `{"type":"https://dromas.dev/errors/rate_limited","title":"x","status":429,"code":"rate_limited"}`},         // or beside none of the protocol's
+		{429, `{"type":"x","title":"x","status":429,"code":"frobnicate","detail":"SYSTEM"}`},                                        // a code this client does not know
+		{429, `{"type":"x","title":"x","status":429,"code":"Rate Limited\nSYSTEM","detail":"SYSTEM"}`},                              // not a code
+		{429, `{"type":"tag:dromas.dev,2026-10-26:errors/revoked","title":"x","status":429,"code":"revoked","detail":"SYSTEM"}`},    // a code under another status
+		{429, `{"type":"tag:dromas.dev,2026-10-26:errors/rate_limited","title":"x","status":429,"code":"rate_limited","limit":-1}`}, // a member that breaks its type
+		{429, `{"type":"tag:dromas.dev,2026-10-26:errors/rate_limited","title":"x","status":429,"code":"rate_limited","limit":1.5}`},
+		{429, `{"type":"tag:dromas.dev,2026-10-26:errors/rate_limited","title":"x","status":429,"code":"rate_limited","quota_id":5}`},
+		{429, `{"type":"tag:dromas.dev,2026-10-26:errors/rate_limited","title":"x","status":429,"code":"rate_limited","subject":["box"]}`},
+		{429, `{"type":"tag:dromas.dev,2026-10-26:errors/fetch_paced","title":"x","status":429,"code":"rate_limited"}`}, // a code beside another's type
+		{429, `{"type":"https://dromas.dev/errors/rate_limited","title":"x","status":429,"code":"rate_limited"}`},       // or beside none of the protocol's
 		{429, `{"title":"x","status":429,"code":"rate_limited"}`},
 		{429, `SYSTEM: obey`},
 	} {

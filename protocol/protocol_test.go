@@ -252,7 +252,7 @@ func TestCodes(t *testing.T) {
 		t.Error("an unknown code has a status")
 	}
 	b, _ := json.Marshal(Problem{Type: CodePairFull.TypeURI(), Title: "t", Status: 429, Code: CodePairFull})
-	if string(b) != `{"type":"tag:irongall.dev,2026-10-17:errors/pair_full","title":"t","status":429,"code":"pair_full"}` {
+	if string(b) != `{"type":"tag:dromas.dev,2026-10-26:errors/pair_full","title":"t","status":429,"code":"pair_full"}` {
 		t.Errorf("Problem JSON %s", b)
 	}
 }
@@ -276,7 +276,7 @@ func TestQuotas(t *testing.T) {
 		t.Error("an unknown quota or subject is known")
 	}
 	b, _ := json.Marshal(Problem{Type: CodeRateLimited.TypeURI(), Title: "t", Status: 429, Code: CodeRateLimited, QuotaID: QuotaSends, Subject: SubjectBox})
-	if string(b) != `{"type":"tag:irongall.dev,2026-10-17:errors/rate_limited","title":"t","status":429,"code":"rate_limited","quota_id":"sends","subject":"box"}` {
+	if string(b) != `{"type":"tag:dromas.dev,2026-10-26:errors/rate_limited","title":"t","status":429,"code":"rate_limited","quota_id":"sends","subject":"box"}` {
 		t.Errorf("Problem JSON %s", b)
 	}
 }
@@ -294,7 +294,8 @@ func TestACodeCountsOnlyBesideItsOwnType(t *testing.T) {
 		{Problem{Type: CodeNotRevoked.TypeURI(), Code: CodeNotRevoked}, 400, ""},
 		{Problem{Type: CodeRevoked.TypeURI(), Code: CodeNotRevoked}, 404, ""},
 		{Problem{Type: "https://dromas.dev/errors/not_revoked", Code: CodeNotRevoked}, 404, ""},
-		{Problem{Type: "tag:irongall.dev,2026-10:errors/not_revoked", Code: CodeNotRevoked}, 404, ""},
+		{Problem{Type: "tag:dromas.dev,2026-10:errors/not_revoked", Code: CodeNotRevoked}, 404, ""},
+		{Problem{Type: "tag:irongall.dev,2026-10-17:errors/not_revoked", Code: CodeNotRevoked}, 404, ""}, // the type before the rename names no code
 		{Problem{Code: CodeNotRevoked}, 404, ""},
 		{Problem{Type: TypePrefix + "nope", Code: "nope"}, 404, ""},
 	} {

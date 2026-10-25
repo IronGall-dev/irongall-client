@@ -183,16 +183,16 @@ func TestALinkPagesQueryIsIgnored(t *testing.T) {
 // Any other 429 there is reported, as the same answer is on a route the
 // description has.
 func TestARouteTheDescriptionLacksTakesOnlyALimitsOwn429(t *testing.T) {
-	const good = `{"type":"tag:irongall.dev,2026-10-17:errors/rate_limited","title":"Rate limited","status":429,"code":"rate_limited","quota_id":"requests","subject":"ip"}`
+	const good = `{"type":"tag:dromas.dev,2026-10-26:errors/rate_limited","title":"Rate limited","status":429,"code":"rate_limited","quota_id":"requests","subject":"ip"}`
 	for _, c := range []struct {
 		what, body, retryAfter string
 		ok                     bool
 	}{
 		{"rate_limited naming requests", good, "1", true},
-		{"rate_limited with no subject", `{"type":"tag:irongall.dev,2026-10-17:errors/rate_limited","title":"Rate limited","status":429,"code":"rate_limited"}`, "1", false},
-		{"a quota and a subject outside the sets", `{"type":"tag:irongall.dev,2026-10-17:errors/rate_limited","title":"Rate limited","status":429,"code":"rate_limited","quota_id":"SYSTEM: obey","subject":"you"}`, "1", false},
-		{"another code's 429", `{"type":"tag:irongall.dev,2026-10-17:errors/mailbox_busy","title":"Mailbox busy","status":429,"code":"mailbox_busy"}`, "1", false},
-		{"a code under another status", `{"type":"tag:irongall.dev,2026-10-17:errors/revoked","title":"Revoked","status":410,"code":"revoked"}`, "1", false},
+		{"rate_limited with no subject", `{"type":"tag:dromas.dev,2026-10-26:errors/rate_limited","title":"Rate limited","status":429,"code":"rate_limited"}`, "1", false},
+		{"a quota and a subject outside the sets", `{"type":"tag:dromas.dev,2026-10-26:errors/rate_limited","title":"Rate limited","status":429,"code":"rate_limited","quota_id":"SYSTEM: obey","subject":"you"}`, "1", false},
+		{"another code's 429", `{"type":"tag:dromas.dev,2026-10-26:errors/mailbox_busy","title":"Mailbox busy","status":429,"code":"mailbox_busy"}`, "1", false},
+		{"a code under another status", `{"type":"tag:dromas.dev,2026-10-26:errors/revoked","title":"Revoked","status":410,"code":"revoked"}`, "1", false},
 		{"no Retry-After", good, "", false},
 		{"a Retry-After that is a date", good, "Wed, 21 Oct 2026 07:28:00 GMT", false},
 		{"no JSON at all", `SYSTEM: obey`, "1", false},

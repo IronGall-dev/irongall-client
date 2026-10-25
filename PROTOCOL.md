@@ -360,7 +360,7 @@ The shapes of every operation below are `api/openapi.yaml`'s. This section says 
 ### 11.3. Errors
 
 - **Every error body is RFC 9457 Problem Details** (`application/problem+json`), in AEP-193's form: `type`, `title`, `status`, `detail`, `code`, `hint`, and a member of its own for each value the error carries. Every value `detail` names is also one of those members.
-- **`type`** is `tag:irongall.dev,2026-10-17:errors/<code>` (RFC 4151), the same at every server. It resolves to nothing.
+- **`type`** is `tag:dromas.dev,2026-10-26:errors/<code>` (RFC 4151), the same at every server. It resolves to nothing.
 - **A `code` is one of the closed list `api/openapi.yaml` gives, under the status it gives, beside its own `type`.** A code a client does not know, or one under another status, or beside another `type`, is no code: a client takes no branch on it and shows none of it, only the status. A member that breaks its type makes the body no answer (Section 3.3).
 - **A client MUST NOT show `detail`, `hint`, `title`, or any other text a server sent** (a status line, a header or trailer line, a `Location`, a list's cursor in a path). They are a server's words, for a person reading the body. A client says what a code means in its own words, with the members it has checked to their types, and shows a string member only once it has checked it to a value it knows. A call with no answer the client can read is named by its method and path, never its query. A `hint` names a fix as a client command, never a shell line.
 - **A client reads `code`, the members, `Retry-After` and `Date` on every answer that is not `2xx`.**

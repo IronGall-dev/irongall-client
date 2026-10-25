@@ -167,9 +167,9 @@ func matches(pattern, s string) bool {
 func TestScriptReadsAProblemsCodeAndWait(t *testing.T) {
 	b := &sbox{w: newWorld(t), dir: t.TempDir()}
 	out := b.must(`p(){ printf '%s\n%s\n\n' "$1" "$2" > "$DR/error.meta"; printf %s "$3" > "$DR/error.json"; }
-p 429 0017 '{"type":"tag:irongall.dev,2026-10-17:errors/rate_limited","status":429,"code":"rate_limited"}'; echo "1 $(dr_code) $(dr_wait)"
+p 429 0017 '{"type":"tag:dromas.dev,2026-10-26:errors/rate_limited","status":429,"code":"rate_limited"}'; echo "1 $(dr_code) $(dr_wait)"
 p 429 0017 '{"type":"https://dromas.dev/errors/rate_limited","status":429,"code":"rate_limited"}'; echo "2 $(dr_code)"
-p 429 0017 '{"type":"tag:irongall.dev,2026-10-17:errors/fetch_paced","status":429,"code":"rate_limited"}'; echo "3 $(dr_code)"
+p 429 0017 '{"type":"tag:dromas.dev,2026-10-26:errors/fetch_paced","status":429,"code":"rate_limited"}'; echo "3 $(dr_code)"
 p 429 'Fri, 31 Dec 2027 23:59:59 GMT' '{}'; echo "4 $(dr_wait)"
 p 429 +17 '{}'; echo "5 $(dr_wait)"
 p 429 123456789012345678901234567890 '{}'; echo "6 $(dr_wait)"`)
