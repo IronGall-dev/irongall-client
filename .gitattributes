@@ -1,0 +1,4 @@
+# Every file is checked out as its bytes, on Windows too, where git would
+# otherwise write CRLF line ends: the vectors, the script and the tests read
+# bytes (golang/go's own .gitattributes is the same line).
+* -text

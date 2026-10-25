@@ -10,17 +10,21 @@
 # The tests build with -tags dromas_nofsync, so no write is flushed to the
 # disk (client/fsync.go): a test kills a process, never the machine. -short
 # skips the long tests, each of which says so; CI never passes it. On macOS
-# ./sh is left to CI: the script is held to GNU's and uutils' tools (README §
-# The shell client), and on macOS its tests, a few thousand short processes,
-# took from 3 to more than 20 minutes on one machine in one day (go test ./sh
-# still runs them, with bash 4 or later and GNU coreutils first in PATH).
+# and Windows ./sh is left to the Linux runs: the script is held to GNU's and
+# uutils' tools (README § The shell client), and its tests, a few thousand
+# short processes, took from 3 to more than 20 minutes on one Mac in one day,
+# where a process costs less than on Windows (go test ./sh still runs them,
+# with bash 4 or later and GNU coreutils first in PATH).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 govulncheck=golang.org/x/vuln/cmd/govulncheck@v1.9.0
 tags=dromas_nofsync
-darwin=
-[ "$(uname -s)" = Darwin ] && darwin=1
+darwin='' nosh=''
+case $(uname -s) in
+  Darwin) darwin=1 nosh=macOS ;;
+  MINGW* | MSYS* | CYGWIN*) nosh=Windows ;;
+esac
 if [ -n "$darwin" ] && command -v brew > /dev/null; then
   for d in "$(brew --prefix)/opt/coreutils/libexec/gnubin" "$(brew --prefix)/opt/bash/bin"; do
     if [ -d "$d" ]; then PATH="$d:$PATH"; fi
@@ -33,9 +37,9 @@ unset DROMAS_HOME DROMAS_BOX DR_HOME DR_BOX # no test may meet a real box
 allowed=(-e 'run by the crash tests, in a process of its own')
 
 pkgs=$(go list ./...)
-if [ -n "$darwin" ]; then
+if [ -n "$nosh" ]; then
   pkgs=$(grep -v '/sh$' <<< "$pkgs")
-  echo "macOS: ./sh is left to CI (scripts/check.sh, top)" >&2
+  echo "$nosh: ./sh is left to the Linux runs (scripts/check.sh, top)" >&2
 fi
 
 fail() { # an annotation on GitHub's page, a line on a terminal

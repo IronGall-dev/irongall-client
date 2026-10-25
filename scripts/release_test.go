@@ -168,9 +168,11 @@ func (w *world) passed(commit string) {
 	}
 }
 
+// script runs one of the world's scripts through bash, as Windows, which
+// reads no #! line, needs too.
 func (w *world) script(name string, args ...string) (string, int) {
 	w.t.Helper()
-	return w.try(w.work, filepath.Join(w.work, "scripts", name), args...)
+	return w.try(w.work, "bash", append([]string{filepath.Join(w.work, "scripts", name)}, args...)...)
 }
 
 // originTag is what origin holds for a tag: "tag" for an annotated one, and

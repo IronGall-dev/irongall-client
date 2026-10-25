@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 
@@ -75,7 +74,7 @@ func TestCrashChild(t *testing.T) {
 	}
 	client.SetStep(func(name string) {
 		if name == o.Step {
-			_ = syscall.Kill(os.Getpid(), syscall.SIGKILL)
+			killSelf(o.Step)
 			time.Sleep(time.Minute) // the signal is on its way
 		}
 	})
@@ -100,7 +99,7 @@ func crash(t *testing.T, e *env, b *client.Box, command, step string, to protoco
 	cmd.Env = append(os.Environ(), crashChild+"="+string(order))
 	out, err := cmd.CombinedOutput()
 	var exit *exec.ExitError
-	if !errors.As(err, &exit) || exit.Sys().(syscall.WaitStatus).Signal() != syscall.SIGKILL {
+	if !errors.As(err, &exit) || !killedAt(exit, out, step) {
 		t.Fatalf("%s did not die at %s: %v\n%s", command, step, err, out)
 	}
 }
