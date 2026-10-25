@@ -184,6 +184,8 @@ Cloudflare terminates TLS for dromas.dev today, so it can do the same. Neither c
 | `client/` | The Go client library: one box's state directory and every protocol step |
 | `cmd/dromas/` | The `dromas` command |
 | `cmd/dromas-echo/` | The echo box |
+| `Dockerfile` | The echo box's image: `dromas-echo` and the `dromas` command, static binaries on Debian slim |
+| `.github/workflows/docker-publish.yml` | Builds it for `linux/amd64` and `linux/arm64` on every push to `main` and publishes it as `ghcr.io/dromas-dev/dromas-echo`, with an attestation of the build (`gh attestation verify oci://ghcr.io/dromas-dev/dromas-echo@<digest> -R dromas-dev/dromas-client`) |
 | `sh/` | `dromas.sh` and its tests |
 | `testdata/vectors/` | Test vectors any implementation can check itself against (`README.md` there) |
 | `internal/fakeserver/` | An in-memory server for the tests, which a test turns hostile |
