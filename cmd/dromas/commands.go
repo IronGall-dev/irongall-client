@@ -9,6 +9,8 @@ import (
 	"math"
 	"os"
 	"regexp"
+	"runtime"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -23,7 +25,7 @@ import (
 // each thing that has more than one thing done to it.
 func (e *cli) tree() *cobra.Command {
 	root := e.group("dromas", "", "",
-		e.initCmd(), e.addrCmd(), e.sendCmd(), e.recvCmd(), e.showCmd(), e.statusCmd(), e.heldCmd(),
+		e.initCmd(), e.addrCmd(), e.sendCmd(), e.recvCmd(), e.showCmd(), e.statusCmd(), e.heldCmd(), e.versionCmd(),
 		e.group("peer", "who may write to this box: allow, block, list",
 			`Mail from a sender this box has not allowed is held in held/ (dromas held
 lists it), and mail from a sender it blocked is dropped. Sending to a box, or
@@ -90,6 +92,38 @@ help, and dromas <group> help a group's.`,
 		}))
 	root.SetFlagErrorFunc(func(c *cobra.Command, err error) error { return wrong(c, "%v", err) })
 	return root
+}
+
+// versionCmd prints what this binary is, from the build information Go
+// records in it (runtime/debug), the same that go version -m reads. It reads
+// no box and no environment.
+func (e *cli) versionCmd() *cobra.Command {
+	return command("version", "print this client's version, commit, Go release and platform",
+		`Print one line: the version this client was built at (a release's tag, or
+Go's pseudo-version for a build between releases), the commit when the build
+recorded it, the Go release that built it, and the system and architecture it
+was built for. It reads no box.`,
+		nargs(0, 0), func(*cobra.Command, []string) error {
+			version, commit := "", ""
+			if bi, ok := debug.ReadBuildInfo(); ok {
+				version = bi.Main.Version
+				for _, s := range bi.Settings {
+					if s.Key == "vcs.revision" {
+						commit = s.Value
+					}
+				}
+			}
+			return e.out(line("version", "version", orNil(version), "commit", orNil(commit),
+				"go", runtime.Version(), "platform", runtime.GOOS+"/"+runtime.GOARCH))
+		})
+}
+
+// orNil is s, or nil for "", so a member nobody knows is left out.
+func orNil(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 func (e *cli) initCmd() *cobra.Command {

@@ -15,6 +15,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -2240,5 +2242,34 @@ func TestCertPublishRevokedBelowTheServersSaysTheHigherOne(t *testing.T) {
 	ls := printed(t, out.String())
 	if typesOf(ls) != "certificates_revoked" || ls[0]["through"] != json.Number(strconv.FormatUint(n+100, 10)) || !strings.Contains(ls[0]["message"].(string), "higher serial") {
 		t.Fatalf("printed %q", out.String())
+	}
+}
+
+// version prints one line from the binary's build information, and reads no
+// box and no environment: it answers where no box directory can be found,
+// and status, under the same environment, does not.
+func TestVersionPrintsWhatTheBinaryIs(t *testing.T) {
+	for _, v := range []string{"DROMAS_HOME", "DROMAS_BOX", "XDG_CONFIG_HOME", "HOME"} {
+		t.Setenv(v, "")
+	}
+	var stdout, stderr bytes.Buffer
+	if err := do(t.Context(), "version", nil, nil, &stdout, &stderr); err != nil {
+		t.Fatalf("version: %v: %s", err, stderr.String())
+	}
+	ls := printed(t, stdout.String())
+	want := map[string]any{"type": "version", "go": runtime.Version(), "platform": runtime.GOOS + "/" + runtime.GOARCH}
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" {
+		want["version"] = bi.Main.Version
+	}
+	if len(ls) != 1 {
+		t.Fatalf("printed %d lines, want 1: %s", len(ls), stdout.String())
+	}
+	for k, v := range want {
+		if ls[0][k] != v {
+			t.Errorf("%s is %v, want %v", k, ls[0][k], v)
+		}
+	}
+	if err := do(t.Context(), "status", nil, nil, io.Discard, io.Discard); err == nil {
+		t.Error("status ran with no box directory to be found, so this test shows nothing about what version reads")
 	}
 }
