@@ -161,12 +161,12 @@ ig_identity(){ # → identity.pub, identity.doc and address, the identity as the
 }
 
 # recipe: keys and registration
-ig_work(){ # <serial> → work/<serial>, .pub and -cert.pub: a NEW working key, and the certificate this box's identity gives it, with that serial, good from an hour ago for 65 days. The working key signs what the box says; the identity signs certificates and nothing else
+ig_work(){ # <serial> → work/<serial>, .pub and -cert.pub: a NEW working key, and the certificate this box's identity gives it, with that serial, good from an hour ago for 64 days: the 31 it signs mail for, the longest month, and the 33 the last of that mail may wait. The working key signs what the box says; the identity signs certificates and nothing else
   local A w="$IG/work/$1" t; A=$(cat "$IG/address") || return 1; mkdir -p "$IG/work" || return 1
   [ -s "$w" ] && [ -s "$w-cert.pub" ] && return 0
   rm -f "$w" "$w.pub" "$w-cert.pub"; t=$(ig_now)
   ssh-keygen -q -t ed25519 -N '' -C '' -f "$w" < /dev/null &&
-  ssh-keygen -q -s "$IG/identity" -I irongall-cert-v1 -n "$A" -z "$1" -V "$(ig_stamp $((t - 3600))):$(ig_stamp $((t + 65*86400)))" -O clear "$w.pub"      # one principal, the address; no option and no extension. It starts an hour back, as -V -1h:+65d dates one, so that a verifier whose clock is behind this one takes it at once
+  ssh-keygen -q -s "$IG/identity" -I irongall-cert-v1 -n "$A" -z "$1" -V "$(ig_stamp $((t - 3600))):$(ig_stamp $((t + 64*86400)))" -O clear "$w.pub"      # one principal, the address; no option and no extension. It starts an hour back, as -V -1h:+64d dates one, so that a verifier whose clock is behind this one takes it at once
 }
 ig_lifetime(){ # → the seconds each new prekey of this box is valid for: what its prekey-lifetime file names, a number of seconds alone on its line from 97200 (a day and three hours) to 2851200 (33 days), or 2851200 when it has none. A file that names anything else is a refusal, never the default: no prekey is signed until it is put right (PROTOCOL.md §12.4)
   local l; [ -e "$IG/prekey-lifetime" ] || { echo 2851200; return 0; }
@@ -297,12 +297,12 @@ ig_exts(){ # ig_cert's: <a certificate's extensions, in hex> → 0 only for them
 }
 ig_str(){ [[ ${x:o:8} =~ ^[0-9a-f]{8}$ ]] || return 1; l=$((16#${x:o:8} * 2)); [ $((o + 8 + l)) -le ${#x} ] || return 1; v=${x:o+8:l}; o=$((o + 8 + l)); }      # ig_cert's: the next length-prefixed string of x, in hex, into v
 ig_u64(){ [[ ${x:o:16} =~ ^[0-7][0-9a-f]{15}$ ]] || return 1; v=$((16#${x:o:16})); o=$((o + 16)); }      # ig_cert's: the next 64-bit number of x into v. One with its top bit set is no time and no serial here
-ig_certified(){ # <address> <identity document> <namespace> <signature> <message> [at] → "<certificate serial> <its valid before>" only for a signature by a working key under a certificate of that identity that holds at the time given (now, without one): begun, not ended, and ending at most 66 days on. 1 otherwise; 2 when all that fails is that it has ended, 3 that it has not begun. A signature by the identity itself, or by a key with no certificate, is refused
+ig_certified(){ # <address> <identity document> <namespace> <signature> <message> [at] → "<certificate serial> <its valid before>" only for a signature by a working key under a certificate of that identity that holds at the time given (now, without one): begun, not ended, and ending at most 64 days and an hour on. 1 otherwise; 2 when all that fails is that it has ended, 3 that it has not begun. A signature by the identity itself, or by a key with no certificate, is refused
   local A=$1 r n a b t=${6:-$(ig_now)}
   ig_bound "$4" "$2" && r=$(ig_cert "$4" "$2" "$A") || return 1; read -r n a b <<< "$r"
   printf '%s cert-authority %s\n' "$A" "$(sed -n 2p "$2")" > "$IG/signers"      # ONE line, built from checked bytes: only a certificate this identity signed, for this address
   ssh-keygen -Y verify -f "$IG/signers" -I "$A" -n "$3" -s "$4" -O verify-time="$(ig_stamp $((a > 0 ? a : 1)))" < "$5" > /dev/null 2>&1 || return 1      # the two signatures, the identity's on the certificate and the working key's on the message, judged where the certificate begins (a second in, for one that begins at 0: ssh-keygen takes no verify-time of 0); the time is the next line's
-  [ "$a" -le "$t" ] || return 3; [ "$t" -lt "$b" ] || return 2; [ "$b" -le $((t + 66*86400)) ] || return 1
+  [ "$a" -le "$t" ] || return 3; [ "$t" -lt "$b" ] || return 2; [ "$b" -le $((t + 64*86400 + 3600)) ] || return 1
   echo "$n $b"
 }
 ig_bech32(){ # <string> → its human-readable part, only for a Bech32 string (BIP 173) as age writes a recipient: in lowercase, its checksum good, and its data whole bytes, with fewer than five bits left over and those zero. age takes one of any length, where BIP 173 stops at 90, and so does this. 1 for anything else

@@ -1256,7 +1256,7 @@ const maxRecord = 64 << 10
 // notMadeLine is the line that says the box's server served a statement in
 // its name that it did not make.
 func notMadeLine(nm *client.NotMade) []byte {
-	return line("prekey_not_made", "serial", nm.Serial, "certificate_serial", nm.CertificateSerial, "at", nm.At, "message", nm.Words())
+	return line("prekey_not_made", "serial", nm.Serial, "certificate_serial", nm.CertificateSerial, "own_certificate", nm.OwnCertificate, "at", nm.At, "message", nm.Words())
 }
 
 // readRecord reads a revocation record: the JSON irongall revocation make

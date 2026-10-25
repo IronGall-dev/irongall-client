@@ -7,6 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+
+	"golang.org/x/crypto/ssh"
 
 	"github.com/IronGall-dev/irongall-client/protocol"
 )
@@ -41,6 +44,9 @@ type own struct {
 	// its server holds and showed is so whether or not this box could keep
 	// it (#406 item 1).
 	certs *protocol.RevokedCertificates
+	// notMade is set when the statement served verifies and is one this box
+	// did not make (noteServed).
+	notMade bool
 	// err is the error of the call that got no answer this box can use, or
 	// the server's 410: GET /v1/<own>'s, or GET …/revocations' where the
 	// server holds no box. It is nil when every call was answered.
@@ -120,14 +126,19 @@ func (b *Box) known(ctx context.Context) (*own, error) {
 
 // NotMade is a prekey statement the box's server served in its name at the
 // box's last read of itself, verified under its identity, that the box did
-// not make: none it keeps. It was made on another machine with the box's
-// identity, as a box restored from its identity alone meets the lost
-// machine's, or by someone who holds a working key the identity certified.
-// It changes nothing a command does: a renewal is numbered above it, as above
-// any statement served (#74).
+// not make: none it keeps. Under a certificate this box made, whoever made it
+// holds that certificate's working key, from a copy of the box's directory,
+// which holds the identity too; under one it did not, the identity certified
+// someone else's working key, as on the lost machine a box restored from its
+// identity alone meets. Either way the box recommends revoking the address
+// (PROTOCOL.md §12.4), and recv renews nothing above it: Rekey, which its
+// owner runs, does (#74).
 type NotMade struct {
 	Serial            uint64 `json:"serial"`
 	CertificateSerial uint64 `json:"certificate_serial"`
+	// OwnCertificate is set when the statement is under a certificate this
+	// box made: one that certifies a working key it holds.
+	OwnCertificate bool `json:"own_certificate"`
 	// At is this machine's clock at that read.
 	At string `json:"at"`
 }
@@ -153,11 +164,26 @@ func (b *Box) noteServed(o *own, served []byte) error {
 		}
 		return b.recordTaken(o.statement.Serial, "")
 	}
-	nm, err := json.Marshal(NotMade{Serial: o.statement.Serial, CertificateSerial: o.cert.Serial(), At: b.now().UTC().Format(protocol.TimeLayout)})
+	o.notMade = true
+	nm, err := json.Marshal(NotMade{Serial: o.statement.Serial, CertificateSerial: o.cert.Serial(), OwnCertificate: b.certifiedHere(o.cert), At: b.now().UTC().Format(protocol.TimeLayout)})
 	if err != nil {
 		return err
 	}
 	return b.update(func(s store) error { return s.put(bucketBox, "not-made", nm) })
+}
+
+// certifiedHere reports whether c certifies a working key this box made: the
+// one it keeps at c's serial. It compares the key certified, never the
+// certificate's bytes, which a certificate an ECDSA identity signed does not
+// fix (PROTOCOL.md §5).
+func (b *Box) certifiedHere(c *protocol.Certificate) bool {
+	line, err := os.ReadFile(b.workStem(c.Serial()) + "-cert.pub") //nolint:gosec // a path inside the box's own directory
+	if err != nil {
+		return false
+	}
+	key, _, _, _, err := ssh.ParseAuthorizedKey(line)
+	own, ok := key.(*ssh.Certificate)
+	return err == nil && ok && bytes.Equal(own.Key.Marshal(), c.WorkingKey().Marshal())
 }
 
 // NotMade is the statement the box's server served in its name, at the box's
@@ -179,7 +205,13 @@ func (b *Box) notMade() (nm *NotMade, err error) {
 	return nm, err
 }
 
-// Words says what nm is, to the box's owner.
+// Words says what nm is, to the box's owner, and recommends what to do: in
+// either case, revoking the address (PROTOCOL.md §12.4).
 func (nm *NotMade) Words() string {
-	return fmt.Sprintf("at its read of itself at %s, this box's server served a prekey statement in its name, serial %d under certificate %d, that this box did not make: another machine with its identity made it (a box restored from its identity alone meets the lost machine's), or someone who holds a working key the identity certified. If neither, irongall cert revoke-earlier ends every certificate before a new one. The box's next read of itself, at irongall prekey renew or recv's daily renewal, clears this once its server serves its own", nm.At, nm.Serial, nm.CertificateSerial)
+	head := fmt.Sprintf("at its read of itself at %s, this box's server served a prekey statement in its name, serial %d under certificate %d, that this box did not make", nm.At, nm.Serial, nm.CertificateSerial)
+	tail := "recv renews nothing above it. irongall revocation publish, with the address in full, ends the address for good, and its correspondents need a new one; irongall prekey renew renews above the statement instead, for an owner who knows whose it is. The box's next read of itself that serves its own clears this"
+	if nm.OwnCertificate {
+		return head + ", under this box's own certificate: whoever made it holds this box's working key, so they copied this box's directory, which holds its identity too. Revoke the address, unless you know the identity was not copied, when irongall cert revoke-earlier ends every certificate before a new one instead. " + tail
+	}
+	return head + ", under a certificate this box did not make either: this box's identity certified someone else's working key. Unless it is the owner's own, from the machine this box was restored from, the identity is in other hands, and only revoking the address ends that: whoever holds the identity makes a later certificate as easily as this box. " + tail
 }

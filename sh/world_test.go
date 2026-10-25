@@ -260,7 +260,7 @@ func (w *world) operator() *operator {
 		b.must(`mkdir -p "$IG"; cd "$IG"
 ssh-keygen -q -t ed25519 -N '' -C '' -f identity; printf 'irongall-v1\n%s\n' "$(cut -d' ' -f1,2 identity.pub)" > identity.doc; sha256sum < identity.doc | cut -c1-64 > address
 ssh-keygen -q -t ed25519 -N '' -C '' -f work
-ssh-keygen -q -s identity -I irongall-cert-v1 -n "$(cat address)" -z 1 -V "$(date -u -d '1 hour ago' +%Y%m%d%H%M%SZ):$(date -u -d '65 days' +%Y%m%d%H%M%SZ)" -O clear work.pub
+ssh-keygen -q -s identity -I irongall-cert-v1 -n "$(cat address)" -z 1 -V "$(date -u -d '1 hour ago' +%Y%m%d%H%M%SZ):$(date -u -d '64 days' +%Y%m%d%H%M%SZ)" -O clear work.pub
 age-keygen -o agekey 2> /dev/null; age-keygen -y agekey > recipient`)
 		o.addr = mustAddress(w.t, o.dir)
 		w.op = o

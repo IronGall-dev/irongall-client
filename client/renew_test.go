@@ -719,10 +719,10 @@ func TestAServerThatFailsEveryRenewalGetsEachKeyOnce(t *testing.T) {
 	for day := 1; day <= 75; day++ {
 		e.clock.Add(24 * time.Hour)
 		// The certificate the server holds this box to was made on day 0
-		// and lasts 65 days. Once it has ended the box can sign no pass the
+		// and lasts protocol.CertificateLifetime, 64 days. Once it has ended the box can sign no pass the
 		// server takes, so it cannot poll: it still offers a new prekey,
 		// under a new certificate, each day.
-		if _, err := b.Receive(context.Background()); (err != nil) != (day >= 65) {
+		if _, err := b.Receive(context.Background()); (err != nil) != (day >= int(protocol.CertificateLifetime/(24*time.Hour))) {
 			t.Fatalf("day %d: receive: %v", day, err)
 		}
 		for ; seen < len(*kept); seen++ {

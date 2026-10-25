@@ -143,8 +143,8 @@ func TestScriptInit(t *testing.T) {
 	}
 	var serial, start, end int64
 	if _, err := fmt.Sscan(a.must(fmt.Sprintf(`ig_cert "$IG/prekeys/%d.txt.sig" "$IG/identity.doc" %s`, n, a.addr)), &serial, &start, &end); err != nil || serial != int64(n) ||
-		end-time.Now().Unix() <= 65*86400-60 || end-time.Now().Unix() > 65*86400 {
-		t.Errorf("the prekey statement is not under a certificate numbered %d that is good for 65 days: %d %d %d, %v", n, serial, start, end, err)
+		end-time.Now().Unix() <= 64*86400-60 || end-time.Now().Unix() > 64*86400 {
+		t.Errorf("the prekey statement is not under a certificate numbered %d that is good for 64 days: %d %d %d, %v", n, serial, start, end, err)
 	}
 	if a.has("token") || !strings.HasPrefix(a.read("pass"), `irongall-pass address="`+a.addr.String()+`", not_after="`) {
 		t.Errorf("the box keeps a token, or no pass it signed: %q", a.read("pass"))
@@ -489,7 +489,7 @@ func TestScriptChecksTheBoxItIsServed(t *testing.T) {
 	// second address.
 	e := &sbox{w: w, dir: filepath.Join(w.work, "E")}
 	e.must(`mkdir -p "$IG"; cd "$IG"; ssh-keygen -q -t ed25519 -N '' -C '' -f identity; printf 'irongall-v1\n%s\n \n' "$(cut -d' ' -f1,2 identity.pub)" > identity.doc; sha256sum < identity.doc | cut -c1-64 > address
-ssh-keygen -q -t ed25519 -N '' -C '' -f work; ssh-keygen -q -s identity -I irongall-cert-v1 -n "$(cat address)" -z 1 -V "$(date -u -d '1 hour ago' +%Y%m%d%H%M%SZ):$(date -u -d '65 days' +%Y%m%d%H%M%SZ)" -O clear work.pub
+ssh-keygen -q -t ed25519 -N '' -C '' -f work; ssh-keygen -q -s identity -I irongall-cert-v1 -n "$(cat address)" -z 1 -V "$(date -u -d '1 hour ago' +%Y%m%d%H%M%SZ):$(date -u -d '64 days' +%Y%m%d%H%M%SZ)" -O clear work.pub
 age-keygen -o agekey 2> /dev/null`)
 	e.addr = mustAddress(t, e.dir)
 	eSt := w.statement(e, 1, strings.TrimSpace(e.must(`age-keygen -y "$IG/agekey"`)), notAfter(), e.file("work-cert.pub"))

@@ -22,16 +22,16 @@ import (
 const (
 	// CertificateKeyID is the key id of every v1 certificate.
 	CertificateKeyID = "irongall-cert-v1"
-	// MaxCertificateLifetime is the longest a certificate may still have to
-	// run when a verifier takes it: twice the TTL, so that a certificate with
-	// more than a TTL left outlasts the mail it signs.
-	MaxCertificateLifetime = 2 * TTL
 	// CertificateLifetime is how long a client makes a certificate good for:
-	// a day under the most a verifier takes, so that one asked for at the
-	// ceiling is not refused by a verifier whose clock is behind the maker's.
-	// It is the pass's rule (PassLifetime, MaxPassLifetime), with more room
-	// than MaxSkew asks for.
-	CertificateLifetime = MaxCertificateLifetime - 24*time.Hour
+	// the 31 days it signs mail for (SignsMail), the longest month, so a
+	// certificate made each month carries a box's mail until the next, and
+	// then TTL, so that the last mail it signs still verifies when it is read.
+	CertificateLifetime = 31*24*time.Hour + TTL
+	// MaxCertificateLifetime is the longest a certificate may still have to
+	// run when a verifier takes it: MaxSkew more than a client asks for, so
+	// that one made by a clock ahead of the verifier's is not refused. It is
+	// the prekey's rule (PrekeyLifetime, MaxPrekeyLifetime).
+	MaxCertificateLifetime = CertificateLifetime + MaxSkew
 )
 
 // Every certificate error wraps one of these. ErrCertificate: it is not a
@@ -118,7 +118,7 @@ func CheckCertificate(id *Identity, key ssh.PublicKey, now time.Time) (*Certific
 		return nil, ErrCertificateEnded
 	}
 	if cert.ValidBefore > unix+uint64(MaxCertificateLifetime/time.Second) {
-		return nil, fmt.Errorf("%w: it ends more than %d days from now", ErrCertificate, MaxCertificateLifetime/(24*time.Hour))
+		return nil, fmt.Errorf("%w: it ends more than 64 days and an hour from now", ErrCertificate)
 	}
 	return &Certificate{cert: cert}, nil
 }
@@ -153,12 +153,12 @@ func (c *Certificate) Serial() uint64 { return c.cert.Serial }
 
 // NotAfter returns the first moment the certificate is no longer valid.
 func (c *Certificate) NotAfter() time.Time {
-	return time.Unix(int64(c.cert.ValidBefore), 0).UTC() //nolint:gosec // CheckCertificate bounded it to 66 days from a clock reading
+	return time.Unix(int64(c.cert.ValidBefore), 0).UTC() //nolint:gosec // CheckCertificate bounded it to MaxCertificateLifetime from a clock reading
 }
 
 // SignsMail reports whether mail may still be signed under the certificate at
 // now: it has more than TTL left, so it outlasts the mail, which may wait
-// that long to be read.
+// that long to be read. One a client makes signs mail for its first 31 days.
 func (c *Certificate) SignsMail(now time.Time) bool { return c.NotAfter().Sub(now) > TTL }
 
 // PublicKey returns the certificate as the key its signatures verify under.
@@ -173,7 +173,7 @@ func (c *Certificate) Marshal() []byte { return c.cert.Marshal() }
 
 // NewCertificate makes the certificate of serial for the working key work,
 // signed by identity, the signer for id's key. It is what
-// "ssh-keygen -s identity -I irongall-cert-v1 -n <address> -z <serial> -V -1h:+65d -O clear work.pub"
+// "ssh-keygen -s identity -I irongall-cert-v1 -n <address> -z <serial> -V -1h:+64d -O clear work.pub"
 // writes: valid from MaxSkew before now to CertificateLifetime after now. It
 // starts in the past so that a verifier whose clock is behind this one takes
 // it at once; ssh-keygen's own default, a minute or two back, is not enough

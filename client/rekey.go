@@ -52,7 +52,7 @@ func (b *Box) Rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey,
 // restore from an identity alone. Receive's renewal adopts it where it reads
 // the server's ACL (checkACL).
 func (b *Box) rekeyAdopting(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey, error) {
-	p, err := b.rekey(ctx, kt)
+	p, err := b.rekey(ctx, kt, true)
 	if p == nil || err != nil {
 		return p, err
 	}
@@ -61,9 +61,11 @@ func (b *Box) rekeyAdopting(ctx context.Context, kt protocol.KeyType) (*protocol
 }
 
 // rekey is Rekey with the lock held. It returns the prekey once the server
-// took it: an error beside it is a fault of this box after that.
-func (b *Box) rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey, error) {
-	p, at, err := b.renew(ctx, kt)
+// took it: an error beside it is a fault of this box after that. With asked
+// unset, a renewal the box makes on its own (Receive's), it renews nothing
+// above a statement the box did not make (renew).
+func (b *Box) rekey(ctx context.Context, kt protocol.KeyType, asked bool) (*protocol.Prekey, error) {
+	p, at, err := b.renew(ctx, kt, asked)
 	if err != nil {
 		return p, err
 	}
@@ -75,10 +77,19 @@ func (b *Box) rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey,
 // sends it. It returns the prekey and the reading the server took it at once
 // it is taken, with an error beside them only for a fault of this box after
 // that (#110).
-func (b *Box) renew(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey, taken, error) {
+//
+// A renewal its owner did not ask for (asked unset) goes no further where the
+// read served a statement the box did not make, once it has published one of
+// its own (PROTOCOL.md §12.4): above it the box would take its address back
+// from whoever made it, whom only its owner can judge, and recommend revoking
+// the address to ([NotMade]). A box that has published none is a restore.
+func (b *Box) renew(ctx context.Context, kt protocol.KeyType, asked bool) (*protocol.Prekey, taken, error) {
 	st, err := b.readOwn(ctx, kt, false)
 	if err != nil {
 		return nil, taken{}, err
+	}
+	if st.notMade && !asked {
+		return nil, taken{}, refuse("this box's server serves a prekey statement in its name that this box did not make, and recv renews nothing above one: irongall status says what to do, and irongall prekey renew renews above it, for its owner to run")
 	}
 	return b.renewFrom(ctx, st)
 }
@@ -199,6 +210,9 @@ type ownRead struct {
 	kt protocol.KeyType
 	// unread is why the remedy went on without its server's answer, or nil.
 	unread error
+	// notMade is set when the statement served is one this box did not make
+	// ([NotMade]), and the box has published one of its own.
+	notMade bool
 }
 
 // readOwn reads this box at its server (known), as a renewal does before
@@ -257,6 +271,10 @@ func (b *Box) readOwn(ctx context.Context, kt protocol.KeyType, unused bool) (*o
 			err = refuse("rollback: the server serves this box's prekey serial %d under certificate %d, before serial %d, which this box published", o.statement.Serial, o.cert.Serial(), published)
 		default:
 			out.known = max(o.cert.Serial(), published)
+			// A box that has published nothing, restored from its identity
+			// alone or its state lost, has no statement of its own to judge
+			// the served one by: its first renewal is the restore.
+			out.notMade = o.notMade && published > 0
 		}
 		if err != nil {
 			if !unused {
@@ -641,7 +659,7 @@ func (b *Box) renewNow(ctx context.Context) (*protocol.Prekey, error) {
 	if err := b.oweACLRead(); err != nil {
 		return nil, err
 	}
-	p, err := b.rekey(ctx, "")
+	p, err := b.rekey(ctx, "", false)
 	if p == nil && err != nil {
 		// A box that holds its own revocation renews nothing again: there
 		// is nothing to try in an hour.

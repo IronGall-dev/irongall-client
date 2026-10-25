@@ -517,6 +517,15 @@ func (b *Box) seal(ctx context.Context, to protocol.Address, stem string, l *loo
 	} else if held != nil && held.Revokes(cert.Serial()) {
 		return nil, refuse("this box's identity has revoked the certificate it signs under, so mail signed now would be refused: irongall recv or irongall prekey renew publishes the new one first")
 	}
+	// Nor does a certificate whose working key another holds, as a statement
+	// this box did not make under it shows (PROTOCOL.md §12.4): its owner's
+	// remedy revokes it, and its reader then refuses this mail with the
+	// thief's. The entry waits for the box's next certificate.
+	if nm, err := b.notMade(); err != nil {
+		return nil, err
+	} else if nm != nil && nm.OwnCertificate && nm.CertificateSerial == cert.Serial() {
+		return nil, refuse("someone else holds the working key of the certificate this box signs under, as a statement its server serves in its name shows, so mail signed now would go with that certificate: irongall status says what to do, and the mail waits for the box's next certificate")
+	}
 	// Mail may wait 33 days to be read, and its certificate must still be
 	// valid then.
 	if !cert.SignsMail(b.now()) {
