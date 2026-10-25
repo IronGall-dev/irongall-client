@@ -125,3 +125,24 @@ func TestAReadingThatFoundNoStateFileReadsOneState(t *testing.T) {
 		t.Errorf("the next reading read %q, %v", v, err)
 	}
 }
+
+// Where there is no gate (gate_other.go: Windows among them), a reading and a
+// command each open the state file at once, and neither waits for a gate it
+// could never hold: on Windows' first CI run every reading waited out its
+// patience for one and was refused.
+func TestWhereThereIsNoGateNeitherAReadingNorACommandWaitsForOne(t *testing.T) {
+	savedPatience, savedGate := lockPatience, gateOf
+	lockPatience, gateOf = 3*time.Second, noGate
+	t.Cleanup(func() { lockPatience, gateOf = savedPatience, savedGate })
+	a, r, _ := twoOpens(t)
+	began := time.Now()
+	if _, err := reading(context.Background(), r, func() (struct{}, error) { return struct{}{}, nil }); err != nil {
+		t.Fatalf("a reading: %v", err)
+	}
+	if err := a.lockedFinishedDo(context.Background(), func() error { return nil }); err != nil {
+		t.Fatalf("a command: %v", err)
+	}
+	if d := time.Since(began); d > time.Second {
+		t.Errorf("they took %v, as if waiting for a gate", d)
+	}
+}

@@ -206,16 +206,19 @@ func (b *Box) openState(ctx context.Context, readOnly bool) (*bolt.DB, error) {
 		}
 		return ctx.Err()
 	}
+	// gated is the gate taken: held as gate, or none where the system has
+	// none to hold (noGate), which a reading never waits for.
 	var gate *os.File
+	gated := false
 	defer func() {
 		if gate != nil {
 			_ = gate.Close() // lets go of its flock
 		}
 	}()
 	takeGate := func() error {
-		g, ok, err := tryGate(b.dir)
+		g, ok, err := gateOf(b.dir)
 		if ok {
-			gate = g
+			gate, gated = g, true
 		}
 		return err
 	}
@@ -224,7 +227,7 @@ func (b *Box) openState(ctx context.Context, readOnly bool) (*bolt.DB, error) {
 			if err := takeGate(); err != nil {
 				return nil, err
 			}
-			if gate != nil {
+			if gated {
 				break
 			}
 			if err := waited(); err != nil {
@@ -241,7 +244,7 @@ func (b *Box) openState(ctx context.Context, readOnly bool) (*bolt.DB, error) {
 		if !errors.Is(err, berrors.ErrTimeout) {
 			return nil, err
 		}
-		if gate == nil {
+		if !gated {
 			if err := takeGate(); err != nil {
 				return nil, err
 			}
@@ -251,6 +254,15 @@ func (b *Box) openState(ctx context.Context, readOnly bool) (*bolt.DB, error) {
 		}
 	}
 }
+
+// gateOf takes the box's gate: tryGate, the system's, or noGate in a test of
+// a system that has none.
+var gateOf = tryGate
+
+// noGate is the gate where a directory cannot be flocked (gate_other.go): none
+// to hold, so it is always taken, and a waiting writer has no preference over
+// readings there.
+func noGate(string) (*os.File, bool, error) { return nil, true, nil }
 
 // openWhole opens the state file as bbolt asks, but never makes it, which
 // makeState alone does, and refuses one of no bytes: bbolt would make a

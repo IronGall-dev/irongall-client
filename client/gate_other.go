@@ -4,6 +4,5 @@ package client
 
 import "os"
 
-// tryGate is no gate where a directory cannot be flocked: a waiting writer
-// has no preference over readings there.
-func tryGate(string) (*os.File, bool, error) { return nil, true, nil }
+// tryGate is noGate where a directory cannot be flocked.
+func tryGate(dir string) (*os.File, bool, error) { return noGate(dir) }
