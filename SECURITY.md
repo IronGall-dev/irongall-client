@@ -4,7 +4,7 @@ Dromas is built so that nobody has to trust its server. Everything that protects
 
 ## Supported versions
 
-**Dromas is before v1, and only the latest commit on `main` is supported.** There are no releases or tags yet (the release chain is #16), so a fix is a commit on `main`. The protocol may still change until it is frozen, which we expect by 15 November 2026; what must be settled first is the milestone `M1: protocol freeze`. **Nothing is externally audited yet.**
+**Dromas is before v1, and only the latest release and the latest commit on `main` are supported.** A fix is a commit on `main`, released as the next patch. The protocol may still change until it is frozen, which we expect by 15 November 2026; what must be settled first is the milestone `M1: protocol freeze`. **Nothing is externally audited yet.**
 
 ## Reporting a vulnerability
 
@@ -52,10 +52,11 @@ Each row is a claim the code makes, the section of `PROTOCOL.md` with the whole 
 | **A server's replay of mail already delivered is refused, however the reader's clock has stepped since,** a retry it kept of that mail included | §12.3 check 9, §12.2 | `client/replay_test.go`, `client/replay_retry_test.go`; `TestScriptKeepsItsReplaySetByItsClock`, `sh/dating_test.go` |
 | **A message a server still serves is one its reader takes:** each post is dated afresh, once its recipient's box is read, and a server keeps mail an hour and two minutes less than its reader takes it for, a message that waited in the outbox included | §12.2, §13 | `client/dating_test.go`, `sh/dating_test.go`, `TestScriptKeepsItsReplaySetByItsClock`; dromas-server's `TestMailIsTakenWhileTheServerServesIt`, `TestMailAtTheLastSecondOfItsLife` |
 | **The encryption and the signed container are the standards' formats, read by code this project did not write:** `age` decrypts each message vector with its prekey's published test identity, and `ssh-keygen` reads each certificate and verifies each signature, in a test that fails when either disagrees; typage, an age implementation apart from the one this client links, read both ciphertexts once, recorded with their hashes. `sh/dromas.sh`, on stock `age` and `ssh-keygen`, gives each crypto and container vector the Go client's verdict and exchanges mail with a Go box, against a forging server | §3.1, §16 | `TestVectorsByToolsNotOurs`, `TestVectorMessage`, `testdata/vectors/README.md`, `sh/` |
+| **A release is built by this repo's workflow from a tag its maintainer signed:** no tag that is unannotated, unsigned by a key in `.github/allowed_signers`, off `main` or on a commit whose CI has not passed is built, and every archive carries an attestation of the build that names the tag, the commit and the workflow (`gh attestation verify <archive> -R dromas-dev/dromas-client`) | — | `scripts/tagcheck.sh`, `scripts/release_test.go`; the attestation, by `gh` itself |
 
 **Run them:** `README.md` § Tests, which says what each needs and what an `ok` does not tell you.
 
-**What is not tested:** `age-plugin-pq` against the server's check of a send's stanzas; a box's switch from `--no-pq` to post-quantum by a renewal, against the real server; a restore whose clock reads behind what a server's older record hides, and two machines that make a certificate in one second (`PROTOCOL.md` §5); OpenSSH 9.1 to 10.1 and 10.3p1 to 10.5p1 (the tests run on 10.2p1, and on 10.6p1 with OpenSSL and without), age 1.3.0 and 1.3.1, macOS and BusyBox.
+**What is not tested:** that a release rebuilds byte for byte from its tag (checked by hand for v0.1.0; #463); `age-plugin-pq` against the server's check of a send's stanzas; a box's switch from `--no-pq` to post-quantum by a renewal, against the real server; a restore whose clock reads behind what a server's older record hides, and two machines that make a certificate in one second (`PROTOCOL.md` §5); OpenSSH 9.1 to 10.1 and 10.3p1 to 10.5p1 (the tests run on 10.2p1, and on 10.6p1 with OpenSSL and without), age 1.3.0 and 1.3.1, macOS and BusyBox.
 
 ## Where the rest is
 
