@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -510,7 +511,7 @@ func snapshot(dir string) map[string][32]byte {
 			return nil //nolint:nilerr // a file gone as it was read is not one
 		}
 		rel, _ := filepath.Rel(dir, p)
-		if rel != "state" {
+		if rel = filepath.ToSlash(rel); rel != "state" {
 			files[rel] = sha256.Sum256(raw)
 		}
 		return nil
@@ -553,7 +554,23 @@ var (
 	uuid   = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
 	serial = regexp.MustCompile(`\b1[0-9]{9}\b`)
 	temp   = regexp.MustCompile(`\.tmp-[0-9]+`)
+	inBox  = regexp.MustCompile(`<box>[^ :,]*`)
 )
+
+// notFound is the system's words for a file, and for a directory, that is
+// not there, each to be written as Unix writes them, so that the table reads
+// the same on every system.
+var notFound = func() []string {
+	missing := filepath.Join(os.TempDir(), "statetable-missing-"+strconv.Itoa(os.Getpid()))
+	var words []string
+	for _, p := range []string{missing, filepath.Join(missing, "file")} {
+		var pe *fs.PathError
+		if _, err := os.Stat(p); errors.As(err, &pe) {
+			words = append(words, pe.Err.Error())
+		}
+	}
+	return words
+}()
 
 // normalize writes the box's address as own, the peer's as peer, any other
 // hash as #, a message id as <msg_id>, the box's directory as <box>, and
@@ -561,6 +578,10 @@ var (
 // start.
 func normalize(s string, e *env, dir string, peer *client.Box) string {
 	s = strings.ReplaceAll(s, dir, "<box>")
+	s = inBox.ReplaceAllStringFunc(s, filepath.ToSlash)
+	for _, w := range notFound {
+		s = strings.ReplaceAll(s, w, "no such file or directory")
+	}
 	s = strings.ReplaceAll(s, peer.Address().String(), "peer")
 	if id, err := os.ReadFile(filepath.Join(dir, "identity")); err == nil { //nolint:gosec // a test box's own file
 		if signer, err := ssh.ParsePrivateKey(id); err == nil {

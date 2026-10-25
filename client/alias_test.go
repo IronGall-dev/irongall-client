@@ -27,8 +27,8 @@ func TestAliasNamesAPeer(t *testing.T) {
 	if err != nil || len(as) != 2 || as[0] != (client.Alias{Name: "bob", Address: b.Address()}) || as[1] != (client.Alias{Name: "zed", Address: c.Address()}) {
 		t.Fatalf("aliases, sorted by name: %+v, %v", as, err)
 	}
-	if fi, err := os.Stat(filepath.Join(a.Dir(), "aliases")); err != nil || fi.Mode().Perm() != 0o600 {
-		t.Fatalf("the aliases file's mode: %v %v", fi, err)
+	if err := ownerOnly(filepath.Join(a.Dir(), "aliases")); err != nil {
+		t.Fatalf("the aliases file: %v", err)
 	}
 	to, err := a.Destination("bob")
 	if err != nil || to != b.Address() {

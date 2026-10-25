@@ -188,8 +188,8 @@ func TestSentKeepsTheEnvelopeAndTheReceipt(t *testing.T) {
 	if strings.ContainsAny(string(rec), "\n\u0085  ") {
 		t.Fatalf("the record is not one line: %q", rec)
 	}
-	if fi, err := os.Stat(filepath.Join(a.Dir(), "sent", name)); err != nil || fi.Mode().Perm() != 0o600 {
-		t.Fatalf("the record's mode: %v %v", fi.Mode(), err)
+	if err := ownerOnly(filepath.Join(a.Dir(), "sent", name)); err != nil {
+		t.Fatalf("the record: %v", err)
 	}
 	var got map[string]json.RawMessage
 	if err := json.Unmarshal(rec, &got); err != nil {
