@@ -70,6 +70,16 @@ makes one. A box keeps every revocation that verifies, of an address and of an
 address's certificates, and checks what it sends and receives against them.`,
 			e.makeCmd(), e.publishCmd(), e.keepCmd(), e.askCmd()),
 	)
+	// dromas --version is dromas version, as gh's and git's are. The flag is
+	// declared here so cobra adds none of its own, which would take -v.
+	var showVersion bool
+	root.Flags().BoolVar(&showVersion, "version", false, "print this client's version, as dromas version does")
+	root.RunE = func(c *cobra.Command, args []string) error {
+		if showVersion && len(args) == 0 {
+			return e.version()
+		}
+		return e.groupRun(c, args)
+	}
 	root.SilenceErrors = true
 	root.SilenceUsage = true
 	root.CompletionOptions.DisableDefaultCmd = true
@@ -103,19 +113,23 @@ func (e *cli) versionCmd() *cobra.Command {
 Go's pseudo-version for a build between releases), the commit when the build
 recorded it, the Go release that built it, and the system and architecture it
 was built for. It reads no box.`,
-		nargs(0, 0), func(*cobra.Command, []string) error {
-			version, commit := "", ""
-			if bi, ok := debug.ReadBuildInfo(); ok {
-				version = bi.Main.Version
-				for _, s := range bi.Settings {
-					if s.Key == "vcs.revision" {
-						commit = s.Value
-					}
-				}
+		nargs(0, 0), func(*cobra.Command, []string) error { return e.version() })
+}
+
+// version prints the line versionCmd describes, for dromas version and
+// dromas --version alike.
+func (e *cli) version() error {
+	version, commit := "", ""
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		version = bi.Main.Version
+		for _, s := range bi.Settings {
+			if s.Key == "vcs.revision" {
+				commit = s.Value
 			}
-			return e.out(line("version", "version", orNil(version), "commit", orNil(commit),
-				"go", runtime.Version(), "platform", runtime.GOOS+"/"+runtime.GOARCH))
-		})
+		}
+	}
+	return e.out(line("version", "version", orNil(version), "commit", orNil(commit),
+		"go", runtime.Version(), "platform", runtime.GOOS+"/"+runtime.GOARCH))
 }
 
 // orNil is s, or nil for "", so a member nobody knows is left out.

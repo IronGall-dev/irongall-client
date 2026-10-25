@@ -2256,6 +2256,10 @@ func TestVersionPrintsWhatTheBinaryIs(t *testing.T) {
 	if err := do(t.Context(), "version", nil, nil, &stdout, &stderr); err != nil {
 		t.Fatalf("version: %v: %s", err, stderr.String())
 	}
+	var flag bytes.Buffer
+	if err := do(t.Context(), "--version", nil, nil, &flag, &stderr); err != nil || flag.String() != stdout.String() {
+		t.Errorf("--version: %v, printed %q, want version's %q: %s", err, flag.String(), stdout.String(), stderr.String())
+	}
 	ls := printed(t, stdout.String())
 	want := map[string]any{"type": "version", "go": runtime.Version(), "platform": runtime.GOOS + "/" + runtime.GOARCH}
 	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" {
