@@ -170,7 +170,7 @@ What it does not do: renew on its own (run `prekey renew` at least monthly, or w
 
 **What the server can still do:**
 - see who writes to whom, when, and each message's size to within a padding block;
-- post in a box's name for the minutes a pass it was shown lasts, which delivers nothing a recipient accepts;
+- with a pass it was shown, for the minutes it lasts: post in the box's name, which delivers nothing a recipient accepts, delete its unacked mail for good, and change its ACL, which can pause the box until its owner writes the next (`PROTOCOL.md` §15.5);
 - drop or delay mail;
 - keep serving a box's previous prekey until it expires, 33 days after it was signed;
 - list mail from senders it made up, which costs a box one bounded run;
