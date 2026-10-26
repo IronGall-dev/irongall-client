@@ -587,7 +587,7 @@ A box may belong to one account at its server. The protocol fixes how a box join
 
 ### 12.1. Keys and what a client keeps
 
-- **A box's keys and state are in a directory only its owner can read** (0700), and never the working directory.
+- **A box's keys and state are in a directory only its owner can read** (0700, or the system's own equivalent where it has no modes), and never the working directory.
 - **The identity key** is a plain OpenSSH private key file, with no passphrase and no seed derivation. It is backed up: losing it loses the address (Section 12.5).
 - **A prekey MUST NOT be backed up, synced, derived from a seed, or kept where old versions survive** (a secrets manager, a version-control system, a snapshot): a prekey that survives its deletion voids the forward secrecy of Section 15.3. A working key is not backed up either: a restored box makes new ones.
 - **What a client keeps, each by the rule of its section:** each peer's identity, pinned once something it signed has verified (Sections 12.2, 12.3); the highest certificate and prekey serials it has seen on each peer's statements (Section 6); every revocation it has verified, never removed (Section 12.5); its replay set and its floor (Section 12.3, check 9); when it signed each of its prekeys (Section 12.4); and its outbox, as written (Section 12.2).

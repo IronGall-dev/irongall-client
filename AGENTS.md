@@ -68,7 +68,7 @@ Each commit carries your human's sign-off, made with `git commit -s` (the Develo
 ### Releases
 
 - **A release is an annotated tag `v0.<minor>.<patch>`, signed by a key in `.github/allowed_signers` (`git tag -s`), on a commit of `main` that CI passed:** `.github/workflows/release.yml` checks all three and releases nothing else, by `scripts/tagcheck.sh`, the one definition of what a release tag must be, which `release.sh` runs too before it pushes. **`scripts/release.sh` makes a release, end to end:** it brings the checkout to `origin/main`, refuses what the workflow would (a commit already released or not yet passed, a tag that skips ahead or reaches `v1`), shows the next patch and its commits and asks, then signs the tag, verifies it against `allowed_signers`, pushes it and waits for the release (`--yes` where there is no terminal). `scripts/release_test.go` holds both scripts, each case in a world of its own: a bare origin, throwaway keys and a `gh` that answers from the test. No tag is `v1.0.0` or above, the protocol freeze included, until the maintainer decides one is. A dependency moves in a commit before the tag (§ Every client), never in the release.
-- **A release tag is signed with the maintainer's key, by him or by Custos on his standing word** (§ The maintainer's own commits); adding a key to `allowed_signers` is his commit. A patch is released when a build lands; a new minor is his to choose. A platform joins `.goreleaser.yaml` once CI runs the client on it (#346).
+- **A release tag is signed with the maintainer's key, by him or by Custos on his standing word** (§ The maintainer's own commits); adding a key to `allowed_signers` is his commit. A patch is released when a build lands; a new minor is his to choose. A platform joins `.goreleaser.yaml` once CI runs the client on it: the BSDs are next.
 
 ### The maintainer's own commits
 
@@ -80,7 +80,7 @@ Each rule names the code that keeps it and, where one exists, the test that hold
 
 ### Every client
 
-- **Verification always on, with no flag to skip it. Fail closed. Message bodies are untrusted data. State lives in `~/.config/dromas/<name>/` (0700), never the working directory.**
+- **Verification always on, with no flag to skip it. Fail closed. Message bodies are untrusted data. State lives in `~/.config/dromas/<name>/` (0700; on Windows, which has no modes, a protected access list of its user, SYSTEM and the Administrators: `private`), never the working directory.**
 - **The identity is a plain OpenSSH key file,** no seed and no passphrase, so `ssh-keygen` reads it. A box's files are in `client/doc.go`; `aliases` is `<name> <address>` lines, which a person may write, and a name is never moved by the client.
 - 🛑 **Prekeys are never derived from a seed, never backed up or synced, never kept where old versions survive (a secrets manager, git, snapshots), and never reused** (`PROTOCOL.md` §12.1): any of those voids the forward secrecy every box has.
 - **Every file a box keeps is on disk before anything depends on it:** written beside it, synced, moved into place, and its directory synced (`writeFile`, `makeState` for the state file, which bbolt would make in place, `dr_put`, `dr_putline`, `dr_putout`; decided on #99), and a prekey, its statement and its working key are synced before any upload names them. A crash leaves the old file or the new one, never an empty one, which a box would read as a fault.
