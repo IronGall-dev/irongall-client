@@ -181,6 +181,8 @@ func TestCertificateRules(t *testing.T) {
 		{name: "a small-order working key", change: func(c *ssh.Certificate) { c.Key = smallOrder }, want: ErrCertificate},
 		{name: "ends in 64 days, an hour and a second", change: func(c *ssh.Certificate) { c.ValidBefore = unix + lifetime + 1 }, want: ErrCertificate},
 		{name: "never ends", change: func(c *ssh.Certificate) { c.ValidBefore = ssh.CertTimeInfinity }, want: ErrCertificate},
+		// Its form is refused before its dates are read: never "not begun" (#435).
+		{name: "not begun and never ends", change: func(c *ssh.Certificate) { c.ValidAfter, c.ValidBefore = unix+3600, ssh.CertTimeInfinity }, want: ErrCertificate},
 		{name: "altered after it was signed", after: func(c *ssh.Certificate) { c.Serial++ }, want: ErrCertificate},
 
 		{name: "begins next second", change: func(c *ssh.Certificate) { c.ValidAfter = unix + 1 }, want: ErrCertificateTime},
