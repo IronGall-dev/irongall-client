@@ -5,9 +5,10 @@
 #
 #   task release                  the next patch
 #   task release BUMP=minor       a new minor, the maintainer's choice
-#   task release VERSION=<tag>    a version svu cannot know: one skipped
-#                                 because its tag was pushed and never
-#                                 released (a pushed tag is never reused)
+#   task release VERSION=<tag>    a version svu cannot know: one past a
+#                                 name that is burned (released, or in Go's
+#                                 module index); a tag that left neither
+#                                 may be deleted and its name reused
 #   task release NOTES=<file>     the tag's message from a file: its first
 #                                 line the subject, the rest the release's
 #                                 summary
