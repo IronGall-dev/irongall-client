@@ -523,10 +523,11 @@ func TestAFetchOfAnotherMessageDropsWhatWasKept(t *testing.T) {
 
 // No size a server gives is taken past the protocol's largest ciphertext
 // (PROTOCOL.md §11.10, §11.11, §11.12), whether the box keeps part of the message
-// or none: a list that gives one is no answer, and a fetch's Content-Length
-// or Content-Range that is not the listed size breaks its answer's form.
-// Either way the drain stops with nothing judged or acked, the message still
-// on the server, nothing fetched on a list that is no answer, and nothing
+// or none: a list that gives one is no answer, a good message listed ahead
+// of it too (#446), and a fetch's Content-Length or Content-Range that is not
+// the listed size breaks its answer's form. Either way the drain stops with
+// nothing judged or acked, the mail still on the server, nothing fetched on
+// a list that is no answer, and nothing
 // made by the size: a resume once made its buffer from the listed size
 // before any bound held it, and 2^53 − 1 panicked the drain (#404). 🛑 No
 // case asks for more than a ciphertext's bytes where a regression would
@@ -559,26 +560,33 @@ func TestNoSizeAServerGivesIsTakenPastTheLargestCiphertext(t *testing.T) {
 		// it gives; nil leaves it honest and gives the size in the list.
 		fetch answer
 		cut   bool
+		ahead bool // a message of its own size listed ahead of it
 	}{
-		{"in the list", []int64{-1, protocol.MaxCiphertext + 1, protocol.MaxInteger}, nil, false},
-		{"in the list, part of it kept", []int64{-1, protocol.MaxCiphertext + 1, protocol.MaxInteger}, nil, true},
+		{"in the list", []int64{-1, protocol.MaxCiphertext + 1, protocol.MaxInteger}, nil, false, false},
+		{"in the list, part of it kept", []int64{-1, protocol.MaxCiphertext + 1, protocol.MaxInteger}, nil, true, false},
+		{"in the list, behind a good one", []int64{protocol.MaxCiphertext + 1}, nil, false, true},
 		// net/http's server sends no Content-Length of -1, and its client
 		// takes none: the two larger are the ones a server can give.
-		{"as the Content-Length", []int64{protocol.MaxCiphertext + 1, protocol.MaxInteger}, header("Content-Length", func(_, size int64) string { return strconv.FormatInt(size, 10) }), false},
-		{"as the Content-Length, part of it kept", []int64{protocol.MaxCiphertext + 1, protocol.MaxInteger}, header("Content-Length", func(kept, size int64) string { return strconv.FormatInt(size-kept, 10) }), true},
-		{"as the Content-Range's length", []int64{-1, protocol.MaxCiphertext + 1, protocol.MaxInteger}, header("Content-Range", func(kept, size int64) string { return fmt.Sprintf("bytes %d-%d/%d", kept, size-1, size) }), true},
+		{"as the Content-Length", []int64{protocol.MaxCiphertext + 1, protocol.MaxInteger}, header("Content-Length", func(_, size int64) string { return strconv.FormatInt(size, 10) }), false, false},
+		{"as the Content-Length, part of it kept", []int64{protocol.MaxCiphertext + 1, protocol.MaxInteger}, header("Content-Length", func(kept, size int64) string { return strconv.FormatInt(size-kept, 10) }), true, false},
+		{"as the Content-Range's length", []int64{-1, protocol.MaxCiphertext + 1, protocol.MaxInteger}, header("Content-Range", func(kept, size int64) string { return fmt.Sprintf("bytes %d-%d/%d", kept, size-1, size) }), true, false},
 	} {
 		for _, size := range c.sizes {
 			t.Run(c.name+"/"+strconv.FormatInt(size, 10), func(t *testing.T) {
 				e := newEnv(t)
 				a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 				f := &fetches{b: b}
+				var ids []string
+				if c.ahead {
+					ids = append(ids, send(t, a, b, "listed ahead, at its own size").ID)
+				}
 				var id string
 				if c.cut {
 					id, _ = cutOnce(t, e, a, b, f)
 				} else {
 					id = send(t, a, b, strings.Repeat("a message listed or served at a size past any. ", 1500)).ID
 				}
+				ids = append(ids, id)
 				before := len(f.asked())
 				e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 					switch {
@@ -586,11 +594,11 @@ func TestNoSizeAServerGivesIsTakenPastTheLargestCiphertext(t *testing.T) {
 						c.fetch(w, honest(next, r), size)
 					case r.Method == http.MethodGet && r.URL.Path == boxPath(b)+"/messages" && c.fetch == nil:
 						var list protocol.MessageList
-						if err := protocol.Unmarshal(honest(next, r).Body.Bytes(), &list); err != nil || len(list.Messages) != 1 {
+						if err := protocol.Unmarshal(honest(next, r).Body.Bytes(), &list); err != nil || len(list.Messages) != len(ids) || list.Messages[len(ids)-1].ID != id {
 							t.Errorf("the list: %v", err)
 							return
 						}
-						list.Messages[0].Size = size
+						list.Messages[len(ids)-1].Size = size
 						fakeserver.WriteList(w, list)
 					default:
 						next.ServeHTTP(w, r)
@@ -605,7 +613,7 @@ func TestNoSizeAServerGivesIsTakenPastTheLargestCiphertext(t *testing.T) {
 					return b.Receive(context.Background())
 				}()
 				switch {
-				case err == nil || len(res.Delivered)+len(res.Refused) != 0 || e.srv.Count(b.Address()) != 1:
+				case err == nil || len(res.Delivered)+len(res.Refused) != 0 || e.srv.Count(b.Address()) != len(ids):
 					t.Fatalf("%+v, %v; the server holds %d", res, err, e.srv.Count(b.Address()))
 				case c.fetch == nil && (!errors.Is(err, protocol.ErrMemberValue) || len(f.asked()) != before):
 					t.Fatalf("a list that is no answer: %v, and %d fetches", err, len(f.asked())-before)
@@ -613,7 +621,12 @@ func TestNoSizeAServerGivesIsTakenPastTheLargestCiphertext(t *testing.T) {
 					t.Fatalf("a fetch of another size: %v", err)
 				}
 				e.srv.SetMiddle(nil)
-				if res := receive(t, b); len(res.Delivered) != 1 || res.Delivered[0].ID != id {
+				res = receive(t, b)
+				var got []string
+				for _, d := range res.Delivered {
+					got = append(got, d.ID)
+				}
+				if slices.Sort(got); !slices.Equal(got, slices.Sorted(slices.Values(ids))) {
 					t.Fatalf("the drain after: %+v", res)
 				}
 			})
