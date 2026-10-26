@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/dromas-dev/dromas-client/client"
@@ -84,110 +85,112 @@ func largest(t *testing.T, e *env, b *client.Box, pause func() time.Duration, se
 // cut at its time, stops as at its other limits, with More and no error,
 // keeping what it read. The next recv finishes the fetch from there, asking
 // only for the bytes the box did not keep. The bounds are the test's own,
-// seconds, through the package's seams (SetLockPatience, Options.DrainTime).
+// seconds, through the package's seams (SetLockPatience, Options.DrainTime),
+// on a testing/synctest bubble's fake time against a server in memory: the
+// drain ends by the time the reading started during it gives up, and no
+// scheduler's stall on a busy runner moves either (#477).
 func TestADrainHoldsTheLockForItsTimeAndTheNextGoesOnFromIt(t *testing.T) {
-	if testing.Short() {
-		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
-	}
-	const patience, drainTime = 2 * time.Second, 6 * time.Second
-	client.SetLockPatience(t, patience)
-	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
-	send(t, a, b, "listed as the largest a ciphertext may be")
-	var mu sync.Mutex
-	var served []*atomic.Int64
-	var slow atomic.Bool
-	slow.Store(true)
-	id := largest(t, e, b, func() time.Duration {
-		if slow.Load() {
-			return 50 * time.Millisecond
+	synctest.Test(t, func(t *testing.T) {
+		const patience, drainTime = 2 * time.Second, 6 * time.Second
+		client.SetLockPatience(t, patience)
+		e := newMemEnv(t)
+		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+		send(t, a, b, "listed as the largest a ciphertext may be")
+		var mu sync.Mutex
+		var served []*atomic.Int64
+		var slow atomic.Bool
+		slow.Store(true)
+		id := largest(t, e, b, func() time.Duration {
+			if slow.Load() {
+				return 50 * time.Millisecond
+			}
+			return 0
+		}, &served, &mu)
+		fetched := func() []int64 {
+			mu.Lock()
+			defer mu.Unlock()
+			var ns []int64
+			for _, n := range served {
+				ns = append(ns, n.Load())
+			}
+			return ns
 		}
-		return 0
-	}, &served, &mu)
-	fetched := func() []int64 {
-		mu.Lock()
-		defer mu.Unlock()
-		var ns []int64
-		for _, n := range served {
-			ns = append(ns, n.Load())
+		opt := e.opts()
+		opt.DrainTime = drainTime
+		x, err := client.Open(b.Dir(), opt)
+		if err != nil {
+			t.Fatal(err)
 		}
-		return ns
-	}
-	opt := e.opts()
-	opt.DrainTime = drainTime
-	x, err := client.Open(b.Dir(), opt)
-	if err != nil {
-		t.Fatal(err)
-	}
-	type outcome struct {
-		res *client.Result
-		err error
-		at  time.Time
-	}
-	done := make(chan outcome, 1)
-	start := time.Now()
-	go func() {
-		res, err := x.Receive(context.Background())
-		done <- outcome{res, err, time.Now()}
-	}()
-	for ns := fetched(); len(ns) == 0 || ns[0] == 0; ns = fetched() {
-		if time.Since(start) > drainTime {
-			t.Fatal("the fetch moved no byte")
+		type outcome struct {
+			res *client.Result
+			err error
+			at  time.Time
 		}
-		time.Sleep(10 * time.Millisecond)
-	}
+		done := make(chan outcome, 1)
+		start := time.Now()
+		go func() {
+			res, err := x.Receive(context.Background())
+			done <- outcome{res, err, time.Now()}
+		}()
+		for ns := fetched(); len(ns) == 0 || ns[0] == 0; ns = fetched() {
+			if time.Since(start) > drainTime {
+				t.Fatal("the fetch moved no byte")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
 
-	// A second command waits its patience, and fails as locked, having asked
-	// the server nothing.
-	y, err := client.Open(b.Dir(), e.opts())
-	if err != nil {
-		t.Fatal(err)
-	}
-	calls := len(e.srv.Requests())
-	began := time.Now()
-	if _, err := y.Receive(context.Background()); err == nil || !strings.Contains(err.Error(), "held its lock") || time.Since(began) < patience {
-		t.Fatalf("a second command during the drain: %v after %s", err, time.Since(began))
-	}
-	if got := len(e.srv.Requests()); got != calls {
-		t.Fatalf("the second command asked the server %d calls while it waited", got-calls)
-	}
+		// A second command waits its patience, and fails as locked, having asked
+		// the server nothing.
+		y, err := client.Open(b.Dir(), e.opts())
+		if err != nil {
+			t.Fatal(err)
+		}
+		calls := len(e.srv.Requests())
+		began := time.Now()
+		if _, err := y.Receive(context.Background()); err == nil || !strings.Contains(err.Error(), "held its lock") || time.Since(began) < patience {
+			t.Fatalf("a second command during the drain: %v after %s", err, time.Since(began))
+		}
+		if got := len(e.srv.Requests()); got != calls {
+			t.Fatalf("the second command asked the server %d calls while it waited", got-calls)
+		}
 
-	// A reading started during the drain reads, once the drain lets go.
-	time.Sleep(time.Until(start.Add(drainTime - patience/2)))
-	read := time.Now()
-	st, err := y.Status(context.Background())
-	if err != nil || st == nil {
-		t.Fatalf("a reading during the drain: %v", err)
-	}
-	first := <-done
-	if !read.Before(first.at) {
-		t.Fatalf("the reading began at %s, after the drain ended at %s", read.Sub(start), first.at.Sub(start))
-	}
+		// A reading started during the drain reads, once the drain lets go.
+		time.Sleep(time.Until(start.Add(drainTime - patience/2)))
+		read := time.Now()
+		st, err := y.Status(context.Background())
+		if err != nil || st == nil {
+			t.Fatalf("a reading during the drain: %v", err)
+		}
+		first := <-done
+		if !read.Before(first.at) {
+			t.Fatalf("the reading began at %s, after the drain ended at %s", read.Sub(start), first.at.Sub(start))
+		}
 
-	// Cut at its time: More, no error, nothing judged, the partial kept.
-	if first.err != nil || !first.res.More || len(first.res.Refused)+len(first.res.Delivered) != 0 || first.at.Sub(start) > drainTime+5*time.Second {
-		t.Fatalf("the drain at its time: %+v, %v, after %s", first.res, first.err, first.at.Sub(start))
-	}
-	got, kept, err := x.Partial()
-	if err != nil || got != id || kept <= 0 || kept >= protocol.MaxCiphertext || kept > fetched()[0] {
-		t.Fatalf("the drain kept %d bytes of %q, %v; the server served %d", kept, got, err, fetched()[0])
-	}
+		// Cut at its time: More, no error, nothing judged, the partial kept.
+		if first.err != nil || !first.res.More || len(first.res.Refused)+len(first.res.Delivered) != 0 || first.at.Sub(start) > drainTime+patience/2 {
+			t.Fatalf("the drain at its time: %+v, %v, after %s", first.res, first.err, first.at.Sub(start))
+		}
+		got, kept, err := x.Partial()
+		if err != nil || got != id || kept <= 0 || kept >= protocol.MaxCiphertext || kept > fetched()[0] {
+			t.Fatalf("the drain kept %d bytes of %q, %v; the server served %d", kept, got, err, fetched()[0])
+		}
 
-	// The next recv finishes the fetch from what was kept: the server serves
-	// the rest, and no byte the box kept.
-	slow.Store(false)
-	z, err := client.Open(b.Dir(), e.opts())
-	if err != nil {
-		t.Fatal(err)
-	}
-	res := receive(t, z)
-	if len(res.Refused) != 1 || res.Refused[0].ID != id || res.Refused[0].Code != client.RefusedDecrypt || res.More {
-		t.Fatalf("the next recv: %+v", res)
-	}
-	if ns := fetched(); len(ns) != 2 || ns[1] != protocol.MaxCiphertext-kept {
-		t.Fatalf("the fetches were served %v bytes, want the %d after the %d kept", ns, protocol.MaxCiphertext-kept, kept)
-	}
-	noPartial(t, z)
+		// The next recv finishes the fetch from what was kept: the server serves
+		// the rest, and no byte the box kept.
+		slow.Store(false)
+		z, err := client.Open(b.Dir(), e.opts())
+		if err != nil {
+			t.Fatal(err)
+		}
+		res := receive(t, z)
+		if len(res.Refused) != 1 || res.Refused[0].ID != id || res.Refused[0].Code != client.RefusedDecrypt || res.More {
+			t.Fatalf("the next recv: %+v", res)
+		}
+		if ns := fetched(); len(ns) != 2 || ns[1] != protocol.MaxCiphertext-kept {
+			t.Fatalf("the fetches were served %v bytes, want the %d after the %d kept", ns, protocol.MaxCiphertext-kept, kept)
+		}
+		noPartial(t, z)
+	})
 }
 
 // At the drain's bound in time, a fault of the box itself at keeping what

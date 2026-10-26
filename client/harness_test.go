@@ -48,6 +48,7 @@ type env struct {
 	t     *testing.T
 	clock *clock
 	srv   *fakeserver.Server
+	http  *http.Client // the in-memory server's, or nil for the default client
 }
 
 func newEnv(t *testing.T) *env {
@@ -57,8 +58,19 @@ func newEnv(t *testing.T) *env {
 	return e
 }
 
+// newMemEnv is newEnv with the server in memory, for a test that runs in a
+// testing/synctest bubble: each box it makes reaches the server through the
+// server's client, bounded as the default client is (client.Bounded).
+func newMemEnv(t *testing.T) *env {
+	t.Helper()
+	e := &env{t: t, clock: &clock{t: time.Now().UTC().Truncate(time.Second)}}
+	e.srv = fakeserver.NewInMemory(t, e.clock.Now)
+	e.http = e.srv.Client()
+	return e
+}
+
 func (e *env) opts() client.Options {
-	return client.Options{Base: e.srv.URL, Now: e.clock.Now}
+	return client.Options{Base: e.srv.URL, Now: e.clock.Now, HTTPClient: e.http}
 }
 
 // box makes and registers a box, whose policy lands every sender's mail in
@@ -87,6 +99,9 @@ func (e *env) heldBox(kt protocol.KeyType) *client.Box {
 	b, err := client.Init(context.Background(), e.t.TempDir(), e.opts(), kt)
 	if err != nil {
 		e.t.Fatalf("init: %v", err)
+	}
+	if e.http != nil {
+		client.Bounded(b)
 	}
 	return b
 }

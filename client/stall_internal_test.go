@@ -10,11 +10,13 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
-// stallBound is the requestTimeout these tests set: short, so they run in
-// seconds.
+// stallBound is the requestTimeout these tests set. Each test that races a
+// bound runs in a testing/synctest bubble, on fake time, so no scheduler's
+// stall on a busy runner reads as a link's.
 const stallBound = 200 * time.Millisecond
 
 // shortBound sets requestTimeout to stallBound for one test.
@@ -111,51 +113,55 @@ func created() *http.Response {
 // requestTimeout in all, and is cut once requestTimeout passes with none
 // moving; the server's transport plays a slow link, read a chunk at a time.
 func TestAPostRunsWhileItsBytesMove(t *testing.T) {
-	shortBound(t)
-	body := bytes.Repeat([]byte{1}, 64<<10)
-	var reads timeline
-	moving := slowBox(t, func(r *http.Request) (*http.Response, error) {
-		r.Body = reads.of(r.Body)
-		if _, err := readsEvery(r, 4<<10, stallBound/4); err != nil {
-			return nil, err
+	synctest.Test(t, func(t *testing.T) {
+		shortBound(t)
+		body := bytes.Repeat([]byte{1}, 64<<10)
+		var reads timeline
+		moving := slowBox(t, func(r *http.Request) (*http.Response, error) {
+			r.Body = reads.of(r.Body)
+			if _, err := readsEvery(r, 4<<10, stallBound/4); err != nil {
+				return nil, err
+			}
+			return created(), nil
+		})
+		start := time.Now()
+		reads.start = start
+		if _, err := moving.exchange(context.Background(), http.MethodPost, "/v1/x/messages", &ciphertext{bytes: body}, nil, nil); err != nil {
+			t.Fatalf("a post whose bytes kept moving, after %s: %v; the server's reads, from the start: %s", time.Since(start), err, reads.String())
 		}
-		return created(), nil
-	})
-	start := time.Now()
-	reads.start = start
-	if _, err := moving.exchange(context.Background(), http.MethodPost, "/v1/x/messages", &ciphertext{bytes: body}, nil, nil); err != nil {
-		t.Fatalf("a post whose bytes kept moving, after %s: %v; the server's reads, from the start: %s", time.Since(start), err, reads.String())
-	}
-	if took := time.Since(start); took < 3*stallBound {
-		t.Fatalf("the slow link took %s, too little to show the bound is not on the whole", took)
-	}
-	stalled := slowBox(t, func(r *http.Request) (*http.Response, error) {
-		if _, err := r.Body.Read(make([]byte, 4<<10)); err != nil {
-			return nil, err
+		if took := time.Since(start); took < 3*stallBound {
+			t.Fatalf("the slow link took %s, too little to show the bound is not on the whole", took)
 		}
-		return nil, cutOrGiveUp(r) // and reads nothing more
+		stalled := slowBox(t, func(r *http.Request) (*http.Response, error) {
+			if _, err := r.Body.Read(make([]byte, 4<<10)); err != nil {
+				return nil, err
+			}
+			return nil, cutOrGiveUp(r) // and reads nothing more
+		})
+		start = time.Now()
+		_, err := stalled.exchange(context.Background(), http.MethodPost, "/v1/x/messages", &ciphertext{bytes: body}, nil, nil)
+		var te *transportError
+		if took := time.Since(start); !errors.As(err, &te) || te.kind != "no answer within the wait" || took > 5*stallBound {
+			t.Fatalf("a post whose bytes stopped: %v after %s", err, took)
+		}
 	})
-	start = time.Now()
-	_, err := stalled.exchange(context.Background(), http.MethodPost, "/v1/x/messages", &ciphertext{bytes: body}, nil, nil)
-	var te *transportError
-	if took := time.Since(start); !errors.As(err, &te) || te.kind != "no answer within the wait" || took > 5*stallBound {
-		t.Fatalf("a post whose bytes stopped: %v after %s", err, took)
-	}
 }
 
 // The wait for an answer's head is bounded by requestTimeout, from the last
 // byte the call sent: a fetch, which sends none, from its start.
 func TestTheWaitForTheHeadIsBounded(t *testing.T) {
-	shortBound(t)
-	b := slowBox(t, func(r *http.Request) (*http.Response, error) {
-		return nil, cutOrGiveUp(r)
+	synctest.Test(t, func(t *testing.T) {
+		shortBound(t)
+		b := slowBox(t, func(r *http.Request) (*http.Response, error) {
+			return nil, cutOrGiveUp(r)
+		})
+		start := time.Now()
+		_, err := b.exchange(context.Background(), http.MethodGet, "/v1/x/messages/y", nil, nil, &ciphertext{size: 10})
+		var te *transportError
+		if took := time.Since(start); !errors.As(err, &te) || te.kind != "no answer within the wait" || took > 5*stallBound {
+			t.Fatalf("a fetch with no answer: %v after %s", err, took)
+		}
 	})
-	start := time.Now()
-	_, err := b.exchange(context.Background(), http.MethodGet, "/v1/x/messages/y", nil, nil, &ciphertext{size: 10})
-	var te *transportError
-	if took := time.Since(start); !errors.As(err, &te) || te.kind != "no answer within the wait" || took > 5*stallBound {
-		t.Fatalf("a fetch with no answer: %v after %s", err, took)
-	}
 }
 
 // trickle is a body that gives one byte each pause, of n in all, and ends
@@ -187,17 +193,19 @@ func (tr *trickle) Close() error { return nil }
 // one, is cut at requestTimeout all the same, so a server that trickles a
 // list or a read of a box cannot hold the box's lock (#381's trickle).
 func TestAnyOtherCallIsBoundedWhole(t *testing.T) {
-	shortBound(t)
-	b := slowBox(t, func(r *http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: &trickle{r.Context(), 40, stallBound / 4}}, nil
+	synctest.Test(t, func(t *testing.T) {
+		shortBound(t)
+		b := slowBox(t, func(r *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: &trickle{r.Context(), 40, stallBound / 4}}, nil
+		})
+		start := time.Now()
+		var out struct{}
+		_, err := b.exchange(context.Background(), http.MethodGet, "/v1/x", nil, nil, &out)
+		var te *transportError
+		if took := time.Since(start); !errors.As(err, &te) || te.kind != "no answer within the wait" || took > 5*stallBound {
+			t.Fatalf("a read whose answer trickles: %v after %s", err, took)
+		}
 	})
-	start := time.Now()
-	var out struct{}
-	_, err := b.exchange(context.Background(), http.MethodGet, "/v1/x", nil, nil, &out)
-	var te *transportError
-	if took := time.Since(start); !errors.As(err, &te) || te.kind != "no answer within the wait" || took > 5*stallBound {
-		t.Fatalf("a read whose answer trickles: %v after %s", err, took)
-	}
 }
 
 // A post's answer, once its ciphertext is sent, is bounded whole: a receipt
@@ -205,21 +213,23 @@ func TestAnyOtherCallIsBoundedWhole(t *testing.T) {
 // is cut at requestTimeout all the same, so a server cannot hold a send, and
 // the box's lock, by trickling what it answers (#403 item 3).
 func TestAPostsAnswerIsBoundedWholeOnceItsBodyIsSent(t *testing.T) {
-	shortBound(t)
-	body := bytes.Repeat([]byte{1}, 1<<10)
-	b := slowBox(t, func(r *http.Request) (*http.Response, error) {
-		if _, err := io.ReadAll(r.Body); err != nil {
-			return nil, err
+	synctest.Test(t, func(t *testing.T) {
+		shortBound(t)
+		body := bytes.Repeat([]byte{1}, 1<<10)
+		b := slowBox(t, func(r *http.Request) (*http.Response, error) {
+			if _, err := io.ReadAll(r.Body); err != nil {
+				return nil, err
+			}
+			return &http.Response{StatusCode: http.StatusCreated, Header: http.Header{"Content-Type": {"application/json"}}, Body: &trickle{r.Context(), 40, stallBound / 4}}, nil
+		})
+		start := time.Now()
+		var out struct{}
+		_, err := b.exchange(context.Background(), http.MethodPost, "/v1/x/messages", &ciphertext{bytes: body}, nil, &out)
+		var te *transportError
+		if took := time.Since(start); !errors.As(err, &te) || te.kind != "no answer within the wait" || took > 3*stallBound {
+			t.Fatalf("a post whose answer trickles: %v after %s (the bound is %s)", err, took, stallBound)
 		}
-		return &http.Response{StatusCode: http.StatusCreated, Header: http.Header{"Content-Type": {"application/json"}}, Body: &trickle{r.Context(), 40, stallBound / 4}}, nil
 	})
-	start := time.Now()
-	var out struct{}
-	_, err := b.exchange(context.Background(), http.MethodPost, "/v1/x/messages", &ciphertext{bytes: body}, nil, &out)
-	var te *transportError
-	if took := time.Since(start); !errors.As(err, &te) || te.kind != "no answer within the wait" || took > 3*stallBound {
-		t.Fatalf("a post whose answer trickles: %v after %s (the bound is %s)", err, took, stallBound)
-	}
 }
 
 // counted is a body that counts the bytes read of it.
@@ -262,16 +272,18 @@ func TestAPostsAnswerIsReadNoFurtherThanAReceipt(t *testing.T) {
 // from its head: only a ciphertext's bytes hold a call open by moving
 // (#403 item 3).
 func TestAFetchsProblemIsBoundedWhole(t *testing.T) {
-	shortBound(t)
-	b := slowBox(t, func(r *http.Request) (*http.Response, error) {
-		return &http.Response{StatusCode: http.StatusNotFound, Header: http.Header{"Content-Type": {"application/problem+json"}}, Body: &trickle{r.Context(), 40, stallBound / 4}}, nil
+	synctest.Test(t, func(t *testing.T) {
+		shortBound(t)
+		b := slowBox(t, func(r *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusNotFound, Header: http.Header{"Content-Type": {"application/problem+json"}}, Body: &trickle{r.Context(), 40, stallBound / 4}}, nil
+		})
+		start := time.Now()
+		_, err := b.exchange(context.Background(), http.MethodGet, "/v1/x/messages/y", nil, nil, &ciphertext{size: 10})
+		var te *transportError
+		if took := time.Since(start); !errors.As(err, &te) || te.kind != "no answer within the wait" || took > 3*stallBound {
+			t.Fatalf("a fetch whose problem trickles: %v after %s (the bound is %s)", err, took, stallBound)
+		}
 	})
-	start := time.Now()
-	_, err := b.exchange(context.Background(), http.MethodGet, "/v1/x/messages/y", nil, nil, &ciphertext{size: 10})
-	var te *transportError
-	if took := time.Since(start); !errors.As(err, &te) || te.kind != "no answer within the wait" || took > 3*stallBound {
-		t.Fatalf("a fetch whose problem trickles: %v after %s (the bound is %s)", err, took, stallBound)
-	}
 }
 
 // The stall keeps when a byte last moved as an offset from its start, read

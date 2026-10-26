@@ -15,6 +15,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/dromas-dev/dromas-client/client"
@@ -383,59 +384,63 @@ func TestAPartialGoesWhenItsMessageLeavesTheList(t *testing.T) {
 
 // The default client cuts a fetch once requestTimeout passes with no byte of
 // it moving, and keeps what it read; one whose bytes keep moving runs for as
-// long as they do, many times that.
+// long as they do, many times that. It runs in a testing/synctest bubble,
+// on fake time against a server in memory: no scheduler's stall on a busy
+// runner reads as a link's.
 func TestAFetchIsCutWhenItStallsAndNotWhileItMoves(t *testing.T) {
-	const bound = 300 * time.Millisecond
-	client.SetRequestTimeout(t, bound)
-	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
-	id := send(t, a, b, strings.Repeat("a message sent at the speed of a slow link. ", 1500)).ID
-	f := &fetches{b: b}
-	stalled := make(chan struct{})
-	defer close(stalled)
-	var stall atomic.Bool
-	stall.Store(true)
-	var size atomic.Int64
-	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if !f.is(r) {
-			next.ServeHTTP(w, r)
-			return
+	synctest.Test(t, func(t *testing.T) {
+		const bound = 300 * time.Millisecond
+		client.SetRequestTimeout(t, bound)
+		e := newMemEnv(t)
+		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+		id := send(t, a, b, strings.Repeat("a message sent at the speed of a slow link. ", 1500)).ID
+		f := &fetches{b: b}
+		stalled := make(chan struct{})
+		defer close(stalled)
+		var stall atomic.Bool
+		stall.Store(true)
+		var size atomic.Int64
+		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if !f.is(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			rec := honest(next, r)
+			body := rec.Body.Bytes()
+			for k, v := range rec.Header() {
+				w.Header()[k] = v
+			}
+			w.WriteHeader(rec.Code)
+			if stall.Load() {
+				size.Store(int64(len(body)))
+				_, _ = w.Write(body[:len(body)/2])
+				w.(http.Flusher).Flush()
+				<-stalled
+				return
+			}
+			// A link that moves 2 KiB each 50 ms: far longer than the bound in
+			// all, and never that long without a byte.
+			for i := 0; i < len(body); i += 2 << 10 {
+				_, _ = w.Write(body[i:min(i+2<<10, len(body))])
+				w.(http.Flusher).Flush()
+				time.Sleep(50 * time.Millisecond)
+			}
+		})
+		start := time.Now()
+		_, err := b.Receive(context.Background())
+		if took := time.Since(start); err == nil || !strings.Contains(err.Error(), "no answer within the wait") || took > 5*bound {
+			t.Fatalf("a fetch that stopped half way: %v after %s", err, took)
 		}
-		rec := honest(next, r)
-		body := rec.Body.Bytes()
-		for k, v := range rec.Header() {
-			w.Header()[k] = v
+		if got, n, _ := partialOf(t, b); got != id || n != size.Load()/2 {
+			t.Fatalf("a fetch cut by its stall kept %d of %q", n, got)
 		}
-		w.WriteHeader(rec.Code)
-		if stall.Load() {
-			size.Store(int64(len(body)))
-			_, _ = w.Write(body[:len(body)/2])
-			w.(http.Flusher).Flush()
-			<-stalled
-			return
-		}
-		// A link that moves 2 KiB each 50 ms: far longer than the bound in
-		// all, and never that long without a byte.
-		for i := 0; i < len(body); i += 2 << 10 {
-			_, _ = w.Write(body[i:min(i+2<<10, len(body))])
-			w.(http.Flusher).Flush()
-			time.Sleep(50 * time.Millisecond)
+		stall.Store(false)
+		start = time.Now()
+		res := receive(t, b)
+		if took := time.Since(start); len(res.Delivered) != 1 || took < 3*bound {
+			t.Fatalf("a fetch whose bytes kept moving: %+v after %s", res, took)
 		}
 	})
-	start := time.Now()
-	_, err := b.Receive(context.Background())
-	if took := time.Since(start); err == nil || !strings.Contains(err.Error(), "no answer within the wait") || took > 5*bound {
-		t.Fatalf("a fetch that stopped half way: %v after %s", err, took)
-	}
-	if got, n, _ := partialOf(t, b); got != id || n != size.Load()/2 {
-		t.Fatalf("a fetch cut by its stall kept %d of %q", n, got)
-	}
-	stall.Store(false)
-	start = time.Now()
-	res := receive(t, b)
-	if took := time.Since(start); len(res.Delivered) != 1 || took < 3*bound {
-		t.Fatalf("a fetch whose bytes kept moving: %+v after %s", res, took)
-	}
 }
 
 // The partial file is taken only as far as the box's state records it

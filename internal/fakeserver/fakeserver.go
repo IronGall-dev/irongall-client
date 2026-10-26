@@ -94,8 +94,33 @@ type message struct {
 	seq        int // its place in the box: a list's cursor is the last one it gave
 }
 
-// New starts a server on the clock now, stopped when the test ends.
+// New starts a server on the clock now, on a loopback port, stopped when the
+// test ends: a process of its own, such as the shell client's curl, reaches it.
 func New(t testing.TB, now func() time.Time) *Server {
+	s, h := newServer(t, now)
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	s.URL, s.srv = srv.URL, srv
+	return s
+}
+
+// NewInMemory is a server on httptest's in-memory network, which Client
+// reaches: one a test can run in a testing/synctest bubble, whose time is
+// fake and moves only when every goroutine waits.
+func NewInMemory(t testing.TB, now func() time.Time) *Server {
+	s, h := newServer(t, now)
+	srv := httptest.NewTestServer(t, h)
+	// Its client reaches it at any address; a loopback one is a base the
+	// client calls over plain HTTP.
+	s.URL, s.srv = "http://127.0.0.1", srv
+	return s
+}
+
+// Client is the client that reaches a server NewInMemory made.
+func (s *Server) Client() *http.Client { return s.srv.Client() }
+
+// newServer is a server on the clock now, and the handler that serves it.
+func newServer(t testing.TB, now func() time.Time) (*Server, http.Handler) {
 	s := &Server{now: now, boxes: map[protocol.Address]*box{}, held: map[protocol.Address]*held{}, keys: map[string]string{}, page: MaxPage}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/{addr}", s.getBox)
@@ -118,7 +143,7 @@ func New(t testing.TB, now func() time.Time) *Server {
 		w.Header().Set("Cache-Control", "no-store")
 		mux.ServeHTTP(w, r)
 	}))
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return s, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Dated by the server's own clock, which a test sets: a client
 		// compares an answer's Date with its clock when a pass is refused.
 		w.Header().Set("Date", s.now().UTC().Format(http.TimeFormat))
@@ -131,10 +156,7 @@ func New(t testing.TB, now func() time.Time) *Server {
 			return
 		}
 		api.ServeHTTP(w, r)
-	}))
-	t.Cleanup(srv.Close)
-	s.URL, s.srv = srv.URL, srv
-	return s
+	})
 }
 
 // Close stops the server for good, as one that is gone: whoever calls it
