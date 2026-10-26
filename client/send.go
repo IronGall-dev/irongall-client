@@ -520,7 +520,10 @@ func (b *Box) seal(ctx context.Context, to protocol.Address, stem string, l *loo
 	// Nor does a certificate whose working key another holds, as a statement
 	// this box did not make under it shows (PROTOCOL.md §12.4): its owner's
 	// remedy revokes it, and its reader then refuses this mail with the
-	// thief's. The entry waits for the box's next certificate.
+	// thief's. The entry waits for the box's next certificate. The record is
+	// what the box's last read of itself showed (known, its one writer), not
+	// a read made for this post: a statement its server serves only since
+	// then holds back no mail until the box reads itself again.
 	if nm, err := b.notMade(); err != nil {
 		return nil, err
 	} else if nm != nil && nm.OwnCertificate && nm.CertificateSerial == cert.Serial() {
