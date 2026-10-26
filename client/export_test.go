@@ -61,6 +61,14 @@ func SetRequestTimeout(t *testing.T, d time.Duration) {
 	t.Cleanup(func() { requestTimeout = old })
 }
 
+// Bounded has a box whose client it was given bound its calls as the
+// default client does (stall): a test whose server is in memory, reached
+// only by that server's client, tests the default client's bounds.
+func Bounded(b *Box) *Box {
+	b.stall = true
+	return b
+}
+
 // Partial is what the box's state records of its partial file: which
 // message it is of, and how many of its bytes are synced; "" and 0 for none.
 func (b *Box) Partial() (string, int64, error) { return b.partialRecord() }
