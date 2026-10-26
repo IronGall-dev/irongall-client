@@ -229,21 +229,10 @@ func TestParseTime(t *testing.T) {
 	}
 }
 
+// Every code this version knows has a status, a title and a code's form:
+// the codes are read from Codes(), never typed here (#426 item 4).
 func TestCodes(t *testing.T) {
-	codes := []Code{
-		CodeBadRequest, CodeBadAddress, CodeBadEncoding, CodeIdentityMismatch, CodeBadKey, CodePrekeyNotNew, CodePrekeyTime, CodeUnsupportedKeyType, CodeNotAge, CodeWrongRecipientType, CodeBadRevocation,
-		CodeUnauthorized, CodePassExpired, CodeCertificateNotCurrent, CodeCertificateRevoked,
-		CodeUnknownSender, CodeSenderRevoked, CodeSenderNotAllowed, CodeSenderKeyType, CodeAdoptKeyRefused,
-		CodeNoSuchMailbox, CodeNoSuchMessage, CodeNotRevoked,
-		CodeConflict, CodeBoxChanged, CodeStalePrekey, CodePrekeyExpired,
-		CodeRequestTimeout, CodeRevoked, CodePreconditionFailed, CodeTooLarge,
-		CodeRateLimited, CodeFetchPaced, CodeRefetchSpent, CodePairFull, CodeMailboxFull, CodeMailboxBusy,
-		CodeUnavailable,
-	}
-	if len(codes) != len(Codes()) {
-		t.Errorf("%d codes listed, %d known", len(codes), len(Codes()))
-	}
-	for _, c := range codes {
+	for _, c := range Codes() {
 		if c.Status() == 0 || c.Title() == "" || !c.Known() || !regexp.MustCompile(`\A[a-z0-9_]{1,40}\z`).MatchString(string(c)) {
 			t.Errorf("%s has no status or title, or is not a code's form", c)
 		}
@@ -259,15 +248,9 @@ func TestCodes(t *testing.T) {
 
 // Every quota a rate_limited names has the form of a code and one of the two
 // subjects, and the two members are written as Google's QuotaFailure names them.
+// The quotas are read from Quotas(), never typed here (#426 item 4).
 func TestQuotas(t *testing.T) {
-	quotas := []Quota{
-		QuotaPolls, QuotaPages, QuotaCalls, QuotaSends, QuotaRenewals, QuotaCertificates, QuotaCertificateRevocations,
-		QuotaRegistrations, QuotaRegistrationsRange, QuotaMisses, QuotaSendsBeforePass, QuotaRequests,
-	}
-	if len(quotas) != len(Quotas()) {
-		t.Errorf("%d quotas listed, %d known", len(quotas), len(Quotas()))
-	}
-	for _, q := range quotas {
+	for _, q := range Quotas() {
 		if !q.Known() || !q.Subject().Known() || !regexp.MustCompile(`\A[a-z0-9_]{1,40}\z`).MatchString(string(q)) {
 			t.Errorf("%s is not known, has no subject, or is not a code's form", q)
 		}
