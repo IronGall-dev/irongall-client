@@ -289,8 +289,11 @@ func verifyCertified(id *Identity, message, signature []byte, namespace string, 
 
 // CertificateBegan returns when the certificate an armored signature carries
 // began: the moment to verify a signature at when the question is whether the
-// identity ever certified its key, and not whether it is good now. A box
-// reading its own record asks that; nobody judging another box's word does.
+// identity ever certified its key, and not whether it is good now. A refused
+// message's Findings ask that (whoMade), and keep the start beside a
+// signature that verified (signed); a box asks it of a prekey statement it
+// kept, and spends the serial of one whose certificate began less than
+// MaxSkew before its clock (signedPrekey, in the client).
 func CertificateBegan(signature []byte) (time.Time, error) {
 	blob, err := Dearmor(signature)
 	if err != nil {
