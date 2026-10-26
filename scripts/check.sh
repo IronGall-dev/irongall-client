@@ -20,6 +20,10 @@ cd "$(dirname "$0")/.."
 
 govulncheck=golang.org/x/vuln/cmd/govulncheck@v1.9.0
 tags=dromas_nofsync
+# How long one package's tests may run: about half again the slowest's, the
+# shell client's, on the slowest runner, so a test that hangs fails in
+# minutes with every goroutine's stack, which names what it waits for.
+timeout=6m
 darwin='' nosh=''
 case $(uname -s) in
   Darwin) darwin=1 nosh=macOS ;;
@@ -57,7 +61,7 @@ alltests() {
   dir=$(mktemp -d)
   set +e
   # shellcheck disable=SC2086 # one package a word
-  go test -tags "$tags" -count=1 -timeout 20m -json $pkgs | tee "$dir/test.json" | jq -rj --unbuffered 'select(.Action == "output") | .Output'
+  go test -tags "$tags" -count=1 -timeout "$timeout" -json $pkgs | tee "$dir/test.json" | jq -rj --unbuffered 'select(.Action == "output") | .Output'
   status=${PIPESTATUS[0]}
   set -e
   jq -rs '[.[] | select(.Test != null)] | group_by([.Package, .Test])[] | select(any(.Action == "skip"))
@@ -78,7 +82,7 @@ full() {
   fmt
   go vet ./...
   alltests
-  go test -tags "$tags" -race -count=1 -run 'SharedByGoroutines' ./client # a Box shared by goroutines
+  go test -tags "$tags" -race -count=1 -timeout "$timeout" -run 'SharedByGoroutines' ./client # a Box shared by goroutines
 }
 
 case ${1:-quick} in

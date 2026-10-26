@@ -33,16 +33,19 @@ defaults:
 jobs:
   test:
     # Ubuntu on two OpenSSH releases for the script and the cross-tests, 9.6p1
-    # and 10.2p1, and on arm64; macOS on Apple silicon and Intel; Windows on
-    # x64 and arm64, in Git's bash: each system and architecture a release is
-    # built for. On macOS and Windows scripts/check.sh leaves ./sh out (its
-    # header says why).
+    # and 10.2p1, and on arm64; macOS on Apple silicon, and on Intel in the
+    # daily run alone, since that runner is the slowest and once stalled
+    # with no log; Windows on x64 and arm64, in Git's bash: each system and
+    # architecture a release is built for. On macOS and Windows
+    # scripts/check.sh leaves ./sh out (its header says why).
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, ubuntu-26.04, ubuntu-26.04-arm, macos-26, macos-26-intel, windows-2025, windows-11-arm]
+        os: ${{ fromJSON(github.event_name == 'schedule' && '["ubuntu-24.04","ubuntu-26.04","ubuntu-26.04-arm","macos-26","macos-26-intel","windows-2025","windows-11-arm"]' || '["ubuntu-24.04","ubuntu-26.04","ubuntu-26.04-arm","macos-26","windows-2025","windows-11-arm"]') }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
+    # Twice a run's usual length: a hang is caught sooner by scripts/check.sh's
+    # timeout for one package, which prints what it waits for.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
