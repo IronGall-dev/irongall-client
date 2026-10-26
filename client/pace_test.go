@@ -18,8 +18,9 @@ import (
 // A server that paces how much mail a box takes out (a 429 with Retry-After
 // on a fetch, PROTOCOL.md §11.5) stops the drain as the drain's own limits do:
 // what was delivered stays delivered, the rest waits on the server, the
-// Result says how long, and nothing is an error. The next drain takes the
-// rest.
+// Result says how long, and nothing is an error. A pace past the poll
+// interval is when to run again (Result.Again; #447). The next drain takes
+// the rest.
 func TestAPacedDrainStopsAndResumes(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
@@ -37,7 +38,7 @@ func TestAPacedDrainStopsAndResumes(t *testing.T) {
 			mu.Unlock()
 			if n == 3 {
 				w.Header().Set("Content-Type", protocol.ProblemContentType)
-				w.Header().Set("Retry-After", "6")
+				w.Header().Set("Retry-After", "90") // past the fake's poll interval
 				w.WriteHeader(http.StatusTooManyRequests)
 				_ = json.NewEncoder(w).Encode(protocol.Problem{Type: protocol.CodeFetchPaced.TypeURI(), Title: "Fetch paced", Status: http.StatusTooManyRequests, Code: protocol.CodeFetchPaced, Detail: "paced"})
 				return
@@ -46,8 +47,11 @@ func TestAPacedDrainStopsAndResumes(t *testing.T) {
 		next.ServeHTTP(w, r)
 	})
 	res := receive(t, b)
-	if len(res.Delivered) != 2 || !res.More || res.Paced != 6*time.Second {
+	if len(res.Delivered) != 2 || !res.More || res.Paced != 90*time.Second {
 		t.Fatalf("a paced drain: delivered %d, more %v, paced %s", len(res.Delivered), res.More, res.Paced)
+	}
+	if poll := time.Duration(res.PollAfter) * time.Second; poll >= res.Paced || res.Again() != res.Paced {
+		t.Errorf("paced %s, polled every %s: again in %s, want the pace", res.Paced, poll, res.Again())
 	}
 	e.srv.SetMiddle(nil)
 	if res := receive(t, b); len(res.Delivered) != 1 || res.More || res.Paced != 0 {

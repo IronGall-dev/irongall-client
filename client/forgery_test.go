@@ -279,8 +279,8 @@ func TestForgeries(t *testing.T) {
 			}
 			next.ServeHTTP(w, r)
 		})
-		if _, err := b.Rekey(ctx, ""); err == nil || !strings.Contains(err.Error(), "rollback") {
-			t.Fatalf("rekey: %v, want a rollback refusal", err)
+		if _, err := b.Rekey(ctx, ""); err == nil || !strings.Contains(err.Error(), "rollback") || !strings.Contains(err.Error(), "dromas cert revoke-earlier") {
+			t.Fatalf("rekey: %v, want a rollback refusal naming dromas cert revoke-earlier", err)
 		}
 		if now, _ := e.srv.Prekey(b.Address()); !bytes.Equal(now, published) {
 			t.Fatal("a prekey was published over a rollback")
@@ -328,8 +328,8 @@ func TestForgeries(t *testing.T) {
 		b := e.box(protocol.Classic)
 		published, _ := e.srv.Prekey(b.Address())
 		below(t, e, b)
-		if _, err := b.Rekey(ctx, ""); err == nil || !strings.Contains(err.Error(), "rollback") {
-			t.Fatalf("rekey: %v, want a rollback refusal", err)
+		if _, err := b.Rekey(ctx, ""); err == nil || !strings.Contains(err.Error(), "rollback") || !strings.Contains(err.Error(), "dromas cert revoke-earlier") {
+			t.Fatalf("rekey: %v, want a rollback refusal naming dromas cert revoke-earlier", err)
 		}
 		if now, _ := e.srv.Prekey(b.Address()); !bytes.Equal(now, published) {
 			t.Fatal("a prekey was published over a rollback")

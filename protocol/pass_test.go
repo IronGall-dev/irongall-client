@@ -506,7 +506,9 @@ func FuzzParsePass(f *testing.F) {
 // after it, SSHSIG version 0, a NUL ending the namespace and bytes in the
 // reserved field, which nothing signs. A server remembers a pass by its
 // Authorization, so each costs it one check (dromas-dev/dromas-server#69).
-// A signature that differs in a bit is another pass.
+// A signature that differs in a byte the verifier reads is another pass: a
+// bit of the signature itself, the hash it names, a byte after its five
+// fields (#445).
 func TestAPassWrittenAnotherWayIsOnePass(t *testing.T) {
 	header := strings.TrimSuffix(string(read(t, "a/pass.authorization")), "\n")
 	p, err := ParsePass(header)
@@ -522,22 +524,26 @@ func TestAPassWrittenAnotherWayIsOnePass(t *testing.T) {
 		t.Fatal(err)
 	}
 	// rewrite is blob with version v, a NUL after its namespace when nul,
-	// and reserved in its reserved field, armored as ssh-keygen does.
-	rewrite := func(v uint32, nul bool, reserved []byte) []byte {
+	// reserved in its reserved field, the hash named hash where it is not
+	// empty and tail after the five fields, armored as ssh-keygen does.
+	rewrite := func(v uint32, nul bool, reserved []byte, hash string, tail []byte) []byte {
 		r := wireReader(blob[10:])
 		key, _ := r.string()
 		ns, _ := r.string()
 		_, _ = r.string()
-		hash, _ := r.string()
+		named, _ := r.string()
 		sig, _ := r.string()
 		if nul {
 			ns = append(append([]byte{}, ns...), 0)
 		}
+		if hash != "" {
+			named = []byte(hash)
+		}
 		out := binary.BigEndian.AppendUint32([]byte("SSHSIG"), v)
-		for _, s := range [][]byte{key, ns, reserved, hash, sig} {
+		for _, s := range [][]byte{key, ns, reserved, named, sig} {
 			out = appendWireString(out, s)
 		}
-		return Armor(out)
+		return Armor(append(out, tail...))
 	}
 	body := bytes.IndexByte(armored, '\n') + 1
 	forms := map[string][]byte{
@@ -547,9 +553,9 @@ func TestAPassWrittenAnotherWayIsOnePass(t *testing.T) {
 		"a NUL before the END line":    bytes.Replace(armored, []byte("\n-----END"), []byte("\x00\n-----END"), 1),
 		"the base64 on one line":       []byte(armorBegin + base64.StdEncoding.EncodeToString(blob) + "\n" + armorEnd + "\n"),
 		"a space inside the base64":    append(append(append([]byte{}, armored[:body+7]...), ' '), armored[body+7:]...),
-		"SSHSIG version 0":             rewrite(0, false, nil),
-		"a NUL ending the namespace":   rewrite(1, true, nil),
-		"a byte in the reserved field": rewrite(1, false, []byte{'x'}),
+		"SSHSIG version 0":             rewrite(0, false, nil, "", nil),
+		"a NUL ending the namespace":   rewrite(1, true, nil, "", nil),
+		"a byte in the reserved field": rewrite(1, false, []byte{'x'}, "", nil),
 	}
 	for name, sig := range forms {
 		if _, err := Dearmor(sig); err != nil {
@@ -563,15 +569,24 @@ func TestAPassWrittenAnotherWayIsOnePass(t *testing.T) {
 			t.Errorf("%s: written back as another pass", name)
 		}
 	}
-	// Control: one bit of the signature itself, in its last string.
+	// A byte the verifier reads: one bit of the signature itself, in its
+	// last string, the other hash §3.2 lets a signature name (the vector's
+	// is sha512), and a byte after the five fields, which it refuses.
 	flipped := append([]byte{}, blob...)
 	flipped[len(flipped)-1] ^= 1
-	q, err := ParsePass(strings.Replace(header, base64.StdEncoding.EncodeToString(armored), base64.StdEncoding.EncodeToString(Armor(flipped)), 1))
-	if err != nil {
-		t.Fatal(err)
+	others := map[string][]byte{
+		"a bit of the signature":       Armor(flipped),
+		"the hash named sha256":        rewrite(1, false, nil, "sha256", nil),
+		"a byte after the five fields": rewrite(1, false, nil, "", []byte{0}),
 	}
-	if q.Authorization() == header {
-		t.Error("a signature that differs in a bit is written back as the same pass")
+	for name, sig := range others {
+		q, err := ParsePass(strings.Replace(header, base64.StdEncoding.EncodeToString(armored), base64.StdEncoding.EncodeToString(sig), 1))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if q.Authorization() == header {
+			t.Errorf("%s: written back as the same pass", name)
+		}
 	}
 }
 

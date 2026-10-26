@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -369,6 +370,14 @@ func TestScriptRefusesForgedMail(t *testing.T) {
 	reasons, _ := filepath.Glob(b.file("quarantine/*.reason"))
 	if len(q) != refusals-1 || len(reasons) != refusals-1 || len(b.files("inbox")) != 2 {
 		t.Errorf("not every refusal quarantined with its reason, or one delivered: %d refusals, %d quarantined, %d reasons, inbox %q", refusals, len(q), len(reasons), b.files("inbox"))
+	}
+	// Each keeps the ciphertext and the id the script hashed, and none of
+	// the server's strings (dr_kept; #454 item 1).
+	for _, f := range q {
+		var kept map[string]any
+		if err := protocol.Unmarshal(mustRead(t, f), &kept); err != nil || !slices.Equal(slices.Sorted(maps.Keys(kept)), []string{"ciphertext", "id"}) {
+			t.Errorf("quarantine/%s keeps the members %v, want ciphertext and id alone: %v", filepath.Base(f), slices.Sorted(maps.Keys(kept)), err)
+		}
 	}
 	for _, f := range reasons {
 		code, _, _ := strings.Cut(mustReadString(t, f), ": ")

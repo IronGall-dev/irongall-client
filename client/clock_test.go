@@ -90,10 +90,14 @@ func TestTheTwoClocksFurthestApart(t *testing.T) {
 	}
 }
 
-// Further off than that, the server refuses the box. A pass refused for its
-// time gets the client's own sentence: the date on the server's answer, what
-// this machine's clock reads, and where to check the clock, which is never
-// the server. A refusal that is not the pass's gets no such sentence.
+// Further off than that, the server refuses the box: its pass, or, more
+// than 50 minutes fast, its certificate, which a server takes once it has
+// begun PassLifetime before its own clock and sees before the pass, as
+// dromas-server answers both (#426 item 6). A refusal for a time gets the
+// client's own sentence: the date on the server's answer, what this
+// machine's clock reads, and where to check the clock, which is never the
+// server. TestTheDateOnAnAnswerIsNeverAnOrder holds that no other refusal
+// gets it.
 func TestABoxWhoseClockIsTooFarOffIsToldSo(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -104,8 +108,8 @@ func TestABoxWhoseClockIsTooFarOffIsToldSo(t *testing.T) {
 	}{
 		{-11 * time.Minute, protocol.CodePassExpired, "11m0s behind that"},
 		{-50 * time.Minute, protocol.CodePassExpired, "50m0s behind that"},
-		{51 * time.Minute, protocol.CodePassExpired, "51m0s ahead of that"},
-		{61 * time.Minute, protocol.CodeBadKey, ""}, // its certificate has not begun, which a server sees before the pass
+		{51 * time.Minute, protocol.CodePrekeyTime, "51m0s ahead of that"},
+		{61 * time.Minute, protocol.CodePrekeyTime, "1h1m0s ahead of that"},
 	} {
 		e := newEnv(t)
 		off, dir := c.off, t.TempDir()
@@ -351,7 +355,7 @@ func TestACertificateKeptFromARefusedAttemptLeavesTheHour(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	off, dir := 55*time.Minute, t.TempDir()
-	if _, err := client.Init(ctx, dir, e.skewed(&off), protocol.Classic); client.Code(err) != protocol.CodePassExpired {
+	if _, err := client.Init(ctx, dir, e.skewed(&off), protocol.Classic); client.Code(err) != protocol.CodePrekeyTime {
 		t.Fatalf("init, 55 minutes ahead: %v", err)
 	}
 	off = 0 // the clock is set right
@@ -385,7 +389,7 @@ func TestARenewalKeptFromARefusedAttemptLeavesTheHour(t *testing.T) {
 	}
 	e.clock.Add(2 * time.Second)
 	off = 55 * time.Minute
-	if _, err := b.Rekey(ctx, ""); client.Code(err) != protocol.CodePassExpired {
+	if _, err := b.Rekey(ctx, ""); client.Code(err) != protocol.CodePrekeyTime {
 		t.Fatalf("a renewal 55 minutes ahead: %v", err)
 	}
 	off = 0

@@ -157,7 +157,7 @@ func TestTheRemedyGoesOnPastARollback(t *testing.T) {
 		next.ServeHTTP(w, r)
 	})
 	e.clock.Add(2 * time.Second)
-	if _, err := a.Rekey(ctx, ""); err == nil || !strings.Contains(err.Error(), "rollback") {
+	if _, err := a.Rekey(ctx, ""); err == nil || !strings.Contains(err.Error(), "rollback") || !strings.Contains(err.Error(), "dromas cert revoke-earlier") {
 		t.Fatalf("a plain renewal served a rollback: %v", err)
 	}
 	r, err := a.RenewAndRevoke(ctx, "")

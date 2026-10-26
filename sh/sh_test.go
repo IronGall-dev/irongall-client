@@ -37,15 +37,34 @@ import (
 
 const vectors = "../testdata/vectors"
 
-// need skips the test unless every tool is on PATH, saying which is missing.
+// need skips the test unless every tool is on PATH, saying which is missing,
+// and the bash there is 4 or later, as the script's header says it needs: an
+// older one fails at the script's first array or mapfile (#426 item 5).
 func need(t *testing.T, tools ...string) {
 	t.Helper()
 	for _, tool := range tools {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skipf("%s is not on PATH: dromas.sh needs bash, age, ssh-keygen, curl, jq, iconv and coreutils", tool)
 		}
+		if tool != "bash" {
+			continue
+		}
+		if v := bashMajor(); v < 4 {
+			t.Skipf("the bash on PATH is version %d: dromas.sh needs bash 4 or later", v)
+		}
 	}
 }
+
+// bashMajor is the major version of the bash on PATH, as its BASH_VERSINFO
+// gives it, or 0 where it gives none.
+var bashMajor = sync.OnceValue(func() int {
+	out, err := exec.Command("bash", "-c", `printf %s "${BASH_VERSINFO[0]}"`).Output()
+	if err != nil {
+		return 0
+	}
+	v, _ := strconv.Atoi(string(out))
+	return v
+})
 
 var scriptTools = []string{"bash", "age", "age-keygen", "ssh-keygen", "jq", "iconv", "sha256sum", "base64", "od", "sync"}
 

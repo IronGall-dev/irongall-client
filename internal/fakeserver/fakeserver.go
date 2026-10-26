@@ -259,20 +259,32 @@ func pathAddr(w http.ResponseWriter, r *http.Request) (protocol.Address, bool) {
 }
 
 // verifyPrekey checks a statement against the box's identity, and returns
-// the certificate it is signed under.
-func (s *Server) verifyPrekey(identity, statement, signature []byte) (*protocol.Prekey, *protocol.Certificate, error) {
+// the certificate it is signed under, or the code its refusal is answered
+// with, as dromas-server answers it (#426 item 6): prekey_time where the
+// refusal is for a time (a certificate that has not begun
+// protocol.PassLifetime before this clock, or has ended, or a statement
+// that has, or ends too far ahead), and bad_key where it is not.
+func (s *Server) verifyPrekey(identity, statement, signature []byte) (*protocol.Prekey, *protocol.Certificate, protocol.Code, error) {
 	id, err := protocol.ParseIdentity(identity)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, protocol.CodeBadKey, err
 	}
 	p, cert, err := protocol.VerifyPrekey(id, statement, signature, s.now())
-	if err != nil {
-		return nil, nil, err
+	if err == nil {
+		if began, berr := protocol.CertificateBegan(signature); berr != nil || began.After(s.now().Add(-protocol.PassLifetime)) {
+			err = protocol.ErrCertificateNotBegun
+		}
+	}
+	switch {
+	case errors.Is(err, protocol.ErrCertificateTime):
+		return nil, nil, protocol.CodePrekeyTime, err
+	case err != nil:
+		return nil, nil, protocol.CodeBadKey, err
 	}
 	if err := p.CheckLifetime(s.now()); err != nil {
-		return nil, nil, err
+		return nil, nil, protocol.CodePrekeyTime, err
 	}
-	return p, cert, nil
+	return p, cert, "", nil
 }
 
 // pass checks a call's pass: it is the pass of the box whose identity
@@ -320,9 +332,9 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		problem(w, protocol.CodeIdentityMismatch, "the identity does not hash to the address")
 		return
 	}
-	p, cert, err := s.verifyPrekey(req.Identity, req.Prekey, req.PrekeySignature)
+	p, cert, refusal, err := s.verifyPrekey(req.Identity, req.Prekey, req.PrekeySignature)
 	if err != nil {
-		problem(w, protocol.CodeBadKey, err.Error())
+		problem(w, refusal, err.Error())
 		return
 	}
 	// A registration carries a pass under the certificate of the statement
@@ -512,9 +524,9 @@ func (s *Server) newPrekey(w http.ResponseWriter, r *http.Request) {
 		problem(w, protocol.CodeNoSuchMailbox, "no box has this address")
 		return
 	}
-	p, cert, err := s.verifyPrekey(b.identity, req.Prekey, req.PrekeySignature)
+	p, cert, refusal, err := s.verifyPrekey(b.identity, req.Prekey, req.PrekeySignature)
 	if err != nil {
-		problem(w, protocol.CodeBadKey, err.Error())
+		problem(w, refusal, err.Error())
 		return
 	}
 	if refused := order(w, b, p, cert); refused {

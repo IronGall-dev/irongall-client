@@ -83,7 +83,7 @@ func TestScriptAfterAClockAhead(t *testing.T) {
 	for _, c := range []struct {
 		ahead time.Duration
 		code  string
-	}{{61 * time.Minute, "bad_key"}, {55 * time.Minute, "pass_expired"}} {
+	}{{61 * time.Minute, "prekey_time"}, {55 * time.Minute, "prekey_time"}} { // its certificate not begun protocol.PassLifetime before the server's clock, which it reads before the pass
 		b := at{w.empty(), c.ahead}
 		if r := b.sh("dr_init"); r.rc == 0 || !strings.Contains(r.err, c.code) {
 			t.Fatalf("a box %v fast registered: %v", c.ahead, r)
