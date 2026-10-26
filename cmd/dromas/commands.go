@@ -58,7 +58,8 @@ dromas prekey lifetime --help says how often for a shorter lifetime.`,
 		e.group("cert", "this box's certificates: revoke-earlier, publish-revoked",
 			`This box's identity certifies a working key with each prekey, and the working
 key signs what the box says. A box whose working key may have been taken
-revokes every certificate before a new one: the address goes on.`,
+revokes every certificate before a new one: the address goes on. A copy of the
+whole box directory holds the identity too: revoke the address.`,
 			e.revokeEarlierCmd(), e.publishRevokedCmd()),
 		e.group("account", "the account that can lift this box's limits: adopt, leave",
 			`An account can lift the limits of the boxes in it. An adopt key, from the
@@ -933,7 +934,8 @@ new working key and certificate, revoke every certificate before that one, and
 then publish the new prekey. The address goes on, and mail this box sent that
 is still unread is refused with the rest, so send it again. Until the server
 takes the new prekey, the box sends no mail, and once its server holds the
-revocation it takes none there either.`,
+revocation it takes none there either. A copy of the whole box directory holds
+the identity too: revoke the address.`,
 		checked(nargs(0, 0), func(c *cobra.Command, _ []string) error {
 			if _, err := keyType(noPQ, pq); err != nil {
 				return wrong(c, "%v", err)
