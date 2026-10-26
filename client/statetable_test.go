@@ -511,7 +511,9 @@ func snapshot(dir string) map[string][32]byte {
 			return nil //nolint:nilerr // a file gone as it was read is not one
 		}
 		rel, _ := filepath.Rel(dir, p)
-		if rel = filepath.ToSlash(rel); rel != "state" {
+		// The state file is read as its records, and the gate holds
+		// nothing: it is Windows' lock (gate_windows.go).
+		if rel = filepath.ToSlash(rel); rel != "state" && rel != "gate" {
 			files[rel] = sha256.Sum256(raw)
 		}
 		return nil
