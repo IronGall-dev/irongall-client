@@ -92,6 +92,12 @@ full() {
   esac
 }
 
+# Every module before any test, the tools' too: internal/agetool builds age
+# with go tool, which otherwise fetches its modules mid-test, so a fetch that
+# times out reads as a failed test (v0.1.1's first tag run, macos-26-intel:
+# nistec and x/term, Go's 30 s dial timeout each, 62.8 s).
+go mod download
+
 case ${1:-quick} in
   quick)
     fmt
