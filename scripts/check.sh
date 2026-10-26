@@ -82,7 +82,14 @@ full() {
   fmt
   go vet ./...
   alltests
-  go test -tags "$tags" -race -count=1 -timeout "$timeout" -run 'SharedByGoroutines' ./client # a Box shared by goroutines
+  # A Box shared by goroutines, under the race detector where Go has one
+  # (go.dev/doc/articles/race_detector, Requirements).
+  case $(go env GOOS)/$(go env GOARCH) in
+    linux/amd64 | linux/ppc64le | linux/arm64 | linux/s390x | linux/loong64 | freebsd/amd64 | netbsd/amd64 | darwin/amd64 | darwin/arm64 | windows/amd64)
+      go test -tags "$tags" -race -count=1 -timeout "$timeout" -run 'SharedByGoroutines' ./client
+      ;;
+    *) echo "$(go env GOOS)/$(go env GOARCH): the race test is left out: Go's race detector does not run here" >&2 ;;
+  esac
 }
 
 case ${1:-quick} in
