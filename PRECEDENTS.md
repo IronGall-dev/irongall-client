@@ -355,7 +355,7 @@ None was a flaw in the layout: each was a verifier that read an object different
 
 ## 3e. Output: JSON lines, each with its type first
 
-**Ours:** every command prints JSON lines, `type` first, the same from the script: what it did and met to stdout, refusals included; to stderr only its failure, a wrong command line, or waiting. No `--json`, no switch on a terminal; help is the one text. A line nests the envelope whole as `envelope`, so what the envelope gains in v1 (§14) never meets the line's own names. The MCP server, when built, returns the same objects.
+**Ours:** every command prints JSON lines, `type` first, the same from the script: what it did and met to stdout, refusals included; to stderr only its failure, a wrong command line, or waiting. No `--json`, no switch on a terminal; help is the one text. A line nests the envelope whole as `envelope`, so what the envelope gains in v1 (§14) never meets the line's own names.
 
 | Who | What they do | How it is known |
 |---|---|---|
@@ -375,7 +375,6 @@ None was a flaw in the layout: each was a verifier that read an object different
 - **JSON where text or Markdown would do:** the guidance finds no format best; our lines are one record each, where Markdown saved nothing; and a stranger's text inside a JSON string can pass for no line of ours and write no control character to a terminal (§ 3d's rule).
 - **What a command met is on stdout,** as agent CLIs stream their errors among their events: a reader of stdout alone misses no forgery.
 - **A revocation record names its own `type`** (§10.3), as a Kubernetes object its `kind`: the line `revocation make` prints is the record that publishes with curl; readers take one without it and refuse another type.
-- **MCP: the same JSON twice, not a sentence,** as the spec's rule asks, so a sender's text gets no prose around it.
 
 ## 4. The rest: one row a decision
 
