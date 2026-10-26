@@ -8,8 +8,11 @@
 # - verify: the published release is checked as README § Install has a user
 #   check it, as GoReleaser checks its own;
 # - rebuild: the release is built again from its tag on another image, and
-#   each archive must come out as published.
-# By hand, ci and the build as a snapshot, published nowhere. Actions are
+#   each archive must come out as the release job made it, which verify has
+#   checked against what was published.
+# By hand (workflow_dispatch), all of it but the tag and verify, on main as a
+# snapshot published nowhere: so a release's every build and test runs
+# before any tag is made. Actions are
 # pinned by commit, each with its release beside it, and GoReleaser by its
 # version.
 name: release
@@ -98,6 +101,10 @@ jobs:
         if: github.ref_type == 'tag'
         with:
           subject-checksums: ./dist/checksums.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: checksums
+          path: dist/checksums.txt
 
   verify:
     needs: release
@@ -140,7 +147,6 @@ jobs:
 
   rebuild:
     needs: release
-    if: github.ref_type == 'tag'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -152,7 +158,8 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - run: git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
+      - if: github.ref_type == 'tag'
+        run: git fetch --force origin "refs/tags/$TAG:refs/tags/$TAG"
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: ${{ needs.release.outputs.go }}
@@ -160,14 +167,17 @@ jobs:
         with:
           distribution: goreleaser
           version: v2.19.0
-          args: release --clean --skip=publish,sign,sbom
+          args: ${{ github.ref_type == 'tag' && 'release --clean --skip=publish,sign,sbom' || 'release --snapshot --clean --skip=sign,sbom' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-      - name: each archive, as published
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: checksums
+          path: published
+      - name: each archive, as the release job made it
         # The SBOMs are left out: syft writes a new document name and time
         # each run.
         run: |
-          gh release download "$TAG" -R "$REPO" -p checksums.txt -D published
           grep -E '\.(tar\.gz|zip)$' published/checksums.txt | sort > published.sums
           grep -E '\.(tar\.gz|zip)$' dist/checksums.txt | sort > rebuilt.sums
           cat rebuilt.sums

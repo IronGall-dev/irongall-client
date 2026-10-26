@@ -36,14 +36,14 @@ jobs:
   test:
     # Ubuntu on two OpenSSH releases for the script and the cross-tests, 9.6p1
     # and 10.2p1, and on arm64; macOS on Apple silicon, and on Intel in the
-    # daily run and a release's alone, since that runner is the slowest and
+    # daily run and release.yml's alone (a tag's and its hand-run), since that runner is the slowest and
     # once stalled with no log; Windows on x64 and arm64, in Git's bash: each
     # system and architecture a release is built for. On macOS and Windows
     # scripts/check.sh leaves ./sh out (its header says why).
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON((github.event_name == 'schedule' || github.ref_type == 'tag') && '["ubuntu-24.04","ubuntu-26.04","ubuntu-26.04-arm","macos-26","macos-26-intel","windows-2025","windows-11-arm"]' || '["ubuntu-24.04","ubuntu-26.04","ubuntu-26.04-arm","macos-26","windows-2025","windows-11-arm"]') }}
+        os: ${{ fromJSON((github.event_name == 'schedule' || github.workflow == 'release') && '["ubuntu-24.04","ubuntu-26.04","ubuntu-26.04-arm","macos-26","macos-26-intel","windows-2025","windows-11-arm"]' || '["ubuntu-24.04","ubuntu-26.04","ubuntu-26.04-arm","macos-26","windows-2025","windows-11-arm"]') }}
     runs-on: ${{ matrix.os }}
     # Twice a run's usual length: a hang is caught sooner by scripts/check.sh's
     # timeout for one package, which prints what it waits for.
