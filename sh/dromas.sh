@@ -493,13 +493,14 @@ dr_send(){ # <link or address> [body file] → one message, posted now or not at
   local B f A id
   f=${2-}; A=$(cat "$DR/address") && B=$(dr_dest "${1-}") || return 1
   { if [ -n "$f" ]; then cat < "$f"; else cat; fi; } > "$DR/body.new" 2> /dev/null && mv "$DR/body.new" "$DR/body.txt" || { rm -f "$DR/body.new"; dr_err "the body${f:+ file $f} could not be read: nothing is sent"; return 1; }; f="$DR/body.txt"      # read ONCE, from the file named or stdin, into a new file moved into place: every check below and the envelope read these bytes, so a body from a pipe is sent, one changed after its check is not, and a body named $DR/body.txt is not emptied before it is read
-  iconv -f UTF-8 -t UTF-8 < "$f" > /dev/null 2>&1 || dr_refuse "the body is not UTF-8 text" || return 1
-  id=$(dr_uuid) || return 1
+  iconv -f UTF-8 -t UTF-8 < "$f" > /dev/null 2>&1 || { dr_spent; dr_refuse "the body is not UTF-8 text"; return 1; }
+  id=$(dr_uuid) || { dr_spent; return 1; }
   jq -cn --arg from "$A" --arg to "$B" --arg id "$id" --argjson t "$(dr_now)" --arg i "$(dr_b64 "$DR/identity.doc")" --rawfile body "$f" \
-    '{v:1, from:$from, to:$to, sent_at:($t|todate), msg_id:$id, identity:$i, body:$body}' > "$DR/send.P" 2> /dev/null || { rm -f "$DR/send.P"; dr_err "the envelope could not be built: nothing is sent"; return 1; }      # ONE line, ending in a line feed: exactly the bytes that are signed. It carries this box's identity document, so its reader need not ask the server who wrote it
-  why=$(dr_envcheck "$DR/send.P" "$A" "$B") || { rm -f "$DR/send.P"; dr_refuse "nothing is sent, since its reader would refuse this message: ${why#*: }"; return 1; }      # read back as its reader will, and as dr_seal does
-  dr_post "$B" "$DR/send"; local rc=$?; rm -f "$DR/send.P"; return $rc
+    '{v:1, from:$from, to:$to, sent_at:($t|todate), msg_id:$id, identity:$i, body:$body}' > "$DR/send.P" 2> /dev/null || { dr_spent; dr_err "the envelope could not be built: nothing is sent"; return 1; }      # ONE line, ending in a line feed: exactly the bytes that are signed. It carries this box's identity document, so its reader need not ask the server who wrote it
+  why=$(dr_envcheck "$DR/send.P" "$A" "$B") || { dr_spent; dr_refuse "nothing is sent, since its reader would refuse this message: ${why#*: }"; return 1; }      # read back as its reader will, and as dr_seal does
+  dr_post "$B" "$DR/send"; local rc=$?; dr_spent; return $rc
 }
+dr_spent(){ rm -f "$DR/body.txt" "$DR/send.P" "$DR/seal.P" "$DR/seal.sig" "$DR/seal.age" "$DR/seal.query" "$DR/box.json" "$DR/receipt.json"; }      # what a send wrote to post its message, gone once it is posted or refused: the body, the envelope, its seal, the box it was sealed to and the server's receipt. sent/ is the record of what was sent
 dr_agehead(){ if [[ $1 = age1pq1* ]]; then echo 1627; else echo 168; fi; }      # <age recipient> → the size of an age file's header for one key of its type: its fields are fixed-size, so it never varies
 dr_sealed(){ echo $(($(dr_agehead "$2") + 16 + $1 + 16 * ($1 > 65536 ? ($1 + 65535) / 65536 : 1))); }      # <plaintext bytes> <age recipient> → the size of the age file holding them: the header, a 16-byte nonce, and a 16-byte tag after each 64 KiB chunk
 dr_blocks(){ # <size> → the size rounded up to a whole number of blocks. A block is 1/16 of the size, rounded up to a power of two, and never under 1 KiB: 1 KiB blocks up to 16 KiB, 2 KiB up to 32 KiB, and on

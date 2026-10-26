@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"maps"
 	"net/http"
 	"net/http/httptest"
@@ -103,9 +104,59 @@ func randomID() string {
 	return hex.EncodeToString(h[:])
 }
 
-// bare reports whether a send that failed left nothing to post again: there
-// is no outbox.
-func (b *sbox) bare() bool { return !exists(b.file("send.P")) && !exists(b.file("outbox")) }
+// bare reports whether a send left nothing behind: no outbox, and none of
+// the files it wrote to post its message (dr_spent).
+func (b *sbox) bare() bool {
+	for _, f := range []string{"outbox", "body.txt", "send.P", "seal.P", "seal.sig", "seal.age", "seal.query", "box.json", "receipt.json"} {
+		if exists(b.file(f)) {
+			return false
+		}
+	}
+	return true
+}
+
+// A send leaves no copy of its body outside sent/, posted or refused at its
+// post: every file of the box is read, not a list of the files a send
+// writes.
+func TestASendLeavesNoCopyOfItsBody(t *testing.T) {
+	w := newWorld(t)
+	a, b := w.box(), w.box()
+	copies := func(body string) []string {
+		var held []string
+		_ = filepath.WalkDir(a.dir, func(p string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				if d != nil && d.IsDir() && d.Name() == "sent" {
+					return filepath.SkipDir
+				}
+				return err
+			}
+			if s, err := os.ReadFile(p); err == nil && strings.Contains(string(s), body) {
+				held = append(held, strings.TrimPrefix(p, a.dir+string(filepath.Separator)))
+			}
+			return nil
+		})
+		return held
+	}
+	posted := "posted " + randomID()
+	a.mustSend(b, posted)
+	if held := copies(posted); held != nil {
+		t.Errorf("a send that was posted left its body in %v", held)
+	}
+	w.srv.SetMiddle(func(rw http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.Method == http.MethodPost {
+			forge.Refuse(rw, protocol.CodeUnavailable)
+			return
+		}
+		next.ServeHTTP(rw, r)
+	})
+	refused := "refused " + randomID()
+	if r := a.send(b.addr.String(), refused); r.rc == 0 {
+		t.Fatalf("a send the server refused: %v", r)
+	}
+	if held := copies(refused); held != nil {
+		t.Errorf("a send the server refused left its body in %v", held)
+	}
+}
 
 // boxLine is the line init and addr print.
 func (w *world) boxLine(b *sbox) string {
