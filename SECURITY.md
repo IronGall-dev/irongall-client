@@ -56,7 +56,7 @@ Each row is a claim the code makes, the section of `PROTOCOL.md` with the whole 
 
 **Run them:** `README.md` § Tests, which says what each needs and what an `ok` does not tell you.
 
-**What is not tested:** that a release rebuilds byte for byte anywhere but in this repo's own workflow (v0.1.0 was rebuilt by hand once); `age-plugin-pq` against the server's check of a send's stanzas; a box's switch from `--no-pq` to post-quantum by a renewal, against the real server; a restore whose clock reads behind what a server's older record hides, and two machines that make a certificate in one second (`PROTOCOL.md` §5); OpenSSH 9.1 to 10.1 and 10.3p1 to 10.5p1 (the tests run on 10.2p1, and on 10.6p1 with OpenSSL and without), age 1.3.0 and 1.3.1, macOS and BusyBox.
+**What is not tested:** that a release rebuilds byte for byte anywhere but in this repo's own workflow (v0.1.0 was rebuilt by hand once; its `rebuild` job does it for each release since v0.1.1); `age-plugin-pq` against the server's check of a send's stanzas; a box's switch from `--no-pq` to post-quantum by a renewal, against the real server; a restore whose clock reads behind what a server's older record hides, and two machines that make a certificate in one second (`PROTOCOL.md` §5); OpenSSH 9.1 to 10.1 and 10.3p1 to 10.5p1 (the tests run on 10.2p1, and on 10.6p1 with OpenSSL and without), age 1.3.0 and 1.3.1, macOS and BusyBox.
 
 ## Where the rest is
 
