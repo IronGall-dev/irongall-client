@@ -159,9 +159,8 @@ func Open(dir string, opt Options) (*Box, error) {
 // newBox is how every box is made, its directory read or not: its server's
 // URL is held to checkServerURL, and an identity type to the ones this client
 // makes, before anything is done, so Init writes nothing for either, and its
-// HTTP client
-// takes every request through one transport (newTransport) and follows no
-// redirect (followNone).
+// HTTP client takes every request through one transport (newTransport) and
+// follows no redirect (followNone).
 func newBox(dir string, opt Options) (*Box, error) {
 	b := &Box{dir: dir, base: strings.TrimRight(opt.Base, "/"), http: opt.HTTPClient, now: opt.Now, identityType: opt.IdentityType, senderKeyTypes: opt.SenderKeyTypes, waiting: opt.Waiting, slot: make(chan struct{}, 1)}
 	if b.senderKeyTypes == nil {
