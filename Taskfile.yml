@@ -10,7 +10,9 @@
 #                                 summary
 #
 # Needs Task, svu and gh (brew install go-task svu gh), and git signing with
-# SSH (gpg.format ssh, user.signingkey).
+# SSH (gpg.format ssh, user.signingkey the public key): the private key must
+# be in ssh-agent, and only the maintainer, who holds its passphrase, puts
+# it there, for one release at a time.
 version: "3"
 
 tasks:
@@ -38,10 +40,8 @@ tasks:
         msg: "CI has not passed on this commit yet: gh run list --workflow ci.yml"
       - sh: '[ -z "{{.NOTES}}" ] || [ -s "{{.NOTES}}" ]'
         msg: NOTES names no file with anything in it
+      - sh: ssh-add -T "$(git config user.signingkey)"
+        msg: "the signing key is locked: its holder unlocks it for the release (ssh-add -t 15m <private key>)"
     cmds:
-      # The key's passphrase is in the macOS keychain (ssh-add --apple-use-keychain).
-      - cmd: ssh-add -q --apple-load-keychain
-        platforms: [darwin]
-        ignore_error: true
       - git tag -s {{if .NOTES}}-F "{{.NOTES}}"{{else}}-m "dromas {{.NEXT}}"{{end}} {{.NEXT}}
       - git push origin {{.NEXT}}
