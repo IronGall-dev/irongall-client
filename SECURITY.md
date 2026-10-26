@@ -4,7 +4,7 @@ Dromas is built so that nobody has to trust its server. Everything that protects
 
 ## Supported versions
 
-**Dromas is before v1, and only the latest release and the latest commit on `main` are supported.** A fix is a commit on `main`, released as the next patch. The protocol may still change until it is frozen, which we expect by 15 November 2026; what must be settled first is the milestone `M1: protocol freeze`. **Nothing is externally audited yet.**
+**Dromas is before v1, and only the latest release and the latest commit on `main` are supported.** A fix is a commit on `main`, released as the next patch. The protocol may still change until it is frozen, which we expect by 15 November 2026; what must be settled first is the milestone `M1: protocol freeze`.
 
 ## Reporting a vulnerability
 
