@@ -1,8 +1,9 @@
 # The dromas command's releases: on a pushed tag v*, the tag must be signed by
 # a key in .github/allowed_signers and sit on a commit of main that CI passed;
 # then GoReleaser builds it (.goreleaser.yaml) and publishes the archives and
-# checksums.txt as the tag's GitHub release, and every file the checksums name
-# is attested (gh attestation verify <file> -R dromas-dev/dromas-client).
+# checksums.txt, signed with cosign, as the tag's GitHub release, and every
+# file the checksums name is attested (gh attestation verify <file> -R
+# dromas-dev/dromas-client).
 # A tag that fails a check releases nothing. By hand, the same build as a
 # snapshot, published nowhere. Actions are pinned by commit, each with its
 # release beside it, and GoReleaser by its version.
@@ -54,6 +55,7 @@ jobs:
         with:
           go-version: stable
           check-latest: true
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - uses: goreleaser/goreleaser-action@a4f02ab5355a589de60d917a659ce617ed19b3de # v7.3.0
         with:
           distribution: goreleaser
