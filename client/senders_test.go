@@ -695,28 +695,46 @@ func TestARestoredBoxAdoptsItsServersACL(t *testing.T) {
 		})
 	}
 
-	t.Run("with its blocked file", func(t *testing.T) {
-		e := newEnv(t)
-		b, a, _, own := lost(t, e)
-		r := restore(t, e, b)
-		if err := os.WriteFile(filepath.Join(r.Dir(), "blocked"), []byte(a.Address().String()+"\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		e.clock.Add(time.Minute)
-		if _, err := r.Rekey(ctx, ""); err != nil {
-			t.Fatal(err)
-		}
-		for _, f := range []string{"allowed", "policy"} {
-			if _, err := os.Stat(filepath.Join(r.Dir(), f)); !errors.Is(err, os.ErrNotExist) {
-				t.Errorf("a box restored with its blocked file wrote %s: %v", f, err)
+	// Each of the three files alone, as the lost box wrote it (#441 item 2),
+	// and the ACL it makes: under the default policy, which admits all,
+	// allowed changes nothing; policy alone admits only the allowed, who are
+	// none.
+	for _, kept := range []struct {
+		file string
+		want func(own *protocol.ACL) *protocol.ACL
+	}{
+		{"allowed", func(*protocol.ACL) *protocol.ACL { return &protocol.ACL{Allow: protocol.ACLList{Any: true}} }},
+		{"blocked", func(own *protocol.ACL) *protocol.ACL {
+			return &protocol.ACL{Allow: protocol.ACLList{Any: true}, Deny: own.Deny}
+		}},
+		{"policy", func(*protocol.ACL) *protocol.ACL { return &protocol.ACL{} }},
+	} {
+		t.Run("with its "+kept.file+" file", func(t *testing.T) {
+			e := newEnv(t)
+			b, _, _, own := lost(t, e)
+			r := restore(t, e, b)
+			data, err := os.ReadFile(filepath.Join(b.Dir(), kept.file))
+			if err != nil {
+				t.Fatal(err)
 			}
-		}
-		e.clock.Add(25 * time.Hour)
-		want := &protocol.ACL{Allow: protocol.ACLList{Any: true}, Deny: own.Deny}
-		if res := receive(t, r); res.Renewed == nil || !res.ACLReplaced || !e.srv.ACL(b.Address()).SameLists(want) {
-			t.Fatalf("the first renewal of a box restored with its blocked file: %+v; the server holds %+v", res, e.srv.ACL(b.Address()))
-		}
-	})
+			if err := os.WriteFile(filepath.Join(r.Dir(), kept.file), data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			e.clock.Add(time.Minute)
+			if _, err := r.Rekey(ctx, ""); err != nil {
+				t.Fatal(err)
+			}
+			for _, f := range []string{"allowed", "blocked", "policy"} {
+				if _, err := os.Stat(filepath.Join(r.Dir(), f)); f != kept.file && !errors.Is(err, os.ErrNotExist) {
+					t.Errorf("a box restored with its %s file wrote %s: %v", kept.file, f, err)
+				}
+			}
+			e.clock.Add(25 * time.Hour)
+			if res := receive(t, r); res.Renewed == nil || !res.ACLReplaced || !e.srv.ACL(b.Address()).SameLists(kept.want(own)) {
+				t.Fatalf("the first renewal of a box restored with its %s file: %+v; the server holds %+v", kept.file, res, e.srv.ACL(b.Address()))
+			}
+		})
+	}
 }
 
 // What a restored box adopts and no file of it says, a pause (a deny of
