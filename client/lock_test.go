@@ -61,8 +61,15 @@ func TestEveryCommandWaitsForTheLock(t *testing.T) {
 				t.Fatal(err)
 			}
 			var waited atomic.Int32
+			told := make(chan struct{}, 1)
 			opt := e.opts()
-			opt.Waiting = func() { waited.Add(1) }
+			opt.Waiting = func() {
+				waited.Add(1)
+				select {
+				case told <- struct{}{}:
+				default:
+				}
+			}
 			x, err := client.Open(a.Dir(), opt)
 			if err != nil {
 				t.Fatal(err)
@@ -72,10 +79,15 @@ func TestEveryCommandWaitsForTheLock(t *testing.T) {
 			release := holdState(t, a) // another command's
 			done := make(chan error, 1)
 			go func() { done <- f() }()
+			// Released once the command says it waits, never after a guessed
+			// time: on a slow runner a command can take longer than any fixed
+			// pause to reach the lock (KeepRevocation, windows-11-arm).
 			select {
 			case err := <-done:
 				t.Fatalf("ran while another command held the lock: %v", err)
-			case <-time.After(300 * time.Millisecond):
+			case <-told:
+			case <-time.After(10 * time.Second):
+				t.Fatal("never said it waits for the lock")
 			}
 			release()
 			if err := <-done; err != nil {

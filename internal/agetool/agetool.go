@@ -5,6 +5,8 @@
 package agetool
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -29,6 +31,10 @@ func Path() (string, error) {
 	for _, tool := range []string{"age", "age-keygen"} {
 		out, err := exec.Command("go", "tool", "-n", tool).Output() //nolint:gosec // one of the two names above
 		if err != nil {
+			var ee *exec.ExitError
+			if errors.As(err, &ee) {
+				return "", fmt.Errorf("go tool -n %s: %w: %s", tool, err, bytes.TrimSpace(ee.Stderr))
+			}
 			return "", fmt.Errorf("go tool -n %s: %w", tool, err)
 		}
 		dirs = append(dirs, filepath.Dir(strings.TrimSpace(string(out))))
