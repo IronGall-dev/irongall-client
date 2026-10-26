@@ -46,7 +46,7 @@ tasks:
       - sh: '[ -z "{{.NOTES}}" ] || [ -s "{{.NOTES}}" ]'
         msg: NOTES names no file with anything in it
       - sh: ssh-add -T "$(git config user.signingkey)"
-        msg: "the signing key is locked: its holder unlocks it for the release (ssh-add -t 15m <private key>)"
+        msg: "the signing key is locked: its holder unlocks it for the release (ssh-add -t 1h <private key>)"
     cmds:
       - git tag -s {{if .NOTES}}-F "{{.NOTES}}"{{else}}-m "dromas {{.NEXT}}"{{end}} {{.NEXT}}
       - git push origin {{.NEXT}}
