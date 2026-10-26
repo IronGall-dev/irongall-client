@@ -380,6 +380,31 @@ func TestVectorsSignatureForm(t *testing.T) {
 	}
 }
 
+// dr_blob reads a signature's base64 only in its one encoding: padded, and
+// the unused bits of its last character zero, as OpenSSH's decoder holds it.
+// ssh-keygen -Y verify refuses both other forms by itself, so the verdicts
+// TestVectorsSignatureForm compares cannot show the script's own check: this
+// runs dr_blob alone (#478). GNU's base64 -d refuses a set unused bit by
+// itself; where a base64 takes one, the check is what refuses it. Control: it
+// reads every ok-* vector.
+func TestTheScriptReadsASignatureInItsOneEncoding(t *testing.T) {
+	need(t, scriptTools...)
+	oks, _ := filepath.Glob(filepath.Join(vectors, "sig", "ok-*.sig"))
+	if len(oks) < 10 {
+		t.Fatalf("%d sig/ok-* vectors", len(oks))
+	}
+	for _, sig := range oks {
+		if out, err := bash(t, scratch(t), "dr_blob "+abs(t, sig)); err != nil || out == "" {
+			t.Errorf("%s: dr_blob does not read it: %v", filepath.Base(sig), err)
+		}
+	}
+	for _, name := range []string{"bad-padding-bits.sig", "bad-no-padding.sig"} {
+		if _, err := bash(t, scratch(t), "dr_blob "+abs(t, filepath.Join(vectors, "sig", name))); err == nil {
+			t.Errorf("%s: dr_blob reads it", name)
+		}
+	}
+}
+
 func TestVectorsPrekey(t *testing.T) {
 	need(t, scriptTools...)
 	now, setNow := vectorNow(t)
