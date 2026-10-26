@@ -290,25 +290,45 @@ func TestMailFromARevokedSenderIsRefused(t *testing.T) {
 
 // A drain reads each sender's box once, however many of its messages it
 // holds, from senders this box holds no revocation of (PROTOCOL.md §12.3 check
-// 8): the read marks the sender answered (readBox), and judge reads none it
-// has marked. Above, the sender is revoked, so judge asks nothing after its
-// first message, marked or not (#384).
+// 8), whatever the read answered: a box served, no such box, or "revoked"
+// with nothing that verifies (#447). The read marks the sender answered
+// (readBox), and judge reads none it has marked. Above, the sender is
+// revoked, so judge asks nothing after its first message, marked or not
+// (#384).
 func TestADrainReadsEachSendersBoxOnce(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	to, a, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+	none, unproved := e.box(protocol.Classic), e.box(protocol.Classic)
 	for range 3 {
 		send(t, a, to, "from a")
 	}
 	for range 2 {
 		send(t, c, to, "from c")
+		send(t, none, to, "from a box its server says it holds none of")
+		send(t, unproved, to, "from a box its server says is revoked, showing nothing")
 	}
-	op := watch(e, nil)
-	if res := receive(t, to); len(res.Delivered) != 5 {
-		t.Fatalf("delivered %d of 5", len(res.Delivered))
+	op := watch(e, func(w http.ResponseWriter, r *http.Request) bool {
+		switch x, _ := forge.ReadOf(r); x {
+		case none.Address():
+			return answer(w, protocol.CodeNoSuchMailbox)
+		case unproved.Address():
+			return answer(w, protocol.CodeRevoked)
+		}
+		return false
+	})
+	if res := receive(t, to); len(res.Delivered) != 9 {
+		t.Fatalf("delivered %d of 9", len(res.Delivered))
 	}
-	if na, nc := op.count(http.MethodGet, boxPath(a)), op.count(http.MethodGet, boxPath(c)); na != 1 || nc != 1 {
-		t.Errorf("a drain of three messages from one sender and two from another read their boxes %d and %d times, want 1 and 1", na, nc)
+	for name, from := range map[string]*client.Box{
+		"three messages, its box served":          a,
+		"two, its box served":                     c,
+		"two, no such box":                        none,
+		"two, revoked with nothing that verifies": unproved,
+	} {
+		if n := op.count(http.MethodGet, boxPath(from)); n != 1 {
+			t.Errorf("a sender of %s: its box read %d times, want 1", name, n)
+		}
 	}
 }
 
