@@ -286,7 +286,8 @@ func tchar(c byte) bool {
 // folding, strings.EqualFold's and strings.ToLower's, takes characters that
 // are no token's for ASCII letters (U+017F folds to s, the Kelvin sign to
 // k), so a value a token would refuse would read as one. The linter refuses
-// strings.EqualFold (.golangci.yml; #268, #405).
+// EqualFold, ToLower, ToUpper and ToTitle of strings and bytes
+// (.golangci.yml; #268, #405).
 func LowerASCII(s string) string {
 	b := []byte(s)
 	for i, c := range b {
