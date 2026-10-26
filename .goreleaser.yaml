@@ -1,9 +1,10 @@
 # The dromas command's releases, which .github/workflows/release.yml makes
 # from a signed tag: a static binary for each system and architecture below,
-# archived with the licence and README, and checksums.txt, signed with
-# cosign, whose files the workflow attests. Built from the tagged module as
-# Go's module proxy serves it (gomod.proxy), so a release is what go install
-# …@<tag> builds, and with GoReleaser's settings for a reproducible build.
+# archived with the licence and README, an SBOM of each archive, and
+# checksums.txt, signed with cosign, whose files the workflow attests. Built
+# from the tagged module as Go's module proxy serves it (gomod.proxy), so a
+# release is what go install …@<tag> builds, and with GoReleaser's settings
+# for a reproducible build.
 # The BSDs join when CI runs the client on them. goreleaser release
 # --snapshot --clean builds it all into dist/ and publishes nothing.
 version: 2
@@ -58,5 +59,31 @@ signs:
       - "--yes"
     artifacts: checksum
 
+# An SPDX document of each archive, by syft, with GoReleaser's own arguments,
+# named as OpenSSF Scorecard looks for one. checksums.txt names each, so its
+# signature and the attestations cover them.
+sboms:
+  - artifacts: archive
+    documents:
+      - "${artifact}.spdx.json"
+
+# Each commit since the last tag, with its link, as GoReleaser lists its own.
 changelog:
+  use: github
   sort: asc
+
+# The notes open with the signed tag's message past its first line (empty
+# for a plain patch) and close with how to check what was downloaded.
+release:
+  header: "{{ .TagBody }}"
+  footer: |
+    ## Verify
+
+    Built from the signed tag {{ .Tag }} by this repository's release workflow. With gh 2.102.0 or later:
+
+    ```sh
+    gh release verify-asset {{ .Tag }} <file> -R dromas-dev/dromas-client
+    gh attestation verify <file> -R dromas-dev/dromas-client --signer-workflow dromas-dev/dromas-client/.github/workflows/release.yml --source-ref refs/tags/{{ .Tag }}
+    ```
+
+    Or with cosign: `README.md` § Install.
