@@ -310,6 +310,61 @@ func TestAnInitCrashedBeforeItsIdentityIsSyncedRegisters(t *testing.T) {
 	}
 }
 
+// The script syncs in the order its crash safety rests on, as a sync and an
+// mv that log each call read it (#444 item 2): dr_prekey puts the working
+// key, its certificate and their directory on disk before the prekey, its
+// statement and its signature, so a signed statement is never on disk
+// without the key its pass needs (#291); dr_forget puts a raised floor on
+// disk and in place before it syncs the new replay set and moves it into
+// place, so a crash leaves the old set or the new one, never an empty one,
+// under a floor at least as high (#240).
+func TestTheScriptSyncsInItsOrder(t *testing.T) {
+	w := newWorld(t)
+	b := w.box()
+	// calls runs commands with sync and mv logged, and returns each call
+	// fn made, its paths relative to the box.
+	calls := func(fn, commands string) []string {
+		t.Helper()
+		log := filepath.Join(t.TempDir(), "log")
+		b.must("LOG=" + log + `
+sync(){ printf '%s sync %s\n' "${FUNCNAME[1]}" "$*" >> "$LOG"; command sync "$@"; }
+mv(){ printf '%s mv %s\n' "${FUNCNAME[1]}" "$*" >> "$LOG"; command mv "$@"; }
+` + commands)
+		data, err := os.ReadFile(log) //nolint:gosec // the test's own log
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, l := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+			if c, ok := strings.CutPrefix(l, fn+" "); ok {
+				got = append(got, strings.ReplaceAll(strings.ReplaceAll(c, b.dir+"/", ""), b.dir, "."))
+			}
+		}
+		return got
+	}
+
+	got := calls("dr_prekey", "dr_rekey")
+	n := strconv.FormatUint(b.num(), 10)
+	if want := []string{
+		"sync work/" + n + " work/" + n + ".pub work/" + n + "-cert.pub work",
+		"sync prekeys/" + n + ".agekey prekeys/" + n + ".txt prekeys/" + n + ".made prekeys/" + n + ".txt.sig prekeys",
+	}; !slices.Equal(got, want) {
+		t.Errorf("dr_prekey's syncs:\n%q\nwant\n%q", got, want)
+	}
+
+	now := time.Now().Unix()
+	if err := os.WriteFile(b.file("seen"), []byte("aa 100 x y\nbb "+strconv.FormatInt(now, 10)+" x z\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got = calls("dr_forget", "dr_forget "+strconv.FormatInt(now, 10))
+	if want := []string{"sync seen-floor.new", "mv seen-floor.new seen-floor", "sync .", "sync seen.new", "mv seen.new seen", "sync ."}; !slices.Equal(got, want) {
+		t.Errorf("dr_forget's syncs and moves:\n%q\nwant\n%q", got, want)
+	}
+	if !strings.HasPrefix(b.read("seen"), "bb ") || strings.Count(b.read("seen"), "\n") != 1 || b.read("seen-floor") == "" {
+		t.Errorf("dr_forget left the set %q under the floor %q", b.read("seen"), b.read("seen-floor"))
+	}
+}
+
 // .gitignore is written beside and moved into place, as every file a box
 // keeps is, so a crash leaves the old file or the new one (#239): each write
 // is a new file, never one written in place.
