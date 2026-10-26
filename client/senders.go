@@ -154,13 +154,17 @@ func (b *Box) addAll(name string, addrs []protocol.Address) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	seen := make(map[protocol.Address]bool, len(have)+len(addrs))
+	for _, a := range have {
+		seen[a] = true
+	}
 	var lines []byte
 	n := 0
 	for _, a := range addrs {
-		if slices.Contains(have, a) {
+		if seen[a] {
 			continue
 		}
-		have = append(have, a)
+		seen[a] = true
 		lines = append(lines, a.String()+"\n"...)
 		n++
 	}
