@@ -123,6 +123,49 @@ func TestRecvRenewsNothingAboveAStatementTheBoxDidNotMake(t *testing.T) {
 	}
 }
 
+// seal holds a send by the record of the box's last read of itself
+// (noteServed, which only known writes), and a send makes no such read: a
+// statement signed with the box's own working key, served since that read,
+// lets a send through, and once a read of itself has shown it (revocation
+// ask of its own address), the next send waits (#442 item 1).
+func TestASendIsHeldByTheBoxsLastReadOfItself(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	e := newEnv(t)
+	b, to := e.box(protocol.PostQuantum), e.box(protocol.PostQuantum)
+	n := numberOf(t, b)
+	st, _ := e.srv.Prekey(b.Address())
+	p, err := protocol.ParsePrekey(st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Serial, p.Key = n+5, k.Recipient().String()
+	sig, err := protocol.Sign(worker(t, b), p.Statement(), protocol.PrekeyNamespace(b.Address()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.Method == http.MethodGet && r.URL.Path == boxPath(b) {
+			fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: b.Identity().Document(), Prekey: p.Statement(), PrekeySignature: sig})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	if _, err := b.Send(ctx, to.Address(), "before the box has read itself"); err != nil {
+		t.Fatalf("a send before the box has read the statement: %v", err)
+	}
+	if _, err := b.Ask(ctx, b.Address()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Send(ctx, to.Address(), "once the box has read itself"); err == nil || !strings.Contains(err.Error(), "someone else holds the working key") {
+		t.Fatalf("a send once the box has read the statement: %v", err)
+	}
+}
+
 // A renewal the server took, and a fault of the box after it, is a renewal
 // taken: Rekey and the remedy return the new prekey with the fault, and the
 // box holds it as the one it published (#110).
