@@ -2,6 +2,8 @@ package protocol
 
 import (
 	"bytes"
+	"encoding/base64"
+	"encoding/binary"
 	"errors"
 	"os"
 	"os/exec"
@@ -18,7 +20,8 @@ import (
 // age decrypts each message with its prekey's published test identity to
 // exactly its plaintext, and with the other box's not at all; head and sed split that plaintext into the line and
 // its signature; ssh-keygen reads each certificate and verifies each signature
-// under it, at the vectors' time; and sha256sum gives each address. Nothing
+// under it, at the vectors' time, and each certificate file is the one its
+// signatures carry; and sha256sum gives each address. Nothing
 // from this package reads a vector here: the namespaces are the spec's.
 func TestVectorsByToolsNotOurs(t *testing.T) {
 	dir, err := filepath.Abs(vectors)
@@ -142,10 +145,67 @@ func TestVectorsByToolsNotOurs(t *testing.T) {
 				t.Errorf("%s over %s: %v", sig, msg, err)
 			}
 		}
+		// A signature carries its certificate and ssh-keygen verifies under that
+		// one, while -L reads the .pub alone: so each .pub is held to the
+		// certificate its signatures carry, byte for byte, read with the standard
+		// library alone (#444 item 3). carried is the key a signature carries.
+		carried := func(t *testing.T, sig string) []byte {
+			t.Helper()
+			_, body, begun := strings.Cut(string(file(t, sig)), "-----BEGIN SSH SIGNATURE-----")
+			body, _, ended := strings.Cut(body, "-----END SSH SIGNATURE-----")
+			blob, err := base64.StdEncoding.DecodeString(strings.Join(strings.Fields(body), ""))
+			if !begun || !ended || err != nil || len(blob) < 14 || string(blob[:6]) != "SSHSIG" {
+				t.Fatalf("%s is not an armored SSHSIG", sig)
+			}
+			n := uint64(binary.BigEndian.Uint32(blob[10:14]))
+			if uint64(len(blob)-14) < n {
+				t.Fatalf("%s: its key is cut short", sig)
+			}
+			return blob[14 : 14+n]
+		}
+		// keyType is the type a key in SSH's wire form names first.
+		keyType := func(k []byte) string {
+			if len(k) < 4 || uint64(len(k)-4) < uint64(binary.BigEndian.Uint32(k)) {
+				return ""
+			}
+			return string(k[4 : 4+binary.BigEndian.Uint32(k)])
+		}
+		carries := func(t *testing.T, pub, sig string) {
+			t.Helper()
+			f := strings.Fields(string(file(t, pub)))
+			if len(f) < 2 {
+				t.Fatalf("%s is not a key line", pub)
+			}
+			cert, err := base64.StdEncoding.DecodeString(f[1])
+			if err != nil || !bytes.Equal(carried(t, sig), cert) {
+				t.Errorf("%s does not carry the certificate in %s", sig, pub)
+			}
+		}
+		// Every signature in a box's directory that carries a certificate carries
+		// that box's work-cert.pub; message/ holds A's. The rest carry the bare
+		// identity, verified below.
+		for box, sigs := range map[string]string{"a": "a/*.sig", "b": "b/*.sig", "c": "c/*.sig", "message": "message/*.sig"} {
+			owner, certified := box, 0
+			if box == "message" {
+				owner = "a"
+			}
+			for _, s := range globIn(t, dir, sigs) {
+				if strings.HasSuffix(keyType(carried(t, s)), "-cert-v01@openssh.com") {
+					carries(t, owner+"/work-cert.pub", s)
+					certified++
+				}
+			}
+			if certified == 0 {
+				t.Errorf("%s: no signature carries a certificate", sigs)
+			}
+		}
 		for _, c := range []string{"a/work-cert.pub", "b/work-cert.pub", "c/work-cert.pub"} {
 			if _, err := run(t, nil, "ssh-keygen", "-L", "-f", c); err != nil {
 				t.Errorf("ssh-keygen -L %s: %v", c, err)
 			}
+		}
+		for _, c := range globIn(t, dir, "cert/*.pub") {
+			carries(t, c, strings.TrimSuffix(c, ".pub")+".sig")
 		}
 		ns := func(tag, box string) string { return tag + ":" + address(t, box) }
 		for _, box := range []string{"a", "b", "c"} {
