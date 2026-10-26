@@ -94,7 +94,7 @@ Forward secrecy, padding, accounts and the rest: `PROTOCOL.md`.
 
 | `type` | Printed by | Members |
 |---|---|---|
-| `mail` | `recv`, `peer allow`, `show` | `id`, then `envelope`, the envelope's checked fields: `v`, `from`, `to`, `sent_at`, `msg_id`, `body`, and `subject`, `in_reply_to`, `supersedes` when set. `inbox/<id>.json` keeps the `envelope`, and `sent/` keeps it beside the server's `receipt`. Its strings escape every character nobody sees, Unicode's `Default_Ignorable_Code_Point`, and each line break but LF: the same value, with nothing hidden in it |
+| `mail` | `recv`, `peer allow`, `show` | `id`, then `envelope`, the envelope's checked fields: `v`, `from`, `to`, `sent_at`, `msg_id`, `body`, and `subject`, `in_reply_to`, `supersedes` when set. `inbox/<id>.json` is the envelope alone, and `sent/` keeps it as `envelope`, beside the server's `receipt`. Its strings escape every character nobody sees, Unicode's `Default_Ignorable_Code_Point`, and each line break but LF: the same value, with nothing hidden in it |
 | `mail_headers` | `recv --headers` | in each `mail` line's place, with none of the text the sender chose: `id`; `envelope`, with no body or subject: `v`, `from`, `to`, `sent_at`, `msg_id`, `in_reply_to` and `supersedes` when each has a `msg_id`'s form; and `body_size`, the body's bytes. `dromas show <id>` prints the `mail` line |
 | `refused` | `recv` | `id`, `code` (below), `message`. The message is kept in `quarantine/` |
 | `held`, `dropped`, `duplicate` | `recv` | `id`; `held` (kept in `held/`) has `from`. `dropped` is mail from a sender this box blocked |
