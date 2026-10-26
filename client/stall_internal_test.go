@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -68,6 +70,39 @@ func cutOrGiveUp(r *http.Request) error {
 	}
 }
 
+// timeline records when each read of a body returned, and what it got, so
+// a test of a timed bound can say which wait ran long when it fails.
+type timeline struct {
+	start time.Time
+	mu    sync.Mutex
+	b     strings.Builder
+}
+
+// of is body, each read of it recorded.
+func (l *timeline) of(body io.ReadCloser) io.ReadCloser { return timedBody{body, l} }
+
+func (l *timeline) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.b.Len() == 0 {
+		return "none"
+	}
+	return l.b.String()
+}
+
+type timedBody struct {
+	io.ReadCloser
+	l *timeline
+}
+
+func (b timedBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	b.l.mu.Lock()
+	fmt.Fprintf(&b.l.b, "%s %d %v; ", time.Since(b.l.start).Round(time.Millisecond), n, err)
+	b.l.mu.Unlock()
+	return n, err
+}
+
 func created() *http.Response {
 	return &http.Response{StatusCode: http.StatusCreated, Header: http.Header{}, Body: io.NopCloser(strings.NewReader("{}"))}
 }
@@ -78,15 +113,18 @@ func created() *http.Response {
 func TestAPostRunsWhileItsBytesMove(t *testing.T) {
 	shortBound(t)
 	body := bytes.Repeat([]byte{1}, 64<<10)
+	var reads timeline
 	moving := slowBox(t, func(r *http.Request) (*http.Response, error) {
+		r.Body = reads.of(r.Body)
 		if _, err := readsEvery(r, 4<<10, stallBound/4); err != nil {
 			return nil, err
 		}
 		return created(), nil
 	})
 	start := time.Now()
+	reads.start = start
 	if _, err := moving.exchange(context.Background(), http.MethodPost, "/v1/x/messages", &ciphertext{bytes: body}, nil, nil); err != nil {
-		t.Fatalf("a post whose bytes kept moving, after %s: %v", time.Since(start), err)
+		t.Fatalf("a post whose bytes kept moving, after %s: %v; the server's reads, from the start: %s", time.Since(start), err, reads.String())
 	}
 	if took := time.Since(start); took < 3*stallBound {
 		t.Fatalf("the slow link took %s, too little to show the bound is not on the whole", took)
