@@ -180,7 +180,8 @@ func TestAServerIsCalledOverHTTPSOrOnThisMachine(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	const refusal = "is not a server this client calls"
-	// Publish needs no box, so only the check of each call holds it.
+	// Publish and Revoke need no box, so only the check of each call holds
+	// them.
 	rec, err := newEnv(t).box(protocol.Classic).Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -207,6 +208,9 @@ func TestAServerIsCalledOverHTTPSOrOnThisMachine(t *testing.T) {
 		}
 		if _, err := client.Publish(ctx, opt, rec); err == nil || !strings.Contains(err.Error(), refusal) {
 			t.Errorf("%q: Publish: %v", u, err)
+		}
+		if _, err := client.Revoke(ctx, opt, rec); err == nil || !strings.Contains(err.Error(), refusal) {
+			t.Errorf("%q: Revoke: %v", u, err)
 		}
 		if rt.n != 0 {
 			t.Errorf("%q: %d requests made", u, rt.n)

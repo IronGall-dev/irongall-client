@@ -22,6 +22,7 @@ func TestNoProxyForThisMachine(t *testing.T) {
 	for host, direct := range map[string]bool{
 		"localhost": true, "LOCALHOST": true, "LocalHost": true, "127.0.0.1": true, "127.1.2.3": true, "[::1]": true,
 		"dromas.dev": false, "localhost.example": false, "128.0.0.1": false,
+		"localhoſt": false, // U+017F, which Unicode's case folding reads as s (#433)
 	} {
 		r, _ := http.NewRequest(http.MethodGet, "https://"+host+":8443/v1/x", nil)
 		got, err := tr.Proxy(r)
