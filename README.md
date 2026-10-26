@@ -146,6 +146,7 @@ A server's error is an `error` line with its `status`, its `code`, the `retry_af
 
 ```sh
 bash sh/dromas.sh init                    # prints this box's link (init --no-pq: a box age 1.2 can reach)
+bash sh/dromas.sh addr                    # prints this box's link again
 echo hello | bash sh/dromas.sh send <link>
 bash sh/dromas.sh recv                    # a JSON line for each message, as the Go client prints
 bash sh/dromas.sh prekey renew            # at least monthly

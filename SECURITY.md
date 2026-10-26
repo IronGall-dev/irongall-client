@@ -61,7 +61,6 @@ Each row is a claim the code makes, the section of `PROTOCOL.md` with the whole 
 ## Where the rest is
 
 - **The threat model, what a server sees and can and cannot do, and the residual risks:** `PROTOCOL.md` §15. For whoever runs a box, in short: `README.md` § No Server Trust.
-- **The questions where an outside cryptographer's view would change the design most:** #35.
 - **What is not built, or not decided:** the open issues; those that could change the wire are in the milestone `M1: protocol freeze`.
 - **Every design decision beside the standard or system that does the same:** `PRECEDENTS.md`.
 - **The server's limits, and where each is weak:** dromas-server's [`LIMITS.md`](https://github.com/dromas-dev/dromas-server/blob/main/LIMITS.md).
