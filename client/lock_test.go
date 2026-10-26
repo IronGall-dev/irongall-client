@@ -532,13 +532,18 @@ func TestAWaitForTheSlotEndsWithItsContext(t *testing.T) {
 // A command that waits for the box's lock goes before readings that come
 // after it, however they overlap: two readings back to back held a Receive
 // back past its patience, since a flock gives a waiting writer no preference
-// (#344).
+// (#344). Each reading is had too: one refused would leave the Receive alone
+// (#452). Where the system has no gate there is no preference to hold.
 func TestAWaitingCommandGoesBeforeReadingsThatOverlap(t *testing.T) {
+	if !client.HasGate(t) {
+		t.Skip("this system has no gate (gate_other.go): a waiting writer has no preference here")
+	}
 	client.SetLockPatience(t, 5*time.Second)
 	e := newEnv(t)
 	b := e.box(protocol.Classic)
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
+	var refused atomic.Int64
 	for range 2 {
 		r, err := client.Open(b.Dir(), e.opts())
 		if err != nil {
@@ -551,15 +556,24 @@ func TestAWaitingCommandGoesBeforeReadingsThatOverlap(t *testing.T) {
 					return
 				default:
 				}
-				_, _ = r.Status(context.Background())
+				if _, err := r.Status(context.Background()); err != nil {
+					refused.Add(1)
+				}
 			}
 		})
 	}
-	defer func() { close(stop); wg.Wait() }()
+	stopped := sync.OnceFunc(func() { close(stop); wg.Wait() })
+	defer stopped()
 	time.Sleep(200 * time.Millisecond)
 	start := time.Now()
-	if _, err := b.Receive(context.Background()); err != nil || time.Since(start) > 2*time.Second {
-		t.Fatalf("a Receive beside two readings back to back: %v after %v", err, time.Since(start))
+	_, err := b.Receive(context.Background())
+	took := time.Since(start)
+	stopped() // every reading's error counted
+	if err != nil || took > 2*time.Second {
+		t.Fatalf("a Receive beside two readings back to back: %v after %v", err, took)
+	}
+	if n := refused.Load(); n != 0 {
+		t.Errorf("%d readings beside the Receive were refused", n)
 	}
 }
 
