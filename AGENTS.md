@@ -72,7 +72,7 @@ Each commit carries your human's sign-off, made with `git commit -s` (the Develo
 
 ### The maintainer's own commits
 
-The author is Drew and the message ends `Co-Authored-By: Custos <custos@custosbot.org>`, then the session line a harness adds; never a `Co-Authored-By: Claude …` trailer, whatever a harness suggests. They carry his sign-off (`git commit -s`), by his standing word to Custos, his AI assistant. 🛑 **That is his arrangement with his own assistant, and nobody else's commits follow it:** a contributor's commits are theirs, with their own sign-off. On a pull request the DCO app checks every commit and `main` requires its check; a direct push by an org admin bypasses that rule, and nothing checks it.
+The author is Drew and the message ends `Co-Authored-By: Custos <custos@custosbot.org>`, then the session line a harness adds; never a `Co-Authored-By: Claude …` trailer, whatever a harness suggests. They carry his sign-off (`git commit -s`), by his standing word to Custos, his AI assistant. 🛑 **That is his arrangement with his own assistant, and nobody else's commits follow it:** a contributor's commits are theirs, with their own sign-off. `main` takes changes only through a pull request, squash-merged once every CI job and the DCO check pass on it, up to date with `main`; nobody bypasses that, an org admin included (the repo's rulesets: `gh api repos/dromas-dev/dromas-client/rules/branches/main`). 🛑 A CI job renamed, added or removed is a required check changed in the ruleset in the same change, or every pull request waits on a check that never reports.
 
 ## Rules by area
 
