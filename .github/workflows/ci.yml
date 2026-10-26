@@ -94,9 +94,11 @@ jobs:
 
   fuzz-targets:
     # The fuzz targets, listed from the code: once a week, or by hand, never on
-    # a push, a pull request or the daily run. In two weeks of daily and
-    # per-push runs fuzzing found no defect, so it runs long and seldom.
-    if: github.event.schedule == '47 6 * * 0' || github.event_name == 'workflow_dispatch'
+    # a push, a pull request, the daily run or a call from release.yml (whose
+    # own event a called workflow sees: so the workflow's name, ci, is
+    # checked). In two weeks of daily and per-push runs fuzzing found no
+    # defect, so it runs long and seldom.
+    if: github.event.schedule == '47 6 * * 0' || (github.event_name == 'workflow_dispatch' && github.workflow == 'ci')
     runs-on: ubuntu-26.04
     outputs:
       targets: ${{ steps.list.outputs.targets }}
