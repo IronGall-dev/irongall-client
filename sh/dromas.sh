@@ -594,7 +594,7 @@ dr_drain(){ # stops at a transient error or a fault of this box, leaving the res
 dr_one(){ # <me> <id> <its list entry> → 0 once the message is judged and its verdict is on disk; 1 on a transient error or a fault of this box, so it is not acked. The fetch answers the ciphertext alone, of the size the list gives; who sent it, on the server's word, and when, are the list entry's
   local B=$1 id=$2 m="$DR/msg" A why rc h z
   rm -f "$m.json" "$m.age" "$m.sig" "$m.P" "$m.T" "$m.doc"
-  cp "$3" "$m.json" && z=$(jq -r '.size // 0' "$m.json") || return 1      # an integer from 0 to 2^53 - 1, or null, which is 0 (dr_shape)
+  cp "$3" "$m.json" && z=$(jq -r '.size // 0' "$m.json") || return 1      # an integer from 0 to 16 MiB, the protocol's largest ciphertext, or null, which is 0 (dr_shape's list; PROTOCOL.md §11.10)
   if dr_owner GET "/v1/$B/messages/$id" "" --max-filesize $((z > 0 ? z : 1)) > "$m.age"; then :      # no more than the list says it holds, and every size up to 16 MiB, the protocol's largest ciphertext, which every reader takes; the list's form holds the size to it (dr_shape; PROTOCOL.md §11.10, §12.3)
   elif [ "$(dr_code)" = no_such_message ]; then return 0      # already gone
   elif [[ $(dr_status) != 2?? ]]; then return 1; fi      # a 2xx that curl cut short is a body past its size
