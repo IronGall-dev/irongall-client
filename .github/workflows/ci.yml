@@ -160,8 +160,8 @@ jobs:
         run: git ls-files --others --exclude-standard -- '*testdata/fuzz/*' | xargs -r tail -n +1
 
   server:
-    # dromas-server builds against this checkout (its go.mod replaces the
-    # client module with ../dromas-client), so a change here is a change there.
+    # dromas-server requires a release of this module; a go.work over the two
+    # checkouts builds it against this commit, so a change here is a change there.
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     steps:
@@ -181,6 +181,8 @@ jobs:
           cache-dependency-path: |
             dromas-client/go.sum
             dromas-server/go.sum
+      - name: workspace
+        run: go work init ./dromas-server ./dromas-client
       - name: check
         # dromas-server's own scripts/check.sh: its tests and test/interop.sh, against this commit
         working-directory: dromas-server
