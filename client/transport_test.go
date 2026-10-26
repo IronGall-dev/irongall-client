@@ -3,7 +3,9 @@ package client_test
 import (
 	"context"
 	"crypto/tls"
+	"encoding/binary"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -249,7 +251,11 @@ func TestACallWithNoAnswerSaysWhatKind(t *testing.T) {
 	alerting.TLS = &tls.Config{ClientAuth: tls.RequireAnyClientCert, MinVersion: tls.VersionTLS13}
 	alerting.StartTLS()
 	t.Cleanup(alerting.Close)
-	// A server that answers neither TLS nor HTTP.
+	// A server that answers neither TLS nor HTTP. It reads the whole of the
+	// client's first record, a ClientHello larger than any small buffer
+	// (1,505 bytes from Go 1.27's), before it answers: a socket closed with
+	// bytes unread sends a reset, which on Windows can discard the answer
+	// before the client reads it.
 	garbled, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -261,7 +267,10 @@ func TestACallWithNoAnswerSaysWhatKind(t *testing.T) {
 			if err != nil {
 				return
 			}
-			_, _ = c.Read(make([]byte, 512))
+			hdr := make([]byte, 5)
+			if _, err := io.ReadFull(c, hdr); err == nil {
+				_, _ = io.CopyN(io.Discard, c, int64(binary.BigEndian.Uint16(hdr[3:])))
+			}
 			_, _ = c.Write([]byte("\x00\x01\x02\x03\x04 neither TLS nor HTTP\r\n"))
 			_ = c.Close()
 		}
@@ -295,7 +304,7 @@ func TestACallWithNoAnswerSaysWhatKind(t *testing.T) {
 		_, err = at.Send(c.ctx, to.Address(), "x")
 		var dial *net.OpError
 		if err == nil || !strings.Contains(err.Error(), read+c.kind) || c.is != nil && !errors.Is(err, c.is) || c.base == closed && !errors.As(err, &dial) {
-			t.Errorf("%s: %v", c.name, err)
+			t.Errorf("%s: %v (from %v)", c.name, err, errors.Unwrap(err))
 		}
 	}
 }
