@@ -111,9 +111,9 @@ func (b *Box) known(ctx context.Context) (*own, error) {
 		}
 	}
 	if o.at == atServed {
-		// Its own record, so judged as one: whether this identity ever
-		// certified the key that signed it, even if that certificate has since
-		// ended.
+		// Its own record, so judged as one: whether this identity certified
+		// the key that signed it, by every rule but its certificate's dates
+		// (CheckCertificateRecord).
 		o.statement, o.cert, o.bad = protocol.VerifyPrekeyRecord(b.id, br.Prekey, br.PrekeySignature)
 		if o.bad == nil {
 			if err := b.noteServed(o, br.Prekey); err != nil {

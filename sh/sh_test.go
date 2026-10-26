@@ -567,7 +567,13 @@ var answerTypes = map[string]func() any{
 // answerRead are the answer/ vectors the script refuses: those that are not one
 // object, or break a member the script reads (a byte member it decodes, an id
 // or a size it uses, the cursor it puts in a query). Every other bad-* vector
-// breaks a member it never reads, and is the Go client's to refuse.
+// is the Go client's to refuse, and breaks a member the script never reads but
+// in two, which name a member it reads twice: jq takes the last, where the Go
+// client refuses the text (PROTOCOL.md §3.3). Neither difference guards any of
+// the five. In record-bad-identity-twice the address comes from the identity
+// the script read, which must hash to the address asked about and sign the
+// record; in problem-bad-code-twice the code is held to its status and type,
+// and a server that wrote both codes could have written either alone.
 var answerRead = map[string]bool{
 	"box-bad-prekey-a-number": true, "box-bad-revoked-certificates-a-number": true, "box-bad-signature-unpadded": true,
 	"list-bad-cursor-a-number": true, "list-bad-cursor-a-percent": true, "list-bad-cursor-a-slash": true, "list-bad-cursor-empty": true,

@@ -329,8 +329,9 @@ func (b *Box) readBox(ctx context.Context, a protocol.Address, l *lookups) (*pro
 	case code(err) != protocol.CodeRevoked && code(err) != protocol.CodeNoSuchMailbox:
 		return nil, false, err
 	}
-	// The box's own server has answered, whatever it served and whoever
-	// reads the box: a send at each post, a drain, a post's refusal checked.
+	// The box's own server has answered, whatever it served: with l, a is
+	// marked answered in the command, whichever read it here (resolve, at
+	// each post of a send; lookupRevocation, in a drain or a question).
 	if l != nil {
 		l.answered[a] = true
 	}
@@ -826,8 +827,9 @@ func named(method, path string) (a protocol.Address, read, ok bool) {
 // one drain, or one question.
 type lookups struct {
 	// answered are the addresses this command has its server's answer
-	// about: a drain asks nothing more about them, and a send reads their
-	// box at each post.
+	// about, each marked as resolve or lookupRevocation reads it. Only
+	// judge reads the marks, and a drain asks nothing more about them; a
+	// send's resolve reads the box at each post whatever is marked.
 	answered map[protocol.Address]bool
 }
 
