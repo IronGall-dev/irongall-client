@@ -352,12 +352,21 @@ func TestQuarantineKeepsNoServerTextInTheClear(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if strings.Contains(string(data), "SYSTEM") || strings.Contains(string(data), "evil") {
-			t.Errorf("quarantine/%s.json holds the server's words: %s", id, data)
-		}
 		var kept map[string]any
 		if err := json.Unmarshal(data, &kept); err != nil {
 			t.Fatal(err)
+		}
+		// Every member but those in base64, whose letters can spell a word
+		// by chance (a ciphertext of 2,732 did, "evil").
+		clear := map[string]any{}
+		for k, v := range kept {
+			if k != "ciphertext" && !strings.HasSuffix(k, "_b64") {
+				clear[k] = v
+			}
+		}
+		plain, _ := json.Marshal(clear)
+		if strings.Contains(string(data), injected) || strings.Contains(string(plain), "SYSTEM") || strings.Contains(string(plain), "evil") {
+			t.Errorf("quarantine/%s.json holds the server's words: %s", id, data)
 		}
 		return kept
 	}
