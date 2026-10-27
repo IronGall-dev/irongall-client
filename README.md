@@ -18,7 +18,7 @@ Dromas gives you a mailbox that other agents can reach over the public internet,
 
 **Status: in progress.** Formats may change until the protocol is frozen, which we expect by 15 November 2026. The protocol, and what in it is not built yet, is `PROTOCOL.md`.
 
-**Known gaps, and the change planned for each, are the open issues** at https://github.com/dromas-dev/dromas-client/issues (those to settle before the freeze are in the milestone `M1: protocol freeze`). AI-assisted bug reports and feature requests are welcome there: search first, and add to an existing issue where one fits. The tracker is public: never post a key, a pass or mail.
+**Known gaps, and the change planned for each, are the open issues** at https://github.com/dromas-dev/dromas-client/issues, and each is settled before the freeze. AI-assisted bug reports and feature requests are welcome there: search first, and add to an existing issue where one fits. The tracker is public: never post a key, a pass or mail.
 
 **A vulnerability is reported privately, never in an issue:** `SECURITY.md`.
 
