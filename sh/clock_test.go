@@ -150,7 +150,7 @@ func TestScriptSendsAndReadsByItsClock(t *testing.T) {
 		t.Error("the kept pass was used after the clock went back")
 	}
 	l := p.line(q.addr, "00000000-0000-4000-8000-0000000000f1", "dated ahead", -3700*time.Second)
-	w.inject(q, p.addr, "", l, p.sign(q.addr, l))
+	w.inject(q, "", l, p.sign(q.addr, l))
 	if d := q.recv(); len(d.mail) != 0 || !strings.Contains(d.said, "future: sent_at is more than 60 minutes ahead") {
 		t.Errorf("sent_at more than an hour ahead of the reader's clock: %v", d)
 	}
@@ -164,14 +164,14 @@ func TestScriptKeepsItsReplaySetByItsClock(t *testing.T) {
 	p, q := w.box(), w.box()
 	l := p.line(q.addr, "00000000-0000-4000-8000-0000000000f2", "pay invoice 7 once", 33*24*time.Hour-49*time.Minute)
 	sig := p.sign(q.addr, l)
-	oid := w.inject(q, p.addr, "", l, sig)
+	oid := w.inject(q, "", l, sig)
 	if d := q.recv(); d.rc != 0 || !slices.Equal(d.bodies(), []string{"pay invoice 7 once"}) {
 		t.Fatalf("the first delivery: %v", d)
 	}
 	if d := (at{q, 50 * time.Minute}).recv(); d.rc != 0 { // 33 days and a minute old by this clock, which a server takes
 		t.Fatalf("a drain 50 minutes fast: %v", d)
 	}
-	w.inject(q, p.addr, oid, l, sig)
+	w.inject(q, oid, l, sig)
 	if d := (at{q, -9 * time.Minute}).recv(); len(d.mail) != 0 || d.rc != 0 || !strings.Contains(q.read("seen"), oid+" ") || q.has("seen-floor") {
 		t.Errorf("the server's replay of it after the clock stepped back: %v", d)
 	}
@@ -189,13 +189,13 @@ func TestScriptKeepsItsReplaySetByItsClock(t *testing.T) {
 	}
 	writeFile(t, q.file("seen-floor"), fmt.Appendf(nil, "%d\n", time.Now().Unix()+100))
 	under := p.line(q.addr, "00000000-0000-4000-8000-0000000000f4", "under the floor", 0)
-	w.inject(q, p.addr, "", under, p.sign(q.addr, under))
+	w.inject(q, "", under, p.sign(q.addr, under))
 	if d := q.recv(); len(d.mail) != 0 || !strings.Contains(d.said, "stale: sent_at is before this box's replay set reaches back to") {
 		t.Errorf("mail under the floor: %v", d)
 	}
 	writeFile(t, q.file("seen-floor"), []byte("soon\n"))
 	none := p.line(q.addr, "00000000-0000-4000-8000-0000000000f5", "a floor that names no time", 0)
-	w.inject(q, p.addr, "", none, p.sign(q.addr, none))
+	w.inject(q, "", none, p.sign(q.addr, none))
 	if d := q.recv(); d.rc == 0 || len(d.mail) != 0 || !strings.Contains(d.said, "seen-floor names no time") || w.srv.Count(q.addr) != 1 {
 		t.Errorf("a seen-floor that names no time: %v", d)
 	}

@@ -212,7 +212,7 @@ jq -cn --arg i "$(dr_b64 "$DR/identity.doc")" --arg s "$(dr_b64 "$W/wk.sig")" '{
 	// The operator then hides the revocation, and delivers mail that sender's
 	// working key signed, which its certificate still covers.
 	late := rd.line(ra.addr, "00000000-0000-4000-8000-00000000d001", "signed with a key that still verifies", 0)
-	w.inject(ra, rd.addr, "", late, rd.sign(ra.addr, late))
+	w.inject(ra, "", late, rd.sign(ra.addr, late))
 	forge.Hides(t, w.srv)
 	if d := ra.recv(); len(d.mail) != 0 || d.refused("revoked") != 1 {
 		t.Errorf("a kept revocation against a server that hides it: %v", d)
@@ -343,7 +343,7 @@ func TestScriptAfterAWorkingKeyIsTaken(t *testing.T) {
 	}
 	thief := func(to *sbox, msgID, body string) {
 		l := envelope(t, cb.addr, to.addr, []byte(cb.read("identity.doc")), msgID, body, 0)
-		w.inject(to, cb.addr, "", l, w.signWith(taken+"-cert.pub", to.addr, l))
+		w.inject(to, "", l, w.signWith(taken+"-cert.pub", to.addr, l))
 	}
 	thief(ca, "00000000-0000-4000-8000-00000000c001", "signed by the thief, before the revocation")
 	if d := ca.recv(); !slices.Equal(d.bodies(), []string{"signed by the thief, before the revocation"}) {

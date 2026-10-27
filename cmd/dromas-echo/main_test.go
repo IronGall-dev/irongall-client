@@ -213,7 +213,7 @@ func TestEchoNeverAnswersARefusal(t *testing.T) {
 	ct := []byte("not age, and not signed by a")
 	h := sha256.Sum256(ct)
 	id := hex.EncodeToString(h[:])
-	e.srv.Inject(x.b.Address(), id, a.Address(), ct)
+	e.srv.Inject(x.b.Address(), id, ct)
 	x.once(context.Background())
 	if e.srv.Count(x.b.Address()) != 0 {
 		t.Fatal("the refused message was not acked")

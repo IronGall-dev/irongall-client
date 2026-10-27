@@ -232,11 +232,10 @@ func (e *env) line(doc []byte, from, to protocol.Address, body string) []byte {
 	return forge.Line(e.t, doc, from, to, body, e.clock.Now())
 }
 
-// seal stores in box to, as mail from a sender, what a sender encrypts to its
-// prekey as the server holds it, as only the operator can (forge.Seal), and
-// returns its id.
-func (e *env) seal(to *client.Box, from protocol.Address, plaintext ...[]byte) string {
-	return forge.Seal(e.t, e.srv, to.Address(), from, plaintext...)
+// seal stores in box to what a sender encrypts to its prekey as the server
+// holds it, as only the operator can (forge.Seal), and returns its id.
+func (e *env) seal(to *client.Box, plaintext ...[]byte) string {
+	return forge.Seal(e.t, e.srv, to.Address(), plaintext...)
 }
 
 // serve answers r, a read of a box, with the box the server holds, edited

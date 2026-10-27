@@ -61,9 +61,9 @@ func quarantinedFindings(t *testing.T, kind string) {
 		t.Fatal(err)
 	}
 	line := e.line(a.Identity().Document(), a.Address(), b.Address(), "under a certificate that has not begun")
-	notBegun := e.seal(b, a.Address(), line, forge.Sign(t, early, line, b.Address()))
+	notBegun := e.seal(b, line, forge.Sign(t, early, line, b.Address()))
 	forged := e.line(a.Identity().Document(), a.Address(), b.Address(), "from A, says the forger")
-	forgery := e.seal(b, a.Address(), forged, forge.Sign(t, worker(t, c), forged, b.Address()))
+	forgery := e.seal(b, forged, forge.Sign(t, worker(t, c), forged, b.Address()))
 
 	res, err := b.Receive(ctx)
 	if err != nil || len(res.Refused) != 2 || len(res.Delivered) != 0 {
@@ -82,7 +82,6 @@ func quarantinedFindings(t *testing.T, kind string) {
 		ID:                notBegun,
 		Code:              protocol.RefusedSignature,
 		Reason:            "the certificate of the key that signed it has not begun, by this machine's clock",
-		From:              a.Address().String(),
 		ReceivedAt:        q.ReceivedAt,
 		JudgedAt:          stamp(e.clock.Now()),
 		SignedBy:          a.Address().String(),
@@ -100,7 +99,6 @@ func quarantinedFindings(t *testing.T, kind string) {
 		ID:             forgery,
 		Code:           protocol.RefusedSignature,
 		Reason:         "it is not signed under a certificate of the sender's identity",
-		From:           a.Address().String(),
 		ReceivedAt:     q.ReceivedAt,
 		JudgedAt:       stamp(e.clock.Now()),
 		ClaimsIdentity: a.Address().String(),
@@ -133,7 +131,7 @@ func TestADeliveryLeavesNothingOfAnEarlierRefusal(t *testing.T) {
 	e := newEnv(t)
 	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
 	line := forge.Line(t, a.Identity().Document(), a.Address(), b.Address(), "dated ahead of the reader", e.clock.Now().Add(2*time.Hour))
-	id := e.seal(b, a.Address(), line, forge.Sign(t, worker(t, a), line, b.Address()))
+	id := e.seal(b, line, forge.Sign(t, worker(t, a), line, b.Address()))
 	says(e, protocol.CodeUnavailable, "DELETE", "/messages/"+id)
 	res, err := b.Receive(ctx)
 	if err == nil || len(res.Refused) != 1 || res.Refused[0].Code != protocol.RefusedFuture || !exists(filepath.Join(b.Dir(), "quarantine", id+".json")) || !has(b, "quarantine/"+id+".reason") {
@@ -178,8 +176,8 @@ func TestARefusalNamesNoSignerTheBoxHoldsRevoked(t *testing.T) {
 		}
 		return s
 	}
-	signed := func(e *env, b *client.Box, s ssh.Signer, line []byte, postedBy protocol.Address) string {
-		return e.seal(b, postedBy, line, forge.Sign(t, s, line, b.Address()))
+	signed := func(e *env, b *client.Box, s ssh.Signer, line []byte) string {
+		return e.seal(b, line, forge.Sign(t, s, line, b.Address()))
 	}
 	// Each refusal, by the check that makes it where the box holds nothing
 	// of a; "" is mail that passes every check before the revocations'.
@@ -190,24 +188,24 @@ func TestARefusalNamesNoSignerTheBoxHoldsRevoked(t *testing.T) {
 		{"its certificate not begun", protocol.RefusedSignature, func(t *testing.T, e *env, a, b, _ *client.Box) sent {
 			n := numberOf(t, a) + 1
 			line := e.line(a.Identity().Document(), a.Address(), b.Address(), "not begun")
-			return sent{signed(e, b, under(t, a, n, e.clock.Now().Add(2*time.Hour)), line, a.Address()), n}
+			return sent{signed(e, b, under(t, a, n, e.clock.Now().Add(2*time.Hour)), line), n}
 		}},
 		{"its certificate ended", protocol.RefusedSignature, func(t *testing.T, e *env, a, b, _ *client.Box) sent {
 			n := numberOf(t, a) - 1000
 			line := e.line(a.Identity().Document(), a.Address(), b.Address(), "ended")
-			return sent{signed(e, b, under(t, a, n, e.clock.Now().Add(-70*24*time.Hour)), line, a.Address()), n}
+			return sent{signed(e, b, under(t, a, n, e.clock.Now().Add(-70*24*time.Hour)), line), n}
 		}},
 		{"sent_at older than the TTL", protocol.RefusedStale, func(t *testing.T, e *env, a, b, _ *client.Box) sent {
 			line := forge.Line(t, a.Identity().Document(), a.Address(), b.Address(), "old", e.clock.Now().Add(-protocol.TTL-time.Second))
-			return sent{signed(e, b, worker(t, a), line, a.Address()), numberOf(t, a)}
+			return sent{signed(e, b, worker(t, a), line), numberOf(t, a)}
 		}},
 		{"sent_at ahead", protocol.RefusedFuture, func(t *testing.T, e *env, a, b, _ *client.Box) sent {
 			line := forge.Line(t, a.Identity().Document(), a.Address(), b.Address(), "ahead", e.clock.Now().Add(protocol.MaxSkew+time.Minute))
-			return sent{signed(e, b, worker(t, a), line, a.Address()), numberOf(t, a)}
+			return sent{signed(e, b, worker(t, a), line), numberOf(t, a)}
 		}},
 		{"to another box", protocol.RefusedAttribution, func(t *testing.T, e *env, a, b, thief *client.Box) sent {
 			line := e.line(a.Identity().Document(), a.Address(), thief.Address(), "to another")
-			return sent{signed(e, b, worker(t, a), line, a.Address()), numberOf(t, a)}
+			return sent{signed(e, b, worker(t, a), line), numberOf(t, a)}
 		}},
 		{"an envelope of another version", protocol.RefusedEnvelope, func(t *testing.T, e *env, a, b, _ *client.Box) sent {
 			env := `{"v":2,"from":"` + a.Address().String() + `","to":"` + b.Address().String() + `","identity":"` + base64.StdEncoding.EncodeToString(a.Identity().Document()) + `","sent_at":"` + e.clock.Now().Format(protocol.TimeLayout) + `","msg_id":"77777777-2222-4333-8444-555555555555","body":"x"}`
@@ -216,15 +214,11 @@ func TestARefusalNamesNoSignerTheBoxHoldsRevoked(t *testing.T) {
 		{"sent_at below the replay set's floor", protocol.RefusedStale, func(t *testing.T, e *env, a, b, _ *client.Box) sent {
 			b.SetRecord(t, "seen-floor", []byte(strconv.FormatInt(e.clock.Now().Unix(), 10)))
 			line := e.line(a.Identity().Document(), a.Address(), b.Address(), "below the floor")
-			return sent{signed(e, b, worker(t, a), line, a.Address()), numberOf(t, a)}
-		}},
-		{"posted by another box", protocol.RefusedAttribution, func(t *testing.T, e *env, a, b, thief *client.Box) sent {
-			line := e.line(a.Identity().Document(), a.Address(), b.Address(), "posted from the thief's box")
-			return sent{signed(e, b, worker(t, a), line, thief.Address()), numberOf(t, a)}
+			return sent{signed(e, b, worker(t, a), line), numberOf(t, a)}
 		}},
 		{"good in every other way", "", func(t *testing.T, e *env, a, b, _ *client.Box) sent {
 			line := e.line(a.Identity().Document(), a.Address(), b.Address(), "good mail")
-			return sent{signed(e, b, worker(t, a), line, a.Address()), numberOf(t, a)}
+			return sent{signed(e, b, worker(t, a), line), numberOf(t, a)}
 		}},
 	}
 	// What b holds of a when it judges: covers is whether it covers the mail,

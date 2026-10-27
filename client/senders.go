@@ -382,9 +382,9 @@ func (b *Box) allow(a protocol.Address) ([]Delivery, error) {
 	return moved, syncDir(b.path("held"))
 }
 
-// Block blocks a sender: its mail is dropped from now on, and its server
-// refuses it, which deletes what the server holds from it; what held/ keeps
-// from it is deleted. It returns how many held messages it deleted. Blocking
+// Block blocks a sender: its mail is dropped from now on, what its server
+// holds from it at the next drain among it, and its server refuses its later
+// sends; what held/ keeps from it is deleted. It returns how many held messages it deleted. Blocking
 // wins over allowing. An error sending the server the box's ACL leaves the
 // sender blocked here, and the next send, recv, allow or block sends it.
 func (b *Box) Block(ctx context.Context, a protocol.Address) (int, error) {

@@ -199,7 +199,7 @@ func TestTheScriptTakesARetryAboveTheFloor(t *testing.T) {
 			clk.Set(at)
 			floor, _ := sh(at, "cat $DR/seen-floor 2> /dev/null")
 			id := sha256.Sum256(retry)
-			srv.Inject(to, hex.EncodeToString(id[:]), s.Address(), retry)
+			srv.Inject(to, hex.EncodeToString(id[:]), retry)
 			out, err = sh(at, "dr_recv")
 			t.Logf("the retry listed on day 66 less 31 minutes (floor %q): %q, %v", strings.TrimSpace(floor), out, err)
 			if strings.Contains(out, `"type":"mail"`) {
@@ -308,7 +308,7 @@ func TestTheScriptTakesAStretchedRetryAtHonestClocks(t *testing.T) {
 			server += time.Second
 			clk.Set(server)
 			id := sha256.Sum256(retry)
-			srv.Inject(to, hex.EncodeToString(id[:]), s.Address(), retry)
+			srv.Inject(to, hex.EncodeToString(id[:]), retry)
 			out, err = sh(server-(9*time.Minute+59*time.Second), "dr_recv")
 			t.Logf("floor %q (W %d); the retry, the script 9m59s slow: %q, %v", strings.TrimSpace(floor), clk.base.Unix(), out, err)
 			if strings.Contains(out, `"type":"mail"`) {

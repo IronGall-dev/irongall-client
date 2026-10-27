@@ -504,7 +504,7 @@ func TestAKeptMessageFileIsWrittenBesideAndMoved(t *testing.T) {
 			}
 		}},
 		{"quarantine", `{"type":"refused",`, []string{"-cj", "--rawfile", "c"}, func() {
-			srv.Inject(me, strings.Repeat("e", 64), g.Address(), []byte("not an age file"))
+			srv.Inject(me, strings.Repeat("e", 64), []byte("not an age file"))
 		}},
 	} {
 		c.waiting()

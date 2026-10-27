@@ -21,13 +21,50 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
+// A server can list a from beside each message, as one before #507 lists the
+// box whose pass the send carried: no reader reads it. A message is its
+// signature's, so A's message listed as another box's, or as what is no
+// address, is delivered as A's, and the box the list names is neither
+// pinned nor asked about.
+func TestAFromTheServerListsIsNotRead(t *testing.T) {
+	t.Parallel()
+	for name, listed := range map[string]func(a, c *client.Box) string{
+		"another box's address": func(_, c *client.Box) string { return c.Address().String() },
+		"a path":                func(*client.Box, *client.Box) string { return "../../" + strings.Repeat("x", 58) },
+		"A's with a line feed":  func(a, _ *client.Box) string { return a.Address().String() + "\n" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t)
+			a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+			send(t, a, b, "from A")
+			named := 0
+			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+				if strings.HasPrefix(r.URL.Path, "/v1/"+c.Address().String()) {
+					named++
+				}
+				forge.List(t, w, r, next, func(l *protocol.MessageList) {
+					for i := range l.Messages {
+						l.Messages[i].From = listed(a, c)
+					}
+				})
+			})
+			res := receive(t, b)
+			if len(res.Delivered) != 1 || len(res.Refused) != 0 || res.Delivered[0].Envelope.From != a.Address() || bodyOf(t, res.Delivered[0]) != "from A" {
+				t.Fatalf("delivered %+v, refused %+v; want A's message delivered as A's", res.Delivered, res.Refused)
+			}
+			if e.srv.Count(b.Address()) != 0 || pinnedPeer(b, c.Address()) || named != 0 {
+				t.Errorf("left on the server: %d; C pinned: %v; calls that named C: %d", e.srv.Count(b.Address()), pinnedPeer(b, c.Address()), named)
+			}
+		})
+	}
+}
+
 // TestForgeries plays the operator, who controls every byte the server sends
 // and stores. Each forgery must be refused by the client: never delivered,
 // never encrypted to, never pinned. Refused mail is quarantined and acked, so
 // it leaves the server, and the refusal never blocks the claimed sender.
 //
-//	a sender the server relabels          A's message listed as C's            → refused: C did not sign it
-//	a from that is not an address         the server's from is a path          → refused, and nothing is named by it
 //	mail made in another box's name       O signs an envelope carrying A's identity → refused: not under a certificate of A's identity
 //	a second message after the signature  C's signed envelope in the padding   → A's is delivered, and nothing after its signature is read
 //	a forged identity on a send           C's identity served as B's           → the send refuses, nothing pinned
@@ -54,64 +91,6 @@ func TestForgeries(t *testing.T) {
 			t.Fatalf("delivered %d, refused %v; want refused as %s for %q", len(res.Delivered), res.Refused, code, why)
 		}
 	}
-	// relabel makes the server say every message in b's box is from another
-	// sender: it rewrites the list and the fetch.
-	relabel := func(e *env, was, now string) {
-		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-			if r.Method != http.MethodGet || !strings.Contains(r.URL.Path, "/messages") {
-				next.ServeHTTP(w, r)
-				return
-			}
-			rec := httptest.NewRecorder()
-			next.ServeHTTP(rec, r)
-			for k, v := range rec.Header() {
-				w.Header()[k] = v
-			}
-			w.WriteHeader(rec.Code)
-			_, _ = w.Write(bytes.ReplaceAll(rec.Body.Bytes(), []byte(was), []byte(now)))
-		})
-	}
-
-	t.Run("a sender the server relabels", func(t *testing.T) {
-		e := newEnv(t)
-		a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
-		send(t, a, b, "from A")
-		relabel(e, a.Address().String(), c.Address().String())
-		res := receive(t, b)
-		refusedFor(t, res, protocol.RefusedAttribution, "another box than the one that signed")
-		if !exists(filepath.Join(b.Dir(), "quarantine", res.Refused[0].ID+".json")) {
-			t.Fatal("not quarantined")
-		}
-		if e.srv.Count(b.Address()) != 0 {
-			t.Fatal("refused mail was not acked")
-		}
-		if pinnedPeer(b, c.Address()) {
-			t.Fatal("the box the server named was pinned")
-		}
-	})
-
-	t.Run("a from that is not an address", func(t *testing.T) {
-		e := newEnv(t)
-		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
-		send(t, a, b, "hi")
-		relabel(e, a.Address().String(), "../../"+strings.Repeat("x", 58))
-		refusedFor(t, receive(t, b), protocol.RefusedAttribution, "another box than the one that signed")
-		all, _ := client.RecordsAt(b.Dir())
-		for name := range all {
-			if strings.HasPrefix(name, "peers/") {
-				t.Fatalf("a peer was kept: %s", name)
-			}
-		}
-	})
-
-	t.Run("a from with a line feed added", func(t *testing.T) {
-		e := newEnv(t)
-		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
-		send(t, a, b, "hi")
-		relabel(e, a.Address().String(), a.Address().String()+`\n`) // a JSON escape: the sender's address and a line feed
-		refusedFor(t, receive(t, b), protocol.RefusedAttribution, "another box than the one that signed")
-	})
-
 	t.Run("mail made in another box's name", func(t *testing.T) {
 		e := newEnv(t)
 		a, b, o := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
@@ -119,7 +98,7 @@ func TestForgeries(t *testing.T) {
 		// carries A's identity document and says it is from A. The signature
 		// is good. The certificate is the forger's.
 		line := e.line(a.Identity().Document(), a.Address(), b.Address(), "from A, says the forger")
-		e.seal(b, a.Address(), line, forge.Sign(t, worker(t, o), line, b.Address()))
+		e.seal(b, line, forge.Sign(t, worker(t, o), line, b.Address()))
 		refusedFor(t, receive(t, b), protocol.RefusedSignature, "not signed under a certificate of the sender's identity")
 		if pinnedPeer(b, a.Address()) {
 			t.Fatal("a sender whose signature did not verify was pinned")
@@ -131,7 +110,7 @@ func TestForgeries(t *testing.T) {
 		a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
 		genuine := e.line(a.Identity().Document(), a.Address(), b.Address(), "real, from A")
 		hidden := e.line(c.Identity().Document(), c.Address(), b.Address(), "hidden, from C")
-		id := e.seal(b, a.Address(), genuine, forge.Sign(t, worker(t, a), genuine, b.Address()), hidden, forge.Sign(t, worker(t, c), hidden, b.Address()))
+		id := e.seal(b, genuine, forge.Sign(t, worker(t, a), genuine, b.Address()), hidden, forge.Sign(t, worker(t, c), hidden, b.Address()))
 		res := receive(t, b)
 		if len(res.Delivered) != 1 {
 			t.Fatalf("delivered %d, refused %v", len(res.Delivered), res.Refused)
@@ -344,7 +323,7 @@ func TestForgeries(t *testing.T) {
 		e.srv.SetMiddle(nil)
 		receive(t, b)
 		other := sha256.Sum256([]byte("another id"))
-		e.srv.Inject(b.Address(), hex.EncodeToString(other[:]), a.Address(), *sent) // a send's body is its ciphertext
+		e.srv.Inject(b.Address(), hex.EncodeToString(other[:]), *sent) // a send's body is its ciphertext
 		refusedFor(t, receive(t, b), client.RefusedReplay, "replay")
 	})
 
@@ -360,7 +339,7 @@ func TestForgeries(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		e.seal(b, a.Address(), line, sig)
+		e.seal(b, line, sig)
 		refusedFor(t, receive(t, b), protocol.RefusedStale, "older than 33 days")
 	})
 
@@ -372,7 +351,7 @@ func TestForgeries(t *testing.T) {
 		send(t, a, c, "for C's key")
 		e.srv.SetMiddle(nil)
 		id := sha256.Sum256(*sent)
-		e.srv.Inject(b.Address(), hex.EncodeToString(id[:]), a.Address(), *sent)
+		e.srv.Inject(b.Address(), hex.EncodeToString(id[:]), *sent)
 		refusedFor(t, receive(t, b), client.RefusedDecrypt, "does not decrypt")
 	})
 

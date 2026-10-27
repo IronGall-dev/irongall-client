@@ -184,13 +184,47 @@ func Encrypt(t testing.TB, s *fakeserver.Server, to protocol.Address, parts ...[
 
 // Seal encrypts what a sender encrypts, an envelope's line and then whatever
 // follows it, to a box's current prekey as s holds it, and stores it in that
-// box as mail from a sender, as only the operator can. It returns the id it
-// is stored under: the hash of the ciphertext.
-func Seal(t testing.TB, s *fakeserver.Server, to, from protocol.Address, plaintext ...[]byte) string {
+// box, as only the operator can. It returns the id it is stored under: the
+// hash of the ciphertext.
+func Seal(t testing.TB, s *fakeserver.Server, to protocol.Address, plaintext ...[]byte) string {
 	t.Helper()
 	ct := Encrypt(t, s, to, plaintext...)
 	h := sha256.Sum256(ct)
 	id := hex.EncodeToString(h[:])
-	s.Inject(to, id, from, ct)
+	s.Inject(to, id, ct)
 	return id
+}
+
+// List answers r, a box's list, with each page it answers edited first, and
+// any other request as next does: an operator's own list, a from beside each
+// entry among what it can write (PROTOCOL.md §11.11 lists none).
+func List(t testing.TB, w http.ResponseWriter, r *http.Request, next http.Handler, edit func(*protocol.MessageList)) {
+	if r.Method != http.MethodGet || !strings.HasSuffix(r.URL.Path, "/messages") {
+		next.ServeHTTP(w, r)
+		return
+	}
+	rec := httptest.NewRecorder()
+	next.ServeHTTP(rec, r)
+	for k, v := range rec.Header() {
+		if k != "Content-Length" {
+			w.Header()[k] = v
+		}
+	}
+	var l protocol.MessageList
+	if rec.Code != http.StatusOK {
+		w.WriteHeader(rec.Code)
+		_, _ = w.Write(rec.Body.Bytes())
+		return
+	}
+	if err := protocol.Unmarshal(rec.Body.Bytes(), &l); err != nil {
+		t.Errorf("an operator edits a list, and the server's is none: %v", err)
+		return
+	}
+	edit(&l)
+	fakeserver.WriteList(w, l)
+}
+
+// Lists has s answer every list with it edited first (List).
+func Lists(t testing.TB, s *fakeserver.Server, edit func(*protocol.MessageList)) {
+	s.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) { List(t, w, r, next, edit) })
 }

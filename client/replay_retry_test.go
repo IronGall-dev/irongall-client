@@ -17,7 +17,7 @@ import (
 )
 
 // A retry is dated afresh at its post, so its sent_at is up to the outbox's
-// 33 days after the first copy's, whose line keys the msg_id (check 10). The
+// 33 days after the first copy's, whose line keys the msg_id (check 9). The
 // floor (seen-floor) compares the sent_at of the message read. Once a prune
 // by a clock far enough ahead drops the first copy's line, a retry the
 // server kept is above the floor and fresh, and is delivered a second time.
@@ -94,7 +94,7 @@ func TestARetryAboveTheFloorIsDeliveredAgain(t *testing.T) {
 			}
 			floor, _ := stateOf(r, "seen-floor")
 			id := sha256.Sum256(retry)
-			e.srv.Inject(r.Address(), hex.EncodeToString(id[:]), s.Address(), retry)
+			e.srv.Inject(r.Address(), hex.EncodeToString(id[:]), retry)
 			res, err := r.Receive(ctx)
 			t.Logf("the retry, listed on day 66 less 31 minutes (floor %q): delivered %d, duplicates %d, refused %v, %v", bytes.TrimSpace(floor), len(res.Delivered), len(res.Duplicates), res.Refused, err)
 			if len(res.Delivered) != 0 {
@@ -165,7 +165,7 @@ func TestARetryAfterAStepOfTheHour(t *testing.T) {
 	}
 	off = -(9*time.Minute + 59*time.Second)
 	id := sha256.Sum256(retry)
-	e.srv.Inject(r.Address(), hex.EncodeToString(id[:]), s.Address(), retry)
+	e.srv.Inject(r.Address(), hex.EncodeToString(id[:]), retry)
 	res, err := r.Receive(ctx)
 	t.Logf("the retry, read at W+2TTL by the reader's clock: delivered %d, duplicates %d, refused %v, %v", len(res.Delivered), len(res.Duplicates), res.Refused, err)
 	if len(res.Delivered) != 0 || len(res.Duplicates) != 1 {
@@ -286,7 +286,7 @@ func TestAStretchedRetryAtClocksAnHonestServerTakes(t *testing.T) {
 			e.clock.Add(time.Second)
 			off = c.slow
 			id := sha256.Sum256(retry)
-			e.srv.Inject(r.Address(), hex.EncodeToString(id[:]), s.Address(), retry)
+			e.srv.Inject(r.Address(), hex.EncodeToString(id[:]), retry)
 			res, err := r.Receive(ctx)
 			dated := ""
 			if len(res.Delivered) > 0 {
@@ -379,7 +379,7 @@ func TestADailyReaderWhoseRenewalsAreRefused(t *testing.T) {
 			t.Logf("the drain at %v: %v; renewals asked since the retry: %d", e.clock.Now().Sub(t0), err, renewals)
 			e.clock.Add(-92 * time.Minute)
 			id := sha256.Sum256(retry)
-			e.srv.Inject(r.Address(), hex.EncodeToString(id[:]), s.Address(), retry)
+			e.srv.Inject(r.Address(), hex.EncodeToString(id[:]), retry)
 			res, err := r.Receive(ctx)
 			t.Logf("the retry, listed on day 66 less 31 minutes: delivered %d, duplicates %d, refused %v, %v", len(res.Delivered), len(res.Duplicates), res.Refused, err)
 			if len(res.Delivered) != 0 {
@@ -507,7 +507,7 @@ func TestAFirstCopyIsNeverDatedBeforeItWasWritten(t *testing.T) {
 			e.clock.Add(time.Second)
 			off = c.slow
 			id := sha256.Sum256(retry)
-			e.srv.Inject(r.Address(), hex.EncodeToString(id[:]), s.Address(), retry)
+			e.srv.Inject(r.Address(), hex.EncodeToString(id[:]), retry)
 			res, err := r.Receive(ctx)
 			t.Logf("written at W, the first copy dated W%+v; floor %q: delivered %d, duplicates %d, refused %v, %v",
 				firstSentAt.Sub(wrote), bytes.TrimSpace(floor), len(res.Delivered), len(res.Duplicates), res.Refused, err)

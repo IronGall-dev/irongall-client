@@ -9,7 +9,6 @@ import (
 	"io/fs"
 	"maps"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -80,21 +79,21 @@ func (b *sbox) sign(to protocol.Address, line []byte) []byte {
 }
 
 // inject puts the parts, encrypted to to's prekey as the server holds it, in
-// box to as mail from from, under id or, given none, its hash: as only the
-// operator can. It returns the id.
-func (w *world) inject(to *sbox, from protocol.Address, id string, parts ...[]byte) string {
+// box to, under id or, given none, its hash: as only the operator can. It
+// returns the id.
+func (w *world) inject(to *sbox, id string, parts ...[]byte) string {
 	w.t.Helper()
 	ct := forge.Encrypt(w.t, w.srv, to.addr, parts...)
-	return w.put(to, from, id, ct)
+	return w.put(to, id, ct)
 }
 
 // put puts a ciphertext in box to, as inject does.
-func (w *world) put(to *sbox, from protocol.Address, id string, ct []byte) string {
+func (w *world) put(to *sbox, id string, ct []byte) string {
 	if id == "" {
 		h := sha256.Sum256(ct)
 		id = hex.EncodeToString(h[:])
 	}
-	w.srv.Inject(to.addr, id, from, ct)
+	w.srv.Inject(to.addr, id, ct)
 	return id
 }
 
@@ -296,26 +295,12 @@ func TestScriptDeliversARetryOnce(t *testing.T) {
 }
 
 // listing puts an operator in front of the server that rewrites each list it
-// answers with edit.
-func (w *world) listing(edit func(*protocol.MessageList)) {
-	w.srv.SetMiddle(func(rw http.ResponseWriter, r *http.Request, next http.Handler) {
-		if r.Method != http.MethodGet || !strings.HasSuffix(r.URL.Path, "/messages") {
-			next.ServeHTTP(rw, r)
-			return
-		}
-		rec := httptest.NewRecorder()
-		next.ServeHTTP(rec, r)
-		var l protocol.MessageList
-		if rec.Code != http.StatusOK || protocol.Unmarshal(rec.Body.Bytes(), &l) != nil {
-			w.t.Fatalf("an operator edits a list, and the server answered %d", rec.Code)
-		}
-		edit(&l)
-		fakeserver.WriteList(rw, l)
-	})
-}
+// answers with edit (forge.Lists).
+func (w *world) listing(edit func(*protocol.MessageList)) { forge.Lists(w.t, w.srv, edit) }
 
-// Mail a server forges or relabels, a replay, and what is no message:
-// each REFUSED, quarantined with its reason, and acked; nothing pinned by it.
+// Mail a server forges, a replay, and what is no message: each REFUSED,
+// quarantined with its reason, and acked; nothing pinned by it. A from the
+// server lists is never read.
 func TestScriptRefusesForgedMail(t *testing.T) {
 	w := newWorld(t)
 	a, b, c, d := w.box(), w.box(), w.box(), w.box()
@@ -343,7 +328,7 @@ func TestScriptRefusesForgedMail(t *testing.T) {
 		l := envelope(t, from.addr, b.addr, []byte(from.read("identity.doc")), "00000000-0000-4000-8000-000000000000", "PAPAYA", 0)
 		return slices.Concat(l, w.signWith(opCert, b.addr, l))
 	}
-	w.inject(b, a.addr, "", forged(a))
+	w.inject(b, "", forged(a))
 	r := b.sh("dr_recv")
 	refusals++
 	if !strings.Contains(r.out, `"code":"bad_signature","message":"it is not signed for this box by a working key the sender's identity certified"}`) || r.err != "" || w.srv.Count(b.addr) != 0 || pinned() != a.read("identity.doc") {
@@ -353,51 +338,59 @@ func TestScriptRefusesForgedMail(t *testing.T) {
 	if !strings.HasPrefix(r.out, `{"type":"refused","id":"`) || strings.Count(r.out, "\n") != 1 || jsonLine(r.out, &l) != nil || len(l.ID) != 64 {
 		t.Errorf("a refusal is not one line of JSON on stdout, its type first: %q", r.out)
 	}
-	w.inject(b, d.addr, "", forged(d))
+	w.inject(b, "", forged(d))
 	refused("first contact, mail in D's name under the operator's certificate", "bad_signature", b.recv())
 	if b.has("peers/" + d.addr.String()) {
 		t.Error("the forgery pinned D")
 	}
-	// A from the server made up, with a line feed and a signer after it.
+	// A from the server made up, with a line feed and a signer after it,
+	// beside the operator's own mail: the from is never read, so the mail is
+	// the operator's, as its signature says, and nothing is built from it.
 	opDoc := []byte(mustReadString(t, filepath.Join(op.dir, "identity.doc")))
 	ol := envelope(t, op.addr, b.addr, opDoc, "00000000-0000-4000-8000-000000000001", "PAPAYA", 0)
-	w.inject(b, a.addr, "", ol, w.signWith(opCert, b.addr, ol))
+	w.inject(b, "", ol, w.signWith(opCert, b.addr, ol))
 	madeUp := a.addr.String() + "\n* " + strings.Split(string(opDoc), "\n")[1]
 	w.listing(func(l *protocol.MessageList) {
 		for i := range l.Messages {
 			l.Messages[i].From = madeUp
 		}
 	})
-	refused("a from the server made up, with a newline", "reattributed: the server lists it as from another box", b.recv())
-	w.honest()
-	if b.has("peers/" + op.addr.String()) {
-		t.Error("a from with a newline pinned the operator")
+	if dr := b.recv(); len(dr.mail) != 1 || !strings.Contains(dr.mail[0], `"from":"`+op.addr.String()+`"`) || w.srv.Count(b.addr) != 0 {
+		t.Errorf("the operator's mail under a from it made up, with a newline: %v", dr)
 	}
+	w.honest()
 	if out := b.must(`grep -rqs '^\*' "$DR/peers" "$DR/signers" && echo planted || true`); out != "" {
 		t.Error("a signer line was built from a from the server made up")
 	}
-	// A's genuine ciphertext, listed as C's, then A's again: under its own id, and a new one.
-	w.put(b, c.addr, randomID(), genuine)
-	refused("A's message relabelled as C's", "reattributed: the server lists it as from another box", b.recv())
+	// A's genuine ciphertext, listed as C's: a replay of A's, whoever the list
+	// names; then A's again, under its own id, and a new one.
+	w.put(b, randomID(), genuine)
+	w.listing(func(l *protocol.MessageList) {
+		for i := range l.Messages {
+			l.Messages[i].From = c.addr.String()
+		}
+	})
+	refused("A's message listed as C's", "replay", b.recv())
+	w.honest()
 	if b.has("peers/" + c.addr.String()) {
-		t.Error("the relabelled message pinned C")
+		t.Error("the message listed as C's pinned C")
 	}
-	w.put(b, a.addr, "", genuine)
+	w.put(b, "", genuine)
 	if dr := b.recv(); len(dr.mail) != 0 || dr.said != "" || w.srv.Count(b.addr) != 0 {
 		t.Errorf("a replay under an id already handled is more than acked again: %v", dr)
 	}
-	w.put(b, a.addr, randomID(), genuine)
+	w.put(b, randomID(), genuine)
 	refused("a replay under a new id", "replay", b.recv())
 	// A genuine new message under an id that is not its hash; one older than 33 days; a key twice.
 	wl := a.line(b.addr, "44444444-2222-4333-8444-555555555555", "wrong id", 0)
-	w.inject(b, a.addr, randomID(), wl, a.sign(b.addr, wl))
+	w.inject(b, randomID(), wl, a.sign(b.addr, wl))
 	refused("a genuine message under an id that is not its hash", "not the SHA-256 of its ciphertext", b.recv())
 	old := a.line(b.addr, "22222222-2222-4333-8444-555555555555", "old", 34*24*time.Hour)
-	w.inject(b, a.addr, "", old, a.sign(b.addr, old))
+	w.inject(b, "", old, a.sign(b.addr, old))
 	refused("sent_at older than 33 days", "older than 33 days", b.recv())
 	dup := fmt.Appendf(nil, `{"v":1,"from":"%s","from":"%s","to":"%s","sent_at":"%s","msg_id":"55555555-2222-4333-8444-555555555555","identity":"%s","body":"twice"}`+"\n",
 		c.addr, a.addr, b.addr, time.Now().UTC().Format(protocol.TimeLayout), b64(a.read("identity.doc")))
-	w.inject(b, a.addr, "", dup, a.sign(b.addr, dup))
+	w.inject(b, "", dup, a.sign(b.addr, dup))
 	refused("an envelope with a key twice", "no member named twice", b.recv())
 	// Each part has one place: what follows the first END line is never read,
 	// and a line before the envelope, a blank line before the signature, or no
@@ -405,12 +398,12 @@ func TestScriptRefusesForgedMail(t *testing.T) {
 	fromA := a.line(b.addr, "66666666-2222-4333-8444-555555555551", "real, from A", 0)
 	fromASig := a.sign(b.addr, fromA)
 	hidden := c.line(b.addr, "66666666-2222-4333-8444-555555555552", "hidden, from C", 0)
-	w.inject(b, a.addr, "", fromA, fromASig, hidden, c.sign(b.addr, hidden))
+	w.inject(b, "", fromA, fromASig, hidden, c.sign(b.addr, hidden))
 	if dr := b.recv(); !slices.Equal(dr.bodies(), []string{"real, from A"}) || strings.Contains(dr.said+strings.Join(dr.mail, ""), c.addr.String()) || b.has("peers/"+c.addr.String()) {
 		t.Errorf("a second signed envelope after the first one's signature: %v", dr)
 	}
 	for _, parts := range [][][]byte{{[]byte("\n"), fromA, fromASig}, {fromA, []byte("\n"), fromASig}, {fromA}} {
-		w.inject(b, a.addr, "", parts...)
+		w.inject(b, "", parts...)
 	}
 	refusals += 3
 	if dr := b.recv(); len(dr.mail) != 0 || dr.refused("bad_message") != 3 || !strings.Contains(dr.said, "bad_message: what was decrypted is not an envelope line and then a signature block") {
@@ -419,7 +412,7 @@ func TestScriptRefusesForgedMail(t *testing.T) {
 	// The two refusals of A's genuine ciphertext share its hash, so one file.
 	q, _ := filepath.Glob(b.file("quarantine/*.json"))
 	reasons, _ := filepath.Glob(b.file("quarantine/*.reason"))
-	if len(q) != refusals-1 || len(reasons) != refusals-1 || len(b.files("inbox")) != 2 {
+	if len(q) != refusals-1 || len(reasons) != refusals-1 || len(b.files("inbox")) != 3 {
 		t.Errorf("not every refusal quarantined with its reason, or one delivered: %d refusals, %d quarantined, %d reasons, inbox %q", refusals, len(q), len(reasons), b.files("inbox"))
 	}
 	// Each keeps the ciphertext and the id the script hashed, and none of
@@ -436,17 +429,17 @@ func TestScriptRefusesForgedMail(t *testing.T) {
 			t.Errorf("%s: %q is no code", f, code)
 		}
 	}
-	// The server's from, and a listed id, with a line feed added: compared in
-	// jq, never through a shell variable, which drops it.
+	// A listed from of A's address and a line feed is never read, and a
+	// listed id with a line feed added is compared in jq, never through a
+	// shell variable, which drops it.
 	lf := a.line(b.addr, "77777777-2222-4333-8444-555555555551", "a from with a line feed", 0)
-	w.inject(b, a.addr, "", lf, a.sign(b.addr, lf))
-	w.listing(func(l *protocol.MessageList) { l.Messages[0].From += "\n" })
-	refused("the server's from with a line feed added", "reattributed: the server lists it as from another box", b.recv())
-	if w.srv.Count(b.addr) != 0 {
-		t.Error("the message under a from with a line feed was not acked")
+	w.inject(b, "", lf, a.sign(b.addr, lf))
+	w.listing(func(l *protocol.MessageList) { l.Messages[0].From = a.addr.String() + "\n" })
+	if dr := b.recv(); !slices.Equal(dr.bodies(), []string{"a from with a line feed"}) || w.srv.Count(b.addr) != 0 {
+		t.Errorf("A's message under a from with a line feed: %v", dr)
 	}
 	lfid := a.line(b.addr, "77777777-2222-4333-8444-555555555552", "an id with a line feed", 0)
-	w.inject(b, a.addr, "", lfid, a.sign(b.addr, lfid))
+	w.inject(b, "", lfid, a.sign(b.addr, lfid))
 	w.listing(func(l *protocol.MessageList) { l.Messages[0].ID += "\n" })
 	if dr := b.recv(); len(dr.mail) != 0 || w.srv.Count(b.addr) != 1 {
 		t.Errorf("a listed id with a line feed added was fetched as the id it was cut to: %v", dr)

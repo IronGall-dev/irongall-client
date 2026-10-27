@@ -87,8 +87,9 @@ type held struct {
 	revocations
 }
 
+// message is what the server keeps of a message: no sender (PROTOCOL.md
+// §13).
 type message struct {
-	from       protocol.Address
 	ciphertext []byte
 	receivedAt time.Time
 	seq        int // its place in the box: a list's cursor is the last one it gave
@@ -226,12 +227,12 @@ func (s *Server) Prekey(a protocol.Address) (statement, signature []byte) {
 
 // Inject stores a message in a box under id, as only the operator can: no
 // check at all.
-func (s *Server) Inject(to protocol.Address, id string, from protocol.Address, ciphertext []byte) {
+func (s *Server) Inject(to protocol.Address, id string, ciphertext []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	b := s.boxes[to]
 	b.seq++
-	b.messages[id] = &message{from: from, ciphertext: ciphertext, receivedAt: s.now(), seq: b.seq}
+	b.messages[id] = &message{ciphertext: ciphertext, receivedAt: s.now(), seq: b.seq}
 }
 
 // WriteJSON writes v as a JSON response, as the server does: a middleware
@@ -661,6 +662,8 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	// Dedupe while the message is live, from any sender: an ack leaves
+	// nothing of it (PROTOCOL.md §11.10, step 6).
 	h := sha256.Sum256(ct)
 	key := hex.EncodeToString(h[:])
 	if m := rcpt.messages[key]; m != nil {
@@ -672,7 +675,7 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rcpt.seq++
-	m := &message{from: from, ciphertext: ct, receivedAt: s.now(), seq: rcpt.seq}
+	m := &message{ciphertext: ct, receivedAt: s.now(), seq: rcpt.seq}
 	rcpt.messages[key] = m
 	w.Header().Set("Location", r.URL.Path+"/"+key)
 	WriteJSON(w, http.StatusCreated, receipt(key, m))
@@ -786,7 +789,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request, b *box) {
 			l.NextCursor = &c
 			break
 		}
-		l.Messages = append(l.Messages, protocol.MessageInfo{ID: ids[m], From: m.from.String(), Size: int64(len(m.ciphertext)),
+		l.Messages = append(l.Messages, protocol.MessageInfo{ID: ids[m], Size: int64(len(m.ciphertext)),
 			ReceivedAt: formatTime(m.receivedAt), ExpiresAt: formatTime(m.receivedAt.Add(protocol.Retention))})
 	}
 	if after > 0 {
@@ -826,8 +829,8 @@ func WriteList(w http.ResponseWriter, l protocol.MessageList) {
 	WriteJSON(w, http.StatusOK, l)
 }
 
-// fetch answers a message's ciphertext, and nothing else: the list says who
-// sent it and when. A Range of one open-ended byte range that begins inside
+// fetch answers a message's ciphertext, and nothing else: the list says
+// when it came. A Range of one open-ended byte range that begins inside
 // it is answered 206 with the bytes from there on, and any other with the
 // whole body (PROTOCOL.md §11.12; protocol.RangeAsked), as dromas-server
 // answers them.
@@ -865,11 +868,11 @@ func WritePartial(w http.ResponseWriter, ct []byte, from int64) {
 	_, _ = w.Write(ct[from:])
 }
 
-// putACL replaces the box's ACL whole, and deletes what is waiting from
-// every sender its deny list matches. An If-Match is read as a server reads
-// one (protocol.IfMatch), against the tag of the ACL held, a box with none
-// included, before the body: a false one is 412, and changes nothing. It
-// answers the ACL as held, with no ETag (RFC 9110 §9.3.4).
+// putACL replaces the box's ACL whole, and deletes no mail. An If-Match is
+// read as a server reads one (protocol.IfMatch), against the tag of the ACL
+// held, a box with none included, before the body: a false one is 412, and
+// changes nothing. It answers the ACL as held, with no ETag (RFC 9110
+// §9.3.4).
 func (s *Server) putACL(w http.ResponseWriter, r *http.Request, b *box) {
 	if !protocol.IfMatch(r.Header.Values("If-Match"), aclTag(b.acl)) {
 		problem(w, protocol.CodePreconditionFailed, "the If-Match is false")
@@ -885,11 +888,6 @@ func (s *Server) putACL(w http.ResponseWriter, r *http.Request, b *box) {
 		return
 	}
 	b.acl = acl
-	for id, m := range b.messages {
-		if acl.Deny.Has(m.from) {
-			delete(b.messages, id)
-		}
-	}
 	WriteJSON(w, http.StatusOK, acl.Document())
 }
 
@@ -919,8 +917,8 @@ func aclTag(acl *protocol.ACL) string {
 }
 
 // PutACL replaces a box's ACL as another writer of it does, another
-// machine of the box or whoever holds its pass, with nothing deleted: a
-// test's way to change what the box last sent.
+// machine of the box or whoever holds its pass: a test's way to change what
+// the box last sent.
 func (s *Server) PutACL(a protocol.Address, acl *protocol.ACL) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
