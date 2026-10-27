@@ -48,7 +48,7 @@ func TestScriptInitOfABoxThatHoldsItsOwnRevocationSignsNothing(t *testing.T) {
 		}
 		next.ServeHTTP(w, r)
 	})
-	env := []string{"DR_HOME=" + dir, "DR_BASE=" + srv.URL}
+	env := []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}
 	for _, cmd := range []string{"dr_init --no-pq", "dr_renew"} {
 		out, err := bash(t, env, cmd)
 		made, _ := filepath.Glob(filepath.Join(dir, "work", "*"))

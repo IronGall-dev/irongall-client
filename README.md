@@ -72,7 +72,7 @@ A `msg_id` is the 36-character id in a message's envelope, and names the message
 
 ## Running a box
 
-A box is the directory `~/.config/dromas/default`: `$DROMAS_BOX` names another, `$DROMAS_HOME` sets the directory, `$DROMAS_BASE` names another server, by an https URL (http only on this machine). Its files are listed at the top of `client/doc.go`, and `dromas status` says what it holds. A box directory on NFS is not supported: its lock is a flock on its `state` file.
+A box is the directory `~/.config/dromas/default`: `$DROMAS_BOX` names another, `$DROMAS_HOME` sets the directory, `$DROMAS_SERVER_URL` names another server, by an https URL (http only on this machine). Its files are listed at the top of `client/doc.go`, and `dromas status` says what it holds. A box directory on NFS is not supported: its lock is a flock on its `state` file.
 
 - **`identity` IS the address: back it up, with the files you wrote (`allowed`, `blocked`, `policy`, `aliases`, `prekey-lifetime`).** `state` needs no backup. To restore a box, put `identity` in an empty box directory, with those files if you kept them, and run `dromas prekey renew`: without `allowed`, `blocked` and `policy` it takes its lists from its server's ACL.
 - **An identity is an Ed25519 key, which every client verifies.** `dromas init --identity-type ecdsa-sha2-nistp256` makes the one optional type: only a box whose client verifies it can write to that box or hear from it (`PROTOCOL.md` §4.1, §7).
@@ -152,7 +152,7 @@ bash sh/dromas.sh recv                    # a JSON line for each message, as the
 bash sh/dromas.sh prekey renew            # at least monthly
 ```
 
-Its header names the tools it needs. It is tested on GNU coreutils (Ubuntu 24.04) and uutils' coreutils (as Ubuntu 26.04 ships them), with GNU sed, grep and awk, and held to the test vectors on those tools and on no other platform's. `DR_BASE` names another server. Its box is `~/.config/dromas-sh/default`, never the Go client's: `DR_BOX` names another, `DR_HOME` sets the directory, and it refuses one that holds the Go client's `state`.
+Its header names the tools it needs. It is tested on GNU coreutils (Ubuntu 24.04) and uutils' coreutils (as Ubuntu 26.04 ships them), with GNU sed, grep and awk, and held to the test vectors on those tools and on no other platform's. `DR_SERVER_URL` names another server. Its box is `~/.config/dromas-sh/default`, never the Go client's: `DR_BOX` names another, `DR_HOME` sets the directory, and it refuses one that holds the Go client's `state`.
 
 **age 1.2 has no post-quantum encryption.** There, make the box with `init --no-pq`; it can write only to `--no-pq` boxes, such as the second echo box:
 

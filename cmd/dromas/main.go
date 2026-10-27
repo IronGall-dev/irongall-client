@@ -32,7 +32,7 @@ import (
 const about = `The box lives in $DROMAS_HOME, or ${XDG_CONFIG_HOME:-~/.config}/dromas/${DROMAS_BOX:-default}.
 Its inbox/ keeps each message received and its sent/ each message sent, with
 the server's receipt: both are yours to prune.
-The server is $DROMAS_BASE, or https://dromas.dev: https, or http only
+The server is $DROMAS_SERVER_URL, or https://dromas.dev: https, or http only
 to a server on this machine, and a redirect is never followed.
 The box's policy file says where mail from a sender it has not allowed
 lands, "unknown held" (the default) or "unknown inbox", and whom its server
@@ -132,7 +132,7 @@ func (e *cli) environment() error {
 		return err
 	}
 	e.dir = dir
-	e.opt.Base = os.Getenv("DROMAS_BASE")
+	e.opt.Base = os.Getenv("DROMAS_SERVER_URL")
 	if v := os.Getenv("DROMAS_SENDER_KEY_TYPES"); v != "" {
 		e.opt.SenderKeyTypes = strings.Split(v, ",")
 	}

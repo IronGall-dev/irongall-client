@@ -111,7 +111,7 @@ func (b *sbox) sh(commands string) ran {
 	b.w.t.Helper()
 	cmd := exec.Command("bash", "-c", ". "+abs(b.w.t, "dromas.sh")+"\n"+commands)
 	cmd.Dir = b.w.work
-	cmd.Env = append(os.Environ(), "DR_HOME="+b.dir, "DR_BASE="+b.w.srv.URL, "W="+b.w.work, "SRV="+b.w.srv.URL)
+	cmd.Env = append(os.Environ(), "DR_HOME="+b.dir, "DR_SERVER_URL="+b.w.srv.URL, "W="+b.w.work, "SRV="+b.w.srv.URL)
 	var out, errs bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errs
 	r := ran{}

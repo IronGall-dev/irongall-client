@@ -45,7 +45,7 @@ func TestTheScriptRunsABoxOfItsOwnOnly(t *testing.T) {
 	}
 	before, calls := files(), len(srv.Requests())
 	for _, cmd := range []string{"dr_init --no-pq", "dr_rekey", "dr_recv"} {
-		if out, err := bash(t, []string{"DR_HOME=" + g.Dir(), "DR_BASE=" + srv.URL}, cmd); err == nil || !strings.Contains(err.Error(), "state file") {
+		if out, err := bash(t, []string{"DR_HOME=" + g.Dir(), "DR_SERVER_URL=" + srv.URL}, cmd); err == nil || !strings.Contains(err.Error(), "state file") {
 			t.Errorf("%s in a Go box: %q, %v", cmd, out, err)
 		}
 	}
@@ -118,7 +118,7 @@ func TestTheScriptKeepsItsOwnRevocationFromA410(t *testing.T) {
 		t.Run(at, func(t *testing.T) {
 			srv := fakeserver.New(t, time.Now)
 			dir := t.TempDir()
-			env := []string{"DR_HOME=" + dir, "DR_BASE=" + srv.URL}
+			env := []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}
 			if out, err := bash(t, env, "dr_init --no-pq"); err != nil {
 				t.Fatalf("init: %q, %v", out, err)
 			}
@@ -148,7 +148,7 @@ func TestTheScriptKeepsItsOwnRevocationFromA410(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(restored, "identity"), mustRead(t, filepath.Join(dir, "identity")), 0o600); err != nil {
 					t.Fatal(err)
 				}
-				dir, env, cmd = restored, []string{"DR_HOME=" + restored, "DR_BASE=" + srv.URL}, "dr_init --no-pq"
+				dir, env, cmd = restored, []string{"DR_HOME=" + restored, "DR_SERVER_URL=" + srv.URL}, "dr_init --no-pq"
 			}
 			passes.Store(0)
 			out, err := bash(t, env, cmd)
@@ -164,7 +164,7 @@ func TestTheScriptKeepsItsOwnRevocationFromA410(t *testing.T) {
 			// Pointed at a server that never saw the revocation: nothing is
 			// asked there and nothing signed.
 			other := fakeserver.New(t, time.Now)
-			if _, err := bash(t, []string{"DR_HOME=" + dir, "DR_BASE=" + other.URL}, "dr_rekey"); err == nil || len(other.Requests()) != 0 {
+			if _, err := bash(t, []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + other.URL}, "dr_rekey"); err == nil || len(other.Requests()) != 0 {
 				t.Errorf("at another server: %v, %d calls", err, len(other.Requests()))
 			}
 		})

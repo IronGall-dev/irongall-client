@@ -72,7 +72,7 @@ func TestOnlyRecvsOwnLineIsShown(t *testing.T) {
 		t.Fatalf("%+v %v", res, err)
 	}
 	t.Setenv("DROMAS_HOME", b.Dir())
-	t.Setenv("DROMAS_BASE", srv.URL)
+	t.Setenv("DROMAS_SERVER_URL", srv.URL)
 	for _, d := range res.Delivered {
 		kept := must(t, filepath.Join(b.Dir(), "inbox", d.ID+".json"))
 		var out bytes.Buffer
@@ -164,7 +164,7 @@ func TestShowHoldsTheFileToTheLineRecvKept(t *testing.T) {
 	held := filepath.Join(b.Dir(), "held", res.Held[0].ID+".json")
 	line := must(t, held)
 	t.Setenv("DROMAS_HOME", b.Dir())
-	t.Setenv("DROMAS_BASE", srv.URL)
+	t.Setenv("DROMAS_SERVER_URL", srv.URL)
 	id := res.Held[0].ID
 	inbox := filepath.Join(b.Dir(), "inbox", id+".json")
 	for _, c := range []struct{ name, kept string }{

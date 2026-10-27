@@ -798,7 +798,7 @@ func TestAP256BoxInBothClients(t *testing.T) {
 	kt := protocol.PostQuantum
 	sh := func(dir, commands string) string {
 		t.Helper()
-		out, err := bash(t, []string{"DR_HOME=" + dir, "DR_BASE=" + srv.URL}, commands)
+		out, err := bash(t, []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}, commands)
 		if err != nil {
 			t.Fatalf("%s: %v", commands, err)
 		}
@@ -895,7 +895,7 @@ func TestTheScriptsSendABoxDeniesFails(t *testing.T) {
 	kt := protocol.PostQuantum
 	shDir := t.TempDir()
 	sh := func(commands string) (string, error) {
-		return bash(t, []string{"DR_HOME=" + shDir, "DR_BASE=" + srv.URL}, commands)
+		return bash(t, []string{"DR_HOME=" + shDir, "DR_SERVER_URL=" + srv.URL}, commands)
 	}
 	out, err := sh("dr_init")
 	if err != nil {
@@ -933,7 +933,7 @@ func TestWithGoClient(t *testing.T) {
 	kt := protocol.PostQuantum
 	shDir, goDir := t.TempDir(), t.TempDir()
 	sh := func(dir, commands string) (string, error) {
-		return bash(t, []string{"DR_HOME=" + dir, "DR_BASE=" + srv.URL}, commands)
+		return bash(t, []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}, commands)
 	}
 	out, err := sh(shDir, "dr_init")
 	if err != nil {
@@ -1248,7 +1248,7 @@ func TestRevocationInBothClients(t *testing.T) {
 	opt := client.Options{Base: srv.URL}
 	kt := protocol.PostQuantum
 	sh := func(dir, commands string) (string, error) {
-		return bash(t, []string{"DR_HOME=" + dir, "DR_BASE=" + srv.URL}, commands)
+		return bash(t, []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}, commands)
 	}
 	scriptBox := func() (string, protocol.Address) {
 		t.Helper()
@@ -1499,7 +1499,7 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 	kt := protocol.PostQuantum
 	dir := t.TempDir()
 	sh := func(commands string) (string, error) {
-		return bash(t, []string{"DR_HOME=" + dir, "DR_BASE=" + srv.URL}, commands)
+		return bash(t, []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}, commands)
 	}
 	out, err := sh("dr_init")
 	if err != nil {
@@ -1602,7 +1602,7 @@ func TestAJSONBodyFromTheGoClient(t *testing.T) {
 	kt := protocol.PostQuantum
 	dir := t.TempDir()
 	sh := func(commands string) (string, error) {
-		return bash(t, []string{"DR_HOME=" + dir, "DR_BASE=" + srv.URL}, commands)
+		return bash(t, []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}, commands)
 	}
 	if _, err := sh("dr_init"); err != nil {
 		t.Fatal(err)
@@ -1676,7 +1676,7 @@ func TestTheCommandLine(t *testing.T) {
 	run := func(stdin string, args ...string) (string, string, int) {
 		t.Helper()
 		cmd := exec.Command("bash", append([]string{abs(t, "dromas.sh")}, args...)...)
-		cmd.Env = append(os.Environ(), "DR_HOME="+home, "DR_BASE="+srv.URL)
+		cmd.Env = append(os.Environ(), "DR_HOME="+home, "DR_SERVER_URL="+srv.URL)
 		cmd.Stdin = strings.NewReader(stdin)
 		var out, errs bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &out, &errs
@@ -1748,7 +1748,7 @@ func TestASendDuringADrainHidesNoRevocation(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	ctx, srv := context.Background(), fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
-	env := []string{"DR_HOME=" + t.TempDir(), "DR_BASE=" + srv.URL, "DR_LOCK_WAIT=2"}
+	env := []string{"DR_HOME=" + t.TempDir(), "DR_SERVER_URL=" + srv.URL, "DR_LOCK_WAIT=2"}
 	out, err := bash(t, env, "dr_init --no-pq")
 	if err != nil {
 		t.Fatal(err)
@@ -1836,11 +1836,11 @@ func TestBothClientsCallTheSameServers(t *testing.T) {
 	}
 	// Each call is held to it too, as the Go client's are: dr_api calls no
 	// curl for a server out of form, whoever named it.
-	if _, err := bash(t, []string{"DR_HOME=" + t.TempDir()}, `curl(){ echo "curl was called" >&2; return 7; }; DR_BASE=http://example.com dr_api GET /v1/x`); err == nil || !strings.Contains(err.Error(), refusal) || strings.Contains(err.Error(), "curl was called") {
+	if _, err := bash(t, []string{"DR_HOME=" + t.TempDir()}, `curl(){ echo "curl was called" >&2; return 7; }; DR_SERVER_URL=http://example.com dr_api GET /v1/x`); err == nil || !strings.Contains(err.Error(), refusal) || strings.Contains(err.Error(), "curl was called") {
 		t.Errorf("dr_api to a server over http elsewhere: %v", err)
 	}
 	cmd := exec.Command("bash", abs(t, "dromas.sh"), "addr")
-	cmd.Env = append(os.Environ(), "DR_HOME="+t.TempDir(), "DR_BASE=http://example.com")
+	cmd.Env = append(os.Environ(), "DR_HOME="+t.TempDir(), "DR_SERVER_URL=http://example.com")
 	if out, err := cmd.CombinedOutput(); err == nil || !strings.Contains(string(out), refusal) {
 		t.Errorf("dromas.sh addr with a server over http elsewhere: %v %q", err, out)
 	}
@@ -1864,7 +1864,7 @@ func TestTheScriptFollowsNoRedirect(t *testing.T) {
 	}))
 	t.Cleanup(other.Close)
 	dir := t.TempDir()
-	env := []string{"DR_HOME=" + dir, "DR_BASE=" + srv.URL}
+	env := []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}
 	if _, err := bash(t, env, "dr_init"); err != nil {
 		t.Fatalf("dr_init: %v", err)
 	}
@@ -1911,7 +1911,7 @@ func TestNoCallOfTheScriptFollowsARedirect(t *testing.T) {
 	t.Cleanup(other.Close)
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
-	env := []string{"DR_HOME=" + dir, "DR_BASE=" + srv.URL}
+	env := []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}
 	if _, err := bash(t, env, "dr_init"); err != nil {
 		t.Fatalf("dr_init: %v", err)
 	}
@@ -1968,7 +1968,7 @@ func TestAnAnswerWithNoBodyPutsOnlyJSONOnStderr(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(status) }))
 		t.Cleanup(srv.Close)
 		cmd := exec.Command("bash", "-c", ". "+abs(t, "dromas.sh")+"\ndr_api GET /v1/x")
-		cmd.Env = append(os.Environ(), "DR_HOME="+t.TempDir(), "DR_BASE="+srv.URL)
+		cmd.Env = append(os.Environ(), "DR_HOME="+t.TempDir(), "DR_SERVER_URL="+srv.URL)
 		var errs bytes.Buffer
 		cmd.Stderr = &errs
 		_ = cmd.Run()
@@ -1994,7 +1994,7 @@ func TestAServerThatIsNotThereIsNoAnswer(t *testing.T) {
 	}
 	base := "http://" + l.Addr().String()
 	_ = l.Close()
-	_, err = bash(t, []string{"DR_HOME=" + t.TempDir(), "DR_BASE=" + base}, "dr_api GET /v1/x")
+	_, err = bash(t, []string{"DR_HOME=" + t.TempDir(), "DR_SERVER_URL=" + base}, "dr_api GET /v1/x")
 	if err == nil || !strings.Contains(err.Error(), `{"type":"error","message":"no answer from `+base+`"}`) || strings.Contains(err.Error(), "curl") || strings.Contains(err.Error(), `"status":`) {
 		t.Errorf("a server that is not there: %v", err)
 	}
@@ -2006,7 +2006,7 @@ func TestAServerThatIsNotThereIsNoAnswer(t *testing.T) {
 func TestA3xxIsNoAnswerWhateverItsLines(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
-	env := []string{"DR_HOME=" + t.TempDir(), "DR_BASE=" + srv.URL}
+	env := []string{"DR_HOME=" + t.TempDir(), "DR_SERVER_URL=" + srv.URL}
 	if _, err := bash(t, env, "dr_init"); err != nil {
 		t.Fatal(err)
 	}
@@ -2055,7 +2055,7 @@ func TestTheScriptReadsNoCurlrc(t *testing.T) {
 		_, _ = w.Write([]byte(`{"messages":[]}`))
 	}))
 	t.Cleanup(other.Close)
-	env := []string{"DR_HOME=" + t.TempDir(), "DR_BASE=" + srv.URL, curlrc("location-trusted")}
+	env := []string{"DR_HOME=" + t.TempDir(), "DR_SERVER_URL=" + srv.URL, curlrc("location-trusted")}
 	if _, err := bash(t, env, "dr_init"); err != nil {
 		t.Fatal(err)
 	}
@@ -2077,7 +2077,7 @@ func TestTheScriptReadsNoCurlrc(t *testing.T) {
 	u, _ := url.Parse(fakeserver.New(t, time.Now).URL)
 	front := httptest.NewTLSServer(httputil.NewSingleHostReverseProxy(u))
 	t.Cleanup(front.Close)
-	env = []string{"DR_HOME=" + t.TempDir(), "DR_BASE=" + front.URL, curlrc("insecure")}
+	env = []string{"DR_HOME=" + t.TempDir(), "DR_SERVER_URL=" + front.URL, curlrc("insecure")}
 	if out, err := bash(t, env, "dr_init && dr_recv"); err == nil {
 		t.Errorf("insecure: a server whose certificate nobody signed made a box and drained it: %q", out)
 	}
@@ -2114,7 +2114,7 @@ func TestTheScriptCallsThisMachineDirectly(t *testing.T) {
 		t.Fatal(err)
 	}
 	register := func(base string) (string, error) {
-		env := []string{"DR_HOME=" + t.TempDir(), "DR_BASE=" + base, "CURL_CA_BUNDLE=" + ca, "no_proxy=", "NO_PROXY="}
+		env := []string{"DR_HOME=" + t.TempDir(), "DR_SERVER_URL=" + base, "CURL_CA_BUNDLE=" + ca, "no_proxy=", "NO_PROXY="}
 		for _, v := range []string{"http_proxy", "https_proxy", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"} {
 			env = append(env, v+"="+proxy.URL)
 		}
@@ -2151,7 +2151,7 @@ func TestTheScriptHoldsALowerLifetimeOverAWaitingRenewal(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
-	env := []string{"DR_HOME=" + dir, "DR_BASE=" + srv.URL}
+	env := []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}
 	if _, err := bash(t, env, "dr_init"); err != nil {
 		t.Fatalf("dr_init: %v", err)
 	}
