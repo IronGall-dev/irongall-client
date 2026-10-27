@@ -240,8 +240,8 @@ func TestCodes(t *testing.T) {
 	if Code("nope").Status() != 0 {
 		t.Error("an unknown code has a status")
 	}
-	b, _ := json.Marshal(Problem{Type: CodePairFull.TypeURI(), Title: "t", Status: 429, Code: CodePairFull})
-	if string(b) != `{"type":"tag:dromas.dev,2026-10-26:errors/pair_full","title":"t","status":429,"code":"pair_full"}` {
+	b, _ := json.Marshal(Problem{Type: CodeMailboxBusy.TypeURI(), Title: "t", Status: 429, Code: CodeMailboxBusy})
+	if string(b) != `{"type":"tag:dromas.dev,2026-10-26:errors/mailbox_busy","title":"t","status":429,"code":"mailbox_busy"}` {
 		t.Errorf("Problem JSON %s", b)
 	}
 }
