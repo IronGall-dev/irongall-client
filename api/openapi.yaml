@@ -1405,7 +1405,7 @@ components:
                   code:
                     const: precondition_failed
     ContentTooLarge:
-      description: '`too_large`, with the `limit` in bytes, or in entries for an ACL (bytes at a server that bounds no ACL''s entries).'
+      description: '`too_large`, with the `limit` in bytes, or in entries for an ACL.'
       headers:
         Date:
           $ref: '#/components/headers/Date'
@@ -1740,6 +1740,7 @@ components:
           items:
             $ref: '#/components/schemas/ACLEntry'
     ACL:
+      description: At most 10,000 entries in both lists together (`PROTOCOL.md` §11.14).
       type: object
       required: [allow, deny]
       properties:
