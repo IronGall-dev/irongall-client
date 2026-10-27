@@ -453,6 +453,10 @@ case_env accept-every-field "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"b
 case_env accept-json-body "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":{\"task\":\"ping\",\"n\":1}}" "$A" "$B"
 case_env accept-null-body "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":null}" "$A" "$B"
 case_env accept-unknown-field "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\",\"later\":true}" "$A" "$B"
+# U+2028 and U+2029 raw, as a sender's JSON may leave them (Go's writer escapes them, and need not): a reader takes them as any
+# other character, in a string body, and in a body's member name and value and the subject.
+case_env accept-line-separators-raw-in-a-string-body "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"a\xe2\x80\xa8b\xe2\x80\xa9c\"}" "$A" "$B"
+case_env accept-line-separators-raw-in-a-member "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":{\"a\xe2\x80\xa8b\":\"c\xe2\x80\xa9d\"},\"subject\":\"e\xe2\x80\xa8f\"}" "$A" "$B"
 case_env accept-33-days-old "{$H,\"sent_at\":\"2026-09-07T00:00:00Z\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
 case_env refuse-33-days-and-1s-old "{$H,\"sent_at\":\"2026-09-06T23:59:59Z\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
 case_env accept-1-hour-ahead "{$H,\"sent_at\":\"2026-10-10T01:00:00Z\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
