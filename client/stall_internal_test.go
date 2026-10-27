@@ -147,6 +147,47 @@ func TestAPostRunsWhileItsBytesMove(t *testing.T) {
 	})
 }
 
+// A post whose body the transport sends again runs while the second copy's
+// bytes move, as the first's do: net/http reads a body again through GetBody
+// after an HTTP/2 GOAWAY or REFUSED_STREAM once the body was written, and on
+// a reused HTTP/1 connection that closed with the body buffered and nothing
+// flushed (#439 item 1). The server's transport plays the retry: it reads a
+// chunk, takes GetBody, and reads that copy a chunk at a time, for many times
+// requestTimeout in all.
+func TestAPostSentAgainRunsWhileTheCopysBytesMove(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		shortBound(t)
+		body := bytes.Repeat([]byte{1}, 64<<10)
+		var reads timeline
+		b := slowBox(t, func(r *http.Request) (*http.Response, error) {
+			if _, err := r.Body.Read(make([]byte, 4<<10)); err != nil {
+				return nil, err
+			}
+			_ = r.Body.Close()
+			if r.GetBody == nil {
+				return nil, errors.New("the post has no GetBody")
+			}
+			again, err := r.GetBody()
+			if err != nil {
+				return nil, err
+			}
+			r.Body = reads.of(again)
+			if _, err := readsEvery(r, 4<<10, stallBound/4); err != nil {
+				return nil, err
+			}
+			return created(), nil
+		})
+		start := time.Now()
+		reads.start = start
+		if _, err := b.exchange(context.Background(), http.MethodPost, "/v1/x/messages", &ciphertext{bytes: body}, nil, nil); err != nil {
+			t.Fatalf("a post whose second copy kept moving, after %s: %v; the server's reads of it, from the start: %s", time.Since(start), err, reads.String())
+		}
+		if took := time.Since(start); took < 3*stallBound {
+			t.Fatalf("the slow link took %s, too little to show the bound is not on the whole", took)
+		}
+	})
+}
+
 // The wait for an answer's head is bounded by requestTimeout, from the last
 // byte the call sent: a fetch, which sends none, from its start.
 func TestTheWaitForTheHeadIsBounded(t *testing.T) {
