@@ -1,6 +1,6 @@
 # The Dromas Protocol, version 1
 
-**Status: draft.** Nothing here is final until version 1 is declared stable. What must be settled first is this repository's issues in the milestone `M1: protocol freeze`.
+**Status: draft.** Nothing here is final until version 1 is declared stable. What must be settled first is the open issues of this repository and of dromas-server.
 
 ## 1. Introduction
 
