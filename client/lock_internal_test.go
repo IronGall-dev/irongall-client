@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,20 +38,25 @@ func twoOpens(t *testing.T) (a, r *Box, state string) {
 // A reading whose open finds no state file reads none at every view, and
 // opens none that a command makes after that open: Status's views, behind a
 // command that made the file again and holds it, would each wait for that
-// command past the reading's context, up to lockPatience (#382).
+// command with no context, up to lockPatience (#382). What the reading waited
+// on is what its Box is told (Options.Waiting), which here also lets the
+// command go, so a reading that waits is seen at once and on no clock (#509).
 func TestAReadingThatFoundNoStateFileWaitsForNoCommand(t *testing.T) {
-	saved := lockPatience
-	lockPatience = 3 * time.Second // a view that waits for the command ends at this, refused
-	t.Cleanup(func() { lockPatience = saved })
+	t.Parallel()
 	a, r, state := twoOpens(t)
 	if err := os.Remove(state); err != nil {
 		t.Fatal(err)
 	}
 	holding, release, cmd := make(chan struct{}), make(chan struct{}), make(chan error, 1)
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	defer cancel()
-	began := time.Now()
-	_, err := reading(ctx, r, func() (*Status, error) {
+	var waited atomic.Bool
+	var letGo sync.Once
+	r.waiting = func() {
+		waited.Store(true)
+		letGo.Do(func() { close(release) })
+	}
+	cmdDone := false
+	var cmdErr error
+	_, err := reading(context.Background(), r, func() (*Status, error) {
 		// Once the reading's open has found no file, a command makes it
 		// again and holds it.
 		go func() {
@@ -61,18 +68,21 @@ func TestAReadingThatFoundNoStateFileWaitsForNoCommand(t *testing.T) {
 		}()
 		select {
 		case <-holding:
-		case <-time.After(10 * time.Second):
-			t.Error("the command never held the box")
+		case cmdErr = <-cmd:
+			cmdDone = true
+			return nil, errors.New("the command ended without holding the box")
 		}
 		return r.status()
 	})
-	took := time.Since(began)
-	close(release)
-	if err := <-cmd; err != nil {
-		t.Errorf("the command: %v", err)
+	letGo.Do(func() { close(release) })
+	if !cmdDone {
+		cmdErr = <-cmd
 	}
-	if took > time.Second || err != nil && !errors.Is(err, context.DeadlineExceeded) {
-		t.Errorf("a reading given 300ms, behind a command that made the state file after the reading's open: %v after %v", err, took.Round(10*time.Millisecond))
+	if cmdErr != nil {
+		t.Errorf("the command: %v", cmdErr)
+	}
+	if waited.Load() || err != nil {
+		t.Errorf("a reading behind a command that made the state file after the reading's open: waited for it %v, %v", waited.Load(), err)
 	}
 }
 

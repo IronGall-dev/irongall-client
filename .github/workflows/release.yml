@@ -133,11 +133,15 @@ jobs:
           sha256sum --strict -c checksums.txt
       - name: each file's attestation, built by this workflow from this tag
         working-directory: release
+        # gh prints nothing on a pass off a terminal, so each file passed is
+        # named after it, and the log shows which were checked (#503 item 2);
+        # a failure ends the step (bash -e) before its name is printed.
         run: |
           while read -r _ file; do
             gh attestation verify "$file" -R "$REPO" \
               --signer-workflow "$REPO/.github/workflows/release.yml" \
               --source-ref "refs/tags/$TAG" --deny-self-hosted-runners
+            echo "attested: $file"
           done < checksums.txt
       - name: the release's own attestation, which GitHub makes of an immutable release
         working-directory: release
