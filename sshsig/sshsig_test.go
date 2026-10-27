@@ -252,6 +252,22 @@ func TestVerifyQuotesNothingTheSignatureCarries(t *testing.T) {
 			t.Errorf("%s the signer chose: %v", c.name, err)
 		}
 	}
+	// The signature's format name, and a signature blob that does not parse,
+	// whose bytes end in the words.
+	sig, err := s.Sign(rand.Reader, signedData(ns, "", "sha512", h))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig.Format = said
+	for name, blob := range map[string][]byte{
+		"a format name":  ssh.Marshal(sig),
+		"a blob's bytes": append(ssh.Marshal(struct{ Format string }{said}), 0xff),
+	} {
+		err := Verify(s.PublicKey(), msg, build(pk, ns, "", "sha512", blob, 1), ns)
+		if err == nil || strings.Contains(err.Error(), "SENDER-CHOSEN") {
+			t.Errorf("%s the signer chose: %v", name, err)
+		}
+	}
 }
 
 // The reserved field is read as "ssh-keygen -Y verify" reads it: the blob's is

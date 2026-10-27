@@ -157,7 +157,7 @@ func Verify(pub ssh.PublicKey, message, signature []byte, namespace string) erro
 
 	sig := new(ssh.Signature)
 	if err := ssh.Unmarshal(sigBytes, sig); err != nil {
-		return fmt.Errorf("sshsig: malformed signature: %v", err)
+		return errors.New("sshsig: malformed signature")
 	}
 	switch sig.Format {
 	case ssh.KeyAlgoRSA:
@@ -175,7 +175,14 @@ func Verify(pub ssh.PublicKey, message, signature []byte, namespace string) erro
 	// sshsig_wrap_verify does it: the blob's is skipped, and the data the key
 	// signed has an empty one. So a signature made over a reserved string that
 	// is not empty is refused, as "ssh-keygen -Y verify" refuses it.
-	return pub.Verify(signedData(string(ns), "", string(hashAlg), h), sig)
+	//
+	// The key's own error is not passed on: x/crypto/ssh names the signature's
+	// format in it ("ssh: signature type %s for key type %s"), and the format
+	// is the signer's bytes.
+	if pub.Verify(signedData(string(ns), "", string(hashAlg), h), sig) != nil {
+		return errors.New("sshsig: signature did not verify")
+	}
+	return nil
 }
 
 func isRSA(pub ssh.PublicKey) bool {
