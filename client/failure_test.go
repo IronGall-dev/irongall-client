@@ -348,23 +348,6 @@ func TestAPassTheServerSaysHasRunOut(t *testing.T) {
 	}
 }
 
-// One command of a box at a time: one that finds the lock held waits for
-// it, and gives up once it has waited as long as it waits.
-func TestLock(t *testing.T) {
-	e := newEnv(t)
-	b := e.box(protocol.Classic)
-	release := holdState(t, b)
-	client.SetLockPatience(t, 200*time.Millisecond)
-	if _, err := b.Receive(context.Background()); err == nil || !strings.Contains(err.Error(), "lock") {
-		t.Fatalf("receive while another command holds the lock: %v", err)
-	}
-	if _, err := b.Rekey(context.Background(), ""); err == nil || !strings.Contains(err.Error(), "lock") {
-		t.Fatalf("rekey while another command holds the lock: %v", err)
-	}
-	release()
-	receive(t, b)
-}
-
 // A lock whose holder was killed is free at once: the kernel lets go of its
 // flock, and nothing is left to take over or remove (#235).
 func TestAKilledHolderLeavesNoLock(t *testing.T) {

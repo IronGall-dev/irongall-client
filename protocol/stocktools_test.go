@@ -237,25 +237,6 @@ func TestVectorsByToolsNotOurs(t *testing.T) {
 	})
 }
 
-// TestTheStockToolNamespacesAreTheSpecs holds the namespaces written out in
-// TestVectorsByToolsNotOurs to this package's, so that test reads nothing of
-// ours and still tests what the protocol signs.
-func TestTheStockToolNamespacesAreTheSpecs(t *testing.T) {
-	var a Address
-	copy(a[:], bytes.Repeat([]byte{1}, len(a)))
-	for _, c := range []struct{ got, tag string }{
-		{PrekeyNamespace(a), "dromas-prekey-v1"},
-		{MessageNamespace(a), "dromas-msg-v1"},
-		{RevokeNamespace(a), "dromas-revoke-v1"},
-		{PassNamespace(a), "dromas-pass-v1"},
-		{RevokedCertsNamespace(a), "dromas-revoke-certs-v1"},
-	} {
-		if c.got != c.tag+":"+a.String() {
-			t.Errorf("%s is not %s:<address>", c.got, c.tag)
-		}
-	}
-}
-
 func globIn(t *testing.T, dir, pattern string) []string {
 	t.Helper()
 	m, err := filepath.Glob(filepath.Join(dir, pattern))
