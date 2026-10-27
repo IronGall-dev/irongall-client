@@ -51,7 +51,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 - **No answer:** what a client takes a call to have had when it failed, or when its answer breaks the form this document gives it (Sections 3.3, 11.1, 11.2, 12.3): it says nothing about what was asked.
 - **Drain:** a client's pass over its box: every page of its list, each message fetched, judged and acked (Section 12.3).
 - **Native stanza:** an age recipient stanza of a type a prekey has, `X25519` or `mlkem768x25519` (Section 9.4).
-- **Floor:** the cutoff a box's replay set has been pruned to (Section 12.3, check 9).
+- **Floor:** the cutoff a box's replay set has been pruned to (Section 12.3, check 8).
 
 ## 3. Primitives
 
@@ -393,7 +393,7 @@ What each code means, and what a client does on it:
 | 404 | `no_such_message` | the message was acked or has expired: it is gone |
 | 404 | `not_revoked` | the server holds no revocation of the address (Section 11.15) |
 | 408 | `request_timeout` | the body did not arrive in time: send it again |
-| 409 | `conflict` | what is held is newer, or other: a registration that is not an identical retry; a renewal under the current certificate at a prekey serial not higher (`prekey_serial` names the serial it must pass); a revocation of certificates through a serial lower than the one held (`through` names the one held); a send whose id another sender holds |
+| 409 | `conflict` | what is held is newer, or other: a registration that is not an identical retry; a renewal under the current certificate at a prekey serial not higher (`prekey_serial` names the serial it must pass); a revocation of certificates through a serial lower than the one held (`through` names the one held) |
 | 409 | `box_changed` | the box changed while the request was handled, or a condition it carried no longer held at its write: send it again as it is |
 | 409 | `stale_prekey` | a newer prekey exists: read the box again and seal the same envelope (`prekey_serial`, `certificate_serial` name the current one) |
 | 409 | `prekey_expired` | the recipient's prekey has ended, or is under a revoked certificate: its owner must renew |
@@ -402,7 +402,6 @@ What each code means, and what a client does on it:
 | 413 | `too_large` | a body or ciphertext over its cap, or an ACL with more entries than the server takes; `limit` gives the cap |
 | 429 | `rate_limited` | past a limit (Section 11.5); `subject`, `quota_id`, and for a number a day `limit` |
 | 429 | `fetch_paced`, `refetch_spent` | the box's fetches are paced (Section 11.12) |
-| 429 | `pair_full` | the sender's unacked mail at this box is at its cap; `unacked`, `oldest_expires_at` |
 | 429 | `mailbox_full` | the box holds as much mail as it may; `count`, how many it holds, as its list counts them |
 | 429 | `mailbox_busy` | the box has taken as much new mail as it takes for now |
 | 503 | `unavailable` | the server is not ready to answer |
@@ -414,7 +413,7 @@ Every `429` carries `Retry-After`.
 Which refusal a server answers first is its own, but for three rules. Otherwise, where a request fails several checks, a server answers the one it finds first, and a client acts on whichever comes; the steps of Sections 11.7 and 11.10 are numbered to be cited, not to order them.
 
 1. **A box's state comes before any pass.** A call answers the state of the box whose pass it carries, and a read of a box the state of the box it reads, before any pass is judged: a call with a box's own pass, `404 no_such_mailbox` for a box unknown, `410 revoked`, and `401 certificate_revoked` where it takes a pass under the box's current certificate and the identity has revoked that certificate; a send, of its sender, `403 unknown_sender`, `403 sender_revoked` and `401 certificate_revoked`; the read of a box, `404 no_such_mailbox` or `410 revoked` with its record; the read of revocations, `404 not_revoked` or `200` with the record. So a box learns its own state whatever pass it carries.
-2. **What could change nothing is answered from what is kept.** A registration of a box the server holds is answered from its record (Section 11.7, step 5), and an identical retry of it, or of a renewal, is `200 {}`; a revocation of an address the server holds revoked, or of certificates through a serial no higher than the one held, is answered from what is held (Section 11.15); a send's retry gets its first receipt, whatever has changed at its recipient since (Section 11.10, step 6). None of them is refused by a count of what it would make new. The budgets that bound any call may still defer one with a `429`: the address's `requests` and `misses`, and the box's `calls`.
+2. **What could change nothing is answered from what is kept.** A registration of a box the server holds is answered from its record (Section 11.7, step 5), and an identical retry of it, or of a renewal, is `200 {}`; a revocation of an address the server holds revoked, or of certificates through a serial no higher than the one held, is answered from what is held (Section 11.15); a send of a ciphertext its recipient holds unacked gets the receipt it holds, whatever has changed at that box since (Section 11.10, step 6). None of them is refused by a count of what it would make new. The budgets that bound any call may still defer one with a `429`: the address's `requests` and `misses`, and the box's `calls`.
 3. **Preconditions are evaluated once the call knows its target's state** (by its route, its method, its pass where it takes one, and the read of its target) **and before it acts** (RFC 9110 §13.2.1, §13.2.2). What is refused before that point is answered as without them. After it, a false one is a call that does nothing but count: a list's is a poll, a fetch's or an ack's one of the box's calls, and it takes no cursor and no new mail, marks nothing fetched and writes nothing. A send evaluates them before its dedupe (Section 11.10, step 6).
 
 ### 11.5. Limits
@@ -427,7 +426,7 @@ What a server limits, and by how much, is its own: no limit's value is part of t
 
 **Who a call is counted against.** A call with a box's pass is counted against that box. A call with none is counted against the IPv4 address or the IPv6 /64 it comes from; a server MAY also count by a wider range. The read of a box is counted against its address whatever it carries. A check that fails, or a call that names no box, is counted against its address. No caller is exempt.
 
-**How a refusal names its limit.** A limit without a code of its own (`fetch_paced`, `refetch_spent`, `mailbox_busy`, `pair_full`, `mailbox_full`) is `429 rate_limited`, with whom it was counted against in `subject` (`box`, or `ip`) and which limit in `quota_id`. Where one call would spend several limits, `Retry-After` is the time when every limit the server can read without doing the call's work lets the same call through (RFC 8555 §6.6), and the name is that limit's; a limit behind that work, a read of storage or a signature check, can still refuse the call once that wait is over. A send's number a day is behind its dedupe, so a send past its calls is told the calls' wait. **A number a day** is a budget of that many, refilled one at a time, evenly over the day, for each box: `limit` gives the number.
+**How a refusal names its limit.** A limit without a code of its own (`fetch_paced`, `refetch_spent`, `mailbox_busy`, `mailbox_full`) is `429 rate_limited`, with whom it was counted against in `subject` (`box`, or `ip`) and which limit in `quota_id`. Where one call would spend several limits, `Retry-After` is the time when every limit the server can read without doing the call's work lets the same call through (RFC 8555 §6.6), and the name is that limit's; a limit behind that work, a read of storage or a signature check, can still refuse the call once that wait is over. A send's number a day is behind its dedupe, so a send past its calls is told the calls' wait. **A number a day** is a budget of that many, refilled one at a time, evenly over the day, for each box: `limit` gives the number.
 
 | `quota_id` | `subject` | Counts |
 |---|---|---|
@@ -460,7 +459,7 @@ Every call names a box, and this is what each does in each state.
 - **There is no delete of a box.** A box leaves a server for good by its identity's revocation, pauses with its ACL (Section 11.14), and is forgotten once it stops renewing.
 - **There is no pending state:** a registration carries a pass minutes old, so a box is active from its first call.
 - **A box is forgotten once nothing valid for it is left** (Section 13): it has stopped renewing, its certificate has ended and its last prekey's mail has expired. It is then unknown, and registers anew, its ACL and its account gone. What its identity revoked is kept.
-- **A replay** of a request that took effect, byte for byte, gets `200` and the same result; a conflicting one gets `409 conflict`.
+- **A replay** of a request that took effect, byte for byte, gets `200` and the same result, and a conflicting one `409 conflict`; a send's is answered as Section 11.10, step 6, answers it.
 
 ### 11.7. Register
 
@@ -513,16 +512,16 @@ The server checks, and only step 9 stores anything. Every count is taken before 
 3. **The body's size:** at most the sender's cap → otherwise `413 too_large` with the cap in `limit`, from the `Content-Length` before anything is read, or as it reads.
 4. **It is an age file** → otherwise `not_age`, an empty body included.
 5. **`B` is active:** unknown → `404 no_such_mailbox`; revoked → `410 revoked`.
-6. **Dedupe:** the id is the ciphertext's SHA-256. If `B` holds that id, acked or not: from the same sender, a retry → `200` with the original receipt, whatever has changed at `B` since; from another sender → `409 conflict`.
+6. **Dedupe, while the message is live:** the id is the ciphertext's SHA-256. `B` holding that id unacked, from any sender → `200` with the receipt it holds, whatever has changed at `B` since. Nothing of a message is kept once it is acked or has expired: the same bytes sent after that are a new message, stored and counted as any send is, which a reader that took them once skips or refuses (Section 12.3, check 8).
 7. **`B` takes new mail, on this prekey, from this sender.** `B`'s current prekey past its `not_after`, or under a certificate `B`'s identity has revoked → `409 prekey_expired`. A sender whose identity is not `ssh-ed25519`, to a `B` that declared neither that type nor `any` (Section 7) → `403 sender_key_type`. The two serials not those of `B`'s current statement → `409 stale_prekey`. **Exactly one native stanza** (`X25519` or `mlkem768x25519`) of the current prekey's type; a stanza whose type matches `^[!-~]{1,8}-grease$` with at most 4 arguments is ignored, as age has a reader ignore a stanza it does not recognise, and its body is bounded by nothing but the message cap → otherwise `wrong_recipient_type`. Which key the file is sealed to cannot be checked.
-8. **Quotas, counted only for sends that carried their sender's pass.** `B`'s ACL does not admit the sender → `403 sender_not_allowed`, one code and one wording whether the sender is denied or only not allowed. The sender's `sends` → `429 rate_limited`. Its unacked mail at `B` at the pair's cap → `429 pair_full`. `B`'s mail at its cap → `429 mailbox_full`. The new mail `B` takes, from every sender together, past its budget → `429 mailbox_busy`; a retry spends none. `pair_full` and `mailbox_full` carry a `Retry-After` of the poll interval, and `mailbox_busy` the time until `B` takes another.
+8. **Quotas, counted only for sends that carried their sender's pass.** `B`'s ACL does not admit the sender → `403 sender_not_allowed`, one code and one wording whether the sender is denied or only not allowed. The sender's `sends` → `429 rate_limited`. `B`'s mail at its cap → `429 mailbox_full`. The new mail `B` takes, from every sender together, past its budget → `429 mailbox_busy`; a retry spends none. `mailbox_full` carries a `Retry-After` of the poll interval, and `mailbox_busy` the time until `B` takes another.
 9. **Store it** (Section 13) → `201`. A concurrent send of the same ciphertext that got there first is answered as step 6 does. Any other failure is `503 unavailable`, and the sender posts the message again from its outbox.
 
 ### 11.11. List
 
 `GET /v1/<B>/messages`, with the box's pass → `200` with `count`, `messages` and `next_cursor`, and `Retry-After`.
 
-- **`count`** is every live message in the box; **`messages`** is one page of up to 50 entries, oldest first by `received_at`, each its `id`, `from` (the box whose pass its send carried, on the server's word), `size` (its ciphertext's length, at most 16 MiB), `received_at` and `expires_at`; **`next_cursor`** is null after the last page. An empty box is `{"count":0,"messages":[],"next_cursor":null}`.
+- **`count`** is every live message in the box; **`messages`** is one page of up to 50 entries, oldest first by `received_at`, each its `id`, `size` (its ciphertext's length, at most 16 MiB), `received_at` and `expires_at`, and no sender; **`next_cursor`** is null after the last page. An empty box is `{"count":0,"messages":[],"next_cursor":null}`.
 - **A cursor is opaque** and is one or more of `A`–`Z`, `a`–`z`, `0`–`9`, `-` and `_` (AEP-158). The next list carries it as `?cursor=` as it is.
 - **`Retry-After` on every list answer, a `304` included, is the server's poll interval,** in seconds.
 - **A first page carries an `ETag`,** a strong validator of the page's body, which changes with any message that enters or leaves the page or the count. A page after the first carries none.
@@ -544,7 +543,7 @@ The server checks, and only step 9 stores anything. Every count is taken before 
 
 ### 11.13. Ack
 
-`DELETE /v1/<B>/messages/<id>`, with the box's pass → `204`. It deletes the stored ciphertext and takes the message out of the list. The server keeps a dedupe record of it until its `expires_at` (Section 13). A message that is gone → `404 no_such_message`. Reading does not delete.
+`DELETE /v1/<B>/messages/<id>`, with the box's pass → `204`. It deletes the message, and the server keeps nothing of it (Section 13). A message that is gone → `404 no_such_message`. Reading does not delete.
 
 ### 11.14. ACL
 
@@ -554,8 +553,8 @@ A box's ACL is whom its server takes the box's mail from.
 - **`PUT /v1/<B>/acl`,** with the pass, replaces it whole with `allow` and `deny`. Each entry is an address, or `*`, which matches every address; there is no other pattern, and repeats are taken once. `allow` is REQUIRED (`["*"]` is everyone and `[]` nobody): a document without it is `400 bad_request`. `deny` may be left out, for none. More entries, in both lists together, than the server takes is `413 too_large`. A server MUST NOT take more than 10,000, and MAY take fewer. The answer is `200` with the ACL as held, `*` first and then each address once in ascending order, and no `ETag`.
 - **`GET /v1/<B>/acl`,** with the pass, answers the ACL as held, in that order, with its `ETag`, a strong validator that changes whenever the lists change. A box with none answers `{"allow":["*"],"deny":[]}`, and has a tag too. A client MUST treat an ACL answer holding more than 10,000 entries, in both lists together, as an answer that breaks its form. There is no `DELETE`.
 - **A `PUT` MAY carry `If-Match`,** so that it replaces only the ACL its writer read: compared strongly with the tag of the ACL held now, a box with none included. `If-None-Match: *`, or one naming the ACL's tag, is false, since a box always has an ACL. A `PUT` without a precondition replaces whatever is held.
-- **What it denies is deleted:** the box's unacked mail from every sender the new `deny` matches is deleted with the change. A send that passed the check while the ACL changed may still be stored after it.
-- **A box pauses with it:** `{"allow":[],"deny":["*"]}` refuses every sender and deletes the box's unacked mail.
+- **It deletes no mail:** a change refuses later sends only, and what the box holds stays until it is acked or expires. A send that passed the check while the ACL changed may still be stored after it.
+- **A box pauses with it:** `{"allow":[],"deny":["*"]}` refuses every sender.
 - **It is not signed.** Only its box reads it, and only the server acts on it.
 
 ### 11.15. Revocations
@@ -590,7 +589,7 @@ A box may belong to one account at its server. The protocol fixes how a box join
 - **A box's keys and state are in a directory only its owner can read** (0700, or the system's own equivalent where it has no modes), and never the working directory.
 - **The identity key** is a plain OpenSSH private key file, with no passphrase and no seed derivation. It is backed up: losing it loses the address (Section 12.5).
 - **A prekey MUST NOT be backed up, synced, derived from a seed, or kept where old versions survive** (a secrets manager, a version-control system, a snapshot): a prekey that survives its deletion voids the forward secrecy of Section 15.3. A working key is not backed up either: a restored box makes new ones.
-- **What a client keeps, each by the rule of its section:** each peer's identity, pinned once something it signed has verified (Sections 12.2, 12.3); the highest certificate and prekey serials it has seen on each peer's statements (Section 6); every revocation it has verified, never removed (Section 12.5); its replay set and its floor (Section 12.3, check 9); when it signed each of its prekeys (Section 12.4); and its outbox, as written (Section 12.2).
+- **What a client keeps, each by the rule of its section:** each peer's identity, pinned once something it signed has verified (Sections 12.2, 12.3); the highest certificate and prekey serials it has seen on each peer's statements (Section 6); every revocation it has verified, never removed (Section 12.5); its replay set and its floor (Section 12.3, check 8); when it signed each of its prekeys (Section 12.4); and its outbox, as written (Section 12.2).
 - **A client MUST NOT adopt a server's `Date` as its clock, nor tell its owner to set the clock by it.** When a refusal is for a time, it reports the difference between the two, as the server's word, pointing its owner to a time source the owner trusts: a box checks everything against its own clock, and a clock set by a lying server would make an ended certificate valid again and stale mail fresh.
 - **A key that reads mail decrypts the messages a client fetches (Section 12.3), and nothing else a server sends.**
 - **One command of a box at a time.** A client MUST hold a box's lock for the whole of every command that writes the box, so a box has one consumer, and a command that finds it held waits.
@@ -614,14 +613,14 @@ A box may belong to one account at its server. The protocol fixes how a box join
 - **A post is dated after the read, and never before its entry was written.** An entry dated ahead of the clock at its dating waits until the clock passes that time.
 - **An entry is posted for 33 days from when it was written,** by the clock at each dating, and never after, so no copy of a message is dated more than 33 days after the first.
 - **On `409 stale_prekey`, the sender posts the same envelope again** within the same send: the box read, the envelope dated and sealed anew, as above.
-- **A refusal no later post of the message can pass is final:** `bad_address`, `too_large`, `conflict` and `sender_not_allowed` (only the recipient can change its ACL); the message is never posted again. **Any other refusal leaves it in the outbox,** posted again after `Retry-After` where the answer gives one.
+- **A refusal no later post of the message can pass is final:** `bad_address`, `too_large` and `sender_not_allowed` (only the recipient can change its ACL); the message is never posted again. **Any other refusal leaves it in the outbox,** posted again after `Retry-After` where the answer gives one.
 - **A box MUST NOT sign mail under a certificate it holds revoked** (Section 10.2): the entry waits until its renewal is taken.
 - **A `410 revoked`, to the read or to the send, is checked, never believed** (Section 12.5).
-- **A post whose answer is lost costs a send.** The server stored it; the retry is a new ciphertext, which the server stores and counts as new mail, and the recipient delivers the message once (Section 12.3, check 10).
+- **A post whose answer is lost costs a send.** The server stored it; the retry is a new ciphertext, which the server stores and counts as new mail, and the recipient delivers the message once (Section 12.3, check 9).
 
 ### 12.3. Receiving
 
-A client drains every page of its list (Section 11.11). For each entry it fetches the message (Section 11.12) and reads at most the listed `size`: a body of another length breaks the answer's form, and the drain stops there, with nothing judged or acked and the message still on the server. A fetch that was cut resumes by range; the whole, the bytes kept and the range, is held to the listed `size` and to the id (check 9), as a body read whole is, and a `206` whose `Content-Range` is not the range asked for, or not of the listed size, breaks its form.
+A client drains every page of its list (Section 11.11). For each entry it fetches the message (Section 11.12) and reads at most the listed `size`: a body of another length breaks the answer's form, and the drain stops there, with nothing judged or acked and the message still on the server. A fetch that was cut resumes by range; the whole, the bytes kept and the range, is held to the listed `size` and to the id (check 8), as a body read whole is, and a `206` whose `Content-Range` is not the range asked for, or not of the listed size, breaks its form.
 
 **The checks, in this order.** Only a message that passes all of them is accepted.
 
@@ -630,11 +629,10 @@ A client drains every page of its list (Section 11.11). For each entry it fetche
 3. **The envelope is one JSON object** as Section 3.3 reads one; its body is held to the same rules and passed on as it is (`bad_envelope`).
 4. **The sender's identity document,** from the envelope's `identity`: base64, the form of Section 4.1, and a key that passes its checks (`bad_identity`). `from` MUST be its hash (`reattributed`). A well-formed document of a type the reader does not verify, whose hash is `from`, is refused as `unsupported_key_type`.
 5. **The signature,** over line 1 exactly as decrypted, in the namespace `dromas-msg-v1:<this box>`, by a working key under a certificate of that identity that holds now (Section 5) (`bad_signature`).
-6. **The rest of the envelope,** in this order: a body, and every member of its type (`from` and `to` addresses); `v` the integer 1; `to` this box (`reattributed`); `msg_id` in its form (each other failure `bad_envelope`); and `sent_at` no older than 33 days and not before the box's floor (both `stale`, check 9), and no more than an hour ahead of this box's clock (`future`).
-7. **The listed `from` is the sender that verified** (`reattributed` otherwise).
-8. **Revocation:** the box holds no revocation of the sender (Section 12.5). The reader asks by one read of the sender's box (Section 11.8), once for each sender in a drain, after that sender's signature has verified. A revocation that verifies refuses the message as `revoked`, and every later one from that address, whenever it was signed. A box served with no revocation, no such box, or `410 revoked` with nothing that verifies is an answer that none is held. Any other result is no answer: the drain stops, and the message stays on the server. The same read carries the sender's revocation of certificates: mail under a revoked certificate is refused as `certificate_revoked`.
-9. **Replay:** the SHA-256 of the ciphertext, computed by the reader, is not in the replay set (`replay`). A listed `id` that differs from it is refused (`bad_id`). The set keeps each message's hash, with its `sent_at`, `from` and `msg_id`, until `sent_at` + 66 days and an hour. **A prune that drops a line first raises the box's floor to its cutoff,** the date of the pass it prunes by (Section 12.4) less 66 days and an hour, in the same write or before it; a prune that drops nothing leaves the floor, and a `sent_at` before the floor, or less than 33 days above it, is `stale` whatever the clock reads.
-10. **Retry:** `(from, msg_id)` is not in the replay set. A match is a copy of a message already delivered: it is acked and not delivered again.
+6. **The rest of the envelope,** in this order: a body, and every member of its type (`from` and `to` addresses); `v` the integer 1; `to` this box (`reattributed`); `msg_id` in its form (each other failure `bad_envelope`); and `sent_at` no older than 33 days and not before the box's floor (both `stale`, check 8), and no more than an hour ahead of this box's clock (`future`).
+7. **Revocation:** the box holds no revocation of the sender (Section 12.5). The reader asks by one read of the sender's box (Section 11.8), once for each sender in a drain, after that sender's signature has verified. A revocation that verifies refuses the message as `revoked`, and every later one from that address, whenever it was signed. A box served with no revocation, no such box, or `410 revoked` with nothing that verifies is an answer that none is held. Any other result is no answer: the drain stops, and the message stays on the server. The same read carries the sender's revocation of certificates: mail under a revoked certificate is refused as `certificate_revoked`.
+8. **Replay:** the SHA-256 of the ciphertext, computed by the reader, is not in the replay set (`replay`). A listed `id` that differs from it is refused (`bad_id`). The set keeps each message's hash, with its `sent_at`, `from` and `msg_id`, until `sent_at` + 66 days and an hour. **A prune that drops a line first raises the box's floor to its cutoff,** the date of the pass it prunes by (Section 12.4) less 66 days and an hour, in the same write or before it; a prune that drops nothing leaves the floor, and a `sent_at` before the floor, or less than 33 days above it, is `stale` whatever the clock reads.
+9. **Retry:** `(from, msg_id)` is not in the replay set. A match is a copy of a message already delivered: it is acked and not delivered again.
 
 **Who a sender is is never asked of the server:** the message carries what proves it, and the sender's identity is pinned only once every check has passed.
 
@@ -719,11 +717,11 @@ How a server stores things is its own. What it promises a client is this.
 - **Per box:** the identity document; its state (Section 11.6); the current prekey statement and its signature, as they were sent, and served so; the serial of the certificate that statement is under; the sender key types it declared; for the newest retired prekeys, the type, `not_after` and a hash of the key (Section 11.9); when the box was registered; its account, if any; and its ACL. No private key, no pass, and no record of when the box was last seen.
 - **Per address, with a box or none:** the identity document and what its identity revoked (Section 10), each kept for good and served to whoever asks.
 - **A box is kept until nothing valid for it is left:** a registration and every renewal keep it until the later of its certificate's end and its prekey's `not_after` plus the TTL. Past that a server MAY forget it at any moment, and it is then unknown (Section 11.6).
-- **Per message:** the ciphertext exactly as the send's body carried it; `from`, the box whose pass the send carried; its size; `received_at` and `expires_at`. Its id is the ciphertext's SHA-256. No signature: the message's is inside the ciphertext.
+- **Per message:** the ciphertext exactly as the send's body carried it; its size; `received_at` and `expires_at`. Its id is the ciphertext's SHA-256. No sender and no signature: the message's signature, which names its sender, is inside the ciphertext.
 - **A `200` or `201` to a send means the message is stored.**
 - **Mail expires 33 days less an hour and two minutes after it is received,** read or not: the TTL, less the hour of room for clocks, less two minutes for a post's own time from its dating to the server's receipt. `expires_at` is the authority: a server MUST NOT serve a message past it.
-- **An ack deletes the ciphertext.** The id, `from`, the size and the times stay as the dedupe record until `expires_at` (Section 11.10, step 6).
-- **A revocation of the address** does to every message in the box what an ack does to one, and the box's record goes with it; the revocation stays. **An ACL** does the same to the mail of every sender its `deny` matches.
+- **An ack deletes the message,** and nothing of it is kept (Section 11.10, step 6).
+- **A revocation of the address** does to every message in the box what an ack does to one, and the box's record goes with it; the revocation stays. **An ACL** deletes no mail (Section 11.14).
 - **Logs.** A server MUST NOT log an address or a message id in the clear: each is replaced by a short hash of itself, which only someone already holding it can match. A server MUST NOT log a pass or a request body.
 
 ## 14. Compatibility and versioning
@@ -767,7 +765,7 @@ Dromas protects a message's content from everyone but its recipient, and its sen
 
 - **It sees:** addresses, identity documents, certificates and prekeys; who mails whom; each message's size to within a padding block (Section 9.3); times and IP addresses; ciphertext; each box's passes; which account a box is in; and each box's ACL, which under an allow list names senders the box takes mail from who may never have written to it.
 - **It never sees:** plaintext, a private key, an age file key, or any message's signature. **It holds nothing signed that says who wrote to whom:** a pass names a box and a time, and no recipient and no message.
-- **It can:** deny service; drop, delay or delete mail, undetectably; say a box is revoked when it is not, which a client checks and does not believe (Section 12.5); keep a revocation from a peer that has never seen it (Section 15.6); replay old mail, and name another box as a message's sender, both of which Section 12.3 refuses; serve a stale prekey to a sender, but only one the box's working key signed, and only until its `not_after`, and not to a sender that has seen a newer one; act as a box toward itself; take mail a box's ACL refuses, which the box's client still judges, or refuse mail it admits, which it could drop anyway; lie once in the ACL a box restored without its own lists adopts, so that a verified sender's mail lands as allowed, or mail it could drop anyway is dropped; write anything in an error's words, which a client never shows, or in a receipt, an account id or a cursor, which a client checks to their forms before it uses one (Section 11.3); and serve altered instructions to an agent that runs what it is served.
+- **It can:** deny service; drop, delay or delete mail, undetectably; say a box is revoked when it is not, which a client checks and does not believe (Section 12.5); keep a revocation from a peer that has never seen it (Section 15.6); replay old mail, which Section 12.3 refuses; serve a stale prekey to a sender, but only one the box's working key signed, and only until its `not_after`, and not to a sender that has seen a newer one; act as a box toward itself; take mail a box's ACL refuses, which the box's client still judges, or refuse mail it admits, which it could drop anyway; lie once in the ACL a box restored without its own lists adopts, so that a verified sender's mail lands as allowed, or mail it could drop anyway is dropped; write anything in an error's words, which a client never shows, or in a receipt, an account id or a cursor, which a client checks to their forms before it uses one (Section 11.3); and serve altered instructions to an agent that runs what it is served.
 - **It cannot,** against a client that verifies and gates: read mail, forge a sender, reattribute a message, substitute a key (that would need a SHA-256 second preimage or a signature forgery), alter a message undetected, end an address, make a pass, or turn a pass into plaintext or a signature on mail.
 
 ### 15.3. Forward secrecy
@@ -783,7 +781,7 @@ Dromas protects a message's content from everyone but its recipient, and its sen
 - **Each message carries its sender's signature inside the encryption,** by a working key the sender's identity certified, verified by the recipient. The signature resists key-compromise impersonation: a leaked prekey lets nobody forge a sender to its box.
 - **The signature is bound to its recipient,** by the namespace and by the envelope's `to`, so a recipient cannot pass a signed message on to a third box as mail from its sender, the known flaw of signing before encrypting.
 - **It is not deniable toward a recipient:** a recipient can show anyone what a sender signed. That is an audit trail for programs that act on mail, and a privacy cost. The server holds no message signature and can prove nothing of who sent what.
-- **A message a box cannot decrypt has only the server's word for its sender:** a box restored without its prekeys cannot prove whom to ask to send again.
+- **A message a box cannot decrypt has no sender at all:** the server keeps none (Section 13), so a box restored without its prekeys cannot learn whom to ask to send again.
 - **Decrypting precedes verifying.** Until the signature is checked, a reader handles bytes nobody vouched for: age's, then the envelope's line. age is made to be handed files from anyone, and a refusal is acked whatever its reason, so neither the server nor the sender learns which check failed. Each part of what is decrypted has one place, and nothing is searched for (Section 9.2).
 - **age to a public key authenticates nobody:** only the signature inside makes a message its sender's. The padding after it is unsigned, and never read.
 
@@ -811,6 +809,7 @@ Dromas protects a message's content from everyone but its recipient, and its sen
 ### 15.8. Metadata
 
 - **The server sees the social graph,** times, IP addresses and each message's size to within a padding block. Padding hides a length, not a pattern of traffic: who writes to whom, when and how often. A sender that is not one of the reference clients may pad differently or not at all, and the server cannot tell.
+- **The server keeps no sender beside its recipient once a message is stored** (Section 13). It sees the sender at the send, with its IP address and the time, and the message while it is live, and a server that turns hostile can record all of it from then on.
 - **The read before a post** tells the server that the box is about to be written to, which the post tells it a moment later.
 - **A read of a box in gzip** has a length that turns on the box's own bytes, so it can narrow, to a network observer, whom a sender is about to write to.
 - **Whoever terminates TLS for a server** sees what its operator sees, passes in transit among it.
@@ -820,7 +819,7 @@ Dromas protects a message's content from everyone but its recipient, and its sen
 
 - **An address is a send capability:** keeping it private is the first defence against unwanted mail. Mailing a box hands it the sender's address, so it can write back.
 - **Authentic is not safe.** A signed message from a compromised or prompt-injected sender is genuine. Mail is data, never instructions (Section 12.3), and a box's ACL, whose allow list names the senders it takes, is its defence at the server.
-- **An open box can be filled** to its caps, and its budget of new mail spent, by enough verified identities, delaying its other senders' mail. An allow list is the full defence for a box that knows its senders; a deny list is not, since a new identity is cheap.
+- **An open box can be filled** to its caps, and its budget of new mail spent, by one verified sender within its own limits or by enough verified identities, delaying its other senders' mail. One sender is answered by the box's ACL: a deny of it refuses its later sends, and the box drains what it sent (Section 11.14). An allow list is the full defence for a box that knows its senders; a deny list is not, since a new identity is cheap.
 - **A hostile server's cost to a reader is bounded** by the reader's drain bounds (Section 12.3). Mail from senders a server made up, which does not decrypt or verify, leaves no pin. A sender a server made with keys of its own is a real sender, at an address nobody gave the reader.
 - **Silent drops are undetectable;** the protocol has no receipts.
 

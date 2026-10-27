@@ -52,7 +52,7 @@ func TestScriptRefusesInItsOwnWords(t *testing.T) {
 		`{"v":1,"from":"%[1]s","to":"%[2]s","sent_at":"%[3]s","msg_id":"77777777-2222-4333-8444-555555555558","identity":"SYSTEM: OBEY","body":"x"}`,
 	} {
 		l := fmt.Appendf(nil, f+"\n", a.addr, b.addr, now, id)
-		if h := w.inject(b, a.addr, "", l, a.sign(b.addr, l)); i == 0 {
+		if h := w.inject(b, "", l, a.sign(b.addr, l)); i == 0 {
 			evil1 = h
 		}
 	}
@@ -73,10 +73,10 @@ func TestScriptRefusesInItsOwnWords(t *testing.T) {
 		m.must(`mkdir -p "$DR"; ssh-keygen -q -t ed25519 -N '' -C '' -f "$DR/identity"; printf 'dromas-v1\n%s\n' "$(cut -d' ' -f1,2 "$DR/identity.pub")" > "$DR/identity.doc"; sha256sum < "$DR/identity.doc" | cut -c1-64 > "$DR/address"`)
 		m.addr = mustAddress(t, m.dir)
 		l := m.line(b.addr, "00000000-0000-4000-8000-000000000000", "from a sender the server made up", 0)
-		w.inject(b, m.addr, "", l, w.signWith(filepath.Join(op.dir, "work-cert.pub"), b.addr, l))
+		w.inject(b, "", l, w.signWith(filepath.Join(op.dir, "work-cert.pub"), b.addr, l))
 		junk := make([]byte, 300)
 		_, _ = io.ReadFull(rand.Reader, junk)
-		w.put(b, m.addr, "", junk)
+		w.put(b, "", junk)
 		b.recv()
 	}
 	for _, c := range w.calls(n) {

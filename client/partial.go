@@ -20,7 +20,7 @@ import (
 // "partial", as "<id> <length>". A fetch trusts the file only up to the
 // length state records: whatever a crash left past it was never synced. The
 // whole, those bytes and the range, is then held to the list's size and
-// judged as a body read whole is, its id held to its SHA-256 (§12.3 check 9),
+// judged as a body read whole is, its id held to its SHA-256 (§12.3 check 8),
 // so bytes a server splices in are refused as any wrong ciphertext is. One
 // message's partial is kept at a time: a fetch of another starts the file
 // afresh. It goes once its message is judged or gone (drop), and a drain

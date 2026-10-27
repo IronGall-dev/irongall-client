@@ -107,9 +107,9 @@ func TestWritingOrNamingAPeerAllowsIt(t *testing.T) {
 }
 
 // Block deletes what held/ keeps from a sender and tells the server, which
-// deletes what it holds from it and refuses its sends: final, so the
-// sender's client moves the message to outbox/failed/. Blocking wins over
-// allowing.
+// refuses its later sends: final, so the sender's client moves the message
+// to outbox/failed/. What the server holds from it stays there (PROTOCOL.md
+// §11.14), and the next drain drops it. Blocking wins over allowing.
 func TestBlockDropsASendersMailHereAndAtTheServer(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -126,8 +126,8 @@ func TestBlockDropsASendersMailHereAndAtTheServer(t *testing.T) {
 		t.Fatalf("block: %d, %v", n, err) // allow moved the held one to inbox/ already
 	}
 	acl := e.srv.ACL(b.Address())
-	if acl == nil || !acl.Deny.Has(a.Address()) || !acl.Allow.Any || e.srv.Count(b.Address()) != 0 {
-		t.Fatalf("the server holds %+v and %d messages", acl, e.srv.Count(b.Address()))
+	if acl == nil || !acl.Deny.Has(a.Address()) || !acl.Allow.Any || e.srv.Count(b.Address()) != 1 {
+		t.Fatalf("the server holds %+v and %d messages, want one", acl, e.srv.Count(b.Address()))
 	}
 	_, err = a.Send(ctx, b.Address(), "refused")
 	if client.Code(err) != protocol.CodeSenderNotAllowed || !strings.Contains(err.Error(), "moved to outbox/failed/") {
@@ -135,6 +135,9 @@ func TestBlockDropsASendersMailHereAndAtTheServer(t *testing.T) {
 	}
 	if failed, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "failed", "*.P")); len(failed) != 1 {
 		t.Fatalf("outbox/failed/ holds %v", failed)
+	}
+	if res := receive(t, b); len(res.Blocked) != 1 || len(res.Held)+len(res.Delivered) != 0 || e.srv.Count(b.Address()) != 0 {
+		t.Fatalf("the drain after the block: %+v, and %d messages on the server", res, e.srv.Count(b.Address()))
 	}
 
 	// What held/ keeps from a sender goes when it is blocked.

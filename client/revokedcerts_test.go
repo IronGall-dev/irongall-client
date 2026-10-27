@@ -36,7 +36,7 @@ func keptList(b *client.Box, of protocol.Address) bool {
 func mailAs(t *testing.T, e *env, from, to *client.Box, signer ssh.Signer, body string) {
 	t.Helper()
 	line := e.line(from.Identity().Document(), from.Address(), to.Address(), body)
-	e.seal(to, from.Address(), line, forge.Sign(t, signer, line, to.Address()))
+	e.seal(to, line, forge.Sign(t, signer, line, to.Address()))
 }
 
 // A box renews under a new certificate and revokes every one before it. Mail

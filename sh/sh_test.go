@@ -627,7 +627,7 @@ var answerTypes = map[string]func() any{
 var answerRead = map[string]bool{
 	"box-bad-prekey-a-number": true, "box-bad-revoked-certificates-a-number": true, "box-bad-signature-unpadded": true,
 	"list-bad-cursor-a-number": true, "list-bad-cursor-a-percent": true, "list-bad-cursor-a-slash": true, "list-bad-cursor-empty": true,
-	"list-bad-messages-an-object": true, "list-bad-size-a-string": true, "list-bad-size-past-the-largest": true, "receipt-bad-id-an-array": true,
+	"list-bad-id-a-number": true, "list-bad-messages-an-object": true, "list-bad-size-a-string": true, "list-bad-size-past-the-largest": true, "receipt-bad-id-an-array": true,
 	"record-bad-a-second-value": true, "record-bad-an-array": true, "record-bad-empty": true, "record-bad-identity-a-number": true,
 	"record-bad-identity-wrapped": true, "record-bad-revocation-signature-unpadded": true, "record-bad-revocation-signature-unused-bits-set": true,
 }

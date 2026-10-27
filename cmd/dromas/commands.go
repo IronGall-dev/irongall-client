@@ -308,7 +308,7 @@ func (e *cli) quarantineListCmd() *cobra.Command {
 	return command("list", "list the mail quarantine/ keeps, one line of JSON each",
 		`List the mail quarantine/ keeps: a "quarantined" line for each message, with
 its id, the code it was refused for (the README's table has each), and the
-sender and the time the server gave, each only when it has its form.`,
+time the server gave, only when it has its form.`,
 		nargs(0, 0), func(c *cobra.Command, _ []string) error {
 			b, err := e.box()
 			if err != nil {

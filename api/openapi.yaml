@@ -614,7 +614,7 @@ paths:
           application/octet-stream: {}
       responses:
         '200':
-          description: This ciphertext was stored before; the receipt is the original one.
+          description: The box holds this ciphertext, unacked, whoever sent it; the receipt is the one it holds (`PROTOCOL.md` §11.10, step 6).
           headers:
             Date:
               $ref: '#/components/headers/Date'
@@ -926,7 +926,7 @@ paths:
       operationId: ack
       summary: Ack a message
       description: |
-        Deletes the stored ciphertext (`PROTOCOL.md` §11.13).
+        Deletes the message, and the server keeps nothing of it (`PROTOCOL.md` §11.13).
       parameters:
         - $ref: '#/components/parameters/IfMatch'
         - $ref: '#/components/parameters/IfNoneMatch'
@@ -1426,9 +1426,11 @@ components:
         Past a limit: `rate_limited` (with `subject`, whom it was counted
         against, and `quota_id`, which limit, from a closed set; a limit
         counted by the day also with its `limit`) · `fetch_paced` ·
-        `refetch_spent` · `pair_full` (with `unacked` and
-        `oldest_expires_at`) · `mailbox_full` (with `count`) ·
-        `mailbox_busy`. `PROTOCOL.md` §11.3 and §11.5 have what each means.
+        `refetch_spent` · `mailbox_full` (with `count`) · `mailbox_busy`.
+        `PROTOCOL.md` §11.3 and §11.5 have what each means. A server before
+        #507 also sends `pair_full` (with `unacked` and `oldest_expires_at`),
+        its cap on one sender's unacked mail at the box, which
+        `PROTOCOL.md` does not have.
       headers:
         Date:
           $ref: '#/components/headers/Date'
@@ -1637,12 +1639,12 @@ components:
             - type: 'null'
     MessageInfo:
       type: object
-      required: [id, from, size, received_at, expires_at]
+      required: [id, size, received_at, expires_at]
       properties:
         id:
           $ref: '#/components/schemas/MessageID'
         from:
-          description: The box whose pass the send carried, on the server's word (`PROTOCOL.md` §11.11).
+          description: Sent by a server before #507 alone, as the box whose pass the send carried, and read by no client; a message's sender is its signature's (`PROTOCOL.md` §11.11, §12.3).
           $ref: '#/components/schemas/Address'
         size:
           description: The ciphertext's size in bytes, which its fetch answers exactly, at most 16 MiB (`PROTOCOL.md` §11.10).
@@ -1818,12 +1820,12 @@ components:
             - $ref: '#/components/schemas/Integer'
             - type: 'null'
         unacked:
-          description: '`pair_full`: how many messages from this sender the box holds unacked.'
+          description: '`pair_full`, from a server before #507: how many messages from this sender the box holds unacked.'
           anyOf:
             - $ref: '#/components/schemas/Integer'
             - type: 'null'
         oldest_expires_at:
-          description: '`pair_full`: when the oldest of them expires.'
+          description: '`pair_full`, from a server before #507: when the oldest of them expires.'
           anyOf:
             - $ref: '#/components/schemas/Time'
             - type: 'null'

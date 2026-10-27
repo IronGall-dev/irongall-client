@@ -473,9 +473,9 @@ func (e *pacedError) Unwrap() error { return e.err }
 // receiveOne judges one message of a list unless its id was already handled,
 // stores the verdict, and acks it, and returns the bytes of ciphertext it
 // fetched. The fetch answers the ciphertext alone, of the size the list
-// gives; who sent it, on the server's word, and when, are the list's. It
-// goes on from what an earlier fetch of the message kept, and keeps what it
-// reads should it be cut (partial.go). An error is transient, a fetch that
+// gives; when it came, on the server's word, is the list's. It goes on from
+// what an earlier fetch of the message kept, and keeps what it reads should
+// it be cut (partial.go). An error is transient, a fetch that
 // is not of that size, or a fault of this box (an unreadable key, a full
 // disk): the message stays on the server for the next drain, never judged
 // by a box that cannot judge it.
@@ -516,7 +516,7 @@ func (b *Box) receiveOne(ctx context.Context, m protocol.MessageInfo, res *Resul
 		}
 		h := sha256.Sum256(ct.bytes)
 		local := hex.EncodeToString(h[:])
-		v, err := b.judge(ctx, ct.bytes, m.From, asked)
+		v, err := b.judge(ctx, ct.bytes, asked)
 		if err != nil {
 			return fetched, err
 		}
@@ -602,10 +602,10 @@ type verdict struct {
 	found    *protocol.Findings
 }
 
-// judge runs every check on one message, its ciphertext and the sender its
-// list names (from), in this order, and returns the delivery only if all of
-// them pass; otherwise why says which failed, in a code and in this client's
-// own words. An error is this box's own fault, not the message's: no verdict.
+// judge runs every check on one message, its ciphertext alone, in this
+// order, and returns the delivery only if all of them pass; otherwise why
+// says which failed, in a code and in this client's own words. An error is
+// this box's own fault, not the message's: no verdict.
 //
 //  1. Decryption with every retained prekey, of a file with exactly one
 //     native recipient stanza, counted before anything is decrypted
@@ -618,8 +618,7 @@ type verdict struct {
 //  5. The envelope: version 1, to is this box.
 //  6. Freshness: sent_at no older than protocol.TTL (33 days), and not
 //     before the floor the seen-set was pruned at (seenFloor).
-//  7. The server's from for it is the sender that was verified.
-//  8. Revocation: this box holds no revocation of the sender. The server is
+//  7. Revocation: this box holds no revocation of the sender. The server is
 //     asked for one, once for each sender in a drain. A revocation that
 //     verifies refuses the message and every later one, whenever they were
 //     signed. A server that says it holds none has answered. No answer is an
@@ -627,14 +626,15 @@ type verdict struct {
 //     answer carries the sender's revocation of its certificates, if it has
 //     one: mail signed under a revoked certificate is refused the same way,
 //     and the address goes on.
-//  9. Replay: the locally computed ciphertext hash is not in the seen-set.
-//  10. Retry: (from, msg_id) is not in the seen-set. A match is a duplicate.
+//  8. Replay: the locally computed ciphertext hash is not in the seen-set.
+//  9. Retry: (from, msg_id) is not in the seen-set. A match is a duplicate.
 //
 // Checks 2 to 6 are protocol.OpenSigned's. Who the sender is, is never asked
-// of the server: the message carries what proves it. The one thing asked is
-// whether a revocation of that sender exists, and the answer proves itself.
-// The sender's identity is pinned only once all of that has passed.
-func (b *Box) judge(ctx context.Context, ct []byte, listedFrom string, asked *lookups) (verdict, error) {
+// of the server, nor read from its list: the message carries what proves
+// it. The one thing asked is whether a revocation of that sender exists, and
+// the answer proves itself. The sender's identity is pinned only once all of
+// that has passed.
+func (b *Box) judge(ctx context.Context, ct []byte, asked *lookups) (verdict, error) {
 	now := b.now()
 	found := &protocol.Findings{At: now}
 	refused := func(code, reason string) (verdict, error) {
@@ -683,7 +683,7 @@ func (b *Box) judge(ctx context.Context, ct []byte, listedFrom string, asked *lo
 	// Freshness has a floor too: a sent_at before the highest cutoff the
 	// seen-set was pruned at may be a message whose line went, and so may one
 	// up to protocol.TTL above it, a retry of such a message, dated afresh up
-	// to a TTL after its first copy (check 10 knows a retry by that copy's
+	// to a TTL after its first copy (check 9 knows a retry by that copy's
 	// line).
 	floor, err := b.seenFloor()
 	if err != nil {
@@ -691,11 +691,6 @@ func (b *Box) judge(ctx context.Context, ct []byte, listedFrom string, asked *lo
 	}
 	if floor > 0 && env.SentAt.Unix() < floor+int64(protocol.TTL/time.Second) {
 		return refused(protocol.RefusedStale, "sent_at is before this box's replay set reaches back to, since its clock once read later than it does now")
-	}
-	// The server says who posted it, from the pass the post carried. It is
-	// held to the sender the signature proved.
-	if listedFrom != from.String() {
-		return refused(protocol.RefusedAttribution, "the server lists it as from another box than the one that signed it")
 	}
 	gone, err := b.revoked(from)
 	if err != nil {

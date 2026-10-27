@@ -77,20 +77,19 @@ func (b *Box) keptLine(data []byte) (line []byte, from protocol.Address, env *pr
 }
 
 // keptRefusal is a refused message as quarantine/<id>.json keeps it: the
-// message as served, whole, for whoever looks into who sent what: the
-// members of its list entry, and the ciphertext its fetch answered, in
-// base64. Each of the server's strings is in the clear only when it has its
-// form (an id or an address is 64 lowercase hex, a time is one
-// protocol.ParseTime reads), and is otherwise kept as <name>_b64, the string
-// as served in base64. So nothing the server chose is readable at a glance,
-// and nothing is lost. Its size is the ciphertext's, which the fetch was
-// held to. Why it was refused, and what the checks found, are the box's
+// message as served, whole, for whoever looks into who sent what: its id
+// and times as its list entry gives them, and the ciphertext its fetch
+// answered, in base64. A from a list entry carries is kept nowhere: no
+// reader reads it (PROTOCOL.md §11.11). Each of the server's strings is in
+// the clear only when it has its form (an id is 64 lowercase hex, a time is
+// one protocol.ParseTime reads), and is otherwise kept as <name>_b64, the
+// string as served in base64. So nothing the server chose is readable at a
+// glance, and nothing is lost. Its size is the ciphertext's, which the fetch
+// was held to. Why it was refused, and what the checks found, are the box's
 // state's (quarantineRecord), which only this client writes (#280).
 type keptRefusal struct {
 	ID            string         `json:"id,omitempty"`
 	IDB64         string         `json:"id_b64,omitempty"`
-	From          string         `json:"from,omitempty"`
-	FromB64       string         `json:"from_b64,omitempty"`
 	ReceivedAt    string         `json:"received_at,omitempty"`
 	ReceivedAtB64 string         `json:"received_at_b64,omitempty"`
 	ExpiresAt     string         `json:"expires_at,omitempty"`
@@ -179,7 +178,6 @@ func servedRefusal(m *protocol.MessageInfo, ct []byte) ([]byte, error) {
 		ok           bool
 	}{
 		{m.ID, &k.ID, &k.IDB64, IsID(m.ID)},
-		{m.From, &k.From, &k.FromB64, IsID(m.From)},
 		{m.ReceivedAt, &k.ReceivedAt, &k.ReceivedAtB64, isTime(m.ReceivedAt)},
 		{m.ExpiresAt, &k.ExpiresAt, &k.ExpiresAtB64, isTime(m.ExpiresAt)},
 	} {
@@ -197,15 +195,14 @@ func servedRefusal(m *protocol.MessageInfo, ct []byte) ([]byte, error) {
 func isTime(s string) bool { _, err := protocol.ParseTime(s); return err == nil }
 
 // Quarantined is a refused message in quarantine/, in this client's words:
-// its id, the code it was refused for and why, the sender and the time the
-// server gave, and what this client's checks established about it when it
-// judged it (keptFindings), each only when it has its form. Nothing else of
+// its id, the code it was refused for and why, the time the server gave,
+// and what this client's checks established about it when it judged it
+// (keptFindings), each only when it has its form. Nothing else of
 // what the server or the sender wrote is in it.
 type Quarantined struct {
 	ID                string `json:"id"`
 	Code              string `json:"code"`
 	Reason            string `json:"reason,omitempty"`
-	From              string `json:"from,omitempty"`
 	ReceivedAt        string `json:"received_at,omitempty"`
 	JudgedAt          string `json:"judged_at,omitempty"`
 	SignedBy          string `json:"signed_by,omitempty"`
@@ -240,18 +237,11 @@ func (b *Box) quarantined() ([]Quarantined, error) {
 			}
 			q := Quarantined{ID: id}
 			var kept struct {
-				From       any `json:"from"`
 				ReceivedAt any `json:"received_at"`
 			}
 			if data, err := os.ReadFile(name); err == nil && protocol.Unmarshal(data, &kept) == nil { //nolint:gosec // a path inside the box's own directory
-				for _, v := range []struct {
-					kept any
-					dst  *string
-					ok   func(string) bool
-				}{{kept.From, &q.From, IsID}, {kept.ReceivedAt, &q.ReceivedAt, isTime}} {
-					if str, ok := v.kept.(string); ok && v.ok(str) {
-						*v.dst = str
-					}
+				if str, ok := kept.ReceivedAt.(string); ok && isTime(str) {
+					q.ReceivedAt = str
 				}
 			}
 			rec := quarantineOf(s, id)

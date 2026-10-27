@@ -107,7 +107,7 @@ Forward secrecy, padding, accounts and the rest: `PROTOCOL.md`.
 | `box` | `init`, `addr` | `address`, `link` |
 | `version` | `version`, `--version` | `version`, the tag of a release or Go's pseudo-version between them; `commit`, when the build recorded it; `go`; `platform` |
 | `prekey_lifetime` | `prekey lifetime` | `seconds`, `lifetime`, and `message`, a warning when the lifetime is short enough that one missed daily check-in leaves the box unable to receive |
-| `quarantined` | `quarantine list` | `id`, `code` (below), `reason`, and `from` and `received_at`, the server's, each when it has its form; then what the checks established when they judged it: `judged_at`, this machine's clock; `signed_by` when its signature verifies, by a working key that identity certified, at that certificate's own start, and the box holds no revocation of that address or of that certificate, or else `claims_identity`; and with `signed_by`, `certificate_serial`, `certificate_began`, `certificate_ends`, `sent_at` and `msg_id` |
+| `quarantined` | `quarantine list` | `id`, `code` (below), `reason`, and `received_at`, the server's, when it has its form; then what the checks established when they judged it: `judged_at`, this machine's clock; `signed_by` when its signature verifies, by a working key that identity certified, at that certificate's own start, and the box holds no revocation of that address or of that certificate, or else `claims_identity`; and with `signed_by`, `certificate_serial`, `certificate_began`, `certificate_ends`, `sent_at` and `msg_id` |
 | `error` | any, on stderr | `message`; from a server's answer, `status`, its `code` when this client knows it, `retry_after`, and the values the code carries, each checked to its type; otherwise, from a refusal with a code of its own, that `code` (below). One failure a line: a flush's, of several entries, has its first server answer's, and its `message` names each |
 
 The rest are named for what they report: `status`, `held_sender`, `allowed`, `allowed_rebuilt`, `blocked`, `alias`, `alias_removed`, `removed` (from `quarantine/`), `prekey`, `certificates_revoked`, `no_earlier_certificate`, `account`, `revoked`, `not_revoked`, and `revocation_record`, which is the record itself, exactly the body every server takes: save it where only you can read it (`umask 077; dromas revocation make > <file>`).
@@ -129,7 +129,7 @@ A refusal's words are this client's own, never text from the message, its sender
 | `bad_identity` | the envelope carries no identity document, or one that breaks its format or its key checks |
 | `unsupported_key_type` | the sender's identity is of a key type this client does not verify |
 | `bad_signature` | it is not signed for this box by a working key the sender's identity certified, under a certificate that holds now |
-| `reattributed` | the envelope's `from` is not the address of the identity that signed it, its `to` is not this box, or the server names another sender |
+| `reattributed` | the envelope's `from` is not the address of the identity that signed it, or its `to` is not this box |
 | `revoked` | this box holds a revocation of the sender that verifies: nothing signed for that address is taken, whenever it was signed |
 | `certificate_revoked` | it is signed under a certificate its sender's identity has revoked, by a revocation this box holds that verifies: the address goes on, and nothing signed under that certificate is taken, whenever it was signed |
 | `stale` | its `sent_at` is older than 33 days |

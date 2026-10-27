@@ -281,7 +281,7 @@ func TestMailFromARevokedSenderIsRefused(t *testing.T) {
 	// signed, which its certificate still covers.
 	forge.Hides(e.t, e.srv)
 	line := e.line(a.Identity().Document(), a.Address(), b.Address(), "signed with a key that still verifies")
-	e.seal(b, a.Address(), line, forge.Sign(t, worker(t, a), line, b.Address()))
+	e.seal(b, line, forge.Sign(t, worker(t, a), line, b.Address()))
 	res = receive(t, b)
 	if len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedRevoked {
 		t.Fatalf("after the server hid the revocation: %+v", res)

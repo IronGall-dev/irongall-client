@@ -1,1 +1,1 @@
-{"count":1,"messages":[{"id":"53c9b10b989554232967a2d478aa6213273bdf97581901dae25a1229c5ceeccd","from":"7498fd8f0ee084c4a9d4d3bfbafe5dbb2a6b60fce8c4ac74acaeede50916ea60","size":16777217,"received_at":"2026-10-10T00:00:00Z","expires_at":"2026-11-12T00:00:00Z"}],"next_cursor":null}
+{"count":1,"messages":[{"id":"53c9b10b989554232967a2d478aa6213273bdf97581901dae25a1229c5ceeccd","size":16777217,"received_at":"2026-10-10T00:00:00Z","expires_at":"2026-11-12T00:00:00Z"}],"next_cursor":null}

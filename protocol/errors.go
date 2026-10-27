@@ -68,7 +68,7 @@ const (
 	CodeRateLimited  Code = "rate_limited"  // a limit takes no more for now: which one is quota_id, and whom it counted against subject
 	CodeFetchPaced   Code = "fetch_paced"   // the box has taken out as much new mail as it may for now: the rest waits
 	CodeRefetchSpent Code = "refetch_spent" // the message was fetched before, and fetching again is spent for now
-	CodePairFull     Code = "pair_full"
+	CodePairFull     Code = "pair_full"     // a server before #507's cap on one sender's unacked mail at a box, which PROTOCOL.md does not have
 	CodeMailboxFull  Code = "mailbox_full"
 	CodeMailboxBusy  Code = "mailbox_busy" // the box has taken as much new mail as it takes for now
 
@@ -178,7 +178,8 @@ type Problem struct {
 	// (mailbox_full).
 	Count *uint64 `json:"count,omitempty"`
 	// Unacked and OldestExpiresAt are how many messages from this sender the
-	// box holds unacked, and when the oldest of them expires (pair_full).
+	// box holds unacked, and when the oldest of them expires (pair_full, from
+	// a server before #507).
 	Unacked         *int64 `json:"unacked,omitempty"`
 	OldestExpiresAt string `json:"oldest_expires_at,omitempty"`
 	// PrekeySerial and CertificateSerial are serials of a prekey and of a

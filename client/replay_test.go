@@ -19,7 +19,7 @@ import (
 // A reader whose clock steps back meets mail it has already delivered as
 // fresh again. The server keeps what it was sent and lists it once more; the
 // reader must refuse it whatever its clock read when it last pruned
-// (PROTOCOL.md §12.3 check 9, §15.7).
+// (PROTOCOL.md §12.3 check 8, §15.7).
 func TestAReplayIsRefusedAfterTheClockStepsBack(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {
@@ -84,7 +84,7 @@ func TestAReplayIsRefusedAfterTheClockStepsBack(t *testing.T) {
 			}
 			off = c.back
 			id := sha256.Sum256(kept)
-			e.srv.Inject(r.Address(), hex.EncodeToString(id[:]), s.Address(), kept)
+			e.srv.Inject(r.Address(), hex.EncodeToString(id[:]), kept)
 			res, err2 := r.Receive(ctx)
 			t.Logf("the drain while ahead: %v; the replay: delivered %d, refused %v, %v", client.Code(err), len(res.Delivered), res.Refused, err2)
 			if len(res.Delivered) != 0 || err2 != nil {

@@ -97,7 +97,7 @@ func TestMailFromAnIdentityOfAnUnknownType(t *testing.T) {
 	want := map[string]string{}
 	for from, code := range map[protocol.Address]string{addr: protocol.RefusedKeyType, a.Address(): protocol.RefusedAttribution} {
 		line := e.line(doc, from, b.Address(), "hello")
-		want[e.seal(b, from, line, forge.Sign(t, worker(t, a), line, b.Address()))] = code
+		want[e.seal(b, line, forge.Sign(t, worker(t, a), line, b.Address()))] = code
 	}
 	res := receive(t, b)
 	if len(res.Delivered) != 0 || len(res.Refused) != 2 {

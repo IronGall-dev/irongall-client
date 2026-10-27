@@ -226,8 +226,8 @@ type AccountResponse struct {
 	Account string `json:"account"`
 }
 
-// Receipt is the answer to a send. A retry of the same ciphertext gets the
-// original receipt.
+// Receipt is the answer to a send. A send of a ciphertext the box holds
+// unacked gets the receipt it holds (PROTOCOL.md §11.10, step 6).
 type Receipt struct {
 	ID         string `json:"id"` // lowercase hex SHA-256 of the ciphertext
 	ReceivedAt string `json:"received_at"`
@@ -260,14 +260,15 @@ func PollInterval(v string) (uint64, error) {
 	return n, nil
 }
 
-// MessageInfo is one message in a list. From is the box whose pass the send
-// carried, on the server's word: a recipient holds it to the sender it
-// verifies inside the ciphertext. Size is the ciphertext's length in bytes:
-// GET /v1/<address>/messages/<id> answers the ciphertext itself
-// (CiphertextContentType), and nothing else.
+// MessageInfo is one message in a list (PROTOCOL.md §11.11). Size is the
+// ciphertext's length in bytes: GET /v1/<address>/messages/<id> answers the
+// ciphertext itself (CiphertextContentType), and nothing else. From is what
+// a server before #507 lists as the box whose pass the send carried: no
+// reader reads it, since the signature inside the ciphertext names the
+// sender, and it goes once dromas-server lists none.
 type MessageInfo struct {
 	ID         string `json:"id"`
-	From       string `json:"from"`
+	From       string `json:"from,omitempty"`
 	Size       int64  `json:"size"`
 	ReceivedAt string `json:"received_at"`
 	ExpiresAt  string `json:"expires_at"`

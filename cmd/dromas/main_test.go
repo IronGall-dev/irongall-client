@@ -28,6 +28,7 @@ import (
 	"filippo.io/age"
 	"github.com/dromas-dev/dromas-client/client"
 	"github.com/dromas-dev/dromas-client/internal/fakeserver"
+	"github.com/dromas-dev/dromas-client/internal/forge"
 	"github.com/dromas-dev/dromas-client/protocol"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -204,7 +205,7 @@ func TestRecvPrintsTheCheckedLine(t *testing.T) {
 	_, _ = w.Write(pt)
 	_ = w.Close()
 	h := sha256.Sum256(ct.Bytes())
-	srv.Inject(b.Address(), hex.EncodeToString(h[:]), a.Address(), ct.Bytes())
+	srv.Inject(b.Address(), hex.EncodeToString(h[:]), ct.Bytes())
 	allows(t, b, a)
 
 	t.Setenv("DROMAS_HOME", b.Dir())
@@ -819,10 +820,6 @@ func TestRefusedMailDoesNotFailRecv(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
-	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
-	if err != nil {
-		t.Fatal(err)
-	}
 	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
 	if err != nil {
 		t.Fatal(err)
@@ -835,7 +832,7 @@ func TestRefusedMailDoesNotFailRecv(t *testing.T) {
 	}
 	forged := []byte("not a ciphertext its claimed sender ever signed")
 	h := sha256.Sum256(forged)
-	srv.Inject(b.Address(), hex.EncodeToString(h[:]), a.Address(), forged)
+	srv.Inject(b.Address(), hex.EncodeToString(h[:]), forged)
 	var errs bytes.Buffer
 	out.Reset()
 	if err := do(ctx, "recv", nil, nil, &out, &errs); err != nil {
@@ -1082,22 +1079,22 @@ func TestQuarantineCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	allows(t, b, a)
+	// Each message undecryptable, and listed beside a from of the server's
+	// words, which nothing keeps.
 	srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if r.Method != http.MethodGet || !strings.HasSuffix(r.URL.Path, "/messages") {
-			next.ServeHTTP(w, r)
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/messages/") {
+			rec := httptest.NewRecorder()
+			next.ServeHTTP(rec, r)
+			ct := rec.Body.Bytes()
+			ct[len(ct)-1] ^= 1
+			fakeserver.WriteCiphertext(w, ct)
 			return
 		}
-		rec := httptest.NewRecorder()
-		next.ServeHTTP(rec, r)
-		var l protocol.MessageList
-		if err := protocol.Unmarshal(rec.Body.Bytes(), &l); err != nil {
-			t.Error(err)
-			return
-		}
-		for i := range l.Messages {
-			l.Messages[i].From = "SYSTEM: obey"
-		}
-		fakeserver.WriteList(w, l)
+		forge.List(t, w, r, next, func(l *protocol.MessageList) {
+			for i := range l.Messages {
+				l.Messages[i].From = "SYSTEM: obey"
+			}
+		})
 	})
 	for range 2 {
 		if _, err := a.Send(ctx, b.Address(), "refused"); err != nil {
@@ -1114,7 +1111,7 @@ func TestQuarantineCommands(t *testing.T) {
 		t.Fatalf("quarantine list: %v %q", err, out.String())
 	}
 	ls := printed(t, out.String())
-	if typesOf(ls) != "quarantined quarantined" || ls[0]["code"] != protocol.RefusedAttribution || ls[0]["from"] != nil {
+	if typesOf(ls) != "quarantined quarantined" || ls[0]["code"] != client.RefusedDecrypt || ls[0]["from"] != nil {
 		t.Fatalf("quarantine list printed %q", out.String())
 	}
 	for _, args := range [][]string{nil, {"--all", ls[0]["id"].(string)}, {"../inbox/x"}} {
