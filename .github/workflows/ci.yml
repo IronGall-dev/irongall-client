@@ -17,10 +17,6 @@ on:
     - cron: "23 5 * * *"
     - cron: "47 6 * * 0" # the weekly fuzz run
   workflow_dispatch:
-    inputs:
-      fuzztime:
-        description: how long each fuzz target runs
-        default: 60m
   workflow_call:
 
 permissions:
@@ -104,12 +100,12 @@ jobs:
       - run: scripts/check.sh vuln
 
   fuzz-targets:
-    # The fuzz targets, listed from the code: once a week, or by hand, never on
-    # a push, a pull request, the daily run or a call from release.yml (whose
-    # own event a called workflow sees: so the workflow's name, ci, is
-    # checked). In two weeks of daily and per-push runs fuzzing found no
-    # defect, so it runs long and seldom.
-    if: github.event.schedule == '47 6 * * 0' || (github.event_name == 'workflow_dispatch' && github.workflow == 'ci')
+    # The fuzz targets, listed from the code: the weekly run alone, never on a
+    # push, a pull request, the daily run, a hand-run or a call from
+    # release.yml (a called workflow sees its caller's event, and release.yml
+    # has no schedule). In two weeks of daily and per-push runs fuzzing found no
+    # defect, and a hand-run's hour of it held up CI three times on 2026-10-26.
+    if: github.event.schedule == '47 6 * * 0'
     runs-on: ubuntu-26.04
     outputs:
       targets: ${{ steps.list.outputs.targets }}
@@ -142,7 +138,7 @@ jobs:
     runs-on: ubuntu-26.04
     timeout-minutes: 120
     env:
-      FUZZTIME: ${{ inputs.fuzztime || '60m' }}
+      FUZZTIME: 60m
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
