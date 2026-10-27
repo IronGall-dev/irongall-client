@@ -2,6 +2,7 @@ package client_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"net/http"
@@ -620,6 +621,44 @@ func TestARegistrationDropsTheMarkOfAnotherWritersACL(t *testing.T) {
 	res := receive(t, b)
 	if res.Renewed == nil || res.ACLErr != nil || res.ACLReplaced || !e.srv.ACL(b.Address()).SameLists(own) {
 		t.Fatalf("the recv that registered the box again: renewed %v, its ACL's error %v, replaced %v; the server holds %+v, the box's own is %+v", res.Renewed != nil, res.ACLErr, res.ACLReplaced, e.srv.ACL(b.Address()), own)
+	}
+}
+
+// A restore adopts at most protocol.MaxACLEntries of its server's entries
+// (PROTOCOL.md §11.14; #440): an ACL answer with more is one that breaks its
+// form, so the box adopts nothing, writes none of its lists, and reads again
+// at its next command. The server holds the most there may be, then one
+// more.
+func TestARestoreAdoptsABoundedACL(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	for _, n := range []int{protocol.MaxACLEntries, protocol.MaxACLEntries + 1} {
+		t.Run(fmt.Sprint(n), func(t *testing.T) {
+			t.Parallel()
+			e := newEnv(t)
+			b := e.heldBox(protocol.Classic)
+			addrs := make([]protocol.Address, n-1) // and the allow list's *
+			for i := range addrs {
+				addrs[i] = protocol.Address(sha256.Sum256(fmt.Append(nil, i)))
+			}
+			e.srv.PutACL(b.Address(), &protocol.ACL{Allow: protocol.ACLList{Any: true}, Deny: protocol.NewACLList(false, addrs)})
+			r := restore(t, e, b)
+			e.clock.Add(time.Minute)
+			_, err := r.Rekey(ctx, "")
+			blocked, _ := r.Blocked()
+			if n <= protocol.MaxACLEntries {
+				if err != nil || len(blocked) != n-1 {
+					t.Fatalf("a restore against %d entries: %v, %d blocked", n, err, len(blocked))
+				}
+				return
+			}
+			if err == nil || len(blocked) != 0 {
+				t.Fatalf("a restore against %d entries: %v, %d blocked; want refused, none", n, err, len(blocked))
+			}
+			if _, err := os.Lstat(filepath.Join(r.Dir(), "blocked")); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("a refused adoption wrote blocked: %v", err)
+			}
+		})
 	}
 }
 

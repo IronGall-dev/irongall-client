@@ -673,7 +673,7 @@ func (b *Box) heldACL(ctx context.Context) (*protocol.ACL, error) {
 	if _, err := b.owner(ctx, http.MethodGet, b.boxPath("/acl"), nil, &d); err != nil {
 		return nil, err
 	}
-	return protocol.CheckACL(&d, 0)
+	return protocol.CheckACL(&d, protocol.MaxACLEntries)
 }
 
 // sendACL sends the box's ACL, want, and keeps the server's answer as the
@@ -826,7 +826,7 @@ func (b *Box) putACL(ctx context.Context, acl *protocol.ACL) (*protocol.ACL, err
 	if _, err := b.owner(ctx, http.MethodPut, b.boxPath("/acl"), acl.Document(), &d); err != nil {
 		return nil, err
 	}
-	got, err := protocol.CheckACL(&d, 0)
+	got, err := protocol.CheckACL(&d, protocol.MaxACLEntries)
 	if err != nil || !got.SameLists(acl) {
 		return nil, errors.New("the server answered with another ACL than the one sent")
 	}

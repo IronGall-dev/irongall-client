@@ -128,6 +128,12 @@ var (
 	ErrACLTooLarge = errors.New("the ACL has more entries than this server takes")
 )
 
+// MaxACLEntries is the most entries an ACL holds, its two lists together
+// (PROTOCOL.md §11.14): a server takes no more, whatever it is set to, and a
+// client refuses an ACL its server answers with more, so a restore that
+// adopts its server's lists adopts a bounded number.
+const MaxACLEntries = 10000
+
 // CheckACL checks an ACL document as a server takes one, and returns it in
 // its checked form. maxEntries bounds the entries of both lists together,
 // AnyAddress counting as one and a repeat counting as often as it is
