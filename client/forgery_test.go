@@ -21,17 +21,19 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// A server can list a from beside each message, as one before #507 lists the
-// box whose pass the send carried: no reader reads it. A message is its
-// signature's, so A's message listed as another box's, or as what is no
-// address, is delivered as A's, and the box the list names is neither
-// pinned nor asked about.
+// A server can list a from beside each message, a member PROTOCOL.md §11.11
+// does not give a list, so a reader ignores it, whatever its value (§3.3). A
+// message is its signature's, so A's message listed as another box's, as
+// what is no address or as no string at all, is delivered as A's, and the
+// box the list names is neither pinned nor asked about.
 func TestAFromTheServerListsIsNotRead(t *testing.T) {
 	t.Parallel()
-	for name, listed := range map[string]func(a, c *client.Box) string{
-		"another box's address": func(_, c *client.Box) string { return c.Address().String() },
-		"a path":                func(*client.Box, *client.Box) string { return "../../" + strings.Repeat("x", 58) },
-		"A's with a line feed":  func(a, _ *client.Box) string { return a.Address().String() + "\n" },
+	for name, listed := range map[string]func(a, c *client.Box) any{
+		"another box's address": func(_, c *client.Box) any { return c.Address().String() },
+		"a path":                func(*client.Box, *client.Box) any { return "../../" + strings.Repeat("x", 58) },
+		"A's with a line feed":  func(a, _ *client.Box) any { return a.Address().String() + "\n" },
+		"a number":              func(*client.Box, *client.Box) any { return 5 },
+		"an object":             func(a, _ *client.Box) any { return map[string]string{"address": a.Address().String()} },
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -43,7 +45,7 @@ func TestAFromTheServerListsIsNotRead(t *testing.T) {
 				if strings.HasPrefix(r.URL.Path, "/v1/"+c.Address().String()) {
 					named++
 				}
-				forge.List(t, w, r, next, func(l *protocol.MessageList) {
+				forge.List(t, w, r, next, func(l *forge.Listed) {
 					for i := range l.Messages {
 						l.Messages[i].From = listed(a, c)
 					}

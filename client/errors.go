@@ -176,15 +176,6 @@ func (e *APIError) words() string {
 		return "the server paces how much new mail the box takes out: the rest waits on the server"
 	case protocol.CodeRefetchSpent:
 		return "the message was fetched before, and the server takes no more fetches of it for now: a client keeps each message when it fetches it"
-	case protocol.CodePairFull:
-		s := "the recipient holds as much unacked mail from this box as it takes"
-		if p.Unacked != nil {
-			s += fmt.Sprintf(": %d messages", *p.Unacked)
-			if t, err := protocol.ParseTime(p.OldestExpiresAt); err == nil {
-				s += ", the oldest expiring " + t.Format(protocol.TimeLayout)
-			}
-		}
-		return s
 	case protocol.CodeMailboxFull:
 		s := "the recipient's box is full"
 		if p.Count != nil {

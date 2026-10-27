@@ -195,10 +195,26 @@ func Seal(t testing.TB, s *fakeserver.Server, to protocol.Address, plaintext ...
 	return id
 }
 
+// Listed is a list as an operator writes it: the members PROTOCOL.md §11.11
+// gives one, and a from beside each entry, which it gives none and a reader
+// ignores, as it does every member it does not know (§3.3).
+type Listed struct {
+	Count      int64         `json:"count"`
+	Messages   []ListedEntry `json:"messages"`
+	NextCursor *string       `json:"next_cursor"`
+}
+
+// ListedEntry is one entry of a Listed: its members, and a from of any
+// value, written only when it is set.
+type ListedEntry struct {
+	protocol.MessageInfo
+	From any `json:"from,omitempty"`
+}
+
 // List answers r, a box's list, with each page it answers edited first, and
 // any other request as next does: an operator's own list, a from beside each
-// entry among what it can write (PROTOCOL.md §11.11 lists none).
-func List(t testing.TB, w http.ResponseWriter, r *http.Request, next http.Handler, edit func(*protocol.MessageList)) {
+// entry among what it can write.
+func List(t testing.TB, w http.ResponseWriter, r *http.Request, next http.Handler, edit func(*Listed)) {
 	if r.Method != http.MethodGet || !strings.HasSuffix(r.URL.Path, "/messages") {
 		next.ServeHTTP(w, r)
 		return
@@ -220,11 +236,15 @@ func List(t testing.TB, w http.ResponseWriter, r *http.Request, next http.Handle
 		t.Errorf("an operator edits a list, and the server's is none: %v", err)
 		return
 	}
-	edit(&l)
-	fakeserver.WriteList(w, l)
+	listed := Listed{Count: l.Count, NextCursor: l.NextCursor, Messages: make([]ListedEntry, len(l.Messages))}
+	for i, m := range l.Messages {
+		listed.Messages[i].MessageInfo = m
+	}
+	edit(&listed)
+	fakeserver.WriteJSON(w, http.StatusOK, listed)
 }
 
 // Lists has s answer every list with it edited first (List).
-func Lists(t testing.TB, s *fakeserver.Server, edit func(*protocol.MessageList)) {
+func Lists(t testing.TB, s *fakeserver.Server, edit func(*Listed)) {
 	s.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) { List(t, w, r, next, edit) })
 }

@@ -296,7 +296,7 @@ func TestScriptDeliversARetryOnce(t *testing.T) {
 
 // listing puts an operator in front of the server that rewrites each list it
 // answers with edit (forge.Lists).
-func (w *world) listing(edit func(*protocol.MessageList)) { forge.Lists(w.t, w.srv, edit) }
+func (w *world) listing(edit func(*forge.Listed)) { forge.Lists(w.t, w.srv, edit) }
 
 // Mail a server forges, a replay, and what is no message: each REFUSED,
 // quarantined with its reason, and acked; nothing pinned by it. A from the
@@ -350,7 +350,7 @@ func TestScriptRefusesForgedMail(t *testing.T) {
 	ol := envelope(t, op.addr, b.addr, opDoc, "00000000-0000-4000-8000-000000000001", "PAPAYA", 0)
 	w.inject(b, "", ol, w.signWith(opCert, b.addr, ol))
 	madeUp := a.addr.String() + "\n* " + strings.Split(string(opDoc), "\n")[1]
-	w.listing(func(l *protocol.MessageList) {
+	w.listing(func(l *forge.Listed) {
 		for i := range l.Messages {
 			l.Messages[i].From = madeUp
 		}
@@ -365,7 +365,7 @@ func TestScriptRefusesForgedMail(t *testing.T) {
 	// A's genuine ciphertext, listed as C's: a replay of A's, whoever the list
 	// names; then A's again, under its own id, and a new one.
 	w.put(b, randomID(), genuine)
-	w.listing(func(l *protocol.MessageList) {
+	w.listing(func(l *forge.Listed) {
 		for i := range l.Messages {
 			l.Messages[i].From = c.addr.String()
 		}
@@ -434,13 +434,13 @@ func TestScriptRefusesForgedMail(t *testing.T) {
 	// shell variable, which drops it.
 	lf := a.line(b.addr, "77777777-2222-4333-8444-555555555551", "a from with a line feed", 0)
 	w.inject(b, "", lf, a.sign(b.addr, lf))
-	w.listing(func(l *protocol.MessageList) { l.Messages[0].From = a.addr.String() + "\n" })
+	w.listing(func(l *forge.Listed) { l.Messages[0].From = a.addr.String() + "\n" })
 	if dr := b.recv(); !slices.Equal(dr.bodies(), []string{"a from with a line feed"}) || w.srv.Count(b.addr) != 0 {
 		t.Errorf("A's message under a from with a line feed: %v", dr)
 	}
 	lfid := a.line(b.addr, "77777777-2222-4333-8444-555555555552", "an id with a line feed", 0)
 	w.inject(b, "", lfid, a.sign(b.addr, lfid))
-	w.listing(func(l *protocol.MessageList) { l.Messages[0].ID += "\n" })
+	w.listing(func(l *forge.Listed) { l.Messages[0].ID += "\n" })
 	if dr := b.recv(); len(dr.mail) != 0 || w.srv.Count(b.addr) != 1 {
 		t.Errorf("a listed id with a line feed added was fetched as the id it was cut to: %v", dr)
 	}

@@ -262,13 +262,9 @@ func PollInterval(v string) (uint64, error) {
 
 // MessageInfo is one message in a list (PROTOCOL.md §11.11). Size is the
 // ciphertext's length in bytes: GET /v1/<address>/messages/<id> answers the
-// ciphertext itself (CiphertextContentType), and nothing else. From is what
-// a server before #507 lists as the box whose pass the send carried: no
-// reader reads it, since the signature inside the ciphertext names the
-// sender, and it goes once dromas-server lists none.
+// ciphertext itself (CiphertextContentType), and nothing else.
 type MessageInfo struct {
 	ID         string `json:"id"`
-	From       string `json:"from,omitempty"`
 	Size       int64  `json:"size"`
 	ReceivedAt string `json:"received_at"`
 	ExpiresAt  string `json:"expires_at"`

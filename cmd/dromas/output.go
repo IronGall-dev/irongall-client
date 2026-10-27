@@ -154,11 +154,7 @@ func failure(err error) []any {
 		p := &ae.Problem
 		if p.Code.Known() {
 			kv = append(kv, "code", p.Code,
-				"limit", p.Limit, "count", p.Count, "unacked", p.Unacked)
-			if t, err := protocol.ParseTime(p.OldestExpiresAt); err == nil {
-				kv = append(kv, "oldest_expires_at", t.Format(protocol.TimeLayout))
-			}
-			kv = append(kv, "prekey_serial", p.PrekeySerial,
+				"limit", p.Limit, "count", p.Count, "prekey_serial", p.PrekeySerial,
 				"certificate_serial", p.CertificateSerial, "through", p.Through)
 			// A quota and a subject are names: only one this client knows is printed.
 			if p.QuotaID.Known() {
