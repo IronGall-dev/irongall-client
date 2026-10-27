@@ -28,8 +28,7 @@ import (
 var update = flag.Bool("update", false, "write testdata/statetable.golden from this run")
 
 // TestStateTable runs each command of a box in each state its server and its
-// directory can be in, with the server answering, refusing or silent, and
-// holds what each cell did to testdata/statetable.golden: what the command
+// directory can be in, with the server answering or refusing, and holds what each cell did to testdata/statetable.golden: what the command
 // returned, every call it made, and what changed in the box's directory. The
 // file is the behaviour's spec (the redesign's (4)): a change to what a
 // command does in some state is a change to it, read line by line before it
@@ -44,9 +43,14 @@ var update = flag.Bool("update", false, "write testdata/statetable.golden from t
 // three rows more: the address revoked at the server, the box finished (it
 // holds its own revocation), and no box at all.
 //
-// It runs alone: its "silent" cells close their servers, and a port a closed
-// server freed could be another test's server before the command calls it.
+// Two kinds of cell are not run, since a diff of every one showed each the
+// same as another (#426 item 3): a server that is silent left the box as
+// one that refuses in all 220 pairs of row and command, and only its words
+// differed, which TestACallWithNoAnswerSaysWhatKind holds; and the identity
+// alone at a server that forgot the box did in all 90 cells what it does at
+// one that never registered it, which holds nothing of it either.
 func TestStateTable(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
 	}
@@ -58,7 +62,7 @@ func TestStateTable(t *testing.T) {
 	t.Run("cells", func(t *testing.T) {
 		for _, r := range stateRows() {
 			for _, c := range stateCommands() {
-				for _, m := range []string{"answers", "refuses", "silent"} {
+				for _, m := range []string{"answers", "refuses"} {
 					key := r.name + " | " + c.name + " | " + m
 					t.Run(strings.NewReplacer(" ", "_", "|", "").Replace(key), func(t *testing.T) {
 						t.Parallel()
@@ -123,6 +127,9 @@ func stateRows() []stateRow {
 	for _, view := range []string{"full", "identity alone"} {
 		for _, server := range []string{"never registered", "active", "forgotten"} {
 			for _, rev := range []string{"no revocation", "revoked through the one in use", "revoked a day ahead"} {
+				if view == "identity alone" && server == "forgotten" {
+					continue // the same in every cell as never registered (TestStateTable)
+				}
 				rows = append(rows, stateRow{view + ", " + server + ", " + rev, func(t *testing.T, e *env, dir string, peer *client.Box) {
 					makeBox(t, e, dir, peer, server == "never registered")
 					a := openBox(t, e, dir)
@@ -471,8 +478,6 @@ func runCell(t *testing.T, r stateRow, c stateCommand, m string) string {
 			w.Header().Set("Retry-After", "3600")
 			forge.Refuse(w, protocol.CodeRateLimited)
 		})
-	case "silent":
-		e.srv.Close()
 	}
 	words, err := c.run(context.Background(), e, dir, peer)
 	result := "ok"
