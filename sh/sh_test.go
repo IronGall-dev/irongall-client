@@ -188,6 +188,7 @@ func scratch(t *testing.T) []string { return []string{"DR_HOME=" + t.TempDir()} 
 // The script's verdict on every vector is the one the vectors name, as the
 // Go client's is (protocol/vectors_test.go).
 func TestVectorsIdentity(t *testing.T) {
+	t.Parallel()
 	need(t, scriptTools...)
 	t.Logf("ssh-keygen: %s", sshBuild())
 	for _, box := range []string{"a", "b", "c"} { // c's identity is a P-256 key
@@ -268,6 +269,7 @@ func TestVectorsIdentity(t *testing.T) {
 // themselves are good: it is the certificate's form, its signer or its dates
 // that fail, which ssh-keygen -Y verify alone does not all check.
 func TestVectorsCertificate(t *testing.T) {
+	t.Parallel()
 	need(t, scriptTools...)
 	_, setNow := vectorNow(t)
 	a, aDoc := identity(t, "a")
@@ -336,6 +338,7 @@ func TestVectorsCertificate(t *testing.T) {
 // ssh-keygen says of those two, so on such a build it is held to that
 // shape, a known variance, and anything else fails.
 func TestVectorsSignatureForm(t *testing.T) {
+	t.Parallel()
 	need(t, scriptTools...)
 	t.Logf("ssh-keygen: %s", sshBuild())
 	_, setNow := vectorNow(t)
@@ -388,6 +391,7 @@ func TestVectorsSignatureForm(t *testing.T) {
 // itself; where a base64 takes one, the check is what refuses it. Control: it
 // reads every ok-* vector.
 func TestTheScriptReadsASignatureInItsOneEncoding(t *testing.T) {
+	t.Parallel()
 	need(t, scriptTools...)
 	oks, _ := filepath.Glob(filepath.Join(vectors, "sig", "ok-*.sig"))
 	if len(oks) < 10 {
@@ -406,6 +410,7 @@ func TestTheScriptReadsASignatureInItsOneEncoding(t *testing.T) {
 }
 
 func TestVectorsPrekey(t *testing.T) {
+	t.Parallel()
 	need(t, scriptTools...)
 	now, setNow := vectorNow(t)
 	a, aDoc := identity(t, "a")
@@ -538,6 +543,7 @@ func sameNumber(x, y string) bool {
 // line, byte for byte but for jq's spelling (sameLine), and refuses each of
 // envelopeFive.
 func TestVectorsEnvelope(t *testing.T) {
+	t.Parallel()
 	need(t, scriptTools...)
 	now, setNow := vectorNow(t)
 	a, _ := identity(t, "a")
@@ -630,6 +636,7 @@ var answerRead = map[string]bool{
 // a server of each kind: with dr_shape, and each byte member with dr_bytes,
 // and refuses each of answerRead.
 func TestVectorsAnswer(t *testing.T) {
+	t.Parallel()
 	need(t, scriptTools...)
 	files, _ := filepath.Glob(filepath.Join(vectors, "answer", "*.json"))
 	if len(files) != 60 {
@@ -681,6 +688,7 @@ func TestVectorsAnswer(t *testing.T) {
 // carries, the signature under its certificate, and the envelope. An accepted
 // one gives the same sender and the same delivered line.
 func TestVectorsPlain(t *testing.T) {
+	t.Parallel()
 	need(t, scriptTools...)
 	now, setNow := vectorNow(t)
 	b, _ := identity(t, "b")
@@ -743,6 +751,7 @@ func TestVectorsPlain(t *testing.T) {
 // arithmetic only, so it needs no age: a post-quantum key is told by its
 // prefix.
 func TestPaddingIsTheGoClients(t *testing.T) {
+	t.Parallel()
 	need(t, "bash")
 	sig := bytes.Repeat([]byte{'s'}, 846)
 	// Message sizes, the envelope's line with its signature, on each side of
@@ -789,6 +798,7 @@ func TestPaddingIsTheGoClients(t *testing.T) {
 // each verifies what the other's P-256 identity certified. The script takes
 // the identity key it finds, so its box's key is made with ssh-keygen first.
 func TestAP256BoxInBothClients(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	if !p256() {
 		t.Skipf("%s reads no P-256 key, so the script runs no P-256 box: a known variance (PROTOCOL.md Appendix A)", sshBuild())
@@ -889,6 +899,7 @@ func TestTheScriptDeclaresTheKeyTypesItsBuildVerifies(t *testing.T) {
 // A box whose ACL does not admit the script's box refuses its send, and the
 // script says so and keeps nothing: only the recipient can change that.
 func TestTheScriptsSendABoxDeniesFails(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -927,6 +938,7 @@ func TestTheScriptsSendABoxDeniesFails(t *testing.T) {
 // The two clients exchange mail through the honest fake server, and each runs
 // a box the other made: one on-disk format.
 func TestWithGoClient(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -1152,6 +1164,7 @@ func sameButReceipt(t *testing.T, record string, delivered []byte, id string) {
 // it is told the identity is a certificate authority: the script's signers
 // line for a revocation never says so.
 func TestVectorsRevocation(t *testing.T) {
+	t.Parallel()
 	need(t, scriptTools...)
 	a, aDoc := identity(t, "a")
 	b, bDoc := identity(t, "b")
@@ -1242,6 +1255,7 @@ func TestVectorsRevocation(t *testing.T) {
 // record of a script box is one the Go client takes, and mail from a revoked
 // box is refused by whichever reads it.
 func TestRevocationInBothClients(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -1353,6 +1367,7 @@ func TestRevocationInBothClients(t *testing.T) {
 // a revocation of the address, never names the identity a certificate
 // authority.
 func TestVectorsRevokedCertificates(t *testing.T) {
+	t.Parallel()
 	need(t, scriptTools...)
 	a, aDoc := identity(t, "a")
 	b, bDoc := identity(t, "b")
@@ -1492,6 +1507,7 @@ func TestVectorsRevokedCertificates(t *testing.T) {
 // each follows the other to a later certificate, naming a prekey by both
 // serials.
 func TestRevokedCertificatesInBothClients(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -1596,6 +1612,7 @@ func numberOf(t *testing.T, b *client.Box) uint64 {
 // A JSON body the Go client sends reaches the script as the value it is
 // (PROTOCOL.md §3.3). The Go client's own refusals are client/sent_test.go's.
 func TestAJSONBodyFromTheGoClient(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -1669,6 +1686,7 @@ func landAll(t *testing.T, b *client.Box) {
 // says on stderr that --help is the flag; a bare group, or a command it does
 // not have, on stderr with exit 2.
 func TestTheCommandLine(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -1745,6 +1763,7 @@ func TestTheCommandLine(t *testing.T) {
 // mail. The hook runs a whole send, in a shell of its own on the same box,
 // after the drain has read the sender's revocation and before it takes it.
 func TestASendDuringADrainHidesNoRevocation(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	ctx, srv := context.Background(), fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
@@ -1792,6 +1811,7 @@ dr_recv`
 // number only when that is not the scheme's default (PROTOCOL.md §8;
 // client's TestAPassNamesTheServerAsAnOrigin holds the Go client to the same).
 func TestTheScriptsPassNamesTheServerAsAnOrigin(t *testing.T) {
+	t.Parallel()
 	need(t, "bash")
 	for base, want := range map[string]string{
 		"https://dromas.dev":              "dromas.dev",
@@ -1815,6 +1835,7 @@ func TestTheScriptsPassNamesTheServerAsAnOrigin(t *testing.T) {
 // (PROTOCOL.md §11.1), so a pass never crosses a network in the clear. The
 // script refuses another before any command runs.
 func TestBothClientsCallTheSameServers(t *testing.T) {
+	t.Parallel()
 	need(t, "bash", "jq")
 	const refusal = "is not a server this client calls"
 	for _, u := range []string{
@@ -1851,6 +1872,7 @@ func TestBothClientsCallTheSameServers(t *testing.T) {
 // as the Go client's test has it: nothing reaches the other server, and
 // the read fails with the redirect's status.
 func TestTheScriptFollowsNoRedirect(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
 	var mu sync.Mutex
@@ -1896,6 +1918,7 @@ func TestTheScriptFollowsNoRedirect(t *testing.T) {
 // redirect has (PROTOCOL.md §11.1): the read of a recipient before a send and
 // the post itself, which post nothing anywhere and keep nothing.
 func TestNoCallOfTheScriptFollowsARedirect(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
 	kt := protocol.PostQuantum
@@ -1963,6 +1986,7 @@ func TestNoCallOfTheScriptFollowsARedirect(t *testing.T) {
 // stderr carries only the script's own JSON lines (AGENTS.md § What a box
 // prints), whatever an error's answer holds, a body or none.
 func TestAnAnswerWithNoBodyPutsOnlyJSONOnStderr(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	for _, status := range []int{http.StatusNotModified, http.StatusNotFound, http.StatusServiceUnavailable} {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(status) }))
@@ -1987,6 +2011,8 @@ func TestAnAnswerWithNoBodyPutsOnlyJSONOnStderr(t *testing.T) {
 // words, which can quote what a server sent (#289): curl's -w writes 000 for
 // the status it never read.
 func TestAServerThatIsNotThereIsNoAnswer(t *testing.T) {
+	// Not parallel: the port it closes must stay closed, and a server
+	// another test starts could take it.
 	need(t, append(scriptTools, "curl")...)
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -2004,6 +2030,7 @@ func TestAServerThatIsNotThereIsNoAnswer(t *testing.T) {
 // (PROTOCOL.md §11.1): its status is the final answer's own status line, as
 // curl read it, never a line of its header block that looks like one.
 func TestA3xxIsNoAnswerWhateverItsLines(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
 	env := []string{"DR_HOME=" + t.TempDir(), "DR_SERVER_URL=" + srv.URL}
@@ -2034,6 +2061,7 @@ func TestA3xxIsNoAnswerWhateverItsLines(t *testing.T) {
 // The user's curl config changes nothing the script does (PROTOCOL.md §11.1):
 // -q comes first, or curl reads .curlrc.
 func TestTheScriptReadsNoCurlrc(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	curlrc := func(line string) string {
 		home := t.TempDir()
@@ -2088,6 +2116,7 @@ func TestTheScriptReadsNoCurlrc(t *testing.T) {
 // over https, and by the name localhost. A server elsewhere still goes
 // through it, which shows the proxy is one curl uses.
 func TestTheScriptCallsThisMachineDirectly(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	var mu sync.Mutex
 	var got []string
@@ -2148,6 +2177,7 @@ func TestTheScriptCallsThisMachineDirectly(t *testing.T) {
 // that waited and signs a new key for the lifetime now set, as the Go client
 // does (PROTOCOL.md §12.4).
 func TestTheScriptHoldsALowerLifetimeOverAWaitingRenewal(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()

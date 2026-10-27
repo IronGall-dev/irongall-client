@@ -39,6 +39,7 @@ func goneKeys(keys []string) []string {
 // #200, #209): the two messages waiting for the retired key are read once
 // the clock is right.
 func TestScriptAClockThatJumpsDuringARenewalDeletesNoKey(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -119,6 +120,7 @@ func staleProblem(w http.ResponseWriter) {
 // client/replay_retry_test.go. The owner renews the script box by hand on
 // days 30 and 60; the server takes one dr_recv 1h32m ahead.
 func TestTheScriptTakesARetryAboveTheFloor(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
 	day := 24 * time.Hour
@@ -212,6 +214,7 @@ func TestTheScriptTakesARetryAboveTheFloor(t *testing.T) {
 // stale_prekey), with every pass one an honest server takes: the script's
 // clock 50m fast at the drain that prunes, then 9m59s slow a second later.
 func TestTheScriptTakesAStretchedRetryAtHonestClocks(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
 	day := 24 * time.Hour
@@ -320,6 +323,7 @@ func TestTheScriptTakesAStretchedRetryAtHonestClocks(t *testing.T) {
 // which the server took, so a clock that jumps 70 days once the list is
 // answered drops no line and raises no floor.
 func TestScriptAClockThatJumpsDuringADrainPrunesNoLine(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -359,6 +363,7 @@ dr_api(){ orig_ig_api "$@"; local rc=$?; case "$1 $2" in "GET /v1/"*/messages | 
 // and the Go boxes share, and each message is dated after its retry's read
 // was answered: the script's, and the Go client's sent the same way.
 func TestTheScriptDatesARetryAfterItsBoxRead(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
 	clk := &frozen{base: time.Now().UTC().Truncate(time.Second)}

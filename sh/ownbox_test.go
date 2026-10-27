@@ -26,6 +26,7 @@ import (
 // state file, at init and at every command that writes the box, writing
 // nothing there (#331).
 func TestTheScriptRunsABoxOfItsOwnOnly(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	home := t.TempDir()
 	out, err := bash(t, []string{"HOME=" + home, "DR_HOME=", "DR_BOX=", "XDG_CONFIG_HOME=", "DROMAS_HOME=" + filepath.Join(home, "go-box")}, `printf '%s' "$DR"`)
@@ -113,6 +114,7 @@ func putRevocation(t *testing.T, next http.Handler, rec *protocol.Revocations) {
 // record; at a registration of its identity alone, refused 410; and at a
 // renewal's upload, refused 410 after a clean read (#343).
 func TestTheScriptKeepsItsOwnRevocationFromA410(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	for _, at := range []string{"its renewal's read", "a registration of its identity alone", "its renewal's upload"} {
 		t.Run(at, func(t *testing.T) {
