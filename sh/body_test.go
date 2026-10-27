@@ -45,6 +45,7 @@ const keepPost = "DR_HELD=$DR; dr_post(){ cp \"$2.P\" \"$OUT\"; mv \"$2.P\" \"$2
 // is sent, not as "" and not refused; and one named $DR/body.txt, the file a
 // body on stdin is kept in, is not emptied first.
 func TestTheScriptReadsTheBodyOnce(t *testing.T) {
+	t.Parallel()
 	need(t, scriptTools...)
 	dir, a, b := sendBox(t)
 	out := t.TempDir()
@@ -75,6 +76,7 @@ func TestTheScriptReadsTheBodyOnce(t *testing.T) {
 // line on stderr, with nothing kept and nothing left in the box: a body that
 // is not UTF-8, and a body file it cannot read (#274).
 func TestARefusedBodyIsOneErrorLine(t *testing.T) {
+	t.Parallel()
 	need(t, scriptTools...)
 	dir, _, b := sendBox(t)
 	body := filepath.Join(t.TempDir(), "body")
@@ -110,6 +112,7 @@ func TestARefusedBodyIsOneErrorLine(t *testing.T) {
 // A send whose envelope jq does not write, as a jq stopped midway leaves it,
 // is one error line, with nothing kept and no send.P left in the box.
 func TestASendWhoseEnvelopeIsNotBuiltLeavesNothing(t *testing.T) {
+	t.Parallel()
 	need(t, scriptTools...)
 	dir, _, b := sendBox(t)
 	o := filepath.Join(t.TempDir(), "sent")

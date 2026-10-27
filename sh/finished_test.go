@@ -21,6 +21,7 @@ import (
 // one path to its certificates and statements, so prekey renew is held the
 // same way.
 func TestScriptInitOfABoxThatHoldsItsOwnRevocationSignsNothing(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)

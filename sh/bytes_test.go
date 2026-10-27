@@ -19,10 +19,13 @@ import (
 
 // The script runs in the C locale, so its patterns and tools read bytes, as
 // the Go client does (#65). Under en_US.UTF-8 a pattern's [0-9] takes a
-// digit that is not ASCII, and under tr_TR.UTF-8 grep's [A-Z] misses I. The
-// vector tests and TestPatternsReadBytes run again under each, built with
-// localedef, after a control shows the locale bites a bare shell.
+// digit that is not ASCII, and under tr_TR.UTF-8 grep's [A-Z] misses I.
+// TestPatternsReadBytes and the vectors of the two readers of text, envelopes
+// and answers, run again under each, built with localedef, after a control
+// shows the locale bites a bare shell: they hold the script's one LC_ALL line,
+// and every vector run twice more held nothing more (#426 item 2).
 func TestTheScriptReadsBytesInEveryLocale(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("DR_TEST_LOCALE") != "" {
 		t.Skip("already inside a locale")
 	}
@@ -41,7 +44,7 @@ func TestTheScriptReadsBytesInEveryLocale(t *testing.T) {
 		if err := control.Run(); err != nil {
 			t.Fatalf("control: %s does not bite a bare shell (%s), so this test would see nothing: %v", loc.name, loc.bites, err)
 		}
-		run := exec.Command(os.Args[0], "-test.count=1", "-test.run", "^(TestVectors.*|TestPatternsReadBytes)$")
+		run := exec.Command(os.Args[0], "-test.count=1", "-test.run", "^(TestVectorsEnvelope|TestVectorsAnswer|TestPatternsReadBytes)$")
 		run.Env = env
 		out, err := run.CombinedOutput()
 		if err != nil {
@@ -53,6 +56,7 @@ func TestTheScriptReadsBytesInEveryLocale(t *testing.T) {
 // What the script reads by a pattern alone, held to bytes (#65): each is
 // refused, on stdout and stderr with JSON lines only.
 func TestPatternsReadBytes(t *testing.T) {
+	t.Parallel()
 	need(t, scriptTools...)
 	if _, err := bash(t, nil, "dr_hex "+strings.Repeat("a", 63)+"١"); err == nil {
 		t.Error("dr_hex takes a digit that is not ASCII")
@@ -80,6 +84,7 @@ func TestPatternsReadBytes(t *testing.T) {
 // ending in a line feed or a NUL (#187). Neither client takes it, and
 // nothing goes to sent/: the script keeps nothing to post again.
 func TestAReceiptIsComparedAsBytes(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)

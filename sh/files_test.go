@@ -65,6 +65,7 @@ func newestKey(t *testing.T, dir string) string {
 // identity.doc and the same address from the identity (#231, #243), mail
 // sent to it is delivered, and init on it then rewrites none of them.
 func TestTheScriptRestoresABoxFromItsIdentityAlone(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
 	for _, forgotten := range []bool{false, true} {
@@ -140,6 +141,7 @@ func TestTheScriptRestoresABoxFromItsIdentityAlone(t *testing.T) {
 // hashes the document, it leaves both whole for whoever reads them then.
 // And it makes an address that is gone again.
 func TestAnInitRunAgainRewritesNothing(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
@@ -188,6 +190,7 @@ func TestAnInitRunAgainRewritesNothing(t *testing.T) {
 // beside a command that reads them: while another command holds the lock,
 // init waits, and writes neither.
 func TestInitMakesTheIdentityFilesUnderTheLock(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
@@ -222,6 +225,7 @@ func TestInitMakesTheIdentityFilesUnderTheLock(t *testing.T) {
 // again, is refused, and the box keeps its address, where it would
 // otherwise take the hash of what that file holds.
 func TestAnIdentityPubOutOfFormIsRefused(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
@@ -250,6 +254,7 @@ func TestAnIdentityPubOutOfFormIsRefused(t *testing.T) {
 // the server refused at every try (#238). A key file age cannot read and
 // that is not empty is refused, and nothing is signed with it.
 func TestAPrekeyKeyACrashLeftEmptyIsMadeAgain(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
@@ -293,6 +298,7 @@ func TestAPrekeyKeyACrashLeftEmptyIsMadeAgain(t *testing.T) {
 // is no key: nothing was registered with it, and init makes it again, as the
 // Go client does (#238).
 func TestAnInitCrashedBeforeItsIdentityIsSyncedRegisters(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
@@ -369,6 +375,7 @@ mv(){ printf '%s mv %s\n' "${FUNCNAME[1]}" "$*" >> "$LOG"; command mv "$@"; }
 // keeps is, so a crash leaves the old file or the new one (#239): each write
 // is a new file, never one written in place.
 func TestGitignoreIsMovedIntoPlace(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
@@ -392,6 +399,7 @@ func TestGitignoreIsMovedIntoPlace(t *testing.T) {
 // script once exited 1 with no line. A record that holds nothing lets the
 // renewal go on.
 func TestAForgottenBoxsRenewalRefusesARevocationsAnswerThatIsNoRecord(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
 	env := []string{"DR_HOME=" + t.TempDir(), "DR_SERVER_URL=" + srv.URL}
@@ -458,6 +466,7 @@ func dyingJQ(t *testing.T, match ...string) string {
 // nothing beside it; the message is delivered, kept or recorded at the next
 // run, whole.
 func TestAKeptMessageFileIsWrittenBesideAndMoved(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -528,6 +537,7 @@ func TestAKeptMessageFileIsWrittenBesideAndMoved(t *testing.T) {
 // on a box restored from its identity alone prints its address, the box's
 // files made from the identity first, as the Go client's Open makes them.
 func TestAddrNeedsABox(t *testing.T) {
+	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
 	command := func(home string, args ...string) (string, string, int) {
