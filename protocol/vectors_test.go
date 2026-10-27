@@ -15,6 +15,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -880,6 +881,25 @@ func TestVectorMessage(t *testing.T) {
 		}
 		if got, err := io.ReadAll(r); err != nil || !bytes.Equal(got, pt) {
 			t.Errorf("%s: decrypts to other bytes than its .plain (%v)", c.name, err)
+		}
+	}
+}
+
+// The two ciphertexts are the files typage, a second age implementation,
+// read: testdata/vectors/README.md names each by its SHA-256, and a file
+// made again fails this until typage reads it and the README names it
+// (#454 item 3).
+func TestTheCiphertextsAreTheOnesTypageRead(t *testing.T) {
+	t.Parallel()
+	readme := string(read(t, "README.md"))
+	named := regexp.MustCompile("`message/(a-to-[bc])\\.age` \\(sha256 `([0-9a-f]{64})`\\)").FindAllStringSubmatch(readme, -1)
+	if len(named) != 2 {
+		t.Fatalf("the README names %d ciphertexts by their hash, want both", len(named))
+	}
+	for _, m := range named {
+		sum := sha256.Sum256(read(t, "message/"+m[1]+".age"))
+		if got := hex.EncodeToString(sum[:]); got != m[2] {
+			t.Errorf("message/%s.age is sha256 %s, and the README names %s as what typage read", m[1], got, m[2])
 		}
 	}
 }
