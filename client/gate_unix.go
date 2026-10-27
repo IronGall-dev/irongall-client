@@ -1,4 +1,8 @@
-//go:build unix
+//go:build darwin || dragonfly || freebsd || illumos || linux || netbsd || openbsd
+
+// The systems with flock, as cmd/go's own file lock lists them
+// (cmd/go/internal/lockedfile/internal/filelock, filelock_unix.go): solaris
+// and aix have none, and get no gate (gate_other.go).
 
 package client
 
