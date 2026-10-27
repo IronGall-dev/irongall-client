@@ -355,7 +355,7 @@ None was a flaw in the layout: each was a verifier that read an object different
 
 ## 3e. Output: JSON lines, each with its type first
 
-**Ours:** every command prints JSON lines, `type` first, the same from the script: what it did and met to stdout, refusals included; to stderr only its failure, a wrong command line, or waiting. No `--json`, no switch on a terminal; help is the one text. A line nests the envelope whole as `envelope`, so what the envelope gains in v1 (§14) never meets the line's own names.
+**Ours:** every command prints JSON lines, `type` first, the same from the script: what it did and met to stdout, refusals included; to stderr only its failure, a wrong command line, or waiting. No `--json`, no switch on a terminal; help is the one text. A line nests the envelope whole as `envelope`, so what the envelope gains in v1 (§14) never meets the line's own names. A line that does not carry the envelope may carry one of its checked values as a member of its own, as `held`'s `from` and `sent`'s `to` do: nothing is spread, so nothing meets (client#441 item 3).
 
 | Who | What they do | How it is known |
 |---|---|---|
