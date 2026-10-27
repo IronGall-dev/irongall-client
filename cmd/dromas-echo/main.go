@@ -45,7 +45,7 @@ is answered, signed, with what was checked and the body it carried.
               $DROMAS_HOME, or ${XDG_CONFIG_HOME:-~/.config}/dromas/${DROMAS_BOX:-default}
   --no-pq     publish prekeys without post-quantum encryption (X25519 only)
 
-The server is $DROMAS_BASE, or https://dromas.dev.
+The server is $DROMAS_SERVER_URL, or https://dromas.dev.
 `
 
 // replyTTL is how long a reply that could not be posted is retried before it
@@ -94,7 +94,7 @@ func run(ctx context.Context, args []string, logw io.Writer) error {
 	if *noPQ {
 		kt = protocol.Classic
 	}
-	opt := client.Options{Base: os.Getenv("DROMAS_BASE")}
+	opt := client.Options{Base: os.Getenv("DROMAS_SERVER_URL")}
 	logger := log.New(logw, "", log.LstdFlags|log.LUTC)
 	e, err := start(ctx, *dir, *identity, opt, kt, logger)
 	if err != nil {

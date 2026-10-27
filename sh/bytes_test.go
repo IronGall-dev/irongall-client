@@ -94,7 +94,7 @@ func TestAReceiptIsComparedAsBytes(t *testing.T) {
 	}
 	landAll(t, to)
 	dir := t.TempDir()
-	env := []string{"DR_HOME=" + dir, "DR_BASE=" + srv.URL}
+	env := []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}
 	if _, err := bash(t, env, "dr_init"); err != nil {
 		t.Fatal(err)
 	}

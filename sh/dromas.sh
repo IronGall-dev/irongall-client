@@ -9,7 +9,7 @@
 # Get it from https://github.com/dromas-dev/dromas-client at a commit you have read, never from the dromas.dev
 # server: a server that could hand you this script could hand you one without its checks.
 #
-#   bash dromas.sh init [--no-pq]                  make and register this box; prints its link, $DR_BASE/to/<address>
+#   bash dromas.sh init [--no-pq]                  make and register this box; prints its link, $DR_SERVER_URL/to/<address>
 #   bash dromas.sh addr                            print it again: give it to whoever should write to this box
 #   bash dromas.sh send <link> [file]             one message (the body from stdin without a file); a link or an address. Posted now or not at all: nothing waits
 #   bash dromas.sh recv                            verified mail, a "mail" line each; refused mail goes to quarantine/, with a "refused" line
@@ -30,7 +30,7 @@
 # recipe: setup
 set -o pipefail; umask 077
 export LC_ALL=C   # every pattern and tool reads bytes, as the Go client does: under another locale [0-9] can take a digit that is not ASCII, and [A-Z] can miss I
-DR_BASE=${DR_BASE:-https://dromas.dev}
+DR_SERVER_URL=${DR_SERVER_URL:-https://dromas.dev}
 DR=${DR_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/dromas-sh/${DR_BOX:-default}}   # one box per directory, of this script's own: never the Go client's (its DROMAS_HOME and ~/.config/dromas/, dr_ownbox), and never the working directory
 DR_LOCK_WAIT=${DR_LOCK_WAIT:-120}   # how many seconds a command waits for the box's lock while another command of the box holds it: what apt waits for its own lock when no one is at a terminal
 DR_P256='ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBGD+1LolWp0xyWHrdMY1bWjASbiSO2H6bOZpYi5g8p+2eQP+EAi4vJmkGunpVii8ZPLxsgwtfp9Rd6PClNRGIpk='   # a P-256 key, box C's identity in this repo's testdata/vectors/ (RFC 6979 §A.2.5's published test key), for dr_senders to ask ssh-keygen to read
@@ -50,15 +50,15 @@ dr_time(){ # <timestamp> → its Unix time, only for exactly YYYY-MM-DDTHH:MM:SS
 dr_api(){ # <METHOD> <PATH> [body file] [curl args…] → the body on stdout, as curl -o wrote it. The body file is sent as it is: a message's ciphertext, POSTed to …/messages, as application/octet-stream (PROTOCOL.md §11.10), and any other body as JSON. Any non-2xx: an error line with its status, its code (dr_code) and the wait its Retry-After asks for, and nothing the server wrote: its detail, hint and title are for a person reading the body (PROTOCOL.md §11.3). No answer at all: an error line with curl's words. Keeps the answer in $DR/error.json and what curl read of it in $DR/error.meta (dr_status), returns 1
   local m=$1 p=$2 f=${3-} t=application/json s c w; local -a np=(); shift 2; [ $# -gt 0 ] && shift
   [[ "$m $p" == "POST /v1/"*"/messages?"* ]] && t=application/octet-stream
-  dr_tls "$DR_BASE" || return 1
-  dr_here "$DR_BASE" localhost && np=(--noproxy '*')      # a server on this machine is called directly, whatever proxy the environment names, as Go's ProxyFromEnvironment never proxies localhost or a loopback address
+  dr_tls "$DR_SERVER_URL" || return 1
+  dr_here "$DR_SERVER_URL" localhost && np=(--noproxy '*')      # a server on this machine is called directly, whatever proxy the environment names, as Go's ProxyFromEnvironment never proxies localhost or a loopback address
   rm -f "$DR/error.json" "$DR/error.meta" "$DR/response.body" "$DR/response.meta"
-  curl -q -sS "${np[@]}" --max-time 60 --max-filesize 16777216 --fail-with-body -o "$DR/response.body" -w '%{response_code}\n%header{retry-after}\n%header{date}\n' -X "$m" ${f:+-H "Content-Type: $t" --data-binary "@$f"} "$@" "$DR_BASE$p" > "$DR/response.meta" 2> "$DR/curl.err" &&
+  curl -q -sS "${np[@]}" --max-time 60 --max-filesize 16777216 --fail-with-body -o "$DR/response.body" -w '%{response_code}\n%header{retry-after}\n%header{date}\n' -X "$m" ${f:+-H "Content-Type: $t" --data-binary "@$f"} "$@" "$DR_SERVER_URL$p" > "$DR/response.meta" 2> "$DR/curl.err" &&
     [[ $(sed -n 1p "$DR/response.meta") = 2?? ]] && { cat "$DR/response.body"; return 0; }      # -q first, or curl reads the user's .curlrc, where location, insecure or proxy change what is called. Only a 2xx is an answer: curl, which follows no redirect without -L, exits 0 on a 3xx too. The status and the two headers are the final answer's own, as curl read it: never a 1xx's line or a trailer, which the Go client never reads either
   mv "$DR/response.body" "$DR/error.json" 2> /dev/null; mv "$DR/response.meta" "$DR/error.meta" 2> /dev/null
   s=$(dr_status); c=$(dr_code); w=$(dr_wait); q=; u=
   [ "$c" = rate_limited ] && q=$(dr_member quota_id "$DR_QUOTAS") && u=$(dr_member subject '["box","ip"]')
-  [ -n "$s" ] || { dr_err "no answer from $DR_BASE"; return 1; }      # curl's words, which can quote what the server sent (a certificate's name), are not printed
+  [ -n "$s" ] || { dr_err "no answer from $DR_SERVER_URL"; return 1; }      # curl's words, which can quote what the server sent (a certificate's name), are not printed
   jq -cn --argjson s "$s" --arg c "$c" --arg w "$w" --arg q "$q" --arg u "$u" '{type:"error", status:$s} + (if $c != "" then {code:$c} else {} end) + (if $q != "" then {quota_id:$q} else {} end) + (if $u != "" then {subject:$u} else {} end) + (if $w != "" then {retry_after:($w | tonumber)} else {} end) +
     {message:("ERROR \($s)" + (if $c != "" then " \($c)" elif $s >= 300 and $s <= 399 then ": a redirect, which this client never follows: the API answers where it is called" else ": an answer this client does not know" end) + (if $q != "" then ": the limit \($q)" else "" end) + (if $u == "box" then ", counted against this box" elif $u == "ip" then ", counted against this machine'"'"'s IP address" else "" end) + (if $w != "" then "; the server asks to wait \($w) seconds" else "" end))}' >&2; return 1
 }
@@ -128,7 +128,7 @@ dr_pass(){ # [serial] → the Authorization value of a call as this box, unless 
     na=$(dr_time "$(sed -n 's/.* not_after="\([^"]*\)".*/\1/p' "$DR/pass" 2> /dev/null)") && [ $((na - $(dr_now))) -gt 30 ] && [ $((na - $(dr_now))) -le 600 ] && { cat "$DR/pass"; return; }      # more than ten minutes left: this machine's clock has gone back since it was signed, so a new one, dated by the clock as it is
     n=$(cat "$DR/serial" 2> /dev/null) || dr_refuse "this box has published no prekey: run init, or rekey for a box restored from its identity" || return 1
   fi
-  h=$(dr_server "$DR_BASE"); na=$(jq -nr --argjson t "$(dr_now)" '$t + 600 | todate')      # who is calling, which server, and until when: ten minutes
+  h=$(dr_server "$DR_SERVER_URL"); na=$(jq -nr --argjson t "$(dr_now)" '$t + 600 | todate')      # who is calling, which server, and until when: ten minutes
   printf 'dromas-pass-v1\n%s\n%s\n%s\n' "$A" "$h" "$na" | ssh-keygen -q -Y sign -n "dromas-pass-v1:$A" -f "$DR/work/$n-cert.pub" > "$DR/pass.sig" 2> /dev/null ||
     dr_refuse "this box cannot sign a pass with working key $n: rekey makes a new working key, certificate and prekey" || return 1
   printf 'dromas-pass address="%s", not_after="%s", signature="%s"\n' "$A" "$na" "$(dr_b64 "$DR/pass.sig")" > "$DR/pass.new" || return 1
@@ -202,11 +202,11 @@ dr_init(){ # [--no-pq] → creates this box, or finishes a half-done init, and r
   jq -n --arg i "$(dr_b64 "$DR/identity.doc")" --arg p "$(dr_b64 "$p.txt")" --arg s "$(dr_b64 "$p.txt.sig")" --argjson k "$(dr_senders)" '{identity:$i, prekey:$p, prekey_signature:$s, sender_key_types:$k}' > "$DR/register.json"
   h=$(dr_pass "$n") && { dr_api PUT "/v1/$A" "$DR/register.json" -H "Authorization: $h" > /dev/null || { dr_clock; dr_own; false; }; } && mv "$DR/pass.new" "$DR/pass" && dr_putline "$DR/serial" "$n" && dr_addr
 }
-dr_addr(){ local a; dr_held || { [ -s "$DR/identity" ] && [ -s "$DR/address" ]; } || { dr_lock dr_addr; return; }; a=$(cat "$DR/address") && dr_out box --arg address "$a" --arg link "$DR_BASE/to/$a"; }      # the box's address and its link: what to give whoever should write to it. Read with no lock; with no box, dr_lock's refusal, and a box restored from its identity alone has its files made under the lock first (dr_identity), as the Go client's Open makes them
-dr_dest(){ # <link or address> → the address: 64 hex, or taken from a link to this box's server, $DR_BASE/to/<address>
-  local a=${1#"$DR_BASE/to/"}
+dr_addr(){ local a; dr_held || { [ -s "$DR/identity" ] && [ -s "$DR/address" ]; } || { dr_lock dr_addr; return; }; a=$(cat "$DR/address") && dr_out box --arg address "$a" --arg link "$DR_SERVER_URL/to/$a"; }      # the box's address and its link: what to give whoever should write to it. Read with no lock; with no box, dr_lock's refusal, and a box restored from its identity alone has its files made under the lock first (dr_identity), as the Go client's Open makes them
+dr_dest(){ # <link or address> → the address: 64 hex, or taken from a link to this box's server, $DR_SERVER_URL/to/<address>
+  local a=${1#"$DR_SERVER_URL/to/"}
   dr_hex "$a" && { echo "$a"; return 0; }
-  [[ $1 != *://* || $1 = "$DR_BASE/"* ]] || { dr_refuse "a link to another server: this box's server is $DR_BASE"; return 1; }
+  [[ $1 != *://* || $1 = "$DR_SERVER_URL/"* ]] || { dr_refuse "a link to another server: this box's server is $DR_SERVER_URL"; return 1; }
   dr_refuse "not an address or a link to one: $1"
 }
 
@@ -796,6 +796,6 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
     dr_init | dr_rekey) [ $# -eq 0 ] || [ "$1" = --no-pq ] || dr_wrong "dromas.sh $words takes no option but --no-pq: $1" "$dr_use" "bash dromas.sh help $words" ;;
     dr_send) for a; do [[ $a != -* ]] || dr_wrong "dromas.sh send takes no option: $a" "$dr_use" "bash dromas.sh help send"; done ;;
   esac
-  dr_tls "$DR_BASE" || exit 1      # refused before anything, as the Go client refuses to open a box whose server it would not call
+  dr_tls "$DR_SERVER_URL" || exit 1      # refused before anything, as the Go client refuses to open a box whose server it would not call
   "$dr_cmd" "$@"; exit
 fi
