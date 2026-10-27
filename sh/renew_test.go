@@ -126,6 +126,38 @@ func TestScriptRenews(t *testing.T) {
 	}
 }
 
+// A statement served in the box's name under the certificate it signs
+// under, that it did not make, means another holds that working key: the box
+// signs no mail under it (PROTOCOL.md §12.4; #442 item 4). A renewal that read
+// it and then failed leaves the box under that certificate; one that goes
+// through moves it to a new one, which signs again.
+func TestScriptSignsNoMailUnderAWorkingKeyAnotherHolds(t *testing.T) {
+	w := newWorld(t)
+	a, b := w.box(), w.box()
+	b.mustSend(a, "before")
+	n := b.num()
+	w.serving(b, w.statement(b, n+1, w.operator().recipient(), notAfter(), b.file(fmt.Sprintf("work/%d-cert.pub", n))))
+	writeFile(t, b.file("prekey-lifetime"), []byte("a month\n"))
+	if r := b.sh("dr_rekey"); r.rc == 0 || b.num() != n {
+		t.Fatalf("a renewal its lifetime file stops: %v, serial %d after %d", r, b.num(), n)
+	}
+	k := len(w.srv.Requests())
+	if r := b.send(a.addr.String(), "under a working key another holds"); r.rc == 0 || !strings.Contains(r.err, "did not make") || slices.Contains(w.calls(k), "POST /v1/"+a.addr.String()+"/messages") {
+		t.Errorf("a send under that certificate: %v, %q", r, w.calls(k))
+	}
+	if err := os.Remove(b.file("prekey-lifetime")); err != nil {
+		t.Fatal(err)
+	}
+	b.must("dr_rekey")
+	if b.num() <= n || b.has("not-made") {
+		t.Fatalf("the renewal: serial %d after %d, not-made kept %v", b.num(), n, b.has("not-made"))
+	}
+	b.mustSend(a, "under the new certificate")
+	if d := a.recv(); !slices.Equal(d.bodies(), []string{"before", "under the new certificate"}) {
+		t.Errorf("A's drain: %v", d)
+	}
+}
+
 // A retired prekey is deleted by the reading of the clock a server took, at
 // its not_after and 33 days; the newest never; then its mail is unrecoverable.
 func TestScriptDeletesARetiredPrekey(t *testing.T) {

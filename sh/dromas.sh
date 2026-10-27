@@ -518,6 +518,8 @@ dr_seal(){ # <address> <envelope stem> [the box dr_lookup read] → what to post
     dr_refuse "the envelope does not read back as itself once dated at this post${why:+: $why}" || return 1
   c=$(dr_cert "$DR/prekeys/$n.txt.sig" "$DR/identity.doc" "$A") && [ $((${c##* } - $(dr_now))) -gt $((33*86400)) ] ||      # the certificate in use: the one this box's published prekey is signed under
     dr_refuse "this box's certificate ends within 33 days, too soon to sign mail that may wait that long (or it has no working key): rekey makes a new one" || return 1
+  [ "$(cat "$DR/not-made" 2> /dev/null)" != "$n" ] ||      # a statement served in this box's name under that certificate that it did not make (dr_renew)
+    dr_refuse "a prekey statement this box did not make is served in its name under the certificate it signs under, so someone else holds that working key, from a copy of the box's directory, which holds the identity too: no mail is signed under it. Revoke the address, unless you know the identity was not copied; prekey renew moves the box to a new certificate" || return 1
   dr_certrevoked "$A" "${c%% *}"; case $? in      # a certificate this box's own identity has revoked signs no mail: every reader that holds the revocation refuses it, whatever this box's server took. That is the remedy's window while its renewal waits (PROTOCOL.md §12.6): the entry waits too
     0) dr_refuse "this box's identity has revoked the certificate it signs under, so mail signed now would be refused: prekey renew publishes the new one first"; return 1 ;;
     1) ;;
@@ -728,6 +730,7 @@ dr_renew(){ # [--no-pq] → what dr_rekey does, the lock held. A serial is signe
     [ -s "$DR/self.txt" ] && [ -s "$DR/self.sig" ] || dr_refuse "the server sent no prekey for this box" || return 1
     c=$(dr_cert "$DR/self.sig" "$DR/identity.doc" "$A") && c=${c#* } && r=$(dr_prekeycheck "$DR/self.txt" "$DR/self.sig" "$A" "$DR/identity.doc" "${c% *}") || dr_refuse "this box's current prekey, as served: ${r:-it is not signed under a certificate of this identity}" || return 1      # its own record, judged where its certificate begins: whether this identity ever certified the key that signed it, even if that certificate has since ended
     s=${r%% *}; cs=${r##* }      # a box's statements are ordered by certificate first, then by serial, and this box gives a renewal's certificate and prekey one number: what it published is (p, p), and the server may serve nothing ordered before it
+    if [ "$cs" -eq "$p" ] && ! cmp -s "$DR/self.txt" "$DR/prekeys/$s.txt"; then dr_putline "$DR/not-made" "$cs" || return 1; fi      # served under the certificate this box signs under, and not a statement it made: whoever made it holds that working key, from a copy of the box's directory, so dr_seal signs no mail under it until this renewal has moved the box to a new certificate (PROTOCOL.md §12.4). The Go client tells its own certificate by the key it certifies, this script by the serial, so it also holds under one the identity made for another key at that serial, which only refuses more
     [ "$cs" -gt "$p" ] || { [ "$cs" -eq "$p" ] && [ "$s" -ge "$p" ]; } || dr_refuse "rollback: the server serves this box's prekey serial $s under certificate $cs, before serial $p, which this box published" || return 1
     s=$((cs > p ? cs : p))
   fi
@@ -750,6 +753,7 @@ dr_renew(){ # [--no-pq] → what dr_rekey does, the lock held. A serial is signe
   h=$(dr_pass "$s") && dr_api PUT "$u" "$DR/rekey.json" -H "Authorization: $h" > /dev/null || { dr_clock; dr_own; return 1; }      # a pass under the NEW certificate: that is how a box moves to one, and the server then takes no pass under an older
   [ "$s" -le "$(cat "$DR/serial" 2> /dev/null || echo 0)" ] || dr_putline "$DR/serial" "$s" || return 1
   mv "$DR/pass.new" "$DR/pass" || return 1
+  rm -f "$DR/not-made"      # the box is under its new certificate
   for f in "$DR"/work/*-cert.pub; do t=$(basename "$f" -cert.pub); [[ $t =~ ^[0-9]+$ ]] && [ "$t" -lt "$s" ] && rm -f "$DR/work/$t" "$DR/work/$t.pub" "$f"; done      # older working keys: what they signed is signed, and the server takes no pass under them
   at=$(dr_taken) && dr_prune "$at" && dr_out prekey --argjson serial "$s" --arg not_after "$(sed -n 5p "$DR/prekeys/$s.txt")"      # by the reading the server took the renewal at: the date of its pass, now $DR/pass
 }
