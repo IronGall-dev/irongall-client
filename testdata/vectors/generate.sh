@@ -78,7 +78,7 @@ identity_doc() { printf 'dromas-v1\nssh-ed25519 %s\n' "$(bin "$(str "$(asc ssh-e
 p256_doc() { printf 'dromas-v1\necdsa-sha2-nistp256 %s\n' "$(bin "$(p256_wire "$@")" | b64)"; }
 
 KEYS=$(mktemp -d) # private keys live only here, and only while this runs
-cleanup() { local k; for k in a b c a-work b-work a-work-2 c-work; do rm -f "$KEYS/$k" "$KEYS/$k.pub" "$KEYS/$k-cert.pub"; done; rmdir "$KEYS"; }
+cleanup() { local k; for k in a b c a-work b-work a-work-2 c-work small-work; do rm -f "$KEYS/$k" "$KEYS/$k.pub" "$KEYS/$k-cert.pub"; done; rmdir "$KEYS"; }
 trap cleanup EXIT
 
 printf '%s\n' "$NOW" > now
@@ -324,6 +324,14 @@ armor "$(restr "$X" 20 "$(nuls "$k" 0)")" > sig/bad-certificate-own-type-nul.sig
 # Two more, made by protocol's TestVectorsEd25519R, since they need arithmetic on the curve: sig/ok-r-small-order.sig, whose
 # R is the neutral point, and sig/bad-r-plus-order-2.sig, whose R has a point of order 2 added. OpenSSH's own Ed25519 from
 # 10.6p1 judges both the other way (PROTOCOL.md Appendix A).
+# A certificate of a working key of small order, the neutral point, which ssh-keygen certifies as it reads any 32 bytes,
+# and a signature under it over a/prekey-1.txt that Ed25519's equation takes, R the neutral point and S zero: the check
+# on the working key is all that refuses it.
+printf 'ssh-ed25519 %s\n' "$(bin "$(str "$(asc ssh-ed25519)")$(str 01$(printf '%062d' 0))" | b64)" > "$KEYS/small-work.pub"
+cert cert/bad-working-key-small-order.pub a small-work $(good "$A")
+X=$(blob a/prekey-1.txt.sig); X=$(restr "$X" 20 "$(cut -d' ' -f2 cert/bad-working-key-small-order.pub | base64 -d | od -An -v -tx1 | tr -d ' \n')")
+o=$(skip "$X" "$(skip "$X" "$(skip "$X" "$(skip "$X" 20)")")")      # the signature: its type, then R and S in one string
+armor "$(restr "$X" "$o" "$(str "$(asc ssh-ed25519)")$(str 01$(printf '%0126d' 0))")" > cert/bad-working-key-small-order.sig
 # A revocation's key is the identity's own, and nothing signs it: its type may end in a NUL, and a P-256 key's curve
 # too. And C's ECDSA signature with r at the most OpenSSH reads, 2,049 bytes with the zeros before it, and a byte over.
 X=$(blob a/revoke.sig)
