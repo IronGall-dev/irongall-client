@@ -422,7 +422,7 @@ func TestPruneDeletesRetiredKeys(t *testing.T) {
 }
 
 // A fault in the box itself is an error, never a verdict on the message:
-// the drain stops, nothing is quarantined or acked, and the mail is
+// the drain stops, nothing is kept in refused/ or acked, and the mail is
 // delivered once the box is fixed.
 func TestLocalFaultLeavesMail(t *testing.T) {
 	t.Parallel()
@@ -453,8 +453,8 @@ func TestLocalFaultLeavesMail(t *testing.T) {
 			if err == nil || (res != nil && (len(res.Refused) != 0 || len(res.Delivered) != 0)) {
 				t.Fatalf("drain on a broken box: %v, %+v", err, res)
 			}
-			if q, _ := os.ReadDir(filepath.Join(b.Dir(), "quarantine")); len(q) != 0 || e.srv.Count(b.Address()) != 1 {
-				t.Fatal("a broken box quarantined or acked mail it could not judge")
+			if q, _ := os.ReadDir(filepath.Join(b.Dir(), "refused")); len(q) != 0 || e.srv.Count(b.Address()) != 1 {
+				t.Fatal("a broken box kept in refused/ or acked mail it could not judge")
 			}
 			fix()
 			if res := receive(t, b); len(res.Delivered) != 1 {

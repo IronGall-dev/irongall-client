@@ -165,7 +165,7 @@ func TestEchoAnswers(t *testing.T) {
 	if res := receive(t, a); len(res.Delivered) != 0 {
 		t.Fatal("answered twice")
 	}
-	for _, sub := range []string{"inbox", "quarantine", "outbox", "sent"} {
+	for _, sub := range []string{"inbox", "refused", "outbox", "sent"} {
 		if l := left(t, x.b.Dir(), sub); len(l) != 0 {
 			t.Errorf("%s keeps %v", sub, l)
 		}
@@ -222,8 +222,8 @@ func TestEchoNeverAnswersARefusal(t *testing.T) {
 	if res := receive(t, a); len(res.Delivered) != 0 {
 		t.Fatal("a refused message was answered")
 	}
-	if l := left(t, x.b.Dir(), "quarantine"); len(l) != 0 {
-		t.Fatalf("quarantine keeps %v", l)
+	if l := left(t, x.b.Dir(), "refused"); len(l) != 0 {
+		t.Fatalf("refused/ keeps %v", l)
 	}
 }
 

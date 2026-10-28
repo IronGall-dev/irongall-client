@@ -249,10 +249,10 @@ func TestScriptDrainsEveryPageAndHoldsTheLock(t *testing.T) {
 		t.Errorf("a command killed while it holds the lock: %v", r)
 	}
 	a.mustSend(b, "kept")
-	q := b.files("quarantine")
+	q := b.files("refused")
 	held := filepath.Join(w.work, "held")
 	b.must(`mkdir ` + held + `; mv "$DR"/prekeys/*.agekey ` + held)
-	if d := b.recv(); d.rc == 0 || w.srv.Count(b.addr) != 1 || !slices.Equal(b.files("quarantine"), q) || !strings.Contains(d.said, "no prekeys") {
+	if d := b.recv(); d.rc == 0 || w.srv.Count(b.addr) != 1 || !slices.Equal(b.files("refused"), q) || !strings.Contains(d.said, "no prekeys") {
 		t.Errorf("a drain with the box's prekeys gone: %v", d)
 	}
 	b.must(`mv ` + held + `/*.agekey "$DR/prekeys/"`)

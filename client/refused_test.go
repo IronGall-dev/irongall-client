@@ -21,14 +21,14 @@ import (
 // its key is gone: a message under a certificate that has not begun says who
 // signed it, under which certificate, beginning when, and what this
 // machine's clock read; a forged one says only whose identity it claims.
-func TestAQuarantinedMessageKeepsWhatItsChecksFound(t *testing.T) {
+func TestARefusedMessageKeepsWhatItsChecksFound(t *testing.T) {
 	t.Parallel()
 	for _, kind := range []string{protocol.IdentityEd25519, protocol.IdentityP256} {
-		t.Run(kind, func(t *testing.T) { quarantinedFindings(t, kind) })
+		t.Run(kind, func(t *testing.T) { refusedFindings(t, kind) })
 	}
 }
 
-func quarantinedFindings(t *testing.T, kind string) {
+func refusedFindings(t *testing.T, kind string) {
 	ctx := context.Background()
 	e := newEnv(t)
 	o := e.opts()
@@ -69,16 +69,16 @@ func quarantinedFindings(t *testing.T, kind string) {
 	if err != nil || len(res.Refused) != 2 || len(res.Delivered) != 0 {
 		t.Fatalf("%+v, %v", res, err)
 	}
-	qs, err := b.Quarantined(t.Context())
+	qs, err := b.RefusedMail(t.Context())
 	if err != nil || len(qs) != 2 {
 		t.Fatalf("%+v, %v", qs, err)
 	}
-	byID := map[string]client.Quarantined{}
+	byID := map[string]client.RefusedMail{}
 	for _, q := range qs {
 		byID[q.ID] = q
 	}
 	q := byID[notBegun]
-	want := client.Quarantined{
+	want := client.RefusedMail{
 		ID:                notBegun,
 		Code:              protocol.RefusedSignature,
 		Reason:            "the certificate of the key that signed it has not begun, by this machine's clock",
@@ -95,7 +95,7 @@ func quarantinedFindings(t *testing.T, kind string) {
 		t.Errorf("under a certificate that has not begun:\n got %+v\nwant %+v", q, want)
 	}
 	q = byID[forgery]
-	want = client.Quarantined{
+	want = client.RefusedMail{
 		ID:             forgery,
 		Code:           protocol.RefusedSignature,
 		Reason:         "it is not signed under a certificate of the sender's identity",
@@ -124,7 +124,7 @@ func workKey(t *testing.T, b *client.Box) ssh.Signer {
 
 // A message refused whose ack was lost is listed again, and judged again: one
 // that passes then is delivered, and nothing of its refusal is kept, neither
-// the message in quarantine/ nor why it was refused (#211).
+// the message in refused/ nor why it was refused (#211).
 func TestADeliveryLeavesNothingOfAnEarlierRefusal(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -134,7 +134,7 @@ func TestADeliveryLeavesNothingOfAnEarlierRefusal(t *testing.T) {
 	id := e.seal(b, line, forge.Sign(t, worker(t, a), line, b.Address()))
 	says(e, protocol.CodeUnavailable, "DELETE", "/messages/"+id)
 	res, err := b.Receive(ctx)
-	if err == nil || len(res.Refused) != 1 || res.Refused[0].Code != protocol.RefusedFuture || !exists(filepath.Join(b.Dir(), "quarantine", id+".json")) || !has(b, "quarantine/"+id+".reason") {
+	if err == nil || len(res.Refused) != 1 || res.Refused[0].Code != protocol.RefusedFuture || !exists(filepath.Join(b.Dir(), "refused", id+".json")) || !has(b, "refused/"+id+".reason") {
 		t.Fatalf("a message dated ahead, whose ack fails: %+v, %v", res, err)
 	}
 	e.srv.SetMiddle(nil)
@@ -142,7 +142,7 @@ func TestADeliveryLeavesNothingOfAnEarlierRefusal(t *testing.T) {
 	if res := receive(t, b); len(res.Delivered) != 1 || res.Delivered[0].ID != id {
 		t.Fatalf("the same message once the clock reached it: %+v", res)
 	}
-	if qs, err := b.Quarantined(t.Context()); err != nil || len(qs) != 0 || exists(filepath.Join(b.Dir(), "quarantine", id+".json")) || has(b, "quarantine/"+id+".reason") {
+	if qs, err := b.RefusedMail(t.Context()); err != nil || len(qs) != 0 || exists(filepath.Join(b.Dir(), "refused", id+".json")) || has(b, "refused/"+id+".reason") {
 		t.Errorf("after its delivery the box keeps %+v, %v of its refusal", qs, err)
 	}
 }
@@ -272,7 +272,7 @@ func TestARefusalNamesNoSignerTheBoxHoldsRevoked(t *testing.T) {
 				if len(res.Refused) != 1 || res.Refused[0].Code != code || res.Refused[0].ID != m.id {
 					t.Fatalf("want it refused %s: %+v", code, res)
 				}
-				q, f := quarantinedAs(t, b, m.id), res.Refused[0].Findings
+				q, f := refusedAs(t, b, m.id), res.Refused[0].Findings
 				if h.covers {
 					if q.SignedBy != "" || q.ClaimsIdentity != a.Address().String() || q.CertificateSerial != 0 || q.SentAt != "" || q.MsgID != "" {
 						t.Errorf("kept as %+v, where the box holds a revocation that covers it", q)
@@ -307,10 +307,10 @@ func identityKey(t *testing.T, b *client.Box) ssh.Signer {
 	return s
 }
 
-// quarantinedAs is what quarantine list gives of message id.
-func quarantinedAs(t *testing.T, b *client.Box, id string) client.Quarantined {
+// refusedAs is what refused list gives of message id.
+func refusedAs(t *testing.T, b *client.Box, id string) client.RefusedMail {
 	t.Helper()
-	qs, err := b.Quarantined(t.Context())
+	qs, err := b.RefusedMail(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -319,6 +319,6 @@ func quarantinedAs(t *testing.T, b *client.Box, id string) client.Quarantined {
 			return q
 		}
 	}
-	t.Fatalf("quarantine/ holds no %s: %+v", id, qs)
-	return client.Quarantined{}
+	t.Fatalf("refused/ holds no %s: %+v", id, qs)
+	return client.RefusedMail{}
 }

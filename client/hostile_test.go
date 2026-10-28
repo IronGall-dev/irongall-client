@@ -72,16 +72,16 @@ func TestARefusalNeverQuotesTheMessage(t *testing.T) {
 		if strings.ContainsAny(r.Reason, "\n\"") || strings.Contains(r.Reason, "EVIL") || strings.Contains(r.Reason, "IGNORE") || strings.Contains(r.Reason, "RUN THIS") {
 			t.Errorf("a refusal quotes the message: %q", r.Reason)
 		}
-		// The reason is kept beside the quarantined message.
-		if kept, _ := stateOf(b, "quarantine/"+r.ID+".reason"); string(kept) != r.Code+": "+r.Reason {
+		// The reason is kept beside the refused message.
+		if kept, _ := stateOf(b, "refused/"+r.ID+".reason"); string(kept) != r.Code+": "+r.Reason {
 			t.Errorf("the box keeps %q as why %s was refused", kept, r.ID)
 		}
-		if !exists(filepath.Join(b.Dir(), "quarantine", r.ID+".json")) {
-			t.Errorf("%s was not quarantined", r.ID)
+		if !exists(filepath.Join(b.Dir(), "refused", r.ID+".json")) {
+			t.Errorf("%s was not kept in refused/", r.ID)
 		}
 	}
 	st, err := b.Status(t.Context())
-	if err != nil || st.Quarantine != len(sent) || len(st.Attention) != 1 || !strings.Contains(st.Attention[0], "(bad_envelope, bad_identity, reattributed, stale)") {
+	if err != nil || st.Refused != len(sent) || len(st.Attention) != 1 || !strings.Contains(st.Attention[0], "(bad_envelope, bad_identity, reattributed, stale)") {
 		t.Fatalf("status: %+v, %v", st, err)
 	}
 }
@@ -304,13 +304,13 @@ func TestADrainIsBounded(t *testing.T) {
 	})
 }
 
-// A refused message is kept whole in quarantine/, with none of the server's
+// A refused message is kept whole in refused/, with none of the server's
 // strings in the clear but those of their form: an id or a time the server
 // chose is kept in base64, and one of its form plainly (the public #7), and
-// a from it lists is kept nowhere. Quarantined, which dromas quarantine list prints, holds only this
+// a from it lists is kept nowhere. RefusedMail, which dromas refused list prints, holds only this
 // client's words, status names the commands and not the files, and
-// RemoveQuarantined deletes nothing unless every id it is given is held.
-func TestQuarantineKeepsNoServerTextInTheClear(t *testing.T) {
+// RemoveRefused deletes nothing unless every id it is given is held.
+func TestRefusedKeepsNoServerTextInTheClear(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
@@ -356,7 +356,7 @@ func TestQuarantineKeepsNoServerTextInTheClear(t *testing.T) {
 	}
 	read := func(id string) map[string]any {
 		t.Helper()
-		data, err := os.ReadFile(filepath.Join(b.Dir(), "quarantine", id+".json")) //nolint:gosec // the test's own directory
+		data, err := os.ReadFile(filepath.Join(b.Dir(), "refused", id+".json")) //nolint:gosec // the test's own directory
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -365,7 +365,7 @@ func TestQuarantineKeepsNoServerTextInTheClear(t *testing.T) {
 			t.Fatal(err)
 		}
 		if strings.Contains(string(data), marker) {
-			t.Errorf("quarantine/%s.json holds the server's words: %s", id, data)
+			t.Errorf("refused/%s.json holds the server's words: %s", id, data)
 		}
 		return kept
 	}
@@ -383,14 +383,14 @@ func TestQuarantineKeepsNoServerTextInTheClear(t *testing.T) {
 	}
 	// What the checks established is this client's: neither decrypted, so
 	// nothing is known of either but when it was judged.
-	qs, err := b.Quarantined(t.Context())
+	qs, err := b.RefusedMail(t.Context())
 	if err != nil || len(qs) != 2 {
-		t.Fatalf("Quarantined: %+v, %v", qs, err)
+		t.Fatalf("RefusedMail: %+v, %v", qs, err)
 	}
-	byID := map[string]client.Quarantined{qs[0].ID: qs[0], qs[1].ID: qs[1]}
+	byID := map[string]client.RefusedMail{qs[0].ID: qs[0], qs[1].ID: qs[1]}
 	for id, received := range map[string]string{first.Refused[0].ID: "", second.Refused[0].ID: str(kept["received_at"])} {
 		q := byID[id]
-		want := client.Quarantined{ID: id, Code: client.RefusedDecrypt, Reason: "it does not decrypt with this box's prekeys", ReceivedAt: received, JudgedAt: q.JudgedAt}
+		want := client.RefusedMail{ID: id, Code: client.RefusedDecrypt, Reason: "it does not decrypt with this box's prekeys", ReceivedAt: received, JudgedAt: q.JudgedAt}
 		if q != want || !protocolTime(q.JudgedAt) {
 			t.Errorf("%s is listed as %+v", id, q)
 		}
@@ -400,21 +400,21 @@ func TestQuarantineKeepsNoServerTextInTheClear(t *testing.T) {
 	old := strings.Repeat("e", 64)
 	// One whose findings and reason are not of their form lists none either.
 	j := `{"at":"` + injected + `","signed_by":"` + injected + `","claims_identity":"` + injected + `","certificate_serial":1.5,"certificate_began":"` + injected + `","certificate_ends":"` + injected + `","sent_at":"` + injected + `","msg_id":"` + injected + `"}`
-	if err := os.WriteFile(filepath.Join(b.Dir(), "quarantine", old+".json"), []byte(`{"id":"`+injected+`","from":"`+injected+`","received_at":"`+injected+`","ciphertext":"QUJD","judged":`+j+`}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(b.Dir(), "refused", old+".json"), []byte(`{"id":"`+injected+`","from":"`+injected+`","received_at":"`+injected+`","ciphertext":"QUJD","judged":`+j+`}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if qs, err := b.Quarantined(t.Context()); err != nil || len(qs) != 3 || !slices.Contains(qs, client.Quarantined{ID: old, Code: "unknown"}) {
-		t.Fatalf("Quarantined with a file of the old form: %+v, %v", qs, err)
+	if qs, err := b.RefusedMail(t.Context()); err != nil || len(qs) != 3 || !slices.Contains(qs, client.RefusedMail{ID: old, Code: "unknown"}) {
+		t.Fatalf("RefusedMail with a file of the old form: %+v, %v", qs, err)
 	}
 	// What the checks found is the box's state's, which only this client
 	// writes: a file that carries findings of their form lists none of them
 	// (#280).
 	planted := `{"at":"2026-10-21T00:00:00Z","signed_by":"` + a.Address().String() + `","certificate_serial":7,"sent_at":"2026-10-21T00:00:00Z","msg_id":"` + strings.Repeat("0", 8) + "-0000-4000-8000-" + strings.Repeat("0", 12) + `"}`
-	if err := os.WriteFile(filepath.Join(b.Dir(), "quarantine", old+".json"), []byte(`{"id":"`+old+`","ciphertext":"QUJD","judged":`+planted+`}`), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(b.Dir(), "refused", old+".json"), []byte(`{"id":"`+old+`","ciphertext":"QUJD","judged":`+planted+`}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if qs, err := b.Quarantined(t.Context()); err != nil || len(qs) != 3 || !slices.Contains(qs, client.Quarantined{ID: old, Code: "unknown"}) {
-		t.Fatalf("Quarantined with findings planted in a file: %+v, %v", qs, err)
+	if qs, err := b.RefusedMail(t.Context()); err != nil || len(qs) != 3 || !slices.Contains(qs, client.RefusedMail{ID: old, Code: "unknown"}) {
+		t.Fatalf("RefusedMail with findings planted in a file: %+v, %v", qs, err)
 	}
 	// A file is read as every JSON text is (PROTOCOL.md §3.3): a name in
 	// another case is not that member, and one given twice is no record, so
@@ -422,43 +422,43 @@ func TestQuarantineKeepsNoServerTextInTheClear(t *testing.T) {
 	other := strings.Repeat("d", 64)
 	at := `"2026-10-21T00:00:00Z"`
 	for _, rec := range []string{`{"RECEIVED_AT":` + at + `}`, `{"received_at":` + at + `,"received_at":` + at + `}`} {
-		f := filepath.Join(b.Dir(), "quarantine", other+".json")
+		f := filepath.Join(b.Dir(), "refused", other+".json")
 		if err := os.WriteFile(f, []byte(rec), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if qs, err := b.Quarantined(t.Context()); err != nil || len(qs) != 4 || !slices.Contains(qs, client.Quarantined{ID: other, Code: "unknown"}) {
-			t.Errorf("Quarantined with %s: %+v, %v", rec, qs, err)
+		if qs, err := b.RefusedMail(t.Context()); err != nil || len(qs) != 4 || !slices.Contains(qs, client.RefusedMail{ID: other, Code: "unknown"}) {
+			t.Errorf("RefusedMail with %s: %+v, %v", rec, qs, err)
 		}
 		if err := os.Remove(f); err != nil {
 			t.Fatal(err)
 		}
 	}
-	b.SetRecord(t, "quarantine/"+old+".reason", []byte("bad_signature: \x1b[2J"+injected))
-	if qs, err := b.Quarantined(t.Context()); err != nil || len(qs) != 3 || !slices.Contains(qs, client.Quarantined{ID: old, Code: protocol.RefusedSignature}) {
-		t.Fatalf("Quarantined with a reason of control bytes: %+v, %v", qs, err)
+	b.SetRecord(t, "refused/"+old+".reason", []byte("bad_signature: \x1b[2J"+injected))
+	if qs, err := b.RefusedMail(t.Context()); err != nil || len(qs) != 3 || !slices.Contains(qs, client.RefusedMail{ID: old, Code: protocol.RefusedSignature}) {
+		t.Fatalf("RefusedMail with a reason of control bytes: %+v, %v", qs, err)
 	}
-	if gone, err := b.RemoveQuarantined(ctx, []string{old}); err != nil || len(gone) != 1 {
-		t.Fatalf("RemoveQuarantined of the old file: %v, %v", gone, err)
+	if gone, err := b.RemoveRefused(ctx, []string{old}); err != nil || len(gone) != 1 {
+		t.Fatalf("RemoveRefused of the old file: %v, %v", gone, err)
 	}
 	st, err := b.Status(t.Context())
-	if err != nil || len(st.Attention) != 1 || !strings.Contains(st.Attention[0], "dromas quarantine list") || strings.Contains(st.Attention[0], ".reason") {
+	if err != nil || len(st.Attention) != 1 || !strings.Contains(st.Attention[0], "dromas refused list") || strings.Contains(st.Attention[0], ".reason") {
 		t.Fatalf("status: %+v, %v", st.Attention, err)
 	}
 	for _, ids := range [][]string{{first.Refused[0].ID, strings.Repeat("f", 64)}, {strings.Repeat("0", 64), first.Refused[0].ID}, {first.Refused[0].ID, "../inbox/x"}} { // an id not held, after and before one that is
-		if _, err := b.RemoveQuarantined(ctx, ids); err == nil {
-			t.Errorf("RemoveQuarantined %v: no error", ids)
+		if _, err := b.RemoveRefused(ctx, ids); err == nil {
+			t.Errorf("RemoveRefused %v: no error", ids)
 		}
 	}
-	if qs, _ := b.Quarantined(t.Context()); len(qs) != 2 {
-		t.Fatalf("a refused RemoveQuarantined deleted mail: %+v", qs)
+	if qs, _ := b.RefusedMail(t.Context()); len(qs) != 2 {
+		t.Fatalf("a refused RemoveRefused deleted mail: %+v", qs)
 	}
-	if gone, err := b.RemoveQuarantined(ctx, []string{first.Refused[0].ID}); err != nil || len(gone) != 1 {
-		t.Fatalf("RemoveQuarantined one: %v, %v", gone, err)
+	if gone, err := b.RemoveRefused(ctx, []string{first.Refused[0].ID}); err != nil || len(gone) != 1 {
+		t.Fatalf("RemoveRefused one: %v, %v", gone, err)
 	}
-	if gone, err := b.RemoveQuarantined(ctx, nil); err != nil || len(gone) != 1 || gone[0] != second.Refused[0].ID {
-		t.Fatalf("RemoveQuarantined all: %v, %v", gone, err)
+	if gone, err := b.RemoveRefused(ctx, nil); err != nil || len(gone) != 1 || gone[0] != second.Refused[0].ID {
+		t.Fatalf("RemoveRefused all: %v, %v", gone, err)
 	}
-	left, _ := filepath.Glob(filepath.Join(b.Dir(), "quarantine", "*"))
+	left, _ := filepath.Glob(filepath.Join(b.Dir(), "refused", "*"))
 	if st, _ := b.Status(t.Context()); len(left) != 0 || len(st.Attention) != 0 {
 		t.Fatalf("after: %v, %+v", left, st.Attention)
 	}
@@ -469,7 +469,7 @@ func protocolTime(s string) bool { _, err := protocol.ParseTime(s); return err =
 // A fetch answers the ciphertext alone, of the size the list gave. A body of
 // any other length breaks that answer's form, and a drain refuses it as it
 // refuses any answer that breaks its form: an error, with nothing judged,
-// quarantined or acked, and the message still on the server. What the list
+// kept in refused/ or acked, and the message still on the server. What the list
 // says, the fetch is held to, whichever of the two is wrong.
 func TestAFetchIsTheSizeItsListGives(t *testing.T) {
 	t.Parallel()
@@ -525,10 +525,10 @@ func TestAFetchIsTheSizeItsListGives(t *testing.T) {
 			if err == nil || !strings.Contains(err.Error(), "bytes of ciphertext the list gives") {
 				t.Fatalf("the drain: %v", err)
 			}
-			q, _ := filepath.Glob(filepath.Join(b.Dir(), "quarantine", "*"))
+			q, _ := filepath.Glob(filepath.Join(b.Dir(), "refused", "*"))
 			in, _ := filepath.Glob(filepath.Join(b.Dir(), "inbox", "*"))
 			if len(q) != 0 || len(in) != 0 || e.srv.Count(b.Address()) != 1 {
-				t.Fatalf("quarantined %d, delivered %d, %d left on the server", len(q), len(in), e.srv.Count(b.Address()))
+				t.Fatalf("refused %d, delivered %d, %d left on the server", len(q), len(in), e.srv.Count(b.Address()))
 			}
 			e.srv.SetMiddle(nil)
 			if res := receive(t, b); len(res.Delivered) != 1 {

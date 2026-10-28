@@ -436,7 +436,7 @@ func (b *Box) recordTaken(n uint64, pass string) error {
 // its state file.
 func (b *Box) makeDirs() error {
 	made := false
-	for _, d := range []string{"work", "prekeys", "inbox", "held", "quarantine", "outbox", "sent"} {
+	for _, d := range []string{"work", "prekeys", "inbox", "held", "refused", "outbox", "sent"} {
 		if _, err := os.Stat(b.path(d)); err == nil {
 			continue
 		}

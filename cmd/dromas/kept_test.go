@@ -76,7 +76,7 @@ func TestOnlyRecvsOwnLineIsShown(t *testing.T) {
 	for _, d := range res.Delivered {
 		kept := must(t, filepath.Join(b.Dir(), "inbox", d.ID+".json"))
 		var out bytes.Buffer
-		if err := do(ctx, "show", []string{d.ID}, strings.NewReader(""), &out, io.Discard); err != nil || unseen(out.String()) || out.String() != `{"type":"mail","id":"`+d.ID+`","envelope":`+string(kept)+"}\n" {
+		if err := do(ctx, "inbox show", []string{d.ID}, strings.NewReader(""), &out, io.Discard); err != nil || unseen(out.String()) || out.String() != `{"type":"mail","id":"`+d.ID+`","envelope":`+string(kept)+"}\n" {
 			t.Errorf("show of recv's own line: %v, printed %+q, kept %+q", err, out.String(), kept)
 		}
 	}
@@ -116,7 +116,7 @@ func TestOnlyRecvsOwnLineIsShown(t *testing.T) {
 			}
 		}
 		var out bytes.Buffer
-		if err := do(ctx, "show", []string{res.Delivered[0].ID}, strings.NewReader(""), &out, io.Discard); err == nil || out.Len() != 0 {
+		if err := do(ctx, "inbox show", []string{res.Delivered[0].ID}, strings.NewReader(""), &out, io.Discard); err == nil || out.Len() != 0 {
 			t.Errorf("show of a file with %s: %v, printed %+q", name, err, out.String())
 		}
 		out.Reset()
@@ -187,7 +187,7 @@ func TestShowHoldsTheFileToTheLineRecvKept(t *testing.T) {
 					t.Errorf("%s: show panicked: %v", c.name, r)
 				}
 			}()
-			code = report(do(ctx, "show", []string{id}, strings.NewReader(""), &out, &errs), &errs)
+			code = report(do(ctx, "inbox show", []string{id}, strings.NewReader(""), &out, &errs), &errs)
 		}()
 		if code != 1 || out.Len() != 0 || !strings.Contains(errs.String(), "is not the line recv keeps") {
 			t.Errorf("%s: exit %d, stdout %q, stderr %q", c.name, code, out.String(), errs.String())
@@ -198,7 +198,7 @@ func TestShowHoldsTheFileToTheLineRecvKept(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := do(ctx, "show", []string{id}, strings.NewReader(""), &out, io.Discard); err != nil || strings.Count(out.String(), "\n") != 1 || jsonv2.Unmarshal(out.Bytes(), new(map[string]any)) != nil {
+	if err := do(ctx, "inbox show", []string{id}, strings.NewReader(""), &out, io.Discard); err != nil || strings.Count(out.String(), "\n") != 1 || jsonv2.Unmarshal(out.Bytes(), new(map[string]any)) != nil {
 		t.Fatalf("show of the line recv kept: %v %q", err, out.String())
 	}
 	// In held/, a line feed after the line is no line: peer allow moves

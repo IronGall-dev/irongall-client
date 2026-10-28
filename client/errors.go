@@ -277,7 +277,7 @@ func (e *APIError) clock() string {
 }
 
 // codeGrammar is the grammar of a code, as the box's state keeps one for
-// each message quarantine/ holds (quarantineRecord).
+// each message refused/ holds (refusedRecord).
 var codeGrammar = regexp.MustCompile(`\A[a-z0-9_]{1,40}\z`)
 
 // code is the error's code, if err is an [APIError]: read where the call

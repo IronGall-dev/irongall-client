@@ -202,7 +202,7 @@ None was a flaw in the layout: each was a verifier that read an object different
 
 **Where ours differs, and why:**
 - **No leeway at any verifier,** where JWT and Kerberos put theirs: every check is one comparison with no number in it to disagree on.
-- **A refusal for a time is final, quarantined and acked,** where SMTP would call it transient (a 4yz is for what "can be successful if repeated without any change", RFC 5321 §4.2.1, queued and retried, §4.5.4.1; greylisting delays on purpose, RFC 6647): a client with right clocks makes no such mail (§15.7), so what is left is a wrong clock or a hand-made certificate, and dromas does not try to deliver past a party that misbehaves: the reader keeps its findings for its owner to judge (§12.3). Read 2026-10-19: [RFC 5321](https://www.rfc-editor.org/rfc/rfc5321), [RFC 6647](https://www.rfc-editor.org/rfc/rfc6647).
+- **A refusal for a time is final, kept as refused and acked,** where SMTP would call it transient (a 4yz is for what "can be successful if repeated without any change", RFC 5321 §4.2.1, queued and retried, §4.5.4.1; greylisting delays on purpose, RFC 6647): a client with right clocks makes no such mail (§15.7), so what is left is a wrong clock or a hand-made certificate, and dromas does not try to deliver past a party that misbehaves: the reader keeps its findings for its owner to judge (§12.3). Read 2026-10-19: [RFC 5321](https://www.rfc-editor.org/rfc/rfc5321), [RFC 6647](https://www.rfc-editor.org/rfc/rfc6647).
 
 **Not read:** smallstep's default backdate.
 

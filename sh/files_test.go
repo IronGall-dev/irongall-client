@@ -460,7 +460,7 @@ func dyingJQ(t *testing.T, match ...string) string {
 	return bin
 }
 
-// A file a box keeps of a message, in inbox/, quarantine/ or sent/, is
+// A file a box keeps of a message, in inbox/, refused/ or sent/, is
 // written beside it and moved into place (#273): a jq stopped while it
 // writes one leaves no file cut short for status and show to read, and
 // nothing beside it; the message is delivered, kept or recorded at the next
@@ -492,7 +492,7 @@ func TestAKeptMessageFileIsWrittenBesideAndMoved(t *testing.T) {
 	}
 	// One message waiting at a time: one that is delivered, through
 	// dr_line's jq, which writes the line inbox/ keeps; then one that is
-	// refused, through dr_kept's, which writes the message quarantine/ keeps.
+	// refused, through dr_kept's, which writes the message refused/ keeps.
 	for _, c := range []struct {
 		sub, line string
 		match     []string
@@ -503,7 +503,7 @@ func TestAKeptMessageFileIsWrittenBesideAndMoved(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		{"quarantine", `{"type":"refused",`, []string{"-cj", "--rawfile", "c"}, func() {
+		{"refused", `{"type":"refused",`, []string{"-cj", "--rawfile", "c"}, func() {
 			srv.Inject(me, strings.Repeat("e", 64), []byte("not an age file"))
 		}},
 	} {
