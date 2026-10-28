@@ -23,25 +23,42 @@ import (
 // quarantine/ keep is named by one.
 func IsID(s string) bool { return hexID.MatchString(s) }
 
-// InboxLine returns the line inbox/<id>.json keeps: the message's checked
-// fields, as recv printed them ([Box.keptLine]). An id that is not one is
-// refused before any file is read.
-func (b *Box) InboxLine(id string) ([]byte, error) {
+// InboxMessage returns the message inbox/<id>.json keeps, as Receive
+// delivered it but for Plaintext and Signature, which the box never kept:
+// its checked fields, as recv printed them ([Box.keptLine]). An id that is
+// not one is refused before any file is read.
+func (b *Box) InboxMessage(id string) (Delivery, error) {
 	if !IsID(id) {
-		return nil, errors.New("not a message's id: 64 lowercase hex, as recv prints it")
+		return Delivery{}, errors.New("not a message's id: 64 lowercase hex, as recv prints it")
 	}
 	data, err := os.ReadFile(b.path("inbox", id+".json")) //nolint:gosec // a path inside the box's own directory, named by 64 hex
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("inbox/ holds no message %s", id)
+		return Delivery{}, fmt.Errorf("inbox/ holds no message %s", id)
 	}
+	if err != nil {
+		return Delivery{}, err
+	}
+	l, _, env, ok := b.keptLine(data)
+	if !ok {
+		return Delivery{}, fmt.Errorf("inbox/%s.json is not the line recv keeps: it was cut short, or written since by something else", id)
+	}
+	return Delivery{ID: id, Envelope: env, Line: l}, nil
+}
+
+// Inbox returns the mail inbox/ keeps, oldest first by sent_at, each as
+// [Box.InboxMessage] returns it: what recv delivered and nobody has pruned
+// since. A file that is not the line recv keeps is left out, as
+// [Box.InboxMessage] refuses it. It reads only inbox/, and calls no server.
+func (b *Box) Inbox() ([]Delivery, error) {
+	ms, err := b.keptMail("inbox")
 	if err != nil {
 		return nil, err
 	}
-	l, _, _, ok := b.keptLine(data)
-	if !ok {
-		return nil, fmt.Errorf("inbox/%s.json is not the line recv keeps: it was cut short, or written since by something else", id)
+	out := make([]Delivery, 0, len(ms))
+	for _, m := range ms {
+		out = append(out, Delivery{ID: m.ID, Envelope: m.Env, Line: m.Line})
 	}
-	return l, nil
+	return out, nil
 }
 
 // keptLine reads a file inbox/ or held/ keeps as the line recv wrote: one

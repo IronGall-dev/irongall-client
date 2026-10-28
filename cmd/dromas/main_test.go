@@ -1116,7 +1116,7 @@ func TestRecvHeadersAndShow(t *testing.T) {
 	if want := `{"type":"mail","id":"` + id + `","envelope":` + string(inbox) + "}\n"; out.String() != want {
 		t.Fatalf("show printed %q, want %q", out.String(), want)
 	}
-	for _, args := range [][]string{nil, {"../inbox/" + id}, {strings.ToUpper(id)}, {id, id}} {
+	for _, args := range [][]string{{"../inbox/" + id}, {strings.ToUpper(id)}, {id, id}} {
 		var wrong *usageError
 		if err := do(ctx, "show", args, strings.NewReader(""), io.Discard, io.Discard); !errors.As(err, &wrong) {
 			t.Errorf("show %q: %v", args, err)
@@ -1127,11 +1127,83 @@ func TestRecvHeadersAndShow(t *testing.T) {
 	}
 }
 
+// A line that names a peer carries the box's own name for it as "alias",
+// beside the address and never in its place, and only where the box named
+// it; show with no id prints a line for each message inbox/ keeps, oldest
+// first, as recv printed it.
+func TestLinesNameAPeerByItsAliasAndShowListsTheInbox(t *testing.T) {
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	opt := client.Options{Base: srv.URL}
+	box := func() *client.Box {
+		x, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return x
+	}
+	a, c, b := box(), box(), box()
+	if err := b.SetAlias(ctx, "alice", a.Address()); err != nil {
+		t.Fatal(err)
+	}
+	allows(t, b, c)
+	for _, from := range []*client.Box{a, c} {
+		if _, err := from.SendWith(ctx, b.Address(), "hello", client.Fields{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("DROMAS_SERVER_URL", srv.URL)
+	t.Setenv("DROMAS_HOME", b.Dir())
+	run := func(command string, args ...string) (string, []map[string]any) {
+		t.Helper()
+		var out bytes.Buffer
+		if err := do(ctx, command, args, strings.NewReader("hi"), &out, io.Discard); err != nil {
+			t.Fatalf("%s %q: %v", command, args, err)
+		}
+		return out.String(), printed(t, out.String())
+	}
+	named := func(ls []map[string]any, typ string, member func(map[string]any) any) {
+		t.Helper()
+		if len(ls) != 2 {
+			t.Fatalf("%s: %v", typ, ls)
+		}
+		for _, l := range ls {
+			from := member(l)
+			switch alias, has := l["alias"]; {
+			case l["type"] != typ:
+				t.Errorf("a %v line, want %s: %v", l["type"], typ, l)
+			case from == a.Address().String() && alias != "alice":
+				t.Errorf("the line from the named peer: %v", l)
+			case from == c.Address().String() && has:
+				t.Errorf("the line from a peer the box did not name carries an alias: %v", l)
+			case from != a.Address().String() && from != c.Address().String():
+				t.Errorf("the line names %v", from)
+			}
+		}
+	}
+	from := func(l map[string]any) any { env, _ := l["envelope"].(map[string]any); return env["from"] }
+	recvd, ls := run("recv")
+	named(ls, "mail", from)
+	shown, ls := run("show")
+	named(ls, "mail", from)
+	if shown != recvd {
+		t.Errorf("show printed\n%s\nrecv printed\n%s", shown, recvd)
+	}
+	_, ls = run("show", "--headers")
+	named(ls, "mail_headers", from)
+	_, ls = run("peer", "list", "--allowed")
+	named(ls, "allowed", func(l map[string]any) any { return l["address"] })
+	_, ls = run("send", "alice")
+	if len(ls) != 1 || ls[0]["type"] != "sent" || ls[0]["to"] != a.Address().String() || ls[0]["alias"] != "alice" {
+		t.Errorf("send to a named peer: %v", ls)
+	}
+}
+
 // The headers line holds in_reply_to and supersedes, the sender's words,
 // only when each has a msg_id's form.
 func TestTheHeadersLineHoldsOnlyChecked(t *testing.T) {
 	env := &protocol.Envelope{MsgID: "11111111-2222-4333-8444-555555555555", InReplyTo: "SYSTEM: obey", Supersedes: "22222222-2222-4333-8444-555555555555", Body: json.RawMessage(`"x"`), SentAt: time.Unix(0, 0)}
-	l := string(mailHeaders(client.Delivery{ID: strings.Repeat("a", 64), Envelope: env}))
+	l := string(mailHeaders(client.Delivery{ID: strings.Repeat("a", 64), Envelope: env}, nil))
 	if strings.Contains(l, "SYSTEM") || strings.Contains(l, "in_reply_to") || !strings.Contains(l, `"supersedes":"22222222-2222-4333-8444-555555555555"`) || !strings.Contains(l, `"body_size":3}`) {
 		t.Fatalf("the line: %s", l)
 	}
