@@ -89,18 +89,51 @@ func typed(typ string, obj []byte) []byte {
 // client built from the checked fields of the envelope. The envelope's
 // members are only ever inside "envelope", so one it gains later (PROTOCOL.md
 // §14) never meets a member of the line's own (#356; PRECEDENTS.md, Part 2,
-// § 3e).
-func mail(d client.Delivery) []byte {
-	return line("mail", "id", d.ID, "envelope", raw(d.Line))
+// § 3e). Beside it, "alias" is the box's own name for the sender, when it
+// has one (names).
+func mail(d client.Delivery, n names) []byte {
+	return line("mail", "id", d.ID, "alias", n.of(d.Envelope.From), "envelope", raw(d.Line))
+}
+
+// names is the box's own name for each peer it has named (dromas alias add),
+// the first by name where it gave one several. A line that names a peer
+// carries it as "alias", beside the address and never in its place: the
+// address is what the client verified, and a name is the box owner's word,
+// never the peer's. A box whose aliases file cannot be read names nobody, and
+// its lines carry the addresses alone.
+type names map[protocol.Address]string
+
+// namesOf is the names b gives its peers.
+func namesOf(b *client.Box) names {
+	n := names{}
+	as, err := b.Aliases()
+	if err != nil {
+		return n
+	}
+	for _, a := range as {
+		if _, ok := n[a.Address]; !ok {
+			n[a.Address] = a.Name
+		}
+	}
+	return n
+}
+
+// of is the name of a, or nil for line to leave out when it has none.
+func (n names) of(a protocol.Address) any {
+	if s, ok := n[a]; ok {
+		return s
+	}
+	return nil
 }
 
 // mailHeaders is a message's line without the text its sender chose: its id,
+// the box's name for its sender (mail),
 // its envelope with the checked fields but its body and subject, and the
 // size of its body in bytes, as the envelope carries it. in_reply_to and
 // supersedes are the sender's words, which a reader holds only to being
 // strings, so each is here only when it has a msg_id's form; dromas show
 // prints them as sent.
-func mailHeaders(d client.Delivery) []byte {
+func mailHeaders(d client.Delivery, n names) []byte {
 	env := d.Envelope
 	msgID := func(s string) any {
 		if !protocol.IsMsgID(s) {
@@ -108,7 +141,7 @@ func mailHeaders(d client.Delivery) []byte {
 		}
 		return s
 	}
-	return line("mail_headers", "id", d.ID,
+	return line("mail_headers", "id", d.ID, "alias", n.of(env.From),
 		"envelope", raw(object("v", protocol.EnvelopeVersion, "from", env.From, "to", env.To,
 			"sent_at", env.SentAt.UTC().Format(protocol.TimeLayout), "msg_id", env.MsgID,
 			"in_reply_to", msgID(env.InReplyTo), "supersedes", msgID(env.Supersedes))),

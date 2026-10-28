@@ -260,8 +260,8 @@ type HeldSender struct {
 	LastSentAt  string   `json:"last_sent_at"`
 }
 
-// heldMessage is a line this client kept in held/, read back.
-type heldMessage struct {
+// keptMessage is a line this client kept in inbox/ or held/, read back.
+type keptMessage struct {
 	ID     string
 	From   protocol.Address
 	SentAt string
@@ -270,21 +270,21 @@ type heldMessage struct {
 	kept   time.Time // when the drain wrote it: the order it arrived in, among messages sent in one second
 }
 
-// heldMail reads held/: each message this client kept there, oldest first by
-// sent_at, and in the order they were kept within a second. A file that is
-// not one of this client's lines ([Box.keptLine]) is skipped.
-func (b *Box) heldMail() ([]heldMessage, error) {
-	names, err := filepath.Glob(b.path("held", "*.json"))
+// keptMail reads dir, inbox/ or held/: each message this client kept there,
+// oldest first by sent_at, and in the order they were kept within a second. A
+// file that is not one of this client's lines ([Box.keptLine]) is skipped.
+func (b *Box) keptMail(dir string) ([]keptMessage, error) {
+	names, err := filepath.Glob(b.path(dir, "*.json"))
 	if err != nil {
 		return nil, err
 	}
-	var out []heldMessage
+	var out []keptMessage
 	for _, n := range names {
 		id := strings.TrimSuffix(filepath.Base(n), ".json")
 		if !hexID.MatchString(id) {
 			continue
 		}
-		data, err := os.ReadFile(n) //nolint:gosec // a file of this box's held/
+		data, err := os.ReadFile(n) //nolint:gosec // a file of this box's inbox/ or held/
 		if err != nil {
 			return nil, err
 		}
@@ -296,9 +296,9 @@ func (b *Box) heldMail() ([]heldMessage, error) {
 		if !ok {
 			continue
 		}
-		out = append(out, heldMessage{ID: id, From: from, SentAt: env.SentAt.UTC().Format(protocol.TimeLayout), Env: env, Line: line, kept: fi.ModTime()})
+		out = append(out, keptMessage{ID: id, From: from, SentAt: env.SentAt.UTC().Format(protocol.TimeLayout), Env: env, Line: line, kept: fi.ModTime()})
 	}
-	slices.SortStableFunc(out, func(x, y heldMessage) int {
+	slices.SortStableFunc(out, func(x, y keptMessage) int {
 		if c := strings.Compare(x.SentAt, y.SentAt); c != 0 {
 			return c
 		}
@@ -310,7 +310,7 @@ func (b *Box) heldMail() ([]heldMessage, error) {
 // HeldMail returns the mail held/ keeps, by sender, the sender with the oldest
 // first. It reads only held/, and calls no server.
 func (b *Box) HeldMail() ([]HeldSender, error) {
-	ms, err := b.heldMail()
+	ms, err := b.keptMail("held")
 	if err != nil {
 		return nil, err
 	}
@@ -359,7 +359,7 @@ func (b *Box) allow(a protocol.Address) ([]Delivery, error) {
 	if _, err := b.addTo("allowed", a); err != nil {
 		return nil, err
 	}
-	ms, err := b.heldMail()
+	ms, err := b.keptMail("held")
 	if err != nil {
 		return nil, err
 	}
@@ -401,7 +401,7 @@ func (b *Box) block(a protocol.Address) (int, error) {
 	if _, err := b.addTo("blocked", a); err != nil {
 		return 0, err
 	}
-	ms, err := b.heldMail()
+	ms, err := b.keptMail("held")
 	if err != nil {
 		return 0, err
 	}

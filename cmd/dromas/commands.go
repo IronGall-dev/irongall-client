@@ -227,7 +227,7 @@ twice in an object among them, is refused, and nothing is sent.`,
 			if err != nil {
 				return err
 			}
-			if err := e.out(sent(s)); err != nil {
+			if err := e.out(sent(s, namesOf(b))); err != nil {
 				return err
 			}
 			return e.aclNotSent(s.ACLErr)
@@ -247,7 +247,8 @@ func (e *cli) recvCmd() *cobra.Command {
 	var headers bool
 	c := command("recv [flags]", "receive, verify and ack every message: one line of JSON each",
 		`Receive, verify and ack every message: a "mail" line for each, built from the
-verified fields. It also renews the prekey once a day, so run it at least
+verified fields, with this box's name for its sender as "alias" when it
+named one (dromas alias add). It also renews the prekey once a day, so run it at least
 monthly and the box never lapses. It prints a "refused" line for each message
 it refused, keeping it in quarantine/, and a "held" line for each it held,
 keeping it in held/.
@@ -283,12 +284,17 @@ the message it was fetching, which the next recv goes on from.`,
 }
 
 func (e *cli) showCmd() *cobra.Command {
-	return command("show <id>", "print a message inbox/ keeps, as recv printed it",
+	var headers bool
+	c := command("show [<id>] [flags]", "print the mail inbox/ keeps, as recv printed it",
 		`Print the "mail" line of a message inbox/ keeps, by the id recv printed: what
-recv prints without --headers. An id that is not 64 lowercase hex is refused
-before any file is read.`,
-		checked(nargs(1, 1), func(c *cobra.Command, args []string) error {
-			if !client.IsID(args[0]) {
+recv prints without --headers. With no id, print a line for each message
+inbox/ keeps, oldest first by sent_at: the mail recv delivered and nobody
+has pruned since, which deleting its file forgets. A file there that is not
+the line recv keeps is left out of the list, and named when its id is
+asked. An id that is not 64 lowercase hex is refused before any file is
+read.`,
+		checked(nargs(0, 1), func(c *cobra.Command, args []string) error {
+			if len(args) == 1 && !client.IsID(args[0]) {
 				return wrong(c, "%s takes a message's id, 64 lowercase hex, as recv prints it", c.CommandPath())
 			}
 			return nil
@@ -297,12 +303,30 @@ before any file is read.`,
 			if err != nil {
 				return err
 			}
-			l, err := b.InboxLine(args[0])
-			if err != nil {
+			var ds []client.Delivery
+			if len(args) == 1 {
+				d, err := b.InboxMessage(args[0])
+				if err != nil {
+					return err
+				}
+				ds = []client.Delivery{d}
+			} else if ds, err = b.Inbox(); err != nil {
 				return err
 			}
-			return e.out(mail(client.Delivery{ID: args[0], Line: l}))
+			n := namesOf(b)
+			for _, d := range ds {
+				l := mail(d, n)
+				if headers {
+					l = mailHeaders(d, n)
+				}
+				if err := e.out(l); err != nil {
+					return err
+				}
+			}
+			return nil
 		})
+	c.Flags().BoolVar(&headers, "headers", false, "print each message's checked fields and its body's size, without its body or subject, as recv --headers does")
+	return c
 }
 
 func (e *cli) quarantineListCmd() *cobra.Command {
@@ -376,6 +400,7 @@ func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration, headers 
 	var renewErr, aclErr error
 	var notMade *client.NotMade
 	replaced := false
+	n := namesOf(b)
 	for {
 		res, err := b.Receive(ctx)
 		if res != nil {
@@ -387,9 +412,9 @@ func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration, headers 
 			var lines [][]byte
 			for _, d := range res.Delivered {
 				if headers {
-					lines = append(lines, mailHeaders(d))
+					lines = append(lines, mailHeaders(d, n))
 				} else {
-					lines = append(lines, mail(d))
+					lines = append(lines, mail(d, n))
 				}
 			}
 			for _, id := range res.Duplicates {
@@ -570,8 +595,9 @@ allowed file that was lost.`,
 				return err
 			}
 			moved, err := b.Allow(c.Context(), a)
+			n := namesOf(b)
 			for _, d := range moved {
-				if werr := e.out(mail(d)); werr != nil && err == nil {
+				if werr := e.out(mail(d, n)); werr != nil && err == nil {
 					err = werr
 				}
 			}
@@ -625,6 +651,7 @@ both.`,
 			if !allowed && !blocked {
 				allowed, blocked = true, true
 			}
+			n := namesOf(b)
 			for _, l := range []struct {
 				on   bool
 				name string
@@ -638,7 +665,7 @@ both.`,
 					return err
 				}
 				for _, a := range as {
-					if err := e.out(line(l.name, "address", a)); err != nil {
+					if err := e.out(line(l.name, "address", a, "alias", n.of(a))); err != nil {
 						return err
 					}
 				}
@@ -722,9 +749,10 @@ does. One that can never be delivered moves to outbox/failed/.`,
 				return err
 			}
 			ss, err := b.Flush(c.Context())
+			n := namesOf(b)
 			var aclErr error
 			for _, s := range ss {
-				if werr := e.out(sent(s)); werr != nil && err == nil {
+				if werr := e.out(sent(s, n)); werr != nil && err == nil {
 					err = werr
 				}
 				aclErr = s.ACLErr
@@ -1311,9 +1339,10 @@ func (e *cli) sayHeld(a protocol.Address, held *client.Held) error {
 	return e.out(line("not_revoked", "address", a, "message", "no revocation shown. That is the server's word, and it can keep a record back: a record from the box's owner settles it (dromas revocation keep <file>)."))
 }
 
-// sent is the line for a message the server took.
-func sent(s *client.Sent) []byte {
-	return line("sent", "id", s.ID, "msg_id", s.MsgID, "to", s.To)
+// sent is the line for a message the server took, with the box's name for
+// its recipient (names).
+func sent(s *client.Sent, n names) []byte {
+	return line("sent", "id", s.ID, "msg_id", s.MsgID, "to", s.To, "alias", n.of(s.To))
 }
 
 // prekey is the line for a prekey this box published.
