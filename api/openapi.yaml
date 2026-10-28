@@ -673,6 +673,12 @@ paths:
           description: The `next_cursor` of the page before (`PROTOCOL.md` §11.11).
           schema:
             $ref: '#/components/schemas/Cursor'
+        - name: wait
+          in: query
+          required: false
+          description: How long, in seconds, a first page whose `If-None-Match` would be `304` may be held for a change, at most the server's own time (`PROTOCOL.md` §11.11). Never with `cursor`.
+          schema:
+            $ref: '#/components/schemas/Wait'
         - name: If-Match
           in: header
           required: false
@@ -702,7 +708,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/MessageList'
         '304':
-          description: The first page is unchanged since the `ETag` the poll sent back, or the `If-None-Match` is `*`, which names any page, a page after the first among them, and it has no content (RFC 9110 §15.4.5).
+          description: The first page is unchanged since the `ETag` the poll sent back, at the end of its `wait` where it carried one, or the `If-None-Match` is `*`, which names any page, a page after the first among them, and it has no content (RFC 9110 §15.4.5).
           headers:
             Date:
               $ref: '#/components/headers/Date'
@@ -744,6 +750,12 @@ paths:
           description: As on the `GET`.
           schema:
             $ref: '#/components/schemas/Cursor'
+        - name: wait
+          in: query
+          required: false
+          description: As on the `GET`.
+          schema:
+            $ref: '#/components/schemas/Wait'
         - name: If-Match
           in: header
           required: false
@@ -1604,6 +1616,10 @@ components:
       description: A list's cursor, opaque and URL-safe (`PROTOCOL.md` §11.11).
       type: string
       pattern: '^[A-Za-z0-9_-]+$'
+    Wait:
+      description: A long poll's wait, delay-seconds in digits alone (`PROTOCOL.md` §11.11).
+      type: string
+      pattern: '^[0-9]+$'
     Receipt:
       type: object
       required: [id, received_at, expires_at]

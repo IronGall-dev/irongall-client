@@ -45,8 +45,9 @@ type Server struct {
 	held   map[protocol.Address]*held // the revocations of addresses with no box here
 	keys   map[string]string          // adopt key → account, each good once
 	middle func(w http.ResponseWriter, r *http.Request, next http.Handler)
-	page   int       // the most messages a list's page holds
-	log    []Request // every call, oldest first
+	page   int           // the most messages a list's page holds
+	hold   time.Duration // the longest this server holds a list (SetHold)
+	log    []Request     // every call, oldest first
 }
 
 // Request is one call the server was sent, as the client sent it, before
@@ -57,6 +58,7 @@ type Request struct {
 }
 
 type box struct {
+	wake      chan struct{} // closed at the box's next change, for a held list (changed)
 	identity  []byte
 	statement []byte
 	signature []byte
@@ -122,7 +124,7 @@ func (s *Server) Client() *http.Client { return s.srv.Client() }
 
 // newServer is a server on the clock now, and the handler that serves it.
 func newServer(t testing.TB, now func() time.Time) (*Server, http.Handler) {
-	s := &Server{now: now, boxes: map[protocol.Address]*box{}, held: map[protocol.Address]*held{}, keys: map[string]string{}, page: MaxPage}
+	s := &Server{now: now, boxes: map[protocol.Address]*box{}, held: map[protocol.Address]*held{}, keys: map[string]string{}, page: MaxPage, hold: MaxHold}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/{addr}", s.getBox)
 	mux.HandleFunc("PUT /v1/{addr}", s.register)
@@ -233,6 +235,7 @@ func (s *Server) Inject(to protocol.Address, id string, ciphertext []byte) {
 	b := s.boxes[to]
 	b.seq++
 	b.messages[id] = &message{ciphertext: ciphertext, receivedAt: s.now(), seq: b.seq}
+	b.changed()
 }
 
 // WriteJSON writes v as a JSON response, as the server does: a middleware
@@ -675,6 +678,7 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rcpt.seq++
+	defer rcpt.changed()
 	m := &message{ciphertext: ct, receivedAt: s.now(), seq: rcpt.seq}
 	rcpt.messages[key] = m
 	w.Header().Set("Location", r.URL.Path+"/"+key)
@@ -736,30 +740,70 @@ func (s *Server) owner(h func(http.ResponseWriter, *http.Request, *box)) http.Ha
 	}
 }
 
-// listQuery reads a list's query: none, or a cursor this server made, once.
-// It writes the refusal, naming the parameter, and reports false if not.
-func listQuery(w http.ResponseWriter, r *http.Request) (after int, ok bool) {
+// listQuery reads a list's query: none, a cursor this server made, or a
+// wait, each once and never both. It writes the refusal, naming the
+// parameter, and reports false if not.
+func listQuery(w http.ResponseWriter, r *http.Request) (after int, wait time.Duration, ok bool) {
 	if r.URL.RawQuery == "" {
-		return 0, true
+		return 0, 0, true
 	}
 	q, err := url.ParseQuery(r.URL.RawQuery)
-	for name := range q {
-		if name != "cursor" {
-			problem(w, protocol.CodeBadRequest, "a list takes a cursor alone", func(p *protocol.Problem) { p.Member = name })
-			return 0, false
+	for name, v := range q {
+		if name != "cursor" && name != "wait" || len(v) != 1 {
+			problem(w, protocol.CodeBadRequest, "a list takes a cursor or a wait, once", func(p *protocol.Problem) { p.Member = name })
+			return 0, 0, false
 		}
 	}
+	if err != nil {
+		problem(w, protocol.CodeBadRequest, "not a query", func(p *protocol.Problem) { p.Member = "cursor" })
+		return 0, 0, false
+	}
+	if v, ok := q["wait"]; ok {
+		n, err := protocol.Wait(v[0])
+		if err != nil || len(q) > 1 {
+			problem(w, protocol.CodeBadRequest, "a wait is digits, on the first page", func(p *protocol.Problem) { p.Member = "wait" })
+			return 0, 0, false
+		}
+		return 0, time.Duration(min(n, uint64(MaxHold/time.Second))) * time.Second, true
+	}
 	c := q["cursor"]
-	if err != nil || len(c) != 1 || protocol.CheckCursor(c[0]) != nil {
+	if protocol.CheckCursor(c[0]) != nil {
 		problem(w, protocol.CodeBadRequest, "not a cursor", func(p *protocol.Problem) { p.Member = "cursor" })
-		return 0, false
+		return 0, 0, false
 	}
 	after, err = strconv.Atoi(c[0])
 	if err != nil || after < 1 || strconv.Itoa(after) != c[0] {
 		problem(w, protocol.CodeBadRequest, "not a cursor this server made", func(p *protocol.Problem) { p.Member = "cursor" })
-		return 0, false
+		return 0, 0, false
 	}
-	return after, true
+	return after, 0, true
+}
+
+// MaxHold is the longest a fake server holds a list, unless SetHold says
+// otherwise.
+const MaxHold = 5 * time.Minute
+
+// SetHold sets the longest this server holds a list (PROTOCOL.md §11.11).
+func (s *Server) SetHold(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.hold = d
+}
+
+// changed wakes every list held on the box: its messages changed.
+func (b *box) changed() {
+	if b.wake != nil {
+		close(b.wake)
+		b.wake = nil
+	}
+}
+
+// woken is closed at the box's next change (changed).
+func (b *box) woken() <-chan struct{} {
+	if b.wake == nil {
+		b.wake = make(chan struct{})
+	}
+	return b.wake
 }
 
 // list answers with a page of the messages after the cursor, oldest first
@@ -769,10 +813,20 @@ func listQuery(w http.ResponseWriter, r *http.Request) (after int, ok bool) {
 // protocol.IfNoneMatch); a page after it carries none, so only an If-Match
 // of * is true of it, and it is never 304.
 func (s *Server) list(w http.ResponseWriter, r *http.Request, b *box) {
-	after, ok := listQuery(w, r)
+	after, wait, ok := listQuery(w, r)
 	if !ok {
 		return
 	}
+	until := time.Now().Add(min(wait, s.hold))
+	for s.listed(w, r, b, after, time.Until(until)) && r.Context().Err() == nil {
+	}
+}
+
+// listed answers a list once, and reports true, writing nothing, where its
+// page is the one If-None-Match names and left is time still to hold it:
+// it has then waited for the box's next change or for left to pass, with
+// the server's lock let go meanwhile, and the list is to be answered again.
+func (s *Server) listed(w http.ResponseWriter, r *http.Request, b *box, after int, left time.Duration) bool {
 	var ms []*message
 	ids := map[*message]string{}
 	for id, m := range b.messages {
@@ -795,25 +849,39 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request, b *box) {
 	if after > 0 {
 		if !protocol.IfMatch(r.Header.Values("If-Match"), "") {
 			problem(w, protocol.CodePreconditionFailed, "the If-Match is false")
-			return
+			return false
 		}
 		WriteList(w, l)
-		return
+		return false
 	}
 	body, _ := json.Marshal(l)
 	sum := sha256.Sum256(body)
 	tag := `"` + hex.EncodeToString(sum[:16]) + `"`
 	if !protocol.IfMatch(r.Header.Values("If-Match"), tag) {
 		problem(w, protocol.CodePreconditionFailed, "the If-Match is false")
-		return
+		return false
+	}
+	if protocol.IfNoneMatch(r.Header.Values("If-None-Match"), tag) && left > 0 {
+		woken := b.woken()
+		s.mu.Unlock()
+		t := time.NewTimer(left)
+		select {
+		case <-woken:
+		case <-t.C:
+		case <-r.Context().Done():
+		}
+		t.Stop()
+		s.mu.Lock()
+		return true
 	}
 	w.Header().Set("ETag", tag)
 	if protocol.IfNoneMatch(r.Header.Values("If-None-Match"), tag) {
 		w.Header().Set("Retry-After", PollInterval)
 		w.WriteHeader(http.StatusNotModified)
-		return
+		return false
 	}
 	WriteList(w, l)
+	return false
 }
 
 // PollInterval is the Retry-After every list answer carries: the poll
@@ -944,6 +1012,7 @@ func (s *Server) ack(w http.ResponseWriter, r *http.Request, b *box) {
 		return
 	}
 	delete(b.messages, id)
+	b.changed()
 	w.WriteHeader(http.StatusNoContent)
 }
 
