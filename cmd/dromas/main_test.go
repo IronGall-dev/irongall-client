@@ -334,6 +334,37 @@ func TestRecvWaitIsWokenByAMessage(t *testing.T) {
 	}
 }
 
+// recv --wait with nothing to receive ends at its duration with one poll
+// after its last hold, never a burst of polls in its last second.
+func TestRecvWaitEndsWithoutABurstOfPolls(t *testing.T) {
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var polls, holds atomic.Int32
+	srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/messages") {
+			if r.URL.Query().Has("wait") {
+				holds.Add(1)
+			} else {
+				polls.Add(1)
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+	t.Setenv("DROMAS_HOME", b.Dir())
+	t.Setenv("DROMAS_SERVER_URL", srv.URL)
+	var out, errs bytes.Buffer
+	if err := do(ctx, "recv", []string{"--wait", "3s"}, strings.NewReader(""), &out, &errs); err != nil {
+		t.Fatalf("recv --wait: %v %s", err, errs.String())
+	}
+	if polls.Load() > 2 || holds.Load() != 1 {
+		t.Fatalf("recv --wait 3s made %d polls and %d holds, want at most 2 and 1", polls.Load(), holds.Load())
+	}
+}
+
 func must(t *testing.T, name string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(name) //nolint:gosec // a test path
