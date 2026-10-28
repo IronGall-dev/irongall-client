@@ -36,8 +36,7 @@ jobs:
     # Ubuntu on two OpenSSH releases for the script and the cross-tests, 9.6p1
     # and 10.2p1, and on arm64; macOS on Apple silicon, and on Intel in the
     # daily run alone, never a release's: that runner compiles from a cold
-    # cache at a third of the speed (a release's run took 17 minutes there, six
-    # elsewhere, 2026-10-28), and once stalled with no log; Windows on x64 and
+    # cache at a third of the others' speed; Windows on x64 and
     # arm64, in Git's bash: each system and architecture a release is built
     # for, the Intel Mac's tested on main once a day. On macOS and Windows
     # scripts/check.sh leaves ./sh out (its header says why).
