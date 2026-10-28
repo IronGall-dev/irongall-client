@@ -764,7 +764,11 @@ func listQuery(w http.ResponseWriter, r *http.Request) (after int, wait time.Dur
 			problem(w, protocol.CodeBadRequest, "a wait is digits, on the first page", func(p *protocol.Problem) { p.Member = "wait" })
 			return 0, 0, false
 		}
-		return 0, time.Duration(min(n, uint64(MaxHold/time.Second))) * time.Second, true
+		held := MaxHold
+		if n < uint64(MaxHold/time.Second) {
+			held = time.Duration(n) * time.Second
+		}
+		return 0, held, true
 	}
 	c := q["cursor"]
 	if protocol.CheckCursor(c[0]) != nil {
