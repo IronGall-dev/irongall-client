@@ -508,6 +508,13 @@ func (e *cli) hold(ctx context.Context, b *client.Box, deadline time.Time) error
 			return nil
 		}
 	}
+	// Under a second left: wait it out here, so the Receive after is the
+	// run's last, never one of a burst of polls until the deadline passes.
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(time.Until(until)):
+	}
 	return nil
 }
 
