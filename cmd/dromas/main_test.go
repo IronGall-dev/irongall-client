@@ -1130,7 +1130,7 @@ func TestRecvHeadersAndShow(t *testing.T) {
 // A line that names a peer carries the box's own name for it as "alias",
 // beside the address and never in its place, and only where the box named
 // it; inbox list prints a line for each message inbox/ keeps, oldest first,
-// as recv printed it.
+// each as recv printed it.
 func TestLinesNameAPeerByItsAliasAndInboxListsWhatItKeeps(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -1184,10 +1184,23 @@ func TestLinesNameAPeerByItsAliasAndInboxListsWhatItKeeps(t *testing.T) {
 	from := func(l map[string]any) any { env, _ := l["envelope"].(map[string]any); return env["from"] }
 	recvd, ls := run("recv")
 	named(ls, "mail", from)
+	// The same lines, each byte for byte as recv printed it. Two sent in one
+	// second may be listed in another order than recv's: their files can
+	// share a modification time (Windows' clock), and the list then orders
+	// them by id.
 	shown, ls := run("inbox list")
 	named(ls, "mail", from)
-	if shown != recvd {
+	sorted := func(s string) []string { l := strings.Split(strings.TrimSpace(s), "\n"); slices.Sort(l); return l }
+	if !slices.Equal(sorted(shown), sorted(recvd)) {
 		t.Errorf("inbox list printed\n%s\nrecv printed\n%s", shown, recvd)
+	}
+	for i := 1; i < len(ls); i++ {
+		if a, b := from(ls[i-1]), from(ls[i]); a == nil || b == nil {
+			t.Fatalf("a line with no sender: %v", ls)
+		}
+		if p, q := ls[i-1]["envelope"].(map[string]any)["sent_at"].(string), ls[i]["envelope"].(map[string]any)["sent_at"].(string); p > q {
+			t.Errorf("inbox list is not oldest first: %s before %s", p, q)
+		}
 	}
 	_, ls = run("inbox list", "--headers")
 	named(ls, "mail_headers", from)
