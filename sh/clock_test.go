@@ -12,7 +12,7 @@ import (
 
 // The clock: every check is exact at the clock of whoever makes it, and what
 // a box makes leaves an hour of room. The server keeps the machine's clock;
-// a box's is dr_now (test.sh's §16 until 2026-10-21).
+// a box's is dr_now.
 
 // at is a box on a clock off from the machine's.
 type at struct {

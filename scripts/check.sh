@@ -12,7 +12,7 @@
 # skips the long tests, each of which says so; CI never passes it. On macOS
 # and Windows ./sh is left to the Linux runs: the script is held to GNU's and
 # uutils' tools (README § The shell client), and its tests, a few thousand
-# short processes, took from 3 to more than 20 minutes on one Mac in one day,
+# short processes, take from 3 to more than 20 minutes on a Mac,
 # where a process costs less than on Windows (go test ./sh still runs them,
 # with bash 4 or later and GNU coreutils first in PATH).
 set -euo pipefail

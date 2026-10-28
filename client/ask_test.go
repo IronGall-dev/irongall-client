@@ -411,7 +411,7 @@ func TestAMessageThatWaitedIsSealedAtThePost(t *testing.T) {
 // A message that waited while its recipient renewed, revoking nothing, goes
 // under the renewal once the box has recorded it, whatever the server takes:
 // here one that takes any post, as a server need not answer stale_prekey
-// (#91: a seal kept from before the renewal was posted as it was).
+// (#91: a seal kept from before the renewal is never posted as it is).
 func TestAMessageThatWaitedGoesUnderTheRenewalTheBoxRecorded(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

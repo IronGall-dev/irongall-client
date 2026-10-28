@@ -43,12 +43,12 @@ var update = flag.Bool("update", false, "write testdata/statetable.golden from t
 // three rows more: the address revoked at the server, the box finished (it
 // holds its own revocation), and no box at all.
 //
-// Two kinds of cell are not run, since a diff of every one showed each the
-// same as another (#426 item 3): a server that is silent left the box as
-// one that refuses in all 220 pairs of row and command, and only its words
-// differed, which TestACallWithNoAnswerSaysWhatKind holds; and the identity
-// alone at a server that forgot the box did in all 90 cells what it does at
-// one that never registered it, which holds nothing of it either.
+// Two kinds of cell are not run, since each is the same as another (#426
+// item 3): a server that is silent leaves the box as one that refuses does
+// in all 220 pairs of row and command, and only its words differ, which
+// TestACallWithNoAnswerSaysWhatKind holds; and the identity alone at a
+// server that forgot the box does in all 90 cells what it does at one that
+// never registered it, which holds nothing of it either.
 func TestStateTable(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {

@@ -138,9 +138,8 @@ func TestAReadingThatFoundNoStateFileReadsOneState(t *testing.T) {
 
 // Where there is no gate (gate_other.go: a system neither Windows nor one with flock),
 // a reading and a command each open the state file at once, and neither waits
-// for a gate it could never hold: on Windows' first CI run, before it had a
-// gate of its own (gate_windows.go), every reading waited out its patience
-// for one and was refused.
+// for a gate it could never hold, or every reading would wait out its
+// patience for one and be refused.
 func TestWhereThereIsNoGateNeitherAReadingNorACommandWaitsForOne(t *testing.T) {
 	savedPatience, savedGate := lockPatience, gateOf
 	lockPatience, gateOf = 3*time.Second, noGate

@@ -22,8 +22,8 @@ import (
 // digit that is not ASCII, and under tr_TR.UTF-8 grep's [A-Z] misses I.
 // TestPatternsReadBytes and the vectors of the two readers of text, envelopes
 // and answers, run again under each, built with localedef, after a control
-// shows the locale bites a bare shell: they hold the script's one LC_ALL line,
-// and every vector run twice more held nothing more (#426 item 2).
+// shows the locale bites a bare shell: they hold the script's one LC_ALL line
+// (#426 item 2).
 func TestTheScriptReadsBytesInEveryLocale(t *testing.T) {
 	t.Parallel()
 	if os.Getenv("DR_TEST_LOCALE") != "" {

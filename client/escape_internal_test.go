@@ -45,9 +45,9 @@ func TestEscapeUnseenEscapesWhatNobodySees(t *testing.T) {
 	for _, r := range []rune{0x85, 0x2028, 0x2029} {
 		check(r, true)
 	}
-	// What GitHub's MCP server strips from issue bodies (pkg/sanitize, read
-	// 2026-10-16) is all in it: tags, BiDi controls and marks, zero-width
-	// characters, and variation selectors.
+	// What GitHub's MCP server strips from issue bodies (pkg/sanitize,
+	// read 2026-10-16) is all in it: tags, BiDi controls and marks,
+	// zero-width characters, and variation selectors.
 	for _, r := range []rune{0xE0001, 0xE0020, 0xE007F, 0x202A, 0x202E, 0x2066, 0x2069, 0x200E, 0x200F, 0x061C,
 		0x200B, 0x200C, 0x00AD, 0xFEFF, 0x180E, 0x2060, 0x2064, 0xFE00, 0xFE0F, 0xE0100, 0xE01EF} {
 		check(r, true)
