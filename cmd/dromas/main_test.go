@@ -318,7 +318,12 @@ func TestRecvWaitIsWokenByAMessage(t *testing.T) {
 		}
 		next.ServeHTTP(w, r)
 	})
+	// The send's goroutine is waited for before the test ends: it writes
+	// a's directory, which the test's cleanup removes.
+	sent := make(chan struct{})
+	t.Cleanup(func() { <-sent })
 	go func() {
+		defer close(sent)
 		time.Sleep(2 * time.Second)
 		_, _ = a.Send(ctx, b.Address(), "woke the hold")
 	}()
