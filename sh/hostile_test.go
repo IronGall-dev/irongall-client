@@ -17,8 +17,7 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// What a refusal says, what a hostile server costs a drain, and padding
-// (test.sh's §14 and §15 until 2026-10-21).
+// What a refusal says, what a hostile server costs a drain, and padding.
 
 // answering puts an operator in front of the server that answers a call
 // matching method and path suffix through edit, given the server's own

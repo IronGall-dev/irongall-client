@@ -21,8 +21,7 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// The script's box made, sending and reading, against a server that forges
-// (test.sh's §1 to §6 until 2026-10-21).
+// The script's box made, sending and reading, against a server that forges.
 
 // served is the serial of box a's prekey as the server serves it, and of the
 // certificate it is signed under.

@@ -170,7 +170,7 @@ through bad-a-sign "$A" +4; thsig bad-a-sign
 through bad-trailing-space "$A" "4 "; thsig bad-trailing-space
 printf 'dromas-revoke-certs-v1\n%s\n4\n6\n' "$A" > revoked/bad-a-second-serial.txt; thsig bad-a-second-serial
 printf 'dromas-revoke-certs-v1\n%s\n4\n\n' "$A" > revoked/bad-blank-line.txt; thsig bad-blank-line
-printf 'dromas-revoked-certs-v1\n%s\n1\n1-4\n' "$A" > revoked/bad-a-list.txt; thsig bad-a-list      # the list a certificate was revoked by until 2026-10-14
+printf 'dromas-revoked-certs-v1\n%s\n1\n1-4\n' "$A" > revoked/bad-a-list.txt; thsig bad-a-list      # a list of serials and ranges
 printf 'dromas-revoke-certs-v1\r\n%s\r\n4\r\n' "$A" > revoked/bad-crlf.txt; thsig bad-crlf
 printf 'dromas-revoke-certs-v1\n%s\n4' "$A" > revoked/bad-no-final-newline.txt; thsig bad-no-final-newline
 printf 'dromas-revoke-certs-v2\n%s\n4\n' "$A" > revoked/bad-another-tag.txt; thsig bad-another-tag

@@ -278,7 +278,7 @@ func TestACodeCountsOnlyBesideItsOwnType(t *testing.T) {
 		{Problem{Type: CodeRevoked.TypeURI(), Code: CodeNotRevoked}, 404, ""},
 		{Problem{Type: "https://dromas.dev/errors/not_revoked", Code: CodeNotRevoked}, 404, ""},
 		{Problem{Type: "tag:dromas.dev,2026-10:errors/not_revoked", Code: CodeNotRevoked}, 404, ""},
-		{Problem{Type: "tag:irongall.dev,2026-10-17:errors/not_revoked", Code: CodeNotRevoked}, 404, ""}, // the type before the rename names no code
+		{Problem{Type: "tag:irongall.dev,2026-10-17:errors/not_revoked", Code: CodeNotRevoked}, 404, ""}, // another authority's type names no code
 		{Problem{Code: CodeNotRevoked}, 404, ""},
 		{Problem{Type: TypePrefix + "nope", Code: "nope"}, 404, ""},
 	} {

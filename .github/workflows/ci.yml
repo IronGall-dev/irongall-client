@@ -104,8 +104,7 @@ jobs:
     # The fuzz targets, listed from the code: the weekly run alone, never on a
     # push, a pull request, the daily run, a hand-run or a call from
     # release.yml (a called workflow sees its caller's event, and release.yml
-    # has no schedule). In two weeks of daily and per-push runs fuzzing found no
-    # defect, and a hand-run's hour of it held up CI three times on 2026-10-26.
+    # has no schedule).
     if: github.event.schedule == '47 6 * * 0'
     runs-on: ubuntu-26.04
     outputs:

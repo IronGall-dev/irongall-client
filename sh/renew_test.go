@@ -19,7 +19,7 @@ import (
 )
 
 // The script's box renewed, pruned, restored and drained against a server
-// that forges (test.sh's §8 to §13 until 2026-10-21).
+// that forges.
 
 // newest is the highest number the box signed a prekey statement at,
 // published or not.

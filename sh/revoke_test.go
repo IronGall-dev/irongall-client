@@ -19,8 +19,7 @@ import (
 )
 
 // Revocation in the script: of an address and of its certificates, what a
-// sender asks before it posts, and a box's own revocations (test.sh's §17 to
-// §19 and §21 until 2026-10-21).
+// sender asks before it posts, and a box's own revocations.
 
 // top is the highest serial there is, 2^53 - 1.
 const top = 9007199254740991

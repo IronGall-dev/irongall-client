@@ -533,8 +533,8 @@ func TestAFetchOfAnotherMessageDropsWhatWasKept(t *testing.T) {
 // the listed size breaks its answer's form. Either way the drain stops with
 // nothing judged or acked, the mail still on the server, nothing fetched on
 // a list that is no answer, and nothing
-// made by the size: a resume once made its buffer from the listed size
-// before any bound held it, and 2^53 − 1 panicked the drain (#404). 🛑 No
+// made by the size: a resume makes no buffer from a listed size before a
+// bound holds it, so 2^53 − 1 cannot panic the drain (#404). 🛑 No
 // case asks for more than a ciphertext's bytes where a regression would
 // allocate them: a size like 1 << 40 there has the host find a TiB.
 func TestNoSizeAServerGivesIsTakenPastTheLargestCiphertext(t *testing.T) {
