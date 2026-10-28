@@ -818,7 +818,9 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request, b *box) {
 		return
 	}
 	until := time.Now().Add(min(wait, s.hold))
-	for s.listed(w, r, b, after, time.Until(until)) && r.Context().Err() == nil {
+	again := true
+	for again && r.Context().Err() == nil {
+		again = s.listed(w, r, b, after, time.Until(until))
 	}
 }
 
