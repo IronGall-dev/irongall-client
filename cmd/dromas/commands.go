@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"math"
+	"net/http"
 	"os"
 	"regexp"
 	"runtime"
@@ -273,7 +275,7 @@ the message it was fetching, which the next recv goes on from.`,
 			}
 			return e.recv(c, b, wait, headers)
 		})
-	c.Flags().DurationVar(&wait, "wait", 0, "poll until a message arrives, for at most this long")
+	c.Flags().DurationVar(&wait, "wait", 0, "hold the list until a message arrives, for at most this long, however many held requests it takes")
 	c.Flags().DurationVar(&drain, "drain-time", client.DefaultDrainTime, "how long one drain runs before it stops for the next recv")
 	// As an IMAP client fetches a message's ENVELOPE apart from its body (RFC
 	// 9051 §6.4.5), as mail clients list headers before they open a message.
@@ -450,6 +452,12 @@ func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration, headers 
 				return &needsALook{}
 			}
 			return err
+		} else if !res.More && res.Paced == 0 {
+			// Nothing left on the server: hold the list until it changes.
+			if err := e.hold(ctx, b, deadline); err != nil {
+				return err
+			}
+			continue
 		}
 		select {
 		case <-ctx.Done():
@@ -457,6 +465,50 @@ func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration, headers 
 		case <-time.After(min(pause, time.Until(deadline))):
 		}
 	}
+}
+
+// receiveEvery is the longest recv --wait holds before it receives again,
+// which renews the prekey when it is due (Box.Receive).
+const receiveEvery = time.Hour
+
+// hold holds b's list (client.Box.Hold), one held request after another,
+// until it changes, deadline passes or receiveEvery has, and returns for a
+// Receive. A call that holding again may get past (no answer, a server
+// error, a rate limit) is said on stderr and held again, after its
+// Retry-After where it gives one; a refusal no wait mends ends it, as the
+// error recv returns. A connection that dropped part way is said too, with
+// the wait and keep-alive the box takes from then on.
+func (e *cli) hold(ctx context.Context, b *client.Box, deadline time.Time) error {
+	until := time.Now().Add(receiveEvery)
+	if deadline.Before(until) {
+		until = deadline
+	}
+	for time.Until(until) >= time.Second {
+		h, err := b.Hold(ctx, time.Until(until))
+		var ae *client.APIError
+		var re *client.RevokedError
+		switch {
+		case ctx.Err() != nil:
+			return ctx.Err()
+		case errors.As(err, &re), errors.As(err, &ae) && ae.Status < 500 && ae.Status != http.StatusTooManyRequests && ae.Status != http.StatusRequestTimeout:
+			return err
+		case err != nil:
+			e.say(line("waiting", append([]any{"for", "server"}, failure(err)...)...))
+			if ae != nil && ae.RetryAfter > 0 {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(min(ae.RetryAfter, time.Until(until))):
+				}
+			}
+		case h.Dropped:
+			e.say(line("waiting", "for", "connection", "held", seconds(h.After), "wait", seconds(h.Wait), "keep_alive", seconds(h.KeepAlive),
+				"message", "the connection dropped while the list was held: the next one keeps alive, and the wait shortens only if that one drops too"))
+		case h.Changed:
+			return nil
+		}
+	}
+	return nil
 }
 
 func (e *cli) statusCmd() *cobra.Command {

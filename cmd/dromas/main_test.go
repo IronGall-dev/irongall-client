@@ -296,6 +296,44 @@ func TestRecvWaitRidesOutARateLimit(t *testing.T) {
 	}
 }
 
+// recv --wait holds the list, and returns with a message the moment it
+// arrives, not at the next poll: one hold, woken by the send.
+func TestRecvWaitIsWokenByAMessage(t *testing.T) {
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	opt := client.Options{Base: srv.URL}
+	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allows(t, b, a)
+	var holds atomic.Int32
+	srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.URL.Query().Has("wait") {
+			holds.Add(1)
+		}
+		next.ServeHTTP(w, r)
+	})
+	go func() {
+		time.Sleep(2 * time.Second)
+		_, _ = a.Send(ctx, b.Address(), "woke the hold")
+	}()
+	t.Setenv("DROMAS_HOME", b.Dir())
+	t.Setenv("DROMAS_SERVER_URL", srv.URL)
+	var out, errs bytes.Buffer
+	start := time.Now()
+	if err := do(ctx, "recv", []string{"--wait", "1m"}, strings.NewReader(""), &out, &errs); err != nil {
+		t.Fatalf("recv --wait: %v %s", err, errs.String())
+	}
+	if took := time.Since(start); !strings.Contains(out.String(), `"body":"woke the hold"`) || holds.Load() != 1 || took > 10*time.Second {
+		t.Fatalf("recv --wait: %q after %s in %d holds, %s", out.String(), took, holds.Load(), errs.String())
+	}
+}
+
 func must(t *testing.T, name string) []byte {
 	t.Helper()
 	b, err := os.ReadFile(name) //nolint:gosec // a test path

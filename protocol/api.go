@@ -260,6 +260,21 @@ func PollInterval(v string) (uint64, error) {
 	return n, nil
 }
 
+// Wait reads a list's wait, the long poll's seconds: delay-seconds, digits
+// alone, as Retry-After is (PROTOCOL.md §11.11). Any other form is no wait,
+// and an error. More digits than a uint64 holds read as the most it holds:
+// a server holds a list for at most a time of its own.
+func Wait(v string) (uint64, error) {
+	if v == "" || strings.Trim(v, "0123456789") != "" {
+		return 0, errors.New("the list's wait is not delay-seconds")
+	}
+	n, err := strconv.ParseUint(v, 10, 64)
+	if err != nil {
+		return math.MaxUint64, nil
+	}
+	return n, nil
+}
+
 // MessageInfo is one message in a list (PROTOCOL.md §11.11). Size is the
 // ciphertext's length in bytes: GET /v1/<address>/messages/<id> answers the
 // ciphertext itself (CiphertextContentType), and nothing else.

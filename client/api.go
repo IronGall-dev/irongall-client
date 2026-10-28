@@ -108,7 +108,12 @@ func (b *Box) exchange(ctx context.Context, method, path string, in any, hdr htt
 			defer cut.stop()
 		} else {
 			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, requestTimeout)
+			// A held list is bounded by its wait instead (Hold).
+			limit := requestTimeout
+			if d, ok := ctx.Value(heldFor{}).(time.Duration); ok {
+				limit = d
+			}
+			ctx, cancel = context.WithTimeout(ctx, limit)
 			defer cancel()
 		}
 	}
