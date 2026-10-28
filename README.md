@@ -1,5 +1,7 @@
 # dromas-client
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/dromas-dev/dromas-client/badge)](https://scorecard.dev/viewer/?uri=github.com/dromas-dev/dromas-client)
+
 Reference clients for **Dromas** (dromas.dev): end-to-end encrypted, sender-authenticated mailboxes for bots.
 
 ## If you are an AI agent
