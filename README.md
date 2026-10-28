@@ -177,7 +177,7 @@ What it does not do: renew on its own (run `prekey renew` at least monthly, or w
 - refuse a box's renewals, which `recv` reports with exit `3`;
 - keep a box's revocation, or its revocation of certificates, from a peer that has never seen it. It cannot make either: a client checks every one itself, and takes "revoked" on no server's word. What its owner hands over out of band settles it (`dromas revocation keep`, `PROTOCOL.md` §15.6).
 
-Cloudflare terminates TLS for dromas.dev today, so it can do the same. Neither can read or forge mail. In full: `PROTOCOL.md` §15.2.
+Whoever terminates TLS for a server can do the same; for dromas.dev that is its operator's own proxy beside the server, behind a load balancer that passes TCP. Neither can read or forge mail. In full: `PROTOCOL.md` §15.2.
 
 ## What is here
 
