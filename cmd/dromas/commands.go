@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"net/http"
 	"os"
 	"regexp"
 	"runtime"
@@ -467,55 +466,19 @@ func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration, headers 
 	}
 }
 
-// receiveEvery is the longest recv --wait holds before it receives again,
-// which renews the prekey when it is due (Box.Receive).
-const receiveEvery = time.Hour
-
-// hold holds b's list (client.Box.Hold), one held request after another,
-// until it changes, deadline passes or receiveEvery has, and returns for a
-// Receive. A call that holding again may get past (no answer, a server
-// error, a rate limit) is said on stderr and held again, after its
-// Retry-After where it gives one; a refusal no wait mends ends it, as the
-// error recv returns. A connection that dropped part way is said too, with
-// the wait and keep-alive the box takes from then on.
+// hold holds b's list until it changes or deadline passes (client.Box.Await),
+// and returns for a Receive. Each held request that failed and is held again
+// is said on stderr, and so is a connection that dropped part way, with the
+// wait and keep-alive the box takes from then on.
 func (e *cli) hold(ctx context.Context, b *client.Box, deadline time.Time) error {
-	until := time.Now().Add(receiveEvery)
-	if deadline.Before(until) {
-		until = deadline
-	}
-	for time.Until(until) >= time.Second {
-		h, err := b.Hold(ctx, time.Until(until))
-		var ae *client.APIError
-		var re *client.RevokedError
-		switch {
-		case ctx.Err() != nil:
-			return ctx.Err()
-		case errors.As(err, &re), errors.As(err, &ae) && ae.Status < 500 && ae.Status != http.StatusTooManyRequests && ae.Status != http.StatusRequestTimeout:
-			return err
-		case err != nil:
+	return b.Await(ctx, deadline, func(h *client.HoldResult, err error) {
+		if err != nil {
 			e.say(line("waiting", append([]any{"for", "server"}, failure(err)...)...))
-			if ae != nil && ae.RetryAfter > 0 {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(min(ae.RetryAfter, time.Until(until))):
-				}
-			}
-		case h.Dropped:
-			e.say(line("waiting", "for", "connection", "held", seconds(h.After), "wait", seconds(h.Wait), "keep_alive", seconds(h.KeepAlive),
-				"message", "the connection dropped while the list was held: the next one keeps alive, and the wait shortens only if that one drops too"))
-		case h.Changed:
-			return nil
+			return
 		}
-	}
-	// Under a second left: wait it out here, so the Receive after is the
-	// run's last, never one of a burst of polls until the deadline passes.
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-time.After(time.Until(until)):
-	}
-	return nil
+		e.say(line("waiting", "for", "connection", "held", seconds(h.After), "wait", seconds(h.Wait), "keep_alive", seconds(h.KeepAlive),
+			"message", "the connection dropped while the list was held: the next one keeps alive, and the wait shortens only if that one drops too"))
+	})
 }
 
 func (e *cli) statusCmd() *cobra.Command {

@@ -214,3 +214,57 @@ func (b *Box) Hold(ctx context.Context, wait time.Duration) (*HoldResult, error)
 	}
 	return nil, err
 }
+
+// ReceiveEvery is the longest Await holds before it returns for a Receive,
+// which renews the prekey when it is due.
+const ReceiveEvery = time.Hour
+
+// Await holds the box's list, one held request after another (Hold), until
+// it changes, until passes or ReceiveEvery has, and returns for a Receive;
+// a zero until is no deadline, as for a box that waits for mail for as long
+// as it runs. A call that holding again may get past (no answer, a server
+// error, a rate limit) is held again, after its Retry-After where it gives
+// one; a refusal no wait mends ends it, as its error. say, when not nil, is
+// told of each: a held request that failed, with its error, and a
+// connection that dropped part way, with its HoldResult.
+//
+// With under a second left Await waits it out, so the Receive after is the
+// caller's last, never one of a burst of polls until the deadline passes.
+func (b *Box) Await(ctx context.Context, until time.Time, say func(*HoldResult, error)) error {
+	if say == nil {
+		say = func(*HoldResult, error) {}
+	}
+	if every := time.Now().Add(ReceiveEvery); until.IsZero() || every.Before(until) {
+		until = every
+	}
+	for time.Until(until) >= time.Second {
+		h, err := b.Hold(ctx, time.Until(until))
+		var ae *APIError
+		var re *RevokedError
+		switch {
+		case ctx.Err() != nil:
+			return ctx.Err()
+		case errors.As(err, &re), errors.As(err, &ae) && ae.Status < 500 && ae.Status != http.StatusTooManyRequests && ae.Status != http.StatusRequestTimeout:
+			return err
+		case err != nil:
+			say(nil, err)
+			if ae != nil && ae.RetryAfter > 0 {
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(min(ae.RetryAfter, time.Until(until))):
+				}
+			}
+		case h.Dropped:
+			say(h, nil)
+		case h.Changed:
+			return nil
+		}
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(time.Until(until)):
+	}
+	return nil
+}
