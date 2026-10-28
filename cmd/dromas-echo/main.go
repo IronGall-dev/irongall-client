@@ -152,9 +152,34 @@ func start(ctx context.Context, dir, identity string, opt client.Options, kt pro
 	return &echo{b: b, log: l, now: now}, nil
 }
 
+// run drains the box and answers, then holds its list until a message
+// arrives (client.Box.Await), so a reply goes within seconds of it. A box
+// with replies not yet posted holds for at most the poll interval, when it
+// retries them; a drain that failed, or left mail on the server, waits that
+// interval with no hold.
 func (e *echo) run(ctx context.Context) error {
 	for {
-		pause := e.once(ctx)
+		pause, hold := e.once(ctx)
+		if hold {
+			var until time.Time
+			if pending, _ := filepath.Glob(filepath.Join(e.b.Dir(), "outbox", "*.P")); len(pending) > 0 {
+				until = time.Now().Add(pause)
+			}
+			err := e.b.Await(ctx, until, func(h *client.HoldResult, err error) {
+				if err != nil {
+					e.log.Printf("hold: %v", err)
+					return
+				}
+				e.log.Printf("the connection dropped after %s held: the wait is now %s, with keep-alive every %s", h.After, h.Wait, h.KeepAlive)
+			})
+			switch {
+			case ctx.Err() != nil:
+				return nil
+			case err == nil:
+				continue
+			}
+			e.log.Printf("hold: %v", err)
+		}
 		select {
 		case <-ctx.Done():
 			return nil
@@ -165,8 +190,9 @@ func (e *echo) run(ctx context.Context) error {
 
 // once retries replies not yet posted, drains the box (which renews its
 // prekey when due) and answers what it delivered. It returns how long to wait
-// before the next poll.
-func (e *echo) once(ctx context.Context) time.Duration {
+// before the next poll, and whether the server holds nothing more for the
+// box, so its list may be held instead.
+func (e *echo) once(ctx context.Context) (time.Duration, bool) {
 	e.retry(ctx)
 	res, err := e.b.Receive(ctx)
 	if res != nil {
@@ -211,7 +237,7 @@ func (e *echo) once(ctx context.Context) time.Duration {
 	if err != nil && ctx.Err() == nil {
 		e.log.Printf("receive: %v", err)
 	}
-	return pause
+	return pause, err == nil && res != nil && !res.More && res.Paced == 0
 }
 
 // reply answers one delivery. A reply the server did not take stays in the

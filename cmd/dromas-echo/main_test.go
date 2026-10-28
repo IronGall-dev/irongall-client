@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -388,14 +389,77 @@ func TestEchoPacesItself(t *testing.T) {
 		w.Header().Set("Retry-After", "23")
 		fakeserver.WriteList(w, protocol.MessageList{Messages: []protocol.MessageInfo{}})
 	})
-	if d := x.once(context.Background()); d != 23*time.Second {
-		t.Fatalf("waits %s, want its list's Retry-After", d)
+	if d, hold := x.once(context.Background()); d != 23*time.Second || !hold {
+		t.Fatalf("waits %s, holding %t: want its list's Retry-After, and a hold", d, hold)
 	}
 	polls(func(w http.ResponseWriter) {
 		w.Header().Set("Retry-After", "17")
 		fakeserver.WriteJSON(w, http.StatusTooManyRequests, protocol.Problem{Type: protocol.CodeRateLimited.TypeURI(), Code: protocol.CodeRateLimited})
 	})
-	if d := x.once(context.Background()); d != 17*time.Second {
-		t.Fatalf("waits %s, want the Retry-After", d)
+	if d, hold := x.once(context.Background()); d != 17*time.Second || hold {
+		t.Fatalf("waits %s, holding %t: want the Retry-After, and no hold", d, hold)
+	}
+}
+
+// lines is a log that hands each line it is written to a channel, and drops
+// a line no one is reading.
+type lines chan string
+
+func (l lines) Write(p []byte) (int, error) {
+	select {
+	case l <- string(p):
+	default:
+	}
+	return len(p), nil
+}
+
+// A running echo box holds its list, and answers a message within seconds of
+// its arrival, woken in the one hold it was waiting in.
+func TestEchoAnswersInSeconds(t *testing.T) {
+	e := newEnv(t)
+	logged := make(lines, 64)
+	x, err := start(context.Background(), t.TempDir(), e.key, e.opts(), protocol.Classic, log.New(logged, "", 0))
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	a := e.box()
+	var holds atomic.Int32
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.URL.Query().Has("wait") {
+			holds.Add(1)
+		}
+		next.ServeHTTP(w, r)
+	})
+	// The run is ended, and waited for, before the test's cleanup removes
+	// the echo box's directory.
+	ctx, cancel := context.WithCancel(context.Background())
+	ran := make(chan struct{})
+	t.Cleanup(func() { cancel(); <-ran })
+	go func() {
+		defer close(ran)
+		_ = x.run(ctx)
+	}()
+	<-logged // its start
+	for holds.Load() == 0 {
+		time.Sleep(10 * time.Millisecond)
+	}
+	sent := time.Now()
+	if _, err := a.Send(context.Background(), x.b.Address(), "woke the echo"); err != nil {
+		t.Fatal(err)
+	}
+	timeout := time.After(10 * time.Second)
+	for answered := false; !answered; {
+		select {
+		case l := <-logged:
+			answered = strings.Contains(l, "answered")
+		case <-timeout:
+			t.Fatalf("no answer within 10 seconds, in %d holds", holds.Load())
+		}
+	}
+	if took := time.Since(sent); holds.Load() != 1 || took > 5*time.Second {
+		t.Fatalf("answered after %s, in %d holds", took, holds.Load())
+	}
+	if res := receive(t, a); len(res.Delivered) != 1 || !strings.Contains(body(t, res.Delivered[0]), "woke the echo") {
+		t.Fatalf("%d replies", len(res.Delivered))
 	}
 }

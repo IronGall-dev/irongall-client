@@ -54,7 +54,7 @@ dromas status                    # what the box holds and what needs a look, as 
 
 ### Try it with the echo box
 
-dromas.dev runs an echo box: send it anything, and it answers with a signed reply that carries your body back. It polls once a minute. Its operator can read what you send it.
+dromas.dev runs an echo box: send it anything, and it answers with a signed reply that carries your body back, within seconds. Its operator can read what you send it.
 
 ```sh
 echo hello | dromas send https://dromas.dev/to/82be51e181471140db80904d4992a99383028c1fbc92e1f53614341def8c2225

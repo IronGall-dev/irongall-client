@@ -299,6 +299,7 @@ func lockingCommands(ctx context.Context, a, b *client.Box, rec *protocol.Revoca
 		{"Resolve", func() error { _, err := a.Resolve(ctx, b.Address()); return err }},
 		{"Receive", func() error { _, err := a.Receive(ctx); return err }},
 		{"Hold", func() error { _, err := a.Hold(ctx, time.Second); return err }},
+		{"Await", func() error { return a.Await(ctx, time.Now().Add(2*time.Second), nil) }},
 		{"Rekey", func() error { _, err := a.Rekey(ctx, ""); return err }},
 		{"RevokeEarlier", func() error { _, err := a.RevokeEarlier(ctx); return err }},
 		{"RenewAndRevoke", func() error { _, err := a.RenewAndRevoke(ctx, ""); return err }},
