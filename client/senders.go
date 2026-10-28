@@ -250,8 +250,8 @@ func (s *senders) land(from protocol.Address) int {
 	return landHeld
 }
 
-// HeldSender is the mail held/ keeps from one sender.
-type HeldSender struct {
+// UnknownSender is the mail held/ keeps from one sender.
+type UnknownSender struct {
 	From protocol.Address `json:"from"`
 	// IDs name its messages in held/, oldest first by sent_at: held/<id>.json
 	// is the line recv would have printed.
@@ -309,19 +309,19 @@ func (b *Box) keptMail(dir string) ([]keptMessage, error) {
 
 // HeldMail returns the mail held/ keeps, by sender, the sender with the oldest
 // first. It reads only held/, and calls no server.
-func (b *Box) HeldMail() ([]HeldSender, error) {
+func (b *Box) HeldMail() ([]UnknownSender, error) {
 	ms, err := b.keptMail("held")
 	if err != nil {
 		return nil, err
 	}
-	var out []HeldSender
+	var out []UnknownSender
 	at := map[protocol.Address]int{}
 	for _, m := range ms {
 		i, ok := at[m.From]
 		if !ok {
 			i = len(out)
 			at[m.From] = i
-			out = append(out, HeldSender{From: m.From, FirstSentAt: m.SentAt})
+			out = append(out, UnknownSender{From: m.From, FirstSentAt: m.SentAt})
 		}
 		out[i].IDs = append(out[i].IDs, m.ID)
 		out[i].LastSentAt = m.SentAt

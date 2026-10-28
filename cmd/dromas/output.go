@@ -131,8 +131,8 @@ func (n names) of(a protocol.Address) any {
 // its envelope with the checked fields but its body and subject, and the
 // size of its body in bytes, as the envelope carries it. in_reply_to and
 // supersedes are the sender's words, which a reader holds only to being
-// strings, so each is here only when it has a msg_id's form; dromas show
-// prints them as sent.
+// strings, so each is here only when it has a msg_id's form; dromas inbox
+// show prints them as sent.
 func mailHeaders(d client.Delivery, n names) []byte {
 	env := d.Envelope
 	msgID := func(s string) any {

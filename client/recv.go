@@ -42,7 +42,7 @@ type Delivery struct {
 	findings *protocol.Findings
 }
 
-// Refusal is a message that failed a check. It was quarantined, never
+// Refusal is a message that failed a check. It was kept in refused/, never
 // delivered, and acked so that it leaves the server. It never blocks its
 // claimed sender: a forgery may be the operator framing them.
 type Refusal struct {
@@ -53,7 +53,7 @@ type Refusal struct {
 	Code   string
 	Reason string
 	// Findings is what the checks established about it before it was
-	// refused (protocol.Findings): kept with it in quarantine/. Where the box
+	// refused (protocol.Findings): kept with it in refused/. Where the box
 	// holds a revocation of the address that signed it, or of its
 	// certificate, it is the clock and the identity alone, with Signed false,
 	// as for a signature that does not verify (#265).
@@ -134,7 +134,7 @@ func (r *Result) Again() time.Duration {
 // where the box's say over its sender puts it: inbox/ for a sender it
 // allowed, held/ for one it has not (unless its policy lands that mail in
 // inbox/ too), and nowhere for one it blocked. Refused mail goes to
-// quarantine/. All of it is acked. A transient error stops the drain and leaves the rest for the
+// refused/. All of it is acked. A transient error stops the drain and leaves the rest for the
 // next one. It holds the box's lock throughout ([Box.hold]): a second
 // Receive, or any other command that writes the box, waits for it.
 //
@@ -557,16 +557,16 @@ func (b *Box) receiveOne(ctx context.Context, m protocol.MessageInfo, res *Resul
 			}
 			step("delivery written")
 			// A message refused once, whose ack was lost, and delivered
-			// now, keeps nothing in quarantine/ (#211): its file goes first,
+			// now, keeps nothing in refused/ (#211): its file goes first,
 			// then what the box's state keeps of it, with the line.
-			if err := removeIfExists(b.path("quarantine", local+".json")); err != nil {
+			if err := removeIfExists(b.path("refused", local+".json")); err != nil {
 				return fetched, err
 			}
 			if err := b.update(func(s store) error {
 				if err := recordSeen(s, ct.bytes, d.Envelope); err != nil {
 					return err
 				}
-				return s.del(bucketQuarantine, local)
+				return s.del(bucketRefused, local)
 			}); err != nil {
 				return fetched, err
 			}

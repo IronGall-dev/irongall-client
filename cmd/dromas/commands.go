@@ -26,10 +26,21 @@ import (
 // each thing that has more than one thing done to it.
 func (e *cli) tree() *cobra.Command {
 	root := e.group("dromas", "", "",
-		e.initCmd(), e.addrCmd(), e.sendCmd(), e.recvCmd(), e.showCmd(), e.statusCmd(), e.heldCmd(), e.versionCmd(),
+		e.initCmd(), e.addrCmd(), e.sendCmd(), e.recvCmd(), e.statusCmd(), e.versionCmd(),
+		e.group("inbox", "mail recv delivered: list, show",
+			`recv keeps each message it delivers in inbox/, as the "mail" line it
+printed, until its file is deleted: deleting it forgets the message. These
+commands print those lines again, and read no server.`,
+			e.inboxListCmd(), e.inboxShowCmd()),
+		e.group("held", "mail from unknown senders, waiting for allow or block: list",
+			`Mail that passed every check, from an unknown sender (one this box has not
+written to, named or allowed), is kept in held/, and recv does not print it.
+dromas peer allow delivers a sender's held mail to inbox/, and dromas peer
+block deletes it. Mail that failed a check is refused/'s, never held.`,
+			e.heldListCmd()),
 		e.group("peer", "who may write to this box: allow, block, list",
 			`Mail from a sender this box has not allowed is held in held/ (dromas held
-lists it), and mail from a sender it blocked is dropped. Sending to a box, or
+list lists it), and mail from a sender it blocked is dropped. Sending to a box, or
 naming it with dromas alias add, allows it too. The box's policy file says
 where mail from a sender not allowed lands, and whom its server takes mail
 from: dromas help has it.`,
@@ -44,12 +55,12 @@ one, remove it and add it again.`,
 			`A message is kept in outbox/ until a server takes it. One that can never be
 delivered moves to outbox/failed/: delete it there to drop it.`,
 			e.flushCmd()),
-		e.group("quarantine", "mail refused for a failed check: list, rm",
+		e.group("refused", "mail refused for a failed check: list, rm",
 			`A message that failed a check is never delivered: recv acks it and keeps it
-in quarantine/, as evidence of who sent what. Read it through these commands,
+in refused/, as evidence of who sent what. Read it through these commands,
 which print this client's words only: the files keep what the server served,
 with each of its strings in base64 that is not of its form.`,
-			e.quarantineListCmd(), e.quarantineRmCmd()),
+			e.refusedListCmd(), e.refusedRmCmd()),
 		e.group("prekey", "the key senders encrypt to: renew, lifetime",
 			`A prekey is valid for 33 days, or the shorter lifetime this box is set to,
 under a working key and a certificate made with it. dromas recv renews it
@@ -250,14 +261,14 @@ func (e *cli) recvCmd() *cobra.Command {
 verified fields, with this box's name for its sender as "alias" when it
 named one (dromas alias add). It also renews the prekey once a day, so run it at least
 monthly and the box never lapses. It prints a "refused" line for each message
-it refused, keeping it in quarantine/, and a "held" line for each it held,
+it refused, keeping it in refused/, and a "held" line for each it held,
 keeping it in held/.
 
 With --headers, a "mail_headers" line takes each "mail" line's place: its
 "envelope" has the fields this client checked with none of the text the
 sender chose, no body and no subject, and the line has the body's size. Each
-message is kept in inbox/ as ever, and dromas show <id> prints its "mail"
-line, so a reader can decide by sender before it reads what the sender wrote.
+message is kept in inbox/ as ever, and dromas inbox show <id> prints its
+"mail" line, so a reader can decide by sender before it reads what the sender wrote.
 
 One drain runs for at most --drain-time, holding the box's lock: there it
 stops with a "more" line, as at its other limits, and keeps what it read of
@@ -283,18 +294,36 @@ the message it was fetching, which the next recv goes on from.`,
 	return c
 }
 
-func (e *cli) showCmd() *cobra.Command {
+func (e *cli) inboxListCmd() *cobra.Command {
 	var headers bool
-	c := command("show [<id>] [flags]", "print the mail inbox/ keeps, as recv printed it",
+	c := command("list [flags]", "list the mail inbox/ keeps, one line of JSON each",
+		`Print a "mail" line for each message inbox/ keeps, oldest first by sent_at,
+as recv printed it: the mail recv delivered and nobody has pruned since. A
+file there that is not the line recv keeps is left out, and dromas inbox
+show names it.`,
+		nargs(0, 0), func(*cobra.Command, []string) error {
+			b, err := e.box()
+			if err != nil {
+				return err
+			}
+			ds, err := b.Inbox()
+			if err != nil {
+				return err
+			}
+			return e.mailLines(b, ds, headers)
+		})
+	c.Flags().BoolVar(&headers, "headers", false, "print each message's checked fields and its body's size, without its body or subject, as recv --headers does")
+	return c
+}
+
+func (e *cli) inboxShowCmd() *cobra.Command {
+	var headers bool
+	c := command("show <id> [flags]", "print a message inbox/ keeps, as recv printed it",
 		`Print the "mail" line of a message inbox/ keeps, by the id recv printed: what
-recv prints without --headers. With no id, print a line for each message
-inbox/ keeps, oldest first by sent_at: the mail recv delivered and nobody
-has pruned since, which deleting its file forgets. A file there that is not
-the line recv keeps is left out of the list, and named when its id is
-asked. An id that is not 64 lowercase hex is refused before any file is
-read.`,
-		checked(nargs(0, 1), func(c *cobra.Command, args []string) error {
-			if len(args) == 1 && !client.IsID(args[0]) {
+recv prints without --headers. An id that is not 64 lowercase hex is refused
+before any file is read.`,
+		checked(nargs(1, 1), func(c *cobra.Command, args []string) error {
+			if !client.IsID(args[0]) {
 				return wrong(c, "%s takes a message's id, 64 lowercase hex, as recv prints it", c.CommandPath())
 			}
 			return nil
@@ -303,35 +332,35 @@ read.`,
 			if err != nil {
 				return err
 			}
-			var ds []client.Delivery
-			if len(args) == 1 {
-				d, err := b.InboxMessage(args[0])
-				if err != nil {
-					return err
-				}
-				ds = []client.Delivery{d}
-			} else if ds, err = b.Inbox(); err != nil {
+			d, err := b.InboxMessage(args[0])
+			if err != nil {
 				return err
 			}
-			n := namesOf(b)
-			for _, d := range ds {
-				l := mail(d, n)
-				if headers {
-					l = mailHeaders(d, n)
-				}
-				if err := e.out(l); err != nil {
-					return err
-				}
-			}
-			return nil
+			return e.mailLines(b, []client.Delivery{d}, headers)
 		})
-	c.Flags().BoolVar(&headers, "headers", false, "print each message's checked fields and its body's size, without its body or subject, as recv --headers does")
+	c.Flags().BoolVar(&headers, "headers", false, "print the message's checked fields and its body's size, without its body or subject, as recv --headers does")
 	return c
 }
 
-func (e *cli) quarantineListCmd() *cobra.Command {
-	return command("list", "list the mail quarantine/ keeps, one line of JSON each",
-		`List the mail quarantine/ keeps: a "quarantined" line for each message, with
+// mailLines prints a "mail" line for each of ds, or with headers a
+// "mail_headers" line, naming each sender as b names it.
+func (e *cli) mailLines(b *client.Box, ds []client.Delivery, headers bool) error {
+	n := namesOf(b)
+	for _, d := range ds {
+		l := mail(d, n)
+		if headers {
+			l = mailHeaders(d, n)
+		}
+		if err := e.out(l); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *cli) refusedListCmd() *cobra.Command {
+	return command("list", "list the mail refused/ keeps, one line of JSON each",
+		`List the mail refused/ keeps: a "refused" line for each message, with
 its id, the code it was refused for (the README's table has each), and the
 time the server gave, only when it has its form.`,
 		nargs(0, 0), func(c *cobra.Command, _ []string) error {
@@ -339,11 +368,11 @@ time the server gave, only when it has its form.`,
 			if err != nil {
 				return err
 			}
-			qs, err := b.Quarantined(c.Context())
+			qs, err := b.RefusedMail(c.Context())
 			for _, q := range qs {
 				l, jerr := json.Marshal(q)
 				if jerr == nil {
-					jerr = e.out(typed("quarantined", l))
+					jerr = e.out(typed("refused", l))
 				}
 				if jerr != nil && err == nil {
 					err = jerr
@@ -353,12 +382,12 @@ time the server gave, only when it has its form.`,
 		})
 }
 
-func (e *cli) quarantineRmCmd() *cobra.Command {
+func (e *cli) refusedRmCmd() *cobra.Command {
 	var all bool
-	c := command("rm [flags] [<id>...]", "delete refused mail from quarantine/",
-		`Delete each message named, by the id dromas quarantine list prints, or with
+	c := command("rm [flags] [<id>...]", "delete refused mail from refused/",
+		`Delete each message named, by the id dromas refused list prints, or with
 --all every one, and print a "removed" line for each. Nothing is deleted when
-an id is not one, or names no message quarantine/ keeps.`,
+an id is not one, or names no message refused/ keeps.`,
 		func(c *cobra.Command, args []string) error {
 			switch {
 			case all && len(args) > 0:
@@ -368,7 +397,7 @@ an id is not one, or names no message quarantine/ keeps.`,
 			}
 			for _, id := range args {
 				if !client.IsID(id) {
-					return wrong(c, "%s takes messages' ids, 64 lowercase hex, as dromas quarantine list prints them", c.CommandPath())
+					return wrong(c, "%s takes messages' ids, 64 lowercase hex, as dromas refused list prints them", c.CommandPath())
 				}
 			}
 			return nil
@@ -377,7 +406,7 @@ an id is not one, or names no message quarantine/ keeps.`,
 			if err != nil {
 				return err
 			}
-			gone, err := b.RemoveQuarantined(c.Context(), args)
+			gone, err := b.RemoveRefused(c.Context(), args)
 			for _, id := range gone {
 				if werr := e.out(line("removed", "id", id)); werr != nil && err == nil {
 					err = werr
@@ -385,7 +414,7 @@ an id is not one, or names no message quarantine/ keeps.`,
 			}
 			return err
 		})
-	c.Flags().BoolVar(&all, "all", false, "delete every message quarantine/ keeps")
+	c.Flags().BoolVar(&all, "all", false, "delete every message refused/ keeps")
 	return c
 }
 
@@ -425,7 +454,7 @@ func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration, headers 
 			}
 			for _, h := range res.Held {
 				lines = append(lines, line("held", "id", h.ID, "from", h.Envelope.From, "message",
-					"from a sender this box has not allowed: kept in held/ (dromas held lists it, and dromas peer allow delivers it)"))
+					"from a sender this box has not allowed: kept in held/ (dromas held list lists it, and dromas peer allow delivers it)"))
 			}
 			for _, id := range res.Blocked {
 				lines = append(lines, line("dropped", "id", id, "message", "from a sender this box blocked: dropped"))
@@ -454,7 +483,7 @@ func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration, headers 
 				lines = append(lines, line("acl_replaced", "message", "this box's server held an ACL other than the one this box last sent it, which another machine of this box, someone holding its pass or the server itself wrote: this box sent its own in its place"))
 			}
 			// Every delivery is also kept in inbox/, and every refusal in
-			// quarantine/, so a failed write to stdout loses nothing.
+			// refused/, so a failed write to stdout loses nothing.
 			for _, l := range lines {
 				if werr := e.out(l); werr != nil && err == nil {
 					err = werr
@@ -510,7 +539,7 @@ func (e *cli) statusCmd() *cobra.Command {
 	return command("status", "say what this box holds and what needs a look, as one line of JSON",
 		`Say what this box holds and what needs a look, as one "status" line, from its
 own files and with no call to the server: its prekey, a renewal that has not
-gone through, refused mail in quarantine/, held mail, mail not yet delivered.`,
+gone through, refused mail in refused/, held mail, mail not yet delivered.`,
 		nargs(0, 0), func(c *cobra.Command, _ []string) error {
 			b, err := e.box()
 			if err != nil {
@@ -534,10 +563,10 @@ gone through, refused mail in quarantine/, held mail, mail not yet delivered.`,
 		})
 }
 
-func (e *cli) heldCmd() *cobra.Command {
-	return command("held", "list the mail held/ keeps, one line of JSON for each sender",
+func (e *cli) heldListCmd() *cobra.Command {
+	return command("list", "list the mail held/ keeps, one line of JSON for each sender",
 		`List the mail held/ keeps, from senders this box has not allowed: a
-"held_sender" line for each sender, with its address, the ids, and the first
+"unknown_sender" line for each sender, with its address, the ids, and the first
 and last sent_at. held/<id>.json is the message recv's "mail" line would have
 carried. dromas peer allow delivers a sender's held mail to inbox/, and
 dromas peer block deletes it.`,
@@ -550,7 +579,7 @@ dromas peer block deletes it.`,
 			for _, h := range hs {
 				l, jerr := json.Marshal(h)
 				if jerr == nil {
-					jerr = e.out(typed("held_sender", l))
+					jerr = e.out(typed("unknown_sender", l))
 				}
 				if jerr != nil && err == nil {
 					err = jerr

@@ -12,7 +12,7 @@
 #   bash dromas.sh init [--no-pq]                  make and register this box; prints its link, $DR_SERVER_URL/to/<address>
 #   bash dromas.sh addr                            print it again: give it to whoever should write to this box
 #   bash dromas.sh send <link> [file]             one message (the body from stdin without a file); a link or an address. Posted now or not at all: nothing waits
-#   bash dromas.sh recv                            verified mail, a "mail" line each; refused mail goes to quarantine/, with a "refused" line
+#   bash dromas.sh recv                            verified mail, a "mail" line each; refused mail goes to refused/, with a "refused" line
 #   bash dromas.sh prekey renew [--no-pq]          a new prekey, working key and certificate: at least monthly, as a prekey is valid for 33 days, or within the lifetime a prekey-lifetime file sets
 #   bash dromas.sh help [<command>]                this, or a command's lines; --help after a command does the same, and runs nothing
 #   The README has the rest: https://github.com/dromas-dev/dromas-client#readme
@@ -150,7 +150,7 @@ dr_lock(){ # <command> [args] → runs that dr_ command with $DR/lock, the box's
 }
 dr_ownbox(){ [ ! -e "$DR/state" ] || dr_refuse "$DR holds a state file: it is a box of the Go client, which this script never runs, since the two keep their records apart and would undo each other's: set DR_HOME to a directory of this script's own"; }      # whether $DR is a box of this script's, by the one file only the Go client makes
 dr_held(){ [ "${DR_HELD-}" = "$DR" ]; }      # whether this shell holds this box's lock: a command another command runs works under its caller's
-dr_dirs(){ mkdir -p "$DR/work" "$DR/prekeys" "$DR/peers" "$DR/inbox" "$DR/quarantine" "$DR/sent"; }      # the box's directories, made where they are missing, as the Go client's Open makes them: by init, and by every command that writes the box (dr_lock)
+dr_dirs(){ mkdir -p "$DR/work" "$DR/prekeys" "$DR/peers" "$DR/inbox" "$DR/refused" "$DR/sent"; }      # the box's directories, made where they are missing, as the Go client's Open makes them: by init, and by every command that writes the box (dr_lock)
 dr_identity(){ # → identity.pub, identity.doc and address, the identity as the box's other files name it: identity.pub made again from the identity where it is missing or empty, then the document and its SHA-256, each written beside and moved into place only where its bytes differ (dr_put), as the Go client's Open writes them. So a box restored from its identity alone gets all three, init run again rewrites nothing a command beside it reads, and a crash leaves no file empty
   local a
   [ -s "$DR/identity.pub" ] || { ssh-keygen -y -f "$DR/identity" < /dev/null > "$DR/id.pub" && dr_put "$DR/id.pub" "$DR/identity.pub"; } || dr_refuse "ssh-keygen cannot read this box's identity, $DR/identity, to make identity.pub" || return 1
@@ -572,7 +572,7 @@ dr_sent(){ # <address> → sent/<address>.<msg_id>.json, one line, {"envelope":�
 }
 
 # recipe: receive
-dr_recv(){ # drains the box, every page up to a drain's limits. ACCEPT → inbox/ and a mail line on stdout. REFUSED → quarantine/, never delivered, and a refused line on stdout. Both are acked
+dr_recv(){ # drains the box, every page up to a drain's limits. ACCEPT → inbox/ and a mail line on stdout. REFUSED → refused/, never delivered, and a refused line on stdout. Both are acked
   dr_held || { dr_lock dr_recv "$@"; return; }
   DR_LISTED=; dr_drain; local rc=$?; [ -z "$DR_LISTED" ] || dr_prune "$DR_LISTED"; return $rc      # keys deleted by this clock only once the server has answered the list, so has taken a pass dated by it, and by that pass's date: a clock far ahead is stopped at its pass, one that moves while the list is in flight deletes nothing by where it went, and the keys that mail waits for stay (PROTOCOL.md §12.4)
 }
@@ -611,11 +611,11 @@ dr_one(){ # <me> <id> <its list entry> → 0 once the message is judged and its 
     2) dr_out duplicate --arg id "$h" --arg message "a retry of a message already delivered: not delivered again" ;;
     3) dr_err "$why: nothing is judged or acked until this box is fixed"; return 1 ;;
     4) dr_err "$why: the message stays on the server, and the next recv asks again"; return 1 ;;
-    *) dr_putout "$DR/quarantine/$h.json" dr_kept "$m" "$h" && dr_putline "$DR/quarantine/$h.reason" "$why" || return 1      # the message as served, its strings in base64 but those of their form, and beside it why: "<code>: <words>", this script's own words, never the message's
+    *) dr_putout "$DR/refused/$h.json" dr_kept "$m" "$h" && dr_putline "$DR/refused/$h.reason" "$why" || return 1      # the message as served, its strings in base64 but those of their form, and beside it why: "<code>: <words>", this script's own words, never the message's
        dr_out refused --arg id "$h" --arg code "${why%%: *}" --arg message "${why#*: }" ;;
   esac
 }
-dr_kept(){ # <message stem> <id> → the message as quarantine/ keeps it: the id this script hashed, and the ciphertext its fetch answered, <stem>.age, in base64; none of the server's strings, so nothing the server chose is there to be read
+dr_kept(){ # <message stem> <id> → the message as refused/ keeps it: the id this script hashed, and the ciphertext its fetch answered, <stem>.age, in base64; none of the server's strings, so nothing the server chose is there to be read
   local rc; dr_b64 "$1.age" > "$1.b64" && jq -cj -n --rawfile c "$1.b64" --arg id "$2" '{id: $id, ciphertext: $c}'; rc=$?; rm -f "$1.b64"; return $rc      # base64 of the bytes, a file of ASCII, which jq carries as it is
 }
 dr_judge(){ # <me> <message stem> → 0 only if EVERY check passes, in this order; 2 for a resend of an accepted msg_id; 1 refused, with "<code>: <words>" on stdout, the words this script's own and never the message's; 3 a fault of this box, no verdict; 4 no answer from the server on whether the sender is revoked, no verdict. Who the sender is, is never asked of the server, nor read from its list: the message carries what proves it. The one thing asked is whether a revocation of that sender exists, and the answer proves itself

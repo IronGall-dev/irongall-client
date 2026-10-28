@@ -227,7 +227,7 @@ jq -cn --arg i "$(dr_b64 "$DR/identity.doc")" --arg s "$(dr_b64 "$W/wk.sig")" '{
 	rb.mustSend(rc, "waits for an answer")
 	stopped := func(what string) {
 		t.Helper()
-		if d := rc.recv(); d.rc == 0 || len(d.mail) != 0 || w.srv.Count(rc.addr) != 1 || len(rc.files("quarantine")) != 0 {
+		if d := rc.recv(); d.rc == 0 || len(d.mail) != 0 || w.srv.Count(rc.addr) != 1 || len(rc.files("refused")) != 0 {
 			t.Errorf("%s: %v", what, d)
 		}
 	}
@@ -400,8 +400,8 @@ func TestScriptAfterAWorkingKeyIsTaken(t *testing.T) {
 	cb.mustSend(ca, "held while the kept revocation is broken")
 	kept := ca.read(peer + "revoked-certs.json")
 	ca.must(fmt.Sprintf(`jq -cn --arg i "$(dr_b64 "$DR/%sidentity.doc")" --arg l "$(dr_b64 "$W/CB1.certs")" --arg g "$(dr_b64 "$W/CB2.sig")" '{identity:$i, revoked_certificates:$l, revoked_certificates_signature:$g}' > "$DR/%[1]srevoked-certs.json"`, peer))
-	q := len(ca.files("quarantine"))
-	if d := ca.recv(); d.rc == 0 || len(d.mail) != 0 || w.srv.Count(ca.addr) != 1 || len(ca.files("quarantine")) != q || !strings.Contains(d.said, "does not verify") {
+	q := len(ca.files("refused"))
+	if d := ca.recv(); d.rc == 0 || len(d.mail) != 0 || w.srv.Count(ca.addr) != 1 || len(ca.files("refused")) != q || !strings.Contains(d.said, "does not verify") {
 		t.Errorf("a kept revocation swapped for one that does not verify: %v", d)
 	}
 	writeFile(t, ca.file(peer+"revoked-certs.json"), []byte(kept))

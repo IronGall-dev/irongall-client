@@ -64,7 +64,7 @@ func TestAFromTheServerListsIsNotRead(t *testing.T) {
 
 // TestForgeries plays the operator, who controls every byte the server sends
 // and stores. Each forgery must be refused by the client: never delivered,
-// never encrypted to, never pinned. Refused mail is quarantined and acked, so
+// never encrypted to, never pinned. Refused mail is kept in refused/ and acked, so
 // it leaves the server, and the refusal never blocks the claimed sender.
 //
 //	mail made in another box's name       O signs an envelope carrying A's identity → refused: not under a certificate of A's identity
@@ -375,10 +375,10 @@ func TestForgeries(t *testing.T) {
 		})
 		res := receive(t, b)
 		refusedFor(t, res, client.RefusedID, "not the SHA-256")
-		if res.Refused[0].ID != realID || !exists(filepath.Join(b.Dir(), "quarantine", realID+".json")) {
-			t.Fatalf("quarantined as %s, not by the ciphertext's hash", res.Refused[0].ID)
+		if res.Refused[0].ID != realID || !exists(filepath.Join(b.Dir(), "refused", realID+".json")) {
+			t.Fatalf("kept in refused/ as %s, not by the ciphertext's hash", res.Refused[0].ID)
 		}
-		if exists(filepath.Join(b.Dir(), "inbox", fake+".json")) || exists(filepath.Join(b.Dir(), "quarantine", fake+".json")) {
+		if exists(filepath.Join(b.Dir(), "inbox", fake+".json")) || exists(filepath.Join(b.Dir(), "refused", fake+".json")) {
 			t.Fatal("a file was named by the server's id")
 		}
 	})

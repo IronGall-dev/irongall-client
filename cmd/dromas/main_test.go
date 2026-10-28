@@ -887,7 +887,7 @@ func TestRecvSaysARenewalFailed(t *testing.T) {
 	}
 }
 
-// A refused message is told in a line and kept in quarantine/, and does not
+// A refused message is told in a line and kept in refused/, and does not
 // change recv's exit status: any sender can cause one, so a stranger must not
 // be able to make a box's recv fail. status is what reports it.
 func TestRefusedMailDoesNotFailRecv(t *testing.T) {
@@ -901,7 +901,7 @@ func TestRefusedMailDoesNotFailRecv(t *testing.T) {
 	t.Setenv("DROMAS_HOME", b.Dir())
 	t.Setenv("DROMAS_SERVER_URL", srv.URL)
 	var out bytes.Buffer
-	if err := do(ctx, "status", nil, nil, &out, io.Discard); err != nil || !strings.Contains(out.String(), `"quarantine":0,"held":0,"policy":{"unknown":"held","server":"all"},"attention":[]`) {
+	if err := do(ctx, "status", nil, nil, &out, io.Discard); err != nil || !strings.Contains(out.String(), `"refused":0,"held":0,"policy":{"unknown":"held","server":"all"},"attention":[]`) {
 		t.Fatalf("status of a new box: %v %q", err, out.String())
 	}
 	forged := []byte("not a ciphertext its claimed sender ever signed")
@@ -918,10 +918,10 @@ func TestRefusedMailDoesNotFailRecv(t *testing.T) {
 	var look *needsALook
 	out.Reset()
 	if err := do(ctx, "status", nil, nil, &out, io.Discard); !errors.As(err, &look) {
-		t.Fatalf("status with mail in quarantine/: %v", err)
+		t.Fatalf("status with mail in refused/: %v", err)
 	}
 	var st client.Status
-	if err := json.Unmarshal(out.Bytes(), &st); err != nil || st.Quarantine != 1 || len(st.Attention) != 1 || !strings.Contains(st.Attention[0], "1 refused in quarantine/ (undecryptable)") {
+	if err := json.Unmarshal(out.Bytes(), &st); err != nil || st.Refused != 1 || len(st.Attention) != 1 || !strings.Contains(st.Attention[0], "1 refused in refused/ (undecryptable)") {
 		t.Fatalf("status printed %q: %v", out.String(), err)
 	}
 }
@@ -1110,28 +1110,28 @@ func TestRecvHeadersAndShow(t *testing.T) {
 	}
 	inbox := must(t, filepath.Join(b.Dir(), "inbox", id+".json"))
 	out.Reset()
-	if err := do(ctx, "show", []string{id}, strings.NewReader(""), &out, io.Discard); err != nil {
+	if err := do(ctx, "inbox show", []string{id}, strings.NewReader(""), &out, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if want := `{"type":"mail","id":"` + id + `","envelope":` + string(inbox) + "}\n"; out.String() != want {
 		t.Fatalf("show printed %q, want %q", out.String(), want)
 	}
-	for _, args := range [][]string{{"../inbox/" + id}, {strings.ToUpper(id)}, {id, id}} {
+	for _, args := range [][]string{nil, {"../inbox/" + id}, {strings.ToUpper(id)}, {id, id}} {
 		var wrong *usageError
-		if err := do(ctx, "show", args, strings.NewReader(""), io.Discard, io.Discard); !errors.As(err, &wrong) {
+		if err := do(ctx, "inbox show", args, strings.NewReader(""), io.Discard, io.Discard); !errors.As(err, &wrong) {
 			t.Errorf("show %q: %v", args, err)
 		}
 	}
-	if err := do(ctx, "show", []string{strings.Repeat("0", 64)}, strings.NewReader(""), io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "inbox/ holds no message") {
+	if err := do(ctx, "inbox show", []string{strings.Repeat("0", 64)}, strings.NewReader(""), io.Discard, io.Discard); err == nil || !strings.Contains(err.Error(), "inbox/ holds no message") {
 		t.Errorf("show of an id inbox/ does not hold: %v", err)
 	}
 }
 
 // A line that names a peer carries the box's own name for it as "alias",
 // beside the address and never in its place, and only where the box named
-// it; show with no id prints a line for each message inbox/ keeps, oldest
-// first, as recv printed it.
-func TestLinesNameAPeerByItsAliasAndShowListsTheInbox(t *testing.T) {
+// it; inbox list prints a line for each message inbox/ keeps, oldest first,
+// as recv printed it.
+func TestLinesNameAPeerByItsAliasAndInboxListsWhatItKeeps(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
@@ -1184,12 +1184,12 @@ func TestLinesNameAPeerByItsAliasAndShowListsTheInbox(t *testing.T) {
 	from := func(l map[string]any) any { env, _ := l["envelope"].(map[string]any); return env["from"] }
 	recvd, ls := run("recv")
 	named(ls, "mail", from)
-	shown, ls := run("show")
+	shown, ls := run("inbox list")
 	named(ls, "mail", from)
 	if shown != recvd {
-		t.Errorf("show printed\n%s\nrecv printed\n%s", shown, recvd)
+		t.Errorf("inbox list printed\n%s\nrecv printed\n%s", shown, recvd)
 	}
-	_, ls = run("show", "--headers")
+	_, ls = run("inbox list", "--headers")
 	named(ls, "mail_headers", from)
 	_, ls = run("peer", "list", "--allowed")
 	named(ls, "allowed", func(l map[string]any) any { return l["address"] })
@@ -1209,10 +1209,10 @@ func TestTheHeadersLineHoldsOnlyChecked(t *testing.T) {
 	}
 }
 
-// quarantine list prints a line for each refused message in this client's
-// words, and quarantine rm deletes by id or --all, refusing a command line
+// refused list prints a line for each refused message in this client's
+// words, and refused rm deletes by id or --all, refusing a command line
 // that names neither, or both (the public #7).
-func TestQuarantineCommands(t *testing.T) {
+func TestRefusedCommands(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
@@ -1253,30 +1253,30 @@ func TestQuarantineCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := do(ctx, "quarantine list", nil, strings.NewReader(""), &out, io.Discard); err != nil || strings.Contains(out.String(), "SYSTEM") {
-		t.Fatalf("quarantine list: %v %q", err, out.String())
+	if err := do(ctx, "refused list", nil, strings.NewReader(""), &out, io.Discard); err != nil || strings.Contains(out.String(), "SYSTEM") {
+		t.Fatalf("refused list: %v %q", err, out.String())
 	}
 	ls := printed(t, out.String())
-	if typesOf(ls) != "quarantined quarantined" || ls[0]["code"] != client.RefusedDecrypt || ls[0]["from"] != nil {
-		t.Fatalf("quarantine list printed %q", out.String())
+	if typesOf(ls) != "refused refused" || ls[0]["code"] != client.RefusedDecrypt || ls[0]["from"] != nil {
+		t.Fatalf("refused list printed %q", out.String())
 	}
 	for _, args := range [][]string{nil, {"--all", ls[0]["id"].(string)}, {"../inbox/x"}} {
 		var wrong *usageError
-		if err := do(ctx, "quarantine rm", args, strings.NewReader(""), io.Discard, io.Discard); !errors.As(err, &wrong) {
-			t.Errorf("quarantine rm %q: %v", args, err)
+		if err := do(ctx, "refused rm", args, strings.NewReader(""), io.Discard, io.Discard); !errors.As(err, &wrong) {
+			t.Errorf("refused rm %q: %v", args, err)
 		}
 	}
 	out.Reset()
-	if err := do(ctx, "quarantine rm", []string{ls[0]["id"].(string)}, strings.NewReader(""), &out, io.Discard); err != nil || out.String() != `{"type":"removed","id":"`+ls[0]["id"].(string)+`"}`+"\n" {
-		t.Fatalf("quarantine rm: %v %q", err, out.String())
+	if err := do(ctx, "refused rm", []string{ls[0]["id"].(string)}, strings.NewReader(""), &out, io.Discard); err != nil || out.String() != `{"type":"removed","id":"`+ls[0]["id"].(string)+`"}`+"\n" {
+		t.Fatalf("refused rm: %v %q", err, out.String())
 	}
 	out.Reset()
-	if err := do(ctx, "quarantine rm", []string{"--all"}, strings.NewReader(""), &out, io.Discard); err != nil || typesOf(printed(t, out.String())) != "removed" {
-		t.Fatalf("quarantine rm --all: %v %q", err, out.String())
+	if err := do(ctx, "refused rm", []string{"--all"}, strings.NewReader(""), &out, io.Discard); err != nil || typesOf(printed(t, out.String())) != "removed" {
+		t.Fatalf("refused rm --all: %v %q", err, out.String())
 	}
 	out.Reset()
-	if err := do(ctx, "quarantine list", nil, strings.NewReader(""), &out, io.Discard); err != nil || out.Len() != 0 {
-		t.Fatalf("quarantine list after: %v %q", err, out.String())
+	if err := do(ctx, "refused list", nil, strings.NewReader(""), &out, io.Discard); err != nil || out.Len() != 0 {
+		t.Fatalf("refused list after: %v %q", err, out.String())
 	}
 }
 
@@ -1554,7 +1554,7 @@ func TestHelpAndAWrongLineComeBeforeTheEnvironment(t *testing.T) {
 				t.Errorf("%v: %s --no-such-flag: %v, want a usage error", env, p, err)
 			}
 		}
-		for _, line := range []string{"prekey lifetime soon", "show not-an-id", "init --identity-type x", "quarantine rm", "prekey renew --pq --no-pq"} {
+		for _, line := range []string{"prekey lifetime soon", "show not-an-id", "init --identity-type x", "refused rm", "prekey renew --pq --no-pq"} {
 			if err := do(ctx, line, nil, nil, io.Discard, io.Discard); !errors.As(err, &u) {
 				t.Errorf("%v: %s: %v, want a usage error", env, line, err)
 			}
@@ -2187,9 +2187,9 @@ func TestHeldAndPeerCommands(t *testing.T) {
 	if ls := printed(t, out); err != nil || typesOf(ls) != "held" || ls[0]["from"] != a.Address().String() || errs != "" {
 		t.Fatalf("recv: %v, stdout %q, stderr %q", err, out, errs)
 	}
-	out, _, err = cmd("held")
-	var h client.HeldSender
-	if err != nil || typesOf(printed(t, out)) != "held_sender" || json.Unmarshal([]byte(out), &h) != nil || h.From != a.Address() || len(h.IDs) != 1 {
+	out, _, err = cmd("held list")
+	var h client.UnknownSender
+	if err != nil || typesOf(printed(t, out)) != "unknown_sender" || json.Unmarshal([]byte(out), &h) != nil || h.From != a.Address() || len(h.IDs) != 1 {
 		t.Fatalf("held: %v %q", err, out)
 	}
 	allowed := `{"type":"allowed","address":"` + a.Address().String() + `"}` + "\n"
@@ -2214,7 +2214,7 @@ func TestHeldAndPeerCommands(t *testing.T) {
 			t.Fatalf("%s: %v %q", args, err, out)
 		}
 	}
-	if out, _, err = cmd("held"); err != nil || out != "" {
+	if out, _, err = cmd("held list"); err != nil || out != "" {
 		t.Fatalf("held, with none: %v %q", err, out)
 	}
 	if _, _, err = cmd("peer allow", "--rebuild", a.Address().String()); err == nil {

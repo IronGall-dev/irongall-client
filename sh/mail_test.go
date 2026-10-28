@@ -299,7 +299,7 @@ func TestScriptDeliversARetryOnce(t *testing.T) {
 func (w *world) listing(edit func(*forge.Listed)) { forge.Lists(w.t, w.srv, edit) }
 
 // Mail a server forges, a replay, and what is no message: each REFUSED,
-// quarantined with its reason, and acked; nothing pinned by it. A from the
+// kept in refused/ with its reason, and acked; nothing pinned by it. A from the
 // server lists is never read.
 func TestScriptRefusesForgedMail(t *testing.T) {
 	w := newWorld(t)
@@ -410,17 +410,17 @@ func TestScriptRefusesForgedMail(t *testing.T) {
 		t.Errorf("a line before the envelope, a blank line before the signature, or no signature: %v", dr)
 	}
 	// The two refusals of A's genuine ciphertext share its hash, so one file.
-	q, _ := filepath.Glob(b.file("quarantine/*.json"))
-	reasons, _ := filepath.Glob(b.file("quarantine/*.reason"))
+	q, _ := filepath.Glob(b.file("refused/*.json"))
+	reasons, _ := filepath.Glob(b.file("refused/*.reason"))
 	if len(q) != refusals-1 || len(reasons) != refusals-1 || len(b.files("inbox")) != 3 {
-		t.Errorf("not every refusal quarantined with its reason, or one delivered: %d refusals, %d quarantined, %d reasons, inbox %q", refusals, len(q), len(reasons), b.files("inbox"))
+		t.Errorf("not every refusal kept in refused/ with its reason, or one delivered: %d refusals, %d kept in refused/, %d reasons, inbox %q", refusals, len(q), len(reasons), b.files("inbox"))
 	}
 	// Each keeps the ciphertext and the id the script hashed, and none of
 	// the server's strings (dr_kept; #454 item 1).
 	for _, f := range q {
 		var kept map[string]any
 		if err := protocol.Unmarshal(mustRead(t, f), &kept); err != nil || !slices.Equal(slices.Sorted(maps.Keys(kept)), []string{"ciphertext", "id"}) {
-			t.Errorf("quarantine/%s keeps the members %v, want ciphertext and id alone: %v", filepath.Base(f), slices.Sorted(maps.Keys(kept)), err)
+			t.Errorf("refused/%s keeps the members %v, want ciphertext and id alone: %v", filepath.Base(f), slices.Sorted(maps.Keys(kept)), err)
 		}
 	}
 	for _, f := range reasons {

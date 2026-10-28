@@ -42,7 +42,7 @@ func (w *world) answering(method, suffix string, edit func(rw http.ResponseWrite
 func TestScriptRefusesInItsOwnWords(t *testing.T) {
 	w := newWorld(t)
 	a, b := w.box(), w.box()
-	q0, p0 := len(b.files("quarantine")), len(b.files("peers"))
+	q0, p0 := len(b.files("refused")), len(b.files("peers"))
 	now, id := time.Now().UTC().Format(protocol.TimeLayout), b64(a.read("identity.doc"))
 	var evil1 string
 	for i, f := range []string{
@@ -62,8 +62,8 @@ func TestScriptRefusesInItsOwnWords(t *testing.T) {
 	}
 	_, said, _ := strings.Cut(d.said, "REFUSED "+evil1+": ")
 	said, _, _ = strings.Cut(said, "\n")
-	if strings.TrimSpace(b.read("quarantine/"+evil1+".reason")) != said || len(b.files("quarantine")) != q0+8 {
-		t.Errorf("quarantine/<hash>.reason does not keep what was said: %q, %q; %d files", b.read("quarantine/"+evil1+".reason"), said, len(b.files("quarantine")))
+	if strings.TrimSpace(b.read("refused/"+evil1+".reason")) != said || len(b.files("refused")) != q0+8 {
+		t.Errorf("refused/<hash>.reason does not keep what was said: %q, %q; %d files", b.read("refused/"+evil1+".reason"), said, len(b.files("refused")))
 	}
 	// Senders the server makes up, whose mail does not verify or does not decrypt.
 	op := w.operator()
@@ -106,7 +106,7 @@ func TestScriptRefusesInItsOwnWords(t *testing.T) {
 	// A fetch a byte short of the size its list gives, or a byte past it; a
 	// list whose cursor is not URL-safe.
 	a.mustSend(b, "whole or not at all")
-	q0 = len(b.files("quarantine"))
+	q0 = len(b.files("refused"))
 	for _, c := range []struct {
 		what, suffix, want string
 		edit               func(rw http.ResponseWriter, rec *httptest.ResponseRecorder)
@@ -146,7 +146,7 @@ func TestScriptRefusesInItsOwnWords(t *testing.T) {
 				fetched++
 			}
 		}
-		if d.rc == 0 || w.srv.Count(b.addr) != 1 || len(b.files("quarantine")) != q0 || !matches(c.want, d.said) || c.suffix != "" && fetched != 0 {
+		if d.rc == 0 || w.srv.Count(b.addr) != 1 || len(b.files("refused")) != q0 || !matches(c.want, d.said) || c.suffix != "" && fetched != 0 {
 			t.Errorf("%s: %v, %d fetched", c.what, d, fetched)
 		}
 	}

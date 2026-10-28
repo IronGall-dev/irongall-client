@@ -216,8 +216,8 @@ func (e *echo) once(ctx context.Context) (time.Duration, bool) {
 			refused = append(refused, r.ID)
 		}
 		if len(refused) > 0 {
-			if _, err := e.b.RemoveQuarantined(ctx, refused); err != nil {
-				e.log.Printf("the refused mail was not deleted from quarantine/: %v", err)
+			if _, err := e.b.RemoveRefused(ctx, refused); err != nil {
+				e.log.Printf("the refused mail was not deleted from refused/: %v", err)
 			}
 		}
 	}

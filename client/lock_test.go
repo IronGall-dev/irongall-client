@@ -297,7 +297,7 @@ func TestABoxSharedByGoroutinesRunsOneAtATime(t *testing.T) {
 func waits(b, c *client.Box, rec *protocol.Revocations, opt client.Options) map[string]func(context.Context) error {
 	return map[string]func(context.Context) error{
 		"Status":             func(ctx context.Context) error { _, err := b.Status(ctx); return err },
-		"Quarantined":        func(ctx context.Context) error { _, err := b.Quarantined(ctx); return err },
+		"RefusedMail":        func(ctx context.Context) error { _, err := b.RefusedMail(ctx); return err },
 		"NotMade":            func(ctx context.Context) error { _, err := b.NotMade(ctx); return err },
 		"Revocation":         func(ctx context.Context) error { _, err := b.Revocation(ctx); return err },
 		"CertificatesRecord": func(ctx context.Context) error { _, err := b.CertificatesRecord(ctx); return err },
@@ -309,7 +309,7 @@ func waits(b, c *client.Box, rec *protocol.Revocations, opt client.Options) map[
 		},
 		"KeepRevocation":    func(ctx context.Context) error { _, _, err := b.KeepRevocation(ctx, rec); return err },
 		"RebuildAllowed":    func(ctx context.Context) error { _, err := b.RebuildAllowed(ctx); return err },
-		"RemoveQuarantined": func(ctx context.Context) error { _, err := b.RemoveQuarantined(ctx, nil); return err },
+		"RemoveRefused":     func(ctx context.Context) error { _, err := b.RemoveRefused(ctx, nil); return err },
 		"SetPrekeyLifetime": func(ctx context.Context) error { return b.SetPrekeyLifetime(ctx, protocol.PrekeyLifetime) },
 		"Receive":           func(ctx context.Context) error { _, err := b.Receive(ctx); return err },
 		"Hold":              func(ctx context.Context) error { _, err := b.Hold(ctx, time.Second); return err },

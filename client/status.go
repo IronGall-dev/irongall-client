@@ -39,7 +39,7 @@ type Status struct {
 	Sent                int    `json:"sent"`
 	Outbox              int    `json:"outbox"`
 	OutboxFailed        int    `json:"outbox_failed"`
-	Quarantine          int    `json:"quarantine"`
+	Refused             int    `json:"refused"`
 	// Held is the mail held/ keeps from senders this box has not allowed.
 	Held int `json:"held"`
 	// Policy is what the box's policy file says, or the default.
@@ -85,7 +85,7 @@ func (b *Box) status() (*Status, error) {
 		}
 		s.Attention = append(s.Attention, why+": the next send, recv, allow or block sends this box's own")
 	}
-	for dir, n := range map[string]*int{"inbox/*.json": &s.Inbox, "sent/*.json": &s.Sent, "outbox/*.P": &s.Outbox, "outbox/failed/*.P": &s.OutboxFailed, "quarantine/*.json": &s.Quarantine, "held/*.json": &s.Held} {
+	for dir, n := range map[string]*int{"inbox/*.json": &s.Inbox, "sent/*.json": &s.Sent, "outbox/*.P": &s.Outbox, "outbox/failed/*.P": &s.OutboxFailed, "refused/*.json": &s.Refused, "held/*.json": &s.Held} {
 		names, err := filepath.Glob(b.path(filepath.FromSlash(dir)))
 		if err != nil {
 			return nil, err
@@ -148,11 +148,11 @@ func (b *Box) status() (*Status, error) {
 	if s.PrekeyNotMade != nil {
 		s.Attention = append(s.Attention, s.PrekeyNotMade.Words())
 	}
-	if s.Quarantine > 0 {
-		s.Attention = append(s.Attention, fmt.Sprintf("%d refused in quarantine/ (%s): each failed a check and was never delivered; dromas quarantine list says which, and dromas quarantine rm deletes them", s.Quarantine, b.quarantineCodes()))
+	if s.Refused > 0 {
+		s.Attention = append(s.Attention, fmt.Sprintf("%d refused in refused/ (%s): each failed a check and was never delivered; dromas refused list says which, and dromas refused rm deletes them", s.Refused, b.refusedCodes()))
 	}
 	if s.Held > 0 {
-		s.Attention = append(s.Attention, fmt.Sprintf("%d held in held/ from senders this box has not allowed: dromas held lists them by sender; dromas peer allow <address> delivers a sender's to inbox/, and dromas peer block <address> deletes them", s.Held))
+		s.Attention = append(s.Attention, fmt.Sprintf("%d held in held/ from senders this box has not allowed: dromas held list lists them by sender; dromas peer allow <address> delivers a sender's to inbox/, and dromas peer block <address> deletes them", s.Held))
 	}
 	if s.Outbox > 0 {
 		s.Attention = append(s.Attention, fmt.Sprintf("%d in outbox/ not delivered yet: dromas outbox flush sends them again", s.Outbox))
@@ -163,11 +163,11 @@ func (b *Box) status() (*Status, error) {
 	return s, nil
 }
 
-// quarantineCodes lists the distinct codes of the mail in quarantine/, from
+// refusedCodes lists the distinct codes of the mail in refused/, from
 // what the box's state keeps of each: a message it keeps no code for counts
 // as "unknown".
-func (b *Box) quarantineCodes() string {
-	qs, _ := b.quarantined()
+func (b *Box) refusedCodes() string {
+	qs, _ := b.refusedMail()
 	var codes []string
 	for _, q := range qs {
 		if !slices.Contains(codes, q.Code) {

@@ -322,7 +322,7 @@ func lockingCommands(ctx context.Context, a, b *client.Box, rec *protocol.Revoca
 		{"Flush", func() error { _, err := a.Flush(ctx); return err }},
 		{"SetAlias", func() error { return a.SetAlias(ctx, "peer", b.Address()) }},
 		{"RemoveAlias", func() error { return a.RemoveAlias(ctx, "peer") }},
-		{"RemoveQuarantined", func() error { _, err := a.RemoveQuarantined(ctx, nil); return err }},
+		{"RemoveRefused", func() error { _, err := a.RemoveRefused(ctx, nil); return err }},
 		{"SetPolicy", func() error {
 			return a.SetPolicy(ctx, client.Policy{Unknown: client.LandInbox, Server: client.AdmitAll})
 		}},

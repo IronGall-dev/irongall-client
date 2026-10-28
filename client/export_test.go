@@ -111,7 +111,7 @@ func PutRevocations(ctx context.Context, opt Options, a protocol.Address, rec *p
 // replay set's lines, "<hash> <sent_at> <from> <msg_id>", by sent_at),
 // "peers/<address>/<part>" (identity.doc, serial, cert-serial, prekey.txt,
 // prekey.sig, revoke.sig, revoked-certs.json), "prekeys/<serial>.<part>"
-// (txt, txt.sig, made) and "quarantine/<id>.reason" ("<code>: <reason>"),
+// (txt, txt.sig, made) and "refused/<id>.reason" ("<code>: <reason>"),
 // each a record's bytes as that file held them; and the records no file held,
 // "renewal" (the number of the renewal under way), "acl-read" (the read of
 // the server's ACL a renewal recv began owes), "adopt-acl" (a restore's
@@ -192,12 +192,12 @@ func (b *Box) Records() (map[string][]byte, error) {
 				out[k] = v
 			}
 		}
-		return s.each(bucketQuarantine, func(k, v []byte) error {
-			var q quarantineRecord
+		return s.each(bucketRefused, func(k, v []byte) error {
+			var q refusedRecord
 			if err := protocol.Unmarshal(v, &q); err != nil {
 				return err
 			}
-			out["quarantine/"+string(k)+".reason"] = []byte(q.Code + ": " + q.Reason)
+			out["refused/"+string(k)+".reason"] = []byte(q.Code + ": " + q.Reason)
 			return nil
 		})
 	})
@@ -314,20 +314,20 @@ func (b *Box) SetRecord(t *testing.T, name string, v []byte) {
 			if name == "renewal" || name == "acl-read" || name == "adopt-acl" {
 				return put(bucketIntent, name, v)
 			}
-			if rest, ok := strings.CutPrefix(name, "quarantine/"); ok {
+			if rest, ok := strings.CutPrefix(name, "refused/"); ok {
 				id, isReason := strings.CutSuffix(rest, ".reason")
 				if !isReason {
 					return fmt.Errorf("no record %s", name)
 				}
 				if v == nil {
-					return s.del(bucketQuarantine, id)
+					return s.del(bucketRefused, id)
 				}
 				code, reason, _ := strings.Cut(string(v), ": ")
-				raw, err := json.Marshal(quarantineRecord{Code: code, Reason: reason})
+				raw, err := json.Marshal(refusedRecord{Code: code, Reason: reason})
 				if err != nil {
 					return err
 				}
-				return s.put(bucketQuarantine, id, raw)
+				return s.put(bucketRefused, id, raw)
 			}
 			return fmt.Errorf("no record %s", name)
 		})

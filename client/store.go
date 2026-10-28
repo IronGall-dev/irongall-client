@@ -32,7 +32,7 @@ import (
 //	intent       the renewal under way, under "renewal": the number it took; under "adopt-acl", a restore's adoption of its server's ACL, until it is done; and under "acl-read", the read of its server's ACL a renewal recv began owes, with the serial the box had published then, until it is made
 //	peers        what this box pinned of each peer, by its address, in one value
 //	seen         the replay set, by ciphertext hash; seen-sender by sender and msg_id, and seen-time by sent_at, its two indexes
-//	quarantine   what this client's checks found of each message it refused, by its id: quarantine/ keeps the message as served
+//	refused      what this client's checks found of each message it refused, by its id: refused/ keeps the message as served
 const (
 	bucketBox        = "box"
 	bucketPrekeys    = "prekeys"
@@ -41,7 +41,7 @@ const (
 	bucketSeen       = "seen"
 	bucketSeenSender = "seen-sender"
 	bucketSeenTime   = "seen-time"
-	bucketQuarantine = "quarantine"
+	bucketRefused    = "refused"
 )
 
 // store is one transaction of the box's state. A store with no transaction

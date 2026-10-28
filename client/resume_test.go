@@ -172,7 +172,7 @@ func TestACutFetchGoesOnFromWhatItKept(t *testing.T) {
 
 // Bytes a server splices into the range it answers make a whole that is not
 // the ciphertext the id names: it is refused as a wrong body read whole is,
-// with the same code, kept in quarantine/ and acked, and the partial goes.
+// with the same code, kept in refused/ and acked, and the partial goes.
 func TestBytesSplicedIntoARangeAreRefusedAsAWrongCiphertext(t *testing.T) {
 	t.Parallel()
 	flip := func(ct []byte, at int) []byte {
@@ -208,8 +208,8 @@ func TestBytesSplicedIntoARangeAreRefusedAsAWrongCiphertext(t *testing.T) {
 		if len(res.Refused) != 1 || len(res.Delivered) != 0 || res.Refused[0].ID == id || e.srv.Count(b.Address()) != 0 {
 			t.Fatalf("spliced %v: %+v; the server holds %d", spliced, res, e.srv.Count(b.Address()))
 		}
-		if qs, err := b.Quarantined(t.Context()); err != nil || len(qs) != 1 {
-			t.Fatalf("spliced %v: quarantine/ holds %+v, %v", spliced, qs, err)
+		if qs, err := b.RefusedMail(t.Context()); err != nil || len(qs) != 1 {
+			t.Fatalf("spliced %v: refused/ holds %+v, %v", spliced, qs, err)
 		}
 		noPartial(t, b)
 		codes = append(codes, res.Refused[0].Code)

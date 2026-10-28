@@ -64,7 +64,7 @@ replaced ("acl_replaced"); from send and outbox flush, the post went ahead
 though the box's ACL was not sent ("acl_not_sent"); from prekey renew, its
 server served a prekey the box did not make ("prekey_not_made"); from status,
 its "attention" list is not empty. recv prints
-a "refused" line for each message it refused, keeping it in quarantine/, a
+a "refused" line for each message it refused, keeping it in refused/, a
 "held" line for each it held in held/, and a "dropped" line for each from a
 sender this box blocked: none of them changes its exit status, since any
 sender can cause them. A refusal's code is from a closed list, and its words
