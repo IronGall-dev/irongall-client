@@ -312,6 +312,7 @@ func waits(b, c *client.Box, rec *protocol.Revocations, opt client.Options) map[
 		"RemoveQuarantined": func(ctx context.Context) error { _, err := b.RemoveQuarantined(ctx, nil); return err },
 		"SetPrekeyLifetime": func(ctx context.Context) error { return b.SetPrekeyLifetime(ctx, protocol.PrekeyLifetime) },
 		"Receive":           func(ctx context.Context) error { _, err := b.Receive(ctx); return err },
+		"Hold":              func(ctx context.Context) error { _, err := b.Hold(ctx, time.Second); return err },
 		"Rekey":             func(ctx context.Context) error { _, err := b.Rekey(ctx, ""); return err },
 		"RevokeEarlier":     func(ctx context.Context) error { _, err := b.RevokeEarlier(ctx); return err },
 		"RenewAndRevoke":    func(ctx context.Context) error { _, err := b.RenewAndRevoke(ctx, ""); return err },

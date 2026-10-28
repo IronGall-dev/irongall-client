@@ -136,6 +136,9 @@ type Box struct {
 	// it, having begun with none (keepRevocation): that command asks nothing
 	// more (call), and returns it (locked). Each command begins with none.
 	ended *RevokedError
+	// holding is what the box has learned of its network while it holds
+	// its list (Hold), which the default client's connections follow.
+	holding holding
 }
 
 // Open opens an existing box's state directory. A directory holding only
@@ -176,7 +179,7 @@ func newBox(dir string, opt Options) (*Box, error) {
 		return nil, fmt.Errorf("this client makes no identity key of type %q: %s", b.identityType, strings.Join(protocol.IdentityTypes(), " or "))
 	}
 	if b.http == nil {
-		b.http, b.stall = &http.Client{}, true
+		b.http, b.stall = &http.Client{Transport: defaultTransport(&b.holding)}, true
 	} else {
 		c := *b.http
 		b.http = &c
