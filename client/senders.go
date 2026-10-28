@@ -267,12 +267,16 @@ type keptMessage struct {
 	SentAt string
 	Env    *protocol.Envelope
 	Line   []byte
-	kept   time.Time // when the drain wrote it: the order it arrived in, among messages sent in one second
+	kept   time.Time // when the drain wrote it: the order it arrived in, among messages sent in one second, where the file system's clock tells them apart
 }
 
 // keptMail reads dir, inbox/ or held/: each message this client kept there,
-// oldest first by sent_at, and in the order they were kept within a second. A
-// file that is not one of this client's lines ([Box.keptLine]) is skipped.
+// oldest first by sent_at, then in the order they were kept, then by id. Two
+// files written within one tick of the file system's clock share a
+// modification time (Windows' ticks about every 15.6 ms), so the order
+// within a second is the order recv kept them only where their times
+// differ; the id makes it the same on every run. A file that is not one of
+// this client's lines ([Box.keptLine]) is skipped.
 func (b *Box) keptMail(dir string) ([]keptMessage, error) {
 	names, err := filepath.Glob(b.path(dir, "*.json"))
 	if err != nil {
@@ -302,7 +306,10 @@ func (b *Box) keptMail(dir string) ([]keptMessage, error) {
 		if c := strings.Compare(x.SentAt, y.SentAt); c != 0 {
 			return c
 		}
-		return x.kept.Compare(y.kept)
+		if c := x.kept.Compare(y.kept); c != 0 {
+			return c
+		}
+		return strings.Compare(x.ID, y.ID)
 	})
 	return out, nil
 }
