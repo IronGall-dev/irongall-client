@@ -102,12 +102,17 @@ jobs:
         shell: cpa.sh {0} --environment-variables INSTALL
         env:
           INSTALL: ${{ matrix.os.install }}
+        # pkgsrc's go is a meta package that links no go command: its
+        # versioned package's bin is put first, in each step, where it is.
         run: |
           $INSTALL
+          for d in /usr/pkg/go1*/bin; do if [ -d "$d" ]; then PATH=$d:$PATH; fi; done
           uname -a; go version; ssh -V; jq --version; bash --version | head -1
       - name: check
         shell: cpa.sh {0}
-        run: scripts/check.sh full
+        run: |
+          for d in /usr/pkg/go1*/bin; do if [ -d "$d" ]; then PATH=$d:$PATH; fi; done
+          scripts/check.sh full
 
   lint:
     runs-on: ubuntu-26.04

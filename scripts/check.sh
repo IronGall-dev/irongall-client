@@ -40,6 +40,11 @@ unset DROMAS_HOME DROMAS_BOX DR_HOME DR_BOX # no test may meet a real box
 # A test skips when a tool it runs is missing. A runner with every tool skips
 # nothing, so a skip fails `full`, but for these.
 allowed=(-e 'run by the crash tests, in a process of its own')
+case $(uname -s) in
+  # Their base systems ship sha256(1) and no sha256sum: the vectors' hashes
+  # are held to sha256sum on every other runner.
+  OpenBSD | DragonFly) allowed+=(-e 'sha256sum is not installed') ;;
+esac
 
 pkgs=$(go list ./...)
 if [ -n "$nosh" ]; then
