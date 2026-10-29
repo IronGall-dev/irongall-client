@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptrace"
@@ -25,14 +26,22 @@ import (
 //     that ends each hold is traffic enough for most networks. A connection
 //     that drops before its hold ends is a network that forgets a silent
 //     connection sooner; the next is made with TCP keep-alive below the
-//     hold that dropped, so the connection lives and the wait stays long.
+//     drop, so the connection lives and the wait stays long. A drop the
+//     box sees as it comes (a reset) names when the network forgot the
+//     connection. One it sees only at its own deadline (a network that
+//     drops silently) names only a bound above that, so keep-alive halves
+//     at each such drop: a search for a bound no answer names, as path MTU
+//     discovery's binary search halves its range at each failed probe
+//     (RFC 4821 §7.3).
 //   - The request. Each asks the server to hold it for the box's wait,
-//     DefaultHold at first, and ends at that wait and a margin whether
-//     answered or not: a dead path is found there, never by a probe. Only a
-//     connection that drops with keep-alive on shortens the wait, never
-//     below MinHold. Holds start at most about once a minute (holdEvery),
-//     so a connection that fails at once is a minute's poll, within the
-//     poll budget (PROTOCOL.md §11.5).
+//     DefaultHold at first, and ends at that wait and a margin from the
+//     connection it got last, whether answered or not: a dead path is found
+//     there, never by a probe. Only a connection that drops with keep-alive
+//     at its floor shortens the wait, never below MinHold: a path whose
+//     probes keep nothing alive (an HTTP proxy's timeout, which TCP's
+//     keep-alive does not reach). Holds start at most about once a minute
+//     (holdEvery), so a connection that fails at once is a minute's poll,
+//     within the poll budget (PROTOCOL.md §11.5).
 
 // DefaultHold is how long a box asks the server to hold its list at first:
 // under the 5 minutes at which common networks drop a silent connection.
@@ -76,17 +85,37 @@ func (h *holding) current() (wait, keepAlive time.Duration) {
 	return h.wait, h.keepAlive
 }
 
-// dropped records a connection that dropped after held, before its hold
-// ended: the next connection gets keep-alive below that, and only one that
-// drops with keep-alive on shortens the wait, to under held. It returns what
-// the box asks for and sets from now on.
-func (h *holding) dropped(held time.Duration) (wait, keepAlive time.Duration) {
+// minKeepAlive is the shortest keep-alive a box's connections get, however
+// they drop.
+const minKeepAlive = MinHold / 2
+
+// dropped records a connection that dropped after held. One seen as it
+// dropped gives the next connection keep-alive below held; one seen only at
+// the hold's own deadline (silent) dropped at some time within the wait, so
+// keep-alive halves, from the wait at first. Once keep-alive is at its
+// floor, a drop shortens the wait instead: below held, or for a silent one
+// to half of it. It returns what the box asks for and sets from now on.
+func (h *holding) dropped(held time.Duration, silent bool) (wait, keepAlive time.Duration) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	below := max(held-holdMargin, MinHold/2)
-	if h.keepAlive == 0 || h.keepAlive > below {
+	if h.wait == 0 {
+		h.wait = DefaultHold
+	}
+	below := held - holdMargin
+	if silent {
+		below = h.keepAlive
+		if below == 0 {
+			below = min(h.wait, held)
+		}
+		below = (below / 2).Truncate(time.Second)
+	}
+	below = max(below, minKeepAlive)
+	switch {
+	case h.keepAlive == 0 || h.keepAlive > below:
 		h.keepAlive = below
-	} else {
+	case silent:
+		h.wait = max((h.wait / 2).Truncate(time.Second), MinHold)
+	default:
 		h.wait = max(min(h.wait, held)-holdMargin, MinHold)
 	}
 	return h.wait, h.keepAlive
@@ -102,13 +131,23 @@ func (h *holding) limiter() *rate.Limiter {
 }
 
 // keepAliveOf is the keep-alive a connection of the default client gets:
-// none, or what a drop taught the box (holding.dropped).
+// none, or what the box's drops taught it (holding.dropped).
 func (h *holding) keepAliveOf() net.KeepAliveConfig {
 	_, ka := h.current()
 	if ka == 0 {
 		return net.KeepAliveConfig{Enable: false}
 	}
 	return net.KeepAliveConfig{Enable: true, Idle: ka, Interval: ka, Count: 3}
+}
+
+// dialer is what makes a connection of the default client: keep-alive as
+// keepAliveOf says, and otherwise none, where net's default sends it.
+func (h *holding) dialer() *net.Dialer {
+	d := &net.Dialer{Timeout: dialTimeout, KeepAliveConfig: h.keepAliveOf()}
+	if !d.KeepAliveConfig.Enable {
+		d.KeepAlive = -1
+	}
+	return d
 }
 
 // defaultTransport is the default client's: net/http's own, a TLS session
@@ -118,11 +157,7 @@ func defaultTransport(h *holding) *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.TLSClientConfig = &tls.Config{ClientSessionCache: tls.NewLRUClientSessionCache(0)}
 	t.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-		d := net.Dialer{Timeout: dialTimeout, KeepAliveConfig: h.keepAliveOf()}
-		if !d.KeepAliveConfig.Enable {
-			d.KeepAlive = -1
-		}
-		return d.DialContext(ctx, network, addr)
+		return h.dialer().DialContext(ctx, network, addr)
 	}
 	return t
 }
@@ -132,34 +167,107 @@ type HoldResult struct {
 	// Changed reports that the box's list changed, or that the box must
 	// receive to find out (its pass refused): a Receive follows.
 	Changed bool
-	// Dropped reports that the connection dropped before the hold ended;
-	// Wait and KeepAlive are then what the box asks for from now on.
-	Dropped         bool
-	After           time.Duration // how long the request was held
+	// Dropped reports that a connection of the hold dropped: before the
+	// hold's answer, seen as it dropped or only at the hold's deadline, or
+	// on a reused connection that net/http sent the request again past,
+	// which the hold's answer then follows. Wait and KeepAlive are then what
+	// the box asks for from now on.
+	Dropped bool
+	// After is how long the request was held on the connection it got
+	// last.
+	After           time.Duration
 	Wait, KeepAlive time.Duration
 }
 
 // heldFor is the context key of the bound on a held list's call, in place
-// of requestTimeout (exchange).
+// of requestTimeout (exchange, heldBound).
 type heldFor struct{}
+
+// errHeldOut is a held list's call cut at its bound, unanswered.
+var errHeldOut = fmt.Errorf("no answer within the wait: %w", context.DeadlineExceeded)
+
+// heldBound is ctx, cut with errHeldOut once d passes from the connection
+// its request got last: net/http sends a GET again, once, on a new
+// connection when a reused one drops before its answer, and that request's
+// bound is its own.
+func heldBound(ctx context.Context, d time.Duration) (context.Context, func()) {
+	ctx, cancel := context.WithCancelCause(ctx)
+	t := time.AfterFunc(d, func() { cancel(errHeldOut) })
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) { t.Reset(d) }})
+	return ctx, func() {
+		t.Stop()
+		cancel(nil)
+	}
+}
+
+// timedOut reports whether err is a call cut by a bound on its time, with
+// no answer: a drop the box did not see as it came.
+func timedOut(err error) bool {
+	var ne net.Error
+	return errors.Is(err, context.DeadlineExceeded) || errors.As(err, &ne) && ne.Timeout()
+}
+
+// Transient reports whether err is a call that failed and that making it
+// again may get past: no answer, a server error, a rate limit or a request
+// timeout. A refusal no wait mends, a revocation or an answer out of its
+// form, is not.
+func Transient(err error) bool {
+	var ae *APIError
+	var re *RevokedError
+	switch {
+	case err == nil, errors.As(err, &re):
+		return false
+	case errors.As(err, &ae):
+		return ae.Status >= 500 || ae.Status == http.StatusTooManyRequests || ae.Status == http.StatusRequestTimeout
+	}
+	var te *transportError
+	return errors.As(err, &te)
+}
+
+// turn waits for the box's turn to start a hold, one a minute on average,
+// for up to wait: false is a turn later than that, whose wait it has waited
+// out instead.
+func (h *holding) turn(ctx context.Context, wait time.Duration) (bool, error) {
+	r := h.limiter().Reserve()
+	d := r.Delay()
+	if d >= wait {
+		r.Cancel()
+		d = max(wait, 0)
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		r.Cancel()
+		return false, ctx.Err()
+	case <-t.C:
+	}
+	return d < wait, nil
+}
 
 // Hold holds the box's list for up to wait, or the box's own wait if that
 // is shorter (DefaultHold, or what its drops taught it): the server answers
 // once the box's first page changes, or at the wait with nothing new. It
-// first waits its turn (one a minute on average), then holds the box's lock
-// only to read its tag and its pass, never through the hold, so the box's
-// other commands go on meanwhile. The held request reads nothing of the
-// box's state: an answer about a revocation is proved under the lock once it
-// comes (provedLocked).
+// first waits its turn (one a minute on average), and where the turn comes
+// past the wait, it waits the wait out and holds nothing. It then holds the
+// box's lock only to read its tag and its pass, never through the hold, so
+// the box's other commands go on meanwhile. The held request reads nothing
+// of the box's state: an answer about a revocation is proved under the lock
+// once it comes (provedLocked).
 //
 // A box with no tag kept, one whose last list found mail, or whose pass the
 // server refused, is Changed at once, for a Receive to settle. An error is a
-// call that failed and that holding again may get past: a refusal no wait
-// mends (a revocation, an answer out of its form) is one too, which a caller
-// tells by its kind ([APIError], [RevokedError]).
+// call that failed and that holding again may get past ([Transient]): a
+// refusal no wait mends (a revocation, an answer out of its form) is one
+// too, which a caller tells by its kind ([APIError], [RevokedError]).
 func (b *Box) Hold(ctx context.Context, wait time.Duration) (*HoldResult, error) {
-	if err := b.holding.limiter().Wait(ctx); err != nil {
-		return nil, err
+	own, _ := b.holding.current()
+	wait = min(wait, own)
+	if ok, err := b.holding.turn(ctx, wait); err != nil || !ok {
+		if err != nil {
+			return nil, err
+		}
+		return &HoldResult{}, nil
 	}
 	type kept struct{ pass, tag, path string }
 	k, err := locked(ctx, b, func() (kept, error) {
@@ -176,46 +284,59 @@ func (b *Box) Hold(ctx context.Context, wait time.Duration) (*HoldResult, error)
 	if k.tag == "" {
 		return &HoldResult{Changed: true}, nil
 	}
-	own, _ := b.holding.current()
-	wait = min(wait, own)
 	hdr := http.Header{"If-None-Match": {k.tag}, "Authorization": {k.pass}}
 	path := k.path + "?wait=" + strconv.FormatInt(int64(wait/time.Second), 10)
 	// How long the request was held is timed from the connection it got
 	// last: net/http sends a GET again, once, on a new connection when a
 	// reused one drops before its answer, and a drop is the connection's.
+	// A connection asked for after one was got is asked for past a drop,
+	// seen as it came; it is learned then, before the next is dialled.
+	h := &HoldResult{}
 	var mu sync.Mutex
+	var got bool
 	start := time.Now()
-	trace := &httptrace.ClientTrace{GotConn: func(httptrace.GotConnInfo) {
-		mu.Lock()
-		defer mu.Unlock()
-		start = time.Now()
-	}}
+	trace := &httptrace.ClientTrace{
+		GetConn: func(string) {
+			mu.Lock()
+			defer mu.Unlock()
+			if lived := time.Since(start); got && lived >= MinHold/2 {
+				h.Dropped = true
+				h.Wait, h.KeepAlive = b.holding.dropped(lived, false)
+			}
+		},
+		GotConn: func(httptrace.GotConnInfo) {
+			mu.Lock()
+			defer mu.Unlock()
+			got, start = true, time.Now()
+		},
+	}
 	held := httptrace.WithClientTrace(context.WithValue(ctx, heldFor{}, wait+holdMargin), trace)
 	var list protocol.MessageList
 	resp, err := b.exchange(held, http.MethodGet, path, nil, hdr, &list)
 	mu.Lock()
 	after := time.Since(start)
+	h.After = after
 	mu.Unlock()
 	err = b.provedLocked(ctx, http.MethodGet, path, err)
 	var te *transportError
 	switch {
 	case err == nil && resp.StatusCode == http.StatusNotModified && sameTag(resp.Header.Get("ETag"), k.tag):
-		return &HoldResult{After: after}, nil
-	case err == nil:
-		return &HoldResult{Changed: true, After: after}, nil
-	case passRefused(code(err)):
-		return &HoldResult{Changed: true, After: after}, nil
+	case err == nil, passRefused(code(err)):
+		h.Changed = true
 	case ctx.Err() == nil && errors.As(err, &te) && after >= MinHold/2:
 		// The connection dropped part way through a hold, or its answer
 		// never came: a network that forgets a silent connection.
 		b.http.CloseIdleConnections()
-		w, ka := b.holding.dropped(after)
-		return &HoldResult{Dropped: true, After: after, Wait: w, KeepAlive: ka}, nil
+		h.Dropped = true
+		h.Wait, h.KeepAlive = b.holding.dropped(after, timedOut(err))
 	case errors.As(err, &te):
 		// No answer at all: the next connection is a new one.
 		b.http.CloseIdleConnections()
+		return nil, err
+	default:
+		return nil, err
 	}
-	return nil, err
+	return h, nil
 }
 
 // ReceiveEvery is the longest Await holds before it returns for a Receive,
@@ -229,7 +350,8 @@ const ReceiveEvery = time.Hour
 // error, a rate limit) is held again, after its Retry-After where it gives
 // one; a refusal no wait mends ends it, as its error. say, when not nil, is
 // told of each: a held request that failed, with its error, and a
-// connection that dropped part way, with its HoldResult.
+// connection that dropped, with its HoldResult. Await returns by until, its
+// waits for a turn to hold included (Hold).
 //
 // With under a second left Await waits it out, so the Receive after is the
 // caller's last, never one of a burst of polls until the deadline passes.
@@ -247,7 +369,7 @@ func (b *Box) Await(ctx context.Context, until time.Time, say func(*HoldResult, 
 		switch {
 		case ctx.Err() != nil:
 			return ctx.Err()
-		case errors.As(err, &re), errors.As(err, &ae) && ae.Status < 500 && ae.Status != http.StatusTooManyRequests && ae.Status != http.StatusRequestTimeout:
+		case errors.As(err, &re), errors.As(err, &ae) && !Transient(err):
 			return err
 		case err != nil:
 			say(nil, err)
@@ -258,9 +380,12 @@ func (b *Box) Await(ctx context.Context, until time.Time, say func(*HoldResult, 
 				case <-time.After(min(ae.RetryAfter, time.Until(until))):
 				}
 			}
-		case h.Dropped:
+			continue
+		}
+		if h.Dropped {
 			say(h, nil)
-		case h.Changed:
+		}
+		if h.Changed {
 			return nil
 		}
 	}

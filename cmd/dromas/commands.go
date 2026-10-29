@@ -494,12 +494,16 @@ func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration, headers 
 		if res != nil && res.Again() > 0 {
 			pause = res.Again()
 		}
-		// A rate limit or a restarting server says how long to wait:
-		// --wait waits it out when there is time to poll again after.
+		// A call that failed and that making again may get past (no answer,
+		// a server error, a rate limit) is made again after its Retry-After,
+		// or a minute: --wait waits it out when there is time to poll again
+		// after, as its holds do (client.Box.Await).
 		var ae *client.APIError
-		if errors.As(err, &ae) && ae.RetryAfter > 0 && time.Until(deadline) > ae.RetryAfter {
-			e.say(line("waiting", append([]any{"for", "server"}, failure(err)...)...))
+		if errors.As(err, &ae) && ae.RetryAfter > 0 {
 			pause = ae.RetryAfter
+		}
+		if client.Transient(err) && (res == nil || len(res.Delivered) == 0) && time.Until(deadline) > pause {
+			e.say(line("waiting", append([]any{"for", "server"}, failure(err)...)...))
 		} else if err != nil || len(res.Delivered) > 0 || !time.Now().Before(deadline) {
 			if err == nil && (renewErr != nil || aclErr != nil || notMade != nil || replaced) {
 				return &needsALook{}

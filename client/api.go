@@ -108,14 +108,14 @@ func (b *Box) exchange(ctx context.Context, method, path string, in any, hdr htt
 		if rawIn || raw {
 			ctx, cut = newStall(ctx)
 			defer cut.stop()
+		} else if d, ok := ctx.Value(heldFor{}).(time.Duration); ok {
+			// A held list is bounded by its wait instead (Hold).
+			var stop func()
+			ctx, stop = heldBound(ctx, d)
+			defer stop()
 		} else {
 			var cancel context.CancelFunc
-			// A held list is bounded by its wait instead (Hold).
-			limit := requestTimeout
-			if d, ok := ctx.Value(heldFor{}).(time.Duration); ok {
-				limit = d
-			}
-			ctx, cancel = context.WithTimeout(ctx, limit)
+			ctx, cancel = context.WithTimeout(ctx, requestTimeout)
 			defer cancel()
 		}
 	}
@@ -137,6 +137,10 @@ func (b *Box) exchange(ctx context.Context, method, path string, in any, hdr htt
 	name = method + " " + name
 	resp, err := b.http.Do(req)
 	if err != nil {
+		if errors.Is(context.Cause(ctx), errHeldOut) {
+			// net/http reports it as the context canceled.
+			err = errHeldOut
+		}
 		return nil, noAnswer(name, "no answer that is HTTP", cut.why(err))
 	}
 	answered := resp.StatusCode >= 200 && resp.StatusCode <= 299

@@ -154,15 +154,17 @@ func start(ctx context.Context, dir, identity string, opt client.Options, kt pro
 
 // run drains the box and answers, then holds its list until a message
 // arrives (client.Box.Await), so a reply goes within seconds of it. A box
-// with replies not yet posted holds for at most the poll interval, when it
-// retries them; a drain that failed, or left mail on the server, waits that
-// interval with no hold.
+// with replies not yet posted holds for at most the poll interval, then
+// retries them, and drains again only once its list has changed: one list
+// an interval, the hold's, as the poll budget allows. A drain that failed,
+// or left mail on the server, waits that interval with no hold.
 func (e *echo) run(ctx context.Context) error {
+	pause, hold := e.once(ctx)
 	for {
-		pause, hold := e.once(ctx)
 		if hold {
 			var until time.Time
-			if pending, _ := filepath.Glob(filepath.Join(e.b.Dir(), "outbox", "*.P")); len(pending) > 0 {
+			pending, _ := filepath.Glob(filepath.Join(e.b.Dir(), "outbox", "*.P"))
+			if len(pending) > 0 {
 				until = time.Now().Add(pause)
 			}
 			err := e.b.Await(ctx, until, func(h *client.HoldResult, err error) {
@@ -170,12 +172,18 @@ func (e *echo) run(ctx context.Context) error {
 					e.log.Printf("hold: %v", err)
 					return
 				}
-				e.log.Printf("the connection dropped after %s held: the wait is now %s, with keep-alive every %s", h.After, h.Wait, h.KeepAlive)
+				e.log.Printf("a connection dropped, after %s held: the wait is now %s, with keep-alive every %s", h.After, h.Wait, h.KeepAlive)
 			})
 			switch {
 			case ctx.Err() != nil:
 				return nil
+			case err == nil && len(pending) > 0 && !time.Now().Before(until):
+				// The interval passed with nothing new: the replies are
+				// retried, and the box's list is held again, not drained.
+				e.retry(ctx)
+				continue
 			case err == nil:
+				pause, hold = e.once(ctx)
 				continue
 			}
 			e.log.Printf("hold: %v", err)
@@ -185,6 +193,7 @@ func (e *echo) run(ctx context.Context) error {
 			return nil
 		case <-time.After(pause):
 		}
+		pause, hold = e.once(ctx)
 	}
 }
 

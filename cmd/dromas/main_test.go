@@ -23,6 +23,7 @@ import (
 	"sync/atomic"
 	"syscall"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"filippo.io/age"
@@ -38,6 +39,12 @@ import (
 // do runs one command line: the command's words, then its arguments.
 func do(ctx context.Context, command string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	return run(ctx, append(strings.Fields(command), args...), stdin, stdout, stderr)
+}
+
+// doWith is do with the box's options opt: for a server in memory, its
+// client.
+func doWith(ctx context.Context, opt client.Options, command string, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	return runWith(ctx, opt, append(strings.Fields(command), args...), stdin, stdout, stderr)
 }
 
 // printed is what a command printed, read back: every line must be one JSON
@@ -299,56 +306,117 @@ func TestRecvWaitRidesOutARateLimit(t *testing.T) {
 // recv --wait holds the list, and returns with a message the moment it
 // arrives, not at the next poll: one hold, woken by the send.
 func TestRecvWaitIsWokenByAMessage(t *testing.T) {
-	ctx := context.Background()
-	srv := fakeserver.New(t, time.Now)
-	opt := client.Options{Base: srv.URL}
-	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
-	if err != nil {
-		t.Fatal(err)
-	}
-	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
-	if err != nil {
-		t.Fatal(err)
-	}
-	allows(t, b, a)
-	var holds atomic.Int32
-	srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if r.URL.Query().Has("wait") {
-			holds.Add(1)
+	synctest.Test(t, func(t *testing.T) {
+		ctx := context.Background()
+		srv := fakeserver.NewInMemory(t, time.Now)
+		opt := client.Options{Base: srv.URL, HTTPClient: srv.Client()}
+		a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+		if err != nil {
+			t.Fatal(err)
 		}
-		next.ServeHTTP(w, r)
+		b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+		if err != nil {
+			t.Fatal(err)
+		}
+		allows(t, b, a)
+		var holds atomic.Int32
+		srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if r.URL.Query().Has("wait") {
+				holds.Add(1)
+			}
+			next.ServeHTTP(w, r)
+		})
+		// The send's goroutine is waited for before the test ends: it writes
+		// a's directory, which the test's cleanup removes.
+		sent := make(chan struct{})
+		t.Cleanup(func() { <-sent })
+		go func() {
+			defer close(sent)
+			time.Sleep(2 * time.Second)
+			_, _ = a.Send(ctx, b.Address(), "woke the hold")
+		}()
+		t.Setenv("DROMAS_HOME", b.Dir())
+		t.Setenv("DROMAS_SERVER_URL", srv.URL)
+		var out, errs bytes.Buffer
+		start := time.Now()
+		if err := doWith(ctx, opt, "recv", []string{"--wait", "1m"}, strings.NewReader(""), &out, &errs); err != nil {
+			t.Fatalf("recv --wait: %v %s", err, errs.String())
+		}
+		if took := time.Since(start); !strings.Contains(out.String(), `"body":"woke the hold"`) || holds.Load() != 1 || took != 2*time.Second {
+			t.Fatalf("recv --wait: %q after %s in %d holds, %s", out.String(), took, holds.Load(), errs.String())
+		}
 	})
-	// The send's goroutine is waited for before the test ends: it writes
-	// a's directory, which the test's cleanup removes.
-	sent := make(chan struct{})
-	t.Cleanup(func() { <-sent })
-	go func() {
-		defer close(sent)
-		time.Sleep(2 * time.Second)
-		_, _ = a.Send(ctx, b.Address(), "woke the hold")
-	}()
-	t.Setenv("DROMAS_HOME", b.Dir())
-	t.Setenv("DROMAS_SERVER_URL", srv.URL)
-	var out, errs bytes.Buffer
-	start := time.Now()
-	if err := do(ctx, "recv", []string{"--wait", "1m"}, strings.NewReader(""), &out, &errs); err != nil {
-		t.Fatalf("recv --wait: %v %s", err, errs.String())
-	}
-	if took := time.Since(start); !strings.Contains(out.String(), `"body":"woke the hold"`) || holds.Load() != 1 || took > 10*time.Second {
-		t.Fatalf("recv --wait: %q after %s in %d holds, %s", out.String(), took, holds.Load(), errs.String())
-	}
 }
 
 // recv --wait with nothing to receive ends at its duration with one poll
 // after its last hold, never a burst of polls in its last second.
 func TestRecvWaitEndsWithoutABurstOfPolls(t *testing.T) {
-	ctx := context.Background()
-	srv := fakeserver.New(t, time.Now)
-	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var polls, holds atomic.Int32
+	synctest.Test(t, func(t *testing.T) {
+		ctx := context.Background()
+		srv := fakeserver.NewInMemory(t, time.Now)
+		opt := client.Options{Base: srv.URL, HTTPClient: srv.Client()}
+		b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+		if err != nil {
+			t.Fatal(err)
+		}
+		polls, holds := listsOf(srv)
+		t.Setenv("DROMAS_HOME", b.Dir())
+		t.Setenv("DROMAS_SERVER_URL", srv.URL)
+		var out, errs bytes.Buffer
+		start := time.Now()
+		if err := doWith(ctx, opt, "recv", []string{"--wait", "3s"}, strings.NewReader(""), &out, &errs); err != nil {
+			t.Fatalf("recv --wait: %v %s", err, errs.String())
+		}
+		if took := time.Since(start); polls.Load() != 2 || holds.Load() != 1 || took != 3*time.Second {
+			t.Fatalf("recv --wait 3s made %d polls and %d holds in %v, want 2 and 1 in 3s", polls.Load(), holds.Load(), took)
+		}
+	})
+}
+
+// recv --wait whose drain gets no answer waits and drains again, as its
+// holds do, for as long as --wait lasts.
+func TestRecvWaitGoesOnPastADrainUnanswered(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx := context.Background()
+		srv := fakeserver.NewInMemory(t, time.Now)
+		opt := client.Options{Base: srv.URL, HTTPClient: srv.Client()}
+		a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+		if err != nil {
+			t.Fatal(err)
+		}
+		allows(t, b, a)
+		var n atomic.Int32
+		srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if r.Method == http.MethodGet && r.URL.Path == "/v1/"+b.Address().String()+"/messages" && !r.URL.Query().Has("wait") && n.Add(1) == 1 {
+				panic(http.ErrAbortHandler) // the run's first drain: no answer
+			}
+			next.ServeHTTP(w, r)
+		})
+		if _, err := a.Send(ctx, b.Address(), "after the drain that failed"); err != nil {
+			t.Fatal(err)
+		}
+		t.Setenv("DROMAS_HOME", b.Dir())
+		t.Setenv("DROMAS_SERVER_URL", srv.URL)
+		var out, errs bytes.Buffer
+		start := time.Now()
+		if err := doWith(ctx, opt, "recv", []string{"--wait", "3m"}, strings.NewReader(""), &out, &errs); err != nil {
+			t.Fatalf("recv --wait: %v %s", err, errs.String())
+		}
+		if took := time.Since(start); !strings.Contains(out.String(), `"body":"after the drain that failed"`) || took != time.Minute ||
+			!strings.Contains(errs.String(), `{"type":"waiting","for":"server"`) {
+			t.Fatalf("recv --wait 3m: %q after %v; stderr %q", out.String(), took, errs.String())
+		}
+	})
+}
+
+// listsOf counts the lists of the first page made of srv's boxes: the
+// polls, and the held ones.
+func listsOf(srv *fakeserver.Server) (polls, holds *atomic.Int32) {
+	polls, holds = new(atomic.Int32), new(atomic.Int32)
 	srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/messages") {
 			if r.URL.Query().Has("wait") {
@@ -359,15 +427,7 @@ func TestRecvWaitEndsWithoutABurstOfPolls(t *testing.T) {
 		}
 		next.ServeHTTP(w, r)
 	})
-	t.Setenv("DROMAS_HOME", b.Dir())
-	t.Setenv("DROMAS_SERVER_URL", srv.URL)
-	var out, errs bytes.Buffer
-	if err := do(ctx, "recv", []string{"--wait", "3s"}, strings.NewReader(""), &out, &errs); err != nil {
-		t.Fatalf("recv --wait: %v %s", err, errs.String())
-	}
-	if polls.Load() > 2 || holds.Load() != 1 {
-		t.Fatalf("recv --wait 3s made %d polls and %d holds, want at most 2 and 1", polls.Load(), holds.Load())
-	}
+	return polls, holds
 }
 
 func must(t *testing.T, name string) []byte {

@@ -69,6 +69,13 @@ func Bounded(b *Box) *Box {
 	return b
 }
 
+// KeepAliveOf is the keep-alive a new connection of b's default client
+// gets now: none is zero.
+func KeepAliveOf(b *Box) time.Duration {
+	_, ka := b.holding.current()
+	return ka
+}
+
 // Partial is what the box's state records of its partial file: which
 // message it is of, and how many of its bytes are synced; "" and 0 for none.
 func (b *Box) Partial() (string, int64, error) { return b.partialRecord() }

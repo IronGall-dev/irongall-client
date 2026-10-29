@@ -2,7 +2,11 @@ package client_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
+	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -114,40 +118,126 @@ func TestAHeldListShownTheBoxsOwnRevocationKeepsIt(t *testing.T) {
 	})
 }
 
-func TestADroppedHoldKeepsAliveThenShortensItsWait(t *testing.T) {
+// path is a network between a box and its server that forgets a
+// connection idle for idle: a held list's answer comes through when its
+// wait is under idle, or when the box keeps its connection alive below idle
+// and the path's keepAlive says probes reach what forgets (a NAT's table,
+// not an HTTP proxy's timeout). Otherwise the connection drops at idle: by
+// a reset the box sees, or, silent, with the answer never coming.
+type path struct {
+	idle              time.Duration
+	silent, keepAlive bool
+}
+
+// on has e's server answer b's held lists through p, and counts them.
+func (p path) on(e *env, b *client.Box) *atomic.Int32 {
+	var n atomic.Int32
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if !r.URL.Query().Has("wait") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		n.Add(1)
+		s, _ := strconv.Atoi(r.URL.Query().Get("wait"))
+		ka := client.KeepAliveOf(b) // as the connection was dialled: a box's own reads it then
+		if time.Duration(s)*time.Second < p.idle || p.keepAlive && ka > 0 && ka < p.idle {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if p.silent {
+			<-r.Context().Done() // the answer never reaches the box
+			return
+		}
+		time.Sleep(p.idle)
+		panic(http.ErrAbortHandler)
+	})
+	return &n
+}
+
+// settle holds b's list until a hold neither drops nor fails, and returns
+// how many holds that took, the last one's result and the time it all took.
+func settle(t *testing.T, b *client.Box) (int, *client.HoldResult, time.Duration) {
+	t.Helper()
+	start := time.Now()
+	for i := 1; i <= 20; i++ {
+		h, err := b.Hold(context.Background(), time.Hour)
+		if err == nil && !h.Dropped {
+			return i, h, time.Since(start)
+		}
+	}
+	t.Fatalf("not settled in 20 holds, %v", time.Since(start))
+	return 0, nil, 0
+}
+
+// TestADropIsLearnedInAFewHolds: a box learns how its path forgets a held
+// connection within a few holds, with keep-alive below the path's idle
+// timeout where probes reach it and its wait kept, and its wait below that
+// timeout only where they do not. A drop seen only at the hold's deadline
+// halves keep-alive, from the wait, then the wait; one seen as it comes
+// puts keep-alive below it.
+func TestADropIsLearnedInAFewHolds(t *testing.T) {
+	for _, c := range []struct {
+		name            string
+		p               path
+		holds           int
+		took            time.Duration
+		wait, keepAlive time.Duration
+	}{
+		// 5m (a wait and its margin, unanswered), then the 4m45s wait.
+		{"a NAT at 4 minutes that drops silently", path{4 * time.Minute, true, true}, 2, 9*time.Minute + 45*time.Second,
+			client.DefaultHold, 2*time.Minute + 22*time.Second},
+		{"a NAT at 2 minutes that drops silently", path{2 * time.Minute, true, true}, 3, 14*time.Minute + 45*time.Second,
+			client.DefaultHold, time.Minute + 11*time.Second},
+		// The reset comes on the connection the box's first receive left
+		// idle, which net/http sends the request again past, on a new
+		// connection that keeps alive below it: one hold that drops and is
+		// answered, then one that is not dropped.
+		{"a NAT at 2 minutes that resets", path{2 * time.Minute, false, true}, 2, 2*time.Minute + 2*client.DefaultHold,
+			client.DefaultHold, time.Minute + 45*time.Second},
+		// Probes keep nothing alive: twice reset in the first hold, which
+		// then shortens the wait below the reset.
+		{"a proxy at 2 minutes that resets", path{2 * time.Minute, false, false}, 2, 4*time.Minute + time.Minute + 45*time.Second,
+			time.Minute + 45*time.Second, time.Minute + 45*time.Second},
+		// Keep-alive halves to its floor (2m22s, 1m11s, 35s, 30s), then the
+		// wait halves below the timeout (2m22s, 1m11s).
+		{"a proxy at 2 minutes that drops silently", path{2 * time.Minute, true, false}, 7,
+			5*(client.DefaultHold+15*time.Second) + 2*time.Minute + 37*time.Second + time.Minute + 11*time.Second,
+			time.Minute + 11*time.Second, client.MinHold / 2},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				e := newMemEnv(t)
+				b := e.box(protocol.Classic)
+				receive(t, b)
+				c.p.on(e, b)
+				holds, h, took := settle(t, b)
+				// The last hold neither dropped nor changed: it held its wait.
+				if k := client.KeepAliveOf(b); holds != c.holds || took != c.took || h.After != c.wait || k != c.keepAlive {
+					t.Fatalf("settled after %d holds in %v, the last holding %v with keep-alive %v; want %d holds in %v, holding %v with keep-alive %v",
+						holds, took, h.After, k, c.holds, c.took, c.wait, c.keepAlive)
+				}
+			})
+		})
+	}
+}
+
+// TestADropAtOnceTeachesNothing: a connection that drops as soon as it
+// holds is no network that forgets a silent connection, and changes neither
+// keep-alive nor the wait.
+func TestADropAtOnceTeachesNothing(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := newMemEnv(t)
 		b := e.box(protocol.Classic)
 		receive(t, b)
-		drop := 2 * time.Minute
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if r.URL.Query().Has("wait") {
-				time.Sleep(drop)
-				panic(http.ErrAbortHandler) // the connection drops, unanswered
+				panic(http.ErrAbortHandler)
 			}
 			next.ServeHTTP(w, r)
 		})
-		below := drop - 15*time.Second
-		// The first drop keeps the wait and turns keep-alive on below it.
-		h := <-held(b, time.Hour)
-		if h == nil || !h.Dropped || h.After != drop || h.Wait != client.DefaultHold || h.KeepAlive != below {
-			t.Fatalf("the first drop came to %+v, want the wait kept and keep-alive at %v", h, below)
-		}
-		// One that drops with keep-alive on shortens the wait below it.
-		h = <-held(b, time.Hour)
-		if h == nil || !h.Dropped || h.Wait != below || h.KeepAlive != below {
-			t.Fatalf("the second drop came to %+v, want the wait at %v", h, below)
-		}
-		// A drop sooner than its keep-alive lowers the keep-alive first, never
-		// under half a minute, and only then the wait, never under a minute.
-		drop = 40 * time.Second
-		h = <-held(b, time.Hour)
-		if h == nil || !h.Dropped || h.Wait != below || h.KeepAlive != client.MinHold/2 {
-			t.Fatalf("a drop at 40 s came to %+v, want keep-alive at %v and the wait kept", h, client.MinHold/2)
-		}
-		h = <-held(b, time.Hour)
-		if h == nil || !h.Dropped || h.Wait != client.MinHold {
-			t.Fatalf("a second drop at 40 s came to %+v, want the wait at %v", h, client.MinHold)
+		h, err := b.Hold(context.Background(), time.Hour)
+		if err == nil || h != nil || client.KeepAliveOf(b) != 0 {
+			t.Fatalf("a drop at once came to %+v, %v, keep-alive %v; want an error and nothing learned", h, err, client.KeepAliveOf(b))
 		}
 	})
 }
@@ -170,6 +260,100 @@ func TestHoldsStartAtMostOnceAMinute(t *testing.T) {
 			if at[i] != want[i] {
 				t.Fatalf("holds started at %v, want %v", at, want)
 			}
+		}
+	})
+}
+
+// TestAwaitReturnsForAReceiveEveryHour: with nothing new for longer, Await
+// returns at ReceiveEvery, for the Receive that renews the prekey.
+func TestAwaitReturnsForAReceiveEveryHour(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		e := newMemEnv(t)
+		b := e.box(protocol.Classic)
+		receive(t, b)
+		start := time.Now()
+		if err := b.Await(context.Background(), start.Add(3*time.Hour), nil); err != nil || time.Since(start) != client.ReceiveEvery {
+			t.Fatalf("Await: %v after %v, want nil at %v", err, time.Since(start), client.ReceiveEvery)
+		}
+	})
+}
+
+// TestAwaitEndsAtARefusalNoWaitMends: a held list refused for good ends
+// Await with the refusal, never held again; one the server is to be asked
+// again after its Retry-After is held again then.
+func TestAwaitEndsAtARefusalNoWaitMends(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		e := newMemEnv(t)
+		b := e.box(protocol.Classic)
+		receive(t, b)
+		var mu sync.Mutex
+		var at []time.Duration
+		start := time.Now()
+		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if !r.URL.Query().Has("wait") {
+				next.ServeHTTP(w, r)
+				return
+			}
+			mu.Lock()
+			at = append(at, time.Since(start))
+			n := len(at)
+			mu.Unlock()
+			if n == 1 {
+				w.Header().Set("Retry-After", "150")
+				forge.Refuse(w, protocol.CodeUnavailable)
+				return
+			}
+			forge.Refuse(w, protocol.CodeBadRequest)
+		})
+		var said []error
+		err := b.Await(context.Background(), start.Add(time.Hour), func(_ *client.HoldResult, err error) { said = append(said, err) })
+		var ae *client.APIError
+		if !errors.As(err, &ae) || ae.Problem.Code != protocol.CodeBadRequest || len(said) != 1 {
+			t.Fatalf("Await: %v, having said %v; want the bad_request refusal, after one retry", err, said)
+		}
+		if want := []time.Duration{0, 150 * time.Second}; len(at) != 2 || at[0] != want[0] || at[1] != want[1] {
+			t.Fatalf("held lists at %v, want %v: the second after the first's Retry-After", at, want)
+		}
+	})
+}
+
+// TestAHoldWhosePassIsRefusedIsChanged: a held list whose pass the server
+// refuses is Changed, for the Receive that signs another.
+func TestAHoldWhosePassIsRefusedIsChanged(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		e := newMemEnv(t)
+		b := e.box(protocol.Classic)
+		receive(t, b)
+		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if r.URL.Query().Has("wait") {
+				forge.Refuse(w, protocol.CodePassExpired)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+		if h, err := b.Hold(context.Background(), time.Hour); err != nil || !h.Changed {
+			t.Fatalf("a hold whose pass was refused came to %+v, %v; want changed", h, err)
+		}
+	})
+}
+
+// TestAwaitReturnsByItsDeadline: Await returns by until, however its holds
+// fail, its waits for a turn to hold included.
+func TestAwaitReturnsByItsDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		e := newMemEnv(t)
+		b := e.box(protocol.Classic)
+		receive(t, b)
+		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if r.URL.Query().Has("wait") {
+				panic(http.ErrAbortHandler) // every hold dropped at once
+			}
+			next.ServeHTTP(w, r)
+		})
+		start := time.Now()
+		until := start.Add(121 * time.Second)
+		if err := b.Await(context.Background(), until, nil); err != nil || time.Since(start) != until.Sub(start) {
+			t.Fatalf("Await until %v: %v after %v", until.Sub(start), err, time.Since(start))
 		}
 	})
 }
