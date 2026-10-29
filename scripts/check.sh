@@ -43,7 +43,7 @@ allowed=(-e 'run by the crash tests, in a process of its own')
 case $(uname -s) in
   # Their base systems ship sha256(1) and no sha256sum: the vectors' hashes
   # are held to sha256sum on every other runner.
-  OpenBSD | DragonFly) allowed+=(-e 'sha256sum is not installed') ;;
+  OpenBSD | NetBSD | DragonFly) allowed+=(-e 'sha256sum is not installed') ;;
 esac
 
 pkgs=$(go list ./...)
