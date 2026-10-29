@@ -9,10 +9,10 @@
 #
 # The tests build with -tags dromas_nofsync, so no write is flushed to the
 # disk (client/fsync.go): a test kills a process, never the machine. -short
-# skips the long tests, each of which says so; CI never passes it. On macOS
-# and Windows ./sh is left to the Linux runs: the script is held to GNU's and
-# uutils' tools (README § The shell client), and its tests, a few thousand
-# short processes, take from 3 to more than 20 minutes on a Mac,
+# skips the long tests, each of which says so; CI never passes it. On macOS,
+# Windows and the BSDs ./sh is left to the Linux runs: the script is held to
+# GNU's and uutils' tools (README § The shell client), and its tests, a few
+# thousand short processes, take from 3 to more than 20 minutes on a Mac,
 # where a process costs less than on Windows (go test ./sh still runs them,
 # with bash 4 or later and GNU coreutils first in PATH).
 set -euo pipefail
@@ -28,6 +28,7 @@ darwin='' nosh=''
 case $(uname -s) in
   Darwin) darwin=1 nosh=macOS ;;
   MINGW* | MSYS* | CYGWIN*) nosh=Windows ;;
+  FreeBSD | OpenBSD | NetBSD | DragonFly) nosh=$(uname -s) ;;
 esac
 if [ -n "$darwin" ] && command -v brew > /dev/null; then
   for d in "$(brew --prefix)/opt/coreutils/libexec/gnubin" "$(brew --prefix)/opt/bash/bin"; do
@@ -39,6 +40,11 @@ unset DROMAS_HOME DROMAS_BOX DR_HOME DR_BOX # no test may meet a real box
 # A test skips when a tool it runs is missing. A runner with every tool skips
 # nothing, so a skip fails `full`, but for these.
 allowed=(-e 'run by the crash tests, in a process of its own')
+case $(uname -s) in
+  # Their base systems ship sha256(1) and no sha256sum: the vectors' hashes
+  # are held to sha256sum on every other runner.
+  OpenBSD | NetBSD | DragonFly) allowed+=(-e 'sha256sum is not installed') ;;
+esac
 
 pkgs=$(go list ./...)
 if [ -n "$nosh" ]; then
