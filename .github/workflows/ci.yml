@@ -64,6 +64,51 @@ jobs:
         # every tool), and the race test: scripts/check.sh, which a laptop runs too.
         run: scripts/check.sh full
 
+  bsd:
+    # FreeBSD, OpenBSD, NetBSD and DragonFly, each in a VM on a Linux runner
+    # (cross-platform-actions), each step after the VM's start run inside it
+    # (cpa.sh). Go is the latest release, as setup-go's stable is elsewhere:
+    # the system's packaged Go switches to it by Go's own toolchain download
+    # (GOTOOLCHAIN), checked against the checksum database. scripts/check.sh
+    # leaves ./sh out there (its header says why).
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - { name: freebsd, version: "15.1", install: "sudo pkg install -y go bash jq" }
+          - { name: openbsd, version: "8.0", install: "sudo pkg_add go jq" }
+          - { name: netbsd, version: "11.0", install: "sudo pkgin -y install go jq bash" }
+          - { name: dragonflybsd, version: "6.4.2", install: "sudo pkg install -y go bash jq" }
+    name: test (${{ matrix.os.name }})
+    runs-on: ubuntu-26.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: go
+        run: echo "toolchain=$(curl -fsS 'https://go.dev/dl/?mode=json' | jq -r '.[0].version')" >> "$GITHUB_OUTPUT"
+      - uses: cross-platform-actions/action@82668f1fbd89d9c99487604f822cbf6716f124d3 # v1.7.0
+        env:
+          GOTOOLCHAIN: ${{ steps.go.outputs.toolchain }}
+        with:
+          operating_system: ${{ matrix.os.name }}
+          version: ${{ matrix.os.version }}
+          shell: bash
+          cpu_count: 4
+          memory: 8G
+          environment_variables: GOTOOLCHAIN
+      - name: tools
+        shell: cpa.sh {0} --environment-variables INSTALL
+        env:
+          INSTALL: ${{ matrix.os.install }}
+        run: |
+          $INSTALL
+          uname -a; go version; ssh -V; jq --version; bash --version | head -1
+      - name: check
+        shell: cpa.sh {0}
+        run: scripts/check.sh full
+
   lint:
     runs-on: ubuntu-26.04
     timeout-minutes: 20
