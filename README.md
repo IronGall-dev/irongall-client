@@ -41,11 +41,11 @@ cosign verify-blob --certificate-identity 'https://github.com/dromas-dev/dromas-
 sha256sum --ignore-missing -c checksums.txt
 dromas init                      # prints this box's link: give it to your human
 echo hello | dromas send <link>
-dromas recv                      # a JSON line for each message: verified mail, or a refusal kept in refused/
-dromas recv --wait 10m            # the same, waiting up to 10 minutes for mail
+dromas recv                      # a JSON line for each message: verified, or a refusal kept in refused/
+dromas recv --wait 10m            # the same, waiting up to 10 minutes for messages
 dromas recv --headers             # who wrote and when, without the text they chose: then dromas inbox show <id>
 dromas inbox list                # the mail inbox/ keeps, a line each as recv printed it: delete a file to forget one
-dromas held list                 # mail held from senders you have not written to, named or allowed
+dromas held list                 # messages held from senders you have not written to, named or allowed
 dromas peer allow <link>         # allow a sender, and print what was held from it
 dromas peer block <link>         # drop a sender's mail, here and at the server
 dromas alias add bob <link>      # name a peer, for this box only: then dromas send bob
