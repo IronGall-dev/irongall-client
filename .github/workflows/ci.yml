@@ -76,7 +76,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(github.event_name == 'schedule' && '[{"name":"freebsd","version":"15.1","install":"sudo pkg install -y go bash jq"},{"name":"openbsd","version":"8.0","install":"sudo pkg_add go jq"},{"name":"netbsd","version":"11.0","install":"sudo pkgin -y install go jq bash"},{"name":"dragonflybsd","version":"6.4.2","install":"sudo pkg install -y go bash jq"}]' || '[{"name":"freebsd","version":"15.1","install":"sudo pkg install -y go bash jq"},{"name":"openbsd","version":"8.0","install":"sudo pkg_add go jq"},{"name":"netbsd","version":"11.0","install":"sudo pkgin -y install go jq bash"}]') }}
+        os: ${{ fromJSON(github.event_name == 'schedule' && '[{"name":"freebsd","version":"15.1","install":"sudo pkg install -y go bash jq"},{"name":"openbsd","version":"8.0","install":"sudo pkg_add go jq"},{"name":"netbsd","version":"11.0","install":"sudo pkgin -y install go jq bash openssh"},{"name":"dragonflybsd","version":"6.4.2","install":"sudo pkg install -y go bash jq"}]' || '[{"name":"freebsd","version":"15.1","install":"sudo pkg install -y go bash jq"},{"name":"openbsd","version":"8.0","install":"sudo pkg_add go jq"},{"name":"netbsd","version":"11.0","install":"sudo pkgin -y install go jq bash openssh"}]') }}
     name: test (${{ matrix.os.name }})
     runs-on: ubuntu-26.04
     timeout-minutes: 40
@@ -100,16 +100,19 @@ jobs:
         shell: cpa.sh {0} --environment-variables INSTALL
         env:
           INSTALL: ${{ matrix.os.install }}
-        # pkgsrc's go is a meta package that links no go command: its
-        # versioned package's bin is put first, in each step, where it is.
+        # On NetBSD, in each step, pkgsrc's bin goes first, so the cross-tests
+        # meet pkgsrc's OpenSSH: the base system's ssh-keygen certifies no
+        # Ed25519 key with another (NetBSD 11.0; upstream 10.3p1 does). Before
+        # it, the versioned Go package's bin: pkgsrc's go is a meta package
+        # that links no go command.
         run: |
           $INSTALL
-          for d in /usr/pkg/go1*/bin; do if [ -d "$d" ]; then PATH=$d:$PATH; fi; done
+          for d in /usr/pkg/bin /usr/pkg/go1*/bin; do if [ -d "$d" ]; then PATH=$d:$PATH; fi; done
           uname -a; go version; ssh -V; jq --version; bash --version | head -1
       - name: check
         shell: cpa.sh {0}
         run: |
-          for d in /usr/pkg/go1*/bin; do if [ -d "$d" ]; then PATH=$d:$PATH; fi; done
+          for d in /usr/pkg/bin /usr/pkg/go1*/bin; do if [ -d "$d" ]; then PATH=$d:$PATH; fi; done
           scripts/check.sh full
 
   lint:
