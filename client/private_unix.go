@@ -4,7 +4,7 @@ package client
 
 import "os"
 
-// private makes the box's directory its owner's alone: mode 0700, where
+// private makes a directory of the box its owner's alone: mode 0700, where
 // MkdirAll leaves an existing directory's mode as it was. Every file in it is
 // written 0600 (writeFile).
 func private(dir string) error {

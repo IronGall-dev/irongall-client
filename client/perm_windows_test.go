@@ -4,6 +4,7 @@ package client_test
 
 import (
 	"fmt"
+	"testing"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -50,4 +51,26 @@ func ownerOnly(path string) error {
 		}
 	}
 	return nil
+}
+
+// widen opens dir to others as a directory under C:\ is: a protected access
+// list that also gives the local Users, inherited by what is made in it.
+func widen(t *testing.T, dir string) {
+	t.Helper()
+	user, err := windows.GetCurrentProcessToken().GetTokenUser()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sd, err := windows.SecurityDescriptorFromString("D:P(A;OICI;FA;;;" + user.User.Sid.String() + ")(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;0x1301bf;;;BU)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dacl, _, err := sd.DACL()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := windows.SetNamedSecurityInfo(dir, windows.SE_FILE_OBJECT,
+		windows.DACL_SECURITY_INFORMATION|windows.PROTECTED_DACL_SECURITY_INFORMATION, nil, nil, dacl, nil); err != nil {
+		t.Fatal(err)
+	}
 }
