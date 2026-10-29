@@ -70,13 +70,13 @@ jobs:
     # (cpa.sh). Go is the latest release, as setup-go's stable is elsewhere:
     # the system's packaged Go switches to it by Go's own toolchain download
     # (GOTOOLCHAIN), checked against the checksum database. scripts/check.sh
-    # leaves ./sh out there (its header says why). DragonFly in the daily run
-    # alone, never a release's, as the Intel Mac: its VM builds the tests at
-    # a quarter of the others' speed.
+    # leaves ./sh out there (its header says why). NetBSD and DragonFly in the
+    # daily run alone, never a release's, as the Intel Mac: their VMs build
+    # the tests at a third and a quarter of the others' speed.
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(github.event_name == 'schedule' && '[{"name":"freebsd","version":"15.1","install":"sudo pkg install -y go bash jq"},{"name":"openbsd","version":"8.0","install":"sudo pkg_add go jq"},{"name":"netbsd","version":"11.0","install":"sudo pkgin -y install go jq bash openssh"},{"name":"dragonflybsd","version":"6.4.2","install":"sudo pkg install -y go bash jq"}]' || '[{"name":"freebsd","version":"15.1","install":"sudo pkg install -y go bash jq"},{"name":"openbsd","version":"8.0","install":"sudo pkg_add go jq"},{"name":"netbsd","version":"11.0","install":"sudo pkgin -y install go jq bash openssh"}]') }}
+        os: ${{ fromJSON(github.event_name == 'schedule' && '[{"name":"freebsd","version":"15.1","install":"sudo pkg install -y go bash jq"},{"name":"openbsd","version":"8.0","install":"sudo pkg_add go jq"},{"name":"netbsd","version":"11.0","install":"sudo pkgin -y install go jq bash openssh"},{"name":"dragonflybsd","version":"6.4.2","install":"sudo pkg install -y go bash jq"}]' || '[{"name":"freebsd","version":"15.1","install":"sudo pkg install -y go bash jq"},{"name":"openbsd","version":"8.0","install":"sudo pkg_add go jq"}]') }}
     name: test (${{ matrix.os.name }})
     runs-on: ubuntu-26.04
     timeout-minutes: 40
