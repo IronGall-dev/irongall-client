@@ -148,7 +148,9 @@ type heldFor struct{}
 // once the box's first page changes, or at the wait with nothing new. It
 // first waits its turn (one a minute on average), then holds the box's lock
 // only to read its tag and its pass, never through the hold, so the box's
-// other commands go on meanwhile.
+// other commands go on meanwhile. The held request reads nothing of the
+// box's state: an answer about a revocation is proved under the lock once it
+// comes (provedLocked).
 //
 // A box with no tag kept, one whose last list found mail, or whose pass the
 // server refused, is Changed at once, for a Receive to settle. An error is a
@@ -159,14 +161,14 @@ func (b *Box) Hold(ctx context.Context, wait time.Duration) (*HoldResult, error)
 	if err := b.holding.limiter().Wait(ctx); err != nil {
 		return nil, err
 	}
-	type kept struct{ pass, tag string }
+	type kept struct{ pass, tag, path string }
 	k, err := locked(ctx, b, func() (kept, error) {
 		hdr, err := b.ifNoneMatch()
 		if err != nil || hdr == nil {
 			return kept{}, err
 		}
 		pass, err := b.pass()
-		return kept{pass, hdr.Get("If-None-Match")}, err
+		return kept{pass, hdr.Get("If-None-Match"), b.boxPath("/messages")}, err
 	})
 	if err != nil {
 		return nil, err
@@ -177,7 +179,7 @@ func (b *Box) Hold(ctx context.Context, wait time.Duration) (*HoldResult, error)
 	own, _ := b.holding.current()
 	wait = min(wait, own)
 	hdr := http.Header{"If-None-Match": {k.tag}, "Authorization": {k.pass}}
-	path := b.boxPath("/messages") + "?wait=" + strconv.FormatInt(int64(wait/time.Second), 10)
+	path := k.path + "?wait=" + strconv.FormatInt(int64(wait/time.Second), 10)
 	// How long the request was held is timed from the connection it got
 	// last: net/http sends a GET again, once, on a new connection when a
 	// reused one drops before its answer, and a drop is the connection's.
@@ -190,10 +192,11 @@ func (b *Box) Hold(ctx context.Context, wait time.Duration) (*HoldResult, error)
 	}}
 	held := httptrace.WithClientTrace(context.WithValue(ctx, heldFor{}, wait+holdMargin), trace)
 	var list protocol.MessageList
-	resp, err := b.call(held, http.MethodGet, path, nil, hdr, &list)
+	resp, err := b.exchange(held, http.MethodGet, path, nil, hdr, &list)
 	mu.Lock()
 	after := time.Since(start)
 	mu.Unlock()
+	err = b.provedLocked(ctx, http.MethodGet, path, err)
 	var te *transportError
 	switch {
 	case err == nil && resp.StatusCode == http.StatusNotModified && sameTag(resp.Header.Get("ETag"), k.tag):

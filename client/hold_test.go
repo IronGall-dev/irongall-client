@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dromas-dev/dromas-client/client"
+	"github.com/dromas-dev/dromas-client/internal/forge"
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
@@ -80,6 +81,35 @@ func TestAHoldLetsTheBoxsOtherCommandsGoOn(t *testing.T) {
 		h := <-c
 		if h == nil || h.Changed {
 			t.Fatalf("the hold came to %+v, want unchanged: a send changes the recipient's list, not the sender's", h)
+		}
+	})
+}
+
+// A held list answered 410 with the box's own revocation is proved as any
+// call's answer is: the box keeps the revocation, and Hold returns it.
+func TestAHeldListShownTheBoxsOwnRevocationKeepsIt(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx := context.Background()
+		e := newMemEnv(t)
+		b := e.box(protocol.Classic)
+		receive(t, b)
+		rec, err := b.Revocation(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if r.URL.Query().Has("wait") {
+				putRecord(t, next, b.Address(), rec)
+				forge.Refuse(w, protocol.CodeRevoked, func(p *protocol.Problem) { p.Record = rec })
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+		if _, err := b.Hold(ctx, time.Hour); !finishedOwn(err) {
+			t.Fatalf("the hold: %v, want the box's own revocation", err)
+		}
+		if s, err := b.Status(ctx); err != nil || !s.Revoked {
+			t.Fatalf("the box after the hold: %+v, %v; want its revocation kept", s, err)
 		}
 	})
 }

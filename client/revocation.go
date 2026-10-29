@@ -719,7 +719,8 @@ var provedCodes = []protocol.Code{protocol.CodeRevoked, protocol.CodeSenderRevok
 
 // proved turns what a server answered about a revocation into what this box
 // has checked, by what the answer names (PROTOCOL.md §12.5). Every
-// answer of every call passes it (call), and nothing else proves one:
+// answer of every call passes it (call; a request made outside the box's
+// lock, provedLocked), and nothing else proves one:
 //
 //   - 410 revoked names the box the call's path names. The record it carries
 //     is taken as a read's is (take); without one that verifies, that box is
@@ -805,6 +806,16 @@ func (b *Box) proved(ctx context.Context, method, path string, err error) error 
 		return fmt.Errorf("%w; it showed no revocation of %s that verifies, so this box does not take that address as revoked", err, who)
 	}
 	return &RevokedError{Address: who, Own: who == own}
+}
+
+// provedLocked is proved for the answer to a request made outside the box's
+// lock (Hold's): proving reads and keeps the box's state, so it takes the
+// lock, as a command does (locked), and only for an answer it has to prove.
+func (b *Box) provedLocked(ctx context.Context, method, path string, err error) error {
+	if !slices.Contains(provedCodes, code(err)) {
+		return err
+	}
+	return b.lockedDo(ctx, func() error { return b.proved(ctx, method, path, err) })
 }
 
 // named is the address a call's path names, /v1/<address>, and whether the

@@ -88,11 +88,13 @@ full() {
   fmt
   go vet ./...
   alltests
-  # A Box shared by goroutines, under the race detector where Go has one
-  # (go.dev/doc/articles/race_detector, Requirements).
+  # A Box shared by goroutines, and every test of a held list (hold_test.go),
+  # whose request runs beside the box's other commands, under the race
+  # detector where Go has one (go.dev/doc/articles/race_detector,
+  # Requirements).
   case $(go env GOOS)/$(go env GOARCH) in
     linux/amd64 | linux/ppc64le | linux/arm64 | linux/s390x | linux/loong64 | freebsd/amd64 | netbsd/amd64 | darwin/amd64 | darwin/arm64 | windows/amd64)
-      go test -tags "$tags" -race -count=1 -timeout "$timeout" -run 'SharedByGoroutines' ./client
+      go test -tags "$tags" -race -count=1 -timeout "$timeout" -run "SharedByGoroutines|^($(sed -n 's/^func \(Test[A-Za-z0-9_]*\).*/\1/p' client/hold_test.go | paste -sd '|' -))\$" ./client
       ;;
     *) echo "$(go env GOOS)/$(go env GOARCH): the race test is left out: Go's race detector does not run here" >&2 ;;
   esac
