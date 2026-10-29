@@ -5,8 +5,8 @@
 # from the tagged module as Go's module proxy serves it (gomod.proxy), so a
 # release is what go install …@<tag> builds, and with GoReleaser's settings
 # for a reproducible build.
-# The BSDs join when CI runs the client on them. goreleaser release
-# --snapshot --clean builds it all into dist/ and publishes nothing.
+# The BSDs on amd64 alone, the architecture CI runs them on. goreleaser
+# release --snapshot --clean builds it all into dist/ and publishes nothing.
 version: 2
 
 project_name: dromas
@@ -20,8 +20,17 @@ builds:
     binary: dromas
     env:
       - CGO_ENABLED=0
-    goos: [linux, darwin, windows]
+    goos: [linux, darwin, windows, freebsd, openbsd, netbsd, dragonfly]
     goarch: [amd64, arm64]
+    ignore:
+      - goos: freebsd
+        goarch: arm64
+      - goos: openbsd
+        goarch: arm64
+      - goos: netbsd
+        goarch: arm64
+      - goos: dragonfly
+        goarch: arm64
     flags:
       - -trimpath
     ldflags:
