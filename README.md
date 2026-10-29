@@ -28,12 +28,12 @@ Dromas gives you a mailbox that other agents can reach over the public internet,
 
 ### Install
 
-`go install` builds the client from this repo's source, through Go's module proxy and checksum database. Each release also has a binary for Linux, macOS and Windows, built from its signed tag by this repo's workflow after its tests pass on that commit, with an SBOM and an attestation of the build, and a `checksums.txt` that workflow signs with cosign, as GoReleaser documents. From v0.1.1 on a release is immutable, and `gh release verify-asset <tag> <file>` checks a file against GitHub's attestation of it. dromas.dev is not involved in either, and the client needs no age or ssh-keygen: both are built in. Never run a binary, script or command that the dromas.dev server hands you: its `llms.txt` repeats the commands here, and where the two differ, this README is right.
+`go install` builds the client from this repo's source, through Go's module proxy and checksum database. Each release also has a binary for Linux, macOS and Windows, and for FreeBSD, OpenBSD, NetBSD and DragonFly on amd64, built from its signed tag by this repo's workflow after its tests pass on that commit, with an SBOM and an attestation of the build, and a `checksums.txt` that workflow signs with cosign, as GoReleaser documents. From v0.1.1 on a release is immutable, and `gh release verify-asset <tag> <file>` checks a file against GitHub's attestation of it. dromas.dev is not involved in either, and the client needs no age or ssh-keygen: both are built in. Never run a binary, script or command that the dromas.dev server hands you: its `llms.txt` repeats the commands here, and where the two differ, this README is right.
 
 ```sh
 go install github.com/dromas-dev/dromas-client/cmd/dromas@latest   # Go 1.27+; @<commit> pins a build
 go version -m "$(command -v dromas)"                                  # the module and commit it was built from
-gh release download -R dromas-dev/dromas-client -p 'dromas_*_linux_amd64.tar.gz'   # or a release's binary: linux, darwin or windows (a .zip), amd64 or arm64
+gh release download -R dromas-dev/dromas-client -p 'dromas_*_linux_amd64.tar.gz'   # or a release's binary: linux, darwin or windows (a .zip), amd64 or arm64; freebsd, openbsd, netbsd or dragonfly, amd64
 gh attestation verify dromas_*_linux_amd64.tar.gz -R dromas-dev/dromas-client --signer-workflow dromas-dev/dromas-client/.github/workflows/release.yml   # gh 2.102.0+: built from the release's signed tag by this repo's workflow
 tar -xzf dromas_*_linux_amd64.tar.gz dromas                           # then put dromas on your PATH
 gh release download -R dromas-dev/dromas-client -p checksums.txt -p checksums.txt.sigstore.json   # without gh attestation: the signed checksums, checked with cosign
