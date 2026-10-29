@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -613,5 +614,48 @@ func TestScriptKeepsNothingOfAFailedSend(t *testing.T) {
 	a.mustSend(b, "secret")
 	if w.srv.Count(b.addr) != 1 {
 		t.Error("the same send run again did not go")
+	}
+}
+
+// A message from A listed as C's, an address its server holds a box at, is
+// delivered as A's: C is neither read nor pinned, and the replay set names
+// A.
+func TestScriptReadsNoFromTheServerLists(t *testing.T) {
+	w := newWorld(t)
+	a, b, c := w.box(), w.box(), w.box()
+	a.mustSend(b, "from A")
+	var named atomic.Int32
+	w.srv.SetMiddle(func(rw http.ResponseWriter, r *http.Request, next http.Handler) {
+		if strings.HasPrefix(r.URL.Path, "/v1/"+c.addr.String()) {
+			named.Add(1)
+		}
+		forge.List(t, rw, r, next, func(l *forge.Listed) {
+			for i := range l.Messages {
+				l.Messages[i].From = c.addr.String()
+			}
+		})
+	})
+	if d := b.recv(); !slices.Equal(d.bodies(), []string{"from A"}) || w.srv.Count(b.addr) != 0 {
+		t.Errorf("A's message listed as C's: %v", d)
+	}
+	if named.Load() != 0 || b.has("peers/"+c.addr.String()) || strings.Contains(b.read("seen"), c.addr.String()) {
+		t.Errorf("calls that named C: %d; C pinned: %v; the replay set: %q", named.Load(), b.has("peers/"+c.addr.String()), b.read("seen"))
+	}
+}
+
+// A revoked sender's message listed as another box's is refused as revoked:
+// the revocation read is of the sender its signature proves.
+func TestScriptAsksAboutTheSenderItsSignatureProves(t *testing.T) {
+	w := newWorld(t)
+	a, b, c := w.box(), w.box(), w.box()
+	a.mustSend(b, "from A, revoked since")
+	a.revoke()
+	w.listing(func(l *forge.Listed) {
+		for i := range l.Messages {
+			l.Messages[i].From = c.addr.String()
+		}
+	})
+	if d := b.recv(); len(d.mail) != 0 || d.refused("revoked") != 1 {
+		t.Errorf("a revoked sender's message listed as C's: %v", d)
 	}
 }

@@ -62,6 +62,73 @@ func TestAFromTheServerListsIsNotRead(t *testing.T) {
 	}
 }
 
+// TestAFromTheServerListsDecidesNothing: a from the list names is read for
+// nothing a box decides: where a message lands, by whom it allowed or
+// blocked, and the replay set's (from, msg_id), which takes its retry as a
+// duplicate.
+func TestAFromTheServerListsDecidesNothing(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	t.Run("where it lands", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t)
+		a, c, d := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+		b := e.heldBox(protocol.Classic)
+		if _, err := b.Allow(ctx, a.Address()); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := b.Block(ctx, c.Address()); err != nil {
+			t.Fatal(err)
+		}
+		// Listed as one b has not allowed, then as one it blocked.
+		for _, named := range []*client.Box{d, c} {
+			send(t, a, b, "from A")
+			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+				forge.List(t, w, r, next, func(l *forge.Listed) {
+					for i := range l.Messages {
+						l.Messages[i].From = named.Address().String()
+					}
+				})
+			})
+			if res := receive(t, b); len(res.Delivered) != 1 || len(res.Held) != 0 || len(res.Blocked) != 0 {
+				t.Errorf("listed as %v: delivered %d, held %d, blocked %d; want A's, which b allowed, in inbox/", named.Address(), len(res.Delivered), len(res.Held), len(res.Blocked))
+			}
+		}
+	})
+	t.Run("the replay set", func(t *testing.T) {
+		t.Parallel()
+		e := newEnv(t)
+		a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+		path := "/v1/" + b.Address().String() + "/messages"
+		lose := true
+		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if lose && r.Method == http.MethodPost && r.URL.Path == path {
+				next.ServeHTTP(httptest.NewRecorder(), r) // stored, and its answer lost
+				http.Error(w, "lost", http.StatusServiceUnavailable)
+				return
+			}
+			forge.List(t, w, r, next, func(l *forge.Listed) {
+				for i := range l.Messages {
+					l.Messages[i].From = c.Address().String()
+				}
+			})
+		})
+		if _, err := a.Send(ctx, b.Address(), "pay invoice 7 once"); err == nil {
+			t.Fatal("the first post's answer was not lost")
+		}
+		if res := receive(t, b); len(res.Delivered) != 1 {
+			t.Fatalf("the first copy: delivered %d", len(res.Delivered))
+		}
+		lose = false
+		if _, err := a.Flush(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if res := receive(t, b); len(res.Delivered) != 0 || len(res.Duplicates) != 1 {
+			t.Fatalf("the retry: delivered %d, duplicates %d; want a duplicate, delivered once", len(res.Delivered), len(res.Duplicates))
+		}
+	})
+}
+
 // TestForgeries plays the operator, who controls every byte the server sends
 // and stores. Each forgery must be refused by the client: never delivered,
 // never encrypted to, never pinned. Refused mail is kept in refused/ and acked, so
