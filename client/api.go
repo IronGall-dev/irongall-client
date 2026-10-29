@@ -66,7 +66,9 @@ type ciphertext struct {
 //
 // Every answer passes here, so what one says of a revocation is proved here
 // and nowhere else (proved): a caller meets a [RevokedError] that verified,
-// or the call's error. A command that has kept its box's own revocation asks
+// or the call's error. A request made outside the box's lock, which call
+// would race the command holding it on, is exchange's, and its answer is
+// proved under the lock (provedLocked). A command that has kept its box's own revocation asks
 // nothing more: each call of it after that returns the revocation before any
 // request is made.
 func (b *Box) call(ctx context.Context, method, path string, in any, hdr http.Header, out any) (*http.Response, error) {
