@@ -125,6 +125,11 @@ func Handler(t testing.TB, h http.Handler) http.Handler {
 		r.Body = body
 		rec := &recorder{ResponseWriter: w, status: http.StatusOK}
 		h.ServeHTTP(rec, r)
+		if !rec.wrote && r.Context().Err() != nil {
+			// The client left before any answer, and none was written:
+			// there is no answer to check.
+			return
+		}
 		check(t, v, r, body, rec)
 	})
 }

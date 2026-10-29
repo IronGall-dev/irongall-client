@@ -156,7 +156,12 @@ func checked(args cobra.PositionalArgs, check cobra.PositionalArgs) cobra.Positi
 // the hook that reads the environment (environment), and each command
 // checks the values it takes in its own argument check.
 func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
-	var opt client.Options
+	return runWith(ctx, client.Options{}, args, stdin, stdout, stderr)
+}
+
+// runWith is run with the box's options opt, its server's address left to
+// the environment: a test's client of a server in memory.
+func runWith(ctx context.Context, opt client.Options, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	// Said once, so that a wait is not read as a hang.
 	opt.Waiting = func() {
 		_, _ = fmt.Fprintf(stderr, "%s\n", line("waiting", "for", "lock", "message",

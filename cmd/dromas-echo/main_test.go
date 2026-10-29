@@ -17,6 +17,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/dromas-dev/dromas-client/client"
@@ -413,53 +414,99 @@ func (l lines) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// A running echo box holds its list, and answers a message within seconds of
-// its arrival, woken in the one hold it was waiting in.
+// A running echo box holds its list, and answers a message as it arrives,
+// woken in the one hold it was waiting in.
 func TestEchoAnswersInSeconds(t *testing.T) {
-	e := newEnv(t)
-	logged := make(lines, 64)
-	x, err := start(context.Background(), t.TempDir(), e.key, e.opts(), protocol.Classic, log.New(logged, "", 0))
-	if err != nil {
-		t.Fatalf("start: %v", err)
-	}
-	a := e.box()
-	var holds atomic.Int32
-	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if r.URL.Query().Has("wait") {
-			holds.Add(1)
+	synctest.Test(t, func(t *testing.T) {
+		srv := fakeserver.NewInMemory(t, time.Now)
+		opt := client.Options{Base: srv.URL, HTTPClient: srv.Client()}
+		logged := make(lines, 64)
+		x, err := start(context.Background(), t.TempDir(), newKey(t), opt, protocol.Classic, log.New(logged, "", 0))
+		if err != nil {
+			t.Fatalf("start: %v", err)
 		}
-		next.ServeHTTP(w, r)
+		a, err := client.Init(context.Background(), t.TempDir(), opt, protocol.PostQuantum)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var holds atomic.Int32
+		srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if r.URL.Query().Has("wait") {
+				holds.Add(1)
+			}
+			next.ServeHTTP(w, r)
+		})
+		// The run is ended, and waited for, before the test's cleanup removes
+		// the echo box's directory.
+		ctx, cancel := context.WithCancel(context.Background())
+		ran := make(chan struct{})
+		t.Cleanup(func() { cancel(); <-ran })
+		go func() {
+			defer close(ran)
+			_ = x.run(ctx)
+		}()
+		time.Sleep(time.Minute) // the echo box holds its list
+		synctest.Wait()
+		sent := time.Now()
+		if _, err := a.Send(context.Background(), x.b.Address(), "woke the echo"); err != nil {
+			t.Fatal(err)
+		}
+		for answered := false; !answered; {
+			answered = strings.Contains(<-logged, "answered")
+		}
+		if took := time.Since(sent); holds.Load() != 1 || took != 0 {
+			t.Fatalf("answered after %s, in %d holds", took, holds.Load())
+		}
+		if res := receive(t, a); len(res.Delivered) != 1 || !strings.Contains(body(t, res.Delivered[0]), "woke the echo") {
+			t.Fatalf("%d replies", len(res.Delivered))
+		}
 	})
-	// The run is ended, and waited for, before the test's cleanup removes
-	// the echo box's directory.
-	ctx, cancel := context.WithCancel(context.Background())
-	ran := make(chan struct{})
-	t.Cleanup(func() { cancel(); <-ran })
-	go func() {
-		defer close(ran)
-		_ = x.run(ctx)
-	}()
-	<-logged // its start
-	for holds.Load() == 0 {
-		time.Sleep(10 * time.Millisecond)
-	}
-	sent := time.Now()
-	if _, err := a.Send(context.Background(), x.b.Address(), "woke the echo"); err != nil {
-		t.Fatal(err)
-	}
-	timeout := time.After(10 * time.Second)
-	for answered := false; !answered; {
-		select {
-		case l := <-logged:
-			answered = strings.Contains(l, "answered")
-		case <-timeout:
-			t.Fatalf("no answer within 10 seconds, in %d holds", holds.Load())
+}
+
+// An echo box with a reply its recipient's server does not take retries it
+// once a poll interval, and lists its own box once in that interval, the
+// hold that waits for it: within the server's poll budget.
+func TestEchoHoldsWithAReplyPending(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		srv := fakeserver.NewInMemory(t, time.Now)
+		opt := client.Options{Base: srv.URL, HTTPClient: srv.Client()}
+		x, err := start(context.Background(), t.TempDir(), newKey(t), opt, protocol.Classic, log.New(io.Discard, "", 0))
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	if took := time.Since(sent); holds.Load() != 1 || took > 5*time.Second {
-		t.Fatalf("answered after %s, in %d holds", took, holds.Load())
-	}
-	if res := receive(t, a); len(res.Delivered) != 1 || !strings.Contains(body(t, res.Delivered[0]), "woke the echo") {
-		t.Fatalf("%d replies", len(res.Delivered))
-	}
+		a, err := client.Init(context.Background(), t.TempDir(), opt, protocol.Classic)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := a.Send(context.Background(), x.b.Address(), "hold the reply"); err != nil {
+			t.Fatal(err)
+		}
+		var lists, posts atomic.Int32
+		mine := "/v1/" + x.b.Address().String() + "/messages"
+		srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			switch {
+			case r.Method == http.MethodPost && r.URL.Path == "/v1/"+a.Address().String()+"/messages":
+				posts.Add(1)
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			case r.Method == http.MethodGet && r.URL.Path == mine && !r.URL.Query().Has("cursor"):
+				lists.Add(1)
+			}
+			next.ServeHTTP(w, r)
+		})
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() { defer close(done); _ = x.run(ctx) }()
+		// After its first drain and reply, one hold and one retry each
+		// interval, the fake's minute.
+		time.Sleep(30 * time.Second)
+		l0, p0 := lists.Load(), posts.Load()
+		time.Sleep(30 * time.Minute)
+		l, p := lists.Load()-l0, posts.Load()-p0
+		cancel()
+		<-done
+		if l != 30 || p != 30 {
+			t.Fatalf("in 30 minutes with a reply pending: %d lists and %d posts, want 30 of each", l, p)
+		}
+	})
 }
