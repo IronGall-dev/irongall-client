@@ -141,9 +141,10 @@ type Box struct {
 	holding holding
 }
 
-// Open opens an existing box's state directory. A directory holding only
-// the identity, a box restored from its backup, gets the box's other
-// directories; [Box.Rekey] then gives it a working key and a prekey, and
+// Open opens an existing box's state directory, its owner's alone as Init
+// leaves it (makeDirs). A directory holding only the identity, a box
+// restored from its backup, gets the box's other directories; [Box.Rekey]
+// then gives it a working key and a prekey, and
 // the lists its server's ACL holds when it has none of its own.
 func Open(dir string, opt Options) (*Box, error) {
 	b, err := newBox(dir, opt)
@@ -308,9 +309,6 @@ func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*B
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	if err := private(dir); err != nil {
-		return nil, fmt.Errorf("the box's directory, made its owner's alone: %w", err)
-	}
 	if err := b.makeDirs(); err != nil {
 		return nil, err
 	}
@@ -433,17 +431,24 @@ func (b *Box) recordTaken(n uint64, pass string) error {
 }
 
 // makeDirs makes the box's directories that are missing, its .gitignore and
-// its state file.
+// its state file, and the box's directory and each of its own its owner's
+// alone (private), at every open: a box restored from its identity alone, or
+// a directory made before the box by someone else, is held to it too.
 func (b *Box) makeDirs() error {
+	if err := private(b.dir); err != nil {
+		return fmt.Errorf("the box's directory, made its owner's alone: %w", err)
+	}
 	made := false
 	for _, d := range []string{"work", "prekeys", "inbox", "held", "refused", "outbox", "sent"} {
-		if _, err := os.Stat(b.path(d)); err == nil {
-			continue
+		if _, err := os.Stat(b.path(d)); err != nil {
+			if err := os.MkdirAll(b.path(d), 0o700); err != nil {
+				return err
+			}
+			made = true
 		}
-		if err := os.MkdirAll(b.path(d), 0o700); err != nil {
-			return err
+		if err := private(b.path(d)); err != nil {
+			return fmt.Errorf("the box's %s/, made its owner's alone: %w", d, err)
 		}
-		made = true
 	}
 	// A new directory is there after a crash only once its parent is synced.
 	if made {

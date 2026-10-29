@@ -5,6 +5,7 @@ package client_test
 import (
 	"fmt"
 	"os"
+	"testing"
 )
 
 // ownerOnly is whether the file or directory at path is its owner's alone:
@@ -22,4 +23,12 @@ func ownerOnly(path string) error {
 		return fmt.Errorf("mode %v, want %v", m, want)
 	}
 	return nil
+}
+
+// widen opens dir to others: mode 0755.
+func widen(t *testing.T, dir string) {
+	t.Helper()
+	if err := os.Chmod(dir, 0o755); err != nil { //nolint:gosec // opened to others on purpose
+		t.Fatal(err)
+	}
 }
