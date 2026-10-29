@@ -611,13 +611,15 @@ type verdict struct {
 //     native recipient stanza, counted before anything is decrypted
 //     (decrypt, oneNative).
 //  2. What came out is an envelope line and then a signature block.
-//  3. The line carries the sender's identity document, and its from is that
+//  3. The envelope is one JSON object, as protocol.Unmarshal reads one.
+//  4. The line carries the sender's identity document, and its from is that
 //     document's hash.
-//  4. The signature over the line as decrypted, in this box's message
+//  5. The signature over the line as decrypted, in this box's message
 //     namespace, by a working key that identity certified.
-//  5. The envelope: version 1, to is this box.
-//  6. Freshness: sent_at no older than protocol.TTL (33 days), and not
-//     before the floor the seen-set was pruned at (seenFloor).
+//  6. The rest of the envelope: version 1, to is this box, msg_id in its
+//     form, and sent_at no older than protocol.TTL (33 days), not before the
+//     floor the seen-set was pruned at (seenFloor), and at most
+//     protocol.MaxSkew ahead.
 //  7. Revocation: this box holds no revocation of the sender. The server is
 //     asked for one, once for each sender in a drain. A revocation that
 //     verifies refuses the message and every later one, whenever they were
@@ -629,11 +631,12 @@ type verdict struct {
 //  8. Replay: the locally computed ciphertext hash is not in the seen-set.
 //  9. Retry: (from, msg_id) is not in the seen-set. A match is a duplicate.
 //
-// Checks 2 to 6 are protocol.OpenSigned's. Who the sender is, is never asked
-// of the server, nor read from its list: the message carries what proves
-// it. The one thing asked is whether a revocation of that sender exists, and
-// the answer proves itself. The sender's identity is pinned only once all of
-// that has passed.
+// The numbers are PROTOCOL.md §12.3's. protocol.Examine makes checks 2 to 6,
+// all but the floor, which is this box's own and judge's. Who the sender is,
+// is never asked of the server, nor read from its list: the message carries
+// what proves it. The one thing asked is whether a revocation of that sender
+// exists, and the answer proves itself. The sender's identity is pinned only
+// once all of that has passed.
 func (b *Box) judge(ctx context.Context, ct []byte, asked *lookups) (verdict, error) {
 	now := b.now()
 	found := &protocol.Findings{At: now}

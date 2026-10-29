@@ -611,7 +611,7 @@ dr_one(){ # <me> <id> <its list entry> → 0 once the message is judged and its 
     2) dr_out duplicate --arg id "$h" --arg message "a retry of a message already delivered: not delivered again" ;;
     3) dr_err "$why: nothing is judged or acked until this box is fixed"; return 1 ;;
     4) dr_err "$why: the message stays on the server, and the next recv asks again"; return 1 ;;
-    *) dr_putout "$DR/refused/$h.json" dr_kept "$m" "$h" && dr_putline "$DR/refused/$h.reason" "$why" || return 1      # the message as served, its strings in base64 but those of their form, and beside it why: "<code>: <words>", this script's own words, never the message's
+    *) dr_putout "$DR/refused/$h.json" dr_kept "$m" "$h" && dr_putline "$DR/refused/$h.reason" "$why" || return 1      # what dr_kept keeps of the message, the id this script hashed and the ciphertext in base64, and beside it why: "<code>: <words>", this script's own words, never the message's
        dr_out refused --arg id "$h" --arg code "${why%%: *}" --arg message "${why#*: }" ;;
   esac
 }
