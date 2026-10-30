@@ -494,20 +494,28 @@ func (b *Mailbox) makeDirs() error {
 	return nil
 }
 
+// newKey makes a new private key of the SSH key type t: an identity key, or a
+// working key of the type its identity's type gives (protocol.WorkingKeyType).
+func newKey(t string) (crypto.Signer, error) {
+	switch t {
+	case protocol.IdentityEd25519:
+		_, priv, err := ed25519.GenerateKey(rand.Reader)
+		return priv, err
+	case protocol.IdentityP256:
+		return ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	}
+	return nil, fmt.Errorf("this client makes no key of type %q: %s", t, strings.Join(protocol.IdentityTypes(), " or "))
+}
+
 // newIdentityKey makes a new identity key, written as ssh-keygen writes one
 // with no passphrase and no comment: Ed25519, unless the mailbox was told another
 // type this client can make.
 func (b *Mailbox) newIdentityKey() error {
-	var priv crypto.Signer
-	var err error
-	switch b.identityType {
-	case "", protocol.IdentityEd25519:
-		_, priv, err = ed25519.GenerateKey(rand.Reader)
-	case protocol.IdentityP256:
-		priv, err = ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	default:
-		return fmt.Errorf("this client makes no identity key of type %q: %s", b.identityType, strings.Join(protocol.IdentityTypes(), " or "))
+	t := b.identityType
+	if t == "" {
+		t = protocol.IdentityEd25519
 	}
+	priv, err := newKey(t)
 	if err != nil {
 		return err
 	}
