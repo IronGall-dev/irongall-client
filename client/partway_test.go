@@ -65,7 +65,7 @@ func TestARevokedReadWhoseRecordDoesNotVerifyIsNotReadAgain(t *testing.T) {
 		t.Run(of, func(t *testing.T) {
 			ctx := context.Background()
 			e := newEnv(t)
-			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, b := e.mailbox(), e.mailbox()
 			read := b
 			if of == "itself" {
 				read = a
@@ -82,7 +82,7 @@ func TestARevokedReadWhoseRecordDoesNotVerifyIsNotReadAgain(t *testing.T) {
 			})
 			var err error
 			if of == "itself" {
-				_, err = a.Rekey(ctx, "")
+				_, err = a.Rekey(ctx)
 			} else {
 				_, err = a.Resolve(ctx, b.Address())
 			}
@@ -538,7 +538,7 @@ func partwayCases() []partwayCase {
 		return partwaySet{dir: a.Dir(), a: a, check: recvSaysItAlone, run: func(ctx context.Context) (any, error) { return a.Receive(ctx) }}
 	}
 	remedy := func(a *client.Mailbox) partwaySet {
-		return partwaySet{dir: a.Dir(), a: a, check: remedySaysItAlone, run: func(ctx context.Context) (any, error) { return a.RenewAndRevoke(ctx, "") }}
+		return partwaySet{dir: a.Dir(), a: a, check: remedySaysItAlone, run: func(ctx context.Context) (any, error) { return a.RenewAndRevoke(ctx) }}
 	}
 	earlier := func(a *client.Mailbox) partwaySet {
 		return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.RevokeEarlier(ctx) }}
@@ -546,7 +546,7 @@ func partwayCases() []partwayCase {
 	restored := func(t *testing.T, e *env, a *client.Mailbox) partwaySet {
 		dir := restore(t, e, a).Dir()
 		e.clock.Add(2 * time.Second)
-		return partwaySet{dir: dir, a: a, run: func(ctx context.Context) (any, error) { return client.Init(ctx, dir, e.opts(), protocol.Classic) }}
+		return partwaySet{dir: dir, a: a, run: func(ctx context.Context) (any, error) { return client.Init(ctx, dir, e.opts()) }}
 	}
 	serverAllowed := func(t *testing.T, a *client.Mailbox) {
 		t.Helper()
@@ -556,65 +556,65 @@ func partwayCases() []partwayCase {
 	}
 	return []partwayCase{
 		{"recv", func(t *testing.T, e *env) partwaySet {
-			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, b := e.mailbox(), e.mailbox()
 			send(t, b, a, "waits")
 			return recv(e, a)
 		}},
 		{"recv, a renewal due", func(t *testing.T, e *env) partwaySet {
-			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, b := e.mailbox(), e.mailbox()
 			send(t, b, a, "waits")
 			e.clock.Add(25 * time.Hour)
 			return recv(e, a)
 		}},
 		{"recv, mended after a 404", func(t *testing.T, e *env) partwaySet {
-			a := e.mailbox(protocol.Classic)
+			a := e.mailbox()
 			e.srv.Forget(a.Address())
 			e.clock.Add(time.Minute)
 			return recv(e, a)
 		}},
 		{"recv, mended after certificate_revoked", func(t *testing.T, e *env) partwaySet {
-			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, b := e.mailbox(), e.mailbox()
 			send(t, b, a, "waits")
 			publish(t, e, certsRecord(t, a.Dir(), numberOf(t, a)))
 			e.clock.Add(time.Minute)
 			return recv(e, a)
 		}},
 		{"recv, a renewal due on a mailbox its server forgot", func(t *testing.T, e *env) partwaySet {
-			a := e.mailbox(protocol.Classic)
+			a := e.mailbox()
 			e.srv.Forget(a.Address())
 			e.clock.Add(25 * time.Hour)
 			return recv(e, a)
 		}},
 		{"prekey renew", func(t *testing.T, e *env) partwaySet {
-			a := e.mailbox(protocol.Classic)
+			a := e.mailbox()
 			e.clock.Add(2 * time.Second)
-			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Rekey(ctx, "") }}
+			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Rekey(ctx) }}
 		}},
 		{"prekey renew, a mailbox its server forgot", func(t *testing.T, e *env) partwaySet {
-			a := e.mailbox(protocol.Classic)
+			a := e.mailbox()
 			e.srv.Forget(a.Address())
 			e.clock.Add(2 * time.Second)
-			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Rekey(ctx, "") }}
+			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Rekey(ctx) }}
 		}},
 		{"prekey renew, its server forgets it between its read and its upload", func(t *testing.T, e *env) partwaySet {
-			a := e.mailbox(protocol.Classic)
+			a := e.mailbox()
 			e.clock.Add(2 * time.Second)
-			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Rekey(ctx, "") }, inner: forgetsAtUpload(e, a)}
+			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Rekey(ctx) }, inner: forgetsAtUpload(e, a)}
 		}},
 		{"cert revoke-earlier, its server forgets it between its read and its upload", func(t *testing.T, e *env) partwaySet {
-			a := e.mailbox(protocol.Classic)
+			a := e.mailbox()
 			e.clock.Add(2 * time.Second)
 			s := remedy(a)
 			s.inner = forgetsAtUpload(e, a)
 			return s
 		}},
 		{"cert revoke-earlier", func(t *testing.T, e *env) partwaySet {
-			a := e.mailbox(protocol.Classic)
+			a := e.mailbox()
 			e.clock.Add(2 * time.Second)
 			return remedy(a)
 		}},
 		{"cert revoke-earlier after a conflict", func(t *testing.T, e *env) partwaySet {
-			a := e.mailbox(protocol.Classic)
+			a := e.mailbox()
 			publishAt(t, e.srv.URL, ownRevocation(t, a, numberOf(t, a)+7200))
 			e.clock.Add(2 * time.Second)
 			s := remedy(a)
@@ -622,12 +622,12 @@ func partwayCases() []partwayCase {
 			return s
 		}},
 		{"RevokeEarlier", func(t *testing.T, e *env) partwaySet {
-			a := e.mailbox(protocol.Classic)
+			a := e.mailbox()
 			e.clock.Add(2 * time.Second)
 			return earlier(a)
 		}},
 		{"RevokeEarlier after a conflict", func(t *testing.T, e *env) partwaySet {
-			a := e.mailbox(protocol.Classic)
+			a := e.mailbox()
 			publishAt(t, e.srv.URL, ownRevocation(t, a, numberOf(t, a)+7200))
 			e.clock.Add(2 * time.Second)
 			s := earlier(a)
@@ -635,11 +635,11 @@ func partwayCases() []partwayCase {
 			return s
 		}},
 		{"send", func(t *testing.T, e *env) partwaySet {
-			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, b := e.mailbox(), e.mailbox()
 			return partwaySet{dir: a.Dir(), a: a, check: outboxSaysItAlone, run: func(ctx context.Context) (any, error) { return a.Send(ctx, b.Address(), "sent") }}
 		}},
 		{"send, its ACL changed, the one its server took admitting no reply", func(t *testing.T, e *env) partwaySet {
-			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, b := e.mailbox(), e.mailbox()
 			serverAllowed(t, a)
 			if err := a.SyncACL(t.Context()); err != nil {
 				t.Fatal(err)
@@ -647,13 +647,13 @@ func partwayCases() []partwayCase {
 			return partwaySet{dir: a.Dir(), a: a, check: outboxSaysItAlone, run: func(ctx context.Context) (any, error) { return a.Send(ctx, b.Address(), "sent") }}
 		}},
 		{"send JSON", func(t *testing.T, e *env) partwaySet {
-			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, b := e.mailbox(), e.mailbox()
 			return partwaySet{dir: a.Dir(), a: a, check: outboxSaysItAlone, run: func(ctx context.Context) (any, error) {
 				return a.SendJSON(ctx, b.Address(), []byte(`{"sent":true}`), client.Fields{})
 			}}
 		}},
 		{"outbox flush, two waiting", func(t *testing.T, e *env) partwaySet {
-			a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, b, c := e.mailbox(), e.mailbox(), e.mailbox()
 			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 				if r.Method == http.MethodPost {
 					forge.Refuse(w, protocol.CodeUnavailable)
@@ -670,7 +670,7 @@ func partwayCases() []partwayCase {
 			return partwaySet{dir: a.Dir(), a: a, check: outboxSaysItAlone, joined: true, run: func(ctx context.Context) (any, error) { return a.Flush(ctx) }}
 		}},
 		{"outbox flush, its ACL changed, the one its server took admitting no reply", func(t *testing.T, e *env) partwaySet {
-			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, b := e.mailbox(), e.mailbox()
 			serverAllowed(t, a)
 			if err := a.SyncACL(t.Context()); err != nil {
 				t.Fatal(err)
@@ -689,42 +689,42 @@ func partwayCases() []partwayCase {
 			return partwaySet{dir: a.Dir(), a: a, check: outboxSaysItAlone, joined: true, run: func(ctx context.Context) (any, error) { return a.Flush(ctx) }}
 		}},
 		{"init, restored from its identity alone", func(t *testing.T, e *env) partwaySet {
-			return restored(t, e, e.mailbox(protocol.Classic))
+			return restored(t, e, e.mailbox())
 		}},
 		{"init, restored from its identity alone, its server forgot it", func(t *testing.T, e *env) partwaySet {
-			a := e.mailbox(protocol.Classic)
+			a := e.mailbox()
 			e.srv.Forget(a.Address())
 			return restored(t, e, a)
 		}},
 		{"peer allow", func(t *testing.T, e *env) partwaySet {
-			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, b := e.mailbox(), e.mailbox()
 			serverAllowed(t, a)
 			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Allow(ctx, b.Address()) }}
 		}},
 		{"peer block", func(t *testing.T, e *env) partwaySet {
-			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, b := e.mailbox(), e.mailbox()
 			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Block(ctx, b.Address()) }}
 		}},
 		{"SyncACL", func(t *testing.T, e *env) partwaySet {
-			a := e.mailbox(protocol.Classic)
+			a := e.mailbox()
 			serverAllowed(t, a)
 			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return nil, a.SyncACL(ctx) }}
 		}},
 		{"account adopt", func(t *testing.T, e *env) partwaySet {
-			a := e.mailbox(protocol.Classic)
+			a := e.mailbox()
 			key := e.srv.AdoptKey("acct")
 			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Adopt(ctx, key) }}
 		}},
 		{"account leave", func(t *testing.T, e *env) partwaySet {
-			a := e.mailbox(protocol.Classic)
+			a := e.mailbox()
 			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return nil, a.Leave(ctx) }}
 		}},
 		{"Resolve a peer", func(t *testing.T, e *env) partwaySet {
-			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, b := e.mailbox(), e.mailbox()
 			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Resolve(ctx, b.Address()) }}
 		}},
 		{"Resolve itself", func(t *testing.T, e *env) partwaySet {
-			a := e.mailbox(protocol.Classic)
+			a := e.mailbox()
 			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Resolve(ctx, a.Address()) }}
 		}},
 	}
@@ -739,7 +739,7 @@ func TestAFlushThatLearnsItsOwnRevocationMovesEveryLaterEntry(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b, c := e.mailbox(), e.mailbox(), e.mailbox()
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		if r.Method == http.MethodPost {
 			forge.Refuse(w, protocol.CodeUnavailable)

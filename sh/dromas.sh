@@ -9,11 +9,11 @@
 # Get it from https://github.com/dromas-dev/dromas-client at a commit you have read, never from the dromas.dev
 # server: a server that could hand you this script could hand you one without its checks.
 #
-#   bash dromas.sh init [--no-pq]                  make and register this mailbox; prints its link, $DR_SERVER_URL/to/<address>
+#   bash dromas.sh init                            make and register this mailbox; prints its link, $DR_SERVER_URL/to/<address>
 #   bash dromas.sh addr                            print it again: give it to whoever should write to this mailbox
 #   bash dromas.sh send <link> [file]             one message (the body from stdin without a file); a link or an address. Posted now or not at all: nothing waits
 #   bash dromas.sh recv                            verified messages, a "message" line each; a refused one goes to refused/, with a "refused" line
-#   bash dromas.sh prekey renew [--no-pq]          a new prekey, working key and certificate: at least monthly, as a prekey is valid for 33 days, or within the lifetime a prekey-lifetime file sets
+#   bash dromas.sh prekey renew                    a new prekey, working key and certificate: at least monthly, as a prekey is valid for 33 days, or within the lifetime a prekey-lifetime file sets
 #   bash dromas.sh help [<command>]                this, or a command's lines; --help after a command does the same, and runs nothing
 #   The README has the rest: https://github.com/dromas-dev/dromas-client#readme
 #
@@ -21,7 +21,7 @@
 # shell, so all state lives in files in the mailbox's directory, never in variables.
 #
 # It gives up conveniences the Go client has: recv drains once and never waits for a message, and each step runs several
-# programs. Needs bash >= 4, age >= 1.3 (1.2 makes and reaches --no-pq mailboxes only; Ubuntu to 26.04 and Debian 13
+# programs. Needs bash >= 4, age >= 1.3 (the first with post-quantum keys, the one prekey type; Ubuntu to 26.04 and Debian 13
 # ship older, and go install filippo.io/age/cmd/...@v1.3.2 is current), OpenSSH >= 9.1 (the first to take a
 # certificate's validity and a time to verify at in UTC), curl >= 7.84 (--fail-with-body, and -w with %header),
 # jq >= 1.7.1 (1.7.0 can abort on a number a sender writes, CVE-2023-50246; Ubuntu 24.04's fixed jq prints jq-1.7),
@@ -104,7 +104,6 @@ dr_bytes(){ # <answer> <member> <file> → the member's bytes into the file, onl
   jq -ejr --arg m "$2" '.[$m] | if . == null then "" else strings end' "$1" > "$3.b64" 2> /dev/null && base64 -d < "$3.b64" > "$3" 2> /dev/null && [ "$(dr_b64 "$3" | sha256sum)" = "$(sha256sum < "$3.b64")" ] || { rm -f "$3.b64"; return 1; }
   rm -f "$3.b64"
 }
-dr_opt(){ [ -z "$1" ] || [ "$1" = --no-pq ] || dr_refuse "unknown option $1: the only one is --no-pq (no post-quantum encryption, X25519 only)"; }
 dr_stamp(){ jq -nr --argjson t "$1" '$t | strftime("%Y%m%d%H%M%SZ")'; }      # <Unix time> → the time as ssh-keygen takes one, in UTC
 dr_asc(){ printf %s "$1" | od -An -v -tx1 | tr -d ' \n'; }      # <text> → its bytes in hex
 dr_owner(){ # <METHOD> <PATH> [body file] [curl args…] → dr_api as this mailbox: adds its pass. If the server refuses the pass (it ran out sooner by the server's clock, or is under a certificate the server no longer takes), signs another and tries once more. A pass refused twice for its time is the clock: it says what this one reads, beside the server's words
@@ -193,12 +192,12 @@ dr_lifetime(){ # → the seconds each new prekey of this mailbox is valid for: w
   l=$(cat "$DR/prekey-lifetime" 2> /dev/null) && [[ $l =~ ^[1-9][0-9]{0,9}$ ]] && { printf '%s\n' "$l" | cmp -s - "$DR/prekey-lifetime" || printf '%s' "$l" | cmp -s - "$DR/prekey-lifetime"; } && [ "$l" -ge 97200 ] && [ "$l" -le 2851200 ] && echo "$l" ||      # compared with itself rebuilt: $(…) drops line feeds and NULs
     dr_refuse "this mailbox's prekey-lifetime file names no lifetime: one is a number of seconds, alone on its line, from 97200 (a day and three hours) to 2851200 (33 days)"
 }
-dr_prekey(){ # <serial> [--no-pq] → prekeys/<serial>.agekey and its statement, signed by a NEW working key (dr_work): a NEW key, valid for the mailbox's prekey lifetime (dr_lifetime), and prekeys/<serial>.made, when it was signed: a statement an earlier attempt left is sent again only while it was made for no longer than the mailbox's lifetime (dr_renew). A re-run reuses the key a failed attempt left, whatever its type, unless it is empty
+dr_prekey(){ # <serial> → prekeys/<serial>.agekey and its statement, signed by a NEW working key (dr_work): a NEW key, valid for the mailbox's prekey lifetime (dr_lifetime), and prekeys/<serial>.made, when it was signed: a statement an earlier attempt left is sent again only while it was made for no longer than the mailbox's lifetime (dr_renew). A re-run reuses the key a failed attempt left, unless it is empty
   local A p="$DR/prekeys/$1" l t k; A=$(cat "$DR/address") || return 1
   [ -s "$p.txt.sig" ] && return 0
   dr_finished || { dr_done $?; return 1; }      # the one path to this mailbox's certificates and statements: a mailbox that holds its own revocation makes neither, init and prekey renew alike
   l=$(dr_lifetime) || return 1
-  [ -s "$p.agekey" ] || { rm -f "$p.agekey"; if [ "${2-}" = --no-pq ]; then age-keygen -o "$p.agekey"; else age-keygen -pq -o "$p.agekey"; fi 2> /dev/null; } || dr_refuse "age-keygen failed: post-quantum needs age >= 1.3 (or make a mailbox with --no-pq)" || return 1      # an empty key file, as a crash before the sync below leaves one, is no key, and no statement names it, so it is made again, as the Go client does
+  [ -s "$p.agekey" ] || { rm -f "$p.agekey"; age-keygen -pq -o "$p.agekey" 2> /dev/null; } || dr_refuse "age-keygen failed: a post-quantum key needs age >= 1.3" || return 1      # an empty key file, as a crash before the sync below leaves one, is no key, and no statement names it, so it is made again, as the Go client does
   k=$(age-keygen -y "$p.agekey" 2> /dev/null) || dr_refuse "age-keygen cannot read $p.agekey, the key this mailbox began prekey $1 with (a post-quantum one needs age >= 1.3)" || return 1      # never a statement with no key in it, which a server refuses at every try
   dr_work "$1" && t=$(dr_now) || return 1
   printf 'dromas-prekey-v1\n%s\n%s\n%s\n%s\n' "$A" "$1" "$k" "$(jq -nr --argjson t "$t" --argjson l "$l" '$t + $l | todate')" > "$p.txt" &&
@@ -206,8 +205,7 @@ dr_prekey(){ # <serial> [--no-pq] → prekeys/<serial>.agekey and its statement,
   ssh-keygen -q -Y sign -n "dromas-prekey-v1:$A" -f "$DR/work/$1-cert.pub" < "$p.txt" > "$p.txt.sig" &&      # stdin to stdout: never a stale .sig
   sync "$DR/work/$1" "$DR/work/$1.pub" "$DR/work/$1-cert.pub" "$DR/work" && sync "$p.agekey" "$p.txt" "$p.made" "$p.txt.sig" "$DR/prekeys"      # the working key first, each file in turn: a signed statement is never on disk without the key its pass needs      # on disk before any upload publishes the statement: a key lost to a crash after that is a message nobody can read
 }
-dr_init(){ # [--no-pq] → creates this mailbox, or finishes a half-done init, and registers it; prints its address and link. The registration carries a pass the new working key signs, so the mailbox is in use at once
-  dr_opt "${1-}" || return 1
+dr_init(){ # → creates this mailbox, or finishes a half-done init, and registers it; prints its address and link. The registration carries a pass the new working key signs, so the mailbox is in use at once
   dr_ownmailbox || return 1
   dr_dirs && dr_putline "$DR/.gitignore" '*' || return 1      # the mailbox ignores itself, wherever it is
   [ -s "$DR/identity" ] || { rm -f "$DR/identity" "$DR/identity.pub"; ssh-keygen -q -t ed25519 -N '' -C '' -f "$DR/identity" < /dev/null; } || return 1      # an empty identity, as a crash before the sync below leaves one, is no key, and nothing was registered with it, so it is made again, as the Go client does
@@ -218,7 +216,7 @@ dr_init(){ # [--no-pq] → creates this mailbox, or finishes a half-done init, a
   if c=$(dr_cert "$p.txt.sig" "$DR/identity.doc" "$A" 2> /dev/null) && c=${c#* } && [ "${c% *}" -gt $(($(dr_now) - 3600)) ]; then      # a first statement an earlier attempt left, under a certificate that began less than an hour before this machine's clock: made while the clock read ahead of where it reads now, as a pass made then is not used either (PROTOCOL.md §12.4), so a reader whose clock a server takes may not have reached its start. The working key, its certificate and the statement are made again. The prekey's own key stays: a server may have taken a registration whose answer was lost, and then messages may be waiting that only this key opens
     rm -f "$p.txt" "$p.made" "$p.txt.sig" "$DR/work/$n" "$DR/work/$n.pub" "$DR/work/$n-cert.pub" "$DR/pass.new"
   fi
-  dr_prekey "$n" "${1-}" || return 1
+  dr_prekey "$n" || return 1
   jq -n --arg i "$(dr_b64 "$DR/identity.doc")" --arg p "$(dr_b64 "$p.txt")" --arg s "$(dr_b64 "$p.txt.sig")" --argjson k "$(dr_senders)" '{identity:$i, prekey:$p, prekey_signature:$s, sender_key_types:$k}' > "$DR/register.json"
   h=$(dr_pass "$n") && { dr_api PUT "/v1/$A" "$DR/register.json" -H "Authorization: $h" > /dev/null || { dr_clock; dr_own; false; }; } && mv "$DR/pass.new" "$DR/pass" && dr_putline "$DR/serial" "$n" && dr_addr
 }
@@ -336,7 +334,7 @@ dr_bech32(){ # <string> → its human-readable part, only for a Bech32 string (B
   ((chk == 1 && c < 5 && (k & m) == 0)) || return 1
   printf '%s\n' "$h"
 }
-dr_prekeycheck(){ # <statement> <signature> <address> <identity document> [at] → "<serial> <age recipient> <not_after as Unix time> <certificate serial>" only for five LF-ended lines naming that address, signed by a working key its identity certified, not outliving that certificate, holding a key age will encrypt to; otherwise the reason, and 1. 2, with the reason, for one good in every other way whose key is a well-formed age recipient of a type this script cannot encrypt to: its Bech32 human-readable part begins age, and is neither X25519's age nor the hybrid's age1pq. Nothing is wrong with such a statement (PROTOCOL.md §6), so its key's type is the last thing checked
+dr_prekeycheck(){ # <statement> <signature> <address> <identity document> [at] → "<serial> <age recipient> <not_after as Unix time> <certificate serial>" only for five LF-ended lines naming that address, signed by a working key its identity certified, not outliving that certificate, holding a key age will encrypt to; otherwise the reason, and 1. 2, with the reason, for one good in every other way whose key is a well-formed age recipient of a type this script cannot encrypt to: its Bech32 human-readable part begins age and is not the hybrid's age1pq, X25519's age among them. Nothing is wrong with such a statement (PROTOCOL.md §6), so its key's type is the last thing checked
   local p=$1 B=$3 s k na c L
   c=$(dr_certified "$B" "$4" "dromas-prekey-v1:$B" "$2" "$p" ${5-}); case $? in 0) ;;
     2) echo "$B's prekey: the certificate the prekey is signed under has ended"; return 1 ;;
@@ -351,8 +349,8 @@ dr_prekeycheck(){ # <statement> <signature> <address> <identity document> [at] �
   [ "$na" -le "${c#* }" ] || { echo "$B's prekey statement outlives the certificate it is signed under"; return 1; }
   k=${L[3]}
   case $(dr_bech32 "$k") in      # the key's type is its human-readable part, read before age is: age 1.3 encrypts to more types than the protocol defines, and to an SSH key
-    age | age1pq) if ! age -r "$k" < /dev/null > /dev/null 2>&1; then
-        if [[ $k = age1pq1* ]]; then echo "$B's prekey is post-quantum, and this age ($(age --version 2> /dev/null)) cannot encrypt to one: that takes age >= 1.3"; else echo "$B's prekey is not an age key that age will encrypt to"; fi; return 1
+    age1pq) if ! age -r "$k" < /dev/null > /dev/null 2>&1; then
+        echo "$B's prekey is post-quantum, and this age ($(age --version 2> /dev/null)) cannot encrypt to one: that takes age >= 1.3"; return 1
       fi ;;
     age*) echo "$B's prekey is an age recipient of a type this script cannot encrypt to, so nothing is sent"; return 2 ;;
     *) echo "$B's prekey is not an age key that age will encrypt to"; return 1 ;;
@@ -521,7 +519,7 @@ dr_send(){ # <link or address> [body file] → one message, posted now or not at
   dr_post "$B" "$DR/send"; local rc=$?; dr_spent; return $rc
 }
 dr_spent(){ rm -f "$DR/body.txt" "$DR/send.P" "$DR/seal.P" "$DR/seal.sig" "$DR/seal.age" "$DR/seal.query" "$DR/mailbox.json" "$DR/receipt.json"; }      # what a send wrote to post its message, gone once it is posted or refused: the body, the envelope, its seal, the mailbox it was sealed to and the server's receipt. sent/ is the record of what was sent
-dr_agehead(){ if [[ $1 = age1pq1* ]]; then echo 1627; else echo 168; fi; }      # <age recipient> → the size of an age file's header for one key of its type: its fields are fixed-size, so it never varies
+dr_agehead(){ echo 1627; }      # <age recipient> → the size of an age file's header for one key of its type, mlkem768x25519, the one a prekey has: its fields are fixed-size, so it never varies
 dr_sealed(){ echo $(($(dr_agehead "$2") + 16 + $1 + 16 * ($1 > 65536 ? ($1 + 65535) / 65536 : 1))); }      # <plaintext bytes> <age recipient> → the size of the age file holding them: the header, a 16-byte nonce, and a 16-byte tag after each 64 KiB chunk
 dr_blocks(){ # <size> → the size rounded up to a whole number of blocks. A block is 1/16 of the size, rounded up to a power of two, and never under 1 KiB: 1 KiB blocks up to 16 KiB, 2 KiB up to 32 KiB, and on
   local b=1024; while [ $((16 * b)) -lt "$1" ]; do b=$((b * 2)); done; echo $((($1 + b - 1) / b * b))
@@ -729,12 +727,11 @@ dr_seen(){ # <sender> <message stem> <hash> → the message, in the replay set a
 }
 
 # recipe: new prekey (monthly)
-dr_rekey(){ # [--no-pq] → publishes a new prekey, signed by a new working key under a new certificate, under the lock: a NEW key at a new number, which this machine's clock gives, or the statement an earlier run signed and the server did not take, sent again as it is. Needs only the identity (dr_lock makes the mailbox's other files from it), so it also recovers a mailbox that lost its prekeys or its working key
-  dr_opt "${1-}" || return 1
-  dr_held || { dr_lock dr_rekey "$@"; return; }
-  dr_renew "${1-}"
+dr_rekey(){ # → publishes a new prekey, signed by a new working key under a new certificate, under the lock: a NEW key at a new number, which this machine's clock gives, or the statement an earlier run signed and the server did not take, sent again as it is. Needs only the identity (dr_lock makes the mailbox's other files from it), so it also recovers a mailbox that lost its prekeys or its working key
+  dr_held || { dr_lock dr_rekey; return; }
+  dr_renew
 }
-dr_renew(){ # [--no-pq] → what dr_rekey does, the lock held. A serial is signed ONCE
+dr_renew(){ # → what dr_rekey does, the lock held. A serial is signed ONCE
   local A r s t na h c f cs p new x gone u w at; A=$(cat "$DR/address") || return 1; mkdir -p "$DR/prekeys"
   dr_finished || { dr_done $?; return 1; }
   dr_api GET "/v1/$A" > "$DR/self.json" 2> "$DR/self.err" || case $(dr_code) in
@@ -766,7 +763,7 @@ dr_renew(){ # [--no-pq] → what dr_rekey does, the lock held. A serial is signe
   t=$(ls "$DR/prekeys" | sed -n 's/\.agekey$//p; s/\.txt\.sig$//p' | sort -n | tail -n 1); new=1      # s is the highest number this mailbox knows of, and the new statement goes above it: above the served CERTIFICATE's serial, never the served prekey's, since it is under a new certificate, which outranks any prekey serial under the one before. So a prekey published in this mailbox's name at the highest serial there is holds nothing. t is the highest number this mailbox began a prekey at
   if [ "${t:-0}" -gt "$s" ]; then s=$t; new=; [ ! -s "$DR/prekeys/$s.txt.sig" ] || { na=$(dr_time "$(sed -n 5p "$DR/prekeys/$s.txt")") && [ "$na" -gt "$(dr_now)" ] && [ -s "$DR/work/$s-cert.pub" ] && c=$(dr_cert "$DR/prekeys/$s.txt.sig" "$DR/identity.doc" "$A") && c=${c#* } && [ "${c% *}" -le $(($(dr_now) - 3600)) ] && u=$(dr_time "$(cat "$DR/prekeys/$s.made" 2> /dev/null)") && w=$(dr_lifetime 2> /dev/null) && [ $((na - u)) -le "$w" ]; } || new=1; fi      # a number an earlier run took, and that nothing has passed since, is kept. Signed and never seen published: sent again AS IT IS until it expires, then a new number. Signed again, the same key would get 33 more days from a server that keeps what it refuses. One under a certificate that began less than an hour before this clock was signed while the clock read ahead of where it reads now: a reader a server takes may not have reached its start, so it is spent too. Never signed: its key is used
   if [ -n "$new" ]; then [ "$s" -lt 9007199254740991 ] || dr_refuse "this mailbox's certificate serial is the highest there is, so no later certificate can be made: the address cannot renew" || return 1; t=$(dr_now); s=$((t > s ? t : s + 1)); fi      # a new number: this machine's clock, in seconds, or one above the highest this mailbox knows of when the clock gives nothing higher. An identity is a key and keeps no record of what it signed, and a mailbox restored from it knows only what the server shows: by the clock, its certificate is above every one made before, on whatever machine. A verifier never reads a serial as a time, it only compares two
-  [ -s "$DR/prekeys/$s.txt.sig" ] || rm -f "$DR/prekeys/$s.txt" "$DR/prekeys/$s.made"; dr_prekey "$s" "${1-}" || return 1
+  [ -s "$DR/prekeys/$s.txt.sig" ] || rm -f "$DR/prekeys/$s.txt" "$DR/prekeys/$s.made"; dr_prekey "$s" || return 1
   if [ -n "$gone" ]; then u="/v1/$A"; w='{identity:$i}'; else u="/v1/$A/prekey"; w='{}'; fi      # a registration is the identity document, then what a new prekey carries
   jq -n --arg i "$(dr_b64 "$DR/identity.doc")" --arg p "$(dr_b64 "$DR/prekeys/$s.txt")" --arg g "$(dr_b64 "$DR/prekeys/$s.txt.sig")" --argjson k "$(dr_senders)" "$w"' + {prekey:$p, prekey_signature:$g, sender_key_types:$k}' > "$DR/rekey.json"
   h=$(dr_pass "$s") && dr_api PUT "$u" "$DR/rekey.json" -H "Authorization: $h" > /dev/null || { dr_clock; dr_own; return 1; }      # a pass under the NEW certificate: that is how a mailbox moves to one, and the server then takes no pass under an older
@@ -792,8 +789,8 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   dr_lines(){ dr_usage | awk -v w="bash dromas.sh $* " '/^bash dromas\.sh /{ on = index($0 " ", w) == 1 } /^The README/{ on = 0 } on'; }      # <words> → the usage lines of the commands they start
   dr_wrong(){ jq -cn --arg m "$1" --arg u "${2-}" --arg h "${3:-bash dromas.sh help}" '{type:"usage_error"} + (if $u != "" then {usage:$u} else {} end) + {help:$h, detail:$m}' >&2; exit 2; }      # <words> [usage] [help] → the usage_error line on stderr, as the Go client prints one: what was wrong, the command's usage, and the help to read. Nothing ran
   dr_cmd= dr_n=0 dr_min=0 dr_max=0      # the function the command line runs, how many words name it, and how many arguments it takes, at least and at most
-  case ${1-} in init) dr_cmd=dr_init dr_n=1 dr_max=1 ;; addr | recv) dr_cmd=dr_$1 dr_n=1 ;; send) dr_cmd=dr_send dr_n=1 dr_min=1 dr_max=2 ;; esac
-  case "${1-} ${2-}" in 'prekey renew') dr_cmd=dr_rekey dr_n=2 dr_max=1 ;; esac
+  case ${1-} in init | addr | recv) dr_cmd=dr_$1 dr_n=1 ;; send) dr_cmd=dr_send dr_n=1 dr_min=1 dr_max=2 ;; esac
+  case "${1-} ${2-}" in 'prekey renew') dr_cmd=dr_rekey dr_n=2 ;; esac
   dr_help=0
   for a; do case $a in --help) dr_help=1 ;; -h) dr_help=1; echo "Flag shorthand -h has been deprecated, use --help" >&2 ;; esac; done      # anywhere after a command: its help, and nothing runs. -h works too, as in the Go client, and means nothing else
   if [ "${1-}" = help ] || { [ -z "$dr_cmd" ] && [ "${2-}" = help ]; }; then
@@ -816,7 +813,6 @@ if [ "${BASH_SOURCE[0]}" = "$0" ]; then
   dr_use=$(dr_lines "$words" | head -n 1 | sed 's/   .*//')
   if [ $# -lt $dr_min ] || [ $# -gt $dr_max ]; then dr_wrong "dromas.sh $words takes $([ $dr_min = $dr_max ] && echo $dr_min || echo "$dr_min to $dr_max") arguments, and was given $#" "$dr_use" "bash dromas.sh help $words"; fi
   case $dr_cmd in      # every word a command takes, and no other: a word it does not take is a wrong command line, never dropped
-    dr_init | dr_rekey) [ $# -eq 0 ] || [ "$1" = --no-pq ] || dr_wrong "dromas.sh $words takes no option but --no-pq: $1" "$dr_use" "bash dromas.sh help $words" ;;
     dr_send) for a; do [[ $a != -* ]] || dr_wrong "dromas.sh send takes no option: $a" "$dr_use" "bash dromas.sh help send"; done ;;
   esac
   dr_tls "$DR_SERVER_URL" || exit 1      # refused before anything, as the Go client refuses to open a mailbox whose server it would not call

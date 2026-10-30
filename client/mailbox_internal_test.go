@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"filippo.io/age"
-	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // With no HTTP client given, requests are bounded by requestTimeout (stall),
@@ -68,7 +67,7 @@ func TestAPassNamesTheServerAsAnOrigin(t *testing.T) {
 func TestAnIdentityTypeIsHeldBeforeAnythingIsWritten(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "mailbox")
-	if _, err := Init(context.Background(), dir, Options{Base: "https://dromas.dev", IdentityType: "ssh-rsa"}, protocol.Classic); err == nil {
+	if _, err := Init(context.Background(), dir, Options{Base: "https://dromas.dev", IdentityType: "ssh-rsa"}); err == nil {
 		t.Fatal("a mailbox was made with an identity type this client does not make")
 	}
 	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
@@ -101,14 +100,10 @@ func (g greaseOnly) WrapWithLabels([]byte) ([]*age.Stanza, []string, error) {
 // A file without exactly one native recipient stanza reaches no key
 // agreement: the stanzas are counted before age is given any prekey
 // (decrypt, oneNative; PROTOCOL.md §12.3 check 1), whatever its native stanzas'
-// type and order, and a file with one is decrypted, one key agreement for
+// order, and a file with one is decrypted, one key agreement for
 // the one prekey given (#417 item 1). One with none is its own case (item 4).
 func TestNoKeyAgreementBeforeTheStanzasAreCounted(t *testing.T) {
 	t.Parallel()
-	x, err := age.GenerateX25519Identity()
-	if err != nil {
-		t.Fatal(err)
-	}
 	pq, err := age.GenerateHybridIdentity()
 	if err != nil {
 		t.Fatal(err)
@@ -120,7 +115,6 @@ func TestNoKeyAgreementBeforeTheStanzasAreCounted(t *testing.T) {
 		other func() age.Recipient
 		label []string
 	}{
-		{"X25519", x, x.Recipient(), func() age.Recipient { s, _ := age.GenerateX25519Identity(); return s.Recipient() }, nil},
 		{"post-quantum", pq, pq.Recipient(), func() age.Recipient { s, _ := age.GenerateHybridIdentity(); return s.Recipient() }, []string{"postquantum"}},
 	} {
 		for _, c := range []struct {

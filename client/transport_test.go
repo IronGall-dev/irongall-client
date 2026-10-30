@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/dromas-dev/dromas-client/client"
-	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // A mailbox calls a server over https, or over http only on this machine, and
@@ -84,7 +83,7 @@ func TestARedirectIsNeverFollowed(t *testing.T) {
 	ctx := context.Background()
 	for _, status := range redirects {
 		e := newEnv(t)
-		b := e.mailbox(protocol.Classic)
+		b := e.mailbox()
 		x := newElsewhere(t)
 		redirect(e, status, x.URL, http.MethodGet, func(p string) bool { return strings.HasSuffix(p, "/messages") })
 		if _, err := b.Receive(ctx); !isRedirect(err, status) {
@@ -117,7 +116,7 @@ func TestNoCallOfAMailboxFollowsARedirect(t *testing.T) {
 	ctx := context.Background()
 	for _, status := range redirects {
 		e := newEnv(t)
-		a, r := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+		a, r := e.mailbox(), e.mailbox()
 		x := newElsewhere(t)
 		redirect(e, status, x.URL, http.MethodGet, func(p string) bool { return p == "/v1/"+r.Address().String() })
 		if _, err := a.Send(ctx, r.Address(), "never posted"); !isRedirect(err, status) {
@@ -144,7 +143,7 @@ func TestARedirectedPublishIsNotTaken(t *testing.T) {
 	for _, status := range redirects {
 		e := newEnv(t)
 		x := newElsewhere(t)
-		b := e.mailbox(protocol.Classic)
+		b := e.mailbox()
 		rec, err := b.Revocation(t.Context())
 		if err != nil {
 			t.Fatal(err)
@@ -182,7 +181,7 @@ func TestAServerIsCalledOverHTTPSOrOnThisMachine(t *testing.T) {
 	const refusal = "is not a server this client calls"
 	// Publish and Revoke need no mailbox, so only the check of each call holds
 	// them.
-	rec, err := newEnv(t).mailbox(protocol.Classic).Revocation(t.Context())
+	rec, err := newEnv(t).mailbox().Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +196,7 @@ func TestAServerIsCalledOverHTTPSOrOnThisMachine(t *testing.T) {
 		if u == "" {
 			opt.Base = " "
 		}
-		if _, err := client.Init(ctx, dir, opt, protocol.Classic); err == nil || !strings.Contains(err.Error(), refusal) {
+		if _, err := client.Init(ctx, dir, opt); err == nil || !strings.Contains(err.Error(), refusal) {
 			t.Errorf("%q: Init: %v", u, err)
 		}
 		if exists(dir) {
@@ -221,7 +220,7 @@ func TestAServerIsCalledOverHTTPSOrOnThisMachine(t *testing.T) {
 		"http://127.0.0.1:1", "http://127.255.0.9", "http://[::1]:1", "http://someone@127.0.0.1:1",
 	} {
 		rt := &recorder{}
-		_, err := client.Init(ctx, t.TempDir(), client.Options{Base: u, HTTPClient: &http.Client{Transport: rt}}, protocol.Classic)
+		_, err := client.Init(ctx, t.TempDir(), client.Options{Base: u, HTTPClient: &http.Client{Transport: rt}})
 		if err == nil || strings.Contains(err.Error(), refusal) || rt.n == 0 {
 			t.Errorf("%q: Init made %d requests: %v", u, rt.n, err)
 		}
@@ -236,8 +235,8 @@ func TestAServerIsCalledOverHTTPSOrOnThisMachine(t *testing.T) {
 func TestACallWithNoAnswerSaysWhatKind(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
-	to := e.mailbox(protocol.Classic)
+	b := e.mailbox()
+	to := e.mailbox()
 	read := "GET /v1/" + to.Address().String() + ": "
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

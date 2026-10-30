@@ -45,14 +45,14 @@ func TestScriptAClockThatJumpsDuringARenewalDeletesNoKey(t *testing.T) {
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
 	env := []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}
-	if out, err := bash(t, env, "dr_init --no-pq"); err != nil {
+	if out, err := bash(t, env, "dr_init"); err != nil {
 		t.Fatalf("init: %q, %v", out, err)
 	}
 	b, err := protocol.ParseAddress(strings.TrimSpace(string(mustRead(t, filepath.Join(dir, "address")))))
 	if err != nil {
 		t.Fatal(err)
 	}
-	g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+	g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,7 @@ func TestScriptAClockThatJumpsDuringARenewalDeletesNoKey(t *testing.T) {
 eval "orig_$(declare -f dr_api)"
 dr_api(){ orig_ig_api "$@"; local rc=$?; case "$1 $2" in "PUT /v1/"*/prekey) : > "$DR/.jumped" ;; esac; return $rc; }
 `
-	out, err := bash(t, env, jump+"dr_rekey --no-pq")
+	out, err := bash(t, env, jump+"dr_rekey")
 	t.Logf("the renewal, the clock jumping once it was taken: %q, %v; of %d prekeys, gone: %v", out, err, len(keys), goneKeys(keys))
 	_ = os.Remove(filepath.Join(dir, ".jumped"))
 	out, err = bash(t, env, "dr_recv")
@@ -134,7 +134,6 @@ func TestTheScriptTakesARetryAboveTheFloor(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			clk := &shifted{}
 			srv := fakeserver.New(t, clk.Now)
-			kt := protocol.PostQuantum
 			dir := t.TempDir()
 			sh := func(at time.Duration, cmd string) (string, error) {
 				return bash(t, []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}, igNow(at)+cmd)
@@ -143,7 +142,7 @@ func TestTheScriptTakesARetryAboveTheFloor(t *testing.T) {
 				t.Fatal(err)
 			}
 			to := mustAddress(t, dir)
-			s, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, Now: clk.Now}, kt)
+			s, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, Now: clk.Now})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -226,7 +225,6 @@ func TestTheScriptTakesAStretchedRetryAtHonestClocks(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			clk := &frozen{base: time.Now().UTC().Truncate(time.Second)}
 			srv := fakeserver.New(t, clk.Now)
-			kt := protocol.PostQuantum
 			dir := t.TempDir()
 			sh := func(at time.Duration, cmd string) (string, error) {
 				return bash(t, []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}, clk.igNow(at)+cmd)
@@ -235,7 +233,7 @@ func TestTheScriptTakesAStretchedRetryAtHonestClocks(t *testing.T) {
 				t.Fatal(err)
 			}
 			to := mustAddress(t, dir)
-			s, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, Now: clk.Now}, kt)
+			s, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, Now: clk.Now})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -327,13 +325,12 @@ func TestScriptAClockThatJumpsDuringADrainPrunesNoLine(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
-	kt := protocol.PostQuantum
 	dir := t.TempDir()
 	env := []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}
 	if out, err := bash(t, env, "dr_init"); err != nil {
 		t.Fatalf("init: %q, %v", out, err)
 	}
-	g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, kt)
+	g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +373,7 @@ func TestTheScriptDatesARetryAfterItsMailboxRead(t *testing.T) {
 	}
 	set(0)
 	srv := fakeserver.New(t, clk.Now)
-	r, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, Now: clk.Now}, protocol.Classic)
+	r, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, Now: clk.Now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,10 +382,10 @@ func TestTheScriptDatesARetryAfterItsMailboxRead(t *testing.T) {
 	}
 	env := []string{"DR_HOME=" + t.TempDir(), "DR_SERVER_URL=" + srv.URL}
 	igNow := `dr_now(){ cat "` + clockFile + `"; }` + "\n"
-	if out, err := bash(t, env, igNow+"dr_init --no-pq"); err != nil {
+	if out, err := bash(t, env, igNow+"dr_init"); err != nil {
 		t.Fatalf("init: %q, %v", out, err)
 	}
-	g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, Now: clk.Now}, protocol.Classic)
+	g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, Now: clk.Now})
 	if err != nil {
 		t.Fatal(err)
 	}

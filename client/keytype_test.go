@@ -38,11 +38,11 @@ func TestAMailboxOnAP256Identity(t *testing.T) {
 	o := e.opts()
 	o.IdentityType = protocol.IdentityP256
 	dir := t.TempDir()
-	p, err := client.Init(context.Background(), dir, o, protocol.Classic)
+	p, err := client.Init(context.Background(), dir, o)
 	if err != nil {
 		t.Fatalf("init: %v", err)
 	}
-	ed := e.mailbox(protocol.Classic)
+	ed := e.mailbox()
 	if p.Identity().Type() != protocol.IdentityP256 || ed.Identity().Type() != protocol.IdentityEd25519 {
 		t.Fatalf("identities of type %s and %s", p.Identity().Type(), ed.Identity().Type())
 	}
@@ -65,7 +65,7 @@ func TestAMailboxOnAP256Identity(t *testing.T) {
 		t.Fatalf("open: %v", err)
 	}
 	e.clock.Add(48 * time.Hour)
-	if _, err := again.Rekey(context.Background(), protocol.Classic); err != nil {
+	if _, err := again.Rekey(context.Background()); err != nil {
 		t.Fatalf("rekey: %v", err)
 	}
 	send(t, ed, again, "after the renewal")
@@ -76,11 +76,11 @@ func TestAMailboxOnAP256Identity(t *testing.T) {
 	// An identity's type is its address's: init never changes it, and makes
 	// only the types this client runs on.
 	o.IdentityType = protocol.IdentityEd25519
-	if _, err := client.Init(context.Background(), dir, o, protocol.Classic); err == nil || !strings.Contains(err.Error(), "cannot change") {
+	if _, err := client.Init(context.Background(), dir, o); err == nil || !strings.Contains(err.Error(), "cannot change") {
 		t.Errorf("init with another type on a mailbox that has a key: %v", err)
 	}
 	o.IdentityType = "ssh-rsa"
-	if _, err := client.Init(context.Background(), t.TempDir(), o, protocol.Classic); err == nil {
+	if _, err := client.Init(context.Background(), t.TempDir(), o); err == nil {
 		t.Error("init made a mailbox of a type this client does not run on")
 	}
 }
@@ -92,7 +92,7 @@ func TestAMailboxOnAP256Identity(t *testing.T) {
 func TestAMessageFromAnIdentityOfAnUnknownType(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	doc, addr := unknownDoc()
 	want := map[string]string{}
 	for from, code := range map[protocol.Address]string{addr: protocol.RefusedKeyType, a.Address(): protocol.RefusedAttribution} {
@@ -119,7 +119,7 @@ func TestAMessageFromAnIdentityOfAnUnknownType(t *testing.T) {
 func TestSendToAnIdentityOfAnUnknownType(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	doc, addr := unknownDoc()
 	st, sig := e.srv.Prekey(b.Address())
 	posted := false
@@ -149,65 +149,75 @@ func TestSendToAnIdentityOfAnUnknownType(t *testing.T) {
 // A send to a mailbox whose prekey statement is good in every way, its key a
 // well-formed age recipient of a type this client cannot encrypt to, is
 // refused with its own code, unsupported_prekey_type, never as a statement
-// that does not verify, and nothing is posted or kept of the peer. The key is
-// the prekey/unsupported-type vector's: a published test key under a
-// human-readable part nobody uses.
+// that does not verify, and nothing is posted or kept of the peer. The keys are
+// the prekey/unsupported-type vectors': a published test key under a
+// human-readable part nobody uses, and an X25519 recipient, which is no
+// prekey's type.
 func TestSendToAPrekeyOfATypeThisClientLacks(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
-	vector, err := os.ReadFile("../testdata/vectors/prekey/unsupported-type.txt")
-	if err != nil {
-		t.Fatal(err)
+	vectors, err := filepath.Glob("../testdata/vectors/prekey/unsupported-type*.txt")
+	if err != nil || len(vectors) < 2 {
+		t.Fatalf("the unsupported-type vectors: %v, %v", vectors, err)
 	}
-	st, _ := e.srv.Prekey(b.Address())
-	lines := strings.Split(string(st), "\n")
-	lines[3] = strings.Split(string(vector), "\n")[3]
-	statement := []byte(strings.Join(lines, "\n"))
-	sig, err := protocol.Sign(worker(t, b), statement, protocol.PrekeyNamespace(b.Address()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	posted := false
-	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == mailboxPath(b):
-			fakeserver.WriteJSON(w, http.StatusOK, protocol.MailboxResponse{Identity: b.Identity().Document(), Prekey: statement, PrekeySignature: sig})
-			return
-		case r.Method == http.MethodPost:
-			posted = true
-		}
-		next.ServeHTTP(w, r)
-	})
-	_, err = a.Send(context.Background(), b.Address(), "hello")
-	var refused *client.RefusedError
-	if !errors.As(err, &refused) || refused.Code != client.RefusedPrekeyType || !strings.Contains(refused.Reason, "a type this client cannot encrypt to") {
-		t.Fatalf("send: %v", err)
-	}
-	if strings.Contains(refused.Reason, "nosuchtype") || posted || pinnedPeer(a, b.Address()) {
-		t.Errorf("the refusal quotes the key, something was posted, or the peer was pinned: %s", refused.Reason)
-	}
-	// The type is the last thing a statement is held to (#167): one that has
-	// expired is refused for that, whatever its key's type.
-	lines[4] = e.clock.Now().Add(-time.Hour).UTC().Format(protocol.TimeLayout)
-	expired := []byte(strings.Join(lines, "\n"))
-	statement, sig = expired, nil
-	if sig, err = protocol.Sign(worker(t, b), expired, protocol.PrekeyNamespace(b.Address())); err != nil {
-		t.Fatal(err)
-	}
-	_, err = a.Send(context.Background(), b.Address(), "hello")
-	if !errors.As(err, &refused) || refused.Code != "" || !strings.Contains(refused.Reason, "has expired") {
-		t.Fatalf("an expired statement of a type this client lacks: %v", err)
-	}
-	// The same statement, signed by another mailbox, does not verify: that is
-	// what it is refused as.
-	sig, err = protocol.Sign(worker(t, a), statement, protocol.PrekeyNamespace(b.Address()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = a.Send(context.Background(), b.Address(), "hello")
-	if !errors.As(err, &refused) || refused.Code != "" {
-		t.Fatalf("a statement that does not verify: %v", err)
+	for _, file := range vectors {
+		t.Run(filepath.Base(file), func(t *testing.T) {
+			e := newEnv(t)
+			a, b := e.mailbox(), e.mailbox()
+			vector, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			st, _ := e.srv.Prekey(b.Address())
+			lines := strings.Split(string(st), "\n")
+			key := strings.Split(string(vector), "\n")[3]
+			lines[3] = key
+			statement := []byte(strings.Join(lines, "\n"))
+			sig, err := protocol.Sign(worker(t, b), statement, protocol.PrekeyNamespace(b.Address()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			posted := false
+			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == mailboxPath(b):
+					fakeserver.WriteJSON(w, http.StatusOK, protocol.MailboxResponse{Identity: b.Identity().Document(), Prekey: statement, PrekeySignature: sig})
+					return
+				case r.Method == http.MethodPost:
+					posted = true
+				}
+				next.ServeHTTP(w, r)
+			})
+			_, err = a.Send(context.Background(), b.Address(), "hello")
+			var refused *client.RefusedError
+			if !errors.As(err, &refused) || refused.Code != client.RefusedPrekeyType || !strings.Contains(refused.Reason, "a type this client cannot encrypt to") {
+				t.Fatalf("send: %v", err)
+			}
+			if strings.Contains(refused.Reason, "nosuchtype") || strings.Contains(refused.Reason, key[:16]) || posted || pinnedPeer(a, b.Address()) {
+				t.Errorf("the refusal quotes the key, something was posted, or the peer was pinned: %s", refused.Reason)
+			}
+			// The type is the last thing a statement is held to (#167): one that has
+			// expired is refused for that, whatever its key's type.
+			lines[4] = e.clock.Now().Add(-time.Hour).UTC().Format(protocol.TimeLayout)
+			expired := []byte(strings.Join(lines, "\n"))
+			statement, sig = expired, nil
+			if sig, err = protocol.Sign(worker(t, b), expired, protocol.PrekeyNamespace(b.Address())); err != nil {
+				t.Fatal(err)
+			}
+			_, err = a.Send(context.Background(), b.Address(), "hello")
+			if !errors.As(err, &refused) || refused.Code != "" || !strings.Contains(refused.Reason, "has expired") {
+				t.Fatalf("an expired statement of a type this client lacks: %v", err)
+			}
+			// The same statement, signed by another mailbox, does not verify: that is
+			// what it is refused as.
+			sig, err = protocol.Sign(worker(t, a), statement, protocol.PrekeyNamespace(b.Address()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = a.Send(context.Background(), b.Address(), "hello")
+			if !errors.As(err, &refused) || refused.Code != "" {
+				t.Fatalf("a statement that does not verify: %v", err)
+			}
+		})
 	}
 }
 
@@ -218,14 +228,14 @@ func TestAMailboxDeclaresTheSenderKeyTypesItVerifies(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	body := forge.Capture(e.srv, http.MethodPut, "")
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	var reg protocol.RegisterRequest
 	if err := json.Unmarshal(*body, &reg); err != nil || !slices.Equal(reg.SenderKeyTypes, protocol.IdentityTypes()) {
 		t.Fatalf("a registration declares %v, %v", reg.SenderKeyTypes, err)
 	}
 	body = forge.Capture(e.srv, http.MethodPut, "/prekey")
 	e.clock.Add(48 * time.Hour)
-	if _, err := b.Rekey(context.Background(), protocol.Classic); err != nil {
+	if _, err := b.Rekey(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	var up protocol.PrekeyRequest
@@ -239,7 +249,7 @@ func TestAMailboxDeclaresTheSenderKeyTypesItVerifies(t *testing.T) {
 	o := e.opts()
 	o.SenderKeyTypes = []string{protocol.AnySender}
 	body = forge.Capture(e.srv, http.MethodPut, "")
-	if _, err := client.Init(context.Background(), t.TempDir(), o, protocol.Classic); err != nil {
+	if _, err := client.Init(context.Background(), t.TempDir(), o); err != nil {
 		t.Fatal(err)
 	}
 	if err := json.Unmarshal(*body, &reg); err != nil || !slices.Equal(reg.SenderKeyTypes, []string{protocol.AnySender}) {
@@ -259,14 +269,14 @@ func TestSendToAMailboxThatDoesNotVerifyThisMailboxsKeyType(t *testing.T) {
 		t.Helper()
 		o := e.opts()
 		mod(&o)
-		b, err := client.Init(ctx, t.TempDir(), o, protocol.Classic)
+		b, err := client.Init(ctx, t.TempDir(), o)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return b
 	}
 	p := with(func(o *client.Options) { o.IdentityType = protocol.IdentityP256 })
-	ed := e.mailbox(protocol.Classic)
+	ed := e.mailbox()
 	edOnly := with(func(o *client.Options) { o.SenderKeyTypes = []string{protocol.IdentityEd25519} })
 	silent := with(func(o *client.Options) { o.SenderKeyTypes = []string{} })
 	anyType := with(func(o *client.Options) { o.SenderKeyTypes = []string{protocol.AnySender} })

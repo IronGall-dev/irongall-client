@@ -33,11 +33,11 @@ func refusedFindings(t *testing.T, kind string) {
 	e := newEnv(t)
 	o := e.opts()
 	o.IdentityType = kind
-	a, err := client.Init(ctx, t.TempDir(), o, protocol.Classic)
+	a, err := client.Init(ctx, t.TempDir(), o)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	b, c := e.mailbox(), e.mailbox()
 	stamp := func(t time.Time) string { return t.UTC().Format(protocol.TimeLayout) }
 
 	// A certificate a's identity made two hours ahead of every clock here.
@@ -129,7 +129,7 @@ func TestADeliveryLeavesNothingOfAnEarlierRefusal(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	line := forge.Line(t, a.Identity().Document(), a.Address(), b.Address(), "dated ahead of the reader", e.clock.Now().Add(2*time.Hour))
 	id := e.seal(b, line, forge.Sign(t, worker(t, a), line, b.Address()))
 	says(e, protocol.CodeUnavailable, "DELETE", "/messages/"+id)
@@ -255,7 +255,7 @@ func TestARefusalNamesNoSignerTheMailboxHoldsRevoked(t *testing.T) {
 		for _, h := range holdings {
 			t.Run(r.name+", "+h.name, func(t *testing.T) {
 				e := newEnv(t)
-				a, b, thief := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+				a, b, thief := e.mailbox(), e.mailbox(), e.mailbox()
 				m := r.send(t, e, a, b, thief)
 				h.hold(t, a, b, m.serial)
 				res := receive(t, b)

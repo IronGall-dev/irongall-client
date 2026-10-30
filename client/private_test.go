@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/dromas-dev/dromas-client/client"
-	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // Every file and directory a mailbox holds is its owner's alone: its directory
@@ -25,12 +24,12 @@ func TestEveryFileOfAMailboxIsItsOwnersAlone(t *testing.T) {
 	made := filepath.Join(t.TempDir(), "made")
 	openToOthers(t, made)
 	openToOthers(t, filepath.Join(made, "inbox"))
-	a, err := client.Init(t.Context(), made, e.opts(), protocol.Classic)
+	a, err := client.Init(t.Context(), made, e.opts())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	id, err := os.ReadFile(filepath.Join(e.mailbox(protocol.Classic).Dir(), "identity"))
+	id, err := os.ReadFile(filepath.Join(e.mailbox().Dir(), "identity"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +42,7 @@ func TestEveryFileOfAMailboxIsItsOwnersAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Rekey(t.Context(), protocol.Classic); err != nil {
+	if _, err := b.Rekey(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 

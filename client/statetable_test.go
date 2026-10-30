@@ -205,13 +205,13 @@ func makeMailbox(t *testing.T, e *env, dir string, peer *client.Mailbox, unregis
 			}
 			next.ServeHTTP(w, r)
 		})
-		if _, err := client.Init(context.Background(), dir, e.opts(), protocol.Classic); err == nil {
+		if _, err := client.Init(context.Background(), dir, e.opts()); err == nil {
 			t.Fatal("the registration was taken")
 		}
 		e.srv.SetMiddle(nil)
 		return
 	}
-	a, err := client.Init(context.Background(), dir, e.opts(), protocol.Classic)
+	a, err := client.Init(context.Background(), dir, e.opts())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,7 +292,7 @@ func stateCommands() []stateCommand {
 	open := func(e *env, dir string) (*client.Mailbox, error) { return client.Open(dir, e.opts()) }
 	return []stateCommand{
 		{"init", func(ctx context.Context, e *env, dir string, _ *client.Mailbox) (string, error) {
-			_, err := client.Init(ctx, dir, e.opts(), protocol.PostQuantum) // the command's default
+			_, err := client.Init(ctx, dir, e.opts())
 			return "", err
 		}},
 		{"recv", func(ctx context.Context, e *env, dir string, _ *client.Mailbox) (string, error) {
@@ -326,7 +326,7 @@ func stateCommands() []stateCommand {
 			if err != nil {
 				return "", err
 			}
-			p, err := b.Rekey(ctx, "")
+			p, err := b.Rekey(ctx)
 			if p == nil {
 				return "", err
 			}
@@ -337,7 +337,7 @@ func stateCommands() []stateCommand {
 			if err != nil {
 				return "", err
 			}
-			r, err := b.RenewAndRevoke(ctx, "")
+			r, err := b.RenewAndRevoke(ctx)
 			if r == nil {
 				return "", err
 			}
@@ -464,7 +464,7 @@ func heldWords(h *client.Held) string {
 // written as a role and an offset from the clock.
 func runCell(t *testing.T, r stateRow, c stateCommand, m string) string {
 	e := newEnv(t)
-	peer := e.mailbox(protocol.Classic)
+	peer := e.mailbox()
 	dir := filepath.Join(t.TempDir(), "mailbox")
 	r.make(t, e, dir, peer)
 	// Two hours on: the mailbox's certificate began well before the command, and

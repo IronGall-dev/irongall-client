@@ -50,7 +50,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 - **Pinned:** a peer's identity that a client keeps once something it signed has verified, and uses over the served one ever after (Section 12.2).
 - **No answer:** what a client takes a call to have had when it failed, or when its answer breaks the form this document gives it (Sections 3.3, 11.1, 11.2, 12.3): it says nothing about what was asked.
 - **Drain:** a client's pass over its mailbox: every page of its list, each message fetched, judged and acked (Section 12.3).
-- **Native stanza:** an age recipient stanza of a type a prekey has, `X25519` or `mlkem768x25519` (Section 9.4).
+- **Native stanza:** an age recipient stanza of a type a prekey has, `mlkem768x25519` (Section 9.4).
 - **Floor:** the cutoff a mailbox's replay set has been pruned to (Section 12.3, check 8).
 
 ## 3. Primitives
@@ -59,7 +59,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 | Name | Role | Specification |
 |---|---|---|
-| age v1 | encryption to a prekey: `mlkem768x25519` (the hybrid ML-KEM-768 + X25519 recipient), or `X25519` | C2SP age |
+| age v1 | encryption to a prekey: `mlkem768x25519`, the hybrid ML-KEM-768 + X25519 recipient | C2SP age |
 | Ed25519 | the working key; the identity key of type `ssh-ed25519` | RFC 8032 |
 | ECDSA P-256 | the identity key of the optional type `ecdsa-sha2-nistp256` | FIPS 186-5, RFC 5656 |
 | SSHSIG | every signature: the signer's signature over SHA-512 or SHA-256 of the message, in a namespace | OpenSSH `PROTOCOL.sshsig` |
@@ -193,11 +193,11 @@ dromas-prekey-v1
 ```
 
 - **Serial:** a serial. Under one certificate, each statement's is higher than the last's.
-- **Key:** an age recipient of a type its Bech32 human-readable part names (BIP 173, as age writes a recipient: lowercase, its checksum valid, its data whole bytes, and with no limit on its length, as age has it): `age1pq` for `mlkem768x25519`, `age` for `X25519`. A key whose X25519 point, or whose post-quantum key's X25519 half, is of small order breaks the statement. A client makes a post-quantum prekey unless its owner asks for X25519. A prekey type added later is an addition inside v1 (Section 14).
+- **Key:** an age recipient of a type its Bech32 human-readable part names (BIP 173, as age writes a recipient: lowercase, its checksum valid, its data whole bytes, and with no limit on its length, as age has it): `age1pq` for `mlkem768x25519`, the one prekey type. A key whose X25519 half is of small order breaks the statement. A prekey type added later is an addition inside v1 (Section 14).
 - **`not_after`:** a time. A client signs a statement to end 33 days after it makes it, or sooner, down to a day and three hours (Section 12.4). A server takes a statement that ends at most 33 days and an hour after its own clock reads. A statement MUST NOT end after its certificate does.
 - **A sender MUST NOT encrypt to a prekey past its `not_after`.** There is no grace period.
 - **A sender MUST keep, for each mailbox, the highest certificate serial and prekey serial it has seen on the mailbox's statements, and refuse an earlier statement** (Section 5, ordering).
-- **A sender MUST hold a statement to every other rule before its key's type.** A statement that passes every other rule and whose key is a well-formed Bech32 string whose human-readable part begins `age` and is neither `age` nor `age1pq` is refused as `unsupported_prekey_type`, never as a statement that does not verify, and nothing is sealed or posted to it.
+- **A sender MUST hold a statement to every other rule before its key's type.** A statement that passes every other rule and whose key is a well-formed Bech32 string whose human-readable part begins `age` and is not `age1pq`, X25519's `age` among them, is refused as `unsupported_prekey_type`, never as a statement that does not verify, and nothing is sealed or posted to it.
 
 ## 7. Sender key types
 
@@ -295,13 +295,13 @@ Every message is padded so that its ciphertext is a whole number of blocks.
 - **A block** is the smallest power of two that is at least 1/16 of the ciphertext's size, and at least 1 KiB.
 - **The padding is `.` bytes after the signature's END line, to the end,** as many as make the ciphertext the next whole number of blocks, and none for one already on a block. It is not signed.
 - **For example,** a ciphertext of 40,000 bytes has a block of 4 KiB and is padded to 40,960; one of 70,000 has a block of 8 KiB and is padded to 73,728.
-- **The ciphertext is what is measured.** An age file (C2SP age's format) of one native stanza and no other, of a plaintext of L bytes, is H + 16 + L + 16 × max(1, ⌈L / 65,536⌉) bytes: the header, H, 168 bytes for an `X25519` stanza and 1,627 for `mlkem768x25519`; the payload's nonce; the plaintext; and a tag for each 64 KiB chunk. A sender computes the padding from that before encrypting, and MUST refuse to send a file that is not the size it computed.
-- **Padding is made at the seal,** for the prekey sealed to: a message sealed again to a prekey of another type is padded again.
+- **The ciphertext is what is measured.** An age file (C2SP age's format) of one native stanza and no other, of a plaintext of L bytes, is H + 16 + L + 16 × max(1, ⌈L / 65,536⌉) bytes: the header, H, 1,627 bytes for its `mlkem768x25519` stanza; the payload's nonce; the plaintext; and a tag for each 64 KiB chunk. A sender computes the padding from that before encrypting, and MUST refuse to send a file that is not the size it computed.
+- **Padding is made at the seal,** for the prekey sealed to: a message sealed again is padded again.
 - **A server does not check padding.** A size limit a server sets MUST be a whole number of its own blocks, as every power of two is, so that a message fits a limit padded exactly when it fits it bare.
 
 ### 9.4. Encryption
 
-The signed plaintext and its padding are encrypted to the recipient's prekey with age (C2SP age), in the binary format, not armoured: `{ cat P P.sig; padding; } | age -r <recipient> > m.age`. A file for a post-quantum prekey has one `mlkem768x25519` stanza; for an X25519 prekey, one `X25519` stanza. A sender adds no other native stanza.
+The signed plaintext and its padding are encrypted to the recipient's prekey with age (C2SP age), in the binary format, not armoured: `{ cat P P.sig; padding; } | age -r <recipient> > m.age`. The file has one `mlkem768x25519` stanza. A sender adds no other native stanza.
 
 ## 10. Revocation
 
@@ -478,7 +478,7 @@ The server checks:
 3. `identity` hashes to the address and has the form of an identity document (Section 4.1) → otherwise `identity_mismatch`.
 4. **The key's type and the key.** A type this protocol does not define → `unsupported_key_type`. The key in its one encoding → otherwise `identity_mismatch`. The type's key checks → otherwise `bad_key`. A server registers `ssh-ed25519` and whichever other defined types its operator chooses, and answers the rest `unsupported_key_type`, naming its list.
 5. **A registration never changes a registered mailbox.** One the server holds is answered from its record: an active mailbox, and the request byte-identical to its current identity, prekey statement and signature → `200 {}` once its pass (step 7) is verified under the mailbox's current certificate, or `401 certificate_revoked` if the identity has revoked that certificate; anything else → `409 conflict`. A revoked address → `410 revoked` with its record, mailbox or none. Any other registration is counted against its address (Section 11.5, `registrations`).
-6. **The prekey statement and its signature:** the statement's form (Section 6); line 2 is the address; a valid age recipient on line 4, of small order neither in its X25519 point nor in a post-quantum key's X25519 half; the signing key a certificate of that identity in every rule of Section 5; the namespace `dromas-prekey-v1:<A>`; the statement's `not_after` after now and at most 33 days and an hour after now; the statement not outliving its certificate → otherwise `bad_key`, or `prekey_time` where what fails is the certificate's time or the statement's `not_after`, a certificate that began less than 10 minutes before the server's clock among them. A certificate the identity revoked, by what the server keeps of the address → `401 certificate_revoked`.
+6. **The prekey statement and its signature:** the statement's form (Section 6); line 2 is the address; a valid age recipient of the prekey type on line 4, its X25519 half not of small order; the signing key a certificate of that identity in every rule of Section 5; the namespace `dromas-prekey-v1:<A>`; the statement's `not_after` after now and at most 33 days and an hour after now; the statement not outliving its certificate → otherwise `bad_key`, or `prekey_time` where what fails is the certificate's time or the statement's `not_after`, a certificate that began less than 10 minutes before the server's clock among them. A certificate the identity revoked, by what the server keeps of the address → `401 certificate_revoked`.
 7. **The pass** (Section 8): this mailbox's, for this server, not ended, under the certificate of step 6 → otherwise a `401`. The certificate shows the identity chose this working key, and a pass minutes old shows its holder is present: nobody can register an identity they do not hold, and a statement that leaked cannot be registered by whoever found it.
 8. **A new mailbox** is stored `active` → `201 {}`. A mailbox registered meanwhile by another request is answered as step 5 answers.
 9. **The server keeps the statement's certificate and its serial.** It takes a pass only under that certificate, and a later statement only under it or under a certificate of a higher serial.
@@ -519,7 +519,7 @@ The server checks, and only step 9 stores anything. Every count is taken before 
 4. **It is an age file** → otherwise `not_age`, an empty body included.
 5. **`B` is active:** unknown → `404 no_such_mailbox`; revoked → `410 revoked`.
 6. **Dedupe, while the message is live:** the id is the ciphertext's SHA-256. `B` holding that id unacked, from any sender → `200` with the receipt it holds, whatever has changed at `B` since. Nothing of a message is kept once it is acked or has expired: the same bytes sent after that are a new message, stored and counted as any send is, which a reader that took them once skips or refuses (Section 12.3, check 8).
-7. **`B` takes new messages, on this prekey, from this sender.** `B`'s current prekey past its `not_after`, or under a certificate `B`'s identity has revoked → `409 prekey_expired`. A sender whose identity is not `ssh-ed25519`, to a `B` that declared neither that type nor `any` (Section 7) → `403 sender_key_type`. The two serials not those of `B`'s current statement → `409 stale_prekey`. **Exactly one native stanza** (`X25519` or `mlkem768x25519`) of the current prekey's type; a stanza whose type matches `^[!-~]{1,8}-grease$` with at most 4 arguments is ignored, as age has a reader ignore a stanza it does not recognise, and its body is bounded by nothing but the message cap → otherwise `wrong_recipient_type`. Which key the file is sealed to cannot be checked.
+7. **`B` takes new messages, on this prekey, from this sender.** `B`'s current prekey past its `not_after`, or under a certificate `B`'s identity has revoked → `409 prekey_expired`. A sender whose identity is not `ssh-ed25519`, to a `B` that declared neither that type nor `any` (Section 7) → `403 sender_key_type`. The two serials not those of `B`'s current statement → `409 stale_prekey`. **Exactly one native stanza** (`mlkem768x25519`) of the current prekey's type; a stanza whose type matches `^[!-~]{1,8}-grease$` with at most 4 arguments is ignored, as age has a reader ignore a stanza it does not recognise, and its body is bounded by nothing but the message cap → otherwise `wrong_recipient_type`. Which key the file is sealed to cannot be checked.
 8. **Quotas, counted only for sends that carried their sender's pass.** `B`'s ACL does not admit the sender → `403 sender_not_allowed`, one code and one wording whether the sender is denied or only not allowed. The sender's `sends` → `429 rate_limited`. `B`'s messages at their cap → `429 mailbox_full`. The new messages `B` takes, from every sender together, past its budget → `429 mailbox_busy`; a retry spends none. `mailbox_full` carries a `Retry-After` of the poll interval, and `mailbox_busy` the time until `B` takes another.
 9. **Store it** (Section 13) → `201`. A concurrent send of the same ciphertext that got there first is answered as step 6 does. Any other failure is `503 unavailable`, and the sender posts the message again from its outbox.
 
@@ -696,8 +696,7 @@ A client drains every page of its list (Section 11.11). For each entry it fetche
 - **A client MUST NOT use a kept certificate that began less than an hour before its clock:** it was made while the clock read ahead. The statement and working key made with it are made again, by the clock as it reads: for the same prekey at a mailbox's first registration, and at a later number at a renewal.
 - **Deletion.** A retired prekey is deleted at its deletion time: at the latest its statement's `not_after` plus the TTL. A drain that stopped at a bound deletes no retired prekey. A client MAY delete earlier all but the newest retired prekey, after a drain that empties the mailbox, by a list the server took under a pass dated more than an hour after the newest retired prekey was made. While a renewal under a new certificate waits, a mailbox holds two working keys: the one under its current certificate, which signs its passes, and the one the waiting statement is signed with. The working key before such a renewal is deleted once it is taken.
 - **A client deletes keys, and prunes its replay set, by its clock only once a server has taken a pass dated by that clock, and by that pass's date** (its `not_after` less ten minutes), never by a reading of the clock: a drain's once its list is answered, a renewal's once it is taken. While a renewal is untaken, every retired key is kept. Section 15.3 gives the reason.
-- **A mailbox its server has forgotten** sends its renewal as a registration (Section 11.7), numbered above what it published. A mailbox restored from its identity alone, with no prekey of its own to keep the type of, makes a post-quantum prekey unless its owner says otherwise.
-- **The prekey's type MAY change at any renewal,** with no change of address.
+- **A mailbox its server has forgotten** sends its renewal as a registration (Section 11.7), numbered above what it published.
 - **A mailbox reads its own record at its server by every rule of Section 5 but its certificate's dates** (Section 11.8): what it needs of the read is that its identity signed the statement, and where the statement stands in the mailbox's order. A certificate's dates bind what is signed under it, never a renewal past it, so a record its server took is never one the mailbox cannot renew past for a date. A record that does not verify, or stands before what the mailbox published, stops a renewal, and the remedy (Section 12.6) goes on past it.
 - **A mailbox whose read of itself shows a statement it did not make** MUST say so to its owner, with what it recommends:
   - **Under a certificate of a working key the mailbox did not make,** its identity has certified someone else's key. The mailbox SHOULD recommend that its owner revoke the address (Section 10.1): a revocation of certificates cannot end it, since whoever holds the identity makes a later certificate as easily (Section 15.5).
@@ -854,7 +853,7 @@ Dromas protects a message's content from everyone but its recipient, and its sen
 
 ### 15.10. Post-quantum
 
-- **Content** is protected against harvest-now-decrypt-later for a mailbox with a post-quantum prekey, the default. A mailbox that moved from an X25519 prekey can be held on its old key for at most its lifetime.
+- **Content** is protected against harvest-now-decrypt-later: every prekey is post-quantum.
 - **Signatures are classical,** Ed25519 or P-256. A forgery needs a quantum computer at signing time, and the transferable audit trail holds until one exists. A post-quantum signature key would be added as an identity key type inside v1 (Section 14), with a new address for the mailbox that moves to it.
 - **The TLS connections are separate,** and protected as their endpoints negotiate.
 

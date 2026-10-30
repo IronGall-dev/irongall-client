@@ -165,7 +165,7 @@ func (w *world) mailboxLine(b *shMailbox) string {
 
 // init: an address that is the identity's hash and a mailbox in use at once,
 // its first number this machine's clock, keys and the pass 0600, a pass and
-// no token; init again changes nothing, and an unknown option is refused.
+// no token; init again changes nothing.
 func TestScriptInit(t *testing.T) {
 	w := newWorld(t)
 	if r := w.empty().sh("dr_recv"); r.rc == 0 || !strings.Contains(r.err, "no mailbox in") {
@@ -203,9 +203,6 @@ func TestScriptInit(t *testing.T) {
 	}
 	if out := a.must("dr_init"); out != w.mailboxLine(a) {
 		t.Errorf("dr_init again: %q", out)
-	}
-	if r := a.sh("dr_init classic"); r.rc == 0 || !strings.Contains(r.err, "unknown option classic") {
-		t.Errorf("an unknown option, the old classic: %v", r)
 	}
 }
 
@@ -546,7 +543,7 @@ func TestScriptChecksTheMailboxItIsServed(t *testing.T) {
 	e := &shMailbox{w: w, dir: filepath.Join(w.work, "E")}
 	e.must(`mkdir -p "$DR"; cd "$DR"; ssh-keygen -q -t ed25519 -N '' -C '' -f identity; printf 'dromas-v1\n%s\n \n' "$(cut -d' ' -f1,2 identity.pub)" > identity.doc; { dr_address identity.doc; echo; } > address
 ssh-keygen -q -t ed25519 -N '' -C '' -f work; ssh-keygen -q -s identity -I dromas-cert-v1 -n "$(cat address)" -z 1 -V "$(date -u -d '1 hour ago' +%Y%m%d%H%M%SZ):$(date -u -d '64 days' +%Y%m%d%H%M%SZ)" -O clear work.pub
-age-keygen -o agekey 2> /dev/null`)
+age-keygen -pq -o agekey 2> /dev/null`)
 	e.addr = mustAddress(t, e.dir)
 	eSt := w.statement(e, 1, strings.TrimSpace(e.must(`age-keygen -y "$DR/agekey"`)), notAfter(), e.file("work-cert.pub"))
 	eDoc := []byte(e.read("identity.doc"))
@@ -575,13 +572,16 @@ age-keygen -o agekey 2> /dev/null`)
 			t.Errorf("%s: its serial was recorded, %s", c.what, s)
 		}
 	}
-	// An age recipient of a type nobody defines: a published test key.
-	other := keyOf(mustReadString(t, filepath.Join(vectors, "prekey", "unsupported-type.txt")))
-	w.serving(b, w.statement(b, b1+9, other, notAfter(), bw))
-	want := fmt.Sprintf(`{"type":"error","code":"unsupported_prekey_type","detail":"REFUSED: %s's prekey is an age recipient of a type this script cannot encrypt to, so nothing is sent"}`+"\n", b.addr)
-	refused("a prekey of a type nobody defines", a, b.addr.String(), want)
-	if a.read("peers/"+b.addr.String()+"/serial") != fmt.Sprintln(b1) {
-		t.Error("a prekey of a type nobody defines was recorded")
+	// An age recipient of a type nobody defines, a published test key, and an
+	// X25519 recipient, which is no prekey's type.
+	for _, v := range []string{"unsupported-type", "unsupported-type-x25519"} {
+		other := keyOf(mustReadString(t, filepath.Join(vectors, "prekey", v+".txt")))
+		w.serving(b, w.statement(b, b1+9, other, notAfter(), bw))
+		want := fmt.Sprintf(`{"type":"error","code":"unsupported_prekey_type","detail":"REFUSED: %s's prekey is an age recipient of a type this script cannot encrypt to, so nothing is sent"}`+"\n", b.addr)
+		refused(v, a, b.addr.String(), want)
+		if a.read("peers/"+b.addr.String()+"/serial") != fmt.Sprintln(b1) {
+			t.Errorf("%s: a prekey of a type the script lacks was recorded", v)
+		}
 	}
 }
 

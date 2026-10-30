@@ -94,7 +94,7 @@ func TestADrainHoldsTheLockForItsTimeAndTheNextGoesOnFromIt(t *testing.T) {
 		const patience, drainTime = 2 * time.Second, 6 * time.Second
 		client.SetLockPatience(t, patience)
 		e := newMemEnv(t)
-		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+		a, b := e.mailbox(), e.mailbox()
 		send(t, a, b, "listed as the largest a ciphertext may be")
 		var mu sync.Mutex
 		var served []*atomic.Int64
@@ -200,7 +200,7 @@ func TestADrainHoldsTheLockForItsTimeAndTheNextGoesOnFromIt(t *testing.T) {
 // the cut's error, out of its reach (#403 item 2).
 func TestAFaultKeepingThePartialAtTheDrainsTimeIsAnError(t *testing.T) {
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	send(t, a, b, strings.Repeat("trickled until the drain's time cuts it. ", 3000))
 	var armed, failed atomic.Bool
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {

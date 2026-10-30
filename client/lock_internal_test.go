@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/dromas-dev/dromas-client/internal/fakeserver"
-	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // twoOpens is one mailbox opened twice, as two processes would: a, for a
@@ -22,7 +21,7 @@ func twoOpens(t *testing.T) (a, r *Mailbox, state string) {
 	srv := fakeserver.New(t, time.Now)
 	opt := Options{Base: srv.URL}
 	dir := t.TempDir()
-	if _, err := Init(context.Background(), dir, opt, protocol.Classic); err != nil {
+	if _, err := Init(context.Background(), dir, opt); err != nil {
 		t.Fatal(err)
 	}
 	var err error

@@ -42,7 +42,7 @@ func TestLookupsCarryNoPass(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	seen := lookups(e)
 	send(t, a, b, "asked about with no pass")
 	if res := receive(t, b); len(res.Delivered) != 1 {
@@ -55,7 +55,7 @@ func TestLookupsCarryNoPass(t *testing.T) {
 		}
 	}
 	seen = lookups(e)
-	if _, err := b.Rekey(ctx, ""); err != nil {
+	if _, err := b.Rekey(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if carried, asked := seen()[mailboxPath(b)]; !asked || carried {
@@ -70,13 +70,13 @@ func TestARevocationPublishedToARevokedMailbox(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a := e.mailbox(protocol.Classic)
+	a := e.mailbox()
 	rec := revoke(t, e, a)
 	if _, err := client.Revoke(ctx, e.opts(), rec); err != nil {
 		t.Fatalf("published again to a server that holds it: %v", err)
 	}
 	says(e, protocol.CodeRevoked, http.MethodPut, "/revocations")
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	other, err := b.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)

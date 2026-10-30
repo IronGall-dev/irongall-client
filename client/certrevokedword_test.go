@@ -20,7 +20,7 @@ import (
 func TestACertificateRevokedWithNoneShownIsTriedOnceMore(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	own := "/v1/" + b.Address().String()
 	var mu sync.Mutex
 	var calls []string

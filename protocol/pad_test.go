@@ -2,7 +2,6 @@ package protocol
 
 import (
 	"bytes"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -29,15 +28,11 @@ func sealedLen(t *testing.T, r age.Recipient, plaintext []byte) int {
 
 func recipients(t *testing.T) map[KeyType]age.Recipient {
 	t.Helper()
-	classic, err := age.GenerateX25519Identity()
-	if err != nil {
-		t.Fatal(err)
-	}
 	pq, err := age.GenerateHybridIdentity()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return map[KeyType]age.Recipient{Classic: classic.Recipient(), PostQuantum: pq.Recipient()}
+	return map[KeyType]age.Recipient{PostQuantum: pq.Recipient()}
 }
 
 // SealedSize is age's own arithmetic, held here against age: for each key
@@ -96,12 +91,11 @@ func TestPaddedSize(t *testing.T) {
 	}
 }
 
-// Every size a ciphertext can be padded to is the size of some age file, for
-// both key types, up to 1 GiB: the 16 sizes no file has, after each full
-// chunk, do not fall on a block there. The first that does is 3 GiB, for an
-// X25519 key, and padding steps past it to the next block.
+// Every size a ciphertext can be padded to is the size of some age file, up to
+// 1 GiB: the 16 sizes no file has, after each full chunk, do not fall on a
+// block there.
 func TestEveryPaddedSizeIsAnAgeFile(t *testing.T) {
-	for _, kt := range []KeyType{Classic, PostQuantum} {
+	for _, kt := range []KeyType{PostQuantum} {
 		for size := PaddedSize(SealedSize(kt, 0)); size <= 1<<30; size = PaddedSize(size + 1) {
 			n, ok := plaintextSize(kt, size)
 			if !ok || SealedSize(kt, n) != size {
@@ -115,19 +109,6 @@ func TestEveryPaddedSizeIsAnAgeFile(t *testing.T) {
 			t.Errorf("%s: a file one byte past a full chunk has a plaintext", kt)
 		}
 	}
-	if strconv.IntSize < 64 {
-		t.Skip("the 3 GiB case needs a 64-bit int")
-	}
-	gib := 1 << 30
-	if _, ok := plaintextSize(Classic, 3*gib); ok {
-		t.Fatal("an X25519 file of exactly 3 GiB has a plaintext: the case below tests nothing")
-	}
-	// A message whose file would be padded to 3 GiB goes to the block after.
-	bare, _ := plaintextSize(Classic, 3*gib-5000)
-	sealed, filler := padTo(Classic, bare)
-	if want := 3*gib + PadBlock(3*gib); sealed != want || SealedSize(Classic, bare+filler) != sealed {
-		t.Fatalf("padTo at 3 GiB: %d bytes with %d of filler, want %d", sealed, filler, want)
-	}
 }
 
 // A size limit that is a whole number of its own blocks is not passed by
@@ -139,7 +120,7 @@ func TestPaddingAtALimit(t *testing.T) {
 		if PaddedSize(limit) != limit {
 			t.Fatalf("%d is not a whole number of its own blocks", limit)
 		}
-		for _, kt := range []KeyType{Classic, PostQuantum} {
+		for _, kt := range []KeyType{PostQuantum} {
 			top, ok := plaintextSize(kt, limit) // the largest message whose file is within the limit
 			if !ok {
 				t.Fatalf("%s: no message's file is exactly %d bytes", kt, limit)
@@ -164,7 +145,7 @@ func TestPaddingAtALimit(t *testing.T) {
 func TestPlaintextLandsOnABlock(t *testing.T) {
 	rs := recipients(t)
 	sig := bytes.Repeat([]byte{'s'}, 846)
-	for _, kt := range []KeyType{Classic, PostQuantum} {
+	for _, kt := range []KeyType{PostQuantum} {
 		// Message lengths that put the unpadded file within a few bytes of a
 		// boundary, on each side, at 2, 4, 16, 18, 32, 36, 64 and 72 KiB,
 		// and past a chunk's end.
@@ -224,8 +205,6 @@ func TestShortBodiesAreOneSize(t *testing.T) {
 	}{
 		{PostQuantum, []string{"", "no", "yes", "reject", "approve", strings.Repeat("a", 130)}, 3072},
 		{PostQuantum, []string{strings.Repeat("a", 131), strings.Repeat("a", 1154)}, 4096},
-		{Classic, []string{"", "no", "yes", strings.Repeat("a", 565)}, 2048},
-		{Classic, []string{strings.Repeat("a", 566), strings.Repeat("a", 1589)}, 3072},
 	} {
 		for _, b := range c.bodies {
 			if got := sizeOf(c.kt, b); got != c.size {

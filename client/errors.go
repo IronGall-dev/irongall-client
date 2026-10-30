@@ -119,7 +119,7 @@ func (e *APIError) words() string {
 	case protocol.CodeNotAge:
 		return "the server does not read the ciphertext as an age file: a bug in this client, or in the server"
 	case protocol.CodeWrongRecipientType:
-		return "the server finds the ciphertext not encrypted to one recipient of the type of the mailbox's prekey: a post-quantum mailbox needs age 1.3 or later"
+		return "the server finds the ciphertext not encrypted to one recipient of the type of the mailbox's prekey: a prekey is post-quantum, which needs age 1.3 or later"
 	case protocol.CodeBadRevocation:
 		return "the server does not take that record as a revocation its address's own identity signed"
 	case protocol.CodeUnauthorized:

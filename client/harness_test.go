@@ -77,9 +77,9 @@ func (e *env) opts() client.Options {
 // inbox/: the tests that use it are of what comes before a message lands.
 // Where it lands, held/ by default, is senders_test.go's, which makes its
 // mailboxes with heldMailbox.
-func (e *env) mailbox(kt protocol.KeyType) *client.Mailbox {
+func (e *env) mailbox() *client.Mailbox {
 	e.t.Helper()
-	b := e.heldMailbox(kt)
+	b := e.heldMailbox()
 	landAll(e.t, b)
 	return b
 }
@@ -94,9 +94,9 @@ func landAll(t *testing.T, b *client.Mailbox) {
 
 // heldMailbox makes and registers a mailbox with the default policy: a message from a
 // sender it has not allowed is held.
-func (e *env) heldMailbox(kt protocol.KeyType) *client.Mailbox {
+func (e *env) heldMailbox() *client.Mailbox {
 	e.t.Helper()
-	b, err := client.Init(context.Background(), e.t.TempDir(), e.opts(), kt)
+	b, err := client.Init(context.Background(), e.t.TempDir(), e.opts())
 	if err != nil {
 		e.t.Fatalf("init: %v", err)
 	}

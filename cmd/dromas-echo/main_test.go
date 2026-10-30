@@ -68,7 +68,7 @@ func (e *env) opts() client.Options {
 // start in a tmpfs.
 func (e *env) echo() *echo {
 	e.t.Helper()
-	x, err := start(context.Background(), e.t.TempDir(), e.key, e.opts(), protocol.Classic, log.New(io.Discard, "", 0))
+	x, err := start(context.Background(), e.t.TempDir(), e.key, e.opts(), log.New(io.Discard, "", 0))
 	if err != nil {
 		e.t.Fatalf("start: %v", err)
 	}
@@ -77,7 +77,7 @@ func (e *env) echo() *echo {
 
 func (e *env) mailbox() *client.Mailbox {
 	e.t.Helper()
-	b, err := client.Init(context.Background(), e.t.TempDir(), e.opts(), protocol.PostQuantum)
+	b, err := client.Init(context.Background(), e.t.TempDir(), e.opts())
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -363,7 +363,7 @@ func TestEchoRefusesAnotherIdentity(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "identity"), other, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, err := start(context.Background(), dir, e.key, e.opts(), protocol.Classic, log.New(io.Discard, "", 0))
+	_, err := start(context.Background(), dir, e.key, e.opts(), log.New(io.Discard, "", 0))
 	if err == nil || !strings.Contains(err.Error(), "another mailbox's identity") {
 		t.Fatalf("got %v", err)
 	}
@@ -424,11 +424,11 @@ func TestEchoAnswersInSeconds(t *testing.T) {
 		srv := fakeserver.NewInMemory(t, time.Now)
 		opt := client.Options{Base: srv.URL, HTTPClient: srv.Client()}
 		logged := make(lines, 64)
-		x, err := start(context.Background(), t.TempDir(), newKey(t), opt, protocol.Classic, log.New(logged, "", 0))
+		x, err := start(context.Background(), t.TempDir(), newKey(t), opt, log.New(logged, "", 0))
 		if err != nil {
 			t.Fatalf("start: %v", err)
 		}
-		a, err := client.Init(context.Background(), t.TempDir(), opt, protocol.PostQuantum)
+		a, err := client.Init(context.Background(), t.TempDir(), opt)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -473,11 +473,11 @@ func TestEchoHoldsWithAReplyPending(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		srv := fakeserver.NewInMemory(t, time.Now)
 		opt := client.Options{Base: srv.URL, HTTPClient: srv.Client()}
-		x, err := start(context.Background(), t.TempDir(), newKey(t), opt, protocol.Classic, log.New(io.Discard, "", 0))
+		x, err := start(context.Background(), t.TempDir(), newKey(t), opt, log.New(io.Discard, "", 0))
 		if err != nil {
 			t.Fatal(err)
 		}
-		a, err := client.Init(context.Background(), t.TempDir(), opt, protocol.Classic)
+		a, err := client.Init(context.Background(), t.TempDir(), opt)
 		if err != nil {
 			t.Fatal(err)
 		}

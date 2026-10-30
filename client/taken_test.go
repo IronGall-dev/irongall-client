@@ -39,7 +39,7 @@ func TestAClockThatJumpsDuringARenewalDeletesNoKey(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	send(t, a, b, "first, sealed to the prekey about to retire")
 	send(t, a, b, "second, sealed to it too")
 	e.clock.Add(2 * time.Second)
@@ -51,7 +51,7 @@ func TestAClockThatJumpsDuringARenewalDeletesNoKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, rerr := jumpy.Rekey(ctx, "")
+	_, rerr := jumpy.Rekey(ctx)
 	after, _ := filepath.Glob(filepath.Join(b.Dir(), "prekeys", "*.agekey"))
 	t.Logf("renewal: %v; prekey keys %d before, %d after (the new one among them)", rerr, len(keys), len(after))
 	right, err := client.Open(b.Dir(), e.opts())
@@ -78,7 +78,7 @@ func TestAClockThatJumpsDuringTheRemedyDeletesNoKey(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	send(t, a, b, "first, sealed to the prekey about to retire")
 	send(t, a, b, "second, sealed to it too")
 	e.clock.Add(2 * time.Second)
@@ -90,7 +90,7 @@ func TestAClockThatJumpsDuringTheRemedyDeletesNoKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, rerr := jumpy.RenewAndRevoke(ctx, "")
+	r, rerr := jumpy.RenewAndRevoke(ctx)
 	after, _ := filepath.Glob(filepath.Join(b.Dir(), "prekeys", "*.agekey"))
 	t.Logf("remedy: %+v, %v; prekey keys %d before, %d after (the new one among them)", r, rerr, len(keys), len(after))
 	right, err := client.Open(b.Dir(), e.opts())
@@ -125,7 +125,7 @@ func TestAClockSteppedBackBeforeARenewalDeletesNoKey(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	send(t, a, b, "first, sealed to the prekey about to retire")
 	send(t, a, b, "second, sealed to it too")
 	e.clock.Add(2 * time.Second)
@@ -137,7 +137,7 @@ func TestAClockSteppedBackBeforeARenewalDeletesNoKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, rerr := stepped.Rekey(ctx, "")
+	_, rerr := stepped.Rekey(ctx)
 	after, _ := filepath.Glob(filepath.Join(b.Dir(), "prekeys", "*.agekey"))
 	t.Logf("renewal: %v; prekey keys %d before, %d after (the new one among them)", rerr, len(keys), len(after))
 	right, err := client.Open(b.Dir(), e.opts())
@@ -175,14 +175,14 @@ func TestDropRetiredDeletesByNoReadingLaterThanTheLists(t *testing.T) {
 			}
 			return e.clock.Now()
 		}
-		b, err := client.Init(ctx, t.TempDir(), o, protocol.Classic)
+		b, err := client.Init(ctx, t.TempDir(), o)
 		if err != nil {
 			t.Fatal(err)
 		}
 		k1 := numberOf(t, b)
 		for range 2 {
 			e.clock.Add(2 * time.Second)
-			if _, err := b.Rekey(ctx, ""); err != nil {
+			if _, err := b.Rekey(ctx); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -223,17 +223,17 @@ func TestARenewalAtRecvWithinWhoseReadTakesSeconds(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv(t)
 			mailboxOff, fromOff := c.mailbox, c.from
-			b, err := client.Init(ctx, t.TempDir(), e.skewed(&mailboxOff), protocol.Classic)
+			b, err := client.Init(ctx, t.TempDir(), e.skewed(&mailboxOff))
 			if err != nil {
 				t.Fatal(err)
 			}
 			landAll(t, b)
-			a, err := client.Init(ctx, t.TempDir(), e.skewed(&fromOff), protocol.Classic)
+			a, err := client.Init(ctx, t.TempDir(), e.skewed(&fromOff))
 			if err != nil {
 				t.Fatal(err)
 			}
 			lifetimeOf(t, b, client.MinPrekeyLifetime)
-			p, err := b.Rekey(ctx, "")
+			p, err := b.Rekey(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -303,7 +303,7 @@ func TestAClockThatJumpsDuringADrainPrunesNoLine(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	send(t, a, b, "delivered once")
 	if res := receive(t, b); len(res.Delivered) != 1 {
 		t.Fatalf("delivered %d", len(res.Delivered))

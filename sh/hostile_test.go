@@ -207,9 +207,6 @@ func TestScriptPads(t *testing.T) {
 		})
 	}
 	first := 3072 // the envelope with its identity document, and the 842-byte signature, to a post-quantum prekey
-	if !strings.HasPrefix(keyOf(string(prekeyOf(w, q))), "age1pq1") {
-		first = 2048
-	}
 	posts()
 	for _, body := range []string{"no", "yes", "reject", "approve"} {
 		p.mustSend(q, body)
@@ -244,20 +241,20 @@ func TestScriptPads(t *testing.T) {
 		t.Errorf("not each large body arrived whole: %v", got)
 	}
 	// The arithmetic at a boundary, and past 16 KiB.
-	if out := p.must(`for c in "824 age1x" "825 age1x" "823 age1x" "389 age1pq1x" "390 age1pq1x" "16000 age1x" "16200 age1x" "65530 age1x" "70000 age1x"; do dr_padding $c; done`); out !=
-		"0 1024\n1023 2048\n1 1024\n0 2048\n1023 3072\n184 16384\n2032 18432\n7982 73728\n3512 73728\n" {
+	if out := p.must(`for c in "389 age1pq1x" "390 age1pq1x" "388 age1pq1x" "14541 age1pq1x" "14741 age1pq1x" "65530 age1pq1x" "70000 age1pq1x"; do dr_padding $c; done`); out !=
+		"0 2048\n1023 3072\n1 2048\n184 16384\n2032 18432\n6523 73728\n2053 73728\n" {
 		t.Errorf("dr_padding: %q", out)
 	}
 	// After 409 stale_prekey the same envelope is padded again, for the newer prekey.
 	earlier := w.prekey(q)
-	q.must("dr_rekey --no-pq")
+	q.must("dr_rekey")
 	w.once(q, earlier)
 	if r := p.send(q.addr.String(), "sealed twice"); r.rc != 0 || !strings.Contains(r.err, "stale_prekey") || w.srv.Count(q.addr) != 1 {
 		t.Fatalf("the send handed Q's earlier prekey: %v", r)
 	}
 	w.honest()
-	if size := q.must(`dr_owner GET "/v1/$(cat "$DR/address")/messages" | jq .messages[0].size`); size != "2048\n" {
-		t.Errorf("a re-encryption after stale_prekey, to an X25519 prekey, is %q bytes", size)
+	if size := q.must(`dr_owner GET "/v1/$(cat "$DR/address")/messages" | jq .messages[0].size`); size != "3072\n" {
+		t.Errorf("a re-encryption after stale_prekey is %q bytes", size)
 	}
 	if d := q.recv(); !slices.Equal(d.bodies(), []string{"sealed twice"}) {
 		t.Errorf("the message sealed again: %v", d)
@@ -268,7 +265,7 @@ func TestScriptPads(t *testing.T) {
 	if r := p.sh("dr_seal " + q.addr.String() + ` "$DR/other"`); r.rc == 0 || !strings.Contains(r.err, "is not one this mailbox made for that address: reattributed") {
 		t.Errorf("an envelope that names another recipient: %v", r)
 	}
-	if r := p.sh(`age(){ command age "$@" && printf x; }; printf 'a size that tells' | dr_send ` + q.addr.String()); r.rc == 0 || !strings.Contains(r.err, "is not the 2048 bytes its padding was made for") || w.posts(q.addr) != n {
+	if r := p.sh(`age(){ command age "$@" && printf x; }; printf 'a size that tells' | dr_send ` + q.addr.String()); r.rc == 0 || !strings.Contains(r.err, "is not the 3072 bytes its padding was made for") || w.posts(q.addr) != n {
 		t.Errorf("an age file that is not the size the padding was made for: %v", r)
 	}
 	if r := p.sh(igNow(33*24*time.Hour) + "printf 'too late to sign' | dr_send " + q.addr.String()); r.rc == 0 || !strings.Contains(r.err, "ends within 33 days") || w.posts(q.addr) != n {

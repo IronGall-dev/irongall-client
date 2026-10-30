@@ -10,7 +10,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dromas-dev/dromas-client/internal/fakeserver"
 	"github.com/dromas-dev/dromas-client/internal/forge"
 	"github.com/dromas-dev/dromas-client/protocol"
 )
@@ -43,10 +42,9 @@ func TestSendPadsEveryMessage(t *testing.T) {
 		bodies []string
 	}{
 		{protocol.PostQuantum, 3072, []string{"no", "yes", "reject", "approve", strings.Repeat("a", 126)}},
-		{protocol.Classic, 2048, []string{"no", "yes", "reject", "approve", strings.Repeat("a", 561)}},
 	} {
 		e := newEnv(t)
-		a, b := e.mailbox(protocol.Classic), e.mailbox(c.kt)
+		a, b := e.mailbox(), e.mailbox()
 		sizes := posted(e, b.Address())
 		for _, body := range c.bodies {
 			send(t, a, b, body)
@@ -91,73 +89,12 @@ func TestSendPadsEveryMessage(t *testing.T) {
 	}
 }
 
-// The padding is made for the key a message is encrypted to. After
-// stale_prekey the newer prekey may be of the other type, whose age file is
-// 1,459 bytes smaller or larger: the same signed envelope is padded again,
-// for that one, and lands on a block again. Here the mailbox renews between the
-// sender's lookup and its post, as the server stands in for by serving the
-// statement it held before, once.
-func TestAReencryptionToTheOtherKeyTypeIsPaddedAgain(t *testing.T) {
-	t.Parallel()
-	for _, c := range []struct {
-		from, to      protocol.KeyType
-		before, after int
-	}{
-		{protocol.PostQuantum, protocol.Classic, 3072, 2048},
-		{protocol.Classic, protocol.PostQuantum, 2048, 3072},
-	} {
-		e := newEnv(t)
-		a, b := e.mailbox(protocol.Classic), e.mailbox(c.from)
-		ctx := context.Background()
-		statement, signature := e.srv.Prekey(b.Address())
-		if _, err := b.Rekey(ctx, c.to); err != nil {
-			t.Fatal(err)
-		}
-		var sizes []int
-		var sealed []byte // the outbox's envelope at the first post
-		old := true
-		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-			switch {
-			case old && r.Method == http.MethodGet && r.URL.Path == "/v1/"+b.Address().String():
-				old = false
-				fakeserver.WriteJSON(w, http.StatusOK, protocol.MailboxResponse{Identity: b.Identity().Document(), Prekey: statement, PrekeySignature: signature})
-				return
-			case r.Method == http.MethodPost && r.URL.Path == "/v1/"+b.Address().String()+"/messages":
-				body, _ := io.ReadAll(r.Body)
-				r.Body = io.NopCloser(bytes.NewReader(body))
-				sizes = append(sizes, len(body)) // the body is the ciphertext
-				if sealed == nil {
-					outbox, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "*.P"))
-					if len(outbox) == 1 {
-						sealed, _ = os.ReadFile(outbox[0])
-					}
-				}
-			}
-			next.ServeHTTP(w, r)
-		})
-		if _, err := a.Send(ctx, b.Address(), "kept"); err != nil {
-			t.Fatalf("%s → %s: %v", c.from, c.to, err)
-		}
-		// The first post is to the old prekey, refused as stale; the second is to the new one.
-		if len(sizes) != 2 || sizes[0] != c.before || sizes[1] != c.after {
-			t.Fatalf("%s → %s: the server got %d sends, %v bytes", c.from, c.to, len(sizes), sizes)
-		}
-		res := receive(t, b)
-		if len(res.Delivered) != 1 || bodyOf(t, res.Delivered[0]) != "kept" {
-			t.Fatalf("%s → %s: delivered %d", c.from, c.to, len(res.Delivered))
-		}
-		if sealed == nil || !bytes.Equal(res.Delivered[0].Plaintext, sealed) {
-			t.Fatalf("%s → %s: the re-encrypted message is not the same signed envelope", c.from, c.to)
-		}
-	}
-}
-
 // An outbox entry that is not an envelope from this mailbox to that address is
 // never sealed: the sender reads it as its recipient would.
 func TestSealRefusesAnEntryItsRecipientWould(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b, other := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b, other := e.mailbox(), e.mailbox(), e.mailbox()
 	ctx := context.Background()
 	forge.FailOnce(e.srv, http.MethodGet, "/v1/"+b.Address().String())
 	if _, err := a.Send(ctx, b.Address(), "to b"); err == nil {

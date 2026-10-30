@@ -36,13 +36,13 @@ func servedSerial(t *testing.T, e *env, b *client.Mailbox) uint64 {
 	return p.Serial
 }
 
-// Receive renews the prekey once it is more than a day old, keeping its
-// type, and not again until the new one is a day old: a mailbox received at
+// Receive renews the prekey once it is more than a day old, and not again
+// until the new one is a day old: a mailbox received at
 // least monthly never lapses, and a busy one renews at most daily.
 func TestReceiveRenewsADayOldPrekey(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	first := numberOf(t, b)
 	e.clock.Add(24 * time.Hour)
 	if res := receive(t, b); res.Renewed != nil || servedSerial(t, e, b) != first {
@@ -57,9 +57,6 @@ func TestReceiveRenewsADayOldPrekey(t *testing.T) {
 	if now := e.clock.Now().Unix(); now < 0 || res.Renewed.Serial != uint64(now) {
 		t.Fatalf("the renewal's number is %d, and the mailbox's clock reads %d", res.Renewed.Serial, now)
 	}
-	if res.Renewed.Type() != protocol.Classic {
-		t.Fatalf("the renewal changed the mailbox's key type to %s", res.Renewed.Type())
-	}
 	if again := receive(t, b); again.Renewed != nil || servedSerial(t, e, b) != res.Renewed.Serial {
 		t.Fatal("renewed again at the next receive")
 	}
@@ -72,7 +69,7 @@ func TestReceiveRenewsADayOldPrekey(t *testing.T) {
 func TestAForgottenMailboxRegistersAnewAtItsRenewal(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b, c := e.mailbox(), e.mailbox(), e.mailbox()
 	if _, err := b.Block(context.Background(), c.Address()); err != nil || e.srv.ACL(b.Address()) == nil {
 		t.Fatalf("the block before the mailbox was forgotten: %v", err)
 	}
@@ -82,9 +79,6 @@ func TestAForgottenMailboxRegistersAnewAtItsRenewal(t *testing.T) {
 	res := receive(t, b)
 	if res.Renewed == nil || res.Renewed.Serial <= first || servedSerial(t, e, b) != res.Renewed.Serial {
 		t.Fatalf("a mailbox its server forgot did not register anew at its renewal: %+v", res)
-	}
-	if res.Renewed.Type() != protocol.Classic {
-		t.Fatalf("the registration changed the mailbox's key type to %s", res.Renewed.Type())
 	}
 	send(t, a, b, "to a mailbox registered anew")
 	if got := receive(t, b); len(got.Delivered) != 1 {
@@ -120,7 +114,7 @@ func TestARenewalWhoseUploadMeetsAMailboxForgottenSinceItsReadRegistersIt(t *tes
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv(t)
-			a, b, d := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, b, d := e.mailbox(), e.mailbox(), e.mailbox()
 			if _, err := b.Block(ctx, d.Address()); err != nil {
 				t.Fatal(err)
 			}
@@ -161,11 +155,11 @@ func TestARenewalWhoseUploadMeetsAMailboxForgottenSinceItsReadRegistersIt(t *tes
 				}
 			case "cert revoke-earlier":
 				var r *client.Remedy
-				if r, err = b.RenewAndRevoke(ctx, ""); err == nil && (r == nil || r.Revoked == nil || r.NotRevoked != nil || r.Prekey == nil || r.NotRenewed != nil) {
+				if r, err = b.RenewAndRevoke(ctx); err == nil && (r == nil || r.Revoked == nil || r.NotRevoked != nil || r.Prekey == nil || r.NotRenewed != nil) {
 					t.Errorf("the remedy: %+v", r)
 				}
 			default:
-				_, err = b.Rekey(ctx, "")
+				_, err = b.Rekey(ctx)
 			}
 			e.srv.SetMiddle(nil)
 			var calls []string
@@ -220,7 +214,7 @@ func TestARenewalWhoseUploadIs404RegistersOnlyOnAReadThatShowsNoMailbox(t *testi
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv(t)
-			b := e.mailbox(protocol.Classic)
+			b := e.mailbox()
 			first := numberOf(t, b)
 			e.clock.Add(2 * time.Second)
 			var reads atomic.Int32
@@ -237,7 +231,7 @@ func TestARenewalWhoseUploadIs404RegistersOnlyOnAReadThatShowsNoMailbox(t *testi
 				}
 			})
 			from := len(e.srv.Requests())
-			_, err := b.Rekey(context.Background(), "")
+			_, err := b.Rekey(context.Background())
 			e.srv.SetMiddle(nil)
 			var calls []string
 			for _, q := range e.srv.Requests()[from:] {
@@ -265,7 +259,7 @@ func TestAnUploadAnswered404WhoseReadAgainServesItIsTaken(t *testing.T) {
 	for _, how := range []string{"prekey renew", "recv", "cert revoke-earlier"} {
 		t.Run(how, func(t *testing.T) {
 			e := newEnv(t)
-			b := e.mailbox(protocol.Classic)
+			b := e.mailbox()
 			first := numberOf(t, b)
 			if how == "recv" {
 				e.clock.Add(25 * time.Hour)
@@ -285,7 +279,7 @@ func TestAnUploadAnswered404WhoseReadAgainServesItIsTaken(t *testing.T) {
 			var err error
 			switch how {
 			case "prekey renew":
-				p, err = b.Rekey(ctx, "")
+				p, err = b.Rekey(ctx)
 			case "recv":
 				res, rerr := b.Receive(ctx)
 				if rerr != nil {
@@ -293,7 +287,7 @@ func TestAnUploadAnswered404WhoseReadAgainServesItIsTaken(t *testing.T) {
 				}
 				p, err = res.Renewed, res.RenewErr
 			case "cert revoke-earlier":
-				r, rerr := b.RenewAndRevoke(ctx, "")
+				r, rerr := b.RenewAndRevoke(ctx)
 				if r == nil {
 					t.Fatalf("no remedy: %v", rerr)
 				}
@@ -322,7 +316,7 @@ func TestAFaultRecordingARenewalTheServerTookLeavesItTaken(t *testing.T) {
 	ctx := context.Background()
 	full := &os.PathError{Op: "write", Path: "state", Err: syscall.ENOSPC}
 	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	old := numberOf(t, b)
 	e.clock.Add(2 * time.Second)
 	var armed, fired atomic.Bool
@@ -339,7 +333,7 @@ func TestAFaultRecordingARenewalTheServerTookLeavesItTaken(t *testing.T) {
 		}
 		return nil
 	})
-	p, err := b.Rekey(ctx, "")
+	p, err := b.Rekey(ctx)
 	client.SetStep(nil)
 	if !fired.Load() {
 		t.Fatal("the fault never fired")
@@ -348,7 +342,7 @@ func TestAFaultRecordingARenewalTheServerTookLeavesItTaken(t *testing.T) {
 		t.Fatalf("a renewal taken whose record failed: %+v, %v; the mailbox records %d (was %d), the server serves %d", p, err, numberOf(t, b), old, servedSerial(t, e, b))
 	}
 	e.clock.Add(2 * time.Second)
-	again, err := b.Rekey(ctx, "")
+	again, err := b.Rekey(ctx)
 	if err != nil || again == nil || again.Serial <= p.Serial || numberOf(t, b) != again.Serial {
 		t.Fatalf("the next renewal: %+v, %v; the mailbox records %d", again, err, numberOf(t, b))
 	}
@@ -370,7 +364,7 @@ func TestARenewalWhoseReadAgainEndsSendsNoRegistration(t *testing.T) {
 	for _, c := range []string{"a fault of the mailbox", "its own revocation"} {
 		t.Run(c, func(t *testing.T) {
 			e := newEnv(t)
-			b, d := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			b, d := e.mailbox(), e.mailbox()
 			if _, err := b.Block(ctx, d.Address()); err != nil || !has(b, "acl.json") {
 				t.Fatalf("the block: %v", err)
 			}
@@ -412,7 +406,7 @@ func TestARenewalWhoseReadAgainEndsSendsNoRegistration(t *testing.T) {
 				next.ServeHTTP(w, r)
 			})
 			from := len(e.srv.Requests())
-			_, err := b.Rekey(ctx, "")
+			_, err := b.Rekey(ctx)
 			armed.Store(false)
 			e.srv.SetMiddle(nil)
 			var calls []string
@@ -433,7 +427,7 @@ func TestARenewalWhoseReadAgainEndsSendsNoRegistration(t *testing.T) {
 				if !errors.Is(err, syscall.ENOSPC) {
 					t.Fatalf("the renewal: %v, want the fault", err)
 				}
-				if _, err := b.Rekey(ctx, ""); err != nil || servedSerial(t, e, b) != numberOf(t, b) {
+				if _, err := b.Rekey(ctx); err != nil || servedSerial(t, e, b) != numberOf(t, b) {
 					t.Fatalf("the next renewal: %v; the server serves %d, the mailbox published %d", err, servedSerial(t, e, b), numberOf(t, b))
 				}
 				return
@@ -453,32 +447,31 @@ func TestARenewalWhoseReadAgainEndsSendsNoRegistration(t *testing.T) {
 
 // A mailbox restored from its identity alone (README: "put it alone in an empty
 // mailbox directory and run dromas prekey renew") at a server that forgot it:
-// nothing is served to take a key type from and nothing was published, so it
-// registers with init's default, post-quantum. The same in the remedy, on a
-// restored mailbox whose server does not answer its read. Control: the restore
-// at a server that still serves the mailbox.
+// nothing is served and nothing was published, so it registers. The same in
+// the remedy, on a restored mailbox whose server does not answer its read.
+// Control: the restore at a server that still serves the mailbox.
 func TestARestoredMailboxRegistersWhereItsServerForgotIt(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	for _, forgotten := range []bool{false, true} {
 		e := newEnv(t)
-		a := e.mailbox(protocol.PostQuantum)
+		a := e.mailbox()
 		if forgotten {
 			e.srv.Forget(a.Address())
 		}
 		r := restoreWith(t, e, a, e.clock.Now)
 		e.clock.Add(time.Minute)
-		p, err := r.Rekey(ctx, "")
+		p, err := r.Rekey(ctx)
 		if err != nil {
 			t.Errorf("forgotten %v: prekey renew of a mailbox restored from its identity alone: %v", forgotten, err)
 			continue
 		}
-		if p.Type() != protocol.PostQuantum || servedSerial(t, e, r) != p.Serial {
-			t.Errorf("forgotten %v: the restored mailbox published a %s prekey at %d, and its server serves %d", forgotten, p.Type(), p.Serial, servedSerial(t, e, r))
+		if servedSerial(t, e, r) != p.Serial {
+			t.Errorf("forgotten %v: the restored mailbox published a prekey at %d, and its server serves %d", forgotten, p.Serial, servedSerial(t, e, r))
 		}
 	}
 	e := newEnv(t)
-	a := e.mailbox(protocol.PostQuantum)
+	a := e.mailbox()
 	r := restoreWith(t, e, a, e.clock.Now)
 	e.clock.Add(time.Minute)
 	watch(e, func(w http.ResponseWriter, req *http.Request) bool {
@@ -488,7 +481,7 @@ func TestARestoredMailboxRegistersWhereItsServerForgotIt(t *testing.T) {
 		}
 		return false
 	})
-	if rm, err := r.RenewAndRevoke(ctx, ""); err != nil || rm == nil || rm.Unread == nil || rm.Prekey == nil || rm.Prekey.Type() != protocol.PostQuantum {
+	if rm, err := r.RenewAndRevoke(ctx); err != nil || rm == nil || rm.Unread == nil || rm.Prekey == nil {
 		t.Errorf("the remedy on a restored mailbox whose server does not answer its read: %+v, %v", rm, err)
 	}
 }
@@ -499,7 +492,7 @@ func TestARestoredMailboxRegistersWhereItsServerForgotIt(t *testing.T) {
 func TestReceiveRetriesAFailedRenewalHourly(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	var puts atomic.Int32
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/prekey") {
@@ -548,7 +541,7 @@ func TestAFailureDatedAheadHoldsBackNoRenewal(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	var off time.Duration
-	b, err := client.Init(context.Background(), t.TempDir(), e.skewed(&off), protocol.Classic)
+	b, err := client.Init(context.Background(), t.TempDir(), e.skewed(&off))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -581,7 +574,7 @@ func TestReceiveKeepsOnePriorPrekey(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	ctx := context.Background()
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	key := func(n uint64) string { return prekeyFile(b, n, "") }
 	k1 := numberOf(t, b)
 	send(t, a, b, "to the first key")
@@ -591,7 +584,7 @@ func TestReceiveKeepsOnePriorPrekey(t *testing.T) {
 	}
 	k2 := numberOf(t, b)
 	send(t, a, b, "to the second key")
-	if _, err := b.Rekey(ctx, ""); err != nil { // retires the second key at once
+	if _, err := b.Rekey(ctx); err != nil { // retires the second key at once
 		t.Fatal(err)
 	}
 	k3 := numberOf(t, b)
@@ -626,7 +619,7 @@ func TestReceiveKeepsOnePriorPrekey(t *testing.T) {
 func TestMonthlyMailboxDeletesAtTheRenewingCheckIn(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	key1 := prekeyFile(b, numberOf(t, b), ".agekey")
 	var second uint64
 	for i := range 2 {
@@ -672,7 +665,7 @@ func uploads(e *env, b *client.Mailbox) *[]protocol.PrekeyRequest {
 func TestAFailedRenewalIsSentAgainUnchanged(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	kept := uploads(e, b)
 	e.clock.Add(25 * time.Hour)
 	for range 5 {
@@ -706,7 +699,7 @@ func TestAFailedRenewalIsSentAgainUnchanged(t *testing.T) {
 func TestAServerThatFailsEveryRenewalGetsEachKeyOnce(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	kept := uploads(e, b)
 	type lease struct {
 		signed time.Time
@@ -784,7 +777,7 @@ func TestAServerThatFailsEveryRenewalGetsEachKeyOnce(t *testing.T) {
 	// (recv tries it again within the hour), it goes, with its statement. The
 	// key in service and the one before it are held.
 	e.srv.SetMiddle(nil)
-	if _, err := b.Rekey(context.Background(), ""); err != nil {
+	if _, err := b.Rekey(context.Background()); err != nil {
 		t.Fatalf("day 75, the server back: prekey renew: %v", err)
 	}
 	if exists(stem(first)+".agekey") || has(b, "prekeys/"+strconv.FormatUint(first.p.Serial, 10)+".txt.sig") {
@@ -803,9 +796,9 @@ func TestAServerThatFailsEveryRenewalGetsEachKeyOnce(t *testing.T) {
 func TestAKeyNeverSignedIsUsed(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	forge.FailOnce(e.srv, http.MethodPut, "/prekey")
-	if _, err := b.Rekey(context.Background(), ""); err == nil {
+	if _, err := b.Rekey(context.Background()); err == nil {
 		t.Fatal("the rekey should have failed")
 	}
 	at := begunAt(t, b)
@@ -815,7 +808,7 @@ func TestAKeyNeverSignedIsUsed(t *testing.T) {
 		b.SetRecord(t, "prekeys/"+strconv.FormatUint(at, 10)+signed, nil)
 	}
 	work := mustRead(t, workFile(b, at, ""))
-	p, err := b.Rekey(context.Background(), "")
+	p, err := b.Rekey(context.Background())
 	if err != nil || p.Serial != at {
 		t.Fatalf("rekey: %+v, %v", p, err)
 	}
@@ -836,7 +829,7 @@ func TestARenewalThatMendsNothingWaitsAnHour(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	own := "/v1/" + b.Address().String()
 	var registrations int
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -867,7 +860,7 @@ func TestARenewalThatMendsNothingWaitsAnHour(t *testing.T) {
 	}
 
 	e.srv.SetMiddle(nil)
-	d := e.mailbox(protocol.Classic)
+	d := e.mailbox()
 	for i := range 2 {
 		e.srv.Forget(d.Address())
 		e.clock.Add(time.Minute)
@@ -883,7 +876,7 @@ func TestARenewalThatMendsNothingWaitsAnHour(t *testing.T) {
 func TestADrainMendedPartWaySaysWhatItsFirstPassDelivered(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	for _, body := range []string{"one", "two", "three"} {
 		send(t, a, b, body)
 	}

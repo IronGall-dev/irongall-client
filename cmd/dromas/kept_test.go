@@ -17,7 +17,6 @@ import (
 
 	"github.com/dromas-dev/dromas-client/client"
 	"github.com/dromas-dev/dromas-client/internal/fakeserver"
-	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // unseen reports whether s holds a raw tag character, a BiDi control or a
@@ -42,7 +41,7 @@ func TestOnlyRecvsOwnLineIsShown(t *testing.T) {
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
 	mailbox := func() *client.Mailbox {
-		b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+		b, err := client.Init(ctx, t.TempDir(), opt)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -146,11 +145,11 @@ func TestShowHoldsTheFileToTheLineRecvKept(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
-	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	a, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -261,7 +261,7 @@ func (w *world) operator() *operator {
 ssh-keygen -q -t ed25519 -N '' -C '' -f identity; printf 'dromas-v1\n%s\n' "$(cut -d' ' -f1,2 identity.pub)" > identity.doc; { dr_address identity.doc; echo; } > address
 ssh-keygen -q -t ed25519 -N '' -C '' -f work
 ssh-keygen -q -s identity -I dromas-cert-v1 -n "$(cat address)" -z 1 -V "$(date -u -d '1 hour ago' +%Y%m%d%H%M%SZ):$(date -u -d '64 days' +%Y%m%d%H%M%SZ)" -O clear work.pub
-age-keygen -o agekey 2> /dev/null; age-keygen -y agekey > recipient`)
+age-keygen -pq -o agekey 2> /dev/null; age-keygen -y agekey > recipient`)
 		o.addr = mustAddress(w.t, o.dir)
 		w.op = o
 	})

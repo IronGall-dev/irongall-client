@@ -14,7 +14,6 @@ import (
 
 	"github.com/dromas-dev/dromas-client/client"
 	"github.com/dromas-dev/dromas-client/internal/fakeserver"
-	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // The script runs in the C locale, so its patterns and tools read bytes, as
@@ -88,12 +87,11 @@ func TestAReceiptIsComparedAsBytes(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
-	kt := protocol.PostQuantum
-	to, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, kt)
+	to, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
-	g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, kt)
+	g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -52,7 +52,7 @@ func TestEveryCommandWaitsForTheLock(t *testing.T) {
 	for i, c := range append(refused, run...) {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv(t)
-			a, peer := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, peer := e.mailbox(), e.mailbox()
 			rec, err := peer.Revocation(t.Context())
 			if err != nil {
 				t.Fatal(err)
@@ -112,7 +112,7 @@ func TestTheStateFileIsMadeAtTheFirstCommand(t *testing.T) {
 		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
 	}
 	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	for _, maker := range []string{"Open", "a command"} {
 		for i := range 10 {
 			if err := os.Remove(filepath.Join(b.Dir(), "state")); err != nil {
@@ -179,7 +179,7 @@ func TestAnEmptyStateFileIsRefusedAndLeftAsItIs(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	state := filepath.Join(b.Dir(), "state")
 	if err := os.Truncate(state, 0); err != nil {
 		t.Fatal(err)
@@ -211,7 +211,7 @@ func TestAnEmptyStateFileIsRefusedAndLeftAsItIs(t *testing.T) {
 func TestAMailboxSharedByGoroutinesRunsOneAtATime(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	send(t, a, b, "landed while another goroutine reads")
 	var read atomic.Int32
 	done := make(chan error, 1)
@@ -325,9 +325,9 @@ func waits(b, c *client.Mailbox, rec *protocol.Revocations, opt client.Options) 
 		"Receive":           func(ctx context.Context) error { _, err := b.Receive(ctx); return err },
 		"Hold":              func(ctx context.Context) error { _, err := b.Hold(ctx, time.Second); return err },
 		"Await":             func(ctx context.Context) error { return b.Await(ctx, time.Now().Add(2*time.Second), nil) },
-		"Rekey":             func(ctx context.Context) error { _, err := b.Rekey(ctx, ""); return err },
+		"Rekey":             func(ctx context.Context) error { _, err := b.Rekey(ctx); return err },
 		"RevokeEarlier":     func(ctx context.Context) error { _, err := b.RevokeEarlier(ctx); return err },
-		"RenewAndRevoke":    func(ctx context.Context) error { _, err := b.RenewAndRevoke(ctx, ""); return err },
+		"RenewAndRevoke":    func(ctx context.Context) error { _, err := b.RenewAndRevoke(ctx); return err },
 		"Send":              func(ctx context.Context) error { _, err := b.Send(ctx, c.Address(), "waits"); return err },
 		"SendWith": func(ctx context.Context) error {
 			_, err := b.SendWith(ctx, c.Address(), "waits", client.Fields{})
@@ -348,7 +348,7 @@ func waits(b, c *client.Mailbox, rec *protocol.Revocations, opt client.Options) 
 		"Publish": func(ctx context.Context) error { _, err := b.Publish(ctx, rec); return err },
 		"Revoke":  func(ctx context.Context) error { _, err := b.Revoke(ctx, rec); return err },
 		"client.Init": func(ctx context.Context) error {
-			_, err := client.Init(ctx, b.Dir(), opt, protocol.Classic)
+			_, err := client.Init(ctx, b.Dir(), opt)
 			return err
 		},
 	}
@@ -501,7 +501,7 @@ func TestAWaitForTheLockEndsWithItsContext(t *testing.T) {
 	}
 	client.SetLockPatience(t, 3*time.Second) // a wait that ignores its context fails at this, not at two minutes
 	e := newEnv(t)
-	b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	b, c := e.mailbox(), e.mailbox()
 	rec, err := c.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -524,7 +524,7 @@ func TestAWaitForTheSlotEndsWithItsContext(t *testing.T) {
 	}
 	client.SetLockPatience(t, 3*time.Second) // a wait that ignores its context ends at this, refused, not at two minutes
 	e := newEnv(t)
-	b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	b, c := e.mailbox(), e.mailbox()
 	rec, err := c.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -563,7 +563,7 @@ func TestAWaitingCommandGoesBeforeReadingsThatOverlap(t *testing.T) {
 	}
 	client.SetLockPatience(t, 5*time.Second)
 	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
 	var refused atomic.Int64
@@ -609,7 +609,7 @@ func TestTwoProcessesKeepTheHigherSerial(t *testing.T) {
 		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
 	}
 	e := newEnv(t)
-	a := e.mailbox(protocol.Classic)
+	a := e.mailbox()
 	key, err := os.ReadFile(filepath.Join(a.Dir(), "identity"))
 	if err != nil {
 		t.Fatal(err)
@@ -631,7 +631,7 @@ func TestTwoProcessesKeepTheHigherSerial(t *testing.T) {
 	}
 	low, high := rec(200), rec(300)
 	for i := range 30 {
-		b := e.mailbox(protocol.Classic) // neither record held yet
+		b := e.mailbox() // neither record held yet
 		p1, err := client.Open(b.Dir(), e.opts())
 		if err != nil {
 			t.Fatal(err)
@@ -658,7 +658,7 @@ func TestTwoProcessesKeepTheHigherSerial(t *testing.T) {
 // Readings at once share it.
 func TestStatusWaitsForACommandThatWrites(t *testing.T) {
 	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	release := holdState(t, b)
 	told := make(chan struct{}, 1)
 	opt := e.opts()

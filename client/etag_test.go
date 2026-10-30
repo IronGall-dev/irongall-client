@@ -56,7 +56,7 @@ func (s *statusWriter) WriteHeader(code int) {
 func TestAnEmptyMailboxPollsWithItsETag(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	var p polls
 	p.watch(e, b)
 	receive(t, b)
@@ -78,7 +78,7 @@ func TestAnEmptyMailboxPollsWithItsETag(t *testing.T) {
 func TestAPageWithMessagesDropsTheETag(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	receive(t, b)
 	if !has(b, "etag") {
 		t.Fatal("an empty mailbox kept no ETag")
@@ -107,7 +107,7 @@ func TestAPageWithMessagesDropsTheETag(t *testing.T) {
 func TestAListAnswerOutOfItsFormIsNoAnswer(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	for name, answer := range map[string]func(w http.ResponseWriter){
 		"a 304 unasked": func(w http.ResponseWriter) {
 			w.Header().Set("Retry-After", "60")
@@ -143,7 +143,7 @@ func TestAListAnswerOutOfItsFormIsNoAnswer(t *testing.T) {
 func TestAnETagOfAnotherFormIsNotKept(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	for _, bad := range []string{`unquoted`, `"a b"`, `"a"b"`, `"` + strings.Repeat("x", 129) + `"`, `W/unquoted`, `"é"`} {
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/messages") {
@@ -167,7 +167,7 @@ func TestAPlantedTagHidesNoMessage(t *testing.T) {
 	t.Parallel()
 	for _, plant := range []string{`",*,"`, `"x,*,y"`, `W/"a,W/*,b"`} {
 		e := newEnv(t)
-		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+		a, b := e.mailbox(), e.mailbox()
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if r.Method != http.MethodGet || !strings.HasSuffix(r.URL.Path, "/messages") || r.URL.RawQuery != "" {
 				next.ServeHTTP(w, r)
@@ -201,7 +201,7 @@ func TestAPlantedTagHidesNoMessage(t *testing.T) {
 func TestA304AboutAnotherTagIsNoAnswer(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	receive(t, b)
 	kept, ok := stateOf(b, "etag")
 	if !ok {

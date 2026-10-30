@@ -177,15 +177,15 @@ func TestRecvPrintsTheCheckedLine(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
-	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	a, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	c, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,11 +247,11 @@ func TestRecvLineHasNoOtherLineBreaks(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
-	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	a, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -282,11 +282,11 @@ func TestRecvWaitRidesOutARateLimit(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
-	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	a, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,11 +323,11 @@ func TestRecvWaitIsWokenByAMessage(t *testing.T) {
 		ctx := context.Background()
 		srv := fakeserver.NewInMemory(t, time.Now)
 		opt := client.Options{Base: srv.URL, HTTPClient: srv.Client()}
-		a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+		a, err := client.Init(ctx, t.TempDir(), opt)
 		if err != nil {
 			t.Fatal(err)
 		}
-		b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+		b, err := client.Init(ctx, t.TempDir(), opt)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -368,7 +368,7 @@ func TestRecvWaitEndsWithoutABurstOfPolls(t *testing.T) {
 		ctx := context.Background()
 		srv := fakeserver.NewInMemory(t, time.Now)
 		opt := client.Options{Base: srv.URL, HTTPClient: srv.Client()}
-		b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+		b, err := client.Init(ctx, t.TempDir(), opt)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -393,11 +393,11 @@ func TestRecvWaitGoesOnPastADrainUnanswered(t *testing.T) {
 		ctx := context.Background()
 		srv := fakeserver.NewInMemory(t, time.Now)
 		opt := client.Options{Base: srv.URL, HTTPClient: srv.Client()}
-		a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+		a, err := client.Init(ctx, t.TempDir(), opt)
 		if err != nil {
 			t.Fatal(err)
 		}
-		b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+		b, err := client.Init(ctx, t.TempDir(), opt)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -460,11 +460,11 @@ func TestRecvDrainTimeStopsAsTheOtherLimitsDo(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
-	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	a, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -535,11 +535,11 @@ func TestRecvWaitResumesAPacedDrain(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
-	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	a, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -596,7 +596,7 @@ func TestRecvWaitResumesAPacedDrain(t *testing.T) {
 func TestAdopt(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
-	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -661,11 +661,11 @@ func TestNothingTheServerWritesIsPrinted(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
-	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	a, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -784,14 +784,6 @@ func TestHelpAndREADMENameTheEchoMailbox(t *testing.T) {
 	if !strings.Contains(string(readme), "dromas send "+link+"\n") {
 		t.Error("the README does not give the echo mailbox's link")
 	}
-	// The second echo mailbox, for age 1.2, is the stock script's: the README
-	// gives its link, and the help, which is this client's, does not need it.
-	if _, err := protocol.ParseAddress(client.EchoAddressNoPQ); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(readme), "dromas.sh send "+client.DefaultBase+"/to/"+client.EchoAddressNoPQ+"\n") {
-		t.Error("the README does not give the no-pq echo mailbox's link")
-	}
 }
 
 // init and addr print the mailbox's address and link; send takes a link to its own server or
@@ -805,7 +797,7 @@ func TestTheLink(t *testing.T) {
 	t.Setenv("DROMAS_HOME", home)
 	t.Setenv("DROMAS_SERVER_URL", srv.URL)
 	var out bytes.Buffer
-	if err := do(ctx, "init", []string{"--no-pq"}, nil, &out, io.Discard); err != nil {
+	if err := do(ctx, "init", nil, nil, &out, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	a, err := client.Open(home, opt)
@@ -821,7 +813,7 @@ func TestTheLink(t *testing.T) {
 	if err := do(ctx, "addr", nil, nil, &out, io.Discard); err != nil || out.String() != mailbox {
 		t.Fatalf("addr: %v %q", err, out.String())
 	}
-	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -862,12 +854,12 @@ func TestRecvSaysItReplacedAnACL(t *testing.T) {
 	ago.Store(int64(25 * time.Hour))
 	clock := func() time.Time { return time.Now().Add(-time.Duration(ago.Load())) }
 	srv := fakeserver.New(t, clock)
-	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, Now: clock}, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, Now: clock})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ago.Store(0)
-	a, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+	a, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -900,12 +892,12 @@ func TestRecvSaysARenewalFailed(t *testing.T) {
 	ago.Store(int64(25 * time.Hour))
 	clock := func() time.Time { return time.Now().Add(-time.Duration(ago.Load())) }
 	srv := fakeserver.New(t, clock)
-	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, Now: clock}, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, Now: clock})
 	if err != nil {
 		t.Fatal(err)
 	}
 	ago.Store(0)
-	a, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+	a, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -979,7 +971,7 @@ func TestARefusedMessageDoesNotFailRecv(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
-	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1019,11 +1011,11 @@ func TestSendFlags(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
-	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	a, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1094,11 +1086,11 @@ func TestSendJSONFlag(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
-	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	a, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1159,11 +1151,11 @@ func TestRecvHeadersAndShow(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
-	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	a, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1221,7 +1213,7 @@ func TestLinesNameAPeerByItsAliasAndInboxListsWhatItKeeps(t *testing.T) {
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
 	mailbox := func() *client.Mailbox {
-		x, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+		x, err := client.Init(ctx, t.TempDir(), opt)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1314,11 +1306,11 @@ func TestRefusedCommands(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
-	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	a, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1384,15 +1376,15 @@ func TestAliasCommand(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
-	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	a, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	c, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1565,7 +1557,7 @@ func TestHelp(t *testing.T) {
 func TestHelpRunsNothing(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
-	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1596,7 +1588,7 @@ func TestHelpRunsNothing(t *testing.T) {
 func TestHelpIsReadAsAnyFlag(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
-	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1652,7 +1644,7 @@ func TestHelpAndAWrongLineComeBeforeTheEnvironment(t *testing.T) {
 				t.Errorf("%v: %s --no-such-flag: %v, want a usage error", env, p, err)
 			}
 		}
-		for _, line := range []string{"prekey lifetime soon", "show not-an-id", "init --identity-type x", "refused rm", "prekey renew --pq --no-pq"} {
+		for _, line := range []string{"prekey lifetime soon", "show not-an-id", "init --identity-type x", "refused rm", "prekey renew --no-pq"} {
 			if err := do(ctx, line, nil, nil, io.Discard, io.Discard); !errors.As(err, &u) {
 				t.Errorf("%v: %s: %v, want a usage error", env, line, err)
 			}
@@ -1674,11 +1666,11 @@ func TestRevocationCommands(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
-	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	a, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1756,7 +1748,7 @@ func TestRevocationCommands(t *testing.T) {
 	if out, _, err := cmd(nil, "revocation publish", "--record", record, a.Address().String()); err != nil || out != `{"type":"revoked","address":"`+a.Address().String()+published {
 		t.Fatalf("revocation publish --record: %v %q", err, out)
 	}
-	c, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	c, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1783,11 +1775,11 @@ func TestRevokedAsk(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
-	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	a, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1805,7 +1797,7 @@ func TestRevokedAsk(t *testing.T) {
 	if ls := printed(t, out); err != nil || typesOf(ls) != "not_revoked" || ls[0]["address"] != addr || !strings.Contains(ls[0]["detail"].(string), "the server's word") || warn != "" {
 		t.Fatalf("ask about a mailbox with nothing revoked: %v %q %q", err, out, warn)
 	}
-	if _, err := a.Rekey(ctx, ""); err != nil {
+	if _, err := a.Rekey(ctx); err != nil {
 		t.Fatal(err)
 	}
 	certs, err := a.RevokeEarlier(ctx)
@@ -1837,7 +1829,7 @@ func TestRevokedAsk(t *testing.T) {
 	if err := os.WriteFile(file, rec, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	c, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	c, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1880,7 +1872,7 @@ func TestRevokedAsk(t *testing.T) {
 func TestCertRevokeEarlier(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
-	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1931,7 +1923,7 @@ func TestCertPublishRevokedKeepsTheRevocationItMeets(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
-	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1988,7 +1980,7 @@ func TestCertPublishRevokedKeepsTheRevocationItMeets(t *testing.T) {
 func TestCertRevokeEarlierWhenTheRenewalIsRefused(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
-	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2020,7 +2012,7 @@ func TestCertRevokeEarlierShownItsOwnRevocationSaysThatAlone(t *testing.T) {
 	for _, at := range []string{"its publish", "its renewal"} {
 		t.Run(at, func(t *testing.T) {
 			srv := fakeserver.New(t, time.Now)
-			b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+			b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -2075,7 +2067,7 @@ func refusing(code protocol.Code, method, suffix string) func(http.ResponseWrite
 func TestCertRevokeEarlierSaysWhatHappenedToEach(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
-	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2263,11 +2255,11 @@ func TestHeldAndPeerCommands(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
-	a, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	a, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2327,7 +2319,7 @@ func TestHeldAndPeerCommands(t *testing.T) {
 func TestPrekeyLifetime(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
-	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2439,7 +2431,7 @@ func TestCertPublishRevokedBelowTheServersSaysTheHigherOne(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
-	b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}

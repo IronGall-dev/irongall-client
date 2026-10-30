@@ -46,12 +46,12 @@ type crashOrder struct {
 // crashCommands are what a copy runs, by name.
 var crashCommands = map[string]func(ctx context.Context, b *client.Mailbox, o crashOrder) error{
 	"rekey": func(ctx context.Context, b *client.Mailbox, _ crashOrder) error {
-		_, err := b.Rekey(ctx, "")
+		_, err := b.Rekey(ctx)
 		return err
 	},
 	"receive": func(ctx context.Context, b *client.Mailbox, _ crashOrder) error { _, err := b.Receive(ctx); return err },
 	"remedy": func(ctx context.Context, b *client.Mailbox, _ crashOrder) error {
-		_, err := b.RenewAndRevoke(ctx, "")
+		_, err := b.RenewAndRevoke(ctx)
 		return err
 	},
 	"send": func(ctx context.Context, b *client.Mailbox, o crashOrder) error {
@@ -150,7 +150,7 @@ func whole(t *testing.T, e *env, b, from *client.Mailbox, waiting ...string) {
 		t.Fatalf("the drain after the crash: %+v, %v; the server still holds %d", res, err, e.srv.Count(x.Address()))
 	}
 	e.clock.Add(2 * time.Second)
-	if _, err := x.Rekey(ctx, ""); err != nil {
+	if _, err := x.Rekey(ctx); err != nil {
 		t.Fatalf("the renewal after the crash: %v", err)
 	}
 	if served := servedSerial(t, e, x); served != numberOf(t, x) {
@@ -177,7 +177,7 @@ func TestARenewalKilledAtEachStepLeavesTheMailboxWhole(t *testing.T) {
 	for _, step := range client.Steps("renewal") {
 		t.Run(step, func(t *testing.T) {
 			e := newEnv(t)
-			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, b := e.mailbox(), e.mailbox()
 			send(t, a, b, "sealed to the prekey in use")
 			e.clock.Add(2 * time.Second)
 			crash(t, e, b, "rekey", step, protocol.Address{})
@@ -198,7 +198,7 @@ func TestAForgottenMailboxKilledAtEachStepOfItsRegistrationSendsItsACLAgain(t *t
 	for _, step := range client.Steps("renewal") {
 		t.Run(step, func(t *testing.T) {
 			e := newEnv(t)
-			a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, b, c := e.mailbox(), e.mailbox(), e.mailbox()
 			if _, err := b.Block(context.Background(), c.Address()); err != nil || e.srv.ACL(b.Address()) == nil {
 				t.Fatalf("the block before the mailbox was forgotten: %v", err)
 			}
@@ -264,7 +264,7 @@ func TestARecvKilledAtEachStepOfItsRenewalReadsItsServersACL(t *testing.T) {
 			t.Run(s.name+", "+step, func(t *testing.T) {
 				ctx := context.Background()
 				e := newEnv(t)
-				a, b, c, d := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+				a, b, c, d := e.mailbox(), e.mailbox(), e.mailbox(), e.mailbox()
 				if _, err := b.Block(ctx, c.Address()); err != nil {
 					t.Fatal(err)
 				}
@@ -317,7 +317,7 @@ func TestARecvKilledAtEachStepOfItsRenewalReadsItsServersACL(t *testing.T) {
 func TestARemedyPassingOverAKilledRenewalDropsWhatItLeft(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	e.clock.Add(2 * time.Second)
 	crash(t, e, b, "rekey", "prekey made", protocol.Address{})
 	x, err := client.Open(b.Dir(), e.opts())
@@ -336,7 +336,7 @@ func TestARemedyPassingOverAKilledRenewalDropsWhatItLeft(t *testing.T) {
 		}
 	}
 	e.clock.Add(2 * time.Second)
-	if r, err := x.RenewAndRevoke(context.Background(), ""); err != nil || r == nil || r.Prekey == nil || r.Prekey.Serial <= left {
+	if r, err := x.RenewAndRevoke(context.Background()); err != nil || r == nil || r.Prekey == nil || r.Prekey.Serial <= left {
 		t.Fatalf("the remedy: %+v, %v", r, err)
 	}
 	for _, f := range files {
@@ -353,7 +353,7 @@ func TestARemedyPassingOverAKilledRenewalDropsWhatItLeft(t *testing.T) {
 func TestARenewalTakenUnseenIsRecordedAndALaterOneKeepsItsNumber(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	e.clock.Add(2 * time.Second)
 	crash(t, e, b, "rekey", "renewal taken", protocol.Address{})
 	x, err := client.Open(b.Dir(), e.opts())
@@ -376,7 +376,7 @@ func TestARenewalTakenUnseenIsRecordedAndALaterOneKeepsItsNumber(t *testing.T) {
 func TestItsOwnStatementUnderAnotherCertificateIsNoRenewalTaken(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	stolen, first := worker(t, b), numberOf(t, b)
 	e.clock.Add(2 * time.Second)
 	crash(t, e, b, "rekey", "renewal taken", protocol.Address{})
@@ -421,7 +421,7 @@ func TestTheRemedyKilledAtEachStepLeavesTheMailboxWhole(t *testing.T) {
 		t.Run(step, func(t *testing.T) {
 			ctx := context.Background()
 			e := newEnv(t)
-			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, b := e.mailbox(), e.mailbox()
 			first := numberOf(t, b)
 			e.clock.Add(2 * time.Second)
 			crash(t, e, b, "remedy", step, protocol.Address{})
@@ -429,7 +429,7 @@ func TestTheRemedyKilledAtEachStepLeavesTheMailboxWhole(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			r, err := x.RenewAndRevoke(ctx, "")
+			r, err := x.RenewAndRevoke(ctx)
 			if err != nil || r == nil || r.NotRevoked != nil || r.NotRenewed != nil {
 				t.Fatalf("the remedy again: %+v, %v", r, err)
 			}
@@ -455,7 +455,7 @@ func TestARestoreKilledAtEachStepAdoptsItsServersACL(t *testing.T) {
 		t.Run(step, func(t *testing.T) {
 			ctx := context.Background()
 			e := newEnv(t)
-			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, b := e.mailbox(), e.mailbox()
 			if _, err := b.Block(ctx, a.Address()); err != nil {
 				t.Fatal(err)
 			}
@@ -488,7 +488,7 @@ func TestADrainKilledAtEachStepOfADeliveryDeliversOnce(t *testing.T) {
 	for _, step := range client.Steps("delivery") {
 		t.Run(step, func(t *testing.T) {
 			e := newEnv(t)
-			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, b := e.mailbox(), e.mailbox()
 			send(t, a, b, "waits for a drain that dies")
 			crash(t, e, b, "receive", step, protocol.Address{})
 			whole(t, e, b, a, "waits for a drain that dies")
@@ -503,7 +503,7 @@ func TestADrainKilledAtEachStepOfARefusalKeepsItOnce(t *testing.T) {
 	for _, step := range client.Steps("refusal") {
 		t.Run(step, func(t *testing.T) {
 			e := newEnv(t)
-			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, b := e.mailbox(), e.mailbox()
 			messageAs(t, e, a, b, worker(t, b), "signed by another mailbox's key")
 			crash(t, e, b, "receive", step, protocol.Address{})
 			x, err := client.Open(b.Dir(), e.opts())
@@ -532,7 +532,7 @@ func TestADrainKilledAtEachStepOfAPartialDeliversOnce(t *testing.T) {
 	for _, step := range client.Steps("partial") {
 		t.Run(step, func(t *testing.T) {
 			e := newEnv(t)
-			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, b := e.mailbox(), e.mailbox()
 			const body = "fetched by a drain that dies. "
 			send(t, a, b, strings.Repeat(body, 2000))
 			f := &fetches{b: b}
@@ -579,7 +579,7 @@ func TestASendKilledAtEachStepIsReadOnce(t *testing.T) {
 	for _, step := range client.Steps("post") {
 		t.Run(step, func(t *testing.T) {
 			e := newEnv(t)
-			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, b := e.mailbox(), e.mailbox()
 			crash(t, e, a, "send", step, b.Address())
 			x, err := client.Open(a.Dir(), e.opts())
 			if err != nil {

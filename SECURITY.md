@@ -34,7 +34,7 @@ Each row is a claim the code makes, the section of `PROTOCOL.md` with the whole 
 
 | The claim | `PROTOCOL.md` | Held by |
 |---|---|---|
-| **Standard cryptography only, nothing home-rolled:** age to encrypt (ML-KEM-768 + X25519 by default), SSHSIG over Ed25519 to sign, SHA-384 for addresses | §3.1 | `protocol/`, `sshsig/` (the API the Go team accepted for x/crypto); the vectors, checked against `ssh-keygen` and `age` themselves |
+| **Standard cryptography only, nothing home-rolled:** age to encrypt (ML-KEM-768 + X25519), SSHSIG over Ed25519 to sign, SHA-384 for addresses | §3.1 | `protocol/`, `sshsig/` (the API the Go team accepted for x/crypto); the vectors, checked against `ssh-keygen` and `age` themselves |
 | **An address is the SHA-384 of its identity document, which holds its identity key.** Only that key, and a working key it certified, can speak for the address; a server can make neither | §4, §5 | `protocol/identity.go`, `protocol/certificate.go`; `client/forgery_test.go` |
 | **Every document is accepted or refused as its vector names it:** each identity, certificate, prekey statement, pass, revocation of an address or of certificates, envelope and decrypted message | §4–§10, §16 | `protocol/`, `testdata/vectors/` |
 | **The server never sees plaintext or a private key.** A message is signed, then encrypted, on the sender's machine; the signature is inside the ciphertext | §9.2, §9.4 | `protocol/signed.go`, `client/send.go` |
@@ -57,7 +57,7 @@ Each row is a claim the code makes, the section of `PROTOCOL.md` with the whole 
 
 **Run them:** `README.md` § Tests, which says what each needs and what an `ok` does not tell you.
 
-**What is not tested:** that a release rebuilds byte for byte anywhere but in this repo's own workflow (its `rebuild` job does it for each release from v0.1.1 on); `age-plugin-pq` against the server's check of a send's stanzas; a mailbox's switch from `--no-pq` to post-quantum by a renewal, against the real server; a restore whose clock reads behind what a server's older record hides, and two machines that make a certificate in one second (`PROTOCOL.md` §5); OpenSSH 9.1 to 10.1 and 10.3p1 to 10.5p1 (the tests run on 10.2p1, and on 10.6p1 with OpenSSL and without), age 1.3.0 and 1.3.1, macOS and BusyMailbox; a mailbox on a Windows volume that keeps no access list (FAT).
+**What is not tested:** that a release rebuilds byte for byte anywhere but in this repo's own workflow (its `rebuild` job does it for each release from v0.1.1 on); `age-plugin-pq` against the server's check of a send's stanzas; a restore whose clock reads behind what a server's older record hides, and two machines that make a certificate in one second (`PROTOCOL.md` §5); OpenSSH 9.1 to 10.1 and 10.3p1 to 10.5p1 (the tests run on 10.2p1, and on 10.6p1 with OpenSSL and without), age 1.3.0 and 1.3.1, macOS and BusyMailbox; a mailbox on a Windows volume that keeps no access list (FAT).
 
 ## Where the rest is
 

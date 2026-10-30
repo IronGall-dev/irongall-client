@@ -35,7 +35,7 @@ func TestTheScriptRunsAMailboxOfItsOwnOnly(t *testing.T) {
 	}
 
 	srv := fakeserver.New(t, time.Now)
-	g, err := client.Init(context.Background(), t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+	g, err := client.Init(context.Background(), t.TempDir(), client.Options{Base: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestTheScriptRunsAMailboxOfItsOwnOnly(t *testing.T) {
 		return names
 	}
 	before, calls := files(), len(srv.Requests())
-	for _, cmd := range []string{"dr_init --no-pq", "dr_rekey", "dr_recv"} {
+	for _, cmd := range []string{"dr_init", "dr_rekey", "dr_recv"} {
 		if out, err := bash(t, []string{"DR_HOME=" + g.Dir(), "DR_SERVER_URL=" + srv.URL}, cmd); err == nil || !strings.Contains(err.Error(), "state file") {
 			t.Errorf("%s in a Go mailbox: %q, %v", cmd, out, err)
 		}
@@ -121,7 +121,7 @@ func TestTheScriptKeepsItsOwnRevocationFromA410(t *testing.T) {
 			srv := fakeserver.New(t, time.Now)
 			dir := t.TempDir()
 			env := []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}
-			if out, err := bash(t, env, "dr_init --no-pq"); err != nil {
+			if out, err := bash(t, env, "dr_init"); err != nil {
 				t.Fatalf("init: %q, %v", out, err)
 			}
 			rec := scriptRevocation(t, dir)
@@ -150,7 +150,7 @@ func TestTheScriptKeepsItsOwnRevocationFromA410(t *testing.T) {
 				if err := os.WriteFile(filepath.Join(restored, "identity"), mustRead(t, filepath.Join(dir, "identity")), 0o600); err != nil {
 					t.Fatal(err)
 				}
-				dir, env, cmd = restored, []string{"DR_HOME=" + restored, "DR_SERVER_URL=" + srv.URL}, "dr_init --no-pq"
+				dir, env, cmd = restored, []string{"DR_HOME=" + restored, "DR_SERVER_URL=" + srv.URL}, "dr_init"
 			}
 			passes.Store(0)
 			out, err := bash(t, env, cmd)

@@ -73,9 +73,9 @@ func servedCertificate(t *testing.T, e *env, b *client.Mailbox) uint64 {
 func TestAPassUnderAnotherCertificateIsToldTheOneTheServerTakes(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	e.clock.Add(2 * time.Second)
-	if _, err := restore(t, e, b).Rekey(context.Background(), ""); err != nil {
+	if _, err := restore(t, e, b).Rekey(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	took := servedCertificate(t, e, b)
@@ -94,7 +94,7 @@ func TestAMailboxNumbersByItsClock(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	var off time.Duration
-	b, err := client.Init(ctx, t.TempDir(), e.skewed(&off), protocol.Classic)
+	b, err := client.Init(ctx, t.TempDir(), e.skewed(&off))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,14 +111,14 @@ func TestAMailboxNumbersByItsClock(t *testing.T) {
 	statement(t, b, first, ".txt.sig")
 
 	// The same second: one above.
-	p, err := b.Rekey(ctx, "")
+	p, err := b.Rekey(ctx)
 	if err != nil || p.Serial != first+1 || servedCertificate(t, e, b) != first+1 {
 		t.Fatalf("a renewal in the second the mailbox was made: %+v, %v", p, err)
 	}
 
 	// The clock has moved on: the clock.
 	e.clock.Add(time.Hour)
-	p, err = b.Rekey(ctx, "")
+	p, err = b.Rekey(ctx)
 	if err != nil || p.Serial != clock() || servedSerial(t, e, b) != p.Serial || servedCertificate(t, e, b) != p.Serial {
 		t.Fatalf("a renewal an hour on: %+v, %v, and the clock reads %d", p, err, clock())
 	}
@@ -130,7 +130,7 @@ func TestAMailboxNumbersByItsClock(t *testing.T) {
 	if clock() >= last {
 		t.Fatal("the test does not reach the case: the clock is not behind the last number")
 	}
-	p, err = b.Rekey(ctx, "")
+	p, err = b.Rekey(ctx)
 	if err != nil || p.Serial != last+1 || servedCertificate(t, e, b) != last+1 {
 		t.Fatalf("a renewal with the clock behind the last number: %+v, %v", p, err)
 	}
@@ -152,10 +152,10 @@ func TestARestoredMailboxRevokesWhatTheLostMachineNeverPublished(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	lost, reader := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	lost, reader := e.mailbox(), e.mailbox()
 	first := numberOf(t, lost)
 	kept := uploads(e, lost)
-	if _, err := lost.Rekey(ctx, ""); err == nil {
+	if _, err := lost.Rekey(ctx); err == nil {
 		t.Fatal("the lost machine's renewal was meant to fail")
 	}
 	e.srv.SetMiddle(nil)
@@ -167,7 +167,7 @@ func TestARestoredMailboxRevokesWhatTheLostMachineNeverPublished(t *testing.T) {
 
 	e.clock.Add(time.Hour)
 	r := restore(t, e, lost)
-	p, err := r.Rekey(ctx, "")
+	p, err := r.Rekey(ctx)
 	if err != nil {
 		t.Fatalf("the restored mailbox's renewal: %v", err)
 	}
@@ -181,7 +181,7 @@ func TestARestoredMailboxRevokesWhatTheLostMachineNeverPublished(t *testing.T) {
 
 	// The control: the taken key is good under its certificate, so the
 	// revocation is what refuses it. A reader shown none delivers what it signs.
-	control := e.mailbox(protocol.Classic)
+	control := e.mailbox()
 	forge.Hides(e.t, e.srv)
 	messageAs(t, e, r, control, taken, "signed with the key the lost machine never published")
 	if res := receive(t, control); len(res.Delivered) != 1 {
@@ -210,11 +210,11 @@ func TestALostMachinesFastClockDoesNotDelayTheRemedy(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	fast := 40 * time.Minute
-	lost, err := client.Init(ctx, t.TempDir(), e.skewed(&fast), protocol.Classic)
+	lost, err := client.Init(ctx, t.TempDir(), e.skewed(&fast))
 	if err != nil {
 		t.Fatalf("a mailbox whose clock reads 40 minutes fast: %v", err)
 	}
-	reader := e.mailbox(protocol.Classic)
+	reader := e.mailbox()
 	ahead := numberOf(t, lost)
 	if now := uint64(e.clock.Now().Unix()); ahead <= now+60 { //nolint:gosec // a test's clock, after 1970
 		t.Fatalf("the test does not reach the case: the lost machine's certificate is %d, and the time is %d", ahead, now)
@@ -222,7 +222,7 @@ func TestALostMachinesFastClockDoesNotDelayTheRemedy(t *testing.T) {
 	taken := worker(t, lost) // what whoever has the machine holds
 
 	r := restore(t, e, lost) // the identity alone, on a machine whose clock is right
-	p, err := r.Rekey(ctx, "")
+	p, err := r.Rekey(ctx)
 	if err != nil || p.Serial != ahead+1 || servedCertificate(t, e, r) != ahead+1 {
 		t.Fatalf("the owner's renewal, its clock behind the lost machine's last number: %+v, %v", p, err)
 	}
@@ -247,11 +247,11 @@ func TestARestoredMailboxShownAnOlderRecordNumbersAboveItAll(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	first := numberOf(t, b)
 	st, sig := e.srv.Prekey(b.Address())
 	for range 2 {
-		if _, err := b.Rekey(ctx, ""); err != nil {
+		if _, err := b.Rekey(ctx); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -266,7 +266,7 @@ func TestARestoredMailboxShownAnOlderRecordNumbersAboveItAll(t *testing.T) {
 		}
 		return false
 	})
-	p, err := r.Rekey(ctx, "")
+	p, err := r.Rekey(ctx)
 	if err != nil || p.Serial <= third || op.count(http.MethodGet, mailboxPath(b)) == 0 {
 		t.Fatalf("a restored mailbox shown the statement of certificate %d, where %d was in use: %+v, %v (shown %d times)", first, third, p, err, op.count(http.MethodGet, mailboxPath(b)))
 	}
@@ -285,7 +285,7 @@ func TestRevokeEarlierNamesEverySerialBelowTheOneInUse(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	n := numberOf(t, a)
 	certs, err := a.RevokeEarlier(ctx)
 	if err != nil || certs == nil || certs.Through != n-1 || certs.Revokes(n) {
@@ -309,7 +309,7 @@ func TestARenewalIsNumberedAboveTheMailboxsOwnRevocation(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	key, err := os.ReadFile(filepath.Join(a.Dir(), "identity"))
 	if err != nil {
 		t.Fatal(err)
@@ -339,7 +339,7 @@ func TestARenewalIsNumberedAboveTheMailboxsOwnRevocation(t *testing.T) {
 
 	ahead := numberOf(t, a) + 1_000_000
 	revokeThrough(ahead)
-	p, err := a.Rekey(ctx, "")
+	p, err := a.Rekey(ctx)
 	if err != nil || p.Serial != ahead+1 {
 		t.Fatalf("a renewal after a revocation through %d: %+v, %v", ahead, p, err)
 	}
@@ -349,7 +349,7 @@ func TestARenewalIsNumberedAboveTheMailboxsOwnRevocation(t *testing.T) {
 	}
 
 	revokeThrough(protocol.MaxSerial)
-	if _, err := a.Rekey(ctx, ""); err == nil || !strings.Contains(err.Error(), "run through the highest serial there is, its own or revoked by its identity") {
+	if _, err := a.Rekey(ctx); err == nil || !strings.Contains(err.Error(), "run through the highest serial there is, its own or revoked by its identity") {
 		t.Fatalf("a renewal after a revocation through the highest serial: %v", err)
 	}
 }
