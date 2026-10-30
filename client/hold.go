@@ -366,10 +366,11 @@ func (b *Mailbox) Await(ctx context.Context, until time.Time, say func(*HoldResu
 		h, err := b.Hold(ctx, time.Until(until))
 		var ae *APIError
 		var re *RevokedError
+		var fe *FormatError
 		switch {
 		case ctx.Err() != nil:
 			return ctx.Err()
-		case errors.As(err, &re), errors.As(err, &ae) && !Transient(err):
+		case errors.As(err, &re), errors.As(err, &fe), errors.As(err, &ae) && !Transient(err):
 			return err
 		case err != nil:
 			say(nil, err)

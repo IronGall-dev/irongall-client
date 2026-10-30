@@ -135,6 +135,19 @@ func TestReport(t *testing.T) {
 	if report(&client.RefusedError{Reason: "no code"}, &errs) != 1 || errs.String() != `{"type":"error","detail":"REFUSED: no code"}`+"\n" {
 		t.Errorf("a refusal: %q", errs.String())
 	}
+	// A mailbox in another format carries its code and both formats.
+	for _, c := range []struct {
+		fe   *client.FormatError
+		want string
+	}{
+		{&client.FormatError{Format: 3, Client: 2}, `{"type":"error","code":"mailbox_format_newer","format":3,"client_format":2,"detail":"REFUSED: the mailbox is in format 3, which a newer client wrote; this client reads format 2: run a newer dromas"}`},
+		{&client.FormatError{Format: 1, Client: 2}, `{"type":"error","code":"mailbox_format_older","format":1,"client_format":2,"detail":"REFUSED: the mailbox is in format 1, older than this client's 2: dromas recv, or any command that writes the mailbox, brings it forward"}`},
+	} {
+		errs.Reset()
+		if report(c.fe, &errs) != 1 || errs.String() != c.want+"\n" {
+			t.Errorf("a mailbox in another format: %q, want %q", errs.String(), c.want)
+		}
+	}
 	// A line describes one failure, whatever an error joins (a flush's, one
 	// an entry): a server's answer when it holds one, and each member once.
 	refused := &client.RefusedError{Code: client.RefusedPrekeyType, Reason: "a type it lacks"}
@@ -944,6 +957,18 @@ func TestRecvSaysARenewalFailed(t *testing.T) {
 	}
 	if err := do(ctx, "status", nil, nil, &out, io.Discard); err != nil || !strings.Contains(out.String(), `"attention":[]`) || strings.Contains(out.String(), "renewal_pending_since") {
 		t.Fatalf("status after the renewal went through: %v %q", err, out.String())
+	}
+	// It names the mailbox's format and where it keeps each of its files.
+	var named struct {
+		Format int               `json:"format"`
+		Paths  map[string]string `json:"paths"`
+	}
+	dir, err := filepath.Abs(b.Dir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(out.Bytes(), &named); err != nil || named.Format != 1 || named.Paths["mailbox"] != dir || named.Paths["inbox"] != filepath.Join(dir, "inbox") {
+		t.Fatalf("status's format and paths: %+v, %v", named, err)
 	}
 }
 

@@ -63,10 +63,22 @@ func (b *Mailbox) hold(ctx context.Context) (func() error, error) {
 		return nil, fmt.Errorf("the mailbox's state file: %w", err)
 	}
 	b.db = db
-	return func() error {
+	release := func() error {
 		b.db = nil
 		return db.Close()
-	}, nil
+	}
+	// The mailbox's format comes before anything else of it is read or
+	// written, its directories among them, which a newer format may lay out
+	// otherwise.
+	if err := b.bringForward(); err != nil {
+		_ = release() // the error is the format's
+		return nil, err
+	}
+	if err := b.makeDirs(); err != nil {
+		_ = release() // the error is the directories'
+		return nil, err
+	}
+	return release, nil
 }
 
 // makeState makes the mailbox's state file where it has none, as writeFile makes
@@ -130,7 +142,8 @@ func (b *Mailbox) claim(ctx context.Context) (func(), error) {
 	}
 }
 
-// reading runs f, a reading of the mailbox that writes nothing, in the Mailbox's
+// reading runs f, a reading of the mailbox that writes nothing and refuses a
+// format other than this client's (formatIn), in the Mailbox's
 // slot (claim) and with its state file open read-only throughout, which
 // waits while a command writes the mailbox: what f's views read is one state,
 // never a command's half done (#329), and the wait ends with ctx (#330).
@@ -156,6 +169,16 @@ func reading[T any](ctx context.Context, b *Mailbox, f func() (T, error)) (v T, 
 			b.db = nil
 			_ = db.Close() // read only
 		}()
+	}
+	// A reading refuses a format other than this client's, before f reads
+	// anything: it writes nothing, so an older one waits for a command to
+	// bring it forward.
+	if err := b.view(func(s store) error {
+		n, _, err := formatIn(s, true)
+		b.format = n
+		return err
+	}); err != nil {
+		return v, err
 	}
 	return f()
 }

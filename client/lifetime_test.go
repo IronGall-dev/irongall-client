@@ -163,7 +163,7 @@ func TestALifetimeOutOfFormIsNeverTheDefault(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(b.Dir(), "prekey-lifetime"), []byte(raw), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := b.PrekeyLifetime(); err == nil {
+		if _, err := b.PrekeyLifetime(t.Context()); err == nil {
 			t.Errorf("%q was read as a lifetime", raw)
 		}
 		if _, err := b.Rekey(ctx, ""); err == nil || numberOf(t, b) != n {
@@ -182,7 +182,7 @@ func TestALifetimeOutOfFormIsNeverTheDefault(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(b.Dir(), "prekey-lifetime"), []byte(raw), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if got, err := b.PrekeyLifetime(); err != nil || got != want {
+		if got, err := b.PrekeyLifetime(t.Context()); err != nil || got != want {
 			t.Errorf("%q: %v, %v", raw, got, err)
 		}
 	}

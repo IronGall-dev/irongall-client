@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -104,9 +105,9 @@ func message(d client.Delivery, n names) []byte {
 type names map[protocol.Address]string
 
 // namesOf is the names b gives its peers.
-func namesOf(b *client.Mailbox) names {
+func namesOf(ctx context.Context, b *client.Mailbox) names {
 	n := names{}
-	as, err := b.Aliases()
+	as, err := b.Aliases(ctx)
 	if err != nil {
 		return n
 	}
@@ -171,15 +172,21 @@ func seconds(d time.Duration) int64 { return int64((d + time.Second - 1) / time.
 // failure is the members of a line about err: from a server's answer, its
 // status, its code when it counts (one this client knows, under that status,
 // beside its own type), the wait it asked for, and the values its code
-// carries, each checked to its type; otherwise, from a refusal with a code of
-// its own, that code; then the message, which is err in this client's own
+// carries, each checked to its type; otherwise, from a mailbox in another
+// format, its code and the two formats; from a refusal with a code of its
+// own, that code; then the message, which is err in this client's own
 // words. The members describe one failure: an error that joins several (a
 // flush's) has those of its first server answer, and its message names each.
 func failure(err error) []any {
 	var kv []any
 	var ae *client.APIError
 	var re *client.RefusedError
-	if !errors.As(err, &ae) && errors.As(err, &re) && re.Code != "" {
+	var fe *client.FormatError
+	switch {
+	case errors.As(err, &ae):
+	case errors.As(err, &fe):
+		kv = append(kv, "code", fe.Code(), "format", fe.Format, "client_format", fe.Client)
+	case errors.As(err, &re) && re.Code != "":
 		kv = append(kv, "code", re.Code)
 	}
 	if ae != nil {

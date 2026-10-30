@@ -442,7 +442,7 @@ func (b *Mailbox) signedPrekey(serial uint64, kt protocol.KeyType) (p *protocol.
 	// Made for longer than the mailbox's lifetime now allows, or with no record
 	// of when: spent, as an expired one is, so a lifetime set lower holds
 	// from the next renewal whatever waited (PROTOCOL.md §12.4).
-	lifetime, err := b.PrekeyLifetime()
+	lifetime, err := b.prekeyLifetime()
 	if err != nil {
 		return nil, false, err
 	}
@@ -538,7 +538,12 @@ var lifetimeGrammar = regexp.MustCompile(`\A[1-9][0-9]{0,9}\n?\z`)
 // has none. A file that names anything but a lifetime from
 // MinPrekeyLifetime to protocol.PrekeyLifetime is an error, never read as the
 // default: the mailbox renews no prekey until it is put right.
-func (b *Mailbox) PrekeyLifetime() (time.Duration, error) {
+func (b *Mailbox) PrekeyLifetime(ctx context.Context) (time.Duration, error) {
+	return reading(ctx, b, b.prekeyLifetime)
+}
+
+// prekeyLifetime is PrekeyLifetime, read under the reading or command that holds the mailbox.
+func (b *Mailbox) prekeyLifetime() (time.Duration, error) {
 	raw, err := os.ReadFile(b.path("prekey-lifetime"))
 	if errors.Is(err, fs.ErrNotExist) {
 		return protocol.PrekeyLifetime, nil
@@ -700,7 +705,7 @@ func (b *Mailbox) renewDue() bool {
 		return true
 	}
 	p, err := b.prekeyStatement(n)
-	lifetime, lerr := b.PrekeyLifetime()
+	lifetime, lerr := b.prekeyLifetime()
 	return err != nil || lerr != nil || p.NotAfter.Sub(made) > lifetime
 }
 

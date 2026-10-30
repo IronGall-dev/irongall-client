@@ -103,9 +103,9 @@ func TestEveryCommandWaitsForTheLock(t *testing.T) {
 
 // A mailbox with no state file, restored or made before there was one, makes it
 // at its first command, beside its place and linked in, and commands that
-// make it at once all run: a link replaces nothing another made first. Both
-// makers race: Open's, and a command's own once the file is gone after its
-// mailbox was opened (#327).
+// make it at once all run: a link replaces nothing another made first. Each
+// opens its mailbox as it runs, or opened it before; Open makes no state file,
+// which a command makes once it has the mailbox's format (#327, #462).
 func TestTheStateFileIsMadeAtTheFirstCommand(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {
@@ -127,8 +127,8 @@ func TestTheStateFileIsMadeAtTheFirstCommand(t *testing.T) {
 					}
 					mailboxes = append(mailboxes, x)
 				}
-				if err := os.Remove(filepath.Join(b.Dir(), "state")); err != nil {
-					t.Fatal(err)
+				if _, err := os.Stat(filepath.Join(b.Dir(), "state")); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("Open made the state file: %v", err)
 				}
 			}
 			start := make(chan struct{})
@@ -302,8 +302,19 @@ func waits(b, c *client.Mailbox, rec *protocol.Revocations, opt client.Options) 
 		"Revocation":         func(ctx context.Context) error { _, err := b.Revocation(ctx); return err },
 		"CertificatesRecord": func(ctx context.Context) error { _, err := b.CertificatesRecord(ctx); return err },
 		"ACLPending":         func(ctx context.Context) error { _, err := b.ACLPending(ctx); return err },
-		"SetAlias":           func(ctx context.Context) error { return b.SetAlias(ctx, "carol", c.Address()) },
-		"RemoveAlias":        func(ctx context.Context) error { return b.RemoveAlias(ctx, "carol") },
+		"Inbox":              func(ctx context.Context) error { _, err := b.Inbox(ctx); return err },
+		"InboxMessage": func(ctx context.Context) error {
+			_, err := b.InboxMessage(ctx, strings.Repeat("0", 64))
+			return err
+		},
+		"HeldMessages":   func(ctx context.Context) error { _, err := b.HeldMessages(ctx); return err },
+		"Aliases":        func(ctx context.Context) error { _, err := b.Aliases(ctx); return err },
+		"Policy":         func(ctx context.Context) error { _, err := b.Policy(ctx); return err },
+		"Allowed":        func(ctx context.Context) error { _, err := b.Allowed(ctx); return err },
+		"Blocked":        func(ctx context.Context) error { _, err := b.Blocked(ctx); return err },
+		"PrekeyLifetime": func(ctx context.Context) error { _, err := b.PrekeyLifetime(ctx); return err },
+		"SetAlias":       func(ctx context.Context) error { return b.SetAlias(ctx, "carol", c.Address()) },
+		"RemoveAlias":    func(ctx context.Context) error { return b.RemoveAlias(ctx, "carol") },
 		"SetPolicy": func(ctx context.Context) error {
 			return b.SetPolicy(ctx, client.Policy{Unknown: client.LandInbox, Server: client.AdmitAll})
 		},
@@ -350,6 +361,26 @@ func waits(b, c *client.Mailbox, rec *protocol.Revocations, opt client.Options) 
 // method that calls one of those on its own mailbox, whatever it does first.
 func TestEveryEntryThatWaitsIsTriedWithItsContext(t *testing.T) {
 	t.Parallel()
+	wait := entriesCalling(t, "locked", "lockedFinished", "lockedDo", "lockedFinishedDo", "reading")
+	tried := waits(nil, nil, nil, client.Options{})
+	for name, w := range wait {
+		if _, ok := tried[name]; w && !ok {
+			t.Errorf("%s waits for the mailbox's lock and is not tried with its context: add it to waits", name)
+		}
+	}
+	for name := range tried {
+		if !wait[name] {
+			t.Errorf("waits tries %s, which waits for no lock", name)
+		}
+	}
+}
+
+// entriesCalling is every exported function and Mailbox method of the
+// package, read from its source, by whether it calls one of callees, as a
+// function, or as a method of its own mailbox does one that does, whatever it
+// does first.
+func entriesCalling(t *testing.T, callees ...string) map[string]bool {
+	t.Helper()
 	names, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
@@ -383,7 +414,7 @@ func TestEveryEntryThatWaitsIsTriedWithItsContext(t *testing.T) {
 	}
 	wait := map[string]bool{}
 	for _, e := range entries {
-		wait[e.name] = calls(e.body, "", "locked", "lockedFinished", "lockedDo", "lockedFinishedDo", "reading")
+		wait[e.name] = calls(e.body, "", callees...)
 	}
 	for grew := true; grew; {
 		grew = false
@@ -399,17 +430,7 @@ func TestEveryEntryThatWaitsIsTriedWithItsContext(t *testing.T) {
 			}
 		}
 	}
-	tried := waits(nil, nil, nil, client.Options{})
-	for name, w := range wait {
-		if _, ok := tried[name]; w && !ok {
-			t.Errorf("%s waits for the mailbox's lock and is not tried with its context: add it to waits", name)
-		}
-	}
-	for name := range tried {
-		if !wait[name] {
-			t.Errorf("waits tries %s, which waits for no lock", name)
-		}
-	}
+	return wait
 }
 
 // calls reports whether body calls one of names, as a function or a method,
@@ -464,7 +485,7 @@ func endsWithItsContext(t *testing.T, held string, waits map[string]func(context
 // which waits would have written had a wait not ended.
 func writtenNothing(t *testing.T, b, c *client.Mailbox) {
 	t.Helper()
-	if as, err := b.Aliases(); err != nil || len(as) != 0 {
+	if as, err := b.Aliases(t.Context()); err != nil || len(as) != 0 {
 		t.Errorf("an alias was written after its wait ended: %+v, %v", as, err)
 	}
 	if held, err := b.Ask(t.Context(), c.Address()); err != nil || held.Revoked {

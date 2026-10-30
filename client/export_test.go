@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/dromas-dev/dromas-client/protocol"
+	bolt "go.etcd.io/bbolt"
 )
 
 // Code is the error's code, if err is an [APIError], for a test that knows
@@ -35,6 +37,43 @@ func SetLockPatience(t *testing.T, d time.Duration) {
 	old := lockPatience
 	lockPatience = d
 	t.Cleanup(func() { lockPatience = old })
+}
+
+// SetFormatSteps makes this client's format one above the steps given, each
+// bringing a mailbox forward one format (formatSteps), for one test.
+func SetFormatSteps(t *testing.T, steps ...func(*Mailbox) error) {
+	old := formatSteps
+	formatSteps = steps
+	t.Cleanup(func() { formatSteps = old })
+}
+
+// ClientFormat is the format this client reads and writes (clientFormat).
+func ClientFormat() int { return clientFormat() }
+
+// SetFormat records raw as the format of the mailbox in dir, or with raw nil
+// none, as another client would have left it.
+func SetFormat(t *testing.T, dir string, raw []byte) {
+	t.Helper()
+	db, err := bolt.Open(filepath.Join(dir, "state"), 0o600, &bolt.Options{Timeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close() //nolint:errcheck // written in its transaction
+	if err := db.Update(func(tx *bolt.Tx) error {
+		if raw == nil {
+			if bk := tx.Bucket([]byte(bucketMeta)); bk != nil {
+				return bk.Delete([]byte(keyFormat))
+			}
+			return nil
+		}
+		bk, err := tx.CreateBucketIfNotExists([]byte(bucketMeta))
+		if err != nil {
+			return err
+		}
+		return bk.Put([]byte(keyFormat), raw)
+	}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // HasGate reports whether this system has the mailbox's gate (tryGate): where
@@ -123,8 +162,9 @@ func PutRevocations(ctx context.Context, opt Options, a protocol.Address, rec *p
 // "renewal" (the number of the renewal under way), "acl-read" (the read of
 // the server's ACL a renewal recv began owes), "adopt-acl" (a restore's
 // adoption of its server's ACL, begun), "renew-failed", "not-made",
-// "acl-another-writer", "acl-replaced" and "partial" (the message the
-// partial file is of, and how many of its bytes are synced). So a test
+// "acl-another-writer", "acl-replaced", "partial" (the message the
+// partial file is of, and how many of its bytes are synced) and "format"
+// (the mailbox's format, as it is recorded). So a test
 // reads and changes the mailbox's state as it did its files.
 func (b *Mailbox) Records() (map[string][]byte, error) {
 	out := map[string][]byte{}
@@ -194,6 +234,9 @@ func (b *Mailbox) Records() (map[string][]byte, error) {
 			return nil
 		}); err != nil {
 			return err
+		}
+		if v := s.get(bucketMeta, keyFormat); v != nil {
+			out["format"] = v
 		}
 		for _, k := range []string{"renewal", "acl-read", "adopt-acl"} {
 			if v := s.get(bucketIntent, k); v != nil {

@@ -23,7 +23,7 @@ func TestAliasNamesAPeer(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	as, err := a.Aliases()
+	as, err := a.Aliases(t.Context())
 	if err != nil || len(as) != 2 || as[0] != (client.Alias{Name: "bob", Address: b.Address()}) || as[1] != (client.Alias{Name: "zed", Address: c.Address()}) {
 		t.Fatalf("aliases, sorted by name: %+v, %v", as, err)
 	}
@@ -122,7 +122,7 @@ func TestAliasFileEditedByHand(t *testing.T) {
 	if err := os.WriteFile(file, []byte(hand), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if as, err := a.Aliases(); err != nil || len(as) != 1 || as[0].Name != "bob" {
+	if as, err := a.Aliases(t.Context()); err != nil || len(as) != 1 || as[0].Name != "bob" {
 		t.Fatalf("aliases: %+v, %v", as, err)
 	}
 	if _, err := a.Destination("carol"); err == nil {

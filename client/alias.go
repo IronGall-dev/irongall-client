@@ -37,7 +37,12 @@ func ValidAlias(name string) error {
 
 // Aliases returns the mailbox's aliases, sorted by name. A line of the aliases
 // file that is not "<name> <address>" names nothing and is skipped.
-func (b *Mailbox) Aliases() ([]Alias, error) {
+func (b *Mailbox) Aliases(ctx context.Context) ([]Alias, error) {
+	return reading(ctx, b, b.aliases)
+}
+
+// aliases is Aliases, read under the reading or command that holds the mailbox.
+func (b *Mailbox) aliases() ([]Alias, error) {
 	lines, err := b.aliasLines()
 	if err != nil {
 		return nil, err
@@ -121,7 +126,7 @@ func (b *Mailbox) alias(name string) (protocol.Address, error) {
 
 // aliased returns every distinct address the aliases file gives a name.
 func (b *Mailbox) aliased(name string) ([]protocol.Address, error) {
-	as, err := b.Aliases()
+	as, err := b.aliases()
 	if err != nil {
 		return nil, err
 	}

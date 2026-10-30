@@ -27,10 +27,16 @@ func IsID(s string) bool { return hexID.MatchString(s) }
 // delivered it but for Plaintext and Signature, which the mailbox never kept:
 // its checked fields, as recv printed them ([Mailbox.keptLine]). An id that is
 // not one is refused before any file is read.
-func (b *Mailbox) InboxMessage(id string) (Delivery, error) {
+func (b *Mailbox) InboxMessage(ctx context.Context, id string) (Delivery, error) {
 	if !IsID(id) {
 		return Delivery{}, errors.New("not a message's id: 64 lowercase hex, as recv prints it")
 	}
+	return reading(ctx, b, func() (Delivery, error) { return b.inboxMessage(id) })
+}
+
+// inboxMessage is InboxMessage, read under the reading or command that holds
+// the mailbox, of an id it has checked.
+func (b *Mailbox) inboxMessage(id string) (Delivery, error) {
 	data, err := os.ReadFile(b.path("inbox", id+".json")) //nolint:gosec // a path inside the mailbox's own directory, named by 64 hex
 	if errors.Is(err, fs.ErrNotExist) {
 		return Delivery{}, fmt.Errorf("inbox/ holds no message %s", id)
@@ -49,8 +55,14 @@ func (b *Mailbox) InboxMessage(id string) (Delivery, error) {
 // second as [Mailbox.keptMessages] orders it), each as
 // [Mailbox.InboxMessage] returns it: what recv delivered and nobody has pruned
 // since. A file that is not the line recv keeps is left out, as
-// [Mailbox.InboxMessage] refuses it. It reads only inbox/, and calls no server.
-func (b *Mailbox) Inbox() ([]Delivery, error) {
+// [Mailbox.InboxMessage] refuses it. It reads only inbox/, once the mailbox's
+// format is this client's, and calls no server.
+func (b *Mailbox) Inbox(ctx context.Context) ([]Delivery, error) {
+	return reading(ctx, b, b.inbox)
+}
+
+// inbox is Inbox, read under the reading or command that holds the mailbox.
+func (b *Mailbox) inbox() ([]Delivery, error) {
 	ms, err := b.keptMessages("inbox")
 	if err != nil {
 		return nil, err
