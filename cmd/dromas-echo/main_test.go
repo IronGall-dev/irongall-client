@@ -414,8 +414,11 @@ func (l lines) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// A running echo mailbox holds its list, and answers a message as it arrives,
-// woken in the one hold it was waiting in.
+// A running echo mailbox holds its list, and answers a message as it arrives:
+// with no time passed, which a poll, a minute from the last, cannot give.
+// How many held requests that takes is not promised: Await holds one after
+// another until the list changes, and one that ends unchanged is followed by
+// the next at once (#557).
 func TestEchoAnswersInSeconds(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		srv := fakeserver.NewInMemory(t, time.Now)
@@ -454,7 +457,7 @@ func TestEchoAnswersInSeconds(t *testing.T) {
 		for answered := false; !answered; {
 			answered = strings.Contains(<-logged, "answered")
 		}
-		if took := time.Since(sent); holds.Load() != 1 || took != 0 {
+		if took := time.Since(sent); holds.Load() < 1 || took != 0 {
 			t.Fatalf("answered after %s, in %d holds", took, holds.Load())
 		}
 		if res := receive(t, a); len(res.Delivered) != 1 || !strings.Contains(body(t, res.Delivered[0]), "woke the echo") {
