@@ -75,7 +75,7 @@ func TestAServersWordRevokesNothing(t *testing.T) {
 	} {
 		t.Run(where.name, func(t *testing.T) {
 			e := newEnv(t)
-			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, b := e.mailbox(), e.mailbox()
 			says(e, protocol.CodeRevoked, where.method, "/v1/"+b.Address().String()+where.suffix)
 			_, err := a.Send(ctx, b.Address(), "to a mailbox the server calls revoked")
 			if err == nil || isRevoked(err, b.Address(), false) || !strings.Contains(err.Error(), "kept in the outbox") || !strings.Contains(err.Error(), "no revocation") {
@@ -122,7 +122,7 @@ func TestAServersWordAtAPostEndsNoMessage(t *testing.T) {
 	for _, c := range client.ProvedCodes() {
 		t.Run(string(c), func(t *testing.T) {
 			e := newEnv(t)
-			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, b := e.mailbox(), e.mailbox()
 			post := postTo(b)
 			var own atomic.Int32
 			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -166,7 +166,7 @@ func TestWhatIsNotARevocationRevokesNothing(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b, c := e.mailbox(), e.mailbox(), e.mailbox()
 	ofC, err := c.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -216,7 +216,7 @@ func TestARevocationIsCheckedAndSticks(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	send(t, a, b, "pins B") // A holds B's identity and prekey from before
 	revoke(t, e, b)
 
@@ -253,7 +253,7 @@ func TestARevocationIsCheckedAndSticks(t *testing.T) {
 func TestAMessageFromARevokedSenderIsRefused(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	send(t, a, b, "delivered before anyone revoked")
 	if res := receive(t, b); len(res.Delivered) != 1 {
 		t.Fatal("the first message was not delivered")
@@ -298,8 +298,8 @@ func TestAMessageFromARevokedSenderIsRefused(t *testing.T) {
 func TestADrainReadsEachSendersMailboxOnce(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	to, a, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
-	none, unproved := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	to, a, c := e.mailbox(), e.mailbox(), e.mailbox()
+	none, unproved := e.mailbox(), e.mailbox()
 	for range 3 {
 		send(t, a, to, "from a")
 	}
@@ -366,7 +366,7 @@ func misstatused(w http.ResponseWriter, status int, code protocol.Code) {
 func TestNoAnswerAboutASenderStopsTheDrain(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	send(t, a, b, "waits for an answer")
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		if x, ok := forge.ReadOf(r); ok && x == a.Address() {
@@ -450,7 +450,7 @@ func TestARevocationHandedOver(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b, c := e.mailbox(), e.mailbox(), e.mailbox()
 	rec, err := b.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -493,7 +493,7 @@ func TestAMailboxLearnsItIsRevoked(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 
 	says(e, protocol.CodeRevoked, http.MethodGet, "/v1/"+a.Address().String()+"/messages")
 	if _, err := a.Receive(ctx); err == nil || isRevoked(err, a.Address(), true) || !strings.Contains(err.Error(), "no revocation") {
@@ -544,7 +544,7 @@ func TestA410CarriesTheRecord(t *testing.T) {
 		revoked func(t *testing.T, err error, named protocol.Address)
 	}{
 		{"a send's", func(t *testing.T, e *env, forged func(http.ResponseWriter, *http.Request, http.Handler)) (call, protocol.Address, error) {
-			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, b := e.mailbox(), e.mailbox()
 			revoke(t, e, b)
 			post := call{http.MethodPost, "/v1/" + b.Address().String() + "/messages"}
 			read := false
@@ -570,7 +570,7 @@ func TestA410CarriesTheRecord(t *testing.T) {
 			}
 		}},
 		{"a poll's", func(t *testing.T, e *env, forged func(http.ResponseWriter, *http.Request, http.Handler)) (call, protocol.Address, error) {
-			a := e.mailbox(protocol.Classic)
+			a := e.mailbox()
 			revoke(t, e, a)
 			poll := call{http.MethodGet, "/v1/" + a.Address().String() + "/messages"}
 			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -591,7 +591,7 @@ func TestA410CarriesTheRecord(t *testing.T) {
 			}
 		}},
 		{"a publish's", func(t *testing.T, e *env, forged func(http.ResponseWriter, *http.Request, http.Handler)) (call, protocol.Address, error) {
-			a := e.mailbox(protocol.Classic)
+			a := e.mailbox()
 			rec := revoke(t, e, a)
 			put := call{http.MethodPut, "/v1/" + a.Address().String() + "/revocations"}
 			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -621,7 +621,7 @@ func TestA410CarriesTheRecord(t *testing.T) {
 				return func(w http.ResponseWriter, r *http.Request, next http.Handler) { forge.Carry(w, r, next, nil) }
 			}, 1},
 			{"another mailbox's revocation", func(t *testing.T, e *env) func(http.ResponseWriter, *http.Request, http.Handler) {
-				ofC, err := e.mailbox(protocol.Classic).Revocation(t.Context())
+				ofC, err := e.mailbox().Revocation(t.Context())
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -655,7 +655,7 @@ func TestRevokeTakesOnlyARecordThatVerifies(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	rec, err := a.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)

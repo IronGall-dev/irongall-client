@@ -21,7 +21,7 @@ import (
 func finishedMailbox(t *testing.T) *Mailbox {
 	t.Helper()
 	srv := fakeserver.New(t, time.Now)
-	b, err := Init(context.Background(), t.TempDir(), Options{Base: srv.URL}, protocol.Classic)
+	b, err := Init(context.Background(), t.TempDir(), Options{Base: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestAPrekeyOnAFinishedMailboxWritesNoKey(t *testing.T) {
 	}
 	before := files()
 	n := protocol.SerialAt(b.now(), 0) + 10
-	_, err := lockedFinished(context.Background(), b, func() (*protocol.Prekey, error) { return b.makePrekey(n, protocol.Classic) })
+	_, err := lockedFinished(context.Background(), b, func() (*protocol.Prekey, error) { return b.makePrekey(n) })
 	var gone *RevokedError
 	if !errors.As(err, &gone) || !gone.Own || files() != before {
 		t.Fatalf("a prekey on a finished mailbox: %v; %d files, were %d", err, files(), before)
@@ -109,11 +109,11 @@ func TestACommandThatKeptItsOwnRevocationAsksNothingMore(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
-	b, err := Init(ctx, t.TempDir(), Options{Base: srv.URL}, protocol.Classic)
+	b, err := Init(ctx, t.TempDir(), Options{Base: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
-	peer, err := Init(ctx, t.TempDir(), Options{Base: srv.URL}, protocol.Classic)
+	peer, err := Init(ctx, t.TempDir(), Options{Base: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}

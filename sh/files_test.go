@@ -71,7 +71,7 @@ func TestTheScriptRestoresAMailboxFromItsIdentityAlone(t *testing.T) {
 	for _, forgotten := range []bool{false, true} {
 		srv := fakeserver.New(t, time.Now)
 		lost := t.TempDir()
-		out, err := bash(t, []string{"DR_HOME=" + lost, "DR_SERVER_URL=" + srv.URL}, "dr_init --no-pq")
+		out, err := bash(t, []string{"DR_HOME=" + lost, "DR_SERVER_URL=" + srv.URL}, "dr_init")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -85,7 +85,7 @@ func TestTheScriptRestoresAMailboxFromItsIdentityAlone(t *testing.T) {
 		}
 		env := []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}
 		n0 := len(srv.Requests())
-		if out, err := bash(t, env, "dr_rekey --no-pq 2> \"$DR/../rekey.err\""); err != nil || !strings.HasPrefix(out, `{"type":"prekey",`) || exists(filepath.Join(dir, "..", "rekey.err")) {
+		if out, err := bash(t, env, "dr_rekey 2> \"$DR/../rekey.err\""); err != nil || !strings.HasPrefix(out, `{"type":"prekey",`) || exists(filepath.Join(dir, "..", "rekey.err")) {
 			t.Fatalf("forgotten %v: a renewal of the mailbox restored from its identity alone: %v %q", forgotten, err, out)
 		}
 		// It needs no record of the numbers it used: its own is above the lost
@@ -113,7 +113,7 @@ func TestTheScriptRestoresAMailboxFromItsIdentityAlone(t *testing.T) {
 		if !exists(filepath.Join(dir, "identity.pub")) {
 			t.Errorf("forgotten %v: the restored mailbox has no identity.pub", forgotten)
 		}
-		g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+		g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -124,7 +124,7 @@ func TestTheScriptRestoresAMailboxFromItsIdentityAlone(t *testing.T) {
 			t.Errorf("forgotten %v: the restored mailbox's recv: %v %q", forgotten, err, out)
 		}
 		before := stats(t, dir, "identity.doc", "address")
-		if out, err := bash(t, env, "dr_init --no-pq"); err != nil || addressIn(t, srv, out) != a {
+		if out, err := bash(t, env, "dr_init"); err != nil || addressIn(t, srv, out) != a {
 			t.Errorf("forgotten %v: init on the restored mailbox: %v %q", forgotten, err, out)
 		}
 		for n, fi := range stats(t, dir, "identity.doc", "address") {
@@ -146,7 +146,7 @@ func TestAnInitRunAgainRewritesNothing(t *testing.T) {
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
 	env := []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}
-	if _, err := bash(t, env, "dr_init --no-pq"); err != nil {
+	if _, err := bash(t, env, "dr_init"); err != nil {
 		t.Fatal(err)
 	}
 	files := []string{"identity.doc", "address"}
@@ -157,7 +157,7 @@ func TestAnInitRunAgainRewritesNothing(t *testing.T) {
 	before := stats(t, dir, files...)
 	done := make(chan error, 1)
 	go func() {
-		_, err := bash(t, env, `sha384sum(){ sleep 2; command sha384sum "$@"; }; dr_init --no-pq`)
+		_, err := bash(t, env, `sha384sum(){ sleep 2; command sha384sum "$@"; }; dr_init`)
 		done <- err
 	}()
 	time.Sleep(time.Second)
@@ -180,7 +180,7 @@ func TestAnInitRunAgainRewritesNothing(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "address")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := bash(t, env, "dr_init --no-pq"); err != nil || string(mustRead(t, filepath.Join(dir, "address"))) != was["address"] {
+	if _, err := bash(t, env, "dr_init"); err != nil || string(mustRead(t, filepath.Join(dir, "address"))) != was["address"] {
 		t.Errorf("init did not make the mailbox's address again: %v", err)
 	}
 }
@@ -195,7 +195,7 @@ func TestInitMakesTheIdentityFilesUnderTheLock(t *testing.T) {
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
 	env := []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL, "DR_LOCK_WAIT=1"}
-	if _, err := bash(t, env, "dr_init --no-pq"); err != nil {
+	if _, err := bash(t, env, "dr_init"); err != nil {
 		t.Fatal(err)
 	}
 	doc := filepath.Join(dir, "identity.doc")
@@ -206,7 +206,7 @@ func TestInitMakesTheIdentityFilesUnderTheLock(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, "lock"), 0o700); err != nil { // another command of the mailbox holds its lock
 		t.Fatal(err)
 	}
-	if _, err := bash(t, env, "dr_init --no-pq"); err == nil || !strings.Contains(err.Error(), "held its lock") {
+	if _, err := bash(t, env, "dr_init"); err == nil || !strings.Contains(err.Error(), "held its lock") {
 		t.Errorf("init while another command held the lock: %v", err)
 	}
 	if _, err := os.Stat(doc); err == nil {
@@ -215,7 +215,7 @@ func TestInitMakesTheIdentityFilesUnderTheLock(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "lock")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := bash(t, env, "dr_init --no-pq"); err != nil || string(mustRead(t, doc)) != was {
+	if _, err := bash(t, env, "dr_init"); err != nil || string(mustRead(t, doc)) != was {
 		t.Errorf("init once the lock was free: %v", err)
 	}
 }
@@ -230,7 +230,7 @@ func TestAnIdentityPubOutOfFormIsRefused(t *testing.T) {
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
 	env := []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}
-	if _, err := bash(t, env, "dr_init --no-pq"); err != nil {
+	if _, err := bash(t, env, "dr_init"); err != nil {
 		t.Fatal(err)
 	}
 	was := string(mustRead(t, filepath.Join(dir, "address")))
@@ -240,7 +240,7 @@ func TestAnIdentityPubOutOfFormIsRefused(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "identity.pub"), []byte("ssh-ed25519 not-a-key\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := bash(t, env, "dr_rekey --no-pq"); err == nil || !strings.Contains(err.Error(), "identity.pub is not a key an identity document holds") {
+	if _, err := bash(t, env, "dr_rekey"); err == nil || !strings.Contains(err.Error(), "identity.pub is not a key an identity document holds") {
 		t.Errorf("a renewal with identity.pub out of form: %v", err)
 	}
 	if got := string(mustRead(t, filepath.Join(dir, "address"))); got != was {
@@ -259,34 +259,34 @@ func TestAPrekeyKeyACrashLeftEmptyIsMadeAgain(t *testing.T) {
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
 	env := []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}
-	if _, err := bash(t, env, "dr_work(){ return 1; }; dr_init --no-pq"); err == nil { // cut short once the key is made
+	if _, err := bash(t, env, "dr_work(){ return 1; }; dr_init"); err == nil { // cut short once the key is made
 		t.Fatal("init went through")
 	}
 	if err := os.Truncate(newestKey(t, dir), 0); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := bash(t, env, "dr_init --no-pq"); err != nil {
+	if _, err := bash(t, env, "dr_init"); err != nil {
 		t.Fatalf("init after a crash that emptied the first prekey's key: %v", err)
 	}
-	if _, err := bash(t, env, "sleep 1; dr_work(){ return 1; }; dr_rekey --no-pq"); err == nil {
+	if _, err := bash(t, env, "sleep 1; dr_work(){ return 1; }; dr_rekey"); err == nil {
 		t.Fatal("the renewal went through")
 	}
 	if err := os.Truncate(newestKey(t, dir), 0); err != nil {
 		t.Fatal(err)
 	}
 	for _, try := range []string{"first", "second"} {
-		if _, err := bash(t, env, "dr_rekey --no-pq"); err != nil {
+		if _, err := bash(t, env, "dr_rekey"); err != nil {
 			t.Errorf("a renewal after a crash that emptied the new prekey's key, %s try: %v", try, err)
 		}
 	}
-	if _, err := bash(t, env, "sleep 1; dr_work(){ return 1; }; dr_rekey --no-pq"); err == nil {
+	if _, err := bash(t, env, "sleep 1; dr_work(){ return 1; }; dr_rekey"); err == nil {
 		t.Fatal("the renewal went through")
 	}
 	key := newestKey(t, dir)
 	if err := os.WriteFile(key, []byte("not a key\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := bash(t, env, "dr_rekey --no-pq"); err == nil || !strings.Contains(err.Error(), "age-keygen cannot read") {
+	if _, err := bash(t, env, "dr_rekey"); err == nil || !strings.Contains(err.Error(), "age-keygen cannot read") {
 		t.Errorf("a renewal with a key file age cannot read: %v", err)
 	}
 	if _, err := os.Stat(strings.TrimSuffix(key, ".agekey") + ".txt.sig"); err == nil {
@@ -311,7 +311,7 @@ func TestAnInitCrashedBeforeItsIdentityIsSyncedRegisters(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := bash(t, env, "dr_init --no-pq"); err != nil {
+	if _, err := bash(t, env, "dr_init"); err != nil {
 		t.Errorf("init after a crash that emptied the identity: %v", err)
 	}
 }
@@ -380,11 +380,11 @@ func TestGitignoreIsMovedIntoPlace(t *testing.T) {
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
 	env := []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}
-	if _, err := bash(t, env, "dr_init --no-pq"); err != nil {
+	if _, err := bash(t, env, "dr_init"); err != nil {
 		t.Fatal(err)
 	}
 	gi := stats(t, dir, ".gitignore")[".gitignore"]
-	if _, err := bash(t, env, "dr_init --no-pq"); err != nil {
+	if _, err := bash(t, env, "dr_init"); err != nil {
 		t.Fatal(err)
 	}
 	if os.SameFile(gi, stats(t, dir, ".gitignore")[".gitignore"]) || string(mustRead(t, filepath.Join(dir, ".gitignore"))) != "*\n" {
@@ -403,7 +403,7 @@ func TestAForgottenMailboxsRenewalRefusesARevocationsAnswerThatIsNoRecord(t *tes
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
 	env := []string{"DR_HOME=" + t.TempDir(), "DR_SERVER_URL=" + srv.URL}
-	out, err := bash(t, env, "dr_init --no-pq")
+	out, err := bash(t, env, "dr_init")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,12 +429,12 @@ func TestAForgottenMailboxsRenewalRefusesARevocationsAnswerThatIsNoRecord(t *tes
 	}
 	for _, body := range []string{"not json", `["a record"]`} {
 		set(body)
-		if _, err := bash(t, env, "dr_rekey --no-pq"); err == nil || !strings.Contains(err.Error(), `"REFUSED: the server's answer for this mailbox's revocations is not one this client reads`) {
+		if _, err := bash(t, env, "dr_rekey"); err == nil || !strings.Contains(err.Error(), `"REFUSED: the server's answer for this mailbox's revocations is not one this client reads`) {
 			t.Errorf("%s: %v", body, err)
 		}
 	}
 	set("{}") // control: a record that holds nothing
-	if out, err := bash(t, env, "dr_rekey --no-pq"); err != nil || !strings.HasPrefix(out, `{"type":"prekey",`) {
+	if out, err := bash(t, env, "dr_rekey"); err != nil || !strings.HasPrefix(out, `{"type":"prekey",`) {
 		t.Errorf("a record that holds nothing: %v %q", err, out)
 	}
 }
@@ -472,12 +472,12 @@ func TestAKeptMessageFileIsWrittenBesideAndMoved(t *testing.T) {
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
 	env := []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}
-	out, err := bash(t, env, "dr_init --no-pq")
+	out, err := bash(t, env, "dr_init")
 	if err != nil {
 		t.Fatal(err)
 	}
 	me := addressIn(t, srv, out)
-	g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+	g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -560,7 +560,7 @@ func TestAddrNeedsAMailbox(t *testing.T) {
 		t.Errorf("addr with no mailbox wrote %v", ls)
 	}
 	lost := t.TempDir()
-	out, err := bash(t, []string{"DR_HOME=" + lost, "DR_SERVER_URL=" + srv.URL}, "dr_init --no-pq")
+	out, err := bash(t, []string{"DR_HOME=" + lost, "DR_SERVER_URL=" + srv.URL}, "dr_init")
 	if err != nil {
 		t.Fatal(err)
 	}

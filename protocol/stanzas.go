@@ -16,7 +16,7 @@ import (
 // stanza, before any key agreement.
 type Stanzas struct {
 	// Native are the types of its native stanzas, those of a type a prekey
-	// has (PostQuantum, Classic), in the header's order.
+	// has (PostQuantum), in the header's order.
 	Native []KeyType
 	// Other is set when it has a stanza that is neither native nor grease.
 	Other bool
@@ -47,7 +47,7 @@ func ReadStanzas(ciphertext []byte) (Stanzas, error) {
 	var st Stanzas
 	for _, s := range rec.stanzas {
 		switch {
-		case s.Type == string(PostQuantum) || s.Type == string(Classic):
+		case s.Type == string(PostQuantum):
 			st.Native = append(st.Native, KeyType(s.Type))
 		case grease.MatchString(s.Type) && len(s.Args) <= maxGreaseArgs:
 		default:

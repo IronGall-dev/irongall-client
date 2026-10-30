@@ -40,7 +40,7 @@ func TestRecvRenewsNothingAboveAStatementTheMailboxDidNotMake(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
 			e := newEnv(t)
-			b := e.mailbox(protocol.PostQuantum)
+			b := e.mailbox()
 			n := numberOf(t, b)
 			signer, certSerial := worker(t, b), n
 			if !c.own {
@@ -66,7 +66,7 @@ func TestRecvRenewsNothingAboveAStatementTheMailboxDidNotMake(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			k, err := age.GenerateX25519Identity()
+			k, err := age.GenerateHybridIdentity()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -98,13 +98,13 @@ func TestRecvRenewsNothingAboveAStatementTheMailboxDidNotMake(t *testing.T) {
 			}
 			// Under its own certificate, whose working key another holds, it
 			// signs no message: the entry waits for the mailbox's next certificate.
-			to := e.mailbox(protocol.PostQuantum)
+			to := e.mailbox()
 			_, err = b.Send(ctx, to.Address(), "while another holds its working key")
 			if (err != nil) != c.own {
 				t.Fatalf("a send while a statement the mailbox did not make is served: %v", err)
 			}
-			// Its owner's renewal goes above it, of the mailbox's own type.
-			if p, err := b.Rekey(ctx, ""); err != nil || p.Serial <= certSerial+5 || p.Type() != protocol.PostQuantum {
+			// Its owner's renewal goes above it.
+			if p, err := b.Rekey(ctx); err != nil || p.Serial <= certSerial+5 {
 				t.Fatalf("prekey renew above a statement the mailbox did not make: %+v, %v", p, err)
 			}
 			if c.own {
@@ -113,7 +113,7 @@ func TestRecvRenewsNothingAboveAStatementTheMailboxDidNotMake(t *testing.T) {
 				}
 			}
 			e.srv.SetMiddle(nil)
-			if _, err := b.Rekey(ctx, ""); err != nil {
+			if _, err := b.Rekey(ctx); err != nil {
 				t.Fatal(err)
 			}
 			if st, err := b.Status(t.Context()); err != nil || st.PrekeyNotMade != nil {
@@ -132,14 +132,14 @@ func TestASendIsHeldByTheMailboxsLastReadOfItself(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	b, to := e.mailbox(protocol.PostQuantum), e.mailbox(protocol.PostQuantum)
+	b, to := e.mailbox(), e.mailbox()
 	n := numberOf(t, b)
 	st, _ := e.srv.Prekey(b.Address())
 	p, err := protocol.ParsePrekey(st)
 	if err != nil {
 		t.Fatal(err)
 	}
-	k, err := age.GenerateX25519Identity()
+	k, err := age.GenerateHybridIdentity()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -177,16 +177,16 @@ func TestAFaultAfterARenewalWasTakenLeavesItTaken(t *testing.T) {
 		name  string
 		renew func(*client.Mailbox) (*protocol.Prekey, error)
 	}{
-		{"prekey renew", func(b *client.Mailbox) (*protocol.Prekey, error) { return b.Rekey(ctx, "") }},
+		{"prekey renew", func(b *client.Mailbox) (*protocol.Prekey, error) { return b.Rekey(ctx) }},
 		{"the remedy", func(b *client.Mailbox) (*protocol.Prekey, error) {
-			r, err := b.RenewAndRevoke(ctx, "")
+			r, err := b.RenewAndRevoke(ctx)
 			if r == nil {
 				return nil, err
 			}
 			return r.Prekey, err
 		}},
 	} {
-		b := e.mailbox(protocol.Classic)
+		b := e.mailbox()
 		old := numberOf(t, b)
 		e.clock.Add(2 * time.Second)
 		// The older working key's public half cannot be deleted: a fault of
@@ -220,12 +220,12 @@ func TestAnInitWhoseFirstStatementExpiredRegisters(t *testing.T) {
 		}
 		next.ServeHTTP(w, r)
 	})
-	if _, err := client.Init(ctx, dir, e.opts(), protocol.Classic); err == nil {
+	if _, err := client.Init(ctx, dir, e.opts()); err == nil {
 		t.Fatal("registered while the server was down")
 	}
 	e.srv.SetMiddle(nil)
 	e.clock.Add(protocol.PrekeyLifetime + time.Hour)
-	b, err := client.Init(ctx, dir, e.opts(), protocol.Classic)
+	b, err := client.Init(ctx, dir, e.opts())
 	if err != nil {
 		t.Fatalf("init once the first statement expired: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestARenewalGoesPastItsOwnRecordWhateverItsDates(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			e := newEnv(t)
-			b := e.mailbox(protocol.PostQuantum)
+			b := e.mailbox()
 			n := numberOf(t, b)
 			unix := uint64(e.clock.Now().Unix())
 			cert := &ssh.Certificate{
@@ -291,7 +291,7 @@ func TestARenewalGoesPastItsOwnRecordWhateverItsDates(t *testing.T) {
 		t.Parallel()
 		ctx := context.Background()
 		e := newEnv(t)
-		b, other := e.mailbox(protocol.PostQuantum), e.mailbox(protocol.PostQuantum)
+		b, other := e.mailbox(), e.mailbox()
 		st, _ := e.srv.Prekey(b.Address())
 		forged, err := protocol.Sign(worker(t, other), st, protocol.PrekeyNamespace(b.Address()))
 		if err != nil {
@@ -309,7 +309,7 @@ func TestARenewalGoesPastItsOwnRecordWhateverItsDates(t *testing.T) {
 		if res == nil || res.Renewed != nil || res.RenewErr == nil || !strings.Contains(res.RenewErr.Error(), "dromas cert revoke-earlier") {
 			t.Fatalf("recv over a record that does not verify: %+v", res)
 		}
-		if _, err := b.RenewAndRevoke(ctx, ""); err != nil {
+		if _, err := b.RenewAndRevoke(ctx); err != nil {
 			t.Fatalf("the remedy past a record that does not verify: %v", err)
 		}
 		e.srv.SetMiddle(nil)

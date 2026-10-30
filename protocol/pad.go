@@ -29,18 +29,14 @@ const (
 	ageNonce = 16
 	ageChunk = 64 << 10
 	ageTag   = 16
-	// The header's size for one recipient of each key type. It never varies:
-	// its fields are fixed-size values in unpadded base64.
-	ageHeaderClassic     = 168
+	// The header's size for one recipient of the post-quantum type. It never
+	// varies: its fields are fixed-size values in unpadded base64.
 	ageHeaderPostQuantum = 1627
 )
 
-func ageHeader(t KeyType) int {
-	if t == PostQuantum {
-		return ageHeaderPostQuantum
-	}
-	return ageHeaderClassic
-}
+// ageHeader is the header's size for one recipient of a prekey type: the
+// post-quantum type's, the one there is.
+func ageHeader(KeyType) int { return ageHeaderPostQuantum }
 
 // SealedSize returns the size of the age file that holds plaintext bytes
 // encrypted to one key of type t.
@@ -88,7 +84,7 @@ func padTo(t KeyType, bare int) (sealed, filler int) {
 		if n, ok := plaintextSize(t, sealed); ok && n >= bare {
 			return sealed, n - bare
 		}
-		// No age file has this size: the next block. Under 3 GiB every
+		// No age file has this size: the next block. Under 1 GiB every
 		// padded size is a file's (TestEveryPaddedSizeIsAnAgeFile).
 		sealed = PaddedSize(sealed + 1)
 	}

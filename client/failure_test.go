@@ -30,7 +30,7 @@ import (
 func TestRoundTrip(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.PostQuantum), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	body := "hello <b>&é☃ — a message is data"
 	r := send(t, a, b, body)
 	res := receive(t, b)
@@ -52,7 +52,7 @@ func TestRoundTrip(t *testing.T) {
 func TestTransientFailureLeavesTheMessage(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	r := send(t, a, b, "survives a failed fetch")
 	forge.FailOnce(e.srv, http.MethodGet, "/messages/"+r.ID)
 	if _, err := b.Receive(context.Background()); err == nil {
@@ -68,7 +68,7 @@ func TestTransientFailureLeavesTheMessage(t *testing.T) {
 func TestFailedAckIsRetriedQuietly(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	r := send(t, a, b, "delivered, ack lost")
 	forge.FailOnce(e.srv, http.MethodDelete, "/messages/"+r.ID)
 	res, err := b.Receive(context.Background())
@@ -90,7 +90,7 @@ func TestFailedAckIsRetriedQuietly(t *testing.T) {
 func TestDuplicateRetryIsAckedNotDelivered(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	send(t, a, b, "do this once")
 	first := receive(t, b)
 	if len(first.Delivered) != 1 {
@@ -119,7 +119,7 @@ func TestDuplicateRetryIsAckedNotDelivered(t *testing.T) {
 func TestStalePrekeyReencryptsSameEnvelope(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.PostQuantum), e.mailbox(protocol.PostQuantum)
+	a, b := e.mailbox(), e.mailbox()
 	forge.FailOnce(e.srv, http.MethodPost, "/v1/"+b.Address().String()+"/messages")
 	if _, err := a.Send(context.Background(), b.Address(), "kept"); err == nil {
 		t.Fatal("the send should have failed")
@@ -130,7 +130,7 @@ func TestStalePrekeyReencryptsSameEnvelope(t *testing.T) {
 		t.Fatalf("outbox holds %d", len(outbox))
 	}
 	p, _ := os.ReadFile(outbox[0])
-	if _, err := b.Rekey(context.Background(), ""); err != nil {
+	if _, err := b.Rekey(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if rs, err := a.Flush(context.Background()); err != nil || len(rs) != 1 {
@@ -157,7 +157,7 @@ func TestStalePrekeyReencryptsSameEnvelope(t *testing.T) {
 func TestRestoreFromIdentity(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	dir := t.TempDir()
 	key, err := os.ReadFile(filepath.Join(b.Dir(), "identity"))
 	if err != nil {
@@ -177,7 +177,7 @@ func TestRestoreFromIdentity(t *testing.T) {
 		t.Errorf("the restored mailbox's .gitignore: %q, %v", got, err)
 	}
 	landAll(t, r)
-	if _, err := r.Rekey(context.Background(), ""); err != nil {
+	if _, err := r.Rekey(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	send(t, a, r, "to the restored mailbox")
@@ -204,7 +204,7 @@ func passes(e *env) *[]string {
 func TestAPassIsUsedUntilItRunsOut(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	seen := passes(e)
 	send(t, a, b, "one")
 	receive(t, b)
@@ -240,14 +240,14 @@ func TestAPassIsUsedUntilItRunsOut(t *testing.T) {
 func TestAPassUnderAnOlderCertificateIsReplaced(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	receive(t, b)
 	old, ok := stateOf(b, "pass")
 	if !ok {
 		t.Fatal("no pass kept")
 	}
 	first := numberOf(t, b)
-	if _, err := b.Rekey(context.Background(), ""); err != nil {
+	if _, err := b.Rekey(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if cur, _ := stateOf(b, "pass"); bytes.Equal(old, cur) {
@@ -289,7 +289,7 @@ func TestEveryRefusalOfThePassIsTriedUnderANewOne(t *testing.T) {
 	for _, c := range refusing {
 		t.Run(string(c), func(t *testing.T) {
 			e := newEnv(t)
-			b := e.mailbox(protocol.Classic)
+			b := e.mailbox()
 			list := mailboxPath(b) + "/messages"
 			var mu sync.Mutex
 			var passes []string
@@ -324,7 +324,7 @@ func TestEveryRefusalOfThePassIsTriedUnderANewOne(t *testing.T) {
 func TestAPassTheServerSaysHasRunOut(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	refusals := 1
 	calls := 0
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -362,7 +362,7 @@ func TestAKilledHolderLeavesNoLock(t *testing.T) {
 		return
 	}
 	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	cmd := exec.Command(os.Args[0], "-test.run=^TestAKilledHolderLeavesNoLock$") //nolint:gosec // this test binary, again
 	cmd.Env = append(os.Environ(), "DROMAS_TEST_HOLD_STATE="+b.Dir())
 	out, err := cmd.StdoutPipe()
@@ -393,24 +393,24 @@ func TestAKilledHolderLeavesNoLock(t *testing.T) {
 func TestPruneDeletesRetiredKeys(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	send(t, a, b, "to the first key")
 	key1 := prekeyFile(b, numberOf(t, b), ".agekey")
-	if _, err := b.Rekey(context.Background(), ""); err != nil {
+	if _, err := b.Rekey(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if res := receive(t, b); len(res.Delivered) != 1 {
 		t.Fatal("a message to the retired key was not delivered")
 	}
 	e.clock.Add(protocol.PrekeyLifetime + protocol.TTL - time.Second)
-	if _, err := b.Rekey(context.Background(), ""); err != nil {
+	if _, err := b.Rekey(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if !exists(key1) {
 		t.Fatal("deleted before its deletion time")
 	}
 	e.clock.Add(time.Second)
-	if _, err := b.Rekey(context.Background(), ""); err != nil {
+	if _, err := b.Rekey(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if exists(key1) {
@@ -444,7 +444,7 @@ func TestLocalFaultLeavesTheMessage(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv(t)
-			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, b := e.mailbox(), e.mailbox()
 			send(t, a, b, "pins A")
 			receive(t, b)
 			send(t, a, b, "waits for the mailbox to be fixed")
@@ -471,7 +471,7 @@ func TestFlushNeverStopsAtABadEntry(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b, c := e.mailbox(), e.mailbox(), e.mailbox()
 	var nobody protocol.Address // sorts first in the outbox
 	if _, err := a.Send(ctx, nobody, "to an address no mailbox has"); err == nil || !strings.Contains(err.Error(), "kept in the outbox") {
 		t.Fatalf("send to nobody: %v", err)
@@ -519,7 +519,7 @@ func TestStaleOutboxEntryIsNotPosted(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	forge.FailOnce(e.srv, http.MethodPost, "/v1/"+b.Address().String()+"/messages")
 	if _, err := a.Send(ctx, b.Address(), "stuck"); err == nil {
 		t.Fatal("the send should have failed")
@@ -537,42 +537,12 @@ func TestStaleOutboxEntryIsNotPosted(t *testing.T) {
 	}
 }
 
-// A rekey asked for a key type makes that type. A statement an earlier
-// attempt signed for a key of the other type is never signed over: its serial
-// is passed over and its key kept.
-func TestRekeyMakesTheTypeAskedFor(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
-	forge.FailOnce(e.srv, http.MethodPut, "/prekey")
-	if _, err := b.Rekey(ctx, ""); err == nil {
-		t.Fatal("the rekey should have failed")
-	}
-	leftAt := begunAt(t, b)
-	left := prekeyFile(b, leftAt, "")
-	signed := statement(t, b, leftAt, ".txt")
-	e.srv.SetMiddle(nil)
-	p, err := b.Rekey(ctx, protocol.PostQuantum)
-	if err != nil {
-		t.Fatal(err)
-	}
-	st, _ := e.srv.Prekey(b.Address())
-	served, _ := protocol.ParsePrekey(st)
-	if p.Type() != protocol.PostQuantum || served.Type() != protocol.PostQuantum || served.Serial <= leftAt {
-		t.Fatalf("published serial %d of type %s", served.Serial, served.Type())
-	}
-	if now := statement(t, b, leftAt, ".txt"); len(signed) == 0 || !bytes.Equal(now, signed) || !exists(left+".agekey") {
-		t.Fatal("the statement the failed attempt signed was changed, or its key deleted")
-	}
-}
-
 // A body that is not UTF-8 is refused before anything is sent: JSON would
 // replace its bytes.
 func TestNonUTF8BodyIsRefused(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	if _, err := a.Send(context.Background(), b.Address(), "\xff\xfe"); err == nil {
 		t.Fatal("a non-UTF-8 body was sent")
 	}

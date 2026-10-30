@@ -554,13 +554,13 @@ type Remedy struct {
 // alone; otherwise the Remedy says what each publish met, and an error beside
 // it is a fault of this mailbox after a server took the revocation or the
 // renewal, or the mailbox's own revocation, shown at the renewal.
-func (b *Mailbox) RenewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy, error) {
-	return locked(ctx, b, func() (*Remedy, error) { return b.renewAndRevoke(ctx, kt) })
+func (b *Mailbox) RenewAndRevoke(ctx context.Context) (*Remedy, error) {
+	return locked(ctx, b, func() (*Remedy, error) { return b.renewAndRevoke(ctx) })
 }
 
-func (b *Mailbox) renewAndRevoke(ctx context.Context, kt protocol.KeyType) (*Remedy, error) {
+func (b *Mailbox) renewAndRevoke(ctx context.Context) (*Remedy, error) {
 	own := b.id.Address()
-	st, err := b.readOwn(ctx, kt, true)
+	st, err := b.readOwn(ctx, true)
 	if err != nil {
 		return nil, err
 	}

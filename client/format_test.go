@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/dromas-dev/dromas-client/client"
-	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // A mailbox is stamped with this client's format at the first command that
@@ -22,7 +21,7 @@ import (
 func TestAMailboxRecordsItsFormatAtItsFirstWrite(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	if got, ok := b.Record(t, "format"); !ok || string(got) != "1" {
 		t.Fatalf("a mailbox made here records format %q (%v), want 1", got, ok)
 	}
@@ -73,7 +72,7 @@ func TestAMailboxRecordsItsFormatAtItsFirstWrite(t *testing.T) {
 func TestANewerFormatIsRefusedByEveryEntryWritingNothing(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	b, c := e.mailbox(), e.mailbox()
 	rec, err := c.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -109,7 +108,7 @@ func TestAnOlderFormatIsBroughtForwardByACommandAndRefusedByAReading(t *testing.
 		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
 	}
 	e := newEnv(t)
-	b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	b, c := e.mailbox(), e.mailbox()
 	rec, err := c.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -167,7 +166,7 @@ func TestAnOlderFormatIsBroughtForwardByACommandAndRefusedByAReading(t *testing.
 // as its own (client/format.go).
 func TestAMailboxWithNoStateFileIsFormat1(t *testing.T) {
 	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	ran := 0
 	client.SetFormatSteps(t, func(*client.Mailbox) error { ran++; return nil })
 	if err := os.Remove(filepath.Join(b.Dir(), "state")); err != nil {
@@ -190,7 +189,7 @@ func TestAMailboxWithNoStateFileIsFormat1(t *testing.T) {
 func TestAFormatRecordNoClientWritesIsRefused(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	for _, raw := range []string{"", "0", "01", "-1", "+1", "1 ", " 1", "1.0", "x", "99999999999999999999"} {
 		client.SetFormat(t, b.Dir(), []byte(raw))
 		if _, err := b.Status(t.Context()); err == nil || !strings.Contains(err.Error(), "no decimal number") {

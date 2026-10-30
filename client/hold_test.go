@@ -33,7 +33,7 @@ func held(b *client.Mailbox, wait time.Duration) <-chan *client.HoldResult {
 func TestAHeldListIsAnsweredWhenAMessageArrives(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := newMemEnv(t)
-		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+		a, b := e.mailbox(), e.mailbox()
 		receive(t, b) // an empty mailbox: its tag kept
 		c := held(b, time.Hour)
 		time.Sleep(time.Minute)
@@ -57,7 +57,7 @@ func TestAHeldListIsAnsweredWhenAMessageArrives(t *testing.T) {
 func TestAHeldListWithNothingNewEndsAtTheMailboxsWait(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := newMemEnv(t)
-		b := e.mailbox(protocol.Classic)
+		b := e.mailbox()
 		receive(t, b)
 		h := <-held(b, time.Hour)
 		if h == nil || h.Changed || h.Dropped || h.After != client.DefaultHold {
@@ -73,7 +73,7 @@ func TestAHeldListWithNothingNewEndsAtTheMailboxsWait(t *testing.T) {
 func TestAHoldLetsTheMailboxsOtherCommandsGoOn(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := newMemEnv(t)
-		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+		a, b := e.mailbox(), e.mailbox()
 		receive(t, b)
 		c := held(b, time.Hour)
 		time.Sleep(time.Second)
@@ -95,7 +95,7 @@ func TestAHeldListShownTheMailboxsOwnRevocationKeepsIt(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx := context.Background()
 		e := newMemEnv(t)
-		b := e.mailbox(protocol.Classic)
+		b := e.mailbox()
 		receive(t, b)
 		rec, err := b.Revocation(ctx)
 		if err != nil {
@@ -207,7 +207,7 @@ func TestADropIsLearnedInAFewHolds(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				e := newMemEnv(t)
-				b := e.mailbox(protocol.Classic)
+				b := e.mailbox()
 				receive(t, b)
 				c.p.on(e, b)
 				holds, h, took := settle(t, b)
@@ -227,7 +227,7 @@ func TestADropIsLearnedInAFewHolds(t *testing.T) {
 func TestADropAtOnceTeachesNothing(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := newMemEnv(t)
-		b := e.mailbox(protocol.Classic)
+		b := e.mailbox()
 		receive(t, b)
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if r.URL.Query().Has("wait") {
@@ -245,7 +245,7 @@ func TestADropAtOnceTeachesNothing(t *testing.T) {
 func TestHoldsStartAtMostOnceAMinute(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := newMemEnv(t)
-		b := e.mailbox(protocol.Classic) // never received: no tag kept, so each hold ends at once
+		b := e.mailbox() // never received: no tag kept, so each hold ends at once
 		start := time.Now()
 		var at []time.Duration
 		for range 4 {
@@ -269,7 +269,7 @@ func TestHoldsStartAtMostOnceAMinute(t *testing.T) {
 func TestAwaitReturnsForAReceiveEveryHour(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := newMemEnv(t)
-		b := e.mailbox(protocol.Classic)
+		b := e.mailbox()
 		receive(t, b)
 		start := time.Now()
 		if err := b.Await(context.Background(), start.Add(3*time.Hour), nil); err != nil || time.Since(start) != client.ReceiveEvery {
@@ -284,7 +284,7 @@ func TestAwaitReturnsForAReceiveEveryHour(t *testing.T) {
 func TestAwaitEndsAtARefusalNoWaitMends(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := newMemEnv(t)
-		b := e.mailbox(protocol.Classic)
+		b := e.mailbox()
 		receive(t, b)
 		var mu sync.Mutex
 		var at []time.Duration
@@ -322,7 +322,7 @@ func TestAwaitEndsAtARefusalNoWaitMends(t *testing.T) {
 func TestAHoldWhosePassIsRefusedIsChanged(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := newMemEnv(t)
-		b := e.mailbox(protocol.Classic)
+		b := e.mailbox()
 		receive(t, b)
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if r.URL.Query().Has("wait") {
@@ -342,7 +342,7 @@ func TestAHoldWhosePassIsRefusedIsChanged(t *testing.T) {
 func TestAwaitReturnsByItsDeadline(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := newMemEnv(t)
-		b := e.mailbox(protocol.Classic)
+		b := e.mailbox()
 		receive(t, b)
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if r.URL.Query().Has("wait") {

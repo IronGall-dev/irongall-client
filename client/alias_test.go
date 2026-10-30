@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/dromas-dev/dromas-client/client"
-	"github.com/dromas-dev/dromas-client/protocol"
 )
 
 // An alias is the mailbox's own name for a peer: Destination takes it where it
@@ -17,7 +16,7 @@ import (
 func TestAliasNamesAPeer(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b, c := e.mailbox(), e.mailbox(), e.mailbox()
 	for name, to := range map[string]*client.Mailbox{"zed": c, "bob": b} {
 		if err := a.SetAlias(t.Context(), name, to.Address()); err != nil {
 			t.Fatal(err)
@@ -63,7 +62,7 @@ func TestAliasNamesAPeer(t *testing.T) {
 func TestAliasIsNeverMoved(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b, c := e.mailbox(), e.mailbox(), e.mailbox()
 	if err := a.SetAlias(t.Context(), "bob", b.Address()); err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +86,7 @@ func TestAliasIsNeverMoved(t *testing.T) {
 func TestAliasGrammar(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	for _, name := range []string{"", "Bob", "-x", ".x", "a b", "a/b", "é", b.Address().String(), b.Link(), strings.Repeat("a", 33), "bob\n"} {
 		var refused *client.RefusedError
 		if err := a.SetAlias(t.Context(), name, b.Address()); !errors.As(err, &refused) || !strings.Contains(refused.Reason, "not an alias") {
@@ -116,7 +115,7 @@ func TestAliasGrammar(t *testing.T) {
 func TestAliasFileEditedByHand(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b, c := e.mailbox(), e.mailbox(), e.mailbox()
 	file := filepath.Join(a.Dir(), "aliases")
 	hand := "# my peers\nbob " + b.Address().String() + "\nBad " + c.Address().String() + "\ncarol not-an-address\n"
 	if err := os.WriteFile(file, []byte(hand), 0o600); err != nil {

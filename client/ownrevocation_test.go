@@ -69,11 +69,11 @@ func TestARenewalNumbersAboveARevocationItDidNotHold(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a := e.mailbox(protocol.Classic)
+	a := e.mailbox()
 	x := numberOf(t, a) + 10*365*86400
 	publishAt(t, e.srv.URL, ownRevocation(t, a, x))
 	e.clock.Add(time.Minute)
-	if _, err := a.Rekey(ctx, ""); err != nil {
+	if _, err := a.Rekey(ctx); err != nil {
 		t.Fatalf("the renewal after a revocation through %d it did not hold: %v", x, err)
 	}
 	if n := numberOf(t, a); n <= x {
@@ -88,20 +88,20 @@ func TestARestoredMailboxRenewsAboveAFastRemedy(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a := e.mailbox(protocol.Classic)
+	a := e.mailbox()
 	o := e.opts()
 	o.Now = func() time.Time { return e.clock.Now().Add(3 * time.Hour) }
 	fast, err := client.Open(a.Dir(), o)
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := fast.RenewAndRevoke(ctx, "")
+	r, err := fast.RenewAndRevoke(ctx)
 	if r == nil || r.Revoked == nil {
 		t.Fatalf("the remedy 3 h ahead: %+v, %v", r, err)
 	}
 	restored := restoreWith(t, e, a, e.clock.Now)
 	e.clock.Add(time.Minute)
-	if _, err := restored.Rekey(ctx, ""); err != nil {
+	if _, err := restored.Rekey(ctx); err != nil {
 		t.Fatalf("the restored mailbox's first renewal: %v", err)
 	}
 	if n := numberOf(t, restored); n <= r.Revoked.Through {
@@ -115,7 +115,7 @@ func TestTheRemedyGoesOnWhenItsServerDoesNotAnswerTheRead(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a := e.mailbox(protocol.Classic)
+	a := e.mailbox()
 	inUse := numberOf(t, a)
 	reads := 0
 	watch(e, func(w http.ResponseWriter, r *http.Request) bool {
@@ -126,7 +126,7 @@ func TestTheRemedyGoesOnWhenItsServerDoesNotAnswerTheRead(t *testing.T) {
 		}
 		return false
 	})
-	r, err := a.RenewAndRevoke(ctx, "")
+	r, err := a.RenewAndRevoke(ctx)
 	if err != nil || r == nil || r.Unread == nil || r.Prekey == nil || r.Revoked == nil || !r.Revoked.Revokes(inUse) {
 		t.Fatalf("the remedy past an unanswered read: %+v, %v", r, err)
 	}
@@ -141,11 +141,11 @@ func TestTheRemedyGoesOnPastARollback(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a := e.mailbox(protocol.Classic)
+	a := e.mailbox()
 	first := numberOf(t, a)
 	old, oldSig := statement(t, a, first, ".txt"), statement(t, a, first, ".txt.sig")
 	e.clock.Add(2 * time.Second)
-	if _, err := a.Rekey(ctx, ""); err != nil {
+	if _, err := a.Rekey(ctx); err != nil {
 		t.Fatal(err)
 	}
 	inUse := numberOf(t, a)
@@ -157,10 +157,10 @@ func TestTheRemedyGoesOnPastARollback(t *testing.T) {
 		next.ServeHTTP(w, r)
 	})
 	e.clock.Add(2 * time.Second)
-	if _, err := a.Rekey(ctx, ""); err == nil || !strings.Contains(err.Error(), "rollback") || !strings.Contains(err.Error(), "dromas cert revoke-earlier") {
+	if _, err := a.Rekey(ctx); err == nil || !strings.Contains(err.Error(), "rollback") || !strings.Contains(err.Error(), "dromas cert revoke-earlier") {
 		t.Fatalf("a plain renewal served a rollback: %v", err)
 	}
-	r, err := a.RenewAndRevoke(ctx, "")
+	r, err := a.RenewAndRevoke(ctx)
 	if err != nil || r == nil || r.Unread == nil || !strings.Contains(r.Unread.Error(), "rollback") || r.Revoked == nil || !r.Revoked.Revokes(inUse) || r.NotRenewed != nil {
 		t.Fatalf("the remedy served a rollback: %+v, %v", r, err)
 	}
@@ -174,7 +174,7 @@ func TestTheRemedyAsksAgainAfterItsServerAnswersConflict(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a := e.mailbox(protocol.Classic)
+	a := e.mailbox()
 	T := numberOf(t, a) + 7200
 	publishAt(t, e.srv.URL, ownRevocation(t, a, T))
 	reads, puts := 0, 0
@@ -189,7 +189,7 @@ func TestTheRemedyAsksAgainAfterItsServerAnswersConflict(t *testing.T) {
 		}
 		next.ServeHTTP(w, r)
 	})
-	r, err := a.RenewAndRevoke(ctx, "")
+	r, err := a.RenewAndRevoke(ctx)
 	if err != nil || r == nil || r.Revoked == nil || r.Revoked.Through != T || r.NotRevoked != nil || r.Below != T+1 || r.Prekey == nil || puts != 1 {
 		t.Fatalf("the remedy, T %d hidden from the first read: %+v, %v, %d publishes", T, r, err, puts)
 	}
@@ -202,7 +202,7 @@ func TestTheRemedyStopsAtAConflictThatShowsNothing(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a := e.mailbox(protocol.Classic)
+	a := e.mailbox()
 	publishAt(t, e.srv.URL, ownRevocation(t, a, numberOf(t, a)+7200))
 	var puts, renewals atomic.Int32
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -217,7 +217,7 @@ func TestTheRemedyStopsAtAConflictThatShowsNothing(t *testing.T) {
 		}
 		next.ServeHTTP(w, r)
 	})
-	r, err := a.RenewAndRevoke(ctx, "")
+	r, err := a.RenewAndRevoke(ctx)
 	if err != nil || r == nil || client.Code(r.NotRevoked) != protocol.CodeConflict || r.NotRenewed == nil || r.Prekey != nil || puts.Load() != 1 || renewals.Load() != 0 {
 		t.Fatalf("the remedy at a conflict that shows nothing: %+v, %v; %d publishes, %d renewals", r, err, puts.Load(), renewals.Load())
 	}
@@ -231,7 +231,7 @@ func TestTheRemedyStopsAtAConflictThatShowsALowerRecord(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a := e.mailbox(protocol.Classic)
+	a := e.mailbox()
 	lower := ownRevocation(t, a, numberOf(t, a)-1)
 	var renewals atomic.Int32
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -249,7 +249,7 @@ func TestTheRemedyStopsAtAConflictThatShowsALowerRecord(t *testing.T) {
 		}
 		next.ServeHTTP(w, r)
 	})
-	r, err := a.RenewAndRevoke(ctx, "")
+	r, err := a.RenewAndRevoke(ctx)
 	if err != nil || r == nil || client.Code(r.NotRevoked) != protocol.CodeConflict || r.Revoked != nil || r.NotRenewed == nil || r.Prekey != nil || renewals.Load() != 0 {
 		t.Fatalf("the remedy at a conflict that shows a lower record: %+v, %v; %d renewals", r, err, renewals.Load())
 	}
@@ -261,7 +261,7 @@ func TestTheRemedyReadsItsMailboxOnce(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a := e.mailbox(protocol.Classic)
+	a := e.mailbox()
 	var reads atomic.Int32
 	watch(e, func(w http.ResponseWriter, r *http.Request) bool {
 		if r.Method == http.MethodGet && r.URL.Path == mailboxPath(a) {
@@ -269,7 +269,7 @@ func TestTheRemedyReadsItsMailboxOnce(t *testing.T) {
 		}
 		return false
 	})
-	r, err := a.RenewAndRevoke(ctx, "")
+	r, err := a.RenewAndRevoke(ctx)
 	if err != nil || r == nil || r.Revoked == nil || r.Prekey == nil {
 		t.Fatalf("the remedy: %+v, %v", r, err)
 	}
@@ -300,9 +300,9 @@ func lockingCommands(ctx context.Context, a, b *client.Mailbox, rec *protocol.Re
 		{"Receive", func() error { _, err := a.Receive(ctx); return err }},
 		{"Hold", func() error { _, err := a.Hold(ctx, time.Second); return err }},
 		{"Await", func() error { return a.Await(ctx, time.Now().Add(2*time.Second), nil) }},
-		{"Rekey", func() error { _, err := a.Rekey(ctx, ""); return err }},
+		{"Rekey", func() error { _, err := a.Rekey(ctx); return err }},
 		{"RevokeEarlier", func() error { _, err := a.RevokeEarlier(ctx); return err }},
-		{"RenewAndRevoke", func() error { _, err := a.RenewAndRevoke(ctx, ""); return err }},
+		{"RenewAndRevoke", func() error { _, err := a.RenewAndRevoke(ctx); return err }},
 		{"SendWith", func() error {
 			_, err := a.SendWith(ctx, b.Address(), "from a finished mailbox", client.Fields{})
 			return err
@@ -364,7 +364,7 @@ func TestAMailboxThatKeepsItsOwnRevocationSignsNothingMore(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	send(t, b, a, "to a mailbox about to be finished")
 	says(e, protocol.CodeUnavailable, http.MethodPost, "/messages")
 	if _, err := a.Send(ctx, b.Address(), "waits in the outbox"); err == nil {
@@ -519,7 +519,7 @@ func TestARenewalThatMeetsItsOwnRevocationSignsNothing(t *testing.T) {
 		t.Run(at, func(t *testing.T) {
 			ctx := context.Background()
 			e := newEnv(t)
-			a := e.mailbox(protocol.Classic)
+			a := e.mailbox()
 			rec, err := a.Revocation(t.Context())
 			if err != nil {
 				t.Fatal(err)
@@ -537,7 +537,7 @@ func TestARenewalThatMeetsItsOwnRevocationSignsNothing(t *testing.T) {
 			before, number, begun := signed(t, a), numberOf(t, a), begunAt(t, a)
 			_, renewing := a.Record(t, "renewal")
 			e.clock.Add(2 * time.Second)
-			_, err = a.Rekey(ctx, "")
+			_, err = a.Rekey(ctx)
 			if st, serr := a.Status(t.Context()); serr != nil || !st.Revoked {
 				t.Fatalf("the mailbox did not keep its own revocation: %+v, %v", st, serr)
 			}
@@ -559,7 +559,7 @@ func TestInitOfAMailboxThatHoldsItsOwnRevocationSignsNothing(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a := e.mailbox(protocol.Classic)
+	a := e.mailbox()
 	rec, err := a.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -584,7 +584,7 @@ func TestInitOfAMailboxThatHoldsItsOwnRevocationSignsNothing(t *testing.T) {
 		calls.Add(1)
 		return false
 	})
-	_, err = client.Init(ctx, dir, e.opts(), protocol.Classic)
+	_, err = client.Init(ctx, dir, e.opts())
 	made, _ := filepath.Glob(filepath.Join(dir, "work", "*"))
 	stmts, _ := filepath.Glob(filepath.Join(dir, "prekeys", "*"))
 	var gone *client.RevokedError
@@ -599,7 +599,7 @@ func TestAMailboxRevokedAtItsServerSignsNothingAtAnother(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a := e.mailbox(protocol.Classic)
+	a := e.mailbox()
 	rec, err := a.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -618,10 +618,10 @@ func TestAMailboxRevokedAtItsServerSignsNothingAtAnother(t *testing.T) {
 		t.Fatal(err)
 	}
 	var gone *client.RevokedError
-	if _, err := elsewhere.Rekey(ctx, ""); !errors.As(err, &gone) {
+	if _, err := elsewhere.Rekey(ctx); !errors.As(err, &gone) {
 		t.Fatalf("a renewal at a server that never saw the revocation: %v", err)
 	}
-	c, err := client.Init(ctx, t.TempDir(), client.Options{Base: other.URL, Now: e.clock.Now}, protocol.Classic)
+	c, err := client.Init(ctx, t.TempDir(), client.Options{Base: other.URL, Now: e.clock.Now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -640,7 +640,7 @@ func TestASendInTheRemedysWindowWaitsForTheRenewal(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, reader := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, reader := e.mailbox(), e.mailbox()
 	inUse := numberOf(t, a)
 	watch(e, func(w http.ResponseWriter, r *http.Request) bool {
 		switch {
@@ -653,7 +653,7 @@ func TestASendInTheRemedysWindowWaitsForTheRenewal(t *testing.T) {
 		}
 		return false
 	})
-	r, err := a.RenewAndRevoke(ctx, "")
+	r, err := a.RenewAndRevoke(ctx)
 	if r == nil || r.Revoked == nil || !r.Revoked.Revokes(inUse) || r.NotRenewed == nil {
 		t.Fatalf("remedy: %+v %v", r, err)
 	}
@@ -682,10 +682,10 @@ func TestAFastClockDeletesNoKeyAMessageWaitsFor(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	send(t, a, b, "sealed to the prekey about to retire")
 	e.clock.Add(2 * time.Second)
-	if _, err := b.Rekey(ctx, ""); err != nil {
+	if _, err := b.Rekey(ctx); err != nil {
 		t.Fatal(err)
 	}
 	keys, _ := filepath.Glob(filepath.Join(b.Dir(), "prekeys", "*.agekey"))
@@ -714,7 +714,7 @@ func TestAnAddressRevocationBesideALowerRevocationOfCertificates(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, s := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, s := e.mailbox(), e.mailbox()
 	n := numberOf(t, a)
 	publishAt(t, e.srv.URL, ownRevocation(t, a, n+10))
 	both := ownRevocation(t, a, n+5)
@@ -743,7 +743,7 @@ func TestARevocationsReadAnsweredOutOfFormIsNoAnswer(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a := e.mailbox(protocol.Classic)
+	a := e.mailbox()
 	e.srv.Forget(a.Address())
 	says(e, protocol.CodeNoSuchMailbox, http.MethodGet, "/revocations")
 	if held, err := a.Ask(ctx, a.Address()); err == nil {

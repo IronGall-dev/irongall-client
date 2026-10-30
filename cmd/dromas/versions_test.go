@@ -51,7 +51,7 @@ func newVersioned(t *testing.T) *versioned {
 	v := &versioned{t: t, server: &settable{t: start}, client: &settable{t: start}}
 	v.srv = fakeserver.New(t, v.server.Now)
 	v.opt = client.Options{Base: v.srv.URL, Now: v.client.Now, Version: ownVersion}
-	b, err := client.Init(context.Background(), t.TempDir(), v.opt, protocol.Classic)
+	b, err := client.Init(context.Background(), t.TempDir(), v.opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func (v *versioned) documentReads() int {
 // every command of the library to it in every state.
 func TestEveryRequestNamesTheClientsVersion(t *testing.T) {
 	v := newVersioned(t)
-	peer, err := client.Init(context.Background(), t.TempDir(), v.opt, protocol.Classic)
+	peer, err := client.Init(context.Background(), t.TempDir(), v.opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +318,7 @@ func TestAnUpgradeIsSaidOnceADay(t *testing.T) {
 // in the outbox.
 func TestARetiredVersionIsSaidInTheClientsWords(t *testing.T) {
 	v := newVersioned(t)
-	peer, err := client.Init(context.Background(), t.TempDir(), client.Options{Base: v.srv.URL, Now: v.server.Now, Version: "1.6.0"}, protocol.Classic)
+	peer, err := client.Init(context.Background(), t.TempDir(), client.Options{Base: v.srv.URL, Now: v.server.Now, Version: "1.6.0"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -42,8 +42,8 @@ func TestARetryAboveTheFloorIsDeliveredAgain(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv(t)
-			r := e.mailbox(protocol.Classic)
-			s := e.mailbox(protocol.Classic)
+			r := e.mailbox()
+			s := e.mailbox()
 			path := "/v1/" + r.Address().String() + "/messages"
 			var retry []byte
 			mode := "lose"
@@ -117,12 +117,12 @@ func TestARetryAfterAStepOfTheHour(t *testing.T) {
 	day := 24 * time.Hour
 	e := newEnv(t)
 	off := time.Duration(0)
-	r, err := client.Init(ctx, t.TempDir(), e.skewed(&off), protocol.Classic)
+	r, err := client.Init(ctx, t.TempDir(), e.skewed(&off))
 	if err != nil {
 		t.Fatal(err)
 	}
 	landAll(t, r)
-	s := e.mailbox(protocol.Classic)
+	s := e.mailbox()
 	mode := "lose"
 	var retry []byte
 	e.srv.SetMiddle(func(w http.ResponseWriter, q *http.Request, next http.Handler) {
@@ -204,12 +204,12 @@ func TestAStretchedRetryAtClocksAnHonestServerTakes(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv(t)
 			off := time.Duration(0)
-			r, err := client.Init(ctx, t.TempDir(), e.skewed(&off), protocol.Classic)
+			r, err := client.Init(ctx, t.TempDir(), e.skewed(&off))
 			if err != nil {
 				t.Fatal(err)
 			}
 			landAll(t, r)
-			s := e.mailbox(protocol.Classic)
+			s := e.mailbox()
 			mailbox := "/v1/" + r.Address().String()
 			mode := "lose"
 			posts, reads := 0, 0
@@ -317,8 +317,8 @@ func TestADailyReaderWhoseRenewalsAreRefused(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			e := newEnv(t)
-			r := e.mailbox(protocol.Classic)
-			s := e.mailbox(protocol.Classic)
+			r := e.mailbox()
+			s := e.mailbox()
 			path := "/v1/" + r.Address().String() + "/messages"
 			var retry []byte
 			mode := "lose"
@@ -426,13 +426,13 @@ func TestAFirstCopyIsNeverDatedBeforeItWasWritten(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv(t)
 			off := time.Duration(0)
-			r, err := client.Init(ctx, t.TempDir(), e.skewed(&off), protocol.Classic)
+			r, err := client.Init(ctx, t.TempDir(), e.skewed(&off))
 			if err != nil {
 				t.Fatal(err)
 			}
 			landAll(t, r)
 			offS := time.Duration(0)
-			s, err := client.Init(ctx, t.TempDir(), e.skewed(&offS), protocol.Classic)
+			s, err := client.Init(ctx, t.TempDir(), e.skewed(&offS))
 			if err != nil {
 				t.Fatal(err)
 			}

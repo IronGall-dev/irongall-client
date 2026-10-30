@@ -38,7 +38,7 @@ func TestAFromTheServerListsIsNotRead(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			e := newEnv(t)
-			a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, b, c := e.mailbox(), e.mailbox(), e.mailbox()
 			send(t, a, b, "from A")
 			named := 0
 			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -72,8 +72,8 @@ func TestAFromTheServerListsDecidesNothing(t *testing.T) {
 	t.Run("where it lands", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t)
-		a, c, d := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
-		b := e.heldMailbox(protocol.Classic)
+		a, c, d := e.mailbox(), e.mailbox(), e.mailbox()
+		b := e.heldMailbox()
 		if _, err := b.Allow(ctx, a.Address()); err != nil {
 			t.Fatal(err)
 		}
@@ -98,7 +98,7 @@ func TestAFromTheServerListsDecidesNothing(t *testing.T) {
 	t.Run("the replay set", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t)
-		a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+		a, b, c := e.mailbox(), e.mailbox(), e.mailbox()
 		path := "/v1/" + b.Address().String() + "/messages"
 		lose := true
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -162,7 +162,7 @@ func TestForgeries(t *testing.T) {
 	}
 	t.Run("a message made in another mailbox's name", func(t *testing.T) {
 		e := newEnv(t)
-		a, b, o := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+		a, b, o := e.mailbox(), e.mailbox(), e.mailbox()
 		// The forger's own working key and certificate sign an envelope that
 		// carries A's identity document and says it is from A. The signature
 		// is good. The certificate is the forger's.
@@ -176,7 +176,7 @@ func TestForgeries(t *testing.T) {
 
 	t.Run("a second message after the signature", func(t *testing.T) {
 		e := newEnv(t)
-		a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+		a, b, c := e.mailbox(), e.mailbox(), e.mailbox()
 		genuine := e.line(a.Identity().Document(), a.Address(), b.Address(), "real, from A")
 		hidden := e.line(c.Identity().Document(), c.Address(), b.Address(), "hidden, from C")
 		id := e.seal(b, genuine, forge.Sign(t, worker(t, a), genuine, b.Address()), hidden, forge.Sign(t, worker(t, c), hidden, b.Address()))
@@ -201,7 +201,7 @@ func TestForgeries(t *testing.T) {
 
 	t.Run("a forged identity on a send", func(t *testing.T) {
 		e := newEnv(t)
-		a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+		a, b, c := e.mailbox(), e.mailbox(), e.mailbox()
 		st, sig := e.srv.Prekey(c.Address())
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if r.Method == http.MethodGet && r.URL.Path == "/v1/"+b.Address().String() {
@@ -220,7 +220,7 @@ func TestForgeries(t *testing.T) {
 
 	t.Run("swapped prekey", func(t *testing.T) {
 		e := newEnv(t)
-		a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+		a, b, c := e.mailbox(), e.mailbox(), e.mailbox()
 		st, sig := e.srv.Prekey(c.Address())
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if r.Method == http.MethodGet && r.URL.Path == "/v1/"+b.Address().String() {
@@ -243,9 +243,9 @@ func TestForgeries(t *testing.T) {
 
 	t.Run("an expired prekey", func(t *testing.T) {
 		e := newEnv(t)
-		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+		a, b := e.mailbox(), e.mailbox()
 		e.clock.Add(protocol.PrekeyLifetime)
-		if _, err := a.Rekey(ctx, ""); err != nil { // a certificate that still signs messages
+		if _, err := a.Rekey(ctx); err != nil { // a certificate that still signs messages
 			t.Fatal(err)
 		}
 		if _, err := a.Send(ctx, b.Address(), "too late"); err == nil || !strings.Contains(err.Error(), "expired") {
@@ -258,9 +258,9 @@ func TestForgeries(t *testing.T) {
 
 	t.Run("rollback of a peer's prekey", func(t *testing.T) {
 		e := newEnv(t)
-		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+		a, b := e.mailbox(), e.mailbox()
 		st, sig := e.srv.Prekey(b.Address())
-		if _, err := b.Rekey(ctx, ""); err != nil {
+		if _, err := b.Rekey(ctx); err != nil {
 			t.Fatal(err)
 		}
 		send(t, a, b, "sees the second prekey")
@@ -278,11 +278,11 @@ func TestForgeries(t *testing.T) {
 
 	t.Run("a stolen working key, replaced since", func(t *testing.T) {
 		e := newEnv(t)
-		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+		a, b := e.mailbox(), e.mailbox()
 		stolen := worker(t, b) // read before the renewal deletes it
 		first := numberOf(t, b)
 		old, _ := e.srv.Prekey(b.Address())
-		if _, err := b.Rekey(ctx, ""); err != nil {
+		if _, err := b.Rekey(ctx); err != nil {
 			t.Fatal(err)
 		}
 		send(t, a, b, "sees the second certificate")
@@ -312,9 +312,9 @@ func TestForgeries(t *testing.T) {
 
 	t.Run("rollback of the mailbox's own prekey", func(t *testing.T) {
 		e := newEnv(t)
-		b := e.mailbox(protocol.Classic)
+		b := e.mailbox()
 		st, sig := e.srv.Prekey(b.Address())
-		if _, err := b.Rekey(ctx, ""); err != nil {
+		if _, err := b.Rekey(ctx); err != nil {
 			t.Fatal(err)
 		}
 		published, _ := e.srv.Prekey(b.Address())
@@ -327,7 +327,7 @@ func TestForgeries(t *testing.T) {
 			}
 			next.ServeHTTP(w, r)
 		})
-		if _, err := b.Rekey(ctx, ""); err == nil || !strings.Contains(err.Error(), "rollback") || !strings.Contains(err.Error(), "dromas cert revoke-earlier") {
+		if _, err := b.Rekey(ctx); err == nil || !strings.Contains(err.Error(), "rollback") || !strings.Contains(err.Error(), "dromas cert revoke-earlier") {
 			t.Fatalf("rekey: %v, want a rollback refusal naming dromas cert revoke-earlier", err)
 		}
 		if now, _ := e.srv.Prekey(b.Address()); !bytes.Equal(now, published) {
@@ -360,7 +360,7 @@ func TestForgeries(t *testing.T) {
 
 	t.Run("a lower serial, the same certificate", func(t *testing.T) {
 		e := newEnv(t)
-		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+		a, b := e.mailbox(), e.mailbox()
 		send(t, a, b, "sees the prekey in use")
 		below(t, e, b)
 		if _, err := a.Send(ctx, b.Address(), "secret"); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("serial %d is below %d", numberOf(t, b)-1, numberOf(t, b))) {
@@ -373,10 +373,10 @@ func TestForgeries(t *testing.T) {
 
 	t.Run("its own lower, the same certificate", func(t *testing.T) {
 		e := newEnv(t)
-		b := e.mailbox(protocol.Classic)
+		b := e.mailbox()
 		published, _ := e.srv.Prekey(b.Address())
 		below(t, e, b)
-		if _, err := b.Rekey(ctx, ""); err == nil || !strings.Contains(err.Error(), "rollback") || !strings.Contains(err.Error(), "dromas cert revoke-earlier") {
+		if _, err := b.Rekey(ctx); err == nil || !strings.Contains(err.Error(), "rollback") || !strings.Contains(err.Error(), "dromas cert revoke-earlier") {
 			t.Fatalf("rekey: %v, want a rollback refusal naming dromas cert revoke-earlier", err)
 		}
 		if now, _ := e.srv.Prekey(b.Address()); !bytes.Equal(now, published) {
@@ -386,7 +386,7 @@ func TestForgeries(t *testing.T) {
 
 	t.Run("replay under a new id", func(t *testing.T) {
 		e := newEnv(t)
-		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+		a, b := e.mailbox(), e.mailbox()
 		sent := forge.Capture(e.srv, http.MethodPost, "/v1/"+b.Address().String()+"/messages")
 		send(t, a, b, "once")
 		e.srv.SetMiddle(nil)
@@ -398,7 +398,7 @@ func TestForgeries(t *testing.T) {
 
 	t.Run("sent_at older than 33 days", func(t *testing.T) {
 		e := newEnv(t)
-		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+		a, b := e.mailbox(), e.mailbox()
 		env, err := protocol.NewEnvelope(a.Address(), b.Address(), "stale", e.clock.Now().Add(-protocol.TTL-time.Second))
 		if err != nil {
 			t.Fatal(err)
@@ -414,7 +414,7 @@ func TestForgeries(t *testing.T) {
 
 	t.Run("not encrypted to this mailbox", func(t *testing.T) {
 		e := newEnv(t)
-		a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+		a, b, c := e.mailbox(), e.mailbox(), e.mailbox()
 		// A's message to C, stored in B's mailbox as it is.
 		sent := forge.Capture(e.srv, http.MethodPost, "/v1/"+c.Address().String()+"/messages")
 		send(t, a, c, "for C's key")
@@ -426,7 +426,7 @@ func TestForgeries(t *testing.T) {
 
 	t.Run("an id that is not the hash", func(t *testing.T) {
 		e := newEnv(t)
-		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+		a, b := e.mailbox(), e.mailbox()
 		realID := send(t, a, b, "listed under another id").ID
 		h := sha256.Sum256([]byte("not the hash"))
 		fake := hex.EncodeToString(h[:])

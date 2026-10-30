@@ -34,7 +34,7 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-const usage = `usage: dromas-echo --identity <key file> [--dir <dir>] [--no-pq]
+const usage = `usage: dromas-echo --identity <key file> [--dir <dir>]
 
 Runs an echo mailbox until interrupted: every message that passes every check
 is answered, signed, with what was checked and the body it carried.
@@ -43,7 +43,6 @@ is answered, signed, with what was checked and the body it carried.
               is registered at its first start
   --dir       the mailbox's state directory, which belongs in memory (a tmpfs):
               $DROMAS_HOME, or ${XDG_CONFIG_HOME:-~/.config}/dromas/${DROMAS_MAILBOX:-default}
-  --no-pq     publish prekeys without post-quantum encryption (X25519 only)
 
 The server is $DROMAS_SERVER_URL, or https://dromas.dev.
 `
@@ -75,7 +74,6 @@ func run(ctx context.Context, args []string, logw io.Writer) error {
 	fl.Usage = func() { _, _ = fmt.Fprint(logw, usage) }
 	identity := fl.String("identity", "", "")
 	dir := fl.String("dir", "", "")
-	noPQ := fl.Bool("no-pq", false, "")
 	if err := fl.Parse(args); err != nil {
 		return err
 	}
@@ -90,13 +88,9 @@ func run(ctx context.Context, args []string, logw io.Writer) error {
 		}
 		*dir = d
 	}
-	kt := protocol.PostQuantum
-	if *noPQ {
-		kt = protocol.Classic
-	}
 	opt := client.Options{Base: os.Getenv("DROMAS_SERVER_URL")}
 	logger := log.New(logw, "", log.LstdFlags|log.LUTC)
-	e, err := start(ctx, *dir, *identity, opt, kt, logger)
+	e, err := start(ctx, *dir, *identity, opt, logger)
 	if err != nil {
 		return err
 	}
@@ -111,7 +105,7 @@ type echo struct {
 
 // start copies the identity into dir and publishes a new prekey, or at the
 // first start registers the mailbox.
-func start(ctx context.Context, dir, identity string, opt client.Options, kt protocol.KeyType, l *log.Logger) (*echo, error) {
+func start(ctx context.Context, dir, identity string, opt client.Options, l *log.Logger) (*echo, error) {
 	key, err := os.ReadFile(identity) //nolint:gosec // the key file the operator named
 	if err != nil {
 		return nil, err
@@ -136,7 +130,7 @@ func start(ctx context.Context, dir, identity string, opt client.Options, kt pro
 	}
 	// A renewal reads the mailbox at its server first, and goes as its
 	// registration when the server holds none: so the first start too.
-	if _, err := b.Rekey(ctx, kt); err != nil {
+	if _, err := b.Rekey(ctx); err != nil {
 		return nil, err
 	}
 	// An echo mailbox answers whoever writes: every sender's messages land in

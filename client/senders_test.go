@@ -29,7 +29,7 @@ func TestAMessageFromASenderNotAllowedIsHeld(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
+	a, b := e.heldMailbox(), e.heldMailbox()
 	send(t, a, b, "first")
 	send(t, a, b, "second")
 	res := receive(t, b)
@@ -74,7 +74,7 @@ func TestAMessageFromASenderNotAllowedIsHeld(t *testing.T) {
 func TestWritingOrNamingAPeerAllowsIt(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b, c := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
+	a, b, c := e.heldMailbox(), e.heldMailbox(), e.heldMailbox()
 	send(t, b, a, "hello")
 	send(t, a, b, "the reply")
 	if res := receive(t, b); len(res.Delivered) != 1 || len(res.Held) != 0 {
@@ -91,7 +91,7 @@ func TestWritingOrNamingAPeerAllowsIt(t *testing.T) {
 		t.Fatalf("a message from a mailbox named, then un-named: %+v", res)
 	}
 	// An alias written by hand, which allowed never heard of, allows too.
-	d := e.heldMailbox(protocol.Classic)
+	d := e.heldMailbox()
 	f, err := os.OpenFile(filepath.Join(b.Dir(), "aliases"), os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		t.Fatal(err)
@@ -114,7 +114,7 @@ func TestBlockDropsASendersMessagesHereAndAtTheServer(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
+	a, b := e.heldMailbox(), e.heldMailbox()
 	send(t, a, b, "held")
 	receive(t, b)
 	send(t, a, b, "waiting on the server")
@@ -141,7 +141,7 @@ func TestBlockDropsASendersMessagesHereAndAtTheServer(t *testing.T) {
 	}
 
 	// What held/ keeps from a sender goes when it is blocked.
-	c := e.heldMailbox(protocol.Classic)
+	c := e.heldMailbox()
 	send(t, c, b, "from c")
 	receive(t, b)
 	if n, err := b.Block(ctx, c.Address()); err != nil || n != 1 {
@@ -160,7 +160,7 @@ func TestBlockDropsASendersMessagesHereAndAtTheServer(t *testing.T) {
 func TestAMailboxDropsMessagesFromASenderItBlockedWhateverItsServerDoes(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
+	a, b := e.heldMailbox(), e.heldMailbox()
 	send(t, a, b, "sent before the block")
 	if err := os.WriteFile(filepath.Join(b.Dir(), "blocked"), []byte(a.Address().String()+"\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -190,7 +190,7 @@ func TestAMailboxDropsMessagesFromASenderItBlockedWhateverItsServerDoes(t *testi
 func TestAPolicyCanLandEverySendersMessagesInInbox(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
+	a, b := e.heldMailbox(), e.heldMailbox()
 	if err := os.WriteFile(filepath.Join(b.Dir(), "policy"), []byte("# every sender\nunknown inbox\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +207,7 @@ func TestUnderServerAllowedTheServerRefusesTheRest(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b, stranger := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
+	a, b, stranger := e.heldMailbox(), e.heldMailbox(), e.heldMailbox()
 	if err := b.SetPolicy(t.Context(), client.Policy{Unknown: client.LandHeld, Server: client.AdmitAllowed}); err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +259,7 @@ func TestAnACLReplacesWhatTheServerHolds(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
+	a, b := e.heldMailbox(), e.heldMailbox()
 	if _, err := b.Block(ctx, a.Address()); err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +271,7 @@ func TestAnACLReplacesWhatTheServerHolds(t *testing.T) {
 		}
 		next.ServeHTTP(w, r)
 	})
-	c := e.heldMailbox(protocol.Classic)
+	c := e.heldMailbox()
 	if _, err := b.Block(ctx, c.Address()); err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +298,7 @@ func TestARenewalReplacesAnACLAnotherWriterPut(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
+	a, b := e.heldMailbox(), e.heldMailbox()
 	if _, err := b.Block(ctx, a.Address()); err != nil {
 		t.Fatal(err)
 	}
@@ -368,7 +368,7 @@ func TestARenewalWhosePUTIsNotTakenLeavesTheMailboxsACLPending(t *testing.T) {
 		for _, fail := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s, the PUT not taken %v", other.name, fail), func(t *testing.T) {
 				e := newEnv(t)
-				a, b, c, d := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
+				a, b, c, d := e.heldMailbox(), e.heldMailbox(), e.heldMailbox(), e.heldMailbox()
 				if _, err := b.Block(ctx, c.Address()); err != nil {
 					t.Fatal(err)
 				}
@@ -457,7 +457,7 @@ func TestWhatChangedInAnACLNotTakenIsSaid(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv(t)
-			b, d, x := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
+			b, d, x := e.heldMailbox(), e.heldMailbox(), e.heldMailbox()
 			var refusing atomic.Bool
 			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 				if refusing.Load() && r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/acl") {
@@ -476,7 +476,7 @@ func TestWhatChangedInAnACLNotTakenIsSaid(t *testing.T) {
 				e.srv.PutACL(b.Address(), &protocol.ACL{Allow: protocol.ACLList{Any: true}, Deny: protocol.NewACLList(true, []protocol.Address{d.Address()})})
 				mailbox = restore(t, e, b)
 				e.clock.Add(time.Minute)
-				if _, err := mailbox.Rekey(ctx, ""); err != nil {
+				if _, err := mailbox.Rekey(ctx); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -508,7 +508,7 @@ func TestAnACLReadNotMadeIsOwedToTheNextRecv(t *testing.T) {
 	for _, fault := range []string{"a list that cannot be read", "no answer to the read", "a fault of the mailbox at the keep", "no answer to a restore's adoption read"} {
 		t.Run(fault, func(t *testing.T) {
 			e := newEnv(t)
-			b, c, d := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
+			b, c, d := e.heldMailbox(), e.heldMailbox(), e.heldMailbox()
 			if _, err := b.Block(ctx, c.Address()); err != nil {
 				t.Fatal(err)
 			}
@@ -599,7 +599,7 @@ func TestARegistrationDropsTheMarkOfAnotherWritersACL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	b, c, d := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
+	b, c, d := e.heldMailbox(), e.heldMailbox(), e.heldMailbox()
 	if _, err := b.Block(ctx, c.Address()); err != nil {
 		t.Fatal(err)
 	}
@@ -639,7 +639,7 @@ func TestARestoreAdoptsABoundedACL(t *testing.T) {
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
 			t.Parallel()
 			e := newEnv(t)
-			b := e.heldMailbox(protocol.Classic)
+			b := e.heldMailbox()
 			addrs := make([]protocol.Address, n-1) // and the allow list's *
 			for i := range addrs {
 				addrs[i] = protocol.Address(sha512.Sum384(fmt.Append(nil, i)))
@@ -647,7 +647,7 @@ func TestARestoreAdoptsABoundedACL(t *testing.T) {
 			e.srv.PutACL(b.Address(), &protocol.ACL{Allow: protocol.ACLList{Any: true}, Deny: protocol.NewACLList(false, addrs)})
 			r := restore(t, e, b)
 			e.clock.Add(time.Minute)
-			_, err := r.Rekey(ctx, "")
+			_, err := r.Rekey(ctx)
 			blocked, _ := r.Blocked(t.Context())
 			if n <= protocol.MaxACLEntries {
 				if err != nil || len(blocked) != n-1 {
@@ -676,7 +676,7 @@ func TestARestoredMailboxAdoptsItsServersACL(t *testing.T) {
 	ctx := context.Background()
 	lost := func(t *testing.T, e *env) (b, blocked, allowed *client.Mailbox, own *protocol.ACL) {
 		t.Helper()
-		a, b, c := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
+		a, b, c := e.heldMailbox(), e.heldMailbox(), e.heldMailbox()
 		if _, err := b.Block(ctx, a.Address()); err != nil {
 			t.Fatal(err)
 		}
@@ -704,9 +704,9 @@ func TestARestoredMailboxAdoptsItsServersACL(t *testing.T) {
 			var err error
 			switch how {
 			case "init":
-				_, err = client.Init(ctx, r.Dir(), e.opts(), "")
+				_, err = client.Init(ctx, r.Dir(), e.opts())
 			case "prekey renew":
-				_, err = r.Rekey(ctx, "")
+				_, err = r.Rekey(ctx)
 			case "recv":
 				var res *client.Result
 				res, err = r.Receive(ctx)
@@ -763,7 +763,7 @@ func TestARestoredMailboxAdoptsItsServersACL(t *testing.T) {
 				t.Fatal(err)
 			}
 			e.clock.Add(time.Minute)
-			if _, err := r.Rekey(ctx, ""); err != nil {
+			if _, err := r.Rekey(ctx); err != nil {
 				t.Fatal(err)
 			}
 			for _, f := range []string{"allowed", "blocked", "policy"} {
@@ -801,12 +801,12 @@ func TestARestoredMailboxReportsWhatItDidNotAdopt(t *testing.T) {
 		for _, how := range []string{"recv after prekey renew", "send after prekey renew", "recv"} {
 			t.Run(held.name+", "+how, func(t *testing.T) {
 				e := newEnv(t)
-				a, b, c := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
+				a, b, c := e.heldMailbox(), e.heldMailbox(), e.heldMailbox()
 				e.srv.PutACL(b.Address(), held.acl(a.Address(), c.Address()))
 				r := restore(t, e, b)
 				e.clock.Add(time.Minute)
 				if how != "recv" {
-					if _, err := r.Rekey(ctx, ""); err != nil {
+					if _, err := r.Rekey(ctx); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -836,7 +836,7 @@ func TestAnACLIsSentAgainWhenTheMailboxChanged(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
+	a, b := e.heldMailbox(), e.heldMailbox()
 	var once sync.Once
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		raced := false
@@ -862,7 +862,7 @@ func TestAnACLIsSentAgainWhenTheMailboxChanged(t *testing.T) {
 func TestAPolicyThatCannotBeReadStopsTheDrain(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
+	a, b := e.heldMailbox(), e.heldMailbox()
 	send(t, a, b, "waits")
 	for name, text := range map[string]string{"policy": "unknown deliver\n", "allowed": "not an address\n", "blocked": strings.ToUpper(a.Address().String()) + "\n"} {
 		if err := os.WriteFile(filepath.Join(b.Dir(), name), []byte(text), 0o600); err != nil {
@@ -889,7 +889,7 @@ func TestAPolicyThatCannotBeReadStopsTheDrain(t *testing.T) {
 func TestRebuildAllowed(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b, c, d := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
+	a, b, c, d := e.heldMailbox(), e.heldMailbox(), e.heldMailbox(), e.heldMailbox()
 	send(t, b, a, "to a")
 	if err := b.SetAlias(t.Context(), "carol", c.Address()); err != nil {
 		t.Fatal(err)
@@ -915,7 +915,7 @@ func TestAllowingABlockedSenderDoesNothing(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
+	a, b := e.heldMailbox(), e.heldMailbox()
 	send(t, a, b, "held, then its sender blocked by hand")
 	if res := receive(t, b); len(res.Held) != 1 {
 		t.Fatalf("held %d", len(res.Held))
@@ -940,7 +940,7 @@ func TestASendWaitsOnTheACLOnlyWhenTheReplyWouldBeRefused(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b, c, d := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
+	a, b, c, d := e.heldMailbox(), e.heldMailbox(), e.heldMailbox(), e.heldMailbox()
 	refuseACL := func() {
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/acl") {
@@ -979,7 +979,7 @@ func TestACommentInTheAddressListsStopsNothing(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
+	a, b := e.heldMailbox(), e.heldMailbox()
 	send(t, a, b, "waiting")
 	if err := os.WriteFile(filepath.Join(b.Dir(), "blocked"), []byte("# senders of spam, 2026-10\n\n"), 0o600); err != nil {
 		t.Fatal(err)

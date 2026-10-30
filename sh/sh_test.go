@@ -461,7 +461,7 @@ func TestVectorsPrekey(t *testing.T) {
 			if err != nil || na <= now.Unix() {
 				t.Errorf("%s: want valid and not expired: %d %v", name, na, err)
 			}
-		case name == "unsupported-type": // good in every way but its key's type: a verdict of its own, as the Go client's ErrPrekeyType
+		case strings.HasPrefix(name, "unsupported-type"): // good in every way but its key's type: a verdict of its own, as the Go client's ErrPrekeyType
 			var exit *exec.ExitError
 			if !errors.As(err, &exit) || exit.ExitCode() != 2 || !strings.Contains(err.Error(), "a type this script cannot encrypt to") {
 				t.Errorf("%s: %v, want 2, a key of a type this script lacks", name, err)
@@ -768,7 +768,7 @@ func TestPaddingIsTheGoClients(t *testing.T) {
 	for n := len(sig) + 1; n < 200_000; n += 997 {
 		sizes = append(sizes, n)
 	}
-	for kt, key := range map[protocol.KeyType]string{protocol.Classic: "age1example", protocol.PostQuantum: "age1pq1example"} {
+	for kt, key := range map[protocol.KeyType]string{protocol.PostQuantum: "age1pq1example"} {
 		var args, want strings.Builder
 		for _, n := range sizes {
 			line := bytes.Repeat([]byte{'e'}, n-len(sig))
@@ -805,7 +805,6 @@ func TestAP256MailboxInBothClients(t *testing.T) {
 	}
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
-	kt := protocol.PostQuantum
 	sh := func(dir, commands string) string {
 		t.Helper()
 		out, err := bash(t, []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}, commands)
@@ -829,12 +828,12 @@ func TestAP256MailboxInBothClients(t *testing.T) {
 	if id, err := protocol.ParseIdentity(doc); err != nil || id.Type() != protocol.IdentityP256 || id.Address() != sp {
 		t.Fatalf("the script's P-256 mailbox: %v", err)
 	}
-	gp, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, IdentityType: protocol.IdentityP256}, kt)
+	gp, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, IdentityType: protocol.IdentityP256})
 	if err != nil {
 		t.Fatal(err)
 	}
 	landAll(t, gp)
-	ge, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, kt)
+	ge, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -903,7 +902,6 @@ func TestTheScriptsSendAMailboxDeniesFails(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
-	kt := protocol.PostQuantum
 	shDir := t.TempDir()
 	sh := func(commands string) (string, error) {
 		return bash(t, []string{"DR_HOME=" + shDir, "DR_SERVER_URL=" + srv.URL}, commands)
@@ -916,7 +914,7 @@ func TestTheScriptsSendAMailboxDeniesFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, kt)
+	g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -942,7 +940,6 @@ func TestWithGoClient(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
-	kt := protocol.PostQuantum
 	shDir, goDir := t.TempDir(), t.TempDir()
 	sh := func(dir, commands string) (string, error) {
 		return bash(t, []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}, commands)
@@ -956,7 +953,7 @@ func TestWithGoClient(t *testing.T) {
 	if err != nil || shLink != srv.URL+protocol.LinkPath+shAddr.String() {
 		t.Fatalf("dr_init printed %q, not the mailbox's link", out)
 	}
-	g, err := client.Init(ctx, goDir, client.Options{Base: srv.URL}, kt)
+	g, err := client.Init(ctx, goDir, client.Options{Base: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1260,7 +1257,6 @@ func TestRevocationInBothClients(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
-	kt := protocol.PostQuantum
 	sh := func(dir, commands string) (string, error) {
 		return bash(t, []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}, commands)
 	}
@@ -1279,7 +1275,7 @@ func TestRevocationInBothClients(t *testing.T) {
 	}
 	goMailbox := func() *client.Mailbox {
 		t.Helper()
-		b, err := client.Init(ctx, t.TempDir(), opt, kt)
+		b, err := client.Init(ctx, t.TempDir(), opt)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1512,7 +1508,6 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
-	kt := protocol.PostQuantum
 	dir := t.TempDir()
 	sh := func(commands string) (string, error) {
 		return bash(t, []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}, commands)
@@ -1525,7 +1520,7 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g, err := client.Init(ctx, t.TempDir(), opt, kt)
+	g, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1539,7 +1534,7 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 	if _, err := g.Send(ctx, script, "under the first certificate"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := g.Rekey(ctx, kt); err != nil {
+	if _, err := g.Rekey(ctx); err != nil {
 		t.Fatal(err)
 	}
 	certs, err := g.RevokeEarlier(ctx)
@@ -1616,7 +1611,6 @@ func TestAJSONBodyFromTheGoClient(t *testing.T) {
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
-	kt := protocol.PostQuantum
 	dir := t.TempDir()
 	sh := func(commands string) (string, error) {
 		return bash(t, []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}, commands)
@@ -1628,7 +1622,7 @@ func TestAJSONBodyFromTheGoClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, kt)
+	g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1705,10 +1699,10 @@ func TestTheCommandLine(t *testing.T) {
 		}
 		return out.String(), errs.String(), cmd.ProcessState.ExitCode()
 	}
-	if _, errs, code := run("", "init", "--no-pq"); code != 0 {
+	if _, errs, code := run("", "init"); code != 0 {
 		t.Fatalf("init: %d %s", code, errs)
 	}
-	g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
+	g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1731,7 +1725,7 @@ func TestTheCommandLine(t *testing.T) {
 	// A line that is wrong runs nothing: no command, one the script does not
 	// have, a word a command does not take, or the wrong number of them.
 	for _, line := range [][]string{nil, {"alias"}, {"alias", "add", "bob", g.Link()}, {"revocation", "publish", g.Address().String()}, {"outbox", "flush"}, {"nosuch"}, {"help", "nosuch"}, {"rekey"},
-		{"send"}, {"send", g.Link(), "body", "more"}, {"send", "--subject", "x", g.Link()}, {"send", g.Link(), "--json"}, {"recv", "--headers"}, {"addr", "x"}, {"init", "--classic"}, {"prekey", "renew", "--now"}} {
+		{"send"}, {"send", g.Link(), "body", "more"}, {"send", "--subject", "x", g.Link()}, {"send", g.Link(), "--json"}, {"recv", "--headers"}, {"addr", "x"}, {"init", "--classic"}, {"init", "--no-pq"}, {"prekey", "renew", "--no-pq"}, {"prekey", "renew", "--now"}} {
 		if out, errs, code := run("never sent", line...); code != 2 || out != "" || !strings.HasPrefix(errs, `{"type":"usage_error",`) || strings.Count(errs, "\n") != 1 || !strings.Contains(errs, `"help":"bash dromas.sh help`) {
 			t.Errorf("dromas.sh %v: %d %q, stderr %q", line, code, out, errs)
 		}
@@ -1749,7 +1743,7 @@ func TestTheCommandLine(t *testing.T) {
 	if res, err := g.Receive(ctx); err != nil || len(res.Delivered) != 1 {
 		t.Fatalf("the Go mailbox did not get the script's message: %v %v", res, err)
 	}
-	if out, errs, code := run("", "prekey", "renew", "--no-pq"); code != 0 || !strings.HasPrefix(out, `{"type":"prekey","serial":`) || strings.Count(out, "\n") != 1 {
+	if out, errs, code := run("", "prekey", "renew"); code != 0 || !strings.HasPrefix(out, `{"type":"prekey","serial":`) || strings.Count(out, "\n") != 1 {
 		t.Fatalf("prekey renew: %d %q %s", code, out, errs)
 	}
 	if out, errs, code := run("", "recv"); code != 0 || out != "" {
@@ -1768,7 +1762,7 @@ func TestASendDuringADrainHidesNoRevocation(t *testing.T) {
 	ctx, srv := context.Background(), fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
 	env := []string{"DR_HOME=" + t.TempDir(), "DR_SERVER_URL=" + srv.URL, "DR_LOCK_WAIT=2"}
-	out, err := bash(t, env, "dr_init --no-pq")
+	out, err := bash(t, env, "dr_init")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1776,11 +1770,11 @@ func TestASendDuringADrainHidesNoRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic) // the script mailbox sends here
+	c, err := client.Init(ctx, t.TempDir(), opt) // the script mailbox sends here
 	if err != nil {
 		t.Fatal(err)
 	}
-	g, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic) // writes, then revokes itself
+	g, err := client.Init(ctx, t.TempDir(), opt) // writes, then revokes itself
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1921,7 +1915,6 @@ func TestNoCallOfTheScriptFollowsARedirect(t *testing.T) {
 	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
-	kt := protocol.PostQuantum
 	var mu sync.Mutex
 	var reached []string
 	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1938,7 +1931,7 @@ func TestNoCallOfTheScriptFollowsARedirect(t *testing.T) {
 	if _, err := bash(t, env, "dr_init"); err != nil {
 		t.Fatalf("dr_init: %v", err)
 	}
-	r, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, kt)
+	r, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL})
 	if err != nil {
 		t.Fatal(err)
 	}

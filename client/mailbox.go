@@ -36,15 +36,9 @@ const DefaultBase = "https://dromas.dev"
 
 // EchoAddress is the echo mailbox dromas.dev runs (cmd/dromas-echo): send
 // it anything, and it answers with a signed reply saying what it checked and
-// carrying the body back. Its prekey is post-quantum. A message to it is readable
-// by dromas.dev's operator, who runs it.
+// carrying the body back. A message to it is readable by dromas.dev's
+// operator, who runs it.
 const EchoAddress = "ibu7bby6dvgmdfvzkdxvnb7u7cpkt66lidriyrhcv5tmgr7tgesl2g2ihwnyifisopsntx435pmbc"
-
-// EchoAddressNoPQ is dromas.dev's second echo mailbox, whose prekey is X25519
-// only: the one a sender on age 1.2 can reach (sh/dromas.sh; this client
-// reaches both). It answers as EchoAddress does, and a message to it is as
-// readable by dromas.dev's operator.
-const EchoAddressNoPQ = "hs5ku3nrzivbloxrg2m36xki7hnuvpbhe64ilrp4psb2tslwxf4njajif6ptjrk35tn7waowsnrei"
 
 // requestTimeout bounds a request of the default HTTP client (stall): the
 // bytes of a ciphertext it sends or fetches, by how long they may go with
@@ -330,10 +324,10 @@ func (b *Mailbox) path(elem ...string) string {
 
 // Init creates a mailbox in dir, or finishes an init that stopped half way:
 // it makes the identity, the first working key with its certificate, and the
-// first prekey (of type kt) if they are missing, and registers the mailbox. The
+// first prekey if they are missing, and registers the mailbox. The
 // registration carries a pass the working key signs, so the mailbox is in use at
 // once. Run again on a finished mailbox, it changes nothing.
-func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*Mailbox, error) {
+func Init(ctx context.Context, dir string, opt Options) (*Mailbox, error) {
 	b, err := newMailbox(dir, opt)
 	if err != nil {
 		return nil, err
@@ -348,12 +342,12 @@ func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*M
 	// the mailbox, and with its outcome, once init has read that the mailbox is not
 	// finished.
 	return lockedFinished(ctx, b, func() (*Mailbox, error) {
-		r, err := b.init(ctx, kt)
+		r, err := b.init(ctx)
 		return outcome(b, r, err)
 	})
 }
 
-func (b *Mailbox) init(ctx context.Context, kt protocol.KeyType) (*Mailbox, error) {
+func (b *Mailbox) init(ctx context.Context) (*Mailbox, error) {
 	fresh := !exists(b.path("identity"))
 	if fresh {
 		if err := b.newIdentityKey(); err != nil {
@@ -387,13 +381,10 @@ func (b *Mailbox) init(ctx context.Context, kt protocol.KeyType) (*Mailbox, erro
 	// anything under it: its renewal goes as a registration with no read,
 	// which a server would count as a miss of its address.
 	if !fresh {
-		_, err := b.rekeyAdopting(ctx, kt)
+		_, err := b.rekeyAdopting(ctx)
 		return b, err
 	}
-	if kt == "" {
-		kt = protocol.PostQuantum
-	}
-	if _, at, err := b.renewFrom(ctx, &ownRead{forgotten: true, kt: kt}); err != nil {
+	if _, at, err := b.renewFrom(ctx, &ownRead{forgotten: true}); err != nil {
 		return nil, err
 	} else if err := b.prune(at); err != nil {
 		return nil, err
@@ -620,7 +611,7 @@ func (b *Mailbox) prekeys() (ns []uint64, err error) {
 	return ns, err
 }
 
-// makePrekey makes prekey serial, a NEW key of type kt valid for the mailbox's
+// makePrekey makes prekey serial, a NEW key valid for the mailbox's
 // prekey lifetime ([Mailbox.PrekeyLifetime]), and its statement, signed by a NEW
 // working key under a new certificate, unless its statement is already
 // signed. The number is recorded as the renewal under way before anything is
@@ -629,7 +620,7 @@ func (b *Mailbox) prekeys() (ns []uint64, err error) {
 // attempt made and never signed is used, but never a working key, whose
 // certificate began when that attempt ran (#197). A statement never outlives
 // the certificate it is signed under.
-func (b *Mailbox) makePrekey(serial uint64, kt protocol.KeyType) (*protocol.Prekey, error) {
+func (b *Mailbox) makePrekey(serial uint64) (*protocol.Prekey, error) {
 	if rec, err := b.prekeyOf(serial); err != nil || rec != nil {
 		if err != nil {
 			return nil, err
@@ -651,8 +642,8 @@ func (b *Mailbox) makePrekey(serial uint64, kt protocol.KeyType) (*protocol.Prek
 	}
 	step("working key made")
 	stem := b.path("prekeys", fmt.Sprint(serial))
-	if !exists(stem+".agekey") || keyType(stem+".agekey") != kt {
-		if err := newAgeKey(stem+".agekey", kt, b.now()); err != nil {
+	if !exists(stem+".agekey") || keyType(stem+".agekey") != protocol.PostQuantum {
+		if err := newAgeKey(stem+".agekey", b.now()); err != nil {
 			return nil, err
 		}
 	}
@@ -723,35 +714,19 @@ func ageRecipient(name string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	switch k := ids[0].(type) {
-	case *age.HybridIdentity:
-		return k.Recipient().String(), nil
-	case *age.X25519Identity:
+	if k, ok := ids[0].(*age.HybridIdentity); ok {
 		return k.Recipient().String(), nil
 	}
 	return "", fmt.Errorf("%s holds an unknown key type", name)
 }
 
-// newAgeKey writes a new age key file as age-keygen writes one.
-func newAgeKey(name string, kt protocol.KeyType, now time.Time) error {
-	var key, recipient string
-	switch kt {
-	case protocol.PostQuantum:
-		k, err := age.GenerateHybridIdentity()
-		if err != nil {
-			return err
-		}
-		key, recipient = k.String(), k.Recipient().String()
-	case protocol.Classic:
-		k, err := age.GenerateX25519Identity()
-		if err != nil {
-			return err
-		}
-		key, recipient = k.String(), k.Recipient().String()
-	default:
-		return fmt.Errorf("unknown prekey type %q", kt)
+// newAgeKey writes a new age key file as age-keygen -pq writes one.
+func newAgeKey(name string, now time.Time) error {
+	k, err := age.GenerateHybridIdentity()
+	if err != nil {
+		return err
 	}
-	return writeFile(name, fmt.Appendf(nil, "# created: %s\n# public key: %s\n%s\n", now.Format(time.RFC3339), recipient, key))
+	return writeFile(name, fmt.Appendf(nil, "# created: %s\n# public key: %s\n%s\n", now.Format(time.RFC3339), k.Recipient().String(), k.String()))
 }
 
 // keyType returns the type of the key in an age key file, or "" if it holds
@@ -761,11 +736,8 @@ func keyType(name string) protocol.KeyType {
 	if err != nil || len(ids) == 0 {
 		return ""
 	}
-	switch ids[0].(type) {
-	case *age.HybridIdentity:
+	if _, ok := ids[0].(*age.HybridIdentity); ok {
 		return protocol.PostQuantum
-	case *age.X25519Identity:
-		return protocol.Classic
 	}
 	return ""
 }
@@ -815,7 +787,7 @@ func decrypt(ct []byte, ids []age.Identity) (io.Reader, error) {
 }
 
 // oneNative takes an age file only with exactly one native recipient stanza,
-// of a type a prekey has (protocol.PostQuantum, protocol.Classic), as every
+// of a type a prekey has (protocol.PostQuantum), as every
 // server takes a send (PROTOCOL.md §11.10 step 7, §12.3 check 1); a grease stanza
 // and any other age ignores, as it does. age tries every identity on every
 // stanza, up to 1,024, so a file of 1,024 native stanzas costs a mailbox about a

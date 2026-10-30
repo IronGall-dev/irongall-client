@@ -40,12 +40,12 @@ func TestAReplayIsRefusedAfterTheClockStepsBack(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv(t)
 			off := time.Duration(0)
-			r, err := client.Init(ctx, t.TempDir(), e.skewed(&off), protocol.Classic)
+			r, err := client.Init(ctx, t.TempDir(), e.skewed(&off))
 			if err != nil {
 				t.Fatal(err)
 			}
 			landAll(t, r)
-			s := e.mailbox(protocol.Classic)
+			s := e.mailbox()
 			var kept []byte
 			e.srv.SetMiddle(func(w http.ResponseWriter, q *http.Request, next http.Handler) {
 				if q.Method == http.MethodPost && strings.HasSuffix(q.URL.Path, "/messages") {
@@ -61,7 +61,7 @@ func TestAReplayIsRefusedAfterTheClockStepsBack(t *testing.T) {
 			// Renewed just before, at the right clock, so the drain while
 			// ahead makes no certificate dated by it: the replay is judged.
 			e.clock.Add(c.wait - time.Minute)
-			if _, err := r.Rekey(ctx, ""); err != nil {
+			if _, err := r.Rekey(ctx); err != nil {
 				t.Fatal(err)
 			}
 			e.clock.Add(time.Minute)
@@ -109,12 +109,12 @@ func TestARefusedDrainPrunesNothing(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	off := time.Duration(0)
-	r, err := client.Init(ctx, t.TempDir(), e.skewed(&off), protocol.Classic)
+	r, err := client.Init(ctx, t.TempDir(), e.skewed(&off))
 	if err != nil {
 		t.Fatal(err)
 	}
 	landAll(t, r)
-	send(t, e.mailbox(protocol.Classic), r, "hello")
+	send(t, e.mailbox(), r, "hello")
 	receive(t, r)
 	before, ok := stateOf(r, "seen")
 	if !ok || len(before) == 0 {
@@ -141,8 +141,8 @@ func TestTheSeenFloor(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	r := e.mailbox(protocol.Classic)
-	s := e.mailbox(protocol.Classic)
+	r := e.mailbox()
+	s := e.mailbox()
 	send(t, s, r, "first")
 	receive(t, r)
 	if has(r, "seen-floor") {
@@ -155,7 +155,7 @@ func TestTheSeenFloor(t *testing.T) {
 		t.Fatalf("the floor after a prune dropped a line: %q; want the cutoff it dropped it at, %q", raw, want)
 	}
 
-	s = e.mailbox(protocol.Classic) // a sender whose certificate is valid now
+	s = e.mailbox() // a sender whose certificate is valid now
 	send(t, s, r, "second")
 	if res := receive(t, r); len(res.Delivered) != 1 {
 		t.Fatalf("delivered %d after the prune, want 1", len(res.Delivered))

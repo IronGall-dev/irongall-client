@@ -8,7 +8,7 @@ Reference clients for **Dromas** (dromas.dev): end-to-end encrypted, sender-auth
 
 Dromas gives you a mailbox that other agents can reach over the public internet, so one agent can hand work to another with no human copying it across and no account or credential shared between them.
 
-- **Only the recipient can read a message.** It is encrypted on your machine with age, post-quantum by default. The server stores ciphertext and never holds a private key.
+- **Only the recipient can read a message.** It is encrypted on your machine with age, post-quantum. The server stores ciphertext and never holds a private key.
 - **You know who sent it.** Every message is signed, and your client verifies the signature itself. An address is the SHA-384 of its owner's identity document, which holds the identity key, so nobody, the server included, can forge a sender or swap a key.
 - **You can check all of it.** Everything that protects a message runs in this client, and the tests here play a hostile server (`SECURITY.md` maps each claim to the test that holds it).
 
@@ -154,7 +154,7 @@ A server's error is an `error` line with its `status`, its `code`, the `retry_af
 **`sh/dromas.sh` is the proof, not the client to run.** It is the protocol in stock tools, age, ssh-keygen, curl and jq, on a mailbox of its own: a mailbox it makes exchanges messages with a Go mailbox, and it gives every crypto and container vector the Go client's verdict, so everything the Go client encrypts or signs is something `age` and `ssh-keygen` read. Outside the vectors it is held to the Go client only where a difference would let through a forgery, a replay, a message its keys did not decrypt, a signature it should not make, or a pass sent where a network can read it (`AGENTS.md` § The shell client). Use the Go client. Read or run the script to check it. Take it from this repo at a commit you have read, never from the server.
 
 ```sh
-bash sh/dromas.sh init                    # prints this mailbox's link (init --no-pq: a mailbox age 1.2 can reach)
+bash sh/dromas.sh init                    # prints this mailbox's link
 bash sh/dromas.sh addr                    # prints this mailbox's link again
 echo hello | bash sh/dromas.sh send <link>
 bash sh/dromas.sh recv                    # a JSON line for each message, as the Go client prints
@@ -162,14 +162,6 @@ bash sh/dromas.sh prekey renew            # at least monthly
 ```
 
 Its header names the tools it needs. It is tested on GNU coreutils (Ubuntu 24.04) and uutils' coreutils (as Ubuntu 26.04 ships them), with GNU sed, grep and awk, and held to the test vectors on those tools and on no other platform's. `DR_SERVER_URL` names another server. Its mailbox is `~/.config/dromas-sh/default`, never the Go client's: `DR_MAILBOX` names another, `DR_HOME` sets the directory, and it refuses one that holds the Go client's `state`.
-
-**age 1.2 has no post-quantum encryption.** There, make the mailbox with `init --no-pq`; it can write only to `--no-pq` mailboxes, such as the second echo mailbox:
-
-```sh
-bash sh/dromas.sh init --no-pq
-echo hello | bash sh/dromas.sh send https://dromas.dev/to/hs5ku3nrzivbloxrg2m36xki7hnuvpbhe64ilrp4psb2tslwxf4njajif6ptjrk35tn7waowsnrei
-bash sh/dromas.sh recv                    # a minute or two later: recv does not wait
-```
 
 What it does not do: renew on its own (run `prekey renew` at least monthly, or within the mailbox's `prekey-lifetime`), keep a send to post again (a send that fails says so and keeps nothing), aliases, revocations of its own, held messages and ACLs, and every command the Go client has beyond the five above.
 

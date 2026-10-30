@@ -599,7 +599,7 @@ func FuzzReadStanzas(f *testing.F) {
 		native, other := 0, false
 		for _, typ := range noMatch.StanzaTypes {
 			switch {
-			case typ == string(PostQuantum) || typ == string(Classic):
+			case typ == string(PostQuantum):
 				native++
 			case !grease.MatchString(typ):
 				other = true
@@ -609,7 +609,7 @@ func FuzzReadStanzas(f *testing.F) {
 			t.Fatalf("age lists %q; read as %+v", noMatch.StanzaTypes, st)
 		}
 		for _, k := range st.Native {
-			if k != PostQuantum && k != Classic {
+			if k != PostQuantum {
 				t.Fatalf("a native stanza of type %q", k)
 			}
 		}

@@ -42,7 +42,7 @@ func message(t *testing.T, e *env, from, to *client.Mailbox, envelope string) st
 func TestARefusalNeverQuotesTheMessage(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	now := e.clock.Now().Format(protocol.TimeLayout)
 	identity := `,"identity":"` + base64.StdEncoding.EncodeToString(a.Identity().Document()) + `"`
 	head := `"from":"` + a.Address().String() + `","to":"` + b.Address().String() + `"` + identity
@@ -95,7 +95,7 @@ func TestARefusalNeverQuotesTheMessage(t *testing.T) {
 func TestAnAPIErrorPrintsNoneOfTheServersWords(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	answer := func(status int, body any) string {
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if r.Method == http.MethodPost {
@@ -170,7 +170,7 @@ func TestAnAPIErrorPrintsNoneOfTheServersWords(t *testing.T) {
 func TestMadeUpSendersLeaveNothingInPeers(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b, o := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b, o := e.mailbox(), e.mailbox(), e.mailbox()
 	send(t, a, b, "from a real sender")
 	fake, listed := map[string]bool{}, map[string]string{} // the server lists each id as from a sender it made up
 	for i := range 20 {
@@ -237,7 +237,7 @@ func TestADrainIsBounded(t *testing.T) {
 	ctx := context.Background()
 	t.Run("messages", func(t *testing.T) {
 		e := newEnv(t)
-		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+		a, b := e.mailbox(), e.mailbox()
 		client.SetDrainLimits(t, 3, 1<<30, 100)
 		for range 5 {
 			send(t, a, b, "one of five")
@@ -251,8 +251,8 @@ func TestADrainIsBounded(t *testing.T) {
 	})
 	t.Run("bytes", func(t *testing.T) {
 		e := newEnv(t)
-		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
-		client.SetDrainLimits(t, 1000, 5000, 100) // each message below is 4,096 bytes of ciphertext
+		a, b := e.mailbox(), e.mailbox()
+		client.SetDrainLimits(t, 1000, 7500, 100) // each message below is 6,144 bytes of ciphertext
 		for range 4 {
 			send(t, a, b, strings.Repeat("x", 2500))
 		}
@@ -265,7 +265,7 @@ func TestADrainIsBounded(t *testing.T) {
 	})
 	t.Run("pages", func(t *testing.T) {
 		e := newEnv(t)
-		b := e.mailbox(protocol.Classic)
+		b := e.mailbox()
 		client.SetDrainLimits(t, 1000, 1<<30, 7)
 		lists := 0
 		next := "again"
@@ -284,10 +284,10 @@ func TestADrainIsBounded(t *testing.T) {
 	})
 	t.Run("keeps retired prekeys", func(t *testing.T) {
 		e := newEnv(t)
-		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+		a, b := e.mailbox(), e.mailbox()
 		key1 := prekeyFile(b, numberOf(t, b), ".agekey")
 		for range 2 {
-			if _, err := b.Rekey(ctx, ""); err != nil {
+			if _, err := b.Rekey(ctx); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -314,7 +314,7 @@ func TestRefusedKeepsNoServerTextInTheClear(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	// The server's words carry a marker no file the client writes holds by
 	// chance, a ciphertext's base64 included: a SHA-256 in hex, at each end.
 	const marker = "753c1e24807c206021679a3df2b779990f540fc60cc74ef0c9697d111fb7611d"
@@ -491,7 +491,7 @@ func TestAFetchIsTheSizeItsListGives(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := newEnv(t)
-			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			a, b := e.mailbox(), e.mailbox()
 			send(t, a, b, "fetched whole, or not at all")
 			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 				if r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, mailboxPath(b)+"/messages") {
@@ -545,7 +545,7 @@ func TestAFetchIsTheSizeItsListGives(t *testing.T) {
 func TestAFetchOfTheLargestCiphertextIsRead(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	send(t, a, b, "listed as the largest a ciphertext may be")
 	largest := make([]byte, protocol.MaxCiphertext)
 	sum := sha256.Sum256(largest)
@@ -588,7 +588,7 @@ func TestAListsCursorIsURLSafe(t *testing.T) {
 		taken  bool
 	}{{cursor, true}, {"a/b", false}, {"a%2Fb", false}, {"a b", false}, {"", false}} {
 		e := newEnv(t)
-		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+		a, b := e.mailbox(), e.mailbox()
 		send(t, a, b, "after the first page")
 		var queries []string
 		fetched := false
@@ -618,11 +618,17 @@ func TestAListsCursorIsURLSafe(t *testing.T) {
 }
 
 // grease is an age recipient that writes one grease stanza, as rage and
-// pyrage add to every file (PROTOCOL.md §11.10 step 7).
+// pyrage add to every file (PROTOCOL.md §11.10 step 7), labelled
+// post-quantum, as age requires of one beside a post-quantum recipient.
 type grease struct{}
 
-func (grease) Wrap([]byte) ([]*age.Stanza, error) {
-	return []*age.Stanza{{Type: "x-grease", Args: []string{"x"}, Body: []byte("grease")}}, nil
+func (g grease) Wrap(k []byte) ([]*age.Stanza, error) {
+	s, _, err := g.WrapWithLabels(k)
+	return s, err
+}
+
+func (grease) WrapWithLabels([]byte) ([]*age.Stanza, []string, error) {
+	return []*age.Stanza{{Type: "x-grease", Args: []string{"x"}, Body: []byte("grease")}}, []string{"postquantum"}, nil
 }
 
 // A file without exactly one native recipient stanza is refused as
@@ -635,7 +641,7 @@ func (grease) Wrap([]byte) ([]*age.Stanza, error) {
 func TestAFileWithoutOneNativeStanzaIsRefusedUndecrypted(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	st, _ := e.srv.Prekey(b.Address())
 	p, err := protocol.ParsePrekey(st)
 	if err != nil {
@@ -645,7 +651,7 @@ func TestAFileWithoutOneNativeStanzaIsRefusedUndecrypted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stranger, err := age.GenerateX25519Identity()
+	stranger, err := age.GenerateHybridIdentity()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -701,57 +707,52 @@ func TestAFileWithoutOneNativeStanzaIsRefusedUndecrypted(t *testing.T) {
 }
 
 // A file of two native stanzas, one to a prekey the mailbox retired and one to
-// its current, is refused undecrypted, on an X25519 mailbox and a post-quantum
-// one alike: the stanzas are counted before age is given any of the mailbox's
-// prekeys, the retired among them, which age alone would decrypt with (#417
-// item 1).
+// its current, is refused undecrypted: the stanzas are counted before age is
+// given any of the mailbox's prekeys, the retired among them, which age alone
+// would decrypt with (#417 item 1).
 func TestTwoNativeStanzasOneToARetiredPrekeyAreRefused(t *testing.T) {
 	t.Parallel()
-	for _, kt := range []protocol.KeyType{protocol.Classic, protocol.PostQuantum} {
-		t.Run(string(kt), func(t *testing.T) {
-			e := newEnv(t)
-			a, b := e.mailbox(protocol.Classic), e.mailbox(kt)
-			recipient := func() age.Recipient {
-				st, _ := e.srv.Prekey(b.Address())
-				p, err := protocol.ParsePrekey(st)
-				if err != nil {
-					t.Fatal(err)
-				}
-				r, err := p.Recipient()
-				if err != nil {
-					t.Fatal(err)
-				}
-				return r
-			}
-			retired := recipient()
-			e.clock.Add(2 * time.Second)
-			if _, err := b.Rekey(t.Context(), ""); err != nil {
-				t.Fatal(err)
-			}
-			current := recipient()
-			env, err := protocol.NewEnvelope(a.Address(), b.Address(), "to a retired prekey and the current", e.clock.Now())
-			if err != nil {
-				t.Fatal(err)
-			}
-			env.Identity = a.Identity().Document()
-			line, sig, err := protocol.SignEnvelope(env, worker(t, a))
-			if err != nil {
-				t.Fatal(err)
-			}
-			var ct bytes.Buffer
-			w, err := age.Encrypt(&ct, retired, current)
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, _ = w.Write(append(line, sig...))
-			if err := w.Close(); err != nil {
-				t.Fatal(err)
-			}
-			id := sha256.Sum256(ct.Bytes())
-			e.srv.Inject(b.Address(), hex.EncodeToString(id[:]), ct.Bytes())
-			if res := receive(t, b); len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedDecrypt {
-				t.Fatalf("%+v", res)
-			}
-		})
+	e := newEnv(t)
+	a, b := e.mailbox(), e.mailbox()
+	recipient := func() age.Recipient {
+		st, _ := e.srv.Prekey(b.Address())
+		p, err := protocol.ParsePrekey(st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := p.Recipient()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	retired := recipient()
+	e.clock.Add(2 * time.Second)
+	if _, err := b.Rekey(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	current := recipient()
+	env, err := protocol.NewEnvelope(a.Address(), b.Address(), "to a retired prekey and the current", e.clock.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.Identity = a.Identity().Document()
+	line, sig, err := protocol.SignEnvelope(env, worker(t, a))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ct bytes.Buffer
+	w, err := age.Encrypt(&ct, retired, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = w.Write(append(line, sig...))
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	id := sha256.Sum256(ct.Bytes())
+	e.srv.Inject(b.Address(), hex.EncodeToString(id[:]), ct.Bytes())
+	if res := receive(t, b); len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedDecrypt {
+		t.Fatalf("%+v", res)
 	}
 }

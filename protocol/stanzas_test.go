@@ -56,14 +56,11 @@ func sealedTo(t *testing.T, rs ...age.Recipient) []byte {
 
 // ReadStanzas sorts each stanza of a file as PROTOCOL.md §11.10 step 7 does:
 // native by its type, grease of at most four arguments ignored, and anything
-// else another type; a file with no native stanza is one of its cases (#417
-// items 1 and 4). What is no age file is an error with nothing beside it.
+// else, an X25519 stanza among them, another type; a file with no native
+// stanza is one of its cases (#417 items 1 and 4). What is no age file is an
+// error with nothing beside it.
 func TestReadStanzasSortsEachStanzaOnce(t *testing.T) {
 	x1, err := age.GenerateX25519Identity()
-	if err != nil {
-		t.Fatal(err)
-	}
-	x2, err := age.GenerateX25519Identity()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,22 +75,25 @@ func TestReadStanzasSortsEachStanzaOnce(t *testing.T) {
 	grease := &age.Stanza{Type: "x-grease", Args: []string{"a", "b"}, Body: []byte("grease")}
 	long := &age.Stanza{Type: "x-grease", Args: strings.Fields("a b c d e"), Body: []byte("grease")}
 	other := &age.Stanza{Type: "piv-p256", Args: []string{"a"}, Body: []byte("other")}
+	x25519, err := x1.Recipient().Wrap(make([]byte, 16)) // age itself writes no file with both types
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, c := range []struct {
 		name   string
 		to     []age.Recipient
 		native []KeyType
 		other  bool
 	}{
-		{"one X25519 stanza", []age.Recipient{x1.Recipient()}, []KeyType{Classic}, false},
 		{"one post-quantum stanza", []age.Recipient{p1.Recipient()}, []KeyType{PostQuantum}, false},
-		{"two X25519 stanzas", []age.Recipient{x1.Recipient(), x2.Recipient()}, []KeyType{Classic, Classic}, false},
 		{"two post-quantum stanzas", []age.Recipient{p1.Recipient(), p2.Recipient()}, []KeyType{PostQuantum, PostQuantum}, false},
-		{"X25519 and grease", []age.Recipient{beside{x1.Recipient(), []*age.Stanza{grease}}}, []KeyType{Classic}, false},
 		{"two post-quantum stanzas, grease after the second", []age.Recipient{beside{p1.Recipient(), nil}, beside{p2.Recipient(), []*age.Stanza{grease}}}, []KeyType{PostQuantum, PostQuantum}, false},
 		{"post-quantum and grease", []age.Recipient{beside{p1.Recipient(), []*age.Stanza{grease}}}, []KeyType{PostQuantum}, false},
 		{"grease alone", []age.Recipient{beside{nil, []*age.Stanza{grease}}}, nil, false},
-		{"X25519 and grease of five arguments", []age.Recipient{beside{x1.Recipient(), []*age.Stanza{long}}}, []KeyType{Classic}, true},
-		{"X25519 and another type", []age.Recipient{beside{x1.Recipient(), []*age.Stanza{other}}}, []KeyType{Classic}, true},
+		{"post-quantum and grease of five arguments", []age.Recipient{beside{p1.Recipient(), []*age.Stanza{long}}}, []KeyType{PostQuantum}, true},
+		{"post-quantum and another type", []age.Recipient{beside{p1.Recipient(), []*age.Stanza{other}}}, []KeyType{PostQuantum}, true},
+		{"one X25519 stanza", []age.Recipient{x1.Recipient()}, nil, true},
+		{"post-quantum and X25519", []age.Recipient{beside{p1.Recipient(), x25519}}, []KeyType{PostQuantum}, true},
 		{"another type alone", []age.Recipient{beside{nil, []*age.Stanza{other}}}, nil, true},
 	} {
 		st, err := ReadStanzas(sealedTo(t, c.to...))

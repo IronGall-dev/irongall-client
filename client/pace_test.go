@@ -24,7 +24,7 @@ import (
 func TestAPacedDrainStopsAndResumes(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	for _, body := range []string{"1", "2", "3"} {
 		send(t, a, b, body)
 	}
@@ -82,7 +82,7 @@ func TestOnlyAPacedFetchEndsADrainQuietly(t *testing.T) {
 		{"a call budget's 429 on the fetch", fetch, http.StatusTooManyRequests, protocol.CodeRateLimited},
 	} {
 		e := newEnv(t)
-		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+		a, b := e.mailbox(), e.mailbox()
 		send(t, a, b, "1")
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if !c.match(r) {
@@ -111,7 +111,7 @@ func TestOnlyAPacedFetchEndsADrainQuietly(t *testing.T) {
 func TestAWaitTheServerAsksForIsAtMostADay(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	const huge = "9223372037" // seconds: one past what a time.Duration holds
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/messages") {
@@ -147,7 +147,7 @@ func TestAWaitTheServerAsksForIsAtMostADay(t *testing.T) {
 func TestARetryAfterIsDigitsAlone(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.mailbox(protocol.Classic)
+	b := e.mailbox()
 	for value, want := range map[string]time.Duration{
 		"17":                             17 * time.Second,
 		"0017":                           17 * time.Second,

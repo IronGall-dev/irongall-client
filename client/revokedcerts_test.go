@@ -47,11 +47,11 @@ func TestRevokeEarlierEndsWhatAnOldWorkingKeySigns(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	stolen := worker(t, a) // read before the renewal deletes it
 	first := numberOf(t, a)
 	send(t, a, b, "sent under the first certificate, and unread")
-	if _, err := a.Rekey(ctx, ""); err != nil {
+	if _, err := a.Rekey(ctx); err != nil {
 		t.Fatal(err)
 	}
 	second := numberOf(t, a)
@@ -86,7 +86,7 @@ func TestRevokeEarlierEndsWhatAnOldWorkingKeySigns(t *testing.T) {
 
 	// A second time, after another renewal: through a higher serial,
 	// everything before the certificate in use.
-	if _, err := a.Rekey(ctx, ""); err != nil {
+	if _, err := a.Rekey(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if certs, err := a.RevokeEarlier(ctx); err != nil || certs.Through != numberOf(t, a)-1 || !certs.Revokes(second) {
@@ -110,13 +110,13 @@ func TestRevokeEarlierAfterARenewalTakenUnseenRevokesTheCertificateBeforeIt(t *t
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
 			e := newEnv(t)
-			b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			b, c := e.mailbox(), e.mailbox()
 			before := numberOf(t, b)
 			stolen := worker(t, b) // in use before the renewal: whoever copied the mailbox holds it
 			e.clock.Add(2 * time.Second)
 			if killed {
 				crash(t, e, b, "rekey", "renewal taken", protocol.Address{})
-			} else if _, err := b.Rekey(ctx, ""); err != nil {
+			} else if _, err := b.Rekey(ctx); err != nil {
 				t.Fatal(err)
 			}
 			x, err := client.Open(b.Dir(), e.opts())
@@ -146,7 +146,7 @@ func TestOnlyTheIdentitysHighestRevocationCounts(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	doc := a.Identity().Document()
 	// show serves A's mailbox with rec's revocation of certificates in place of
 	// what the server holds, and counts the reads it served so.
@@ -184,7 +184,7 @@ func TestOnlyTheIdentitysHighestRevocationCounts(t *testing.T) {
 
 	// The identity's first revocation covers certificate 1; its second, 1
 	// and 2.
-	if _, err := a.Rekey(ctx, ""); err != nil {
+	if _, err := a.Rekey(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.RevokeEarlier(ctx); err != nil {
@@ -201,7 +201,7 @@ func TestOnlyTheIdentitysHighestRevocationCounts(t *testing.T) {
 	_ = resp.Body.Close()
 	firstList := *served.Record()
 	second := workerAt(t, a, numberOf(t, a)) // read before the next renewal deletes it
-	if _, err := a.Rekey(ctx, ""); err != nil {
+	if _, err := a.Rekey(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.RevokeEarlier(ctx); err != nil {
@@ -236,7 +236,7 @@ func TestALaterCertificateOutranksAnyPrekeySerial(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	a, b := e.mailbox(), e.mailbox()
 	stolen := worker(t, a)
 	first := numberOf(t, a)
 	st, _ := e.srv.Prekey(a.Address())
@@ -267,7 +267,7 @@ func TestALaterCertificateOutranksAnyPrekeySerial(t *testing.T) {
 		t.Fatalf("resolve: %v", err)
 	}
 	// A renews: a new certificate, at a later number, far below that serial.
-	got, err := a.Rekey(ctx, "")
+	got, err := a.Rekey(ctx)
 	if err != nil || got.Serial <= first || got.Serial >= protocol.MaxSerial {
 		t.Fatalf("a renewal after a prekey at the last serial: %+v, %v", got, err)
 	}
@@ -297,8 +297,8 @@ func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnError(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
-	if _, err := a.Rekey(ctx, ""); err != nil {
+	a, b := e.mailbox(), e.mailbox()
+	if _, err := a.Rekey(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.RevokeEarlier(ctx); err != nil {
@@ -326,7 +326,7 @@ func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnError(t *testing.T) {
 	for _, c := range []struct{ name, why string }{{string(tampered), "no longer verifies"}, {"not a record", "is not a record"}} {
 		a.SetRecord(t, "revoked-certs.json", []byte(c.name))
 		e.clock.Add(2 * time.Second)
-		if _, err := a.Rekey(ctx, ""); err == nil || !strings.Contains(err.Error(), c.why) || numberOf(t, a) != n {
+		if _, err := a.Rekey(ctx); err == nil || !strings.Contains(err.Error(), c.why) || numberOf(t, a) != n {
 			t.Errorf("its own %s: rekey %v, published %d of %d", c.why, err, numberOf(t, a), n)
 		}
 	}
@@ -350,8 +350,8 @@ func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnErrorWhereTheServerSh
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
-	if _, err := a.Rekey(ctx, ""); err != nil {
+	a, b := e.mailbox(), e.mailbox()
+	if _, err := a.Rekey(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.RevokeEarlier(ctx); err != nil {
@@ -387,7 +387,7 @@ func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnErrorWhereTheServerSh
 	a.SetRecord(t, "revoked-certs.json", tampered)
 	published := numberOf(t, a)
 	e.clock.Add(2 * time.Second)
-	if _, err := a.Rekey(ctx, ""); err == nil || !strings.Contains(err.Error(), "no longer verifies") || numberOf(t, a) != published {
+	if _, err := a.Rekey(ctx); err == nil || !strings.Contains(err.Error(), "no longer verifies") || numberOf(t, a) != published {
 		t.Errorf("a renewal past a kept revocation of the mailbox's own certificates that does not verify: %v, published %d of %d", err, numberOf(t, a), published)
 	}
 	a.SetRecord(t, "revoked-certs.json", own)
@@ -407,8 +407,8 @@ func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnErrorWhereTheServerSh
 func TestASendNamesBothSerials(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
-	if _, err := b.Rekey(context.Background(), ""); err != nil {
+	a, b := e.mailbox(), e.mailbox()
+	if _, err := b.Rekey(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	var query, contentType string

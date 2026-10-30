@@ -153,7 +153,6 @@ func orNil(s string) any {
 }
 
 func (e *cli) initCmd() *cobra.Command {
-	var noPQ bool
 	var idType string
 	c := command("init [flags]", "create this mailbox and register it; prints its link",
 		`Create this mailbox and register it, and print its address and its link,
@@ -164,22 +163,17 @@ func (e *cli) initCmd() *cobra.Command {
 			}
 			return nil
 		}), func(c *cobra.Command, _ []string) error {
-			kt := protocol.PostQuantum
-			if noPQ {
-				kt = protocol.Classic
-			}
 			opt := e.opt
 			var warning any
 			if opt.IdentityType = idType; idType != "" && idType != protocol.IdentityEd25519 {
 				warning = fmt.Sprintf("WARNING: a mailbox whose identity is of the key type %s can neither write to nor hear from a mailbox whose client does not verify that type. Every client verifies ssh-ed25519, which init makes without --identity-type.", idType)
 			}
-			b, err := client.Init(c.Context(), e.dir, opt, kt)
+			b, err := client.Init(c.Context(), e.dir, opt)
 			if err != nil {
 				return err
 			}
 			return e.out(line("mailbox", "address", b.Address(), "link", b.Link(), "detail", warning))
 		})
-	c.Flags().BoolVar(&noPQ, "no-pq", false, "make a mailbox without post-quantum encryption (X25519 only), which age 1.2 can reach")
 	c.Flags().StringVar(&idType, "identity-type", "", "make the identity a key of this `type`, not ssh-ed25519: "+protocol.IdentityP256+". Every client verifies ssh-ed25519; a mailbox of another type is reached only by mailboxes whose client verifies it")
 	return c
 }
@@ -810,37 +804,15 @@ func (e *cli) aclNotSent(err error) error {
 	return &needsALook{}
 }
 
-// keyType is the prekey type --no-pq or --pq asks for, and none for neither:
-// the mailbox keeps the type it has.
-func keyType(noPQ, pq bool) (protocol.KeyType, error) {
-	switch {
-	case noPQ && pq:
-		return "", errors.New("--no-pq or --pq, not both")
-	case noPQ:
-		return protocol.Classic, nil
-	case pq:
-		return protocol.PostQuantum, nil
-	}
-	return "", nil
-}
-
 func (e *cli) renewCmd() *cobra.Command {
-	var noPQ, pq bool
-	c := command("renew [flags]", "publish a new prekey now, or change its type",
-		`Publish a new prekey now, under a new working key and certificate. With
-neither --no-pq nor --pq it keeps the type the mailbox has.`,
-		checked(nargs(0, 0), func(c *cobra.Command, _ []string) error {
-			if _, err := keyType(noPQ, pq); err != nil {
-				return wrong(c, "%v", err)
-			}
-			return nil
-		}), func(c *cobra.Command, _ []string) error {
-			kt, _ := keyType(noPQ, pq)
+	return command("renew", "publish a new prekey now",
+		`Publish a new prekey now, under a new working key and certificate.`,
+		nargs(0, 0), func(c *cobra.Command, _ []string) error {
 			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
-			p, err := b.Rekey(c.Context(), kt)
+			p, err := b.Rekey(c.Context())
 			if p != nil {
 				// Published, whatever fault of this mailbox came after.
 				if werr := e.out(prekey(p)); err == nil {
@@ -859,9 +831,6 @@ neither --no-pq nor --pq it keeps the type the mailbox has.`,
 			}
 			return &needsALook{}
 		})
-	c.Flags().BoolVar(&noPQ, "no-pq", false, "switch to a prekey without post-quantum encryption (X25519 only)")
-	c.Flags().BoolVar(&pq, "pq", false, "switch to a post-quantum prekey")
-	return c
 }
 
 // shortLifetime is the prekey lifetime under which setting one warns: with
@@ -1011,8 +980,7 @@ func formatTime(d time.Duration) string {
 }
 
 func (e *cli) revokeEarlierCmd() *cobra.Command {
-	var noPQ, pq bool
-	c := command("revoke-earlier [flags]", "revoke every certificate before a new one, then publish a new prekey under it",
+	return command("revoke-earlier", "revoke every certificate before a new one, then publish a new prekey under it",
 		`For a mailbox whose working key may have been taken: make a new prekey, under a
 new working key and certificate, revoke every certificate before that one, and
 then publish the new prekey. The address goes on, and a message this mailbox sent that
@@ -1020,23 +988,14 @@ is still unread is refused with the rest, so send it again. Until the server
 takes the new prekey, the mailbox sends no messages, and once its server holds the
 revocation it takes none there either. A copy of the whole mailbox directory holds
 the identity too: revoke the address.`,
-		checked(nargs(0, 0), func(c *cobra.Command, _ []string) error {
-			if _, err := keyType(noPQ, pq); err != nil {
-				return wrong(c, "%v", err)
-			}
-			return nil
-		}), func(c *cobra.Command, _ []string) error {
-			kt, _ := keyType(noPQ, pq)
+		nargs(0, 0), func(c *cobra.Command, _ []string) error {
 			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
-			r, err := b.RenewAndRevoke(c.Context(), kt)
+			r, err := b.RenewAndRevoke(c.Context())
 			return e.remedied(b.Address(), r, err)
 		})
-	c.Flags().BoolVar(&noPQ, "no-pq", false, "switch to a prekey without post-quantum encryption (X25519 only)")
-	c.Flags().BoolVar(&pq, "pq", false, "switch to a post-quantum prekey")
-	return c
 }
 
 // remedied prints what the remedy of mailbox own did, r and err as

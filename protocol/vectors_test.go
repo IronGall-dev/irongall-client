@@ -387,7 +387,7 @@ func TestVectorPrekeys(t *testing.T) {
 	}{
 		{a, "a/prekey-1.txt", "a/prekey-1.txt.sig", 1, PostQuantum},
 		{a, "a/prekey-1.txt", "a/prekey-1.txt.sha256.sig", 1, PostQuantum},
-		{a, "a/prekey-2.txt", "a/prekey-2.txt.sig", 2, Classic},
+		{a, "a/prekey-2.txt", "a/prekey-2.txt.sig", 2, PostQuantum},
 		{b, "b/prekey-1.txt", "b/prekey-1.txt.sig", 1, PostQuantum},
 	} {
 		p, cert, err := VerifyPrekey(c.id, read(t, c.file), read(t, c.sig), now)
@@ -451,7 +451,7 @@ func TestVectorBadPrekeys(t *testing.T) {
 			if err != nil || p.Expired(now) || p.CheckLifetime(now) == nil || !p.NotAfter.Equal(now.Add(MaxPrekeyLifetime+time.Second)) {
 				t.Errorf("%s: want valid, not expired, and refused for publishing: %v", name, err)
 			}
-		case name == "unsupported-type": // good in every other way: refused with its own error, never as one that does not verify
+		case strings.HasPrefix(name, "unsupported-type"): // good in every other way: refused with its own error, never as one that does not verify
 			if _, perr := ParsePrekey(st); !errors.Is(err, ErrPrekeyType) || !errors.Is(perr, ErrPrekeyType) {
 				t.Errorf("%s: %v, and parsed %v, want ErrPrekeyType", name, err, perr)
 			}
@@ -468,9 +468,10 @@ func TestVectorBadPrekeys(t *testing.T) {
 // as a statement that does not verify.
 func TestAPrekeyOfATypeThisClientLacks(t *testing.T) {
 	unknown := strings.Split(string(read(t, "prekey/unsupported-type.txt")), "\n")[3]
+	x25519 := strings.TrimSpace(string(read(t, "input/other.x25519")))
 	for key, hrp := range map[string]string{
-		strings.TrimSpace(string(read(t, "input/a-1.pq"))):      "age1pq",
-		strings.TrimSpace(string(read(t, "input/a-2.classic"))): "age",
+		strings.TrimSpace(string(read(t, "input/a-1.pq"))): "age1pq",
+		x25519:  "age",
 		unknown: "age1nosuchtype",
 		"abcdef1qpzry9x8gf2tvdw0s3jn54khce6mua7lmqqqxw": "abcdef", // BIP 173's own
 		bech32Of("age1nosuchtype", "qq"):                "age1nosuchtype",
@@ -496,11 +497,12 @@ func TestAPrekeyOfATypeThisClientLacks(t *testing.T) {
 	}
 	for key, want := range map[string]error{
 		unknown:                        ErrPrekeyType,
+		x25519:                         ErrPrekeyType,
 		bech32Of("agefoo", "qq"):       ErrPrekeyType,
 		bech32Of("age1nosuchtype", ""): ErrPrekeyType,
-		bech32Of("age1pq", "qq"):       nil, // one of the two types, and not a key of it
-		bech32Of("age", "qq"):          nil,
-		bech32Of("nosuchtype", "qq"):   nil, // Bech32, and no age recipient
+		bech32Of("age", "qq"):          ErrPrekeyType, // X25519's, which is no prekey type
+		bech32Of("age1pq", "qq"):       nil,           // the prekey type, and not a key of it
+		bech32Of("nosuchtype", "qq"):   nil,           // Bech32, and no age recipient
 		strings.ToUpper(unknown):       nil,
 	} {
 		err := checkRecipient(&Prekey{Key: key})
@@ -843,7 +845,7 @@ func TestVectorMessage(t *testing.T) {
 		t                     KeyType
 	}{
 		{"b", "a-to-b", "b-1.pq", "mlkem768x25519", PostQuantum},
-		{"c", "a-to-c", "c-1.classic", "X25519", Classic},
+		{"c", "a-to-c", "b-1.pq", "mlkem768x25519", PostQuantum},
 	} {
 		to := vectorIdentity(t, c.to)
 		// Go builds the same plaintext as the stock tools did: the line, the

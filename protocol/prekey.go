@@ -38,16 +38,13 @@ const (
 	TimeLayout = "2006-01-02T15:04:05Z"
 )
 
-// KeyType is a prekey's type, named as its age stanza is.
+// KeyType is a prekey's type, named as its age stanza is. A type defined
+// later is an addition inside v1 (PROTOCOL.md §14).
 type KeyType string
 
-const (
-	// PostQuantum is age's hybrid ML-KEM-768 + X25519 recipient, "age1pq1…",
-	// the default.
-	PostQuantum KeyType = "mlkem768x25519"
-	// Classic is age's X25519 recipient, "age1…".
-	Classic KeyType = "X25519"
-)
+// PostQuantum is age's hybrid ML-KEM-768 + X25519 recipient, "age1pq1…", the
+// one prekey type.
+const PostQuantum KeyType = "mlkem768x25519"
 
 // serialGrammar is a serial's text: a decimal integer with no leading zero,
 // of at most 16 digits. Its value is held to MaxSerial after.
@@ -58,7 +55,7 @@ var serialGrammar = regexp.MustCompile(`\A[1-9][0-9]{0,15}\z`)
 type Prekey struct {
 	Address  Address   // the mailbox the key belongs to
 	Serial   uint64    // strictly increasing under one certificate; a client gives it its certificate's serial
-	Key      string    // the age recipient: "age1pq1…" or "age1…"
+	Key      string    // the age recipient: "age1pq1…"
 	NotAfter time.Time // the last moment the key may be encrypted to
 }
 
@@ -71,21 +68,12 @@ func (p *Prekey) Statement() []byte {
 		p.NotAfter.UTC().Format(TimeLayout) + "\n")
 }
 
-// Type returns the key's type, from its prefix.
-func (p *Prekey) Type() KeyType {
-	if strings.HasPrefix(p.Key, "age1pq1") {
-		return PostQuantum
-	}
-	return Classic
-}
+// Type returns the key's type: PostQuantum, the one type a statement that
+// parses holds.
+func (p *Prekey) Type() KeyType { return PostQuantum }
 
 // Recipient returns the key as an age recipient to encrypt to.
-func (p *Prekey) Recipient() (age.Recipient, error) {
-	if p.Type() == PostQuantum {
-		return age.ParseHybridRecipient(p.Key)
-	}
-	return age.ParseX25519Recipient(p.Key)
-}
+func (p *Prekey) Recipient() (age.Recipient, error) { return age.ParseHybridRecipient(p.Key) }
 
 // Expired reports whether the key may no longer be encrypted to at now.
 // Senders refuse to encrypt to an expired prekey, with no grace.
@@ -105,16 +93,16 @@ func (p *Prekey) CheckLifetime(now time.Time) error {
 
 // ErrPrekeyType is a prekey statement whose key is a well-formed age
 // recipient of a type this client cannot encrypt to: a Bech32 string whose
-// human-readable part begins "age", and is neither X25519's "age" nor the
-// hybrid's "age1pq". Nothing is wrong with such a statement: a type defined
+// human-readable part begins "age" and is not the hybrid's "age1pq", X25519's
+// "age" among them. Nothing is wrong with such a statement: a type defined
 // later takes no new tag, so a sender refuses it as unsupported_prekey_type,
 // never as a statement that does not verify (PROTOCOL.md §14, §6).
 var ErrPrekeyType = errors.New("the prekey is an age recipient of a type this client cannot encrypt to")
 
 // ParsePrekey parses a prekey statement. It must be exactly five LF-terminated
 // lines with nothing after them, its serial a decimal integer with no leading
-// zero and at most MaxSerial, its key an age recipient in canonical form that
-// can be encrypted to (so no small-order X25519 point, in either key type), and
+// zero and at most MaxSerial, its key a hybrid age recipient in canonical form
+// that can be encrypted to (so no small-order point in its X25519 half), and
 // its not_after a UTC timestamp to the second. A key that is a well-formed
 // age recipient of another type is ErrPrekeyType.
 func ParsePrekey(statement []byte) (*Prekey, error) {
@@ -157,15 +145,14 @@ func parsePrekey(statement []byte) (*Prekey, error) {
 }
 
 // checkRecipient checks the key is an age recipient that age can encrypt to.
-// Its type is its Bech32 human-readable part: "age" or "age1pq", and any
-// other that begins "age" is ErrPrekeyType. age's parser is already exact
-// (lowercase only, zero padding bits; the bad-recipient-uppercase-* vectors
-// hold it to that). It accepts a small-order X25519 point, including the
-// X25519 half of a hybrid key, but refuses to encrypt to one, so a trial wrap
-// is the check.
+// Its type is its Bech32 human-readable part: "age1pq", and any other that
+// begins "age" is ErrPrekeyType. age's parser is already exact (lowercase
+// only, zero padding bits; the bad-recipient-uppercase-pq vector holds it to
+// that). It accepts a small-order point as a hybrid key's X25519 half, but
+// refuses to encrypt to one, so a trial wrap is the check.
 func checkRecipient(p *Prekey) error {
 	switch hrp, ok := bech32HRP(p.Key); {
-	case ok && (hrp == "age" || hrp == "age1pq"):
+	case ok && hrp == "age1pq":
 	case ok && strings.HasPrefix(hrp, "age"):
 		return ErrPrekeyType
 	default:

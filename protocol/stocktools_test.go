@@ -18,7 +18,7 @@ import (
 // tools this project did not write, so that each is the standard's format and
 // not this code's reading of it (testdata/vectors/README.md, PROTOCOL.md §16):
 // age decrypts each message with its prekey's published test identity to
-// exactly its plaintext, and with the other mailbox's not at all; head and sed split that plaintext into the line and
+// exactly its plaintext, and with another key not at all; head and sed split that plaintext into the line and
 // its signature; ssh-keygen reads each certificate and verifies each signature
 // under it, at the vectors' time, and each certificate file is the one its
 // signatures carry; and openssl and base32 give each address, the SHA-384
@@ -100,9 +100,15 @@ func TestVectorsByToolsNotOurs(t *testing.T) {
 		t.Setenv("PATH", path)
 		v, _ := run(t, nil, "age", "--version")
 		t.Logf("age %s", strings.TrimSpace(string(v)))
-		for _, m := range []struct{ msg, key, other string }{{"a-to-b", "b-1.pq", "c-1.classic"}, {"a-to-c", "c-1.classic", "b-1.pq"}} {
-			if _, err := run(t, nil, "age", "-d", "-i", "input/"+m.other+".key", "message/"+m.msg+".age"); err == nil {
-				t.Errorf("%s: age decrypts it with %s, another mailbox's prekey", m.msg, m.other)
+		// B and C have one prekey, the testkit's one hybrid identity: the
+		// other key is made here.
+		other := filepath.Join(t.TempDir(), "other.key")
+		if _, err := run(t, nil, "age-keygen", "-pq", "-o", other); err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range []struct{ msg, key string }{{"a-to-b", "b-1.pq"}, {"a-to-c", "b-1.pq"}} {
+			if _, err := run(t, nil, "age", "-d", "-i", other, "message/"+m.msg+".age"); err == nil {
+				t.Errorf("%s: age decrypts it with another key", m.msg)
 			}
 			out, err := run(t, nil, "age", "-d", "-i", "input/"+m.key+".key", "message/"+m.msg+".age")
 			if err != nil {
