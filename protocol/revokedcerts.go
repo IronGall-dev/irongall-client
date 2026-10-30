@@ -12,7 +12,7 @@ import (
 // RevokedCertsTag is line 1 of a revocation of certificates.
 const RevokedCertsTag = "dromas-revoke-certs-v1"
 
-// RevokedCertsNamespace is the namespace of box a's revocation of its
+// RevokedCertsNamespace is the namespace of mailbox a's revocation of its
 // certificates.
 func RevokedCertsNamespace(a Address) string { return RevokedCertsTag + ":" + a.String() }
 
@@ -40,7 +40,7 @@ func (r *RevokedCertificates) Statement() []byte {
 	return []byte(RevokedCertsTag + "\n" + r.Address.String() + "\n" + strconv.FormatUint(r.Through, 10) + "\n")
 }
 
-// NewRevokedCertificates builds box a's revocation of every certificate up to
+// NewRevokedCertificates builds mailbox a's revocation of every certificate up to
 // and including serial through, which is one a certificate may have.
 func NewRevokedCertificates(a Address, through uint64) (*RevokedCertificates, error) {
 	if through == 0 || through > MaxSerial {

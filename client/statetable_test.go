@@ -27,27 +27,27 @@ import (
 
 var update = flag.Bool("update", false, "write testdata/statetable.golden from this run")
 
-// TestStateTable runs each command of a box in each state its server and its
+// TestStateTable runs each command of a mailbox in each state its server and its
 // directory can be in, with the server answering or refusing, and holds what each cell did to testdata/statetable.golden: what the command
-// returned, every call it made, and what changed in the box's directory. The
+// returned, every call it made, and what changed in the mailbox's directory. The
 // file is the behaviour's spec (the redesign's (4)): a change to what a
 // command does in some state is a change to it, read line by line before it
 // is committed. go test ./client -run TestStateTable -update writes it anew.
 //
-// A row is the box's directory (all of it, or the identity alone, as a
+// A row is the mailbox's directory (all of it, or the identity alone, as a
 // restore from its backup), what its server holds (never registered, an
-// active box, one the server forgot), and what the
+// active mailbox, one the server forgot), and what the
 // server holds of a revocation of its certificates (none, through the one
 // in use, or through a serial a day ahead of the clock), each revocation
-// published by another holder of the identity and not kept by the box; then
-// three rows more: the address revoked at the server, the box finished (it
-// holds its own revocation), and no box at all.
+// published by another holder of the identity and not kept by the mailbox; then
+// three rows more: the address revoked at the server, the mailbox finished (it
+// holds its own revocation), and no mailbox at all.
 //
 // Two kinds of cell are not run, since each is the same as another (#426
-// item 3): a server that is silent leaves the box as one that refuses does
+// item 3): a server that is silent leaves the mailbox as one that refuses does
 // in all 220 pairs of row and command, and only its words differ, which
 // TestACallWithNoAnswerSaysWhatKind holds; and the identity alone at a
-// server that forgot the box does in all 90 cells what it does at one that
+// server that forgot the mailbox does in all 90 cells what it does at one that
 // never registered it, which holds nothing of it either.
 func TestStateTable(t *testing.T) {
 	t.Parallel()
@@ -80,7 +80,7 @@ func TestStateTable(t *testing.T) {
 	}
 	slices.SortFunc(cells, func(a, b cell) int { return strings.Compare(a.key, b.key) })
 	var out strings.Builder
-	out.WriteString("# row | command | server | result | calls | box: +added ~changed -removed\n")
+	out.WriteString("# row | command | server | result | calls | mailbox: +added ~changed -removed\n")
 	out.WriteString("# Written by go test ./client -run TestStateTable -update (statetable_test.go); read each changed line before committing it.\n")
 	for _, c := range cells {
 		out.WriteString(c.line + "\n")
@@ -115,11 +115,11 @@ func TestStateTable(t *testing.T) {
 	}
 }
 
-// A stateRow puts a box in its state: in dir, against e, with peer an active
-// box of the same server.
+// A stateRow puts a mailbox in its state: in dir, against e, with peer an active
+// mailbox of the same server.
 type stateRow struct {
 	name string
-	make func(t *testing.T, e *env, dir string, peer *client.Box)
+	make func(t *testing.T, e *env, dir string, peer *client.Mailbox)
 }
 
 func stateRows() []stateRow {
@@ -130,9 +130,9 @@ func stateRows() []stateRow {
 				if view == "identity alone" && server == "forgotten" {
 					continue // the same in every cell as never registered (TestStateTable)
 				}
-				rows = append(rows, stateRow{view + ", " + server + ", " + rev, func(t *testing.T, e *env, dir string, peer *client.Box) {
-					makeBox(t, e, dir, peer, server == "never registered")
-					a := openBox(t, e, dir)
+				rows = append(rows, stateRow{view + ", " + server + ", " + rev, func(t *testing.T, e *env, dir string, peer *client.Mailbox) {
+					makeMailbox(t, e, dir, peer, server == "never registered")
+					a := openMailbox(t, e, dir)
 					if server == "forgotten" {
 						e.srv.Forget(a.Address())
 					}
@@ -150,26 +150,26 @@ func stateRows() []stateRow {
 		}
 	}
 	return append(rows,
-		stateRow{"full, address revoked at the server", func(t *testing.T, e *env, dir string, peer *client.Box) {
-			makeBox(t, e, dir, peer, false)
-			rec, err := openBox(t, e, dir).Revocation(t.Context())
+		stateRow{"full, address revoked at the server", func(t *testing.T, e *env, dir string, peer *client.Mailbox) {
+			makeMailbox(t, e, dir, peer, false)
+			rec, err := openMailbox(t, e, dir).Revocation(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}
 			publish(t, e, rec)
 		}},
-		stateRow{"identity alone, address revoked at the server", func(t *testing.T, e *env, dir string, peer *client.Box) {
-			makeBox(t, e, dir, peer, false)
-			rec, err := openBox(t, e, dir).Revocation(t.Context())
+		stateRow{"identity alone, address revoked at the server", func(t *testing.T, e *env, dir string, peer *client.Mailbox) {
+			makeMailbox(t, e, dir, peer, false)
+			rec, err := openMailbox(t, e, dir).Revocation(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}
 			publish(t, e, rec)
 			identityAlone(t, dir)
 		}},
-		stateRow{"full, finished: it holds its own revocation", func(t *testing.T, e *env, dir string, peer *client.Box) {
-			makeBox(t, e, dir, peer, false)
-			a := openBox(t, e, dir)
+		stateRow{"full, finished: it holds its own revocation", func(t *testing.T, e *env, dir string, peer *client.Mailbox) {
+			makeMailbox(t, e, dir, peer, false)
+			a := openMailbox(t, e, dir)
 			rec, err := a.Revocation(t.Context())
 			if err != nil {
 				t.Fatal(err)
@@ -179,17 +179,17 @@ func stateRows() []stateRow {
 				t.Fatal(err)
 			}
 		}},
-		stateRow{"no box", func(*testing.T, *env, string, *client.Box) {}},
+		stateRow{"no mailbox", func(*testing.T, *env, string, *client.Mailbox) {}},
 	)
 }
 
-// makeBox makes a box in dir, registered, with a message from peer waiting
+// makeMailbox makes a mailbox in dir, registered, with a message from peer waiting
 // for it; or, unregistered, one whose registration its server refused. Beside
-// the box it leaves the record its owner hands over (handedOver).
-func makeBox(t *testing.T, e *env, dir string, peer *client.Box, unregistered bool) {
+// the mailbox it leaves the record its owner hands over (handedOver).
+func makeMailbox(t *testing.T, e *env, dir string, peer *client.Mailbox, unregistered bool) {
 	t.Helper()
 	defer func() {
-		raw, err := json.Marshal(certsRecord(t, dir, begunAt(t, openBox(t, e, dir))))
+		raw, err := json.Marshal(certsRecord(t, dir, begunAt(t, openMailbox(t, e, dir))))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -219,7 +219,7 @@ func makeBox(t *testing.T, e *env, dir string, peer *client.Box, unregistered bo
 	send(t, peer, a, "waiting")
 }
 
-func openBox(t *testing.T, e *env, dir string) *client.Box {
+func openMailbox(t *testing.T, e *env, dir string) *client.Mailbox {
 	t.Helper()
 	b, err := client.Open(dir, e.opts())
 	if err != nil {
@@ -228,12 +228,12 @@ func openBox(t *testing.T, e *env, dir string) *client.Box {
 	return b
 }
 
-// certsRecord is a record of the revocation of the certificates of the box
+// certsRecord is a record of the revocation of the certificates of the mailbox
 // in dir through serial, signed by its identity: what another holder of it
 // publishes, or hands over.
 func certsRecord(t *testing.T, dir string, through uint64) *protocol.Revocations {
 	t.Helper()
-	key, err := os.ReadFile(filepath.Join(dir, "identity")) //nolint:gosec // a test box's own file
+	key, err := os.ReadFile(filepath.Join(dir, "identity")) //nolint:gosec // a test mailbox's own file
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,7 +256,7 @@ func certsRecord(t *testing.T, dir string, through uint64) *protocol.Revocations
 	return &protocol.Revocations{Identity: id.Document(), RevokedCertificates: certs.Statement(), RevokedCertificatesSignature: sig}
 }
 
-// publish puts rec to e's server as anyone may, with no box.
+// publish puts rec to e's server as anyone may, with no mailbox.
 func publish(t *testing.T, e *env, rec *protocol.Revocations) {
 	t.Helper()
 	if _, err := client.Publish(context.Background(), e.opts(), rec); err != nil {
@@ -264,7 +264,7 @@ func publish(t *testing.T, e *env, rec *protocol.Revocations) {
 	}
 }
 
-// identityAlone leaves the box in dir as a restore from its backup does: its
+// identityAlone leaves the mailbox in dir as a restore from its backup does: its
 // identity alone.
 func identityAlone(t *testing.T, dir string) {
 	t.Helper()
@@ -281,21 +281,21 @@ func identityAlone(t *testing.T, dir string) {
 	}
 }
 
-// A stateCommand is a command as the CLI runs it, on the box in dir, as a
+// A stateCommand is a command as the CLI runs it, on the mailbox in dir, as a
 // process of its own: it returns what to write for it.
 type stateCommand struct {
 	name string
-	run  func(ctx context.Context, e *env, dir string, peer *client.Box) (string, error)
+	run  func(ctx context.Context, e *env, dir string, peer *client.Mailbox) (string, error)
 }
 
 func stateCommands() []stateCommand {
-	open := func(e *env, dir string) (*client.Box, error) { return client.Open(dir, e.opts()) }
+	open := func(e *env, dir string) (*client.Mailbox, error) { return client.Open(dir, e.opts()) }
 	return []stateCommand{
-		{"init", func(ctx context.Context, e *env, dir string, _ *client.Box) (string, error) {
+		{"init", func(ctx context.Context, e *env, dir string, _ *client.Mailbox) (string, error) {
 			_, err := client.Init(ctx, dir, e.opts(), protocol.PostQuantum) // the command's default
 			return "", err
 		}},
-		{"recv", func(ctx context.Context, e *env, dir string, _ *client.Box) (string, error) {
+		{"recv", func(ctx context.Context, e *env, dir string, _ *client.Mailbox) (string, error) {
 			b, err := open(e, dir)
 			if err != nil {
 				return "", err
@@ -313,7 +313,7 @@ func stateCommands() []stateCommand {
 			}
 			return s, err
 		}},
-		{"send", func(ctx context.Context, e *env, dir string, peer *client.Box) (string, error) {
+		{"send", func(ctx context.Context, e *env, dir string, peer *client.Mailbox) (string, error) {
 			b, err := open(e, dir)
 			if err != nil {
 				return "", err
@@ -321,7 +321,7 @@ func stateCommands() []stateCommand {
 			_, err = b.Send(ctx, peer.Address(), "a reply")
 			return "", err
 		}},
-		{"prekey renew", func(ctx context.Context, e *env, dir string, _ *client.Box) (string, error) {
+		{"prekey renew", func(ctx context.Context, e *env, dir string, _ *client.Mailbox) (string, error) {
 			b, err := open(e, dir)
 			if err != nil {
 				return "", err
@@ -332,7 +332,7 @@ func stateCommands() []stateCommand {
 			}
 			return fmt.Sprintf("prekey %d", p.Serial), err
 		}},
-		{"cert revoke-earlier", func(ctx context.Context, e *env, dir string, _ *client.Box) (string, error) {
+		{"cert revoke-earlier", func(ctx context.Context, e *env, dir string, _ *client.Mailbox) (string, error) {
 			b, err := open(e, dir)
 			if err != nil {
 				return "", err
@@ -359,7 +359,7 @@ func stateCommands() []stateCommand {
 			}
 			return s, err
 		}},
-		{"cert publish-revoked", func(ctx context.Context, e *env, dir string, _ *client.Box) (string, error) {
+		{"cert publish-revoked", func(ctx context.Context, e *env, dir string, _ *client.Mailbox) (string, error) {
 			b, err := open(e, dir)
 			if err != nil {
 				return "", err
@@ -376,7 +376,7 @@ func stateCommands() []stateCommand {
 			_, err = b.Publish(ctx, rec)
 			return "", err
 		}},
-		{"revocation make", func(ctx context.Context, e *env, dir string, _ *client.Box) (string, error) {
+		{"revocation make", func(ctx context.Context, e *env, dir string, _ *client.Mailbox) (string, error) {
 			b, err := open(e, dir)
 			if err != nil {
 				return "", err
@@ -384,7 +384,7 @@ func stateCommands() []stateCommand {
 			_, err = b.Revocation(ctx)
 			return "", err
 		}},
-		{"revocation keep", func(ctx context.Context, e *env, dir string, _ *client.Box) (string, error) {
+		{"revocation keep", func(ctx context.Context, e *env, dir string, _ *client.Mailbox) (string, error) {
 			b, err := open(e, dir)
 			if err != nil {
 				return "", err
@@ -396,7 +396,7 @@ func stateCommands() []stateCommand {
 			_, h, err := b.KeepRevocation(ctx, rec)
 			return heldWords(h), err
 		}},
-		{"revocation publish", func(ctx context.Context, e *env, dir string, _ *client.Box) (string, error) {
+		{"revocation publish", func(ctx context.Context, e *env, dir string, _ *client.Mailbox) (string, error) {
 			b, err := open(e, dir)
 			if err != nil {
 				return "", err
@@ -411,7 +411,7 @@ func stateCommands() []stateCommand {
 			_, h, err := b.KeepRevocation(ctx, rec)
 			return heldWords(h), err
 		}},
-		{"revocation ask", func(ctx context.Context, e *env, dir string, _ *client.Box) (string, error) {
+		{"revocation ask", func(ctx context.Context, e *env, dir string, _ *client.Mailbox) (string, error) {
 			b, err := open(e, dir)
 			if err != nil {
 				return "", err
@@ -423,9 +423,9 @@ func stateCommands() []stateCommand {
 }
 
 // handedOver is the record cert publish-revoked and revocation keep are
-// given: the identity's revocation of the box's certificates through the one
+// given: the identity's revocation of the mailbox's certificates through the one
 // in use when its row was made, as its owner signs one on another machine.
-// It is nil where no box was made.
+// It is nil where no mailbox was made.
 func handedOver(dir string) *protocol.Revocations {
 	raw, err := os.ReadFile(handedOverFile(dir))
 	if err != nil {
@@ -438,7 +438,7 @@ func handedOver(dir string) *protocol.Revocations {
 	return &rec
 }
 
-// handedOverFile is where the record handed over is kept, beside the box and
+// handedOverFile is where the record handed over is kept, beside the mailbox and
 // not in it.
 func handedOverFile(dir string) string { return filepath.Join(filepath.Dir(dir), "handed-over.json") }
 
@@ -459,15 +459,15 @@ func heldWords(h *client.Held) string {
 	return s
 }
 
-// runCell runs command c on a box put in row r's state, against a server in
+// runCell runs command c on a mailbox put in row r's state, against a server in
 // mode m, and returns what the cell writes, every address and serial in it
 // written as a role and an offset from the clock.
 func runCell(t *testing.T, r stateRow, c stateCommand, m string) string {
 	e := newEnv(t)
-	peer := e.box(protocol.Classic)
-	dir := filepath.Join(t.TempDir(), "box")
+	peer := e.mailbox(protocol.Classic)
+	dir := filepath.Join(t.TempDir(), "mailbox")
 	r.make(t, e, dir, peer)
-	// Two hours on: the box's certificate began well before the command, and
+	// Two hours on: the mailbox's certificate began well before the command, and
 	// a revocation through it is below the clock.
 	e.clock.Add(2 * time.Hour)
 	before := snapshot(dir)
@@ -509,9 +509,9 @@ func snapshot(dir string) map[string][32]byte {
 	files := map[string][32]byte{}
 	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
-			return nil //nolint:nilerr // a box with no directory has no files
+			return nil //nolint:nilerr // a mailbox with no directory has no files
 		}
-		raw, err := os.ReadFile(p) //nolint:gosec // a test box's own file
+		raw, err := os.ReadFile(p) //nolint:gosec // a test mailbox's own file
 		if err != nil {
 			return nil //nolint:nilerr // a file gone as it was read is not one
 		}
@@ -557,11 +557,11 @@ func changes(before, after map[string][32]byte) string {
 }
 
 var (
-	hex64  = regexp.MustCompile(`[0-9a-f]{64}`)
-	uuid   = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
-	serial = regexp.MustCompile(`\b1[0-9]{9}\b`)
-	temp   = regexp.MustCompile(`\.tmp-[0-9]+`)
-	inBox  = regexp.MustCompile(`<box>[^ :,]*`)
+	hex64     = regexp.MustCompile(`[0-9a-f]{64}`)
+	uuid      = regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
+	serial    = regexp.MustCompile(`\b1[0-9]{9}\b`)
+	temp      = regexp.MustCompile(`\.tmp-[0-9]+`)
+	inMailbox = regexp.MustCompile(`<mailbox>[^ :,]*`)
 )
 
 // notFound is the system's words for a file, and for a directory, that is
@@ -579,18 +579,18 @@ var notFound = func() []string {
 	return words
 }()
 
-// normalize writes the box's address as own, the peer's as peer, any other
-// hash as #, a message id as <msg_id>, the box's directory as <box>, and
+// normalize writes the mailbox's address as own, the peer's as peer, any other
+// hash as #, a message id as <msg_id>, the mailbox's directory as <mailbox>, and
 // each serial, a time in seconds, as T+k, k from the clock at the cell's
 // start.
-func normalize(s string, e *env, dir string, peer *client.Box) string {
-	s = strings.ReplaceAll(s, dir, "<box>")
-	s = inBox.ReplaceAllStringFunc(s, filepath.ToSlash)
+func normalize(s string, e *env, dir string, peer *client.Mailbox) string {
+	s = strings.ReplaceAll(s, dir, "<mailbox>")
+	s = inMailbox.ReplaceAllStringFunc(s, filepath.ToSlash)
 	for _, w := range notFound {
 		s = strings.ReplaceAll(s, w, "no such file or directory")
 	}
 	s = strings.ReplaceAll(s, peer.Address().String(), "peer")
-	if id, err := os.ReadFile(filepath.Join(dir, "identity")); err == nil { //nolint:gosec // a test box's own file
+	if id, err := os.ReadFile(filepath.Join(dir, "identity")); err == nil { //nolint:gosec // a test mailbox's own file
 		if signer, err := ssh.ParsePrivateKey(id); err == nil {
 			if pid, err := protocol.IdentityOf(signer.PublicKey()); err == nil {
 				s = strings.ReplaceAll(s, pid.Address().String(), "own")

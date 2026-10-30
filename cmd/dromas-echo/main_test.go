@@ -26,7 +26,7 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// clock is a settable clock shared by the server, the echo box and its
+// clock is a settable clock shared by the server, the echo mailbox and its
 // correspondents.
 type clock struct {
 	mu sync.Mutex
@@ -49,7 +49,7 @@ type env struct {
 	t     *testing.T
 	clock *clock
 	srv   *fakeserver.Server
-	key   string // the echo box's identity key file
+	key   string // the echo mailbox's identity key file
 }
 
 func newEnv(t *testing.T) *env {
@@ -64,7 +64,7 @@ func (e *env) opts() client.Options {
 	return client.Options{Base: e.srv.URL, Now: e.clock.Now}
 }
 
-// echo starts the echo box in a new, empty state directory, as at every
+// echo starts the echo mailbox in a new, empty state directory, as at every
 // start in a tmpfs.
 func (e *env) echo() *echo {
 	e.t.Helper()
@@ -75,7 +75,7 @@ func (e *env) echo() *echo {
 	return x
 }
 
-func (e *env) box() *client.Box {
+func (e *env) mailbox() *client.Mailbox {
 	e.t.Helper()
 	b, err := client.Init(context.Background(), e.t.TempDir(), e.opts(), protocol.PostQuantum)
 	if err != nil {
@@ -102,7 +102,7 @@ func newKey(t *testing.T) string {
 	return name
 }
 
-func receive(t *testing.T, b *client.Box) *client.Result {
+func receive(t *testing.T, b *client.Mailbox) *client.Result {
 	t.Helper()
 	res, err := b.Receive(context.Background())
 	if err != nil {
@@ -130,11 +130,11 @@ func left(t *testing.T, dir string, sub ...string) []string {
 }
 
 // A message that passes every check is answered once, signed by the echo
-// box, with what it checked and the body it carried, and leaves nothing
-// behind in the echo box's memory.
+// mailbox, with what it checked and the body it carried, and leaves nothing
+// behind in the echo mailbox's memory.
 func TestEchoAnswers(t *testing.T) {
 	e := newEnv(t)
-	x, a := e.echo(), e.box()
+	x, a := e.echo(), e.mailbox()
 	ctx := context.Background()
 	sent := "hello \"echo\"\n"
 	if _, err := a.Send(ctx, x.b.Address(), sent); err != nil {
@@ -147,7 +147,7 @@ func TestEchoAnswers(t *testing.T) {
 	}
 	d := res.Delivered[0]
 	if d.Envelope.From != x.b.Address() {
-		t.Fatal("the reply is not from the echo box")
+		t.Fatal("the reply is not from the echo mailbox")
 	}
 	got := body(t, d)
 	j, _ := json.Marshal(sent)
@@ -177,7 +177,7 @@ func TestEchoAnswers(t *testing.T) {
 // in_reply_to and in its body, its sent_at and the SHA-256 of its ciphertext.
 func TestEchoNamesTheMessage(t *testing.T) {
 	e := newEnv(t)
-	x, a := e.echo(), e.box()
+	x, a := e.echo(), e.mailbox()
 	ctx := context.Background()
 	r, err := a.Send(ctx, x.b.Address(), "which one")
 	if err != nil {
@@ -186,7 +186,7 @@ func TestEchoNamesTheMessage(t *testing.T) {
 	var msgID string
 	res, err := x.b.Receive(ctx)
 	if err != nil || len(res.Delivered) != 1 {
-		t.Fatalf("the echo box got nothing: %v", err)
+		t.Fatalf("the echo mailbox got nothing: %v", err)
 	}
 	msgID = res.Delivered[0].Envelope.MsgID
 	x.reply(ctx, res.Delivered[0])
@@ -211,7 +211,7 @@ func TestEchoNamesTheMessage(t *testing.T) {
 // address. It is acked and leaves nothing behind.
 func TestEchoNeverAnswersARefusal(t *testing.T) {
 	e := newEnv(t)
-	x, a := e.echo(), e.box()
+	x, a := e.echo(), e.mailbox()
 	ct := []byte("not age, and not signed by a")
 	h := sha256.Sum256(ct)
 	id := hex.EncodeToString(h[:])
@@ -242,7 +242,7 @@ func TestEchoRetriesThenDropsAReply(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := newEnv(t)
-			x, a := e.echo(), e.box()
+			x, a := e.echo(), e.mailbox()
 			if _, err := a.Send(ctx, x.b.Address(), "hold the reply"); err != nil {
 				t.Fatal(err)
 			}
@@ -286,9 +286,9 @@ func TestEchoRetriesThenDropsAReply(t *testing.T) {
 // A reply the server refuses for good is dropped, not kept in outbox/failed/.
 func TestEchoDropsAnUndeliverableReply(t *testing.T) {
 	e := newEnv(t)
-	x, a := e.echo(), e.box()
+	x, a := e.echo(), e.mailbox()
 	ctx := context.Background()
-	if _, err := a.Send(ctx, x.b.Address(), "to a box that goes"); err != nil {
+	if _, err := a.Send(ctx, x.b.Address(), "to a mailbox that goes"); err != nil {
 		t.Fatal(err)
 	}
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -305,7 +305,7 @@ func TestEchoDropsAnUndeliverableReply(t *testing.T) {
 	}
 }
 
-// Every start publishes a new prekey, and a running box renews it, through
+// Every start publishes a new prekey, and a running mailbox renews it, through
 // Receive, once it is a day old.
 func TestEchoRenewsItsPrekey(t *testing.T) {
 	e := newEnv(t)
@@ -341,7 +341,7 @@ func TestEchoRenewsItsPrekey(t *testing.T) {
 	}
 }
 
-// The first start registers the box; a later one, on the same identity,
+// The first start registers the mailbox; a later one, on the same identity,
 // keeps its address.
 func TestEchoRegistersOnce(t *testing.T) {
 	e := newEnv(t)
@@ -354,7 +354,7 @@ func TestEchoRegistersOnce(t *testing.T) {
 	}
 }
 
-// A state directory holding another box's identity is refused, never
+// A state directory holding another mailbox's identity is refused, never
 // overwritten.
 func TestEchoRefusesAnotherIdentity(t *testing.T) {
 	e := newEnv(t)
@@ -364,7 +364,7 @@ func TestEchoRefusesAnotherIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := start(context.Background(), dir, e.key, e.opts(), protocol.Classic, log.New(io.Discard, "", 0))
-	if err == nil || !strings.Contains(err.Error(), "another box's identity") {
+	if err == nil || !strings.Contains(err.Error(), "another mailbox's identity") {
 		t.Fatalf("got %v", err)
 	}
 	if held, _ := os.ReadFile(filepath.Join(dir, "identity")); string(held) != string(other) {
@@ -414,7 +414,7 @@ func (l lines) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// A running echo box holds its list, and answers a message as it arrives,
+// A running echo mailbox holds its list, and answers a message as it arrives,
 // woken in the one hold it was waiting in.
 func TestEchoAnswersInSeconds(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -437,7 +437,7 @@ func TestEchoAnswersInSeconds(t *testing.T) {
 			next.ServeHTTP(w, r)
 		})
 		// The run is ended, and waited for, before the test's cleanup removes
-		// the echo box's directory.
+		// the echo mailbox's directory.
 		ctx, cancel := context.WithCancel(context.Background())
 		ran := make(chan struct{})
 		t.Cleanup(func() { cancel(); <-ran })
@@ -445,7 +445,7 @@ func TestEchoAnswersInSeconds(t *testing.T) {
 			defer close(ran)
 			_ = x.run(ctx)
 		}()
-		time.Sleep(time.Minute) // the echo box holds its list
+		time.Sleep(time.Minute) // the echo mailbox holds its list
 		synctest.Wait()
 		sent := time.Now()
 		if _, err := a.Send(context.Background(), x.b.Address(), "woke the echo"); err != nil {
@@ -463,8 +463,8 @@ func TestEchoAnswersInSeconds(t *testing.T) {
 	})
 }
 
-// An echo box with a reply its recipient's server does not take retries it
-// once a poll interval, and lists its own box once in that interval, the
+// An echo mailbox with a reply its recipient's server does not take retries it
+// once a poll interval, and lists its own mailbox once in that interval, the
 // hold that waits for it: within the server's poll budget.
 func TestEchoHoldsWithAReplyPending(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {

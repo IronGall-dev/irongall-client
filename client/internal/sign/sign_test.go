@@ -23,9 +23,9 @@ import (
 // Nothing in the module signs but this package: no other file outside
 // protocol and sshsig, which make signatures for whoever holds a key, calls
 // one of their signing functions, or a method that signs (an ssh.Signer's
-// Sign or SignWithAlgorithm, a certificate's SignCert). So a box's keys sign
+// Sign or SignWithAlgorithm, a certificate's SignCert). So a mailbox's keys sign
 // only through Identity and Work, and every signature is refused once the
-// box is finished, however a new path reaches one. internal/forge signs as a
+// mailbox is finished, however a new path reaches one. internal/forge signs as a
 // test's operator does, as a _test.go file may, so it is read as one: no
 // file but a test imports it.
 func TestOnlySignSigns(t *testing.T) {
@@ -70,9 +70,9 @@ func TestOnlySignSigns(t *testing.T) {
 				return true
 			}
 			if pkg, ok := sel.X.(*ast.Ident); ok && slices.Contains(signing[pkg.Name], sel.Sel.Name) {
-				t.Errorf("%s: calls %s.%s: a box signs only through package sign", rel, pkg.Name, sel.Sel.Name)
+				t.Errorf("%s: calls %s.%s: a mailbox signs only through package sign", rel, pkg.Name, sel.Sel.Name)
 			} else if slices.Contains(methods, sel.Sel.Name) {
-				t.Errorf("%s: calls a method %s: a box signs only through package sign", rel, sel.Sel.Name)
+				t.Errorf("%s: calls a method %s: a mailbox signs only through package sign", rel, sel.Sel.Name)
 			}
 			return true
 		})
@@ -86,9 +86,9 @@ func TestOnlySignSigns(t *testing.T) {
 	}
 }
 
-// Every way Identity and Work sign is refused once the box is finished,
+// Every way Identity and Work sign is refused once the mailbox is finished,
 // before anything is signed.
-func TestAFinishedBoxSignsNothing(t *testing.T) {
+func TestAFinishedMailboxSignsNothing(t *testing.T) {
 	_, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -109,14 +109,14 @@ func TestAFinishedBoxSignsNothing(t *testing.T) {
 	}
 	for name, f := range tried {
 		if err := f(); !errors.Is(err, gone) {
-			t.Errorf("%s on a finished box: %v", name, err)
+			t.Errorf("%s on a finished mailbox: %v", name, err)
 		}
 	}
 	// Every method but PublicKey signs, and is tried above.
 	for _, typ := range []reflect.Type{reflect.TypeOf(id), reflect.TypeOf(work)} {
 		for i := range typ.NumMethod() {
 			if m := typ.Method(i).Name; m != "PublicKey" && tried[m] == nil {
-				t.Errorf("%s.%s is not tried on a finished box", typ.Elem().Name(), m)
+				t.Errorf("%s.%s is not tried on a finished mailbox", typ.Elem().Name(), m)
 			}
 		}
 	}

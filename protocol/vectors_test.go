@@ -58,10 +58,10 @@ func vectorNow(t *testing.T) time.Time {
 	return now
 }
 
-// vectorKey returns a box's RFC 8032 test key from input/<box>.ed25519.
-func vectorKey(t testing.TB, box string) (ssh.Signer, ed25519.PublicKey) {
+// vectorKey returns a mailbox's RFC 8032 test key from input/<mailbox>.ed25519.
+func vectorKey(t testing.TB, mailbox string) (ssh.Signer, ed25519.PublicKey) {
 	t.Helper()
-	s := bufio.NewScanner(bytes.NewReader(read(t, "input/"+box+".ed25519")))
+	s := bufio.NewScanner(bytes.NewReader(read(t, "input/"+mailbox+".ed25519")))
 	var lines [][]byte
 	for s.Scan() {
 		b, err := hex.DecodeString(s.Text())
@@ -72,7 +72,7 @@ func vectorKey(t testing.TB, box string) (ssh.Signer, ed25519.PublicKey) {
 	}
 	priv := ed25519.NewKeyFromSeed(lines[0])
 	if !bytes.Equal(priv.Public().(ed25519.PublicKey), lines[1]) {
-		t.Fatalf("%s: the seed does not give the public key", box)
+		t.Fatalf("%s: the seed does not give the public key", mailbox)
 	}
 	signer, err := ssh.NewSignerFromKey(priv)
 	if err != nil {
@@ -81,33 +81,33 @@ func vectorKey(t testing.TB, box string) (ssh.Signer, ed25519.PublicKey) {
 	return signer, lines[1]
 }
 
-func vectorIdentity(t *testing.T, box string) *Identity {
+func vectorIdentity(t *testing.T, mailbox string) *Identity {
 	t.Helper()
-	id, err := ParseIdentity(read(t, box+"/identity.doc"))
+	id, err := ParseIdentity(read(t, mailbox+"/identity.doc"))
 	if err != nil {
-		t.Fatalf("%s: %v", box, err)
+		t.Fatalf("%s: %v", mailbox, err)
 	}
 	return id
 }
 
 func TestVectorIdentities(t *testing.T) {
-	for _, box := range []string{"a", "b"} {
-		id := vectorIdentity(t, box)
-		if got, want := id.Address().String(), strings.TrimSpace(string(read(t, box+"/address"))); got != want {
-			t.Errorf("%s: address %s, want %s", box, got, want)
+	for _, mailbox := range []string{"a", "b"} {
+		id := vectorIdentity(t, mailbox)
+		if got, want := id.Address().String(), strings.TrimSpace(string(read(t, mailbox+"/address"))); got != want {
+			t.Errorf("%s: address %s, want %s", mailbox, got, want)
 		}
-		_, pub := vectorKey(t, box)
+		_, pub := vectorKey(t, mailbox)
 		built, err := NewIdentity(pub)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.Equal(built.Document(), read(t, box+"/identity.doc")) {
-			t.Errorf("%s: NewIdentity built a different document", box)
+		if !bytes.Equal(built.Document(), read(t, mailbox+"/identity.doc")) {
+			t.Errorf("%s: NewIdentity built a different document", mailbox)
 		}
 	}
 }
 
-// Box C's identity is of the optional type, and everything a box says is
+// Mailbox C's identity is of the optional type, and everything a mailbox says is
 // checked under it as under an Ed25519 one.
 func TestVectorP256Identity(t *testing.T) {
 	now := vectorNow(t)
@@ -231,14 +231,14 @@ func vectorCertificate(t *testing.T, name string) ssh.PublicKey {
 	return key
 }
 
-// vectorWorker returns a box's working key as a signer under its kept
+// vectorWorker returns a mailbox's working key as a signer under its kept
 // certificate: what "ssh-keygen -Y sign -f work-cert.pub" signs with.
-func vectorWorker(t *testing.T, box string) ssh.Signer {
+func vectorWorker(t *testing.T, mailbox string) ssh.Signer {
 	t.Helper()
-	work, _ := vectorKey(t, box+"-work")
-	cert, err := CheckCertificate(vectorIdentity(t, box), vectorCertificate(t, box+"/work-cert.pub"), vectorNow(t))
+	work, _ := vectorKey(t, mailbox+"-work")
+	cert, err := CheckCertificate(vectorIdentity(t, mailbox), vectorCertificate(t, mailbox+"/work-cert.pub"), vectorNow(t))
 	if err != nil {
-		t.Fatalf("%s/work-cert.pub: %v", box, err)
+		t.Fatalf("%s/work-cert.pub: %v", mailbox, err)
 	}
 	s, err := cert.Signer(work)
 	if err != nil {
@@ -510,7 +510,7 @@ func TestAPrekeyOfATypeThisClientLacks(t *testing.T) {
 	}
 
 	// The type is asked last: the same key in a statement that names another
-	// box, or that outlives its certificate, is a statement that does not
+	// mailbox, or that outlives its certificate, is a statement that does not
 	// verify.
 	now := vectorNow(t)
 	a, b := vectorIdentity(t, "a"), vectorIdentity(t, "b")
@@ -615,9 +615,9 @@ func TestVectorSignatureForms(t *testing.T) {
 
 // Each identity key type states its own bound on a signature, and
 // MaxSignature, what a verifier holds one to before it knows the type, is the
-// largest of them. What a box signs is held to its identity's: with that
-// bound lowered, every verifier refuses the box's signatures, a pass's
-// included, and another type's box is untouched (PROTOCOL.md §3.2).
+// largest of them. What a mailbox signs is held to its identity's: with that
+// bound lowered, every verifier refuses the mailbox's signatures, a pass's
+// included, and another type's mailbox is untouched (PROTOCOL.md §3.2).
 func TestASignatureIsHeldToItsIdentitysBound(t *testing.T) {
 	most := 0
 	for _, ty := range IdentityTypes() {
@@ -754,18 +754,18 @@ var plainVerdicts = map[string]string{
 	"accept-anything-after-the-signature":                "",
 	"accept-every-field":                                 "",
 	"accept-body-more-precise-than-binary64":             "",
-	"refuse-signed-for-another-box":                      RefusedSignature,
+	"refuse-signed-for-another-mailbox":                  RefusedSignature,
 	"refuse-signed-by-the-identity":                      RefusedSignature,
 	"refuse-signed-by-a-bare-working-key":                RefusedSignature,
 	"refuse-certificate-ended":                           RefusedSignature,
 	"refuse-line-changed-after-signing":                  RefusedSignature,
-	"refuse-another-box-s-identity-document":             RefusedSignature,
+	"refuse-another-mailbox-s-identity-document":         RefusedSignature,
 	"refuse-from-is-not-the-identity":                    RefusedAttribution,
 	"refuse-from-null":                                   RefusedAttribution,
 	"accept-p256-sender":                                 "",
 	"refuse-unsupported-key-type":                        RefusedKeyType,
 	"refuse-from-is-not-the-identity-of-an-unknown-type": RefusedAttribution,
-	"refuse-to-another-box":                              RefusedAttribution,
+	"refuse-to-another-mailbox":                          RefusedAttribution,
 	"refuse-no-identity":                                 RefusedIdentity,
 	"refuse-identity-not-base64":                         RefusedIdentity,
 	"refuse-identity-ending-in-a-line-feed":              RefusedIdentity,
@@ -926,7 +926,7 @@ func TestVectorEnvelopes(t *testing.T) {
 				"refuse-1-hour-and-1s-ahead": RefusedFuture,
 				"refuse-from-not-signer":     RefusedAttribution,
 				"refuse-from-null":           RefusedAttribution, // null is a member left out
-				"refuse-to-another-box":      RefusedAttribution,
+				"refuse-to-another-mailbox":  RefusedAttribution,
 			}[name]
 			if want == "" {
 				want = RefusedEnvelope // an uppercase from or to is no address at all

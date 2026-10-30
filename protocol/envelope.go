@@ -20,7 +20,7 @@ const (
 	EnvelopeVersion = 1
 	// TTL is how old a message may be, counted from its sent_at, which its
 	// sender dates afresh at every post: 33 days, a prekey's longest life, so
-	// a box that checks in at least monthly loses neither new mail nor held
+	// a mailbox that checks in at least monthly loses neither new mail nor held
 	// mail. Every window of mail's age derives from it: the recipient's
 	// sent_at window, how long a server keeps mail (Retention), the replay
 	// set (SeenFor), how long the sender's outbox posts an entry, and the
@@ -65,8 +65,8 @@ const (
 	RefusedEnvelope    = "bad_envelope"         // not UTF-8 JSON, one object with no key twice, version 1, with a body, a msg_id and a sent_at
 	RefusedIdentity    = "bad_identity"         // the envelope carries no identity document, or one that breaks its format or its key checks
 	RefusedKeyType     = "unsupported_key_type" // the sender's identity is a well-formed document of a key type this client does not verify
-	RefusedSignature   = "bad_signature"        // not signed for this box by a working key the sender's identity certified, under a certificate valid now
-	RefusedAttribution = "reattributed"         // its from is not the address of the identity that signed it, or its to is not this box
+	RefusedSignature   = "bad_signature"        // not signed for this mailbox by a working key the sender's identity certified, under a certificate valid now
+	RefusedAttribution = "reattributed"         // its from is not the address of the identity that signed it, or its to is not this mailbox
 	RefusedStale       = "stale"                // its sent_at is older than TTL
 	RefusedFuture      = "future"               // its sent_at is more than MaxSkew ahead of the reader's clock
 )
@@ -120,7 +120,7 @@ type wireEnvelope struct {
 	Supersedes string          `json:"supersedes,omitempty"`
 }
 
-// NewEnvelope returns an envelope from one box to another with a string body,
+// NewEnvelope returns an envelope from one mailbox to another with a string body,
 // sent now, with a fresh msg_id.
 func NewEnvelope(from, to Address, body string, now time.Time) (*Envelope, error) {
 	if !utf8.ValidString(body) {
@@ -203,9 +203,9 @@ func (e *Envelope) Line() ([]byte, error) {
 // JSON, one object with no key twice; it has a body, and every member it
 // reads is of its type (from and to are addresses, 64 lowercase hex); it is
 // version 1, an integer written as one; its from is the VERIFIED signer and
-// its to is this box (a signature holds for one recipient, so a mismatch is a
-// message passed on to a box it was not written to, or one whose from names a
-// box that did not sign it); it has a msg_id; and sent_at is no older than TTL
+// its to is this mailbox (a signature holds for one recipient, so a mismatch is a
+// message passed on to a mailbox it was not written to, or one whose from names a
+// mailbox that did not sign it); it has a msg_id; and sent_at is no older than TTL
 // at now, and no more than MaxSkew ahead of it. A null member is one left out
 // (PROTOCOL.md §3.3), but for the body, whose null is a value.
 //
@@ -232,9 +232,9 @@ func OpenEnvelope(plaintext []byte, signer, me Address, now time.Time) (*Envelop
 }
 
 // OpenEnvelopeRecord checks an envelope as OpenEnvelope does, but for its
-// sent_at, which it only parses: no clock is read. It is how a box reads back
+// sent_at, which it only parses: no clock is read. It is how a mailbox reads back
 // an envelope it made itself, in its outbox or its sent/ record, whose age is
-// its own to judge. Nobody judging another box's mail uses it.
+// its own to judge. Nobody judging another mailbox's mail uses it.
 func OpenEnvelopeRecord(plaintext []byte, signer, me Address) (*Envelope, error) {
 	if !utf8.Valid(plaintext) {
 		return nil, badEnvelope("the envelope is not UTF-8")
@@ -265,7 +265,7 @@ func OpenEnvelopeRecord(plaintext []byte, signer, me Address) (*Envelope, error)
 		return nil, badEnvelope("unknown envelope version: v is the JSON number 1")
 	}
 	if w.From != signer || w.To != me {
-		return nil, &EnvelopeError{RefusedAttribution, "the inner from/to do not match the signer and this box (re-attribution)"}
+		return nil, &EnvelopeError{RefusedAttribution, "the inner from/to do not match the signer and this mailbox (re-attribution)"}
 	}
 	if !msgIDGrammar.MatchString(w.MsgID) {
 		return nil, badEnvelope("the envelope has no valid msg_id")

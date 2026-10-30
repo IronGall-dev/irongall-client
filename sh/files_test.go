@@ -20,11 +20,11 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// A box's own files in the script, as the Go client keeps them: made from
+// A mailbox's own files in the script, as the Go client keeps them: made from
 // the identity, written beside and moved into place, and made again where a
 // crash left one empty.
 
-// addressIn is the address in the box line init prints.
+// addressIn is the address in the mailbox line init prints.
 func addressIn(t *testing.T, srv *fakeserver.Server, out string) protocol.Address {
 	t.Helper()
 	a, err := protocol.ParseAddress(strings.TrimPrefix(linkIn(t, out), srv.URL+protocol.LinkPath))
@@ -48,7 +48,7 @@ func stats(t *testing.T, dir string, names ...string) map[string]os.FileInfo {
 	return m
 }
 
-// newestKey is the box's prekey key file of the highest serial.
+// newestKey is the mailbox's prekey key file of the highest serial.
 func newestKey(t *testing.T, dir string) string {
 	t.Helper()
 	keys, _ := filepath.Glob(filepath.Join(dir, "prekeys", "*.agekey"))
@@ -59,9 +59,9 @@ func newestKey(t *testing.T, dir string) string {
 	return keys[len(keys)-1]
 }
 
-// A box restored from its identity alone, in an empty directory, renews at a
+// A mailbox restored from its identity alone, in an empty directory, renews at a
 // server that still holds it and at one that forgot it, as the README
-// restores a box: the script makes its directories, identity.pub,
+// restores a mailbox: the script makes its directories, identity.pub,
 // identity.doc and the same address from the identity (#231, #243), mail
 // sent to it is delivered, and init on it then rewrites none of them.
 func TestTheScriptRestoresABoxFromItsIdentityAlone(t *testing.T) {
@@ -86,10 +86,10 @@ func TestTheScriptRestoresABoxFromItsIdentityAlone(t *testing.T) {
 		env := []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}
 		n0 := len(srv.Requests())
 		if out, err := bash(t, env, "dr_rekey --no-pq 2> \"$DR/../rekey.err\""); err != nil || !strings.HasPrefix(out, `{"type":"prekey",`) || exists(filepath.Join(dir, "..", "rekey.err")) {
-			t.Fatalf("forgotten %v: a renewal of the box restored from its identity alone: %v %q", forgotten, err, out)
+			t.Fatalf("forgotten %v: a renewal of the mailbox restored from its identity alone: %v %q", forgotten, err, out)
 		}
 		// It needs no record of the numbers it used: its own is above the lost
-		// machine's where the server serves that box, and is the clock's where
+		// machine's where the server serves that mailbox, and is the clock's where
 		// it serves none, so the two share one only in the same second
 		// (PROTOCOL.md §5). It has a working key and a pass.
 		n, _ := strconv.ParseUint(strings.TrimSpace(string(mustRead(t, filepath.Join(dir, "serial")))), 10, 64)
@@ -97,46 +97,46 @@ func TestTheScriptRestoresABoxFromItsIdentityAlone(t *testing.T) {
 		st, _ := srv.Prekey(a)
 		if n < was || !forgotten && n == was || strings.Split(string(st), "\n")[2] != strconv.FormatUint(n, 10) ||
 			!exists(filepath.Join(dir, "work", strconv.FormatUint(n, 10))) || !exists(filepath.Join(dir, "pass")) {
-			t.Errorf("forgotten %v: the restored box published %d after the lost machine's %d, served %q", forgotten, n, was, st)
+			t.Errorf("forgotten %v: the restored mailbox published %d after the lost machine's %d, served %q", forgotten, n, was, st)
 		}
 		if _, err := bash(t, env, `dr_idcheck "$DR/identity.doc" `+a.String()); err != nil {
 			t.Errorf("forgotten %v: the restored identity document: %v", forgotten, err)
 		}
 		if forgotten && !slices.ContainsFunc(srv.Requests()[n0:], func(r fakeserver.Request) bool { return r.Method == http.MethodPut && r.Path == "/v1/"+a.String() }) {
-			t.Errorf("forgotten %v: the box was not registered anew", forgotten)
+			t.Errorf("forgotten %v: the mailbox was not registered anew", forgotten)
 		}
 		for _, f := range []string{"identity.doc", "address"} {
 			if string(mustRead(t, filepath.Join(dir, f))) != string(mustRead(t, filepath.Join(lost, f))) {
-				t.Errorf("forgotten %v: the restored box's %s is not the lost machine's", forgotten, f)
+				t.Errorf("forgotten %v: the restored mailbox's %s is not the lost machine's", forgotten, f)
 			}
 		}
 		if !exists(filepath.Join(dir, "identity.pub")) {
-			t.Errorf("forgotten %v: the restored box has no identity.pub", forgotten)
+			t.Errorf("forgotten %v: the restored mailbox has no identity.pub", forgotten)
 		}
 		g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL}, protocol.Classic)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if _, err := g.Send(ctx, a, "after the restore"); err != nil {
-			t.Fatalf("forgotten %v: a send to the restored box: %v", forgotten, err)
+			t.Fatalf("forgotten %v: a send to the restored mailbox: %v", forgotten, err)
 		}
 		if out, err := bash(t, env, "dr_recv"); err != nil || !strings.Contains(out, `"body":"after the restore"`) {
-			t.Errorf("forgotten %v: the restored box's recv: %v %q", forgotten, err, out)
+			t.Errorf("forgotten %v: the restored mailbox's recv: %v %q", forgotten, err, out)
 		}
 		before := stats(t, dir, "identity.doc", "address")
 		if out, err := bash(t, env, "dr_init --no-pq"); err != nil || addressIn(t, srv, out) != a {
-			t.Errorf("forgotten %v: init on the restored box: %v %q", forgotten, err, out)
+			t.Errorf("forgotten %v: init on the restored mailbox: %v %q", forgotten, err, out)
 		}
 		for n, fi := range stats(t, dir, "identity.doc", "address") {
 			if !os.SameFile(before[n], fi) || !before[n].ModTime().Equal(fi.ModTime()) {
-				t.Errorf("forgotten %v: init on the restored box rewrote %s", forgotten, n)
+				t.Errorf("forgotten %v: init on the restored mailbox rewrote %s", forgotten, n)
 			}
 		}
 	}
 }
 
-// init run again on a registered box writes neither identity.doc nor
-// address, which every other command of the box reads: each is written only
+// init run again on a registered mailbox writes neither identity.doc nor
+// address, which every other command of the mailbox reads: each is written only
 // where its bytes differ, beside and moved into place (#234). Held where it
 // hashes the document, it leaves both whole for whoever reads them then.
 // And it makes an address that is gone again.
@@ -163,7 +163,7 @@ func TestAnInitRunAgainRewritesNothing(t *testing.T) {
 	time.Sleep(time.Second)
 	mid := map[string]string{}
 	for _, f := range files {
-		b, _ := os.ReadFile(filepath.Join(dir, f)) //nolint:gosec // a file the test's box keeps
+		b, _ := os.ReadFile(filepath.Join(dir, f)) //nolint:gosec // a file the test's mailbox keeps
 		mid[f] = string(b)
 	}
 	if err := <-done; err != nil {
@@ -181,12 +181,12 @@ func TestAnInitRunAgainRewritesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := bash(t, env, "dr_init --no-pq"); err != nil || string(mustRead(t, filepath.Join(dir, "address"))) != was["address"] {
-		t.Errorf("init did not make the box's address again: %v", err)
+		t.Errorf("init did not make the mailbox's address again: %v", err)
 	}
 }
 
-// init makes identity.doc and address under the box's lock, as every
-// command that writes the box makes them, so that it never writes them
+// init makes identity.doc and address under the mailbox's lock, as every
+// command that writes the mailbox makes them, so that it never writes them
 // beside a command that reads them: while another command holds the lock,
 // init waits, and writes neither.
 func TestInitMakesTheIdentityFilesUnderTheLock(t *testing.T) {
@@ -203,7 +203,7 @@ func TestInitMakesTheIdentityFilesUnderTheLock(t *testing.T) {
 	if err := os.Remove(doc); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Mkdir(filepath.Join(dir, "lock"), 0o700); err != nil { // another command of the box holds its lock
+	if err := os.Mkdir(filepath.Join(dir, "lock"), 0o700); err != nil { // another command of the mailbox holds its lock
 		t.Fatal(err)
 	}
 	if _, err := bash(t, env, "dr_init --no-pq"); err == nil || !strings.Contains(err.Error(), "held its lock") {
@@ -220,9 +220,9 @@ func TestInitMakesTheIdentityFilesUnderTheLock(t *testing.T) {
 	}
 }
 
-// The document the box's files are made from is checked before it is
+// The document the mailbox's files are made from is checked before it is
 // written: an identity.pub out of form, where identity.doc is to be made
-// again, is refused, and the box keeps its address, where it would
+// again, is refused, and the mailbox keeps its address, where it would
 // otherwise take the hash of what that file holds.
 func TestAnIdentityPubOutOfFormIsRefused(t *testing.T) {
 	t.Parallel()
@@ -244,7 +244,7 @@ func TestAnIdentityPubOutOfFormIsRefused(t *testing.T) {
 		t.Errorf("a renewal with identity.pub out of form: %v", err)
 	}
 	if got := string(mustRead(t, filepath.Join(dir, "address"))); got != was {
-		t.Errorf("the box's address became %q", got)
+		t.Errorf("the mailbox's address became %q", got)
 	}
 }
 
@@ -326,9 +326,9 @@ func TestAnInitCrashedBeforeItsIdentityIsSyncedRegisters(t *testing.T) {
 // under a floor at least as high (#240).
 func TestTheScriptSyncsInItsOrder(t *testing.T) {
 	w := newWorld(t)
-	b := w.box()
+	b := w.mailbox()
 	// calls runs commands with sync and mv logged, and returns each call
-	// fn made, its paths relative to the box.
+	// fn made, its paths relative to the mailbox.
 	calls := func(fn, commands string) []string {
 		t.Helper()
 		log := filepath.Join(t.TempDir(), "log")
@@ -371,7 +371,7 @@ mv(){ printf '%s mv %s\n' "${FUNCNAME[1]}" "$*" >> "$LOG"; command mv "$@"; }
 	}
 }
 
-// .gitignore is written beside and moved into place, as every file a box
+// .gitignore is written beside and moved into place, as every file a mailbox
 // keeps is, so a crash leaves the old file or the new one (#239): each write
 // is a new file, never one written in place.
 func TestGitignoreIsMovedIntoPlace(t *testing.T) {
@@ -392,10 +392,10 @@ func TestGitignoreIsMovedIntoPlace(t *testing.T) {
 	}
 }
 
-// A box its server has forgotten renews as a registration, once it has read
+// A mailbox its server has forgotten renews as a registration, once it has read
 // what the server holds of its revocations (PROTOCOL.md §12.4, §13). A 2xx
 // there that is no record, not JSON or not an object, stops the renewal with
-// a refusal that says so, as an answer for the box's own read does (#230): the
+// a refusal that says so, as an answer for the mailbox's own read does (#230): the
 // script once exited 1 with no line. A record that holds nothing lets the
 // renewal go on.
 func TestAForgottenBoxsRenewalRefusesARevocationsAnswerThatIsNoRecord(t *testing.T) {
@@ -429,7 +429,7 @@ func TestAForgottenBoxsRenewalRefusesARevocationsAnswerThatIsNoRecord(t *testing
 	}
 	for _, body := range []string{"not json", `["a record"]`} {
 		set(body)
-		if _, err := bash(t, env, "dr_rekey --no-pq"); err == nil || !strings.Contains(err.Error(), `"REFUSED: the server's answer for this box's revocations is not one this client reads`) {
+		if _, err := bash(t, env, "dr_rekey --no-pq"); err == nil || !strings.Contains(err.Error(), `"REFUSED: the server's answer for this mailbox's revocations is not one this client reads`) {
 			t.Errorf("%s: %v", body, err)
 		}
 	}
@@ -460,7 +460,7 @@ func dyingJQ(t *testing.T, match ...string) string {
 	return bin
 }
 
-// A file a box keeps of a message, in inbox/, refused/ or sent/, is
+// A file a mailbox keeps of a message, in inbox/, refused/ or sent/, is
 // written beside it and moved into place (#273): a jq stopped while it
 // writes one leaves no file cut short for status and show to read, and
 // nothing beside it; the message is delivered, kept or recorded at the next
@@ -498,7 +498,7 @@ func TestAKeptMessageFileIsWrittenBesideAndMoved(t *testing.T) {
 		match     []string
 		waiting   func()
 	}{
-		{"inbox", `{"type":"mail",`, []string{"-j", "--slurpfile", "r", "/dev/null"}, func() {
+		{"inbox", `{"type":"message",`, []string{"-j", "--slurpfile", "r", "/dev/null"}, func() {
 			if _, err := g.Send(ctx, me, "hello"); err != nil {
 				t.Fatal(err)
 			}
@@ -532,9 +532,9 @@ func TestAKeptMessageFileIsWrittenBesideAndMoved(t *testing.T) {
 	}
 }
 
-// addr on a directory that holds no box refuses with one error line and
+// addr on a directory that holds no mailbox refuses with one error line and
 // exits 1, as every command of the script does (#274); addr
-// on a box restored from its identity alone prints its address, the box's
+// on a mailbox restored from its identity alone prints its address, the mailbox's
 // files made from the identity first, as the Go client's Open makes them.
 func TestAddrNeedsABox(t *testing.T) {
 	t.Parallel()
@@ -552,12 +552,12 @@ func TestAddrNeedsABox(t *testing.T) {
 	empty := t.TempDir()
 	for _, args := range [][]string{{"addr"}} {
 		out, errs, code := command(empty, args...)
-		if code != 1 || out != "" || errs != `{"type":"error","message":"REFUSED: no box in `+empty+`: run init first"}`+"\n" {
-			t.Errorf("%v with no box: exit %d, stdout %q, stderr %q", args, code, out, errs)
+		if code != 1 || out != "" || errs != `{"type":"error","detail":"REFUSED: no mailbox in `+empty+`: run init first"}`+"\n" {
+			t.Errorf("%v with no mailbox: exit %d, stdout %q, stderr %q", args, code, out, errs)
 		}
 	}
 	if ls, _ := os.ReadDir(empty); len(ls) != 0 {
-		t.Errorf("addr with no box wrote %v", ls)
+		t.Errorf("addr with no mailbox wrote %v", ls)
 	}
 	lost := t.TempDir()
 	out, err := bash(t, []string{"DR_HOME=" + lost, "DR_SERVER_URL=" + srv.URL}, "dr_init --no-pq")
@@ -569,6 +569,6 @@ func TestAddrNeedsABox(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got, errs, code := command(dir, "addr"); code != 0 || got != out || errs != "" {
-		t.Errorf("addr on a box restored from its identity alone: exit %d, stdout %q, stderr %q, want %q", code, got, errs, out)
+		t.Errorf("addr on a mailbox restored from its identity alone: exit %d, stdout %q, stderr %q, want %q", code, got, errs, out)
 	}
 }

@@ -18,12 +18,12 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// The script's box renewed, pruned, restored and drained against a server
+// The script's mailbox renewed, pruned, restored and drained against a server
 // that forges.
 
-// newest is the highest number the box signed a prekey statement at,
+// newest is the highest number the mailbox signed a prekey statement at,
 // published or not.
-func (b *sbox) newest() uint64 {
+func (b *shMailbox) newest() uint64 {
 	b.w.t.Helper()
 	var top uint64
 	for _, f := range b.files("prekeys") {
@@ -38,8 +38,8 @@ func (b *sbox) newest() uint64 {
 	return top
 }
 
-// dated rewrites the not_after of the box's prekey statement n to at.
-func (b *sbox) dated(n uint64, at time.Time) {
+// dated rewrites the not_after of the mailbox's prekey statement n to at.
+func (b *shMailbox) dated(n uint64, at time.Time) {
 	b.w.t.Helper()
 	f := b.file(fmt.Sprintf("prekeys/%d.txt", n))
 	if err := os.WriteFile(f, withLine(mustRead(b.w.t, f), 5, at.UTC().Format(protocol.TimeLayout)), 0o600); err != nil {
@@ -55,12 +55,12 @@ func writeFile(t *testing.T, name string, data []byte) {
 	}
 }
 
-// once serves box b's read with the statement given once, then as held.
-func (w *world) once(b *sbox, s stmt) {
+// once serves mailbox b's read with the statement given once, then as held.
+func (w *world) once(b *shMailbox, s stmt) {
 	var done atomic.Bool
 	w.srv.SetMiddle(func(rw http.ResponseWriter, r *http.Request, next http.Handler) {
 		if x, ok := forge.ReadOf(r); ok && x == b.addr && done.CompareAndSwap(false, true) {
-			forge.Serve(w.t, w.srv, rw, r, next, func(br *protocol.BoxResponse) { br.Prekey, br.PrekeySignature = s.st, s.sig })
+			forge.Serve(w.t, w.srv, rw, r, next, func(br *protocol.MailboxResponse) { br.Prekey, br.PrekeySignature = s.st, s.sig })
 			return
 		}
 		next.ServeHTTP(rw, r)
@@ -72,7 +72,7 @@ func (w *world) once(b *sbox, s stmt) {
 // handed one by a stale cache seals the same envelope again to the next.
 func TestScriptRenews(t *testing.T) {
 	w := newWorld(t)
-	a, b, c := w.box(), w.box(), w.box()
+	a, b, c := w.mailbox(), w.mailbox(), w.mailbox()
 	a.mustSend(b, "before the renewal")
 	b.recv()
 	b1, pass := b.num(), b.read("pass")
@@ -115,7 +115,7 @@ func TestScriptRenews(t *testing.T) {
 	w.serving(b, first)
 	n := len(w.srv.Requests())
 	if r := b.sh("dr_rekey"); r.rc == 0 || !strings.Contains(r.err, "rollback") || slices.Contains(w.calls(n), "PUT /v1/"+b.addr.String()+"/prekey") {
-		t.Errorf("a rollback of the box's own prekey: %v, %q", r, w.calls(n))
+		t.Errorf("a rollback of the mailbox's own prekey: %v, %q", r, w.calls(n))
 	}
 	w.once(b, first)
 	if r := c.send(b.addr.String(), "via a stale cache"); r.rc != 0 || !strings.Contains(r.err, "stale_prekey") || c.read(peer+"serial") != fmt.Sprintln(b2) {
@@ -126,14 +126,14 @@ func TestScriptRenews(t *testing.T) {
 	}
 }
 
-// A statement served in the box's name under the certificate it signs
-// under, that it did not make, means another holds that working key: the box
+// A statement served in the mailbox's name under the certificate it signs
+// under, that it did not make, means another holds that working key: the mailbox
 // signs no mail under it (PROTOCOL.md §12.4; #442 item 4). A renewal that read
-// it and then failed leaves the box under that certificate; one that goes
+// it and then failed leaves the mailbox under that certificate; one that goes
 // through moves it to a new one, which signs again.
 func TestScriptSignsNoMailUnderAWorkingKeyAnotherHolds(t *testing.T) {
 	w := newWorld(t)
-	a, b := w.box(), w.box()
+	a, b := w.mailbox(), w.mailbox()
 	b.mustSend(a, "before")
 	n := b.num()
 	w.serving(b, w.statement(b, n+1, w.operator().recipient(), notAfter(), b.file(fmt.Sprintf("work/%d-cert.pub", n))))
@@ -162,7 +162,7 @@ func TestScriptSignsNoMailUnderAWorkingKeyAnotherHolds(t *testing.T) {
 // its not_after and 33 days; the newest never; then its mail is unrecoverable.
 func TestScriptDeletesARetiredPrekey(t *testing.T) {
 	w := newWorld(t)
-	a, b := w.box(), w.box()
+	a, b := w.mailbox(), w.mailbox()
 	b1 := b.num()
 	posted := forge.Capture(w.srv, http.MethodPost, "/messages")
 	a.mustSend(b, "to the first key")
@@ -188,7 +188,7 @@ func TestScriptDeletesARetiredPrekey(t *testing.T) {
 		t.Errorf("dr_prune past not_after and 33 days: %q", b.files("prekeys"))
 	}
 	if decrypts(b.file(fmt.Sprintf("prekeys/%d.agekey", b2))) {
-		t.Error("mail to the deleted key still decrypts with the box's keys")
+		t.Error("mail to the deleted key still decrypts with the mailbox's keys")
 	}
 	held := b.read(fmt.Sprintf("prekeys/%d.txt", b2))
 	b.dated(b2, time.Now().Add(-34*24*time.Hour))
@@ -198,7 +198,7 @@ func TestScriptDeletesARetiredPrekey(t *testing.T) {
 	}
 	writeFile(t, b.file(fmt.Sprintf("prekeys/%d.txt", b2)), []byte(held))
 	// dr_recv prunes, by the reading at which the server answered its list.
-	p := w.box()
+	p := w.mailbox()
 	p1 := p.newest()
 	p.must("dr_rekey")
 	p.dated(p1, time.Now().Add(-34*24*time.Hour))
@@ -209,10 +209,10 @@ func TestScriptDeletesARetiredPrekey(t *testing.T) {
 
 // A drain follows every page; a pass the server refuses is replaced on the
 // way; a command waits for the lock and leaves none behind when killed; a
-// fault in the box itself stops the drain with nothing judged or acked.
+// fault in the mailbox itself stops the drain with nothing judged or acked.
 func TestScriptDrainsEveryPageAndHoldsTheLock(t *testing.T) {
 	w := newWorld(t)
-	a, b := w.box(), w.box()
+	a, b := w.mailbox(), w.mailbox()
 	old := b.read("pass")
 	b.must("dr_rekey") // the pass kept from before is under a certificate the server no longer takes
 	for i := 1; i <= 3; i++ {
@@ -235,7 +235,7 @@ func TestScriptDrainsEveryPageAndHoldsTheLock(t *testing.T) {
 	if err := os.Mkdir(b.file("lock"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if r := b.sh("DR_LOCK_WAIT=1 dr_recv"); r.rc == 0 || !strings.Contains(r.err, "waiting for this box's lock") || !strings.Contains(r.err, "held its lock") {
+	if r := b.sh("DR_LOCK_WAIT=1 dr_recv"); r.rc == 0 || !strings.Contains(r.err, "waiting for this mailbox's lock") || !strings.Contains(r.err, "held its lock") {
 		t.Errorf("a command while another holds the lock: %v", r)
 	}
 	before, _ := w.served(b)
@@ -253,11 +253,11 @@ func TestScriptDrainsEveryPageAndHoldsTheLock(t *testing.T) {
 	held := filepath.Join(w.work, "held")
 	b.must(`mkdir ` + held + `; mv "$DR"/prekeys/*.agekey ` + held)
 	if d := b.recv(); d.rc == 0 || w.srv.Count(b.addr) != 1 || !slices.Equal(b.files("refused"), q) || !strings.Contains(d.said, "no prekeys") {
-		t.Errorf("a drain with the box's prekeys gone: %v", d)
+		t.Errorf("a drain with the mailbox's prekeys gone: %v", d)
 	}
 	b.must(`mv ` + held + `/*.agekey "$DR/prekeys/"`)
 	if d := b.recv(); !slices.Equal(d.bodies(), []string{"kept"}) || w.srv.Count(b.addr) != 0 {
-		t.Errorf("the drain once the box is fixed: %v", d)
+		t.Errorf("the drain once the mailbox is fixed: %v", d)
 	}
 }
 
@@ -266,7 +266,7 @@ func TestScriptDrainsEveryPageAndHoldsTheLock(t *testing.T) {
 // else (#356), named <address>.<msg_id>.
 func TestScriptKeepsWhatWasSent(t *testing.T) {
 	w := newWorld(t)
-	a, b := w.box(), w.box()
+	a, b := w.mailbox(), w.mailbox()
 	receipts := map[string]string{}
 	w.srv.SetMiddle(func(rw http.ResponseWriter, r *http.Request, next http.Handler) {
 		if r.Method != http.MethodPost {
@@ -321,13 +321,13 @@ func TestScriptKeepsWhatWasSent(t *testing.T) {
 }
 
 // A renewal the server does not take is sent again as it was signed, while
-// the box holds both working keys and still polls; once that statement has
+// the mailbox holds both working keys and still polls; once that statement has
 // expired, a new key is signed at a later number; when one is taken, it is
 // the first signed after the passed-over one, and the working keys before it
 // go.
 func TestScriptRenewsAgainAsSigned(t *testing.T) {
 	w := newWorld(t)
-	a, b := w.box(), w.box()
+	a, b := w.mailbox(), w.mailbox()
 	s0 := b.num()
 	w.srv.SetMiddle(func(rw http.ResponseWriter, r *http.Request, next http.Handler) {
 		if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/prekey") {
@@ -347,7 +347,7 @@ func TestScriptRenewsAgainAsSigned(t *testing.T) {
 		t.Errorf("the renewal sent again is not the one signed: %v", r)
 	}
 	if !b.has(fmt.Sprintf("work/%d", s0)) || !b.has(fmt.Sprintf("work/%d", n)) || b.num() != s0 {
-		t.Errorf("while it waits, the box does not hold both working keys: %q, serial %d", b.files("work"), b.num())
+		t.Errorf("while it waits, the mailbox does not hold both working keys: %q, serial %d", b.files("work"), b.num())
 	}
 	a.mustSend(b, "while B waits")
 	if d := b.recv(); !slices.Equal(d.bodies(), []string{"while B waits"}) {
@@ -381,22 +381,22 @@ func TestScriptRenewsAgainAsSigned(t *testing.T) {
 	}
 }
 
-// A box the server forgot, past its record's expiry (PROTOCOL.md §13), with
-// its own files kept: no box is served to number above, so dr_rekey numbers
+// A mailbox the server forgot, past its record's expiry (PROTOCOL.md §13), with
+// its own files kept: no mailbox is served to number above, so dr_rekey numbers
 // above what it published, registers anew, and prints no error; mail flows.
-func TestScriptRegistersAForgottenBoxAnew(t *testing.T) {
+func TestScriptRegistersAForgottenMailboxAnew(t *testing.T) {
 	w := newWorld(t)
-	a, b := w.box(), w.box()
+	a, b := w.mailbox(), w.mailbox()
 	w.srv.Forget(b.addr)
 	n0, calls := b.num(), len(w.srv.Requests())
 	if r := b.sh("dr_rekey"); r.rc != 0 || r.err != "" || b.num() <= n0 || !slices.Contains(w.calls(calls), "PUT /v1/"+b.addr.String()) {
-		t.Fatalf("a box the server forgot: %v, number %d after %d", r, b.num(), n0)
+		t.Fatalf("a mailbox the server forgot: %v, number %d after %d", r, b.num(), n0)
 	}
 	if p, _ := w.served(b); p != b.num() {
-		t.Errorf("the box registered anew is served at %d, not %d", p, b.num())
+		t.Errorf("the mailbox registered anew is served at %d, not %d", p, b.num())
 	}
 	a.mustSend(b, "after it was forgotten")
 	if d := b.recv(); !slices.Equal(d.bodies(), []string{"after it was forgotten"}) {
-		t.Errorf("mail to the box registered anew: %v", d)
+		t.Errorf("mail to the mailbox registered anew: %v", d)
 	}
 }

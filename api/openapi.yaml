@@ -28,27 +28,27 @@ security:
   - pass: []
 
 tags:
-  - name: box
-    description: Registering a box, and the read of a box (`PROTOCOL.md` §11.7, §11.8).
+  - name: mailbox
+    description: Registering a mailbox, and the read of a mailbox (`PROTOCOL.md` §11.7, §11.8).
   - name: messages
     description: Sending, listing, fetching and acking mail (`PROTOCOL.md` §11.10 to §11.13).
   - name: owner
-    description: What a box's owner manages with its pass, its prekey, its ACL and its account (`PROTOCOL.md` §11.9, §11.14, §11.16).
+    description: What a mailbox's owner manages with its pass, its prekey, its ACL and its account (`PROTOCOL.md` §11.9, §11.14, §11.16).
   - name: revocation
     description: Revocations of an address and of its certificates (`PROTOCOL.md` §11.15).
   - name: link
-    description: The page a box's link opens (`PROTOCOL.md` §4.3).
+    description: The page a mailbox's link opens (`PROTOCOL.md` §4.3).
 
 paths:
   /v1/{addr}:
     parameters:
       - $ref: '#/components/parameters/addr'
     get:
-      tags: [box]
-      operationId: getBox
-      summary: Everything a sender needs about a box
+      tags: [mailbox]
+      operationId: getMailbox
+      summary: Everything a sender needs about a mailbox
       description: |
-        The read of a box (`PROTOCOL.md` §11.8): its identity document, its
+        The read of a mailbox (`PROTOCOL.md` §11.8): its identity document, its
         current prekey statement with its signature, the key types its client
         declared, and the revocation of its certificates this server holds.
       security: []
@@ -57,7 +57,7 @@ paths:
         - $ref: '#/components/parameters/IfNoneMatch'
       responses:
         '200':
-          description: The box, as its identity and working key signed it, and what the server says of its key types.
+          description: The mailbox, as its identity and working key signed it, and what the server says of its key types.
           headers:
             Date:
               $ref: '#/components/headers/Date'
@@ -80,7 +80,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/BoxResponse'
+                $ref: '#/components/schemas/MailboxResponse'
         '304':
           description: The target is the one `If-None-Match` named, `*` naming any that exists, and the answer has no content (RFC 9110 §15.4.5).
           headers:
@@ -141,9 +141,9 @@ paths:
         '503':
           $ref: '#/components/responses/Unavailable'
     head:
-      tags: [box]
-      operationId: headBox
-      summary: The read of a box, without content
+      tags: [mailbox]
+      operationId: headMailbox
+      summary: The read of a mailbox, without content
       description: 'The `GET` beside it, answered without content (RFC 9110 §9.3.2; `PROTOCOL.md` §11.2): the same status and header fields.'
       security: []
       parameters:
@@ -151,7 +151,7 @@ paths:
         - $ref: '#/components/parameters/IfNoneMatch'
       responses:
         '200':
-          description: The box's read, without content.
+          description: The mailbox's read, without content.
           headers:
             Date:
               $ref: '#/components/headers/Date'
@@ -203,11 +203,11 @@ paths:
         '503':
           $ref: '#/components/responses/HeadUnavailable'
     put:
-      tags: [box]
+      tags: [mailbox]
       operationId: register
-      summary: Register a box
+      summary: Register a mailbox
       description: |
-        Registers a box (`PROTOCOL.md` §11.7): `201` for a new box, `200` for
+        Registers a mailbox (`PROTOCOL.md` §11.7): `201` for a new mailbox, `200` for
         an identical retry. The pass is under the certificate of the prekey
         statement the body brings.
       requestBody:
@@ -294,7 +294,7 @@ paths:
       operationId: revocations
       summary: Read the revocations held
       description: |
-        The revocation record the server holds of the address, with a box
+        The revocation record the server holds of the address, with a mailbox
         there or none, or `404 not_revoked` (`PROTOCOL.md` §11.15).
       security: []
       parameters:
@@ -449,9 +449,9 @@ paths:
     put:
       tags: [owner]
       operationId: putACL
-      summary: Replace the box's ACL
+      summary: Replace the mailbox's ACL
       description: |
-        The box's ACL, whom the server takes its mail from, replaced whole
+        The mailbox's ACL, whom the server takes its mail from, replaced whole
         (`PROTOCOL.md` §11.14).
       parameters:
         - name: If-Match
@@ -498,9 +498,9 @@ paths:
     get:
       tags: [owner]
       operationId: getACL
-      summary: The box's ACL
+      summary: The mailbox's ACL
       description: |
-        The box's ACL as held, with its `ETag` (`PROTOCOL.md` §11.14). A box
+        The mailbox's ACL as held, with its `ETag` (`PROTOCOL.md` §11.14). A mailbox
         with none answers `{"allow":["*"],"deny":[]}`.
       parameters:
         - name: If-Match
@@ -555,7 +555,7 @@ paths:
     head:
       tags: [owner]
       operationId: headACL
-      summary: The box's ACL, without content
+      summary: The mailbox's ACL, without content
       description: 'The `GET` beside it, answered without content (RFC 9110 §9.3.2; `PROTOCOL.md` §11.2): its `ETag` among the header fields.'
       parameters:
         - name: If-Match
@@ -642,7 +642,7 @@ paths:
         - $ref: '#/components/parameters/IfNoneMatch'
       responses:
         '200':
-          description: The account the box now belongs to.
+          description: The account the mailbox now belongs to.
           headers:
             Date:
               $ref: '#/components/headers/Date'
@@ -687,8 +687,8 @@ paths:
     delete:
       tags: [owner]
       operationId: leave
-      summary: Leave the box's account
-      description: 'Leaves the box''s account (`PROTOCOL.md` §11.16): `204`, in an account or not.'
+      summary: Leave the mailbox's account
+      description: 'Leaves the mailbox''s account (`PROTOCOL.md` §11.16): `204`, in an account or not.'
       parameters:
         - $ref: '#/components/parameters/IfMatch'
         - $ref: '#/components/parameters/IfNoneMatch'
@@ -718,10 +718,10 @@ paths:
     post:
       tags: [messages]
       operationId: send
-      summary: Send a message to the box
+      summary: Send a message to the mailbox
       description: |
         Sends a message (`PROTOCOL.md` §11.10): `addr` is the recipient, and
-        the sender is the box whose pass the call carries.
+        the sender is the mailbox whose pass the call carries.
       parameters:
         - name: prekey_serial
           in: query
@@ -744,7 +744,7 @@ paths:
           application/octet-stream: {}
       responses:
         '200':
-          description: The box holds this ciphertext, unacked, whoever sent it; the receipt is the one it holds (`PROTOCOL.md` §11.10, step 6).
+          description: The mailbox holds this ciphertext, unacked, whoever sent it; the receipt is the one it holds (`PROTOCOL.md` §11.10, step 6).
           headers:
             Date:
               $ref: '#/components/headers/Date'
@@ -812,9 +812,9 @@ paths:
     get:
       tags: [messages]
       operationId: list
-      summary: List the box's mail
+      summary: List the mailbox's mail
       description: |
-        One page of the box's mail (`PROTOCOL.md` §11.11). An empty box is
+        One page of the mailbox's mail (`PROTOCOL.md` §11.11). An empty mailbox is
         `{"count":0,"messages":[],"next_cursor":null}`.
       parameters:
         - name: cursor
@@ -838,12 +838,12 @@ paths:
         - name: If-None-Match
           in: header
           required: false
-          description: RFC 9110 §13.1.2's `If-None-Match`, naming the `ETag` of a first page this box was answered, evaluated as `PROTOCOL.md` §11.2 and §11.11 say. A false one is `304`.
+          description: RFC 9110 §13.1.2's `If-None-Match`, naming the `ETag` of a first page this mailbox was answered, evaluated as `PROTOCOL.md` §11.2 and §11.11 say. A false one is `304`.
           schema:
             type: string
       responses:
         '200':
-          description: One page of the box's mail.
+          description: One page of the mailbox's mail.
           headers:
             Date:
               $ref: '#/components/headers/Date'
@@ -909,7 +909,7 @@ paths:
     head:
       tags: [messages]
       operationId: headList
-      summary: The box's list, without content
+      summary: The mailbox's list, without content
       description: |
         The `GET` beside it, answered without content (RFC 9110 §9.3.2;
         `PROTOCOL.md` §11.2, §11.11).
@@ -940,7 +940,7 @@ paths:
             type: string
       responses:
         '200':
-          description: One page of the box's mail, without content.
+          description: One page of the mailbox's mail, without content.
           headers:
             Date:
               $ref: '#/components/headers/Date'
@@ -1103,10 +1103,10 @@ paths:
     head:
       tags: [messages]
       operationId: headMessage
-      summary: Whether the box holds a message, without fetching it
+      summary: Whether the mailbox holds a message, without fetching it
       description: |
         The `GET` beside it, answered without content, and no fetch: it reads
-        only whether the box holds the message (RFC 9110 §9.3.2;
+        only whether the mailbox holds the message (RFC 9110 §9.3.2;
         `PROTOCOL.md` §11.2). It carries no `Content-Length` (RFC 9110 §8.6),
         and its `Range` is ignored (RFC 9110 §14.2).
       parameters:
@@ -1126,7 +1126,7 @@ paths:
             type: string
       responses:
         '200':
-          description: The box holds the message.
+          description: The mailbox holds the message.
           headers:
             Date:
               $ref: '#/components/headers/Date'
@@ -1205,15 +1205,15 @@ paths:
       - name: addr
         in: path
         required: true
-        description: A box's address, 64 lowercase hex characters. Any other path is `404`.
+        description: A mailbox's address, 64 lowercase hex characters. Any other path is `404`.
         schema:
           $ref: '#/components/schemas/Address'
     get:
       tags: [link]
       operationId: link
-      summary: The page a box's link opens
+      summary: The page a mailbox's link opens
       description: |
-        The page at a box's link (`PROTOCOL.md` §4.3): fixed text, the address
+        The page at a mailbox's link (`PROTOCOL.md` §4.3): fixed text, the address
         and this server's link to it. A query on the link is ignored.
       security: []
       parameters:
@@ -1304,7 +1304,7 @@ paths:
     head:
       tags: [link]
       operationId: headLink
-      summary: The page a box's link opens, without content
+      summary: The page a mailbox's link opens, without content
       description: 'The `GET` beside it, answered without content (RFC 9110 §9.3.2; `PROTOCOL.md` §11.2).'
       security: []
       parameters:
@@ -1370,7 +1370,7 @@ components:
       type: http
       scheme: dromas-pass
       description: |
-        A pass the box signs for itself with its working key (`PROTOCOL.md`
+        A pass the mailbox signs for itself with its working key (`PROTOCOL.md`
         §8). A client writes it in exactly this form:
         `Authorization: dromas-pass address="<address>", not_after="<RFC 3339 UTC>", signature="<base64 of the SSHSIG>"`.
         A server reads it as RFC 9110 §11 lets a recipient: the scheme and
@@ -1383,7 +1383,7 @@ components:
       name: addr
       in: path
       required: true
-      description: A box's address, 64 lowercase hex characters (`PROTOCOL.md` §4.2). Any other form, uppercase among them, is `400 bad_address`.
+      description: A mailbox's address, 64 lowercase hex characters (`PROTOCOL.md` §4.2). Any other form, uppercase among them, is `400 bad_address`.
       schema:
         $ref: '#/components/schemas/Address'
     id:
@@ -1700,7 +1700,7 @@ components:
     Conflict:
       description: |
         `conflict` (with `prekey_serial` and `certificate_serial`, or
-        `through`, as the call has one) · `box_changed` · `stale_prekey`
+        `through`, as the call has one) · `mailbox_changed` · `stale_prekey`
         (with the current `prekey_serial` and `certificate_serial`) ·
         `prekey_expired`. `PROTOCOL.md` §11.3 has what each means.
       headers:
@@ -1727,7 +1727,7 @@ components:
                   status:
                     const: 409
                   code:
-                    enum: [conflict, box_changed, stale_prekey, prekey_expired]
+                    enum: [conflict, mailbox_changed, stale_prekey, prekey_expired]
     Gone:
       description: |
         `revoked`. Every `410 revoked` a server answers from the record it
@@ -1990,7 +1990,7 @@ components:
       type: string
       pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
     Address:
-      description: A box's address, the lowercase hex SHA-256 of its identity document (`PROTOCOL.md` §4.2).
+      description: A mailbox's address, the lowercase hex SHA-256 of its identity document (`PROTOCOL.md` §4.2).
       type: string
       pattern: '^[0-9a-f]{64}$'
     MessageID:
@@ -2007,7 +2007,7 @@ components:
       pattern: '^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$'
     KeyTypes:
       description: |
-        The identity key types the box's client verifies (`PROTOCOL.md` §7):
+        The identity key types the mailbox's client verifies (`PROTOCOL.md` §7):
         key type names, or the one entry `any`.
       type: [array, 'null']
       items:
@@ -2045,9 +2045,9 @@ components:
           $ref: '#/components/schemas/Bytes'
         sender_key_types:
           $ref: '#/components/schemas/KeyTypes'
-    BoxResponse:
+    MailboxResponse:
       description: |
-        The read of a box (`PROTOCOL.md` §11.8).
+        The read of a mailbox (`PROTOCOL.md` §11.8).
       type: object
       required: [identity, prekey, prekey_signature]
       dependentRequired:
@@ -2104,7 +2104,7 @@ components:
       required: [count, messages, next_cursor]
       properties:
         count:
-          description: Every live message in the box.
+          description: Every live message in the mailbox.
           $ref: '#/components/schemas/Integer'
         messages:
           description: One page, oldest first by `received_at`.
@@ -2176,7 +2176,7 @@ components:
     RevokedRecord:
       description: |
         The record a `410 revoked` carries (`PROTOCOL.md` §10.3): on the read
-        of a box always, and on any other call's where the server answers from
+        of a mailbox always, and on any other call's where the server answers from
         it. It holds the revocation of the address always, and the revocation
         of its certificates when the server holds one.
       type: object
@@ -2288,16 +2288,16 @@ components:
           type: [string, 'null']
           enum: [polls, pages, calls, sends, renewals, certificates, certificate_revocations, registrations, registrations_range, misses, sends_before_pass, requests, null]
         subject:
-          description: '`rate_limited`: whom the limit counted the call against, the box or the IP address it came from (`PROTOCOL.md` §11.5).'
+          description: '`rate_limited`: whom the limit counted the call against, the mailbox or the IP address it came from (`PROTOCOL.md` §11.5).'
           type: [string, 'null']
-          enum: [box, ip, null]
+          enum: [mailbox, ip, null]
         count:
-          description: '`mailbox_full`: how many messages the box holds, as its list counts them.'
+          description: '`mailbox_full`: how many messages the mailbox holds, as its list counts them.'
           anyOf:
             - $ref: '#/components/schemas/Integer'
             - type: 'null'
         prekey_serial:
-          description: '`stale_prekey`: the box''s current prekey; `conflict` on a prekey: the serial a new one must be above.'
+          description: '`stale_prekey`: the mailbox''s current prekey; `conflict` on a prekey: the serial a new one must be above.'
           anyOf:
             - $ref: '#/components/schemas/Integer'
             - type: 'null'
@@ -2317,13 +2317,13 @@ components:
           items:
             type: string
         key_type:
-          description: '`sender_key_type`: the sender''s key type, which the box''s client does not verify.'
+          description: '`sender_key_type`: the sender''s key type, which the mailbox''s client does not verify.'
           type: [string, 'null']
         member:
           description: '`bad_request`: the request member or query parameter that is missing, unknown or given twice, or holds a value its call does not take.'
           type: [string, 'null']
         record:
-          description: '`revoked`: the revocation record the server holds (`PROTOCOL.md` §10.3), on the read of a box always and on any other call where the server answers from it.'
+          description: '`revoked`: the revocation record the server holds (`PROTOCOL.md` §10.3), on the read of a mailbox always and on any other call where the server answers from it.'
           anyOf:
             - $ref: '#/components/schemas/RevokedRecord'
             - type: 'null'
@@ -2392,7 +2392,7 @@ components:
           then:
             properties:
               subject:
-                const: box
+                const: mailbox
         - if:
             required: [quota_id]
             properties:

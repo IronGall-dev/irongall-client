@@ -16,9 +16,9 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// finishedBox is a box that holds its own revocation, with nothing else
+// finishedMailbox is a mailbox that holds its own revocation, with nothing else
 // changed: what sign's own check is the last guard of is reached from it.
-func finishedBox(t *testing.T) *Box {
+func finishedMailbox(t *testing.T) *Mailbox {
 	t.Helper()
 	srv := fakeserver.New(t, time.Now)
 	b, err := Init(context.Background(), t.TempDir(), Options{Base: srv.URL}, protocol.Classic)
@@ -35,13 +35,13 @@ func finishedBox(t *testing.T) *Box {
 	return b
 }
 
-// Every signer the box hands out, its identity and each working key, asks
-// the box's own finished: once it holds its own revocation, each of their
-// signatures is its RevokedError. TestAFinishedBoxSignsNothing holds sign to
-// the finished it is given; this holds the box to giving its own (#339).
-func TestEverySignerTheBoxHandsOutAsksItsFinished(t *testing.T) {
+// Every signer the mailbox hands out, its identity and each working key, asks
+// the mailbox's own finished: once it holds its own revocation, each of their
+// signatures is its RevokedError. TestAFinishedMailboxSignsNothing holds sign to
+// the finished it is given; this holds the mailbox to giving its own (#339).
+func TestEverySignerTheMailboxHandsOutAsksItsFinished(t *testing.T) {
 	t.Parallel()
-	b := finishedBox(t)
+	b := finishedMailbox(t)
 	work, _, err := b.currentWorker()
 	if err != nil {
 		t.Fatal(err)
@@ -68,25 +68,25 @@ func TestEverySignerTheBoxHandsOutAsksItsFinished(t *testing.T) {
 	var gone *RevokedError
 	for name, f := range tried {
 		if err := f(); !errors.As(err, &gone) || !gone.Own {
-			t.Errorf("%s on a box that holds its own revocation: %v", name, err)
+			t.Errorf("%s on a mailbox that holds its own revocation: %v", name, err)
 		}
 	}
 	// Every method but PublicKey signs, and is tried above.
 	for _, typ := range []reflect.Type{reflect.TypeOf(b.identity), reflect.TypeOf(work)} {
 		for i := range typ.NumMethod() {
 			if m := typ.Method(i).Name; m != "PublicKey" && tried[m] == nil {
-				t.Errorf("%s.%s is not tried on a finished box", typ.Elem().Name(), m)
+				t.Errorf("%s.%s is not tried on a finished mailbox", typ.Elem().Name(), m)
 			}
 		}
 	}
 }
 
-// A prekey made on a box that holds its own revocation is stopped at its
+// A prekey made on a mailbox that holds its own revocation is stopped at its
 // certificate, before any key is written: the working key and its
 // certificate come first, then the age key (#339).
-func TestAPrekeyOnAFinishedBoxWritesNoKey(t *testing.T) {
+func TestAPrekeyOnAFinishedMailboxWritesNoKey(t *testing.T) {
 	t.Parallel()
-	b := finishedBox(t)
+	b := finishedMailbox(t)
 	files := func() int {
 		p, _ := filepath.Glob(b.path("prekeys", "*"))
 		w, _ := filepath.Glob(b.path("work", "*"))
@@ -97,14 +97,14 @@ func TestAPrekeyOnAFinishedBoxWritesNoKey(t *testing.T) {
 	_, err := lockedFinished(context.Background(), b, func() (*protocol.Prekey, error) { return b.makePrekey(n, protocol.Classic) })
 	var gone *RevokedError
 	if !errors.As(err, &gone) || !gone.Own || files() != before {
-		t.Fatalf("a prekey on a finished box: %v; %d files, were %d", err, files(), before)
+		t.Fatalf("a prekey on a finished mailbox: %v; %d files, were %d", err, files(), before)
 	}
 }
 
-// A command that keeps its box's own revocation on the way asks nothing
+// A command that keeps its mailbox's own revocation on the way asks nothing
 // more: each call after it, a read with no pass among them, returns the
-// revocation before any request (call), and a read of another box is not
-// that box's revocation (readBox). The next command begins with none.
+// revocation before any request (call), and a read of another mailbox is not
+// that mailbox's revocation (readMailbox). The next command begins with none.
 func TestACommandThatKeptItsOwnRevocationAsksNothingMore(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -130,15 +130,15 @@ func TestACommandThatKeptItsOwnRevocationAsksNothingMore(t *testing.T) {
 		if err := b.keepRevocation(id, rec.Revocation); err != nil {
 			return struct{}{}, err
 		}
-		_, gone, err := b.readBox(ctx, peer.Address(), nil)
+		_, gone, err := b.readMailbox(ctx, peer.Address(), nil)
 		if gone {
-			t.Error("a read of a peer after the box kept its own revocation says the peer is revoked")
+			t.Error("a read of a peer after the mailbox kept its own revocation says the peer is revoked")
 		}
 		return struct{}{}, err
 	})
 	var ended *RevokedError
 	if !errors.As(err, &ended) || !ended.Own || len(srv.Requests()) != before {
-		t.Errorf("a read after the box kept its own revocation: %v, with %d requests", err, len(srv.Requests())-before)
+		t.Errorf("a read after the mailbox kept its own revocation: %v, with %d requests", err, len(srv.Requests())-before)
 	}
 	if _, err := b.Publish(ctx, rec); err != nil || len(srv.Requests()) != before+1 {
 		t.Errorf("the next command, a publish of the record: %v, with %d requests", err, len(srv.Requests())-before)

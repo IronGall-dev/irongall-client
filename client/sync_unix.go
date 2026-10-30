@@ -9,7 +9,7 @@ func syncDir(dir string) error {
 	if !fsync {
 		return nil
 	}
-	d, err := os.Open(dir) //nolint:gosec // a directory inside the box's own
+	d, err := os.Open(dir) //nolint:gosec // a directory inside the mailbox's own
 	if err != nil {
 		return err
 	}

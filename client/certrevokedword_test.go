@@ -13,14 +13,14 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// A 401 certificate_revoked with no revocation of the box's certificates to
-// show is a server's word (PROTOCOL.md §8, §12.5): the box reads itself,
+// A 401 certificate_revoked with no revocation of the mailbox's certificates to
+// show is a server's word (PROTOCOL.md §8, §12.5): the mailbox reads itself,
 // shown none it signs one more pass and tries once more, as for the other
 // 401s, and then reports the refusal, nothing kept.
 func TestACertificateRevokedWithNoneShownIsTriedOnceMore(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.box(protocol.Classic)
+	b := e.mailbox(protocol.Classic)
 	own := "/v1/" + b.Address().String()
 	var mu sync.Mutex
 	var calls []string

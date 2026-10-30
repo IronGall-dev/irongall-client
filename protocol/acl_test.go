@@ -25,7 +25,7 @@ func aclDoc(t *testing.T, text string) *ACLDocument {
 }
 
 // An ACL reads deny first and then allow, as Matrix reads a room's server
-// ACL, and a box with none takes mail from everyone.
+// ACL, and a mailbox with none takes mail from everyone.
 func TestACLAdmits(t *testing.T) {
 	a, b, c := aclAddr(0xaa), aclAddr(0xbb), aclAddr(0xcc)
 	var none *ACL

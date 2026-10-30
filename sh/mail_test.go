@@ -22,11 +22,11 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// The script's box made, sending and reading, against a server that forges.
+// The script's mailbox made, sending and reading, against a server that forges.
 
-// served is the serial of box a's prekey as the server serves it, and of the
+// served is the serial of mailbox a's prekey as the server serves it, and of the
 // certificate it is signed under.
-func (w *world) served(b *sbox) (prekey, cert uint64) {
+func (w *world) served(b *shMailbox) (prekey, cert uint64) {
 	w.t.Helper()
 	st, sig := w.srv.Prekey(b.addr)
 	id, err := protocol.ParseIdentity([]byte(b.read("identity.doc")))
@@ -40,7 +40,7 @@ func (w *world) served(b *sbox) (prekey, cert uint64) {
 	return p.Serial, c.Serial()
 }
 
-// envelope is an envelope's line from box from to address to, carrying the
+// envelope is an envelope's line from mailbox from to address to, carrying the
 // identity document doc, sent ago before now.
 func envelope(t *testing.T, from, to protocol.Address, doc []byte, msgID, body string, ago time.Duration) []byte {
 	t.Helper()
@@ -56,12 +56,12 @@ func envelope(t *testing.T, from, to protocol.Address, doc []byte, msgID, body s
 	return l
 }
 
-// line is an envelope's line as box b writes one to to.
-func (b *sbox) line(to protocol.Address, msgID, body string, ago time.Duration) []byte {
+// line is an envelope's line as mailbox b writes one to to.
+func (b *shMailbox) line(to protocol.Address, msgID, body string, ago time.Duration) []byte {
 	return envelope(b.w.t, b.addr, to, []byte(b.read("identity.doc")), msgID, body, ago)
 }
 
-// signWith signs line for box to with the working key whose certificate is
+// signWith signs line for mailbox to with the working key whose certificate is
 // cert, as ssh-keygen signs one: its signature block.
 func (w *world) signWith(cert string, to protocol.Address, line []byte) []byte {
 	w.t.Helper()
@@ -69,26 +69,26 @@ func (w *world) signWith(cert string, to protocol.Address, line []byte) []byte {
 	if err := os.WriteFile(f, line, 0o600); err != nil {
 		w.t.Fatal(err)
 	}
-	b := &sbox{w: w, dir: w.work}
+	b := &shMailbox{w: w, dir: w.work}
 	return []byte(b.must(fmt.Sprintf("ssh-keygen -q -Y sign -n dromas-msg-v1:%s -f %s < %s", to, cert, f)))
 }
 
 // sign signs line for to with b's working key in use.
-func (b *sbox) sign(to protocol.Address, line []byte) []byte {
+func (b *shMailbox) sign(to protocol.Address, line []byte) []byte {
 	return b.w.signWith(b.file(fmt.Sprintf("work/%d-cert.pub", b.num())), to, line)
 }
 
 // inject puts the parts, encrypted to to's prekey as the server holds it, in
-// box to, under id or, given none, its hash: as only the operator can. It
+// mailbox to, under id or, given none, its hash: as only the operator can. It
 // returns the id.
-func (w *world) inject(to *sbox, id string, parts ...[]byte) string {
+func (w *world) inject(to *shMailbox, id string, parts ...[]byte) string {
 	w.t.Helper()
 	ct := forge.Encrypt(w.t, w.srv, to.addr, parts...)
 	return w.put(to, id, ct)
 }
 
-// put puts a ciphertext in box to, as inject does.
-func (w *world) put(to *sbox, id string, ct []byte) string {
+// put puts a ciphertext in mailbox to, as inject does.
+func (w *world) put(to *shMailbox, id string, ct []byte) string {
 	if id == "" {
 		h := sha256.Sum256(ct)
 		id = hex.EncodeToString(h[:])
@@ -105,8 +105,8 @@ func randomID() string {
 
 // bare reports whether a send left nothing behind: no outbox, and none of
 // the files it wrote to post its message (dr_spent).
-func (b *sbox) bare() bool {
-	for _, f := range []string{"outbox", "body.txt", "send.P", "seal.P", "seal.sig", "seal.age", "seal.query", "box.json", "receipt.json"} {
+func (b *shMailbox) bare() bool {
+	for _, f := range []string{"outbox", "body.txt", "send.P", "seal.P", "seal.sig", "seal.age", "seal.query", "mailbox.json", "receipt.json"} {
 		if exists(b.file(f)) {
 			return false
 		}
@@ -115,11 +115,11 @@ func (b *sbox) bare() bool {
 }
 
 // A send leaves no copy of its body outside sent/, posted or refused at its
-// post: every file of the box is read, not a list of the files a send
+// post: every file of the mailbox is read, not a list of the files a send
 // writes.
 func TestASendLeavesNoCopyOfItsBody(t *testing.T) {
 	w := newWorld(t)
-	a, b := w.box(), w.box()
+	a, b := w.mailbox(), w.mailbox()
 	copies := func(body string) []string {
 		var held []string
 		_ = filepath.WalkDir(a.dir, func(p string, d fs.DirEntry, err error) error {
@@ -157,24 +157,24 @@ func TestASendLeavesNoCopyOfItsBody(t *testing.T) {
 	}
 }
 
-// boxLine is the line init and addr print.
-func (w *world) boxLine(b *sbox) string {
-	return fmt.Sprintf(`{"type":"box","address":"%s","link":"%s/to/%s"}`+"\n", b.addr, w.srv.URL, b.addr)
+// mailboxLine is the line init and addr print.
+func (w *world) mailboxLine(b *shMailbox) string {
+	return fmt.Sprintf(`{"type":"mailbox","address":"%s","link":"%s/to/%s"}`+"\n", b.addr, w.srv.URL, b.addr)
 }
 
-// init: an address that is the identity's hash and a box in use at once,
+// init: an address that is the identity's hash and a mailbox in use at once,
 // its first number this machine's clock, keys and the pass 0600, a pass and
 // no token; init again changes nothing, and an unknown option is refused.
 func TestScriptInit(t *testing.T) {
 	w := newWorld(t)
-	if r := w.empty().sh("dr_recv"); r.rc == 0 || !strings.Contains(r.err, "no box in") {
-		t.Errorf("recv where there is no box: %v", r)
+	if r := w.empty().sh("dr_recv"); r.rc == 0 || !strings.Contains(r.err, "no mailbox in") {
+		t.Errorf("recv where there is no mailbox: %v", r)
 	}
 	a := w.empty()
 	out := a.must("dr_init")
 	t0 := time.Now().Unix()
 	a.addr = mustAddress(t, a.dir)
-	if out != w.boxLine(a) {
+	if out != w.mailboxLine(a) {
 		t.Errorf("dr_init printed %q", out)
 	}
 	if sha256.Sum256([]byte(a.read("identity.doc"))) != a.addr {
@@ -182,10 +182,10 @@ func TestScriptInit(t *testing.T) {
 	}
 	n := a.num()
 	if p, c := w.served(a); p != n || c != n || !slices.Equal(w.calls(0), []string{"PUT /v1/" + a.addr.String()}) {
-		t.Errorf("the box is not in use at once, at its number %d, by one call: served %d under %d, calls %q", n, p, c, w.calls(0))
+		t.Errorf("the mailbox is not in use at once, at its number %d, by one call: served %d under %d, calls %q", n, p, c, w.calls(0))
 	}
 	if int64(n) > t0 || t0-int64(n) >= 300 {
-		t.Errorf("the box's first number %d is not this machine's clock, %d", n, t0)
+		t.Errorf("the mailbox's first number %d is not this machine's clock, %d", n, t0)
 	}
 	for _, f := range []string{"identity", fmt.Sprintf("work/%d", n), "pass", fmt.Sprintf("prekeys/%d.agekey", n)} {
 		if fi, err := os.Stat(a.file(f)); err != nil || fi.Mode().Perm() != 0o600 {
@@ -198,9 +198,9 @@ func TestScriptInit(t *testing.T) {
 		t.Errorf("the prekey statement is not under a certificate numbered %d that is good for 64 days: %d %d %d, %v", n, serial, start, end, err)
 	}
 	if a.has("token") || !strings.HasPrefix(a.read("pass"), `dromas-pass address="`+a.addr.String()+`", not_after="`) {
-		t.Errorf("the box keeps a token, or no pass it signed: %q", a.read("pass"))
+		t.Errorf("the mailbox keeps a token, or no pass it signed: %q", a.read("pass"))
 	}
-	if out := a.must("dr_init"); out != w.boxLine(a) {
+	if out := a.must("dr_init"); out != w.mailboxLine(a) {
 		t.Errorf("dr_init again: %q", out)
 	}
 	if r := a.sh("dr_init classic"); r.rc == 0 || !strings.Contains(r.err, "unknown option classic") {
@@ -213,17 +213,17 @@ func TestScriptInit(t *testing.T) {
 // the reader asks it, pins, prints and keeps.
 func TestScriptSendsAndReads(t *testing.T) {
 	w := newWorld(t)
-	a, b := w.box(), w.box()
+	a, b := w.mailbox(), w.mailbox()
 	posted := forge.Capture(w.srv, http.MethodPost, "/messages")
 	a.mustSend(b, "hello B")
 	if r := a.send(w.srv.URL+"/to/"+b.addr.String(), "second, \"quoted\" <tags> & ünïcode\n"); r.rc != 0 {
 		t.Fatalf("the second send, to B's link: %v", r)
 	}
-	if out := a.must("dr_addr"); out != w.boxLine(a) {
+	if out := a.must("dr_addr"); out != w.mailboxLine(a) {
 		t.Errorf("dr_addr: %q", out)
 	}
 	for _, l := range []string{"https://elsewhere.example/to/" + b.addr.String(), w.srv.URL + ".example/to/" + b.addr.String()} {
-		if r := a.send(l, "x"); r.rc == 0 || !strings.Contains(r.err, "a link to another server: this box's server is "+w.srv.URL) {
+		if r := a.send(l, "x"); r.rc == 0 || !strings.Contains(r.err, "a link to another server: this mailbox's server is "+w.srv.URL) {
 			t.Errorf("a link to another server, %s: %v", l, r)
 		}
 	}
@@ -251,7 +251,7 @@ func TestScriptSendsAndReads(t *testing.T) {
 		}
 	}
 	if !slices.Equal(reads, []string{"GET /v1/" + a.addr.String()}) || b.read("peers/"+a.addr.String()+"/identity.doc") != a.read("identity.doc") {
-		t.Errorf("B asked about a sender it never met other than by one read of its box, or pinned another identity: %q", reads)
+		t.Errorf("B asked about a sender it never met other than by one read of its mailbox, or pinned another identity: %q", reads)
 	}
 	if strings.Contains(strings.Join(d.mail, ""), `"identity"`) {
 		t.Error("a delivered line carries the identity document")
@@ -280,7 +280,7 @@ func TestScriptSendsAndReads(t *testing.T) {
 // dromas-server's to test.)
 func TestScriptDeliversARetryOnce(t *testing.T) {
 	w := newWorld(t)
-	a, b := w.box(), w.box()
+	a, b := w.mailbox(), w.mailbox()
 	if err := os.WriteFile(a.file("retry.P"), a.line(b.addr, "11111111-2222-4333-8444-555555555555", "once", 0), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +303,7 @@ func (w *world) listing(edit func(*forge.Listed)) { forge.Lists(w.t, w.srv, edit
 // server lists is never read.
 func TestScriptRefusesForgedMail(t *testing.T) {
 	w := newWorld(t)
-	a, b, c, d := w.box(), w.box(), w.box(), w.box()
+	a, b, c, d := w.mailbox(), w.mailbox(), w.mailbox(), w.mailbox()
 	op := w.operator()
 	opCert := filepath.Join(op.dir, "work-cert.pub")
 	pinned := func() string { return b.read("peers/" + a.addr.String() + "/identity.doc") }
@@ -324,14 +324,14 @@ func TestScriptRefusesForgedMail(t *testing.T) {
 		}
 	}
 	// In A's name, with A's identity document, under the operator's certificate.
-	forged := func(from *sbox) []byte {
+	forged := func(from *shMailbox) []byte {
 		l := envelope(t, from.addr, b.addr, []byte(from.read("identity.doc")), "00000000-0000-4000-8000-000000000000", "PAPAYA", 0)
 		return slices.Concat(l, w.signWith(opCert, b.addr, l))
 	}
 	w.inject(b, "", forged(a))
 	r := b.sh("dr_recv")
 	refusals++
-	if !strings.Contains(r.out, `"code":"bad_signature","message":"it is not signed for this box by a working key the sender's identity certified"}`) || r.err != "" || w.srv.Count(b.addr) != 0 || pinned() != a.read("identity.doc") {
+	if !strings.Contains(r.out, `"code":"bad_signature","detail":"it is not signed for this mailbox by a working key the sender's identity certified"}`) || r.err != "" || w.srv.Count(b.addr) != 0 || pinned() != a.read("identity.doc") {
 		t.Errorf("mail in A's name under the operator's certificate: %v", r)
 	}
 	var l struct{ Type, ID, Code, Message string }
@@ -476,39 +476,39 @@ func withLine(s []byte, n int, l string) []byte {
 // stmt is a prekey statement and its signature.
 type stmt struct{ st, sig []byte }
 
-// prekey is box b's statement as the server holds it.
-func (w *world) prekey(b *sbox) stmt {
+// prekey is mailbox b's statement as the server holds it.
+func (w *world) prekey(b *shMailbox) stmt {
 	st, sig := w.srv.Prekey(b.addr)
 	return stmt{st, sig}
 }
 
-// statement is a prekey statement for box b, at serial, for key, until
+// statement is a prekey statement for mailbox b, at serial, for key, until
 // notAfter, signed with the key file signer as ssh-keygen signs one.
-func (w *world) statement(b *sbox, serial uint64, key, notAfter, signer string) stmt {
+func (w *world) statement(b *shMailbox, serial uint64, key, notAfter, signer string) stmt {
 	w.t.Helper()
 	st := fmt.Appendf(nil, "dromas-prekey-v1\n%s\n%d\n%s\n%s\n", b.addr, serial, key, notAfter)
 	f := filepath.Join(w.t.TempDir(), "st")
 	if err := os.WriteFile(f, st, 0o600); err != nil {
 		w.t.Fatal(err)
 	}
-	sig := []byte((&sbox{w: w, dir: w.work}).must(fmt.Sprintf("ssh-keygen -q -Y sign -n dromas-prekey-v1:%s -f %s < %s", b.addr, signer, f)))
+	sig := []byte((&shMailbox{w: w, dir: w.work}).must(fmt.Sprintf("ssh-keygen -q -Y sign -n dromas-prekey-v1:%s -f %s < %s", b.addr, signer, f)))
 	return stmt{st, sig}
 }
 
-// serving serves box b's read with the statement given in place of its own.
-func (w *world) serving(b *sbox, s stmt) {
-	w.reading(b.addr, func(br *protocol.BoxResponse) { br.Prekey, br.PrekeySignature = s.st, s.sig })
+// serving serves mailbox b's read with the statement given in place of its own.
+func (w *world) serving(b *shMailbox, s stmt) {
+	w.reading(b.addr, func(br *protocol.MailboxResponse) { br.Prekey, br.PrekeySignature = s.st, s.sig })
 }
 
-// The sender's checks: what a box is served is checked before anything is
+// The sender's checks: what a mailbox is served is checked before anything is
 // encrypted, and what fails one sends nothing and keeps nothing.
-func TestScriptChecksTheBoxItIsServed(t *testing.T) {
+func TestScriptChecksTheMailboxItIsServed(t *testing.T) {
 	w := newWorld(t)
-	a, b, c, d := w.box(), w.box(), w.box(), w.box()
+	a, b, c, d := w.mailbox(), w.mailbox(), w.mailbox(), w.mailbox()
 	op := w.operator()
 	a.mustSend(b, "pins B")
 	b1 := b.num()
-	refused := func(what string, s *sbox, to string, want string) {
+	refused := func(what string, s *shMailbox, to string, want string) {
 		t.Helper()
 		n := len(w.srv.Requests())
 		r := s.send(to, "secret")
@@ -522,7 +522,7 @@ func TestScriptChecksTheBoxItIsServed(t *testing.T) {
 		}
 	}
 	st, _ := w.srv.Prekey(b.addr)
-	w.reading(b.addr, func(br *protocol.BoxResponse) { br.Prekey = withLine(br.Prekey, 4, op.recipient()) })
+	w.reading(b.addr, func(br *protocol.MailboxResponse) { br.Prekey = withLine(br.Prekey, 4, op.recipient()) })
 	refused("the operator swaps B's prekey", a, b.addr.String(), "not signed by a working key its identity certified")
 	w.honest()
 	if r := a.send(b.addr.String(), "bad \xff byte"); r.rc == 0 || !strings.Contains(r.err, "not UTF-8") || !a.bare() || w.posts(b.addr) != 1 {
@@ -532,15 +532,17 @@ func TestScriptChecksTheBoxItIsServed(t *testing.T) {
 	// operator's, with a statement its own working key signed for C's address.
 	opSt := w.statement(c, 99, op.recipient(), notAfter(), filepath.Join(op.dir, "work-cert.pub"))
 	opDoc := mustRead(t, filepath.Join(op.dir, "identity.doc"))
-	w.reading(c.addr, func(br *protocol.BoxResponse) { br.Identity, br.Prekey, br.PrekeySignature = opDoc, opSt.st, opSt.sig })
+	w.reading(c.addr, func(br *protocol.MailboxResponse) {
+		br.Identity, br.Prekey, br.PrekeySignature = opDoc, opSt.st, opSt.sig
+	})
 	refused("first contact, a server-forged identity for the recipient", d, c.addr.String(), "does not hash")
 	if d.has("peers/" + c.addr.String()) {
 		t.Error("the forged identity was pinned")
 	}
 	// A key holder's padded identity document hashes to its own address: an
-	// operator that serves it as a box is refused it, so one key never gets a
+	// operator that serves it as a mailbox is refused it, so one key never gets a
 	// second address.
-	e := &sbox{w: w, dir: filepath.Join(w.work, "E")}
+	e := &shMailbox{w: w, dir: filepath.Join(w.work, "E")}
 	e.must(`mkdir -p "$DR"; cd "$DR"; ssh-keygen -q -t ed25519 -N '' -C '' -f identity; printf 'dromas-v1\n%s\n \n' "$(cut -d' ' -f1,2 identity.pub)" > identity.doc; sha256sum < identity.doc | cut -c1-64 > address
 ssh-keygen -q -t ed25519 -N '' -C '' -f work; ssh-keygen -q -s identity -I dromas-cert-v1 -n "$(cat address)" -z 1 -V "$(date -u -d '1 hour ago' +%Y%m%d%H%M%SZ):$(date -u -d '64 days' +%Y%m%d%H%M%SZ)" -O clear work.pub
 age-keygen -o agekey 2> /dev/null`)
@@ -549,7 +551,7 @@ age-keygen -o agekey 2> /dev/null`)
 	eDoc := []byte(e.read("identity.doc"))
 	w.srv.SetMiddle(func(rw http.ResponseWriter, r *http.Request, next http.Handler) {
 		if x, ok := forge.ReadOf(r); ok && x == e.addr {
-			fakeserver.WriteJSON(rw, http.StatusOK, protocol.BoxResponse{Identity: eDoc, Prekey: eSt.st, PrekeySignature: eSt.sig})
+			fakeserver.WriteJSON(rw, http.StatusOK, protocol.MailboxResponse{Identity: eDoc, Prekey: eSt.st, PrekeySignature: eSt.sig})
 			return
 		}
 		next.ServeHTTP(rw, r)
@@ -575,7 +577,7 @@ age-keygen -o agekey 2> /dev/null`)
 	// An age recipient of a type nobody defines: a published test key.
 	other := keyOf(mustReadString(t, filepath.Join(vectors, "prekey", "unsupported-type.txt")))
 	w.serving(b, w.statement(b, b1+9, other, notAfter(), bw))
-	want := fmt.Sprintf(`{"type":"error","code":"unsupported_prekey_type","message":"REFUSED: %s's prekey is an age recipient of a type this script cannot encrypt to, so nothing is sent"}`+"\n", b.addr)
+	want := fmt.Sprintf(`{"type":"error","code":"unsupported_prekey_type","detail":"REFUSED: %s's prekey is an age recipient of a type this script cannot encrypt to, so nothing is sent"}`+"\n", b.addr)
 	refused("a prekey of a type nobody defines", a, b.addr.String(), want)
 	if a.read("peers/"+b.addr.String()+"/serial") != fmt.Sprintln(b1) {
 		t.Error("a prekey of a type nobody defines was recorded")
@@ -586,11 +588,11 @@ age-keygen -o agekey 2> /dev/null`)
 func notAfter() string { return time.Now().Add(33 * 24 * time.Hour).UTC().Format(protocol.TimeLayout) }
 
 // A send the server refuses or fails says so and keeps nothing to post
-// again; a server's word that a box is revoked, with nothing shown, revokes
+// again; a server's word that a mailbox is revoked, with nothing shown, revokes
 // nothing; the same send run again goes.
 func TestScriptKeepsNothingOfAFailedSend(t *testing.T) {
 	w := newWorld(t)
-	a, b := w.box(), w.box()
+	a, b := w.mailbox(), w.mailbox()
 	for _, c := range []struct {
 		code protocol.Code
 		want string
@@ -617,12 +619,12 @@ func TestScriptKeepsNothingOfAFailedSend(t *testing.T) {
 	}
 }
 
-// A message from A listed as C's, an address its server holds a box at, is
+// A message from A listed as C's, an address its server holds a mailbox at, is
 // delivered as A's: C is neither read nor pinned, and the replay set names
 // A.
 func TestScriptReadsNoFromTheServerLists(t *testing.T) {
 	w := newWorld(t)
-	a, b, c := w.box(), w.box(), w.box()
+	a, b, c := w.mailbox(), w.mailbox(), w.mailbox()
 	a.mustSend(b, "from A")
 	var named atomic.Int32
 	w.srv.SetMiddle(func(rw http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -643,11 +645,11 @@ func TestScriptReadsNoFromTheServerLists(t *testing.T) {
 	}
 }
 
-// A revoked sender's message listed as another box's is refused as revoked:
+// A revoked sender's message listed as another mailbox's is refused as revoked:
 // the revocation read is of the sender its signature proves.
 func TestScriptAsksAboutTheSenderItsSignatureProves(t *testing.T) {
 	w := newWorld(t)
-	a, b, c := w.box(), w.box(), w.box()
+	a, b, c := w.mailbox(), w.mailbox(), w.mailbox()
 	a.mustSend(b, "from A, revoked since")
 	a.revoke()
 	w.listing(func(l *forge.Listed) {

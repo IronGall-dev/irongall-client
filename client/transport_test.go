@@ -19,7 +19,7 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// A box calls a server over https, or over http only on this machine, and
+// A mailbox calls a server over https, or over http only on this machine, and
 // follows no redirect (PROTOCOL.md §11.1): neither its pass nor the address a
 // lookup asks about goes in the clear, or anywhere a server points.
 
@@ -64,7 +64,7 @@ func redirect(e *env, status int, to, method string, match func(path string) boo
 	})
 }
 
-// isRedirect reports whether err is the redirect a box was answered, which
+// isRedirect reports whether err is the redirect a mailbox was answered, which
 // it did not follow.
 func isRedirect(err error, status int) bool {
 	var apiErr *client.APIError
@@ -75,16 +75,16 @@ func isRedirect(err error, status int) bool {
 // to, from every call it makes (PROTOCOL.md §11.1).
 var redirects = []int{http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect}
 
-// A redirect from a box's list, to another port of the same host, which Go's
-// own policy would follow with the box's pass. Nothing reaches the other
-// server, whether the box made its HTTP client or was handed one, and the
+// A redirect from a mailbox's list, to another port of the same host, which Go's
+// own policy would follow with the mailbox's pass. Nothing reaches the other
+// server, whether the mailbox made its HTTP client or was handed one, and the
 // client it was handed is left as it was.
 func TestARedirectIsNeverFollowed(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	for _, status := range redirects {
 		e := newEnv(t)
-		b := e.box(protocol.Classic)
+		b := e.mailbox(protocol.Classic)
 		x := newElsewhere(t)
 		redirect(e, status, x.URL, http.MethodGet, func(p string) bool { return strings.HasSuffix(p, "/messages") })
 		if _, err := b.Receive(ctx); !isRedirect(err, status) {
@@ -98,10 +98,10 @@ func TestARedirectIsNeverFollowed(t *testing.T) {
 			t.Fatal(err)
 		}
 		if _, err := handed.Receive(ctx); !isRedirect(err, status) {
-			t.Fatalf("a drain answered with a %d by a box handed an HTTP client that follows redirects: %v", status, err)
+			t.Fatalf("a drain answered with a %d by a mailbox handed an HTTP client that follows redirects: %v", status, err)
 		}
 		if given.CheckRedirect != nil {
-			t.Fatal("the HTTP client the box was handed was changed")
+			t.Fatal("the HTTP client the mailbox was handed was changed")
 		}
 		if got := x.reached(); len(got) != 0 {
 			t.Fatalf("%d was followed: %q", status, got)
@@ -109,7 +109,7 @@ func TestARedirectIsNeverFollowed(t *testing.T) {
 	}
 }
 
-// Every call a box makes is held to it: the read of a recipient before a
+// Every call a mailbox makes is held to it: the read of a recipient before a
 // send, and the send itself, for each status a redirect has. A send that
 // is redirected posts nothing anywhere, and waits in the outbox.
 func TestNoCallOfABoxFollowsARedirect(t *testing.T) {
@@ -117,7 +117,7 @@ func TestNoCallOfABoxFollowsARedirect(t *testing.T) {
 	ctx := context.Background()
 	for _, status := range redirects {
 		e := newEnv(t)
-		a, r := e.box(protocol.Classic), e.box(protocol.Classic)
+		a, r := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 		x := newElsewhere(t)
 		redirect(e, status, x.URL, http.MethodGet, func(p string) bool { return p == "/v1/"+r.Address().String() })
 		if _, err := a.Send(ctx, r.Address(), "never posted"); !isRedirect(err, status) {
@@ -136,7 +136,7 @@ func TestNoCallOfABoxFollowsARedirect(t *testing.T) {
 	}
 }
 
-// A record the box's server redirects is not taken there: the owner is told,
+// A record the mailbox's server redirects is not taken there: the owner is told,
 // and the record goes nowhere else.
 func TestARedirectedPublishIsNotTaken(t *testing.T) {
 	t.Parallel()
@@ -144,14 +144,14 @@ func TestARedirectedPublishIsNotTaken(t *testing.T) {
 	for _, status := range redirects {
 		e := newEnv(t)
 		x := newElsewhere(t)
-		b := e.box(protocol.Classic)
+		b := e.mailbox(protocol.Classic)
 		rec, err := b.Revocation(t.Context())
 		if err != nil {
 			t.Fatal(err)
 		}
 		redirect(e, status, x.URL, http.MethodPut, func(p string) bool { return strings.HasSuffix(p, "/revocations") })
 		if _, err := b.Revoke(ctx, rec); !isRedirect(err, status) {
-			t.Fatalf("%d from the box's server: %v", status, err)
+			t.Fatalf("%d from the mailbox's server: %v", status, err)
 		}
 		if got := x.reached(); len(got) != 0 {
 			t.Fatalf("a publish's %d was followed: %q", status, got)
@@ -174,15 +174,15 @@ func (rt *recorder) RoundTrip(*http.Request) (*http.Response, error) {
 }
 
 // A server's URL is https, or http only on this machine. Any other is
-// refused before anything is sent or made: no request, and no box
+// refused before anything is sent or made: no request, and no mailbox
 // directory.
 func TestAServerIsCalledOverHTTPSOrOnThisMachine(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	const refusal = "is not a server this client calls"
-	// Publish and Revoke need no box, so only the check of each call holds
+	// Publish and Revoke need no mailbox, so only the check of each call holds
 	// them.
-	rec, err := newEnv(t).box(protocol.Classic).Revocation(t.Context())
+	rec, err := newEnv(t).mailbox(protocol.Classic).Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +192,7 @@ func TestAServerIsCalledOverHTTPSOrOnThisMachine(t *testing.T) {
 		"http://0:0:0:0:0:0:0:1", "ftp://dromas.dev", "dromas.dev", "https://", "http://", "",
 	} {
 		rt := &recorder{}
-		dir := filepath.Join(t.TempDir(), "box")
+		dir := filepath.Join(t.TempDir(), "mailbox")
 		opt := client.Options{Base: u, HTTPClient: &http.Client{Transport: rt}}
 		if u == "" {
 			opt.Base = " "
@@ -201,7 +201,7 @@ func TestAServerIsCalledOverHTTPSOrOnThisMachine(t *testing.T) {
 			t.Errorf("%q: Init: %v", u, err)
 		}
 		if exists(dir) {
-			t.Errorf("%q: Init made the box's directory", u)
+			t.Errorf("%q: Init made the mailbox's directory", u)
 		}
 		if _, err := client.Open(t.TempDir(), opt); err == nil || !strings.Contains(err.Error(), refusal) {
 			t.Errorf("%q: Open: %v", u, err)
@@ -236,8 +236,8 @@ func TestAServerIsCalledOverHTTPSOrOnThisMachine(t *testing.T) {
 func TestACallWithNoAnswerSaysWhatKind(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.box(protocol.Classic)
-	to := e.box(protocol.Classic)
+	b := e.mailbox(protocol.Classic)
+	to := e.mailbox(protocol.Classic)
 	read := "GET /v1/" + to.Address().String() + ": "
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -249,8 +249,8 @@ func TestACallWithNoAnswerSaysWhatKind(t *testing.T) {
 	t.Cleanup(silent.Close)
 	untrusted := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	t.Cleanup(untrusted.Close)
-	// A server the box trusts that ends the handshake with an alert: it asks
-	// for a client certificate, and the box has none.
+	// A server the mailbox trusts that ends the handshake with an alert: it asks
+	// for a client certificate, and the mailbox has none.
 	alerting := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	alerting.TLS = &tls.Config{ClientAuth: tls.RequireAnyClientCert, MinVersion: tls.VersionTLS13}
 	alerting.StartTLS()

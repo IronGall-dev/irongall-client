@@ -14,27 +14,27 @@ import (
 	berrors "go.etcd.io/bbolt/errors"
 )
 
-// The box's state file, the bbolt database "state", holds what this client
-// writes about the box itself, each change made in one transaction: so no
+// The mailbox's state file, the bbolt database "state", holds what this client
+// writes about the mailbox itself, each change made in one transaction: so no
 // two records that go together are ever left one new and one old, and no
 // file's existence stands for a step having finished. Keys, mail and the
 // owner's own files stay files (client/doc.go): a key deleted inside a
 // database stays in its free pages and in every copy of it, and mail and the
 // owner's files are for a person to read, move and delete. A command that
-// writes the box holds the state file open from its start to its end, which
-// is the box's lock ([Box.hold]); a reading with no command under way opens
-// it read-only ([Box.view]).
+// writes the mailbox holds the state file open from its start to its end, which
+// is the mailbox's lock ([Mailbox.hold]); a reading with no command under way opens
+// it read-only ([Mailbox.view]).
 //
 // Its buckets:
 //
-//	box          the box's own records, each by its name: serial, pass, etag, seen-floor, acl, acl-another-writer, acl-replaced, revoked, revoked-certs, renew-failed, not-made, partial
-//	prekeys      each prekey statement this box signed, by its serial: the statement, its signature and when it was signed, in one value
-//	intent       the renewal under way, under "renewal": the number it took; under "adopt-acl", a restore's adoption of its server's ACL, until it is done; and under "acl-read", the read of its server's ACL a renewal recv began owes, with the serial the box had published then, until it is made
-//	peers        what this box pinned of each peer, by its address, in one value
+//	mailbox          the mailbox's own records, each by its name: serial, pass, etag, seen-floor, acl, acl-another-writer, acl-replaced, revoked, revoked-certs, renew-failed, not-made, partial
+//	prekeys      each prekey statement this mailbox signed, by its serial: the statement, its signature and when it was signed, in one value
+//	intent       the renewal under way, under "renewal": the number it took; under "adopt-acl", a restore's adoption of its server's ACL, until it is done; and under "acl-read", the read of its server's ACL a renewal recv began owes, with the serial the mailbox had published then, until it is made
+//	peers        what this mailbox pinned of each peer, by its address, in one value
 //	seen         the replay set, by ciphertext hash; seen-sender by sender and msg_id, and seen-time by sent_at, its two indexes
 //	refused      what this client's checks found of each message it refused, by its id: refused/ keeps the message as served
 const (
-	bucketBox        = "box"
+	bucketMailbox    = "box" // the name stored in every state file, kept as it was
 	bucketPrekeys    = "prekeys"
 	bucketIntent     = "intent"
 	bucketPeers      = "peers"
@@ -44,8 +44,8 @@ const (
 	bucketRefused    = "refused"
 )
 
-// store is one transaction of the box's state. A store with no transaction
-// is the state of a box that has none yet, and holds nothing.
+// store is one transaction of the mailbox's state. A store with no transaction
+// is the state of a mailbox that has none yet, and holds nothing.
 type store struct{ tx *bolt.Tx }
 
 // get returns a copy of what bucket holds under key, or nil.
@@ -108,22 +108,22 @@ func serialKey(n uint64) string { return string(binary.BigEndian.AppendUint64(ni
 // keySerial is the serial a prekeys key names.
 func keySerial(k []byte) (uint64, error) {
 	if len(k) != 8 {
-		return 0, fmt.Errorf("the box's state file holds a prekey under a key that is no serial")
+		return 0, fmt.Errorf("the mailbox's state file holds a prekey under a key that is no serial")
 	}
 	return binary.BigEndian.Uint64(k), nil
 }
 
-// errNotHeld is a write to the box's state by code that does not hold its
-// lock: a bug in this client, never a state of the box.
-var errNotHeld = errors.New("this client wrote the box's state without its lock")
+// errNotHeld is a write to the mailbox's state by code that does not hold its
+// lock: a bug in this client, never a state of the mailbox.
+var errNotHeld = errors.New("this client wrote the mailbox's state without its lock")
 
-// view runs f with the box's state to read: the transaction under way, if f
+// view runs f with the mailbox's state to read: the transaction under way, if f
 // runs inside one; the state the command or reading holds, if one does;
 // nothing, in a reading that found no state file ([reading]); otherwise the
-// state file opened read-only for f alone, waiting as [Box.hold] waits while
-// another command of the box holds it. A box with no state file yet holds
+// state file opened read-only for f alone, waiting as [Mailbox.hold] waits while
+// another command of the mailbox holds it. A mailbox with no state file yet holds
 // nothing.
-func (b *Box) view(f func(store) error) error {
+func (b *Mailbox) view(f func(store) error) error {
 	if b.tx != nil {
 		return f(store{b.tx})
 	}
@@ -149,12 +149,12 @@ func (b *Box) view(f func(store) error) error {
 	})
 }
 
-// update runs f in one transaction of the box's state, the command's, which
+// update runs f in one transaction of the mailbox's state, the command's, which
 // holds the lock: what f writes is kept only if it returns nil, and all of
 // it together. Inside a transaction already under way, f is part of it, so
 // what goes together is written together. No server call is made inside
 // one.
-func (b *Box) update(f func(store) error) error {
+func (b *Mailbox) update(f func(store) error) error {
 	if failWrite != nil {
 		if err := failWrite(); err != nil {
 			return err
@@ -176,24 +176,24 @@ func (b *Box) update(f func(store) error) error {
 	})
 }
 
-// failWrite is asked before each write of the box's state, and a write it
+// failWrite is asked before each write of the mailbox's state, and a write it
 // gives an error fails with it, as a full disk or EIO fails one: nil but in
 // a test.
 var failWrite func() error
 
-// openState opens the box's state file, waiting up to lockPatience while
+// openState opens the mailbox's state file, waiting up to lockPatience while
 // another command holds it: for writing, which only one command at a time
 // may, or read-only, which any number of readings may at once, while no
 // command writes. The first time it finds the file held it tells
 // Options.Waiting, if set, so that a wait is not read as a hang.
 //
 // A flock gives a writer that waits no preference over readings, which
-// overlap and leave it no moment the file is free, so it holds the box's gate
-// while it waits, a flock on the box's directory, and every reading takes the
+// overlap and leave it no moment the file is free, so it holds the mailbox's gate
+// while it waits, a flock on the mailbox's directory, and every reading takes the
 // gate and lets go of it around its own lock: readings wait behind a waiting
 // writer, and those under way finish, as SQLite's PENDING lock has them
 // (#344). The file is opened as bbolt opens it, never made (openWhole).
-func (b *Box) openState(ctx context.Context, readOnly bool) (*bolt.DB, error) {
+func (b *Mailbox) openState(ctx context.Context, readOnly bool) (*bolt.DB, error) {
 	deadline := time.Now().Add(lockPatience)
 	told := false
 	waited := func() error {
@@ -255,7 +255,7 @@ func (b *Box) openState(ctx context.Context, readOnly bool) (*bolt.DB, error) {
 	}
 }
 
-// gateOf takes the box's gate: tryGate, the system's, or noGate in a test of
+// gateOf takes the mailbox's gate: tryGate, the system's, or noGate in a test of
 // a system that has none.
 var gateOf = tryGate
 
@@ -269,7 +269,7 @@ func noGate(string) (*os.File, bool, error) { return nil, true, nil }
 // database in either, in place, where a cut can leave a file that faults
 // every process that opens it after (#323).
 func openWhole(name string, flag int, perm os.FileMode) (*os.File, error) {
-	f, err := os.OpenFile(name, flag&^os.O_CREATE, perm) //nolint:gosec // the box's own state file
+	f, err := os.OpenFile(name, flag&^os.O_CREATE, perm) //nolint:gosec // the mailbox's own state file
 	if err != nil {
 		return nil, err
 	}
@@ -284,4 +284,4 @@ func openWhole(name string, flag int, perm os.FileMode) (*os.File, error) {
 }
 
 // errEmptyState is a state file of no bytes, which this client never leaves.
-var errEmptyState = refuse("the box's state file is empty, which this client never leaves: something else made it, and it holds none of the box's records; delete it, and the next command makes it again")
+var errEmptyState = refuse("the mailbox's state file is empty, which this client never leaves: something else made it, and it holds none of the mailbox's records; delete it, and the next command makes it again")

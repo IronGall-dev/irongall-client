@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 )
 
-// Dir returns the state directory of the box to use, as the stock recipe
+// Dir returns the state directory of the mailbox to use, as the stock recipe
 // finds it: $DROMAS_HOME if set, otherwise
-// ${XDG_CONFIG_HOME:-$HOME/.config}/dromas/${DROMAS_BOX:-default}, the
+// ${XDG_CONFIG_HOME:-$HOME/.config}/dromas/${DROMAS_MAILBOX:-default}, the
 // XDG Base Directory Specification's home for configuration. It is never the
 // working directory, which for a coding agent is a git repository.
 func Dir() (string, error) {
@@ -24,11 +24,11 @@ func Dir() (string, error) {
 		}
 		base = filepath.Join(home, ".config")
 	}
-	box := os.Getenv("DROMAS_BOX")
-	if box == "" {
-		box = "default"
+	mailbox := os.Getenv("DROMAS_MAILBOX")
+	if mailbox == "" {
+		mailbox = "default"
 	}
-	return filepath.Join(base, "dromas", box), nil
+	return filepath.Join(base, "dromas", mailbox), nil
 }
 
 // writeFile writes a file with mode 0600 through a temporary file and a

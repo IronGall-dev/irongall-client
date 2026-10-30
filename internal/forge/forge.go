@@ -1,6 +1,6 @@
 // Package forge is how a test plays the hostile operator in front of
-// internal/fakeserver: a read of a box served otherwise than the server holds
-// it, mail put in a box as only the operator can, a call answered as a server
+// internal/fakeserver: a read of a mailbox served otherwise than the server holds
+// it, mail put in a mailbox as only the operator can, a call answered as a server
 // that is down. The Go client's tests and the script's share it, so each
 // forgery is written once, as an operator could make it.
 package forge
@@ -23,8 +23,8 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// ReadOf reports whether r is a read of a box, GET /v1/<address>, and of
-// which box.
+// ReadOf reports whether r is a read of a mailbox, GET /v1/<address>, and of
+// which mailbox.
 func ReadOf(r *http.Request) (protocol.Address, bool) {
 	rest, ok := strings.CutPrefix(r.URL.Path, "/v1/")
 	if !ok || r.Method != http.MethodGet || strings.Contains(rest, "/") {
@@ -34,16 +34,16 @@ func ReadOf(r *http.Request) (protocol.Address, bool) {
 	return a, err == nil
 }
 
-// Serve answers r, a read of a box, with the box s holds, edited first: an
-// operator that serves a box otherwise than it holds it. A revoked box is
+// Serve answers r, a read of a mailbox, with the mailbox s holds, edited first: an
+// operator that serves a mailbox otherwise than it holds it. A revoked mailbox is
 // served as it was before, from its last prekey, with none of what its
-// identity signed about it, so edit can make it look like any box.
-func Serve(t testing.TB, s *fakeserver.Server, w http.ResponseWriter, r *http.Request, next http.Handler, edit func(*protocol.BoxResponse)) {
+// identity signed about it, so edit can make it look like any mailbox.
+func Serve(t testing.TB, s *fakeserver.Server, w http.ResponseWriter, r *http.Request, next http.Handler, edit func(*protocol.MailboxResponse)) {
 	t.Helper()
 	a, _ := ReadOf(r)
 	rec := httptest.NewRecorder()
 	next.ServeHTTP(rec, r)
-	var br protocol.BoxResponse
+	var br protocol.MailboxResponse
 	var p protocol.Problem
 	switch {
 	case rec.Code == http.StatusOK && protocol.Unmarshal(rec.Body.Bytes(), &br) == nil:
@@ -51,7 +51,7 @@ func Serve(t testing.TB, s *fakeserver.Server, w http.ResponseWriter, r *http.Re
 		br.Identity = p.Record.Identity
 		br.Prekey, br.PrekeySignature = s.Prekey(a)
 	default:
-		t.Fatalf("an operator edits the read of a box, and the server answered %d", rec.Code)
+		t.Fatalf("an operator edits the read of a mailbox, and the server answered %d", rec.Code)
 	}
 	edit(&br)
 	fakeserver.WriteJSON(w, http.StatusOK, br)
@@ -74,16 +74,16 @@ func Carry(w http.ResponseWriter, r *http.Request, next http.Handler, rec *proto
 	_, _ = w.Write(got.Body.Bytes())
 }
 
-// Hides puts an operator in front of s that serves every box without what
-// its identity signed about it: a revoked box as if it were not, and no
-// revocation of a box's certificates.
+// Hides puts an operator in front of s that serves every mailbox without what
+// its identity signed about it: a revoked mailbox as if it were not, and no
+// revocation of a mailbox's certificates.
 func Hides(t testing.TB, s *fakeserver.Server) {
 	s.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		if _, ok := ReadOf(r); !ok {
 			next.ServeHTTP(w, r)
 			return
 		}
-		Serve(t, s, w, r, next, func(br *protocol.BoxResponse) { br.RevokedCertificates, br.RevokedCertificatesSignature = nil, nil })
+		Serve(t, s, w, r, next, func(br *protocol.MailboxResponse) { br.RevokedCertificates, br.RevokedCertificatesSignature = nil, nil })
 	})
 }
 
@@ -127,8 +127,8 @@ func Refuse(w http.ResponseWriter, code protocol.Code, with ...func(*protocol.Pr
 	_ = json.NewEncoder(w).Encode(p)
 }
 
-// Line is an envelope's line as a sender writes it: from the box whose
-// identity document it carries, to a box, sent at at.
+// Line is an envelope's line as a sender writes it: from the mailbox whose
+// identity document it carries, to a mailbox, sent at at.
 func Line(t testing.TB, doc []byte, from, to protocol.Address, body string, at time.Time) []byte {
 	t.Helper()
 	env, err := protocol.NewEnvelope(from, to, body, at)
@@ -153,7 +153,7 @@ func Sign(t testing.TB, s ssh.Signer, line []byte, to protocol.Address) []byte {
 	return sig
 }
 
-// Encrypt encrypts the parts, one after the other, to a box's current
+// Encrypt encrypts the parts, one after the other, to a mailbox's current
 // prekey as s holds it.
 func Encrypt(t testing.TB, s *fakeserver.Server, to protocol.Address, parts ...[]byte) []byte {
 	t.Helper()
@@ -183,8 +183,8 @@ func Encrypt(t testing.TB, s *fakeserver.Server, to protocol.Address, parts ...[
 }
 
 // Seal encrypts what a sender encrypts, an envelope's line and then whatever
-// follows it, to a box's current prekey as s holds it, and stores it in that
-// box, as only the operator can. It returns the id it is stored under: the
+// follows it, to a mailbox's current prekey as s holds it, and stores it in that
+// mailbox, as only the operator can. It returns the id it is stored under: the
 // hash of the ciphertext.
 func Seal(t testing.TB, s *fakeserver.Server, to protocol.Address, plaintext ...[]byte) string {
 	t.Helper()
@@ -211,7 +211,7 @@ type ListedEntry struct {
 	From any `json:"from,omitempty"`
 }
 
-// List answers r, a box's list, with each page it answers edited first, and
+// List answers r, a mailbox's list, with each page it answers edited first, and
 // any other request as next does: an operator's own list, a from beside each
 // entry among what it can write.
 func List(t testing.TB, w http.ResponseWriter, r *http.Request, next http.Handler, edit func(*Listed)) {

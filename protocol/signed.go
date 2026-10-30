@@ -35,7 +35,7 @@ const padFiller = '.'
 // SignEnvelope returns the envelope's line and the signature over it for its
 // recipient, by signer: a working key under its certificate
 // (Certificate.Signer). The namespace names the recipient, so the signature
-// holds for that box only.
+// holds for that mailbox only.
 func SignEnvelope(e *Envelope, signer ssh.Signer) (line, signature []byte, err error) {
 	if line, err = e.Line(); err != nil {
 		return nil, nil, err
@@ -104,11 +104,11 @@ type Signed struct {
 //  4. Its from is that document's hash. A well-formed document of a key type
 //     this client does not verify is refused here, after its hash: with its
 //     own code, since nothing is wrong with it.
-//  5. The signature over the line, as decrypted, verifies in this box's
+//  5. The signature over the line, as decrypted, verifies in this mailbox's
 //     message namespace, by a working key that identity certified, under a
 //     certificate valid at now.
 //  6. The envelope, in OpenEnvelope's order: a body and every member of its
-//     type, version 1, to is this box, a msg_id, and a sent_at no older than
+//     type, version 1, to is this mailbox, a msg_id, and a sent_at no older than
 //     TTL and no more than MaxSkew ahead.
 //
 // The identity document is read from the envelope before the signature is
@@ -190,7 +190,7 @@ func Examine(plaintext []byte, me Address, now time.Time) (*Signed, *Findings, e
 	case errors.Is(err, ErrCertificate):
 		return nil, f, &EnvelopeError{RefusedSignature, "it is not signed under a certificate of the sender's identity"}
 	case err != nil:
-		return nil, f, &EnvelopeError{RefusedSignature, "the signature does not verify for its sender and this box"}
+		return nil, f, &EnvelopeError{RefusedSignature, "the signature does not verify for its sender and this mailbox"}
 	}
 	env, err := OpenEnvelope(line, id.Address(), me, now)
 	if err != nil {

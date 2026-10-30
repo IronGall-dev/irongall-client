@@ -37,7 +37,7 @@ func refusedFindings(t *testing.T, kind string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, c := e.box(protocol.Classic), e.box(protocol.Classic)
+	b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	stamp := func(t time.Time) string { return t.UTC().Format(protocol.TimeLayout) }
 
 	// A certificate a's identity made two hours ahead of every clock here.
@@ -108,8 +108,8 @@ func refusedFindings(t *testing.T, kind string) {
 	}
 }
 
-// workKey is the private half of a box's current working key.
-func workKey(t *testing.T, b *client.Box) ssh.Signer {
+// workKey is the private half of a mailbox's current working key.
+func workKey(t *testing.T, b *client.Mailbox) ssh.Signer {
 	t.Helper()
 	raw, err := os.ReadFile(workFile(b, numberOf(t, b), ""))
 	if err != nil {
@@ -129,7 +129,7 @@ func TestADeliveryLeavesNothingOfAnEarlierRefusal(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	line := forge.Line(t, a.Identity().Document(), a.Address(), b.Address(), "dated ahead of the reader", e.clock.Now().Add(2*time.Hour))
 	id := e.seal(b, line, forge.Sign(t, worker(t, a), line, b.Address()))
 	says(e, protocol.CodeUnavailable, "DELETE", "/messages/"+id)
@@ -143,18 +143,18 @@ func TestADeliveryLeavesNothingOfAnEarlierRefusal(t *testing.T) {
 		t.Fatalf("the same message once the clock reached it: %+v", res)
 	}
 	if qs, err := b.RefusedMail(t.Context()); err != nil || len(qs) != 0 || exists(filepath.Join(b.Dir(), "refused", id+".json")) || has(b, "refused/"+id+".reason") {
-		t.Errorf("after its delivery the box keeps %+v, %v of its refusal", qs, err)
+		t.Errorf("after its delivery the mailbox keeps %+v, %v of its refusal", qs, err)
 	}
 }
 
-// A refused message names its signer only where the box holds no revocation
+// A refused message names its signer only where the mailbox holds no revocation
 // of that address or that certificate (#265), whichever check refuses it:
 // each refusal a signature that verifies can meet, against each thing the
-// reading box can hold of its signer. Where it holds a revocation that covers
+// reading mailbox can hold of its signer. Where it holds a revocation that covers
 // the mail, the record and Refusal.Findings give the identity the mail claims
 // and nothing more, as for a signature that does not verify (#336); where it
 // holds none that does, both name the signer and its certificate.
-func TestARefusalNamesNoSignerTheBoxHoldsRevoked(t *testing.T) {
+func TestARefusalNamesNoSignerTheMailboxHoldsRevoked(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {
 		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
@@ -165,7 +165,7 @@ func TestARefusalNamesNoSignerTheBoxHoldsRevoked(t *testing.T) {
 	}
 	// under is a's working key certified anew by a's identity at serial n,
 	// its certificate starting at start.
-	under := func(t *testing.T, a *client.Box, n uint64, start time.Time) ssh.Signer {
+	under := func(t *testing.T, a *client.Mailbox, n uint64, start time.Time) ssh.Signer {
 		cert, err := protocol.NewCertificate(a.Identity(), identityKey(t, a), workKey(t, a).PublicKey(), n, start)
 		if err != nil {
 			t.Fatal(err)
@@ -176,47 +176,47 @@ func TestARefusalNamesNoSignerTheBoxHoldsRevoked(t *testing.T) {
 		}
 		return s
 	}
-	signed := func(e *env, b *client.Box, s ssh.Signer, line []byte) string {
+	signed := func(e *env, b *client.Mailbox, s ssh.Signer, line []byte) string {
 		return e.seal(b, line, forge.Sign(t, s, line, b.Address()))
 	}
-	// Each refusal, by the check that makes it where the box holds nothing
+	// Each refusal, by the check that makes it where the mailbox holds nothing
 	// of a; "" is mail that passes every check before the revocations'.
 	refusals := []struct {
 		name, code string
-		send       func(t *testing.T, e *env, a, b, thief *client.Box) sent
+		send       func(t *testing.T, e *env, a, b, thief *client.Mailbox) sent
 	}{
-		{"its certificate not begun", protocol.RefusedSignature, func(t *testing.T, e *env, a, b, _ *client.Box) sent {
+		{"its certificate not begun", protocol.RefusedSignature, func(t *testing.T, e *env, a, b, _ *client.Mailbox) sent {
 			n := numberOf(t, a) + 1
 			line := e.line(a.Identity().Document(), a.Address(), b.Address(), "not begun")
 			return sent{signed(e, b, under(t, a, n, e.clock.Now().Add(2*time.Hour)), line), n}
 		}},
-		{"its certificate ended", protocol.RefusedSignature, func(t *testing.T, e *env, a, b, _ *client.Box) sent {
+		{"its certificate ended", protocol.RefusedSignature, func(t *testing.T, e *env, a, b, _ *client.Mailbox) sent {
 			n := numberOf(t, a) - 1000
 			line := e.line(a.Identity().Document(), a.Address(), b.Address(), "ended")
 			return sent{signed(e, b, under(t, a, n, e.clock.Now().Add(-70*24*time.Hour)), line), n}
 		}},
-		{"sent_at older than the TTL", protocol.RefusedStale, func(t *testing.T, e *env, a, b, _ *client.Box) sent {
+		{"sent_at older than the TTL", protocol.RefusedStale, func(t *testing.T, e *env, a, b, _ *client.Mailbox) sent {
 			line := forge.Line(t, a.Identity().Document(), a.Address(), b.Address(), "old", e.clock.Now().Add(-protocol.TTL-time.Second))
 			return sent{signed(e, b, worker(t, a), line), numberOf(t, a)}
 		}},
-		{"sent_at ahead", protocol.RefusedFuture, func(t *testing.T, e *env, a, b, _ *client.Box) sent {
+		{"sent_at ahead", protocol.RefusedFuture, func(t *testing.T, e *env, a, b, _ *client.Mailbox) sent {
 			line := forge.Line(t, a.Identity().Document(), a.Address(), b.Address(), "ahead", e.clock.Now().Add(protocol.MaxSkew+time.Minute))
 			return sent{signed(e, b, worker(t, a), line), numberOf(t, a)}
 		}},
-		{"to another box", protocol.RefusedAttribution, func(t *testing.T, e *env, a, b, thief *client.Box) sent {
+		{"to another mailbox", protocol.RefusedAttribution, func(t *testing.T, e *env, a, b, thief *client.Mailbox) sent {
 			line := e.line(a.Identity().Document(), a.Address(), thief.Address(), "to another")
 			return sent{signed(e, b, worker(t, a), line), numberOf(t, a)}
 		}},
-		{"an envelope of another version", protocol.RefusedEnvelope, func(t *testing.T, e *env, a, b, _ *client.Box) sent {
+		{"an envelope of another version", protocol.RefusedEnvelope, func(t *testing.T, e *env, a, b, _ *client.Mailbox) sent {
 			env := `{"v":2,"from":"` + a.Address().String() + `","to":"` + b.Address().String() + `","identity":"` + base64.StdEncoding.EncodeToString(a.Identity().Document()) + `","sent_at":"` + e.clock.Now().Format(protocol.TimeLayout) + `","msg_id":"77777777-2222-4333-8444-555555555555","body":"x"}`
 			return sent{mail(t, e, a, b, env), numberOf(t, a)}
 		}},
-		{"sent_at below the replay set's floor", protocol.RefusedStale, func(t *testing.T, e *env, a, b, _ *client.Box) sent {
+		{"sent_at below the replay set's floor", protocol.RefusedStale, func(t *testing.T, e *env, a, b, _ *client.Mailbox) sent {
 			b.SetRecord(t, "seen-floor", []byte(strconv.FormatInt(e.clock.Now().Unix(), 10)))
 			line := e.line(a.Identity().Document(), a.Address(), b.Address(), "below the floor")
 			return sent{signed(e, b, worker(t, a), line), numberOf(t, a)}
 		}},
-		{"good in every other way", "", func(t *testing.T, e *env, a, b, _ *client.Box) sent {
+		{"good in every other way", "", func(t *testing.T, e *env, a, b, _ *client.Mailbox) sent {
 			line := e.line(a.Identity().Document(), a.Address(), b.Address(), "good mail")
 			return sent{signed(e, b, worker(t, a), line), numberOf(t, a)}
 		}},
@@ -228,10 +228,10 @@ func TestARefusalNamesNoSignerTheBoxHoldsRevoked(t *testing.T) {
 		name   string
 		covers bool
 		late   string
-		hold   func(t *testing.T, a, b *client.Box, serial uint64)
+		hold   func(t *testing.T, a, b *client.Mailbox, serial uint64)
 	}{
-		{"nothing", false, "", func(*testing.T, *client.Box, *client.Box, uint64) {}},
-		{"the address revoked", true, client.RefusedRevoked, func(t *testing.T, a, b *client.Box, _ uint64) {
+		{"nothing", false, "", func(*testing.T, *client.Mailbox, *client.Mailbox, uint64) {}},
+		{"the address revoked", true, client.RefusedRevoked, func(t *testing.T, a, b *client.Mailbox, _ uint64) {
 			rec, err := a.Revocation(t.Context())
 			if err != nil {
 				t.Fatal(err)
@@ -240,12 +240,12 @@ func TestARefusalNamesNoSignerTheBoxHoldsRevoked(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		{"its certificates revoked through the mail's", true, client.RefusedCertificate, func(t *testing.T, a, b *client.Box, n uint64) {
+		{"its certificates revoked through the mail's", true, client.RefusedCertificate, func(t *testing.T, a, b *client.Mailbox, n uint64) {
 			if _, _, err := b.KeepRevocation(t.Context(), certsRecord(t, a.Dir(), n)); err != nil {
 				t.Fatal(err)
 			}
 		}},
-		{"its certificates revoked through the one below the mail's", false, "", func(t *testing.T, a, b *client.Box, n uint64) {
+		{"its certificates revoked through the one below the mail's", false, "", func(t *testing.T, a, b *client.Mailbox, n uint64) {
 			if _, _, err := b.KeepRevocation(t.Context(), certsRecord(t, a.Dir(), n-1)); err != nil {
 				t.Fatal(err)
 			}
@@ -255,7 +255,7 @@ func TestARefusalNamesNoSignerTheBoxHoldsRevoked(t *testing.T) {
 		for _, h := range holdings {
 			t.Run(r.name+", "+h.name, func(t *testing.T) {
 				e := newEnv(t)
-				a, b, thief := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+				a, b, thief := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 				m := r.send(t, e, a, b, thief)
 				h.hold(t, a, b, m.serial)
 				res := receive(t, b)
@@ -275,26 +275,26 @@ func TestARefusalNamesNoSignerTheBoxHoldsRevoked(t *testing.T) {
 				q, f := refusedAs(t, b, m.id), res.Refused[0].Findings
 				if h.covers {
 					if q.SignedBy != "" || q.ClaimsIdentity != a.Address().String() || q.CertificateSerial != 0 || q.SentAt != "" || q.MsgID != "" {
-						t.Errorf("kept as %+v, where the box holds a revocation that covers it", q)
+						t.Errorf("kept as %+v, where the mailbox holds a revocation that covers it", q)
 					}
 					if f.Signed || f.Identity == nil || *f.Identity != a.Address() || f.Serial != 0 || !f.Began.IsZero() || !f.Ends.IsZero() || !f.SentAt.IsZero() || f.MsgID != "" {
-						t.Errorf("Refusal.Findings %+v, where the box holds a revocation that covers it", f)
+						t.Errorf("Refusal.Findings %+v, where the mailbox holds a revocation that covers it", f)
 					}
 					return
 				}
 				if q.SignedBy != a.Address().String() || q.CertificateSerial != m.serial {
-					t.Errorf("kept as %+v, where the box holds no revocation that covers it", q)
+					t.Errorf("kept as %+v, where the mailbox holds no revocation that covers it", q)
 				}
 				if !f.Signed || f.Serial != m.serial {
-					t.Errorf("Refusal.Findings %+v, where the box holds no revocation that covers it", f)
+					t.Errorf("Refusal.Findings %+v, where the mailbox holds no revocation that covers it", f)
 				}
 			})
 		}
 	}
 }
 
-// identityKey is a box's identity key.
-func identityKey(t *testing.T, b *client.Box) ssh.Signer {
+// identityKey is a mailbox's identity key.
+func identityKey(t *testing.T, b *client.Mailbox) ssh.Signer {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(b.Dir(), "identity"))
 	if err != nil {
@@ -308,7 +308,7 @@ func identityKey(t *testing.T, b *client.Box) ssh.Signer {
 }
 
 // refusedAs is what refused list gives of message id.
-func refusedAs(t *testing.T, b *client.Box, id string) client.RefusedMail {
+func refusedAs(t *testing.T, b *client.Mailbox, id string) client.RefusedMail {
 	t.Helper()
 	qs, err := b.RefusedMail(t.Context())
 	if err != nil {

@@ -80,7 +80,7 @@ func TestPatternsReadBytes(t *testing.T) {
 	}
 }
 
-// The box's own server answers a post with an honest receipt, one member
+// The mailbox's own server answers a post with an honest receipt, one member
 // ending in a line feed or a NUL (#187). Neither client takes it, and
 // nothing goes to sent/: the script keeps nothing to post again.
 func TestAReceiptIsComparedAsBytes(t *testing.T) {

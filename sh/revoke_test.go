@@ -19,23 +19,23 @@ import (
 )
 
 // Revocation in the script: of an address and of its certificates, what a
-// sender asks before it posts, and a box's own revocations.
+// sender asks before it posts, and a mailbox's own revocations.
 
 // top is the highest serial there is, 2^53 - 1.
 const top = 9007199254740991
 
-// revocation is box b's revocation record, made with ssh-keygen as the Go
+// revocation is mailbox b's revocation record, made with ssh-keygen as the Go
 // client's revocation make makes one: the script makes none. Its signature is
 // left in $W/<name>.rev.sig.
-func (b *sbox) revocation(name string) []byte {
+func (b *shMailbox) revocation(name string) []byte {
 	b.w.t.Helper()
 	return []byte(b.must(`a=$(cat "$DR/address"); printf 'dromas-revoke-v1\n%s\n' "$a" | ssh-keygen -q -Y sign -n "dromas-revoke-v1:$a" -f "$DR/identity" > "$W/` + name + `.rev.sig" &&
 jq -cn --arg i "$(dr_b64 "$DR/identity.doc")" --arg s "$(dr_b64 "$W/` + name + `.rev.sig")" '{type:"revocation_record", identity:$i, revocation_signature:$s}'`))
 }
 
 // revoke publishes b's revocation at its server, as the Go client's
-// revocation publish does, and keeps it in the box as that command keeps it.
-func (b *sbox) revoke() {
+// revocation publish does, and keeps it in the mailbox as that command keeps it.
+func (b *shMailbox) revoke() {
 	b.w.t.Helper()
 	rec := filepath.Join(b.w.work, "own.rev.json")
 	writeFile(b.w.t, rec, b.revocation("own"))
@@ -46,7 +46,7 @@ func (b *sbox) revoke() {
 // key file signer, and its record, made with ssh-keygen: the script applies
 // one and makes none. The statement and signature are $W/<name>.certs and
 // .sig, the record $W/<name>.json.
-func (b *sbox) certs(name string, serial uint64, signer string) string {
+func (b *shMailbox) certs(name string, serial uint64, signer string) string {
 	b.w.t.Helper()
 	b.must(fmt.Sprintf(`a=$(cat "$DR/address"); printf 'dromas-revoke-certs-v1\n%%s\n%%s\n' "$a" %d > "$W/%[2]s.certs"; ssh-keygen -q -Y sign -n "dromas-revoke-certs-v1:$a" -f %[3]s < "$W/%[2]s.certs" > "$W/%[2]s.sig"
 jq -cn --arg i "$(dr_b64 "$DR/identity.doc")" --arg l "$(dr_b64 "$W/%[2]s.certs")" --arg g "$(dr_b64 "$W/%[2]s.sig")" '{identity:$i, revoked_certificates:$l, revoked_certificates_signature:$g}' > "$W/%[2]s.json"`, serial, name, signer))
@@ -55,14 +55,14 @@ jq -cn --arg i "$(dr_b64 "$DR/identity.doc")" --arg l "$(dr_b64 "$W/%[2]s.certs"
 
 // publish puts a record at b's server, with no pass: the identity's own
 // signature is the authority.
-func (b *sbox) publish(record string) {
+func (b *shMailbox) publish(record string) {
 	b.w.t.Helper()
 	b.must(`dr_api PUT "/v1/$(cat "$DR/address")/revocations" ` + record + ` > /dev/null`)
 }
 
-// saysRevoked answers every read of box b 410 revoked, carrying record, or
+// saysRevoked answers every read of mailbox b 410 revoked, carrying record, or
 // none if it is nil: an operator's word, whatever it shows.
-func (w *world) saysRevoked(b *sbox, record *protocol.Revocations) {
+func (w *world) saysRevoked(b *shMailbox, record *protocol.Revocations) {
 	w.srv.SetMiddle(func(rw http.ResponseWriter, r *http.Request, next http.Handler) {
 		if x, ok := forge.ReadOf(r); ok && x == b.addr {
 			forge.Refuse(rw, protocol.CodeRevoked, func(p *protocol.Problem) { p.Record = record })
@@ -72,9 +72,9 @@ func (w *world) saysRevoked(b *sbox, record *protocol.Revocations) {
 	})
 }
 
-// showing answers every read of box b as the server does, with the members
+// showing answers every read of mailbox b as the server does, with the members
 // of a JSON object put over it: whatever an operator shows.
-func (w *world) showing(b *sbox, members []byte) {
+func (w *world) showing(b *shMailbox, members []byte) {
 	w.srv.SetMiddle(func(rw http.ResponseWriter, r *http.Request, next http.Handler) {
 		if x, ok := forge.ReadOf(r); !ok || x != b.addr {
 			next.ServeHTTP(rw, r)
@@ -82,17 +82,17 @@ func (w *world) showing(b *sbox, members []byte) {
 		}
 		rec := httptest.NewRecorder()
 		next.ServeHTTP(rec, r)
-		var box, over map[string]any
-		if json.Unmarshal(rec.Body.Bytes(), &box) != nil || json.Unmarshal(members, &over) != nil {
-			w.t.Fatalf("an operator shows members over a box, and the server answered %d", rec.Code)
+		var mailbox, over map[string]any
+		if json.Unmarshal(rec.Body.Bytes(), &mailbox) != nil || json.Unmarshal(members, &over) != nil {
+			w.t.Fatalf("an operator shows members over a mailbox, and the server answered %d", rec.Code)
 		}
-		maps.Copy(box, over)
-		fakeserver.WriteJSON(rw, http.StatusOK, box)
+		maps.Copy(mailbox, over)
+		fakeserver.WriteJSON(rw, http.StatusOK, mailbox)
 	})
 }
 
-// failing answers every read of box b with code: no answer about it.
-func (w *world) failing(b *sbox, code protocol.Code) {
+// failing answers every read of mailbox b with code: no answer about it.
+func (w *world) failing(b *shMailbox, code protocol.Code) {
 	w.srv.SetMiddle(func(rw http.ResponseWriter, r *http.Request, next http.Handler) {
 		if x, ok := forge.ReadOf(r); ok && x == b.addr {
 			forge.Refuse(rw, code)
@@ -114,11 +114,11 @@ func record(t *testing.T, name string) *protocol.Revocations {
 
 // A revocation is the identity's own signature over its fixed statement: a
 // server's word, or what it shows that is not one, revokes nothing; a real
-// one ends the box, is kept, and holds against a server that hides it; no
+// one ends the mailbox, is kept, and holds against a server that hides it; no
 // answer about a sender is not "not revoked".
 func TestScriptTakesARevocationOnItsProofAlone(t *testing.T) {
 	w := newWorld(t)
-	ra, rb, rc, rd := w.box(), w.box(), w.box(), w.box()
+	ra, rb, rc, rd := w.mailbox(), w.mailbox(), w.mailbox(), w.mailbox()
 	va := strings.TrimSpace(mustReadString(t, filepath.Join(vectors, "a", "address")))
 	vdoc := abs(t, filepath.Join(vectors, "a", "identity.doc"))
 	sigs := []string{"a/revoke.sig", "a/revoke.sha256.sig"}
@@ -141,7 +141,7 @@ func TestScriptTakesARevocationOnItsProofAlone(t *testing.T) {
 	vb := strings.TrimSpace(mustReadString(t, filepath.Join(vectors, "b", "address")))
 	for _, v := range append(bad, "b") {
 		cmd := fmt.Sprintf("dr_revcheck %s %s %s", va, vdoc, abs(t, v))
-		if v == "b" { // A's revocation for another box, and under another identity
+		if v == "b" { // A's revocation for another mailbox, and under another identity
 			cmd = fmt.Sprintf("dr_revcheck %s %s %[3]s || dr_revcheck %[4]s %[5]s %[3]s", vb, vdoc, abs(t, filepath.Join(vectors, sigs[0])), va, abs(t, filepath.Join(vectors, "b", "identity.doc")))
 		}
 		if r := ra.sh(cmd); r.rc == 0 {
@@ -166,15 +166,15 @@ jq -cn --arg i "$(dr_b64 "$DR/identity.doc")" --arg s "$(dr_b64 "$W/wk.sig")" '{
 		t.Errorf("a working key's signature is read as a record: %v", r)
 	}
 	// The operator says RB is revoked, and shows nothing, or what is not its
-	// revocation: a working key's signature, another box's revocation, and
-	// another box's signature with this box's document.
+	// revocation: a working key's signature, another mailbox's revocation, and
+	// another mailbox's signature with this mailbox's document.
 	rcRec := filepath.Join(w.work, "rc.json")
 	writeFile(t, rcRec, rc.revocation("rc"))
 	mixed := filepath.Join(w.work, "mixed.json")
 	rb.must(`jq -c --slurpfile b ` + rbRec + ` '.identity = $b[0].identity' ` + rcRec + ` > ` + mixed)
 	wordOnly := func(what string) {
 		t.Helper()
-		if r := ra.send(rb.addr.String(), "to a box the server calls revoked"); r.rc == 0 || !strings.Contains(r.err, "showed no revocation that verifies") || ra.has("peers/"+rb.addr.String()+"/revoke.sig") || !ra.bare() {
+		if r := ra.send(rb.addr.String(), "to a mailbox the server calls revoked"); r.rc == 0 || !strings.Contains(r.err, "showed no revocation that verifies") || ra.has("peers/"+rb.addr.String()+"/revoke.sig") || !ra.bare() {
 			t.Errorf("%s: %v", what, r)
 		}
 	}
@@ -185,28 +185,28 @@ jq -cn --arg i "$(dr_b64 "$DR/identity.doc")" --arg s "$(dr_b64 "$W/wk.sig")" '{
 		wordOnly("a server's word, showing " + filepath.Base(shown))
 	}
 	w.honest()
-	ra.mustSend(rb, "to a box the server calls revoked")
+	ra.mustSend(rb, "to a mailbox the server calls revoked")
 	if d := rb.recv(); len(d.mail) != 1 {
 		t.Errorf("the same send once the server lets it: %v", d)
 	}
-	// A real revocation: the box learns it from the proof, and the mail
+	// A real revocation: the mailbox learns it from the proof, and the mail
 	// waiting for it goes; a second changes nothing.
 	rd.mustSend(ra, "one")
 	rd.mustSend(ra, "two")
-	ra.mustSend(rd, "waiting in the box that is revoked")
+	ra.mustSend(rd, "waiting in the mailbox that is revoked")
 	rd.revoke()
-	if d := rd.recv(); d.rc == 0 || !strings.Contains(d.said, "REVOKED: this box's own address is revoked") {
-		t.Errorf("a revoked box's recv: %v", d)
+	if d := rd.recv(); d.rc == 0 || !strings.Contains(d.said, "REVOKED: this mailbox's own address is revoked") {
+		t.Errorf("a revoked mailbox's recv: %v", d)
 	}
-	if r := rd.send(ra.addr.String(), "from a revoked box"); r.rc == 0 || !strings.Contains(r.err, "REVOKED") || !rd.bare() {
-		t.Errorf("a revoked box's send: %v", r)
+	if r := rd.send(ra.addr.String(), "from a revoked mailbox"); r.rc == 0 || !strings.Contains(r.err, "REVOKED") || !rd.bare() {
+		t.Errorf("a revoked mailbox's send: %v", r)
 	}
 	n := len(w.srv.Requests())
 	reads := func(a protocol.Address, since int) int {
 		return len(slices.DeleteFunc(w.calls(since), func(c string) bool { return c != "GET /v1/"+a.String() }))
 	}
 	if d := ra.recv(); len(d.mail) != 0 || d.refused("revoked") != 2 || reads(rd.addr, n) != 1 || !ra.has("peers/"+rd.addr.String()+"/revoke.sig") || w.srv.Count(ra.addr) != 0 {
-		t.Errorf("mail from a box revoked since: %v, %d reads of it", d, reads(rd.addr, n))
+		t.Errorf("mail from a mailbox revoked since: %v, %d reads of it", d, reads(rd.addr, n))
 	}
 	// The operator then hides the revocation, and delivers mail that sender's
 	// working key signed, which its certificate still covers.
@@ -217,10 +217,10 @@ jq -cn --arg i "$(dr_b64 "$DR/identity.doc")" --arg s "$(dr_b64 "$W/wk.sig")" '{
 		t.Errorf("a kept revocation against a server that hides it: %v", d)
 	}
 	n = len(w.srv.Requests())
-	if r := ra.send(rd.addr.String(), "to a revoked box"); r.rc == 0 || !strings.Contains(r.err, "REVOKED: "+rd.addr.String()+" is revoked") || len(w.srv.Requests()) != n || !ra.bare() {
-		t.Errorf("a send to a box this box holds a revocation of: %v, %q", r, w.calls(n))
+	if r := ra.send(rd.addr.String(), "to a revoked mailbox"); r.rc == 0 || !strings.Contains(r.err, "REVOKED: "+rd.addr.String()+" is revoked") || len(w.srv.Requests()) != n || !ra.bare() {
+		t.Errorf("a send to a mailbox this mailbox holds a revocation of: %v, %q", r, w.calls(n))
 	}
-	// No answer about a sender, or a 2xx that is no box this script reads,
+	// No answer about a sender, or a 2xx that is no mailbox this script reads,
 	// stops the drain with the message on the server; the next drain asks
 	// again.
 	rb.mustSend(rc, "waits for an answer")
@@ -232,9 +232,9 @@ jq -cn --arg i "$(dr_b64 "$DR/identity.doc")" --arg s "$(dr_b64 "$W/wk.sig")" '{
 	}
 	w.failing(rb, protocol.CodeUnavailable)
 	stopped("no answer about the sender")
-	for _, v := range []string{"box-bad-prekey-a-number.json", "box-bad-revoked-certificates-a-number.json"} {
+	for _, v := range []string{"mailbox-bad-prekey-a-number.json", "mailbox-bad-revoked-certificates-a-number.json"} {
 		w.showing(rb, mustRead(t, filepath.Join(vectors, "answer", v)))
-		stopped(v + " over the box served")
+		stopped(v + " over the mailbox served")
 	}
 	w.honest()
 	if d := rc.recv(); d.rc != 0 || len(d.mail) != 1 {
@@ -242,9 +242,9 @@ jq -cn --arg i "$(dr_b64 "$DR/identity.doc")" --arg s "$(dr_b64 "$W/wk.sig")" '{
 	}
 }
 
-// keptCerts is the revocation of certificates a box keeps of address a, as
+// keptCerts is the revocation of certificates a mailbox keeps of address a, as
 // its statement.
-func (b *sbox) keptCerts(a protocol.Address) string {
+func (b *shMailbox) keptCerts(a protocol.Address) string {
 	return b.must(`jq -r .revoked_certificates "$DR/peers/` + a.String() + `/revoked-certs.json" | base64 -d`)
 }
 
@@ -253,7 +253,7 @@ func (b *sbox) keptCerts(a protocol.Address) string {
 // longer verifies is a fault.
 func TestScriptReadsARevocationOfCertificates(t *testing.T) {
 	w := newWorld(t)
-	p := w.box()
+	p := w.mailbox()
 	va := strings.TrimSpace(mustReadString(t, filepath.Join(vectors, "a", "address")))
 	vec := func(n string) string { return abs(t, filepath.Join(vectors, n)) }
 	ok4, okTop := vec("revoked/ok-through-4"), vec("revoked/ok-through-the-highest")
@@ -268,7 +268,7 @@ func TestScriptReadsARevocationOfCertificates(t *testing.T) {
 	}
 	vb := strings.TrimSpace(mustReadString(t, filepath.Join(vectors, "b", "address")))
 	if r := p.sh(fmt.Sprintf("dr_certscheck %[1]s %[2]s %[3]s.txt %[3]s.sig || dr_certscheck %[4]s %[2]s %[3]s.txt %[3]s.sig", vb, vec("b/identity.doc"), ok4, va)); r.rc == 0 {
-		t.Error("A's revocation of certificates is taken for another box, or under another identity")
+		t.Error("A's revocation of certificates is taken for another mailbox, or under another identity")
 	}
 	out := p.must(fmt.Sprintf(`d="$DR/peers/%[1]s"; mkdir -p "$d"; cp %[2]s "$d/identity.doc"
 rec(){ jq -cn --arg i "$(dr_b64 %[2]s)" --arg l "$(dr_b64 "$1")" --arg g "$(dr_b64 "$2")" '{identity:$i, revoked_certificates:$l, revoked_certificates_signature:$g}' > "$d/revoked-certs.json"; }
@@ -282,14 +282,14 @@ echo '{}' > "$d/revoked-certs.json"; dr_certrevoked %[1]s 2; echo "$?"`, va, vec
 }
 
 // Certificates revoked: a working key taken, a prekey published with it at
-// the highest serial there is, the box's next certificate passing it, and the
+// the highest serial there is, the mailbox's next certificate passing it, and the
 // identity's revocation ending what the taken key can still sign.
 func TestScriptAfterAWorkingKeyIsTaken(t *testing.T) {
 	w := newWorld(t)
-	ca, cb, cc := w.box(), w.box(), w.box()
+	ca, cb, cc := w.mailbox(), w.mailbox(), w.mailbox()
 	op := w.operator()
 	cb.mustSend(cc, "signed under the first certificate, and read after it was revoked")
-	lastQuery := func(to *sbox) string {
+	lastQuery := func(to *shMailbox) string {
 		rs := w.srv.Requests()
 		for i := len(rs) - 1; i >= 0; i-- {
 			if rs[i].Method == http.MethodPost && rs[i].Path == "/v1/"+to.addr.String()+"/messages" {
@@ -340,7 +340,7 @@ func TestScriptAfterAWorkingKeyIsTaken(t *testing.T) {
 	if d := cb.recv(); !slices.Equal(slices.Sorted(slices.Values(d.bodies())), []string{"after the renewal", "before the theft"}) || d.refused("undecryptable") != 1 {
 		t.Errorf("what CB reads after its renewal: %v", d)
 	}
-	thief := func(to *sbox, msgID, body string) {
+	thief := func(to *shMailbox, msgID, body string) {
 		l := envelope(t, cb.addr, to.addr, []byte(cb.read("identity.doc")), msgID, body, 0)
 		w.inject(to, "", l, w.signWith(taken+"-cert.pub", to.addr, l))
 	}
@@ -357,7 +357,7 @@ func TestScriptAfterAWorkingKeyIsTaken(t *testing.T) {
 		t.Errorf("a revocation of certificates the working key signed is taken: %v", r)
 	}
 	cb.publish(cb.certs("CB2", n1, cb.file("identity")))
-	// Mail the thief signs now, and mail under the box's new certificate.
+	// Mail the thief signs now, and mail under the mailbox's new certificate.
 	thief(ca, "00000000-0000-4000-8000-00000000c002", "signed by the thief, after the revocation")
 	cb.mustSend(ca, "under the new certificate")
 	n := len(w.srv.Requests())
@@ -375,7 +375,7 @@ func TestScriptAfterAWorkingKeyIsTaken(t *testing.T) {
 	}
 	w.honest()
 	if d := cc.recv(); len(d.mail) != 0 || d.refused("certificate_revoked") != 1 {
-		t.Errorf("the box's own unread mail under that certificate: %v", d)
+		t.Errorf("the mailbox's own unread mail under that certificate: %v", d)
 	}
 	// CC never saw a later statement of CB's, and holds the revocation: a
 	// server that serves the thief's prekey gets nothing encrypted to it.
@@ -389,7 +389,7 @@ func TestScriptAfterAWorkingKeyIsTaken(t *testing.T) {
 		t.Errorf("the send, the server honest, went under %q", cc.read(peer+"cert-serial"))
 	}
 	// A lower revocation never replaces a higher one, whatever a server
-	// shows; a kept one that no longer verifies is a fault of the box.
+	// shows; a kept one that no longer verifies is a fault of the mailbox.
 	cb.mustSend(ca, "another, for a second lookup")
 	w.showing(cb, mustRead(t, cb.certs("CB1", n1-1, cb.file("identity"))))
 	if d := ca.recv(); len(d.mail) != 1 || ca.keptCerts(cb.addr) != mustReadString(t, filepath.Join(w.work, "CB2.certs")) {
@@ -409,28 +409,28 @@ func TestScriptAfterAWorkingKeyIsTaken(t *testing.T) {
 	}
 }
 
-// A box whose current certificate is revoked has no pass the server takes
-// and no mail a sender may seal to it, until one renewal; a box never makes a
+// A mailbox whose current certificate is revoked has no pass the server takes
+// and no mail a sender may seal to it, until one renewal; a mailbox never makes a
 // certificate its identity revoked.
 func TestScriptUnderItsOwnRevokedCertificate(t *testing.T) {
 	w := newWorld(t)
-	ca, cd, ce := w.box(), w.box(), w.box()
+	ca, cd, ce := w.mailbox(), w.mailbox(), w.mailbox()
 	nd := cd.num()
 	cd.publish(cd.certs("CD1", nd, cd.file("identity")))
 	if out := cd.must(`dr_recv > /dev/null 2>&1 && echo drained; dr_code`); out != "certificate_revoked\n" {
 		t.Errorf("a drain under a revoked certificate: %q", out)
 	}
 	forge.Hides(t, w.srv) // so that the answer this sender meets is the server's own
-	if out := ca.must(`printf 'to a box whose certificate is revoked' | dr_send ` + cd.addr.String() + ` > /dev/null 2>&1 && echo sent; dr_code`); out != "prekey_expired\n" || !ca.bare() {
-		t.Errorf("a send to a box whose certificate is revoked: %q", out)
+	if out := ca.must(`printf 'to a mailbox whose certificate is revoked' | dr_send ` + cd.addr.String() + ` > /dev/null 2>&1 && echo sent; dr_code`); out != "prekey_expired\n" || !ca.bare() {
+		t.Errorf("a send to a mailbox whose certificate is revoked: %q", out)
 	}
 	w.honest()
 	cd.must("dr_rekey")
 	if _, c := w.served(cd); c <= nd {
 		t.Errorf("CD renewed under %d", c)
 	}
-	ca.mustSend(cd, "to a box whose certificate is revoked")
-	if d := cd.recv(); !slices.Equal(d.bodies(), []string{"to a box whose certificate is revoked"}) {
+	ca.mustSend(cd, "to a mailbox whose certificate is revoked")
+	if d := cd.recv(); !slices.Equal(d.bodies(), []string{"to a mailbox whose certificate is revoked"}) {
 		t.Errorf("after CD's renewal: %v", d)
 	}
 	x := ce.num() + 1000000 // a slip of a digit
@@ -448,13 +448,13 @@ func TestScriptUnderItsOwnRevokedCertificate(t *testing.T) {
 	}
 }
 
-// A box makes no certificate above the highest serial there is (#69): not
+// A mailbox makes no certificate above the highest serial there is (#69): not
 // past an earlier attempt that took the highest and left nothing it can send,
-// and not when what it published is the highest, its server holding no box
+// and not when what it published is the highest, its server holding no mailbox
 // for it to read.
 func TestScriptMakesNoCertificateAboveTheHighest(t *testing.T) {
 	w := newWorld(t)
-	cf := w.box()
+	cf := w.mailbox()
 	n := cf.num()
 	above := func() bool {
 		return cf.has(fmt.Sprintf("prekeys/%d.agekey", uint64(top)+1)) || cf.has(fmt.Sprintf("work/%d-cert.pub", uint64(top)+1))
@@ -474,12 +474,12 @@ func TestScriptMakesNoCertificateAboveTheHighest(t *testing.T) {
 }
 
 // A kept revocation of a peer's certificates that does not verify is a fault
-// of the box, where the server shows none to keep instead (#69): a send to
+// of the mailbox, where the server shows none to keep instead (#69): a send to
 // the peer posts nothing, and a drain of its mail stops with the mail on the
 // server.
 func TestScriptStopsAtAKeptRevocationThatDoesNotVerify(t *testing.T) {
 	w := newWorld(t)
-	ca, cb := w.box(), w.box()
+	ca, cb := w.mailbox(), w.mailbox()
 	ca.mustSend(cb, "pins CB")
 	writeFile(t, ca.file("peers/"+cb.addr.String()+"/revoked-certs.json"), mustRead(t, cb.certs("CB-not-its-own", 1, ca.file("identity"))))
 	n := w.posts(cb.addr)
@@ -492,11 +492,11 @@ func TestScriptStopsAtAKeptRevocationThatDoesNotVerify(t *testing.T) {
 	}
 }
 
-// A sender reads its recipient's box before every post, keeps what
+// A sender reads its recipient's mailbox before every post, keeps what
 // verifies, and seals to what it then holds; no answer is not "none held".
 func TestScriptAsksBeforeItPosts(t *testing.T) {
 	w := newWorld(t)
-	sa, sb, sc, sd, se := w.box(), w.box(), w.box(), w.box(), w.box()
+	sa, sb, sc, sd, se := w.mailbox(), w.mailbox(), w.mailbox(), w.mailbox(), w.mailbox()
 	n := len(w.srv.Requests())
 	sa.mustSend(sb, "asked first")
 	if c := w.calls(n); !slices.Equal(c, []string{"GET /v1/" + sb.addr.String(), "POST /v1/" + sb.addr.String() + "/messages"}) {
@@ -523,7 +523,7 @@ func TestScriptAsksBeforeItPosts(t *testing.T) {
 	sb.publish(sb.certs("SB1", n1, sb.file("identity")))
 	certs := mustReadString(t, filepath.Join(w.work, "SB1.certs"))
 	peer := "peers/" + sb.addr.String() + "/"
-	w.reading(sb.addr, func(br *protocol.BoxResponse) {
+	w.reading(sb.addr, func(br *protocol.MailboxResponse) {
 		br.Prekey, br.PrekeySignature, br.RevokedCertificates, br.RevokedCertificatesSignature = old.st, old.sig, nil, nil
 	})
 	sc.send(sb.addr.String(), "sealed to the old prekey")
@@ -548,11 +548,11 @@ func TestScriptAsksBeforeItPosts(t *testing.T) {
 	if se.read(peer+"cert-serial") != fmt.Sprintln(sb.num()) {
 		t.Errorf("SE's send, the server honest, went under %q", se.read(peer+"cert-serial"))
 	}
-	// What a box was shown once holds after the server hides it.
+	// What a mailbox was shown once holds after the server hides it.
 	if out := sd.must(`dr_lookup ` + sb.addr.String() + `; echo $?`); out != "1\n" || sd.keptCerts(sb.addr) != certs {
 		t.Errorf("SD's lookup: %q", out)
 	}
-	w.reading(sb.addr, func(br *protocol.BoxResponse) {
+	w.reading(sb.addr, func(br *protocol.MailboxResponse) {
 		br.Prekey, br.PrekeySignature, br.RevokedCertificates, br.RevokedCertificatesSignature = old.st, old.sig, nil, nil
 	})
 	n = w.posts(sb.addr)
@@ -565,29 +565,29 @@ func TestScriptAsksBeforeItPosts(t *testing.T) {
 	}
 }
 
-// own is the record of box b's identity's revocation of its certificates
+// own is the record of mailbox b's identity's revocation of its certificates
 // through serial.
-func (b *sbox) own(serial uint64) []byte {
+func (b *shMailbox) own(serial uint64) []byte {
 	return mustRead(b.w.t, b.certs("own-certs", serial, b.file("identity")))
 }
 
-// A box's own revocations: a renewal takes what is held of them; a clock far
+// A mailbox's own revocations: a renewal takes what is held of them; a clock far
 // ahead deletes no key that mail waits for; a certificate its identity
-// revoked signs no mail; a box that holds its own revocation of its address
+// revoked signs no mail; a mailbox that holds its own revocation of its address
 // signs nothing more.
 func TestScriptUnderItsOwnRevocations(t *testing.T) {
 	w := newWorld(t)
-	s1, s2, s3, s4 := w.box(), w.box(), w.box(), w.box()
+	s1, s2, s3, s4 := w.mailbox(), w.mailbox(), w.mailbox(), w.mailbox()
 	x := s1.num() + 10*365*86400
 	writeFile(t, filepath.Join(w.work, "s1.json"), s1.own(x))
 	s1.publish(filepath.Join(w.work, "s1.json"))
 	if s1.has("revoked-certs.json") {
-		t.Fatal("the box holds the revocation it published by hand")
+		t.Fatal("the mailbox holds the revocation it published by hand")
 	}
 	time.Sleep(time.Second)
 	s1.must("dr_rekey")
 	if out := s1.must(`dr_certskept "$(cat "$DR/address")"`); s1.num() <= x || out != fmt.Sprintln(x) {
-		t.Errorf("a renewal under a revocation through a serial ten years ahead, which the box never held: %d against %d, kept %q", s1.num(), x, out)
+		t.Errorf("a renewal under a revocation through a serial ten years ahead, which the mailbox never held: %d against %d, kept %q", s1.num(), x, out)
 	}
 	s1.mustSend(s4, "sealed to a prekey about to retire")
 	time.Sleep(time.Second)
@@ -603,7 +603,7 @@ func TestScriptUnderItsOwnRevocations(t *testing.T) {
 	writeFile(t, s3.file("revoked-certs.json"), s3.own(s3.num()))
 	n := w.posts(s4.addr)
 	if r := s3.send(s4.addr.String(), "signed under a certificate its identity revoked"); r.rc == 0 || !strings.Contains(r.err, "has revoked the certificate it signs under") || !s3.bare() || w.posts(s4.addr) != n {
-		t.Errorf("a seal under a certificate the box's own identity revoked: %v", r)
+		t.Errorf("a seal under a certificate the mailbox's own identity revoked: %v", r)
 	}
 	time.Sleep(time.Second)
 	s3.must("dr_rekey")
@@ -615,10 +615,10 @@ func TestScriptUnderItsOwnRevocations(t *testing.T) {
 	}
 	s2.revoke()
 	n = len(w.srv.Requests())
-	if r := s2.send(s3.addr.String(), "from a revoked address"); r.rc == 0 || !strings.Contains(r.err, "REVOKED: this box's own address is revoked") || !s2.bare() {
-		t.Errorf("a send from a box that holds its own revocation: %v", r)
+	if r := s2.send(s3.addr.String(), "from a revoked address"); r.rc == 0 || !strings.Contains(r.err, "REVOKED: this mailbox's own address is revoked") || !s2.bare() {
+		t.Errorf("a send from a mailbox that holds its own revocation: %v", r)
 	}
 	if out := s2.must(`dr_recv > /dev/null 2>&1 && echo drained; dr_rekey > /dev/null 2>&1 && echo renewed; dr_pass > /dev/null 2>&1 && echo signed; true`); out != "" || len(w.srv.Requests()) != n {
-		t.Errorf("a box that holds its own revocation: %q, calls %q", out, w.calls(n))
+		t.Errorf("a mailbox that holds its own revocation: %q, calls %q", out, w.calls(n))
 	}
 }

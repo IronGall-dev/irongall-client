@@ -62,10 +62,10 @@ func fuzzNow(f *testing.F) time.Time {
 	return now
 }
 
-// fuzzIdentity is a vector box's identity.
-func fuzzIdentity(f *testing.F, box string) *Identity {
+// fuzzIdentity is a vector mailbox's identity.
+func fuzzIdentity(f *testing.F, mailbox string) *Identity {
 	f.Helper()
-	id, err := ParseIdentity(read(f, box+"/identity.doc"))
+	id, err := ParseIdentity(read(f, mailbox+"/identity.doc"))
 	if err != nil {
 		f.Fatal(err)
 	}
@@ -226,7 +226,7 @@ func FuzzDearmor(f *testing.F) {
 
 // CheckCertificate takes only a user certificate its identity signed for a
 // working key, under the key id the protocol names, with one principal, the
-// box's address, a serial from 1 to MaxSerial, no critical option, and valid
+// mailbox's address, a serial from 1 to MaxSerial, no critical option, and valid
 // at now, for at most MaxCertificateLifetime: its signature is the identity
 // key's over the certificate's bytes (signedBytes, read apart from the
 // library's check), and its working key an Ed25519 key that is a canonical
@@ -309,8 +309,8 @@ func FuzzCheckCertificate(f *testing.F) {
 // Examine, and OpenSigned with it, refuses with one of the closed set of
 // codes and no message beside it, and always gives Findings. It gives a
 // message only with a signature that verifies over the line as it arrived,
-// by a working key the identity the envelope carries certified, for this box
-// at now, from that identity's address to this box. Findings say who signed
+// by a working key the identity the envelope carries certified, for this mailbox
+// at now, from that identity's address to this mailbox. Findings say who signed
 // only when that signature verifies at its certificate's own start.
 func FuzzExamine(f *testing.F) {
 	now := fuzzNow(f)

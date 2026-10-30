@@ -24,17 +24,17 @@ import (
 //     RefusedPrekeyType.
 //   - It may not be ordered before one already seen (rollback): under an
 //     earlier certificate, or under the same one with a lower serial. A later
-//     certificate outranks any serial under an earlier one, so a box that
+//     certificate outranks any serial under an earlier one, so a mailbox that
 //     moved to a new certificate is followed whatever serial it publishes.
 //   - Its certificate may not be one the peer's identity has revoked, by the
-//     revocation this box holds, and it may not have expired.
-//   - A peer this box holds a revocation of is refused before anything is
+//     revocation this mailbox holds, and it may not have expired.
+//   - A peer this mailbox holds a revocation of is refused before anything is
 //     asked: a [RevokedError], whatever the server now serves for it.
 //
 // The identity is pinned, and the serials recorded, only after every check
 // passed: nothing is kept of a peer whose statement did not verify. It holds
-// the box's lock ([Box.hold]).
-func (b *Box) Resolve(ctx context.Context, peer protocol.Address) (*protocol.Prekey, error) {
+// the mailbox's lock ([Mailbox.hold]).
+func (b *Mailbox) Resolve(ctx context.Context, peer protocol.Address) (*protocol.Prekey, error) {
 	return locked(ctx, b, func() (*protocol.Prekey, error) {
 		p, _, err := b.resolve(ctx, peer, nil)
 		return p, err
@@ -42,26 +42,26 @@ func (b *Box) Resolve(ctx context.Context, peer protocol.Address) (*protocol.Pre
 }
 
 // resolve is Resolve with the lock held. It also returns the certificate the
-// prekey statement verified under. It reads the peer's box once (readBox),
+// prekey statement verified under. It reads the peer's mailbox once (readMailbox),
 // and keeps what verifies of the revocations it carries before it checks the
 // statement against them. With l, a send's lookups, the read is marked as
 // answered in the command.
 //
-// A read that serves no box is a [lookupError]: there is nothing to seal to,
+// A read that serves no mailbox is a [lookupError]: there is nothing to seal to,
 // and what the server answered is never an answer about a message.
-func (b *Box) resolve(ctx context.Context, peer protocol.Address, l *lookups) (*protocol.Prekey, *protocol.Certificate, error) {
+func (b *Mailbox) resolve(ctx context.Context, peer protocol.Address, l *lookups) (*protocol.Prekey, *protocol.Certificate, error) {
 	if held, err := b.revoked(peer); err != nil {
 		return nil, nil, err
 	} else if held {
 		return nil, nil, &RevokedError{Address: peer, Own: peer == b.id.Address()}
 	}
-	ir, gone, err := b.readBox(ctx, peer, l)
+	ir, gone, err := b.readMailbox(ctx, peer, l)
 	if gone {
 		return nil, nil, &RevokedError{Address: peer, Own: peer == b.id.Address()}
 	}
 	if err != nil {
 		if code(err) == protocol.CodeRevoked {
-			err = fmt.Errorf("%w; it showed no revocation of %s that verifies, so this box does not take that address as revoked", err, peer)
+			err = fmt.Errorf("%w; it showed no revocation of %s that verifies, so this mailbox does not take that address as revoked", err, peer)
 		}
 		return nil, nil, &lookupError{err}
 	}
@@ -110,11 +110,11 @@ func (b *Box) resolve(ctx context.Context, peer protocol.Address, l *lookups) (*
 	if typeErr {
 		return nil, nil, &RefusedError{Code: RefusedPrekeyType, Reason: fmt.Sprintf("%s's prekey is an age recipient of a type this client cannot encrypt to, so nothing is sent", peer)}
 	}
-	// Whether the peer can verify this box is the one thing here that
+	// Whether the peer can verify this mailbox is the one thing here that
 	// nothing signs: the server says what the peer declared. A server that
 	// misstates it can only stop a message, as it can without it.
 	if !protocol.AcceptsSender(ir.SenderKeyTypes, b.id.Type()) {
-		return nil, nil, refuse("%s's client does not verify identities of this box's key type, %s, so it would refuse this box's mail: nothing is sent", peer, b.id.Type())
+		return nil, nil, refuse("%s's client does not verify identities of this mailbox's key type, %s, so it would refuse this mailbox's mail: nothing is sent", peer, b.id.Type())
 	}
 	// The pin, the pair of serials and the statement they came from, in one
 	// value, written together (#68).
@@ -131,8 +131,8 @@ func (b *Box) resolve(ctx context.Context, peer protocol.Address, l *lookups) (*
 // identityOf returns the peer's identity: the pinned one, or, for a peer not
 // met before, the one served, held in memory. A served document must hash to
 // the address before anything else is read from it. Nothing is kept:
-// [Box.pin] does that, once something the identity signed has verified.
-func (b *Box) identityOf(peer protocol.Address, served []byte) (*protocol.Identity, error) {
+// [Mailbox.pin] does that, once something the identity signed has verified.
+func (b *Mailbox) identityOf(peer protocol.Address, served []byte) (*protocol.Identity, error) {
 	doc := served
 	if err := b.view(func(s store) error {
 		kept, err := b.peerOf(s, peer)
@@ -159,7 +159,7 @@ func (b *Box) identityOf(peer protocol.Address, served []byte) (*protocol.Identi
 	return id, nil
 }
 
-// peerRecord is what this box keeps of a peer, one value of the peers
+// peerRecord is what this mailbox keeps of a peer, one value of the peers
 // bucket by its address: the identity document it pinned, the highest prekey
 // serial and certificate serial it has seen, with the statement they came
 // from, and the revocation of the address and of its certificates, once
@@ -176,22 +176,22 @@ type peerRecord struct {
 	RevokedCertificatesSignature protocol.Bytes `json:"revoked_certificates_signature,omitempty"`
 }
 
-// peerOf is what this box keeps of peer a, or nil for a peer it has pinned
+// peerOf is what this mailbox keeps of peer a, or nil for a peer it has pinned
 // nothing of.
-func (b *Box) peerOf(s store, a protocol.Address) (*peerRecord, error) {
+func (b *Mailbox) peerOf(s store, a protocol.Address) (*peerRecord, error) {
 	raw := s.get(bucketPeers, a.String())
 	if raw == nil {
 		return nil, nil
 	}
 	var p peerRecord
 	if err := protocol.Unmarshal(raw, &p); err != nil || protocol.Address(sha256.Sum256(p.Identity)) != a {
-		return nil, fmt.Errorf("what the box's state file keeps of %s is not a peer's record", a)
+		return nil, fmt.Errorf("what the mailbox's state file keeps of %s is not a peer's record", a)
 	}
 	return &p, nil
 }
 
-// keepPeer keeps p as what this box holds of peer a.
-func (b *Box) keepPeer(s store, a protocol.Address, p *peerRecord) error {
+// keepPeer keeps p as what this mailbox holds of peer a.
+func (b *Mailbox) keepPeer(s store, a protocol.Address, p *peerRecord) error {
 	raw, err := json.Marshal(p)
 	if err != nil {
 		return err
@@ -200,11 +200,11 @@ func (b *Box) keepPeer(s store, a protocol.Address, p *peerRecord) error {
 }
 
 // pin keeps a peer's identity document, unless it is kept already. It is
-// called only for an identity that has signed something this box verified: a
+// called only for an identity that has signed something this mailbox verified: a
 // prekey statement it will encrypt to, mail it delivers, a revocation of its
-// address or of its certificates. So the box keeps a record only of a peer
+// address or of its certificates. So the mailbox keeps a record only of a peer
 // that has signed something.
-func (b *Box) pin(id *protocol.Identity) error {
+func (b *Mailbox) pin(id *protocol.Identity) error {
 	return b.update(func(s store) error {
 		p, err := b.pinned(s, id)
 		if err != nil {
@@ -214,9 +214,9 @@ func (b *Box) pin(id *protocol.Identity) error {
 	})
 }
 
-// pinned is what this box keeps of the peer whose identity id is, with id
+// pinned is what this mailbox keeps of the peer whose identity id is, with id
 // pinned if nothing was: a record to add to and keep.
-func (b *Box) pinned(s store, id *protocol.Identity) (*peerRecord, error) {
+func (b *Mailbox) pinned(s store, id *protocol.Identity) (*peerRecord, error) {
 	p, err := b.peerOf(s, id.Address())
 	if err != nil || p != nil {
 		return p, err

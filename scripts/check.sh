@@ -35,7 +35,7 @@ if [ -n "$darwin" ] && command -v brew > /dev/null; then
     if [ -d "$d" ]; then PATH="$d:$PATH"; fi
   done
 fi
-unset DROMAS_HOME DROMAS_BOX DR_HOME DR_BOX # no test may meet a real box
+unset DROMAS_HOME DROMAS_MAILBOX DR_HOME DR_MAILBOX # no test may meet a real mailbox
 
 # A test skips when a tool it runs is missing. A runner with every tool skips
 # nothing, so a skip fails `full`, but for these.
@@ -88,8 +88,8 @@ full() {
   fmt
   go vet ./...
   alltests
-  # A Box shared by goroutines, and every test of a held list (hold_test.go),
-  # whose request runs beside the box's other commands, under the race
+  # A Mailbox shared by goroutines, and every test of a held list (hold_test.go),
+  # whose request runs beside the mailbox's other commands, under the race
   # detector where Go has one (go.dev/doc/articles/race_detector,
   # Requirements).
   case $(go env GOOS)/$(go env GOARCH) in

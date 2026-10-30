@@ -26,10 +26,10 @@ func refuse(format string, args ...any) error {
 	return &RefusedError{Reason: fmt.Sprintf(format, args...)}
 }
 
-// lookupError is a read of a box that served nothing to seal to: no answer,
-// no such box, or "revoked" with nothing that verifies ([Box.resolve]).
+// lookupError is a read of a mailbox that served nothing to seal to: no answer,
+// no such mailbox, or "revoked" with nothing that verifies ([Mailbox.resolve]).
 // Whatever code it carries, it is no answer about a message, which waits in
-// the outbox ([Box.post]).
+// the outbox ([Mailbox.post]).
 type lookupError struct{ err error }
 
 func (e *lookupError) Error() string { return e.err.Error() }
@@ -42,7 +42,7 @@ func (e *lookupError) Unwrap() error { return e.err }
 // and never quote the message, its claimed sender's text or the server's:
 // whoever reads a refusal may be a model.
 const (
-	RefusedDecrypt    = "undecryptable"           // not encrypted to a prekey this box holds, or not to exactly one recipient of a prekey's type
+	RefusedDecrypt    = "undecryptable"           // not encrypted to a prekey this mailbox holds, or not to exactly one recipient of a prekey's type
 	RefusedReplay     = "replay"                  // this ciphertext was already received
 	RefusedID         = "bad_id"                  // the server's id for it is not the SHA-256 of its ciphertext
 	RefusedPrekeyType = "unsupported_prekey_type" // the recipient's prekey is an age recipient of a type this client cannot encrypt to
@@ -57,10 +57,10 @@ type APIError struct {
 	Problem protocol.Problem
 	// RetryAfter is the server's Retry-After, or zero.
 	RetryAfter time.Duration
-	// Dated is the time in the answer's Date header, and Read this box's
+	// Dated is the time in the answer's Date header, and Read this mailbox's
 	// clock when the answer came: both zero unless the call carried a pass
 	// and the answer a Date. They are set side by side in the error for a
-	// pass or a statement refused for its time, and never adopted: a box
+	// pass or a statement refused for its time, and never adopted: a mailbox
 	// checks everything against its own clock, and a server may lie about
 	// the time as about anything else.
 	Dated, Read time.Time
@@ -102,13 +102,13 @@ func (e *APIError) words() string {
 	case protocol.CodeIdentityMismatch:
 		return "the server finds that the identity document does not hash to the address, or is not in its one form"
 	case protocol.CodeBadKey:
-		return "the server refused a key, certificate or prekey statement this box sent, as malformed or not verifying: dromas prekey renew signs a new statement, and a box that cannot register needs a new identity (dromas init)"
+		return "the server refused a key, certificate or prekey statement this mailbox sent, as malformed or not verifying: dromas prekey renew signs a new statement, and a mailbox that cannot register needs a new identity (dromas init)"
 	case protocol.CodePrekeyNotNew:
 		return "the server has seen that prekey before, and every prekey is a new key: dromas prekey renew makes one"
 	case protocol.CodePrekeyTime:
 		return "the server finds the prekey statement, or the certificate it is under, not valid at its clock"
 	case protocol.CodeUnsupportedKeyType:
-		s := "the server does not register identities of this box's key type"
+		s := "the server does not register identities of this mailbox's key type"
 		if t := knownTypes(p.KeyTypes); t != "" {
 			s += "; it registers " + t
 		}
@@ -116,33 +116,33 @@ func (e *APIError) words() string {
 	case protocol.CodeNotAge:
 		return "the server does not read the ciphertext as an age file: a bug in this client, or in the server"
 	case protocol.CodeWrongRecipientType:
-		return "the server finds the ciphertext not encrypted to one recipient of the type of the box's prekey: a post-quantum box needs age 1.3 or later"
+		return "the server finds the ciphertext not encrypted to one recipient of the type of the mailbox's prekey: a post-quantum mailbox needs age 1.3 or later"
 	case protocol.CodeBadRevocation:
 		return "the server does not take that record as a revocation its address's own identity signed"
 	case protocol.CodeUnauthorized:
-		return "the server refused this box's pass, and a new one: check that the server's URL names the box's own server"
+		return "the server refused this mailbox's pass, and a new one: check that the server's URL names the mailbox's own server"
 	case protocol.CodePassExpired:
-		return "the server refused this box's pass, and a new one, as not valid at its clock"
+		return "the server refused this mailbox's pass, and a new one, as not valid at its clock"
 	case protocol.CodeCertificateNotCurrent:
-		s := "the server takes this box's pass under another certificate than the one it signs under"
+		s := "the server takes this mailbox's pass under another certificate than the one it signs under"
 		if p.CertificateSerial != nil {
 			s += fmt.Sprintf(", serial %d", *p.CertificateSerial)
 		}
-		return s + ", as after a restore or a renewal on another machine, and the one this box signs under may be revoked too: dromas prekey renew certifies a new working key above it"
+		return s + ", as after a restore or a renewal on another machine, and the one this mailbox signs under may be revoked too: dromas prekey renew certifies a new working key above it"
 	case protocol.CodeCertificateRevoked:
-		return "the server holds the certificate this box signs under as one its identity revoked: dromas prekey renew certifies a new working key above it"
+		return "the server holds the certificate this mailbox signs under as one its identity revoked: dromas prekey renew certifies a new working key above it"
 	case protocol.CodeUnknownSender:
-		return "the server does not know this box: it is not registered there, or was forgotten there (dromas init registers a box, and dromas prekey renew registers one again)"
+		return "the server does not know this mailbox: it is not registered there, or was forgotten there (dromas init registers a mailbox, and dromas prekey renew registers one again)"
 	case protocol.CodeSenderRevoked:
-		return "the server answers that this box is revoked: this client takes that only from a revocation that verifies"
+		return "the server answers that this mailbox is revoked: this client takes that only from a revocation that verifies"
 	case protocol.CodeSenderNotAllowed:
-		return "the recipient's ACL does not let this box write to it: only the recipient can change that"
+		return "the recipient's ACL does not let this mailbox write to it: only the recipient can change that"
 	case protocol.CodeSenderKeyType:
-		return "the recipient's client does not verify identities of this box's key type: a box with an ssh-ed25519 identity can write to any box"
+		return "the recipient's client does not verify identities of this mailbox's key type: a mailbox with an ssh-ed25519 identity can write to any mailbox"
 	case protocol.CodeAdoptKeyRefused:
 		return "the server refused the adopt key as spent, expired, revoked or not its own: ask the account for a new one"
 	case protocol.CodeNoSuchMailbox:
-		return "the server holds no box at that address: never registered, or forgotten"
+		return "the server holds no mailbox at that address: never registered, or forgotten"
 	case protocol.CodeNoSuchMessage:
 		return "the server holds no message with that id: acked or expired"
 	case protocol.CodeNotRevoked:
@@ -156,16 +156,16 @@ func (e *APIError) words() string {
 			s += fmt.Sprintf(": prekey serial %d", *p.PrekeySerial)
 		}
 		return s
-	case protocol.CodeBoxChanged:
-		return "the box changed on the server while the request was handled: send it again as it is"
+	case protocol.CodeMailboxChanged:
+		return "the mailbox changed on the server while the request was handled: send it again as it is"
 	case protocol.CodeStalePrekey:
-		return "the box has a newer prekey than the one the message was encrypted to"
+		return "the mailbox has a newer prekey than the one the message was encrypted to"
 	case protocol.CodePrekeyExpired:
-		return "the box's prekey has expired at the server, so it takes no mail until its owner renews it"
+		return "the mailbox's prekey has expired at the server, so it takes no mail until its owner renews it"
 	case protocol.CodeRequestTimeout:
 		return "the server stopped waiting for the request's body, which arrived too slowly for it: send it again"
 	case protocol.CodeRevoked:
-		return "the server answers that that box is revoked: this client takes that only from a revocation that verifies"
+		return "the server answers that that mailbox is revoked: this client takes that only from a revocation that verifies"
 	case protocol.CodePreconditionFailed:
 		return "what the server holds no longer has the tag the request's If-Match named"
 	case protocol.CodeTooLarge:
@@ -173,17 +173,17 @@ func (e *APIError) words() string {
 	case protocol.CodeRateLimited:
 		return rateLimited(p)
 	case protocol.CodeFetchPaced:
-		return "the server paces how much new mail the box takes out: the rest waits on the server"
+		return "the server paces how much new mail the mailbox takes out: the rest waits on the server"
 	case protocol.CodeRefetchSpent:
 		return "the message was fetched before, and the server takes no more fetches of it for now: a client keeps each message when it fetches it"
 	case protocol.CodeMailboxFull:
-		s := "the recipient's box is full"
+		s := "the recipient's mailbox is full"
 		if p.Count != nil {
 			s += fmt.Sprintf(": it holds %d messages", *p.Count)
 		}
 		return s
 	case protocol.CodeMailboxBusy:
-		return "the recipient's box has taken as much new mail as it takes for now: dromas outbox flush posts it again"
+		return "the recipient's mailbox has taken as much new mail as it takes for now: dromas outbox flush posts it again"
 	case protocol.CodeUnavailable:
 		return "the server is not ready to answer"
 	}
@@ -192,16 +192,16 @@ func (e *APIError) words() string {
 
 // quotaWords say what each limit a rate_limited names has counted.
 var quotaWords = map[protocol.Quota]string{
-	protocol.QuotaPolls:                  "the box has polled as often as the server takes for now",
-	protocol.QuotaPages:                  "the box has listed as many pages after the first as the server takes for now",
-	protocol.QuotaCalls:                  "the box has made as many calls as the server takes for now",
-	protocol.QuotaSends:                  "the box has sent as many messages as the server takes for now",
-	protocol.QuotaRenewals:               "the box has renewed its prekey as many times as the server takes for now",
-	protocol.QuotaCertificates:           "the box's identity has certified as many new working keys as the server takes for now",
-	protocol.QuotaCertificateRevocations: "the box's identity has raised its revocation of certificates as many times as the server takes for now",
-	protocol.QuotaRegistrations:          "as many boxes have been registered from this machine's IP address as the server takes for now",
-	protocol.QuotaRegistrationsRange:     "as many boxes have been registered from this machine's IPv6 /48 as the server takes for now",
-	protocol.QuotaMisses:                 "this machine's IP address has made as many calls that named no box or carried nothing that verified as the server takes for now",
+	protocol.QuotaPolls:                  "the mailbox has polled as often as the server takes for now",
+	protocol.QuotaPages:                  "the mailbox has listed as many pages after the first as the server takes for now",
+	protocol.QuotaCalls:                  "the mailbox has made as many calls as the server takes for now",
+	protocol.QuotaSends:                  "the mailbox has sent as many messages as the server takes for now",
+	protocol.QuotaRenewals:               "the mailbox has renewed its prekey as many times as the server takes for now",
+	protocol.QuotaCertificates:           "the mailbox's identity has certified as many new working keys as the server takes for now",
+	protocol.QuotaCertificateRevocations: "the mailbox's identity has raised its revocation of certificates as many times as the server takes for now",
+	protocol.QuotaRegistrations:          "as many mailboxes have been registered from this machine's IP address as the server takes for now",
+	protocol.QuotaRegistrationsRange:     "as many mailboxes have been registered from this machine's IPv6 /48 as the server takes for now",
+	protocol.QuotaMisses:                 "this machine's IP address has made as many calls that named no mailbox or carried nothing that verified as the server takes for now",
 	protocol.QuotaSendsBeforePass:        "this machine's IP address has made as many sends as the server takes for now",
 	protocol.QuotaRequests:               "this machine's IP address has made as many requests as the server takes for now",
 }
@@ -213,15 +213,15 @@ func rateLimited(p *protocol.Problem) string {
 	if s, ok := quotaWords[p.QuotaID]; ok {
 		switch p.QuotaID {
 		case protocol.QuotaSends:
-			return s + limit(p, " (%d a day)") + ": an account can lift a box's limits (dromas account adopt)"
+			return s + limit(p, " (%d a day)") + ": an account can lift a mailbox's limits (dromas account adopt)"
 		case protocol.QuotaRenewals, protocol.QuotaCertificates, protocol.QuotaCertificateRevocations:
 			return s + limit(p, " (%d a day)")
 		}
 		return s
 	}
 	switch p.Subject {
-	case protocol.SubjectBox:
-		return "the server takes no more calls of this kind from this box for now"
+	case protocol.SubjectMailbox:
+		return "the server takes no more calls of this kind from this mailbox for now"
 	case protocol.SubjectIP:
 		return "the server takes no more calls of this kind from this machine's IP address for now"
 	}
@@ -252,7 +252,7 @@ func knownTypes(names []string) string {
 // refused the pass, or a prekey statement, for its time: what the clock
 // reads, and the date on the server's answer. A new pass does not cure that
 // refusal, so it is nearly always a clock, and a server takes a pass from a
-// box whose clock is less than PassLifetime slow and no more than
+// mailbox whose clock is less than PassLifetime slow and no more than
 // MaxPassLifetime less PassLifetime fast (protocol.MaxSkew).
 //
 // The date is the server's word and is given as that. A server may lie about
@@ -276,7 +276,7 @@ func (e *APIError) clock() string {
 		e.Dated.Format(protocol.TimeLayout), e.Read.Format(protocol.TimeLayout), how, slow/time.Minute, fast/time.Minute, fast/time.Minute)
 }
 
-// codeGrammar is the grammar of a code, as the box's state keeps one for
+// codeGrammar is the grammar of a code, as the mailbox's state keeps one for
 // each message refused/ holds (refusedRecord).
 var codeGrammar = regexp.MustCompile(`\A[a-z0-9_]{1,40}\z`)
 

@@ -22,9 +22,9 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// A crash is a box's process killed between two of the steps at which a
-// command writes the box (steps.go names each): the next command finds the
-// box whole, and goes on from where the last left it. Each case kills a copy
+// A crash is a mailbox's process killed between two of the steps at which a
+// command writes the mailbox (steps.go names each): the next command finds the
+// mailbox whole, and goes on from where the last left it. Each case kills a copy
 // of this test binary at one step, with SIGKILL, so nothing of the process
 // runs after it: no deferred call, no close, no further write. What it cannot
 // show is a power cut, where what was not synced is lost: each step syncs
@@ -32,10 +32,10 @@ import (
 // the power (#316).
 
 // crashChild is the environment variable a copy of this binary reads to run
-// one command of a box and die at one step.
+// one command of a mailbox and die at one step.
 const crashChild = "DROMAS_TEST_CRASH"
 
-// crashOrder is what the copy runs: the step it dies at, the box's directory,
+// crashOrder is what the copy runs: the step it dies at, the mailbox's directory,
 // its server's URL, its clock in Unix seconds, the command, and for a send,
 // the address it goes to.
 type crashOrder struct {
@@ -44,14 +44,17 @@ type crashOrder struct {
 }
 
 // crashCommands are what a copy runs, by name.
-var crashCommands = map[string]func(ctx context.Context, b *client.Box, o crashOrder) error{
-	"rekey":   func(ctx context.Context, b *client.Box, _ crashOrder) error { _, err := b.Rekey(ctx, ""); return err },
-	"receive": func(ctx context.Context, b *client.Box, _ crashOrder) error { _, err := b.Receive(ctx); return err },
-	"remedy": func(ctx context.Context, b *client.Box, _ crashOrder) error {
+var crashCommands = map[string]func(ctx context.Context, b *client.Mailbox, o crashOrder) error{
+	"rekey": func(ctx context.Context, b *client.Mailbox, _ crashOrder) error {
+		_, err := b.Rekey(ctx, "")
+		return err
+	},
+	"receive": func(ctx context.Context, b *client.Mailbox, _ crashOrder) error { _, err := b.Receive(ctx); return err },
+	"remedy": func(ctx context.Context, b *client.Mailbox, _ crashOrder) error {
 		_, err := b.RenewAndRevoke(ctx, "")
 		return err
 	},
-	"send": func(ctx context.Context, b *client.Box, o crashOrder) error {
+	"send": func(ctx context.Context, b *client.Mailbox, o crashOrder) error {
 		to, err := protocol.ParseAddress(o.To)
 		if err != nil {
 			return err
@@ -87,9 +90,9 @@ func TestCrashChild(t *testing.T) {
 	fmt.Printf("ended before %s: %v\n", o.Step, err)
 }
 
-// crash runs command on box b in a copy of this binary, killed at step, and
+// crash runs command on mailbox b in a copy of this binary, killed at step, and
 // fails the test unless it died there.
-func crash(t *testing.T, e *env, b *client.Box, command, step string, to protocol.Address) {
+func crash(t *testing.T, e *env, b *client.Mailbox, command, step string, to protocol.Address) {
 	t.Helper()
 	order, err := json.Marshal(crashOrder{Step: step, Dir: b.Dir(), Base: e.srv.URL, Command: command, To: to.String(), Now: e.clock.Now().Unix()})
 	if err != nil {
@@ -104,9 +107,9 @@ func crash(t *testing.T, e *env, b *client.Box, command, step string, to protoco
 	}
 }
 
-// inbox is the body of each message in a box's inbox/, as many times as it is
+// inbox is the body of each message in a mailbox's inbox/, as many times as it is
 // there.
-func inbox(t *testing.T, b *client.Box) []string {
+func inbox(t *testing.T, b *client.Mailbox) []string {
 	t.Helper()
 	names, err := filepath.Glob(filepath.Join(b.Dir(), "inbox", "*.json"))
 	if err != nil {
@@ -128,13 +131,13 @@ func inbox(t *testing.T, b *client.Box) []string {
 	return bodies
 }
 
-// whole checks a box after a crash by its next commands, opened anew from its
+// whole checks a mailbox after a crash by its next commands, opened anew from its
 // directory: a drain takes everything waiting on its server, refusing
 // nothing; a renewal goes through, and its server serves the prekey it
 // published; mail sealed to the new one is read; and the inbox holds every
-// message sent to the box, once: waiting, sent before the crash, and those
+// message sent to the mailbox, once: waiting, sent before the crash, and those
 // sent here.
-func whole(t *testing.T, e *env, b, from *client.Box, waiting ...string) {
+func whole(t *testing.T, e *env, b, from *client.Mailbox, waiting ...string) {
 	t.Helper()
 	ctx := context.Background()
 	x, err := client.Open(b.Dir(), e.opts())
@@ -151,7 +154,7 @@ func whole(t *testing.T, e *env, b, from *client.Box, waiting ...string) {
 		t.Fatalf("the renewal after the crash: %v", err)
 	}
 	if served := servedSerial(t, e, x); served != numberOf(t, x) {
-		t.Fatalf("the server serves %d, the box published %d", served, numberOf(t, x))
+		t.Fatalf("the server serves %d, the mailbox published %d", served, numberOf(t, x))
 	}
 	send(t, from, x, "after the renewal")
 	if res := receive(t, x); len(res.Delivered) != 1 {
@@ -165,8 +168,8 @@ func whole(t *testing.T, e *env, b, from *client.Box, waiting ...string) {
 }
 
 // A renewal killed at each of its steps: the next drain delivers what was
-// sealed to the prekey in use before it, and the box renews again.
-func TestARenewalKilledAtEachStepLeavesTheBoxWhole(t *testing.T) {
+// sealed to the prekey in use before it, and the mailbox renews again.
+func TestARenewalKilledAtEachStepLeavesTheMailboxWhole(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {
 		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
@@ -174,7 +177,7 @@ func TestARenewalKilledAtEachStepLeavesTheBoxWhole(t *testing.T) {
 	for _, step := range client.Steps("renewal") {
 		t.Run(step, func(t *testing.T) {
 			e := newEnv(t)
-			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 			send(t, a, b, "sealed to the prekey in use")
 			e.clock.Add(2 * time.Second)
 			crash(t, e, b, "rekey", step, protocol.Address{})
@@ -183,11 +186,11 @@ func TestARenewalKilledAtEachStepLeavesTheBoxWhole(t *testing.T) {
 	}
 }
 
-// A box its server forgot, killed at each step of the registration that
+// A mailbox its server forgot, killed at each step of the registration that
 // brings it back: its server holds no ACL of it, whatever became of the
 // answer, and the next commands send the ACL again (#324). A recv brings the
-// box back where the registration was not taken.
-func TestAForgottenBoxKilledAtEachStepOfItsRegistrationSendsItsACLAgain(t *testing.T) {
+// mailbox back where the registration was not taken.
+func TestAForgottenMailboxKilledAtEachStepOfItsRegistrationSendsItsACLAgain(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {
 		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
@@ -195,9 +198,9 @@ func TestAForgottenBoxKilledAtEachStepOfItsRegistrationSendsItsACLAgain(t *testi
 	for _, step := range client.Steps("renewal") {
 		t.Run(step, func(t *testing.T) {
 			e := newEnv(t)
-			a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+			a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 			if _, err := b.Block(context.Background(), c.Address()); err != nil || e.srv.ACL(b.Address()) == nil {
-				t.Fatalf("the block before the box was forgotten: %v", err)
+				t.Fatalf("the block before the mailbox was forgotten: %v", err)
 			}
 			e.srv.Forget(b.Address())
 			e.clock.Add(2 * time.Second)
@@ -211,7 +214,7 @@ func TestAForgottenBoxKilledAtEachStepOfItsRegistrationSendsItsACLAgain(t *testi
 			}
 			whole(t, e, b, a)
 			if acl := e.srv.ACL(b.Address()); acl == nil || !slices.Contains(acl.Deny.Addrs, c.Address()) {
-				t.Fatalf("after a crash at %s the server holds the ACL %+v, which does not deny the sender the box blocked", step, acl)
+				t.Fatalf("after a crash at %s the server holds the ACL %+v, which does not deny the sender the mailbox blocked", step, acl)
 			}
 		})
 	}
@@ -220,12 +223,12 @@ func TestAForgottenBoxKilledAtEachStepOfItsRegistrationSendsItsACLAgain(t *testi
 // A recv whose renewal is due, killed at each step of its renewal and of the
 // read of its server's ACL that follows it: the read is owed from before the
 // renewal (#377), so the next recv makes it, whichever command recorded the
-// renewal. After it the server holds the box's own ACL, and recv has said it
+// renewal. After it the server holds the mailbox's own ACL, and recv has said it
 // replaced another writer's where one was there, once, and nothing where
-// none was: another writer's deny list or pause, the box's own, and a box
+// none was: another writer's deny list or pause, the mailbox's own, and a mailbox
 // its server forgot, before the renewal's read or between the read and the
 // upload, which the renewal registers again (#386). A send between the kill
-// and the next recv, whose pass refused has the box read itself and record a
+// and the next recv, whose pass refused has the mailbox read itself and record a
 // renewal taken unseen (ownerTaken), leaves the read owed too.
 func TestARecvKilledAtEachStepOfItsRenewalReadsItsServersACL(t *testing.T) {
 	t.Parallel()
@@ -261,7 +264,7 @@ func TestARecvKilledAtEachStepOfItsRenewalReadsItsServersACL(t *testing.T) {
 			t.Run(s.name+", "+step, func(t *testing.T) {
 				ctx := context.Background()
 				e := newEnv(t)
-				a, b, c, d := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+				a, b, c, d := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 				if _, err := b.Block(ctx, c.Address()); err != nil {
 					t.Fatal(err)
 				}
@@ -275,7 +278,7 @@ func TestARecvKilledAtEachStepOfItsRenewalReadsItsServersACL(t *testing.T) {
 				case atUpload:
 					var forgot atomic.Bool
 					e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-						if r.Method == http.MethodPut && r.URL.Path == boxPath(b)+"/prekey" && forgot.CompareAndSwap(false, true) {
+						if r.Method == http.MethodPut && r.URL.Path == mailboxPath(b)+"/prekey" && forgot.CompareAndSwap(false, true) {
 							e.srv.Forget(b.Address())
 						}
 						next.ServeHTTP(w, r)
@@ -297,7 +300,7 @@ func TestARecvKilledAtEachStepOfItsRenewalReadsItsServersACL(t *testing.T) {
 					t.Fatalf("the recv after the crash: %+v, %v", res, err)
 				}
 				if res.ACLReplaced != (s.other != nil) || !e.srv.ACL(x.Address()).SameLists(own) {
-					t.Fatalf("the recv after a crash at %s: acl_replaced %v; the server holds %+v, the box's own is %+v", step, res.ACLReplaced, e.srv.ACL(x.Address()), own)
+					t.Fatalf("the recv after a crash at %s: acl_replaced %v; the server holds %+v, the mailbox's own is %+v", step, res.ACLReplaced, e.srv.ACL(x.Address()), own)
 				}
 				if again := receive(t, x); again.ACLReplaced {
 					t.Fatalf("the replacement is reported again: %+v", again)
@@ -314,7 +317,7 @@ func TestARecvKilledAtEachStepOfItsRenewalReadsItsServersACL(t *testing.T) {
 func TestARemedyPassingOverAKilledRenewalDropsWhatItLeft(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.box(protocol.Classic)
+	b := e.mailbox(protocol.Classic)
 	e.clock.Add(2 * time.Second)
 	crash(t, e, b, "rekey", "prekey made", protocol.Address{})
 	x, err := client.Open(b.Dir(), e.opts())
@@ -343,14 +346,14 @@ func TestARemedyPassingOverAKilledRenewalDropsWhatItLeft(t *testing.T) {
 	}
 }
 
-// A renewal the server took, whose answer the box never had, is recorded at
-// the box's next read of itself, which a pass refused as under a certificate
-// not current sends it to; a later renewal the box has begun keeps its
+// A renewal the server took, whose answer the mailbox never had, is recorded at
+// the mailbox's next read of itself, which a pass refused as under a certificate
+// not current sends it to; a later renewal the mailbox has begun keeps its
 // number.
 func TestARenewalTakenUnseenIsRecordedAndALaterOneKeepsItsNumber(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.box(protocol.Classic)
+	b := e.mailbox(protocol.Classic)
 	e.clock.Add(2 * time.Second)
 	crash(t, e, b, "rekey", "renewal taken", protocol.Address{})
 	x, err := client.Open(b.Dir(), e.opts())
@@ -366,14 +369,14 @@ func TestARenewalTakenUnseenIsRecordedAndALaterOneKeepsItsNumber(t *testing.T) {
 	}
 }
 
-// The box's own statement served under another of its certificates, here
+// The mailbox's own statement served under another of its certificates, here
 // signed again by the working key it used before, by whoever took that key,
-// is no renewal the server took: the box records it only once it is served
-// under the certificate the box made with it.
+// is no renewal the server took: the mailbox records it only once it is served
+// under the certificate the mailbox made with it.
 func TestItsOwnStatementUnderAnotherCertificateIsNoRenewalTaken(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.box(protocol.Classic)
+	b := e.mailbox(protocol.Classic)
 	stolen, first := worker(t, b), numberOf(t, b)
 	e.clock.Add(2 * time.Second)
 	crash(t, e, b, "rekey", "renewal taken", protocol.Address{})
@@ -384,15 +387,15 @@ func TestItsOwnStatementUnderAnotherCertificateIsNoRenewalTaken(t *testing.T) {
 	took := servedSerial(t, e, x)
 	st, ok := x.Record(t, "prekeys/"+strconv.FormatUint(took, 10)+".txt")
 	if !ok {
-		t.Fatalf("the box keeps no statement %d", took)
+		t.Fatalf("the mailbox keeps no statement %d", took)
 	}
 	sig, err := protocol.Sign(stolen, st, protocol.PrekeyNamespace(x.Address()))
 	if err != nil {
 		t.Fatal(err)
 	}
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if r.Method == http.MethodGet && r.URL.Path == boxPath(x) {
-			fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: x.Identity().Document(), Prekey: st, PrekeySignature: sig})
+		if r.Method == http.MethodGet && r.URL.Path == mailboxPath(x) {
+			fakeserver.WriteJSON(w, http.StatusOK, protocol.MailboxResponse{Identity: x.Identity().Document(), Prekey: st, PrekeySignature: sig})
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -407,9 +410,9 @@ func TestItsOwnStatementUnderAnotherCertificateIsNoRenewalTaken(t *testing.T) {
 }
 
 // The remedy killed at each of its steps: run again, it revokes and renews,
-// the revocation covers the certificate in use before it, and the box comes
+// the revocation covers the certificate in use before it, and the mailbox comes
 // back whole.
-func TestTheRemedyKilledAtEachStepLeavesTheBoxWhole(t *testing.T) {
+func TestTheRemedyKilledAtEachStepLeavesTheMailboxWhole(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {
 		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
@@ -418,7 +421,7 @@ func TestTheRemedyKilledAtEachStepLeavesTheBoxWhole(t *testing.T) {
 		t.Run(step, func(t *testing.T) {
 			ctx := context.Background()
 			e := newEnv(t)
-			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 			first := numberOf(t, b)
 			e.clock.Add(2 * time.Second)
 			crash(t, e, b, "remedy", step, protocol.Address{})
@@ -441,7 +444,7 @@ func TestTheRemedyKilledAtEachStepLeavesTheBoxWhole(t *testing.T) {
 
 // A restore from the identity alone killed at each step of its renewal and
 // of its adoption of its server's ACL: the next recv adopts it, each entry
-// once, and the restored box's first renewal finds the two alike, so the
+// once, and the restored mailbox's first renewal finds the two alike, so the
 // server's blocks stay (#366).
 func TestARestoreKilledAtEachStepAdoptsItsServersACL(t *testing.T) {
 	t.Parallel()
@@ -452,7 +455,7 @@ func TestARestoreKilledAtEachStepAdoptsItsServersACL(t *testing.T) {
 		t.Run(step, func(t *testing.T) {
 			ctx := context.Background()
 			e := newEnv(t)
-			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 			if _, err := b.Block(ctx, a.Address()); err != nil {
 				t.Fatal(err)
 			}
@@ -469,7 +472,7 @@ func TestARestoreKilledAtEachStepAdoptsItsServersACL(t *testing.T) {
 			}
 			e.clock.Add(25 * time.Hour)
 			if res := receive(t, x); res.Renewed == nil || res.ACLReplaced || !e.srv.ACL(b.Address()).SameLists(own) {
-				t.Fatalf("the first renewal after a crash at %s: %+v; the server holds %+v, the lost box's was %+v", step, res, e.srv.ACL(b.Address()), own)
+				t.Fatalf("the first renewal after a crash at %s: %+v; the server holds %+v, the lost mailbox's was %+v", step, res, e.srv.ACL(b.Address()), own)
 			}
 			if data, err := os.ReadFile(filepath.Join(x.Dir(), "blocked")); err != nil || string(data) != a.Address().String()+"\n" {
 				t.Fatalf("blocked after a crash at %s: %q, %v", step, data, err)
@@ -485,7 +488,7 @@ func TestADrainKilledAtEachStepOfADeliveryDeliversOnce(t *testing.T) {
 	for _, step := range client.Steps("delivery") {
 		t.Run(step, func(t *testing.T) {
 			e := newEnv(t)
-			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 			send(t, a, b, "waits for a drain that dies")
 			crash(t, e, b, "receive", step, protocol.Address{})
 			whole(t, e, b, a, "waits for a drain that dies")
@@ -500,8 +503,8 @@ func TestADrainKilledAtEachStepOfARefusalKeepsItOnce(t *testing.T) {
 	for _, step := range client.Steps("refusal") {
 		t.Run(step, func(t *testing.T) {
 			e := newEnv(t)
-			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
-			mailAs(t, e, a, b, worker(t, b), "signed by another box's key")
+			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+			mailAs(t, e, a, b, worker(t, b), "signed by another mailbox's key")
 			crash(t, e, b, "receive", step, protocol.Address{})
 			x, err := client.Open(b.Dir(), e.opts())
 			if err != nil {
@@ -522,14 +525,14 @@ func TestADrainKilledAtEachStepOfARefusalKeepsItOnce(t *testing.T) {
 // A drain killed at each step of a fetch's partial: once a cut fetch has
 // recorded what it kept, and once a judged message's partial is dropped,
 // before its ack. The next drain delivers the message once, asking only for
-// the bytes the box did not keep, so the server serves each byte of it once
-// in all; and the box keeps no partial after (#381).
+// the bytes the mailbox did not keep, so the server serves each byte of it once
+// in all; and the mailbox keeps no partial after (#381).
 func TestADrainKilledAtEachStepOfAPartialDeliversOnce(t *testing.T) {
 	t.Parallel()
 	for _, step := range client.Steps("partial") {
 		t.Run(step, func(t *testing.T) {
 			e := newEnv(t)
-			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 			const body = "fetched by a drain that dies. "
 			send(t, a, b, strings.Repeat(body, 2000))
 			f := &fetches{b: b}
@@ -576,7 +579,7 @@ func TestASendKilledAtEachStepIsReadOnce(t *testing.T) {
 	for _, step := range client.Steps("post") {
 		t.Run(step, func(t *testing.T) {
 			e := newEnv(t)
-			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 			crash(t, e, a, "send", step, b.Address())
 			x, err := client.Open(a.Dir(), e.opts())
 			if err != nil {

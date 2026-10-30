@@ -5,7 +5,7 @@ import (
 	"errors"
 )
 
-// Address is a box's address: the SHA-256 of its identity document. Its text
+// Address is a mailbox's address: the SHA-256 of its identity document. Its text
 // form is 64 lowercase hex characters, the only form clients may send.
 type Address [32]byte
 

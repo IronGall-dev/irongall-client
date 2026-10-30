@@ -20,7 +20,7 @@ const (
 	PrekeyTag = "dromas-prekey-v1"
 	// PrekeyLifetime is how long a client makes a prekey statement valid for:
 	// 31 days, the longest month, plus a day a renewal may wait and a day of
-	// slip, so a box checked at least monthly never lapses.
+	// slip, so a mailbox checked at least monthly never lapses.
 	PrekeyLifetime = 33 * 24 * time.Hour
 	// MaxPrekeyLifetime is the longest a prekey statement may still have to
 	// run when a server takes it: MaxSkew more than a client asks for, so
@@ -53,10 +53,10 @@ const (
 // of at most 16 digits. Its value is held to MaxSerial after.
 var serialGrammar = regexp.MustCompile(`\A[1-9][0-9]{0,15}\z`)
 
-// Prekey is a prekey statement: the box's current age encryption key, signed
+// Prekey is a prekey statement: the mailbox's current age encryption key, signed
 // by a working key its identity certified.
 type Prekey struct {
-	Address  Address   // the box the key belongs to
+	Address  Address   // the mailbox the key belongs to
 	Serial   uint64    // strictly increasing under one certificate; a client gives it its certificate's serial
 	Key      string    // the age recipient: "age1pq1…" or "age1…"
 	NotAfter time.Time // the last moment the key may be encrypted to
@@ -243,12 +243,12 @@ func bech32HRP(s string) (string, bool) {
 	return hrp, true
 }
 
-// VerifyPrekey verifies a prekey statement of the box whose identity is id,
+// VerifyPrekey verifies a prekey statement of the mailbox whose identity is id,
 // at now, and parses it. The signature must be by a working key that identity
 // certified, under a certificate valid at now, in id's prekey namespace; the
 // statement must name id's own address; and it must not outlive the
 // certificate it is signed under. It returns the certificate too: whoever
-// keeps the highest serial it has seen for the box compares. The key's type
+// keeps the highest serial it has seen for the mailbox compares. The key's type
 // is checked last, so ErrPrekeyType is a statement good in every other way,
 // and comes with the statement and its certificate, for a caller to hold to
 // its own rules first (#167).
@@ -275,7 +275,7 @@ func verifyPrekey(id *Identity, statement, signature []byte, check func(ssh.Publ
 		return nil, nil, err
 	}
 	if p.Address != id.Address() {
-		return nil, nil, errors.New("the prekey statement names another box")
+		return nil, nil, errors.New("the prekey statement names another mailbox")
 	}
 	if p.NotAfter.After(cert.NotAfter()) {
 		return nil, nil, errors.New("the prekey statement outlives the certificate it is signed under")
@@ -291,16 +291,16 @@ func verifyPrekey(id *Identity, statement, signature []byte, check func(ssh.Publ
 // VerifyPrekeyRecord verifies a prekey statement as VerifyPrekey does, by
 // every rule but its certificate's dates (CheckCertificateRecord). It answers
 // whether the identity certified the key that signed the statement, and at
-// which serials it stands, which is what a box asks of its own record
-// (PROTOCOL.md §12.4): a box that was away for longer than a certificate
+// which serials it stands, which is what a mailbox asks of its own record
+// (PROTOCOL.md §12.4): a mailbox that was away for longer than a certificate
 // lasts, or whose record its server took under a rule since changed, still
 // has to read its serial to publish the next one. Nobody judging another
-// box's prekey uses it.
+// mailbox's prekey uses it.
 func VerifyPrekeyRecord(id *Identity, statement, signature []byte) (*Prekey, *Certificate, error) {
 	return verifyPrekey(id, statement, signature, func(key ssh.PublicKey) (*Certificate, error) { return CheckCertificateRecord(id, key) })
 }
 
-// Order is where a prekey statement would stand in its box's order
+// Order is where a prekey statement would stand in its mailbox's order
 // (PROTOCOL.md §5): its own serial, and the serial and the SHA-256 of the
 // certificate its signature carries.
 type Order struct {

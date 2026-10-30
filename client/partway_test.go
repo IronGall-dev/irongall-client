@@ -27,8 +27,8 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// A command that learns part way that its box is finished, an answer on the
-// way showing the box its own revocation, which it keeps once it verifies,
+// A command that learns part way that its mailbox is finished, an answer on the
+// way showing the mailbox its own revocation, which it keeps once it verifies,
 // says that alone and asks and signs nothing more after it (PROTOCOL.md
 // §12.5): at whatever call it learns it, by whatever answer.
 
@@ -49,7 +49,7 @@ func putRecord(t *testing.T, next http.Handler, a protocol.Address, rec *protoco
 	}
 }
 
-// finishedOwn reports whether err is the box's own RevokedError.
+// finishedOwn reports whether err is the mailbox's own RevokedError.
 func finishedOwn(err error) bool {
 	var gone *client.RevokedError
 	return errors.As(err, &gone) && gone.Own
@@ -65,7 +65,7 @@ func TestARevokedReadWhoseRecordDoesNotVerifyIsNotReadAgain(t *testing.T) {
 		t.Run(of, func(t *testing.T) {
 			ctx := context.Background()
 			e := newEnv(t)
-			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 			read := b
 			if of == "itself" {
 				read = a
@@ -73,8 +73,8 @@ func TestARevokedReadWhoseRecordDoesNotVerifyIsNotReadAgain(t *testing.T) {
 			bad := notItsRecord(t, read)
 			var reads atomic.Int32
 			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-				// Bounded, so that a box that reads again still ends.
-				if r.Method == http.MethodGet && r.URL.Path == boxPath(read) && reads.Add(1) <= 10 {
+				// Bounded, so that a mailbox that reads again still ends.
+				if r.Method == http.MethodGet && r.URL.Path == mailboxPath(read) && reads.Add(1) <= 10 {
 					forge.Refuse(w, protocol.CodeRevoked, func(p *protocol.Problem) { p.Record = bad })
 					return
 				}
@@ -93,16 +93,16 @@ func TestARevokedReadWhoseRecordDoesNotVerifyIsNotReadAgain(t *testing.T) {
 	}
 }
 
-// Every command a box runs under its lock, in the states that reach each of
+// Every command a mailbox runs under its lock, in the states that reach each of
 // its paths, against a server made hostile at its 1st call, then its 2nd, and
 // on through every call an honest run makes: the crash tests' kill at each
-// step is the model (crash_test.go). At that call the box's address is
+// step is the model (crash_test.go). At that call the mailbox's address is
 // revoked at its server, by another holder of the record, and the call is
-// answered one way (partwayVariants). An answer to a call that names the box,
-// showing its own revocation, that verifies, is the event: the box then holds
+// answered one way (partwayVariants). An answer to a call that names the mailbox,
+// showing its own revocation, that verifies, is the event: the mailbox then holds
 // the revocation, and no pass and no read of its server's ACL owed, the
 // command's error is it, and nothing more is asked or signed; between a call whose answer must be proved and the event, only the
-// proof's own reads of the box go out. A box shown none that verifies holds
+// proof's own reads of the mailbox go out. A mailbox shown none that verifies holds
 // none, and its command is not REVOKED: a server's word revokes nothing.
 func TestEveryCommandShownItsOwnRevocationAtEachCall(t *testing.T) {
 	t.Parallel()
@@ -145,13 +145,13 @@ type partwayCase struct {
 	set  func(t *testing.T, e *env) partwaySet
 }
 
-// partwaySet is a box put in its state: its directory, the box whose
+// partwaySet is a mailbox put in its state: its directory, the mailbox whose
 // revocation is published, the state's own operator at call i (it answers r
 // and reports true, or leaves it to the server), the command, and what the
 // command must say once it learned the revocation, beyond what every one must.
 type partwaySet struct {
 	dir   string
-	a     *client.Box
+	a     *client.Mailbox
 	inner func(i int, w http.ResponseWriter, r *http.Request, next http.Handler) bool
 	run   func(ctx context.Context) (any, error)
 	check func(t *testing.T, w *partwayRun)
@@ -165,7 +165,7 @@ type partwayCall struct {
 	method, path, short string
 	pass                bool
 	status              int
-	// shows is an answer to a call naming the box that carries its own
+	// shows is an answer to a call naming the mailbox that carries its own
 	// revocation, verifying: a 410's record, or a read of its revocations.
 	shows bool
 }
@@ -183,11 +183,11 @@ func (c partwayCall) String() string {
 
 // partwayRun is what one run did.
 type partwayRun struct {
-	box   *client.Box // opened again once the command ended
-	got   any
-	err   error
-	calls []partwayCall
-	event int // the index in calls of the event, or -1
+	mailbox *client.Mailbox // opened again once the command ended
+	got     any
+	err     error
+	calls   []partwayCall
+	event   int // the index in calls of the event, or -1
 }
 
 // partwayLog is the operator in front of the server for one run: hostile at
@@ -196,7 +196,7 @@ type partwayLog struct {
 	mu    sync.Mutex
 	calls []partwayCall
 	event int
-	keys  []string // the box's working keys and prekeys when the event was answered
+	keys  []string // the mailbox's working keys and prekeys when the event was answered
 }
 
 func (l *partwayLog) middle(t *testing.T, s partwaySet, rec, bad *protocol.Revocations, n int, v string) func(http.ResponseWriter, *http.Request, http.Handler) {
@@ -230,7 +230,7 @@ func (l *partwayLog) middle(t *testing.T, s partwaySet, rec, bad *protocol.Revoc
 		l.mu.Lock()
 		l.calls[i-1].status, l.calls[i-1].shows = got.Code, shows
 		if shows && l.event < 0 {
-			// The command waits for this answer: nothing of the box moves.
+			// The command waits for this answer: nothing of the mailbox moves.
 			l.event, l.keys = i-1, keysOf(s.dir)
 		}
 		l.mu.Unlock()
@@ -265,23 +265,23 @@ func partwayShows(r *http.Request, got *httptest.ResponseRecorder, a protocol.Ad
 	return err == nil
 }
 
-// partwayNames reports whether a call's path names box a.
+// partwayNames reports whether a call's path names mailbox a.
 func partwayNames(path string, a protocol.Address) bool {
 	own := "/v1/" + a.String()
 	return path == own || strings.HasPrefix(path, own+"/")
 }
 
-// partwayIsRead reports whether a call is a read of a box or of its
+// partwayIsRead reports whether a call is a read of a mailbox or of its
 // revocations, which carries no pass.
 func partwayIsRead(c partwayCall) bool {
 	rest, _ := strings.CutPrefix(c.path, "/v1/")
 	return c.method == http.MethodGet && (!strings.Contains(rest, "/") || strings.HasSuffix(rest, "/revocations"))
 }
 
-// partwayMustLearn reports whether the box must hold its revocation after
-// call c was answered as v: an answer about the box itself that its proof
-// reads the box for (the revocation is served by then), or one that carries
-// the record itself. A 401 is about the box's own pass, whatever box the
+// partwayMustLearn reports whether the mailbox must hold its revocation after
+// call c was answered as v: an answer about the mailbox itself that its proof
+// reads the mailbox for (the revocation is served by then), or one that carries
+// the record itself. A 401 is about the mailbox's own pass, whatever mailbox the
 // call names; a read carries no pass and is not read again.
 func partwayMustLearn(c partwayCall, v string, a protocol.Address) bool {
 	switch v {
@@ -298,7 +298,7 @@ func partwayMustLearn(c partwayCall, v string, a protocol.Address) bool {
 }
 
 // partwayProved reports whether call c, answered as v, is one whose answer
-// the box proves by reading itself: what goes out between it and the event
+// the mailbox proves by reading itself: what goes out between it and the event
 // is that read alone.
 func partwayProved(c partwayCall, v string, a protocol.Address) bool {
 	return v == partwayServed && partwayNames(c.path, a) && !partwayIsRead(c) || v == partwayCert && !partwayIsRead(c)
@@ -306,13 +306,13 @@ func partwayProved(c partwayCall, v string, a protocol.Address) bool {
 
 var partwayHex = regexp.MustCompile(`[0-9a-f]{64}`)
 
-// partwayShort is a path with the box's address written own and any other
+// partwayShort is a path with the mailbox's address written own and any other
 // address or id written as #.
 func partwayShort(path string, a protocol.Address) string {
 	return partwayHex.ReplaceAllString(strings.ReplaceAll(path, a.String(), "own"), "#")
 }
 
-// keysOf is what a box's work/ and prekeys/ hold, by name.
+// keysOf is what a mailbox's work/ and prekeys/ hold, by name.
 func keysOf(dir string) []string {
 	var names []string
 	for _, d := range []string{"work", "prekeys"} {
@@ -358,15 +358,15 @@ func partwayAt(t *testing.T, c partwayCase, n int, v string) {
 	if len(l.calls) < n {
 		t.Fatalf("the run made %d calls, the honest one at least %d: %v", len(l.calls), n, l.calls)
 	}
-	box, oerr := client.Open(s.dir, e.opts())
+	mailbox, oerr := client.Open(s.dir, e.opts())
 	if oerr != nil {
 		t.Fatal(oerr)
 	}
-	st, serr := box.Status(ctx)
+	st, serr := mailbox.Status(ctx)
 	if serr != nil {
 		t.Fatal(serr)
 	}
-	w := &partwayRun{box: box, got: got, err: err, calls: l.calls, event: l.event}
+	w := &partwayRun{mailbox: mailbox, got: got, err: err, calls: l.calls, event: l.event}
 	at := l.calls[n-1]
 	if peerRevoked(err) {
 		t.Errorf("its error names a peer revoked, where none is: %v; calls %v", err, l.calls)
@@ -375,7 +375,7 @@ func partwayAt(t *testing.T, c partwayCase, n int, v string) {
 		if partwayMustLearn(at, v, s.a.Address()) {
 			t.Errorf("answered %s at %s, and nothing it asked showed it its revocation: %v; calls %v", v, at, err, l.calls)
 		}
-		// A 403 sender_revoked is proved by reading the box, which its server
+		// A 403 sender_revoked is proved by reading the mailbox, which its server
 		// holds revoked by then.
 		for _, c := range l.calls[n-1:] {
 			if c.status == http.StatusForbidden && !partwayIsRead(c) && strings.HasSuffix(c.path, "/messages") {
@@ -413,10 +413,10 @@ func partwayAt(t *testing.T, c partwayCase, n int, v string) {
 			t.Errorf("made %s after the event: calls %v", k, l.calls)
 		}
 	}
-	if has(box, "pass") {
+	if has(mailbox, "pass") {
 		t.Errorf("it keeps a pass after the event: calls %v", l.calls)
 	}
-	if has(box, "acl-read") {
+	if has(mailbox, "acl-read") {
 		t.Errorf("it keeps a read of its server's ACL owed after the event: calls %v", l.calls)
 	}
 	if s.check != nil {
@@ -425,7 +425,7 @@ func partwayAt(t *testing.T, c partwayCase, n int, v string) {
 }
 
 // peerRevoked reports whether err holds, anywhere in its tree, a
-// RevokedError of another address than the box's own.
+// RevokedError of another address than the mailbox's own.
 func peerRevoked(err error) bool {
 	var gone *client.RevokedError
 	if errors.As(err, &gone) && !gone.Own {
@@ -442,7 +442,7 @@ func peerRevoked(err error) bool {
 
 // notItsRecord is a record of a's identity whose revocation another key
 // signed: one that does not verify.
-func notItsRecord(t *testing.T, a *client.Box) *protocol.Revocations {
+func notItsRecord(t *testing.T, a *client.Mailbox) *protocol.Revocations {
 	t.Helper()
 	_, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
@@ -465,7 +465,7 @@ func recvSaysItAlone(t *testing.T, w *partwayRun) {
 	if res, _ := w.got.(*client.Result); res != nil && (res.RenewErr != nil || res.ACLErr != nil) {
 		t.Errorf("recv's result: a renewal that failed %v, an ACL not sent %v; calls %v", res.RenewErr, res.ACLErr, w.calls)
 	}
-	if has(w.box, "renew-failed") {
+	if has(w.mailbox, "renew-failed") {
 		t.Errorf("it keeps a renewal that failed: calls %v", w.calls)
 	}
 }
@@ -490,43 +490,43 @@ func remedySaysItAlone(t *testing.T, w *partwayRun) {
 // a later one (#340). One tried before, and kept for a call that failed, may
 // wait.
 func outboxSaysItAlone(t *testing.T, w *partwayRun) {
-	own := "/v1/" + w.box.Address().String()
+	own := "/v1/" + w.mailbox.Address().String()
 	at := ""
 	for _, c := range w.calls[:w.event+1] {
-		if !partwayNames(c.path, w.box.Address()) {
+		if !partwayNames(c.path, w.mailbox.Address()) {
 			at, _, _ = strings.Cut(strings.TrimPrefix(c.path, "/v1/"), "/")
 		}
 	}
-	left, _ := filepath.Glob(filepath.Join(w.box.Dir(), "outbox", "*.P"))
+	left, _ := filepath.Glob(filepath.Join(w.mailbox.Dir(), "outbox", "*.P"))
 	for _, name := range left {
 		to, _, _ := strings.Cut(filepath.Base(name), ".")
 		reached := slices.ContainsFunc(w.calls[:w.event+1], func(c partwayCall) bool { return c.path != own && strings.HasPrefix(c.path, "/v1/"+to) })
 		if !reached || to == at {
-			t.Errorf("waits in the outbox, not in outbox/failed/: the entry to %s, which it was posting when it learned it or had not reached; calls %v", partwayShort("/v1/"+to, w.box.Address()), w.calls)
+			t.Errorf("waits in the outbox, not in outbox/failed/: the entry to %s, which it was posting when it learned it or had not reached; calls %v", partwayShort("/v1/"+to, w.mailbox.Address()), w.calls)
 		}
 	}
 }
 
-// partwayHides is the state's operator that serves the box's first read of
+// partwayHides is the state's operator that serves the mailbox's first read of
 // itself without the revocation of its certificates its server holds, so
 // that its publish of one is answered conflict.
-func partwayHides(e *env, a *client.Box) func(int, http.ResponseWriter, *http.Request, http.Handler) bool {
+func partwayHides(e *env, a *client.Mailbox) func(int, http.ResponseWriter, *http.Request, http.Handler) bool {
 	return func(i int, w http.ResponseWriter, r *http.Request, next http.Handler) bool {
-		if i != 1 || r.Method != http.MethodGet || r.URL.Path != boxPath(a) {
+		if i != 1 || r.Method != http.MethodGet || r.URL.Path != mailboxPath(a) {
 			return false
 		}
-		e.serve(w, r, next, func(b *protocol.BoxResponse) { b.RevokedCertificates, b.RevokedCertificatesSignature = nil, nil })
+		e.serve(w, r, next, func(b *protocol.MailboxResponse) { b.RevokedCertificates, b.RevokedCertificatesSignature = nil, nil })
 		return true
 	}
 }
 
-// forgetsAtUpload is the state's operator that forgets box a as its first
+// forgetsAtUpload is the state's operator that forgets mailbox a as its first
 // prekey upload arrives, which the server then answers 404 no_such_mailbox
 // (#386).
-func forgetsAtUpload(e *env, a *client.Box) func(int, http.ResponseWriter, *http.Request, http.Handler) bool {
+func forgetsAtUpload(e *env, a *client.Mailbox) func(int, http.ResponseWriter, *http.Request, http.Handler) bool {
 	var forgot atomic.Bool
 	return func(_ int, _ http.ResponseWriter, r *http.Request, _ http.Handler) bool {
-		if r.Method == http.MethodPut && r.URL.Path == boxPath(a)+"/prekey" && forgot.CompareAndSwap(false, true) {
+		if r.Method == http.MethodPut && r.URL.Path == mailboxPath(a)+"/prekey" && forgot.CompareAndSwap(false, true) {
 			e.srv.Forget(a.Address())
 		}
 		return false
@@ -534,21 +534,21 @@ func forgetsAtUpload(e *env, a *client.Box) func(int, http.ResponseWriter, *http
 }
 
 func partwayCases() []partwayCase {
-	recv := func(e *env, a *client.Box) partwaySet {
+	recv := func(e *env, a *client.Mailbox) partwaySet {
 		return partwaySet{dir: a.Dir(), a: a, check: recvSaysItAlone, run: func(ctx context.Context) (any, error) { return a.Receive(ctx) }}
 	}
-	remedy := func(a *client.Box) partwaySet {
+	remedy := func(a *client.Mailbox) partwaySet {
 		return partwaySet{dir: a.Dir(), a: a, check: remedySaysItAlone, run: func(ctx context.Context) (any, error) { return a.RenewAndRevoke(ctx, "") }}
 	}
-	earlier := func(a *client.Box) partwaySet {
+	earlier := func(a *client.Mailbox) partwaySet {
 		return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.RevokeEarlier(ctx) }}
 	}
-	restored := func(t *testing.T, e *env, a *client.Box) partwaySet {
+	restored := func(t *testing.T, e *env, a *client.Mailbox) partwaySet {
 		dir := restore(t, e, a).Dir()
 		e.clock.Add(2 * time.Second)
 		return partwaySet{dir: dir, a: a, run: func(ctx context.Context) (any, error) { return client.Init(ctx, dir, e.opts(), protocol.Classic) }}
 	}
-	serverAllowed := func(t *testing.T, a *client.Box) {
+	serverAllowed := func(t *testing.T, a *client.Mailbox) {
 		t.Helper()
 		if err := a.SetPolicy(t.Context(), client.Policy{Unknown: client.LandInbox, Server: client.AdmitAllowed}); err != nil {
 			t.Fatal(err)
@@ -556,65 +556,65 @@ func partwayCases() []partwayCase {
 	}
 	return []partwayCase{
 		{"recv", func(t *testing.T, e *env) partwaySet {
-			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 			send(t, b, a, "waits")
 			return recv(e, a)
 		}},
 		{"recv, a renewal due", func(t *testing.T, e *env) partwaySet {
-			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 			send(t, b, a, "waits")
 			e.clock.Add(25 * time.Hour)
 			return recv(e, a)
 		}},
 		{"recv, mended after a 404", func(t *testing.T, e *env) partwaySet {
-			a := e.box(protocol.Classic)
+			a := e.mailbox(protocol.Classic)
 			e.srv.Forget(a.Address())
 			e.clock.Add(time.Minute)
 			return recv(e, a)
 		}},
 		{"recv, mended after certificate_revoked", func(t *testing.T, e *env) partwaySet {
-			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 			send(t, b, a, "waits")
 			publish(t, e, certsRecord(t, a.Dir(), numberOf(t, a)))
 			e.clock.Add(time.Minute)
 			return recv(e, a)
 		}},
-		{"recv, a renewal due on a box its server forgot", func(t *testing.T, e *env) partwaySet {
-			a := e.box(protocol.Classic)
+		{"recv, a renewal due on a mailbox its server forgot", func(t *testing.T, e *env) partwaySet {
+			a := e.mailbox(protocol.Classic)
 			e.srv.Forget(a.Address())
 			e.clock.Add(25 * time.Hour)
 			return recv(e, a)
 		}},
 		{"prekey renew", func(t *testing.T, e *env) partwaySet {
-			a := e.box(protocol.Classic)
+			a := e.mailbox(protocol.Classic)
 			e.clock.Add(2 * time.Second)
 			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Rekey(ctx, "") }}
 		}},
-		{"prekey renew, a box its server forgot", func(t *testing.T, e *env) partwaySet {
-			a := e.box(protocol.Classic)
+		{"prekey renew, a mailbox its server forgot", func(t *testing.T, e *env) partwaySet {
+			a := e.mailbox(protocol.Classic)
 			e.srv.Forget(a.Address())
 			e.clock.Add(2 * time.Second)
 			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Rekey(ctx, "") }}
 		}},
 		{"prekey renew, its server forgets it between its read and its upload", func(t *testing.T, e *env) partwaySet {
-			a := e.box(protocol.Classic)
+			a := e.mailbox(protocol.Classic)
 			e.clock.Add(2 * time.Second)
 			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Rekey(ctx, "") }, inner: forgetsAtUpload(e, a)}
 		}},
 		{"cert revoke-earlier, its server forgets it between its read and its upload", func(t *testing.T, e *env) partwaySet {
-			a := e.box(protocol.Classic)
+			a := e.mailbox(protocol.Classic)
 			e.clock.Add(2 * time.Second)
 			s := remedy(a)
 			s.inner = forgetsAtUpload(e, a)
 			return s
 		}},
 		{"cert revoke-earlier", func(t *testing.T, e *env) partwaySet {
-			a := e.box(protocol.Classic)
+			a := e.mailbox(protocol.Classic)
 			e.clock.Add(2 * time.Second)
 			return remedy(a)
 		}},
 		{"cert revoke-earlier after a conflict", func(t *testing.T, e *env) partwaySet {
-			a := e.box(protocol.Classic)
+			a := e.mailbox(protocol.Classic)
 			publishAt(t, e.srv.URL, ownRevocation(t, a, numberOf(t, a)+7200))
 			e.clock.Add(2 * time.Second)
 			s := remedy(a)
@@ -622,12 +622,12 @@ func partwayCases() []partwayCase {
 			return s
 		}},
 		{"RevokeEarlier", func(t *testing.T, e *env) partwaySet {
-			a := e.box(protocol.Classic)
+			a := e.mailbox(protocol.Classic)
 			e.clock.Add(2 * time.Second)
 			return earlier(a)
 		}},
 		{"RevokeEarlier after a conflict", func(t *testing.T, e *env) partwaySet {
-			a := e.box(protocol.Classic)
+			a := e.mailbox(protocol.Classic)
 			publishAt(t, e.srv.URL, ownRevocation(t, a, numberOf(t, a)+7200))
 			e.clock.Add(2 * time.Second)
 			s := earlier(a)
@@ -635,11 +635,11 @@ func partwayCases() []partwayCase {
 			return s
 		}},
 		{"send", func(t *testing.T, e *env) partwaySet {
-			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 			return partwaySet{dir: a.Dir(), a: a, check: outboxSaysItAlone, run: func(ctx context.Context) (any, error) { return a.Send(ctx, b.Address(), "sent") }}
 		}},
 		{"send, its ACL changed, the one its server took admitting no reply", func(t *testing.T, e *env) partwaySet {
-			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 			serverAllowed(t, a)
 			if err := a.SyncACL(t.Context()); err != nil {
 				t.Fatal(err)
@@ -647,13 +647,13 @@ func partwayCases() []partwayCase {
 			return partwaySet{dir: a.Dir(), a: a, check: outboxSaysItAlone, run: func(ctx context.Context) (any, error) { return a.Send(ctx, b.Address(), "sent") }}
 		}},
 		{"send JSON", func(t *testing.T, e *env) partwaySet {
-			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 			return partwaySet{dir: a.Dir(), a: a, check: outboxSaysItAlone, run: func(ctx context.Context) (any, error) {
 				return a.SendJSON(ctx, b.Address(), []byte(`{"sent":true}`), client.Fields{})
 			}}
 		}},
 		{"outbox flush, two waiting", func(t *testing.T, e *env) partwaySet {
-			a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+			a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 				if r.Method == http.MethodPost {
 					forge.Refuse(w, protocol.CodeUnavailable)
@@ -661,7 +661,7 @@ func partwayCases() []partwayCase {
 				}
 				next.ServeHTTP(w, r)
 			})
-			for _, p := range []*client.Box{b, c} {
+			for _, p := range []*client.Mailbox{b, c} {
 				if _, err := a.Send(t.Context(), p.Address(), "waits"); err == nil {
 					t.Fatal("a send went out while the server was down")
 				}
@@ -670,7 +670,7 @@ func partwayCases() []partwayCase {
 			return partwaySet{dir: a.Dir(), a: a, check: outboxSaysItAlone, joined: true, run: func(ctx context.Context) (any, error) { return a.Flush(ctx) }}
 		}},
 		{"outbox flush, its ACL changed, the one its server took admitting no reply", func(t *testing.T, e *env) partwaySet {
-			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 			serverAllowed(t, a)
 			if err := a.SyncACL(t.Context()); err != nil {
 				t.Fatal(err)
@@ -689,57 +689,57 @@ func partwayCases() []partwayCase {
 			return partwaySet{dir: a.Dir(), a: a, check: outboxSaysItAlone, joined: true, run: func(ctx context.Context) (any, error) { return a.Flush(ctx) }}
 		}},
 		{"init, restored from its identity alone", func(t *testing.T, e *env) partwaySet {
-			return restored(t, e, e.box(protocol.Classic))
+			return restored(t, e, e.mailbox(protocol.Classic))
 		}},
 		{"init, restored from its identity alone, its server forgot it", func(t *testing.T, e *env) partwaySet {
-			a := e.box(protocol.Classic)
+			a := e.mailbox(protocol.Classic)
 			e.srv.Forget(a.Address())
 			return restored(t, e, a)
 		}},
 		{"peer allow", func(t *testing.T, e *env) partwaySet {
-			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 			serverAllowed(t, a)
 			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Allow(ctx, b.Address()) }}
 		}},
 		{"peer block", func(t *testing.T, e *env) partwaySet {
-			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Block(ctx, b.Address()) }}
 		}},
 		{"SyncACL", func(t *testing.T, e *env) partwaySet {
-			a := e.box(protocol.Classic)
+			a := e.mailbox(protocol.Classic)
 			serverAllowed(t, a)
 			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return nil, a.SyncACL(ctx) }}
 		}},
 		{"account adopt", func(t *testing.T, e *env) partwaySet {
-			a := e.box(protocol.Classic)
+			a := e.mailbox(protocol.Classic)
 			key := e.srv.AdoptKey("acct")
 			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Adopt(ctx, key) }}
 		}},
 		{"account leave", func(t *testing.T, e *env) partwaySet {
-			a := e.box(protocol.Classic)
+			a := e.mailbox(protocol.Classic)
 			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return nil, a.Leave(ctx) }}
 		}},
 		{"Resolve a peer", func(t *testing.T, e *env) partwaySet {
-			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Resolve(ctx, b.Address()) }}
 		}},
 		{"Resolve itself", func(t *testing.T, e *env) partwaySet {
-			a := e.box(protocol.Classic)
+			a := e.mailbox(protocol.Classic)
 			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Resolve(ctx, a.Address()) }}
 		}},
 	}
 }
 
-// A flush that learns its box's own revocation at an entry's post moves each
-// later entry to outbox/failed/ with nothing asked (#340), by the box's own
-// ended state, the one fact, which the keep sets: here the record the box is
+// A flush that learns its mailbox's own revocation at an entry's post moves each
+// later entry to outbox/failed/ with nothing asked (#340), by the mailbox's own
+// ended state, the one fact, which the keep sets: here the record the mailbox is
 // shown also revokes the certificate it signs under, so a later entry's seal
 // would refuse before any call and leave it waiting (#414 item 1).
 func TestAFlushThatLearnsItsOwnRevocationMovesEveryLaterEntry(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		if r.Method == http.MethodPost {
 			forge.Refuse(w, protocol.CodeUnavailable)
@@ -747,13 +747,13 @@ func TestAFlushThatLearnsItsOwnRevocationMovesEveryLaterEntry(t *testing.T) {
 		}
 		next.ServeHTTP(w, r)
 	})
-	for _, p := range []*client.Box{b, c} {
+	for _, p := range []*client.Mailbox{b, c} {
 		if _, err := a.Send(ctx, p.Address(), "waits"); err == nil {
 			t.Fatal("a send went out while the server was down")
 		}
 	}
 	e.srv.SetMiddle(nil)
-	// Another holder of the box's identity revokes the certificate it signs
+	// Another holder of the mailbox's identity revokes the certificate it signs
 	// under, then the address: what the server carries of it holds both.
 	publish(t, e, certsRecord(t, a.Dir(), numberOf(t, a)))
 	revoke(t, e, a)
@@ -765,13 +765,13 @@ func TestAFlushThatLearnsItsOwnRevocationMovesEveryLaterEntry(t *testing.T) {
 	_, err := a.Flush(ctx)
 	e.srv.SetMiddle(nil)
 	if !finishedOwn(err) {
-		t.Errorf("the flush's error does not hold its box's revocation: %v", err)
+		t.Errorf("the flush's error does not hold its mailbox's revocation: %v", err)
 	}
 	if st, serr := a.Status(ctx); serr != nil || !st.Revoked {
-		t.Errorf("the box does not hold its revocation: %+v, %v", st, serr)
+		t.Errorf("the mailbox does not hold its revocation: %+v, %v", st, serr)
 	}
 	left, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "*.P"))
 	if len(left) != 0 || failed(a, b.Address())+failed(a, c.Address()) != 2 {
-		t.Errorf("%d of 2 entries wait in the outbox, not in outbox/failed/, after the flush learned its box's revocation (calls %v): %v", len(left), calls, err)
+		t.Errorf("%d of 2 entries wait in the outbox, not in outbox/failed/, after the flush learned its mailbox's revocation (calls %v): %v", len(left), calls, err)
 	}
 }

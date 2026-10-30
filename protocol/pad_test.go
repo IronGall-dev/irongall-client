@@ -203,13 +203,13 @@ func TestPlaintextLandsOnABlock(t *testing.T) {
 // wire. And where the first boundaries fall.
 func TestShortBodiesAreOneSize(t *testing.T) {
 	now := time.Unix(1_800_000_000, 0)
-	box, _, signer := passBox(t, now)
+	mailbox, _, signer := passMailbox(t, now)
 	sizeOf := func(kt KeyType, body string) int {
-		e, err := NewEnvelope(box.id.Address(), Address{1}, body, now)
+		e, err := NewEnvelope(mailbox.id.Address(), Address{1}, body, now)
 		if err != nil {
 			t.Fatal(err)
 		}
-		e.Identity = box.id.Document()
+		e.Identity = mailbox.id.Document()
 		line, sig, err := SignEnvelope(e, signer)
 		if err != nil {
 			t.Fatal(err)

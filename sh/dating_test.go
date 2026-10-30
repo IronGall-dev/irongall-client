@@ -77,7 +77,7 @@ dr_api(){ orig_ig_api "$@"; local rc=$?; case "$1 $2" in "PUT /v1/"*/prekey) : >
 	}
 }
 
-// shifted is a clock the fake server, a Go box and the script share, set
+// shifted is a clock the fake server, a Go mailbox and the script share, set
 // apart from the machine's by off; the script reads it through dr_now.
 type shifted struct{ off atomic.Int64 }
 
@@ -88,7 +88,7 @@ func igNow(d time.Duration) string {
 }
 
 // frozen is a clock that stands still at base + off, for edges to the
-// second: the fake server, a Go box and the script (dr_now) read it.
+// second: the fake server, a Go mailbox and the script (dr_now) read it.
 type frozen struct {
 	base time.Time
 	off  atomic.Int64
@@ -117,7 +117,7 @@ func staleProblem(w http.ResponseWriter) {
 }
 
 // The script reading, the Go client sending: the retry above the floor of
-// client/replay_retry_test.go. The owner renews the script box by hand on
+// client/replay_retry_test.go. The owner renews the script mailbox by hand on
 // days 30 and 60; the server takes one dr_recv 1h32m ahead.
 func TestTheScriptTakesARetryAboveTheFloor(t *testing.T) {
 	t.Parallel()
@@ -170,7 +170,7 @@ func TestTheScriptTakesARetryAboveTheFloor(t *testing.T) {
 				t.Fatal("the first post's answer was not lost")
 			}
 			out, err := sh(0, "dr_recv")
-			if err != nil || strings.Count(out, `"type":"mail"`) != 1 {
+			if err != nil || strings.Count(out, `"type":"message"`) != 1 {
 				t.Fatalf("the first copy: %q, %v", out, err)
 			}
 			clk.Set(30 * day) // the owner renews by hand, monthly: the script never renews on its own
@@ -202,7 +202,7 @@ func TestTheScriptTakesARetryAboveTheFloor(t *testing.T) {
 			srv.Inject(to, hex.EncodeToString(id[:]), retry)
 			out, err = sh(at, "dr_recv")
 			t.Logf("the retry listed on day 66 less 31 minutes (floor %q): %q, %v", strings.TrimSpace(floor), out, err)
-			if strings.Contains(out, `"type":"mail"`) {
+			if strings.Contains(out, `"type":"message"`) {
 				t.Error("the script delivered a message already delivered")
 			}
 		})
@@ -210,7 +210,7 @@ func TestTheScriptTakesARetryAboveTheFloor(t *testing.T) {
 }
 
 // The script reading a Go sender's retry that the server stretched past the
-// outbox's 33 days (59s on the box read, 59s on a post answered 409
+// outbox's 33 days (59s on the mailbox read, 59s on a post answered 409
 // stale_prekey), with every pass one an honest server takes: the script's
 // clock 50m fast at the drain that prunes, then 9m59s slow a second later.
 func TestTheScriptTakesAStretchedRetryAtHonestClocks(t *testing.T) {
@@ -239,7 +239,7 @@ func TestTheScriptTakesAStretchedRetryAtHonestClocks(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			box := "/v1/" + to.String()
+			mailbox := "/v1/" + to.String()
 			var retry []byte
 			var phase atomic.Value
 			phase.Store("lose")
@@ -247,16 +247,16 @@ func TestTheScriptTakesAStretchedRetryAtHonestClocks(t *testing.T) {
 			srv.SetMiddle(func(w http.ResponseWriter, q *http.Request, next http.Handler) {
 				p := phase.Load()
 				switch {
-				case q.Method == http.MethodPost && q.URL.Path == box+"/messages" && p == "lose":
+				case q.Method == http.MethodPost && q.URL.Path == mailbox+"/messages" && p == "lose":
 					next.ServeHTTP(httptest.NewRecorder(), q)
 					http.Error(w, "lost", http.StatusServiceUnavailable)
 					return
-				case q.Method == http.MethodGet && q.URL.Path == box && p == "keep" && stretch:
+				case q.Method == http.MethodGet && q.URL.Path == mailbox && p == "keep" && stretch:
 					reads++
 					if reads == 1 {
 						clk.Set(time.Duration(clk.off.Load()) + 59*time.Second)
 					}
-				case q.Method == http.MethodPost && q.URL.Path == box+"/messages" && p == "keep":
+				case q.Method == http.MethodPost && q.URL.Path == mailbox+"/messages" && p == "keep":
 					posts++
 					if stretch && posts == 1 {
 						clk.Set(time.Duration(clk.off.Load()) + 59*time.Second)
@@ -272,7 +272,7 @@ func TestTheScriptTakesAStretchedRetryAtHonestClocks(t *testing.T) {
 			if _, err := s.Send(ctx, to, "pay invoice 15 once"); err == nil {
 				t.Fatal("the answer came")
 			}
-			if out, err := sh(0, "dr_recv"); err != nil || !strings.Contains(out, `"type":"mail"`) {
+			if out, err := sh(0, "dr_recv"); err != nil || !strings.Contains(out, `"type":"message"`) {
 				t.Fatalf("the first copy: %q, %v", out, err)
 			}
 			clk.Set(30 * day)
@@ -311,7 +311,7 @@ func TestTheScriptTakesAStretchedRetryAtHonestClocks(t *testing.T) {
 			srv.Inject(to, hex.EncodeToString(id[:]), retry)
 			out, err = sh(server-(9*time.Minute+59*time.Second), "dr_recv")
 			t.Logf("floor %q (W %d); the retry, the script 9m59s slow: %q, %v", strings.TrimSpace(floor), clk.base.Unix(), out, err)
-			if strings.Contains(out, `"type":"mail"`) {
+			if strings.Contains(out, `"type":"message"`) {
 				t.Error("the script delivered a message already delivered, at clocks an honest server takes")
 			}
 		})
@@ -340,7 +340,7 @@ func TestScriptAClockThatJumpsDuringADrainPrunesNoLine(t *testing.T) {
 	if _, err := g.Send(ctx, mustAddress(t, dir), "delivered once"); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := bash(t, env, "dr_recv"); err != nil || !strings.Contains(out, `"type":"mail"`) {
+	if out, err := bash(t, env, "dr_recv"); err != nil || !strings.Contains(out, `"type":"message"`) {
 		t.Fatalf("the first drain: %q, %v", out, err)
 	}
 	before := mustRead(t, filepath.Join(dir, "seen"))
@@ -356,13 +356,13 @@ dr_api(){ orig_ig_api "$@"; local rc=$?; case "$1 $2" in "GET /v1/"*/messages | 
 	}
 }
 
-// The script dates its retry after 409 stale_prekey once the recipient's box
-// is read again, as it dates its first post (#341): dr_post reads the box
+// The script dates its retry after 409 stale_prekey once the recipient's mailbox
+// is read again, as it dates its first post (#341): dr_post reads the mailbox
 // before each seal and seals to what it read. Here the retry's read is
 // answered 59 seconds later, by the clock the script (dr_now), the server
-// and the Go boxes share, and each message is dated after its retry's read
+// and the Go mailboxes share, and each message is dated after its retry's read
 // was answered: the script's, and the Go client's sent the same way.
-func TestTheScriptDatesARetryAfterItsBoxRead(t *testing.T) {
+func TestTheScriptDatesARetryAfterItsMailboxRead(t *testing.T) {
 	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
@@ -392,16 +392,16 @@ func TestTheScriptDatesARetryAfterItsBoxRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	box := "/v1/" + r.Address().String()
+	mailbox := "/v1/" + r.Address().String()
 	posts, reads := 0, 0
 	srv.SetMiddle(func(w http.ResponseWriter, q *http.Request, next http.Handler) {
 		switch {
-		case q.Method == http.MethodPost && q.URL.Path == box+"/messages":
+		case q.Method == http.MethodPost && q.URL.Path == mailbox+"/messages":
 			if posts++; posts%2 == 1 {
 				staleProblem(w)
 				return
 			}
-		case q.Method == http.MethodGet && q.URL.Path == box:
+		case q.Method == http.MethodGet && q.URL.Path == mailbox:
 			if reads++; reads%2 == 0 {
 				set(time.Duration(clk.off.Load()) + 59*time.Second) // the retry's read, answered 59s later
 			}
@@ -413,7 +413,7 @@ func TestTheScriptDatesARetryAfterItsBoxRead(t *testing.T) {
 	}
 	read := map[string]time.Time{"from the script": clk.Now()}
 	if reads != 2 || posts != 2 {
-		t.Errorf("the script's send read the box %d times and posted %d, want twice each", reads, posts)
+		t.Errorf("the script's send read the mailbox %d times and posted %d, want twice each", reads, posts)
 	}
 	if _, err := g.Send(ctx, r.Address(), "from the Go client"); err != nil {
 		t.Fatalf("the Go client's send: %v", err)
@@ -430,7 +430,7 @@ func TestTheScriptDatesARetryAfterItsBoxRead(t *testing.T) {
 		at, ok := read[strings.TrimSpace(body)]
 		t.Logf("%q dated %s, its retry's read answered at %s", body, d.Envelope.SentAt.Format(protocol.TimeLayout), at.Format(protocol.TimeLayout))
 		if !ok || d.Envelope.SentAt.Before(at) {
-			t.Errorf("%q is dated %v before its retry's box read was answered", body, at.Sub(d.Envelope.SentAt))
+			t.Errorf("%q is dated %v before its retry's mailbox read was answered", body, at.Sub(d.Envelope.SentAt))
 		}
 	}
 }

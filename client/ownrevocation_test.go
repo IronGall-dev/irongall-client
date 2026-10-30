@@ -23,15 +23,15 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// What a box does with its own revocations: a renewal asks for them every
-// time, a box that holds its own revocation of its address signs nothing
+// What a mailbox does with its own revocations: a renewal asks for them every
+// time, a mailbox that holds its own revocation of its address signs nothing
 // more, a certificate it revoked signs no mail, the remedy reads once and
 // goes on past a server it cannot use, and a clock far ahead deletes no key
 // that mail waits for.
 
 // ownRevocation signs a revocation of a's certificates through serial T with
 // its identity.
-func ownRevocation(t *testing.T, a *client.Box, T uint64) *protocol.Revocations {
+func ownRevocation(t *testing.T, a *client.Mailbox, T uint64) *protocol.Revocations {
 	t.Helper()
 	key, err := os.ReadFile(filepath.Join(a.Dir(), "identity"))
 	if err != nil {
@@ -52,8 +52,8 @@ func ownRevocation(t *testing.T, a *client.Box, T uint64) *protocol.Revocations 
 	return &protocol.Revocations{Identity: a.Identity().Document(), RevokedCertificates: certs.Statement(), RevokedCertificatesSignature: sig}
 }
 
-// publishAt publishes rec at base alone, as another machine of the box's
-// identity would: the box itself keeps nothing.
+// publishAt publishes rec at base alone, as another machine of the mailbox's
+// identity would: the mailbox itself keeps nothing.
 func publishAt(t *testing.T, base string, rec *protocol.Revocations) {
 	t.Helper()
 	if _, err := client.Publish(context.Background(), client.Options{Base: base}, rec); err != nil {
@@ -61,7 +61,7 @@ func publishAt(t *testing.T, base string, rec *protocol.Revocations) {
 	}
 }
 
-// A revocation of the box's certificates that its server holds and the box
+// A revocation of the mailbox's certificates that its server holds and the mailbox
 // does not, through a serial far past its clock (a slipped digit, or a
 // remedy on another machine): the renewal reads it from its server's answer
 // and numbers above it at the first attempt.
@@ -69,7 +69,7 @@ func TestARenewalNumbersAboveARevocationItDidNotHold(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a := e.box(protocol.Classic)
+	a := e.mailbox(protocol.Classic)
 	x := numberOf(t, a) + 10*365*86400
 	publishAt(t, e.srv.URL, ownRevocation(t, a, x))
 	e.clock.Add(time.Minute)
@@ -82,13 +82,13 @@ func TestARenewalNumbersAboveARevocationItDidNotHold(t *testing.T) {
 }
 
 // The remedy on a clock three hours fast revokes through a serial that far
-// ahead. The box restored from its identity on a machine whose clock is
+// ahead. The mailbox restored from its identity on a machine whose clock is
 // right holds no such revocation: its first renewal asks, and is taken.
-func TestARestoredBoxRenewsAboveAFastRemedy(t *testing.T) {
+func TestARestoredMailboxRenewsAboveAFastRemedy(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a := e.box(protocol.Classic)
+	a := e.mailbox(protocol.Classic)
 	o := e.opts()
 	o.Now = func() time.Time { return e.clock.Now().Add(3 * time.Hour) }
 	fast, err := client.Open(a.Dir(), o)
@@ -102,24 +102,24 @@ func TestARestoredBoxRenewsAboveAFastRemedy(t *testing.T) {
 	restored := restoreWith(t, e, a, e.clock.Now)
 	e.clock.Add(time.Minute)
 	if _, err := restored.Rekey(ctx, ""); err != nil {
-		t.Fatalf("the restored box's first renewal: %v", err)
+		t.Fatalf("the restored mailbox's first renewal: %v", err)
 	}
 	if n := numberOf(t, restored); n <= r.Revoked.Through {
-		t.Errorf("the restored box renewed at %d, under the revocation through %d", n, r.Revoked.Through)
+		t.Errorf("the restored mailbox renewed at %d, under the revocation through %d", n, r.Revoked.Through)
 	}
 }
 
-// Its own server failing only the read of the box: the remedy revokes and
+// Its own server failing only the read of the mailbox: the remedy revokes and
 // renews there all the same.
 func TestTheRemedyGoesOnWhenItsServerDoesNotAnswerTheRead(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a := e.box(protocol.Classic)
+	a := e.mailbox(protocol.Classic)
 	inUse := numberOf(t, a)
 	reads := 0
 	watch(e, func(w http.ResponseWriter, r *http.Request) bool {
-		if r.Method == http.MethodGet && r.URL.Path == boxPath(a) && reads == 0 {
+		if r.Method == http.MethodGet && r.URL.Path == mailboxPath(a) && reads == 0 {
 			reads++
 			http.Error(w, "down", http.StatusServiceUnavailable)
 			return true
@@ -131,17 +131,17 @@ func TestTheRemedyGoesOnWhenItsServerDoesNotAnswerTheRead(t *testing.T) {
 		t.Fatalf("the remedy past an unanswered read: %+v, %v", r, err)
 	}
 	if !heldCertsOf(t, e, a).Revokes(inUse) || numberOf(t, a) != r.Below {
-		t.Errorf("the server holds %+v, the box is at %d, the remedy made %d", heldCertsOf(t, e, a), numberOf(t, a), r.Below)
+		t.Errorf("the server holds %+v, the mailbox is at %d, the remedy made %d", heldCertsOf(t, e, a), numberOf(t, a), r.Below)
 	}
 }
 
-// Its own server serves a statement ordered before what the box published (a
+// Its own server serves a statement ordered before what the mailbox published (a
 // rollback): a plain renewal refuses, and the remedy goes on.
 func TestTheRemedyGoesOnPastARollback(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a := e.box(protocol.Classic)
+	a := e.mailbox(protocol.Classic)
 	first := numberOf(t, a)
 	old, oldSig := statement(t, a, first, ".txt"), statement(t, a, first, ".txt.sig")
 	e.clock.Add(2 * time.Second)
@@ -150,8 +150,8 @@ func TestTheRemedyGoesOnPastARollback(t *testing.T) {
 	}
 	inUse := numberOf(t, a)
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if r.Method == http.MethodGet && r.URL.Path == boxPath(a) {
-			fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: a.Identity().Document(), Prekey: old, PrekeySignature: oldSig})
+		if r.Method == http.MethodGet && r.URL.Path == mailboxPath(a) {
+			fakeserver.WriteJSON(w, http.StatusOK, protocol.MailboxResponse{Identity: a.Identity().Document(), Prekey: old, PrekeySignature: oldSig})
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -166,15 +166,15 @@ func TestTheRemedyGoesOnPastARollback(t *testing.T) {
 	}
 }
 
-// The box's own server holds a revocation through T and leaves it out of its
-// first read of the box, then answers the remedy's record conflict: the
+// The mailbox's own server holds a revocation through T and leaves it out of its
+// first read of the mailbox, then answers the remedy's record conflict: the
 // remedy reads again, keeps T's, which covers more than its own, publishes
 // nothing more, and numbers above T (PROTOCOL.md §12.6).
 func TestTheRemedyAsksAgainAfterItsServerAnswersConflict(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a := e.box(protocol.Classic)
+	a := e.mailbox(protocol.Classic)
 	T := numberOf(t, a) + 7200
 	publishAt(t, e.srv.URL, ownRevocation(t, a, T))
 	reads, puts := 0, 0
@@ -182,9 +182,9 @@ func TestTheRemedyAsksAgainAfterItsServerAnswersConflict(t *testing.T) {
 		if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/revocations") {
 			puts++
 		}
-		if r.Method == http.MethodGet && r.URL.Path == boxPath(a) && reads == 0 {
+		if r.Method == http.MethodGet && r.URL.Path == mailboxPath(a) && reads == 0 {
 			reads++
-			e.serve(w, r, next, func(b *protocol.BoxResponse) { b.RevokedCertificates, b.RevokedCertificatesSignature = nil, nil })
+			e.serve(w, r, next, func(b *protocol.MailboxResponse) { b.RevokedCertificates, b.RevokedCertificatesSignature = nil, nil })
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -202,7 +202,7 @@ func TestTheRemedyStopsAtAConflictThatShowsNothing(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a := e.box(protocol.Classic)
+	a := e.mailbox(protocol.Classic)
 	publishAt(t, e.srv.URL, ownRevocation(t, a, numberOf(t, a)+7200))
 	var puts, renewals atomic.Int32
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -211,8 +211,8 @@ func TestTheRemedyStopsAtAConflictThatShowsNothing(t *testing.T) {
 			puts.Add(1)
 		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/prekey"):
 			renewals.Add(1)
-		case r.Method == http.MethodGet && r.URL.Path == boxPath(a):
-			e.serve(w, r, next, func(b *protocol.BoxResponse) { b.RevokedCertificates, b.RevokedCertificatesSignature = nil, nil })
+		case r.Method == http.MethodGet && r.URL.Path == mailboxPath(a):
+			e.serve(w, r, next, func(b *protocol.MailboxResponse) { b.RevokedCertificates, b.RevokedCertificatesSignature = nil, nil })
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -224,14 +224,14 @@ func TestTheRemedyStopsAtAConflictThatShowsNothing(t *testing.T) {
 }
 
 // A conflict whose server then shows a revocation that verifies, and runs
-// lower than the one this box signed, stops the remedy as one that shows
+// lower than the one this mailbox signed, stops the remedy as one that shows
 // nothing does: it does not cover the certificate in use, so nothing is taken
 // as revoked and nothing is renewed (#337).
 func TestTheRemedyStopsAtAConflictThatShowsALowerRecord(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a := e.box(protocol.Classic)
+	a := e.mailbox(protocol.Classic)
 	lower := ownRevocation(t, a, numberOf(t, a)-1)
 	var renewals atomic.Int32
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -241,8 +241,8 @@ func TestTheRemedyStopsAtAConflictThatShowsALowerRecord(t *testing.T) {
 			return
 		case r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/prekey"):
 			renewals.Add(1)
-		case r.Method == http.MethodGet && r.URL.Path == boxPath(a):
-			e.serve(w, r, next, func(b *protocol.BoxResponse) {
+		case r.Method == http.MethodGet && r.URL.Path == mailboxPath(a):
+			e.serve(w, r, next, func(b *protocol.MailboxResponse) {
 				b.RevokedCertificates, b.RevokedCertificatesSignature = lower.RevokedCertificates, lower.RevokedCertificatesSignature
 			})
 			return
@@ -255,16 +255,16 @@ func TestTheRemedyStopsAtAConflictThatShowsALowerRecord(t *testing.T) {
 	}
 }
 
-// One remedy reads its server's box once: the read carries both the
-// statement it serves and what it holds of the box's revocations.
-func TestTheRemedyReadsItsBoxOnce(t *testing.T) {
+// One remedy reads its server's mailbox once: the read carries both the
+// statement it serves and what it holds of the mailbox's revocations.
+func TestTheRemedyReadsItsMailboxOnce(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a := e.box(protocol.Classic)
+	a := e.mailbox(protocol.Classic)
 	var reads atomic.Int32
 	watch(e, func(w http.ResponseWriter, r *http.Request) bool {
-		if r.Method == http.MethodGet && r.URL.Path == boxPath(a) {
+		if r.Method == http.MethodGet && r.URL.Path == mailboxPath(a) {
 			reads.Add(1)
 		}
 		return false
@@ -274,25 +274,25 @@ func TestTheRemedyReadsItsBoxOnce(t *testing.T) {
 		t.Fatalf("the remedy: %+v, %v", r, err)
 	}
 	if reads.Load() != 1 {
-		t.Errorf("the box's own read %d times", reads.Load())
+		t.Errorf("the mailbox's own read %d times", reads.Load())
 	}
 }
 
-// command is one of a box's commands, by its method's name.
+// command is one of a mailbox's commands, by its method's name.
 type command struct {
 	name string
 	f    func() error
 }
 
-// lockingCommands are every exported command that takes the box's lock, box
+// lockingCommands are every exported command that takes the mailbox's lock, mailbox
 // a's, with b a peer, rec a revocation record and key an adopt key, in two
-// lists by how a box that holds its own revocation meets them: those that
+// lists by how a mailbox that holds its own revocation meets them: those that
 // would ask a server or carry a pass, which it refuses, and those that still
-// run. Each is tried on a finished box
+// run. Each is tried on a finished mailbox
 // (TestABoxThatKeepsItsOwnRevocationSignsNothingMore) and while another
 // command holds the lock (TestEveryCommandWaitsForTheLock), and
 // TestEveryLockingCommandIsTriedFinished holds the two lists to the code.
-func lockingCommands(ctx context.Context, a, b *client.Box, rec *protocol.Revocations, key string) (refused, run []command) {
+func lockingCommands(ctx context.Context, a, b *client.Mailbox, rec *protocol.Revocations, key string) (refused, run []command) {
 	refused = []command{
 		{"Adopt", func() error { _, err := a.Adopt(ctx, key); return err }},
 		{"Leave", func() error { return a.Leave(ctx) }},
@@ -304,11 +304,11 @@ func lockingCommands(ctx context.Context, a, b *client.Box, rec *protocol.Revoca
 		{"RevokeEarlier", func() error { _, err := a.RevokeEarlier(ctx); return err }},
 		{"RenewAndRevoke", func() error { _, err := a.RenewAndRevoke(ctx, ""); return err }},
 		{"SendWith", func() error {
-			_, err := a.SendWith(ctx, b.Address(), "from a finished box", client.Fields{})
+			_, err := a.SendWith(ctx, b.Address(), "from a finished mailbox", client.Fields{})
 			return err
 		}},
 		{"SendJSON", func() error {
-			_, err := a.SendJSON(ctx, b.Address(), []byte(`{"from":"a finished box"}`), client.Fields{})
+			_, err := a.SendJSON(ctx, b.Address(), []byte(`{"from":"a finished mailbox"}`), client.Fields{})
 			return err
 		}},
 		{"Allow", func() error { _, err := a.Allow(ctx, b.Address()); return err }},
@@ -332,9 +332,9 @@ func lockingCommands(ctx context.Context, a, b *client.Box, rec *protocol.Revoca
 	return refused, run
 }
 
-// signed is what the box's keys have signed: its working keys, certificates
+// signed is what the mailbox's keys have signed: its working keys, certificates
 // and prekey statements, and the pass it keeps.
-func signed(t *testing.T, a *client.Box) []string {
+func signed(t *testing.T, a *client.Mailbox) []string {
 	t.Helper()
 	var names []string
 	for _, d := range []string{"work", "prekeys"} {
@@ -352,20 +352,20 @@ func signed(t *testing.T, a *client.Box) []string {
 	return names
 }
 
-// A box that holds its own revocation is finished (PROTOCOL.md §12.5). Every
-// command that would ask a server or carry a pass is refused, with the box's
+// A mailbox that holds its own revocation is finished (PROTOCOL.md §12.5). Every
+// command that would ask a server or carry a pass is refused, with the mailbox's
 // own RevokedError, before anything is asked. None of them signs anything,
-// by any path, and the pass the box kept is gone. A send writes nothing, and
+// by any path, and the pass the mailbox kept is gone. A send writes nothing, and
 // a flush moves what waits to outbox/failed/. What carries no pass still
-// goes: asking about and keeping a revocation, the record (the one the box
-// holds) published again, and a change to the box's own files alone. No
+// goes: asking about and keeping a revocation, the record (the one the mailbox
+// holds) published again, and a change to the mailbox's own files alone. No
 // call in all of it carries a pass.
 func TestABoxThatKeepsItsOwnRevocationSignsNothingMore(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
-	send(t, b, a, "to a box about to be finished")
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	send(t, b, a, "to a mailbox about to be finished")
 	says(e, protocol.CodeUnavailable, http.MethodPost, "/messages")
 	if _, err := a.Send(ctx, b.Address(), "waits in the outbox"); err == nil {
 		t.Fatal("a send was taken by a server that is down")
@@ -387,7 +387,7 @@ func TestABoxThatKeepsItsOwnRevocationSignsNothingMore(t *testing.T) {
 	}
 	before := signed(t, a)
 	if slices.Contains(before, "pass") {
-		t.Error("the pass the box kept outlives its own revocation")
+		t.Error("the pass the mailbox kept outlives its own revocation")
 	}
 	var calls, passes atomic.Int32
 	watch(e, func(_ http.ResponseWriter, r *http.Request) bool {
@@ -431,7 +431,7 @@ func TestABoxThatKeepsItsOwnRevocationSignsNothingMore(t *testing.T) {
 		t.Errorf("%d entries in outbox/failed/, want the one it can never deliver", len(failed))
 	}
 	if again, err := a.Revocation(t.Context()); err != nil || !bytes.Equal(again.Revocation, rec.Revocation) {
-		t.Errorf("the record of a finished box: %v, not the one it holds", err)
+		t.Errorf("the record of a finished mailbox: %v, not the one it holds", err)
 	}
 	if _, err := a.Revoke(ctx, rec); err != nil { // published again: its server takes it
 		t.Errorf("published again: %v", err)
@@ -440,15 +440,15 @@ func TestABoxThatKeepsItsOwnRevocationSignsNothingMore(t *testing.T) {
 		t.Errorf("signed while finished: %v, then %v", before, after)
 	}
 	if passes.Load() != 0 {
-		t.Errorf("%d calls of a finished box carried a pass", passes.Load())
+		t.Errorf("%d calls of a finished mailbox carried a pass", passes.Load())
 	}
 	if res := receive(t, b); len(res.Delivered) != 0 {
 		t.Errorf("its reader delivered %d", len(res.Delivered))
 	}
 }
 
-// Every exported command that takes the box's lock is one of
-// lockingCommands', so a new one is tried on a finished box, and while
+// Every exported command that takes the mailbox's lock is one of
+// lockingCommands', so a new one is tried on a finished mailbox, and while
 // another command holds the lock, too.
 func TestEveryLockingCommandIsTriedFinished(t *testing.T) {
 	t.Parallel()
@@ -474,14 +474,14 @@ func TestEveryLockingCommandIsTriedFinished(t *testing.T) {
 				continue
 			}
 			if takesTheLock(fn.Body) && !tried(fn.Name.Name) {
-				t.Errorf("%s takes the box's lock and is not tried on a finished box or while the lock is held: add it to lockingCommands", fn.Name.Name)
+				t.Errorf("%s takes the mailbox's lock and is not tried on a finished mailbox or while the lock is held: add it to lockingCommands", fn.Name.Name)
 			}
 		}
 	}
 }
 
 // takesTheLock reports whether body calls one of the functions that take
-// the box's lock.
+// the mailbox's lock.
 func takesTheLock(body *ast.BlockStmt) bool {
 	takes := false
 	ast.Inspect(body, func(n ast.Node) bool {
@@ -506,28 +506,28 @@ func takesTheLock(body *ast.BlockStmt) bool {
 	return takes
 }
 
-// The renewal's own read is what shows the box its address revoked: its
-// server holds the revocation, published from elsewhere, and the box does
-// not. The box keeps the revocation and signs nothing more, this renewal
+// The renewal's own read is what shows the mailbox its address revoked: its
+// server holds the revocation, published from elsewhere, and the mailbox does
+// not. The mailbox keeps the revocation and signs nothing more, this renewal
 // included, the revocation learned inside the command: no certificate and no
 // prekey statement, no key made for one, and no renewal begun (#227). So it
-// is where a server that answers it holds no box shows the revocation at the
-// box's read of its revocations.
+// is where a server that answers it holds no mailbox shows the revocation at the
+// mailbox's read of its revocations.
 func TestARenewalThatMeetsItsOwnRevocationSignsNothing(t *testing.T) {
 	t.Parallel()
-	for _, at := range []string{"the read of the box", "the read of its revocations"} {
+	for _, at := range []string{"the read of the mailbox", "the read of its revocations"} {
 		t.Run(at, func(t *testing.T) {
 			ctx := context.Background()
 			e := newEnv(t)
-			a := e.box(protocol.Classic)
+			a := e.mailbox(protocol.Classic)
 			rec, err := a.Revocation(t.Context())
 			if err != nil {
 				t.Fatal(err)
 			}
-			publishAt(t, e.srv.URL, rec) // as another machine of the box's owner would
+			publishAt(t, e.srv.URL, rec) // as another machine of the mailbox's owner would
 			if at == "the read of its revocations" {
 				e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-					if r.Method == http.MethodGet && r.URL.Path == boxPath(a) {
+					if r.Method == http.MethodGet && r.URL.Path == mailboxPath(a) {
 						forge.Refuse(w, protocol.CodeNoSuchMailbox)
 						return
 					}
@@ -539,7 +539,7 @@ func TestARenewalThatMeetsItsOwnRevocationSignsNothing(t *testing.T) {
 			e.clock.Add(2 * time.Second)
 			_, err = a.Rekey(ctx, "")
 			if st, serr := a.Status(t.Context()); serr != nil || !st.Revoked {
-				t.Fatalf("the box did not keep its own revocation: %+v, %v", st, serr)
+				t.Fatalf("the mailbox did not keep its own revocation: %+v, %v", st, serr)
 			}
 			var gone *client.RevokedError
 			if !errors.As(err, &gone) || !gone.Own || numberOf(t, a) != number || begunAt(t, a) != begun || !slices.Equal(signed(t, a), slices.DeleteFunc(before, func(n string) bool { return n == "pass" })) {
@@ -552,14 +552,14 @@ func TestARenewalThatMeetsItsOwnRevocationSignsNothing(t *testing.T) {
 	}
 }
 
-// A box restored from its identity alone, whose owner kept its revocation
+// A mailbox restored from its identity alone, whose owner kept its revocation
 // record, runs init: it signs nothing, no certificate and no prekey
 // statement, and calls no server (#256).
 func TestInitOfABoxThatHoldsItsOwnRevocationSignsNothing(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a := e.box(protocol.Classic)
+	a := e.mailbox(protocol.Classic)
 	rec, err := a.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -589,17 +589,17 @@ func TestInitOfABoxThatHoldsItsOwnRevocationSignsNothing(t *testing.T) {
 	stmts, _ := filepath.Glob(filepath.Join(dir, "prekeys", "*"))
 	var gone *client.RevokedError
 	if !errors.As(err, &gone) || !gone.Own || calls.Load() != 0 || len(made) != 0 || len(stmts) != 0 {
-		t.Errorf("init of a box that holds its own revocation: %v; %d requests; it made %v and %v", err, calls.Load(), made, stmts)
+		t.Errorf("init of a mailbox that holds its own revocation: %v; %d requests; it made %v and %v", err, calls.Load(), made, stmts)
 	}
 }
 
-// A box whose revocation its own server holds, opened against a server that
+// A mailbox whose revocation its own server holds, opened against a server that
 // never saw it: it registers nothing there and sends nothing.
 func TestABoxRevokedAtItsServerSignsNothingAtAnother(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a := e.box(protocol.Classic)
+	a := e.mailbox(protocol.Classic)
 	rec, err := a.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -630,24 +630,24 @@ func TestABoxRevokedAtItsServerSignsNothingAtAnother(t *testing.T) {
 	}
 }
 
-// After the remedy, while its renewal waits, the box holds the certificate it
+// After the remedy, while its renewal waits, the mailbox holds the certificate it
 // signs under revoked: it signs no mail under it, the entry waits, and goes
 // once the renewal is taken, whatever its server took. Here the server
 // answered the revocation as taken and kept nothing, so it would take the
-// box's pass and mail under that certificate still, and was down for the
-// renewal: only the box's own hold keeps the mail back.
+// mailbox's pass and mail under that certificate still, and was down for the
+// renewal: only the mailbox's own hold keeps the mail back.
 func TestASendInTheRemedysWindowWaitsForTheRenewal(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, reader := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, reader := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	inUse := numberOf(t, a)
 	watch(e, func(w http.ResponseWriter, r *http.Request) bool {
 		switch {
-		case r.Method == http.MethodPut && r.URL.Path == boxPath(a)+"/revocations":
+		case r.Method == http.MethodPut && r.URL.Path == mailboxPath(a)+"/revocations":
 			fakeserver.WriteJSON(w, http.StatusOK, struct{}{})
 			return true
-		case r.Method == http.MethodPut && r.URL.Path == boxPath(a)+"/prekey":
+		case r.Method == http.MethodPut && r.URL.Path == mailboxPath(a)+"/prekey":
 			http.Error(w, "down", http.StatusServiceUnavailable)
 			return true
 		}
@@ -682,7 +682,7 @@ func TestAFastClockDeletesNoKeyMailWaitsFor(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	send(t, a, b, "sealed to the prekey about to retire")
 	e.clock.Add(2 * time.Second)
 	if _, err := b.Rekey(ctx, ""); err != nil {
@@ -714,7 +714,7 @@ func TestAnAddressRevocationBesideALowerRevocationOfCertificates(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, s := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, s := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	n := numberOf(t, a)
 	publishAt(t, e.srv.URL, ownRevocation(t, a, n+10))
 	both := ownRevocation(t, a, n+5)
@@ -735,15 +735,15 @@ func TestAnAddressRevocationBesideALowerRevocationOfCertificates(t *testing.T) {
 	}
 }
 
-// A server that holds no box for this address answers a read of its
+// A server that holds no mailbox for this address answers a read of its
 // revocations 200 or 404 not_revoked, and nothing else (api/openapi.yaml):
-// any other answer, no_such_mailbox among them, is no answer, and the box's
+// any other answer, no_such_mailbox among them, is no answer, and the mailbox's
 // question about itself fails rather than taking it as none held.
 func TestARevocationsReadAnsweredOutOfFormIsNoAnswer(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a := e.box(protocol.Classic)
+	a := e.mailbox(protocol.Classic)
 	e.srv.Forget(a.Address())
 	says(e, protocol.CodeNoSuchMailbox, http.MethodGet, "/revocations")
 	if held, err := a.Ask(ctx, a.Address()); err == nil {

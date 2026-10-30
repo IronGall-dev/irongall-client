@@ -14,9 +14,9 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// A box's identity signs certificates and revocations, of its address and of
+// A mailbox's identity signs certificates and revocations, of its address and of
 // its certificates: nothing else.
-// A certificate names a working key, and the working key signs what the box
+// A certificate names a working key, and the working key signs what the mailbox
 // says (PROTOCOL.md §5).
 
 const (
@@ -24,7 +24,7 @@ const (
 	CertificateKeyID = "dromas-cert-v1"
 	// CertificateLifetime is how long a client makes a certificate good for:
 	// the 31 days it signs mail for (SignsMail), the longest month, so a
-	// certificate made each month carries a box's mail until the next, and
+	// certificate made each month carries a mailbox's mail until the next, and
 	// then TTL, so that the last mail it signs still verifies when it is read.
 	CertificateLifetime = 31*24*time.Hour + TTL
 	// MaxCertificateLifetime is the longest a certificate may still have to
@@ -57,7 +57,7 @@ type Certificate struct {
 // against the verifier's own clock, never a time someone else states.
 //
 // The rules: a user certificate with the key id CertificateKeyID, a serial of
-// at least 1, exactly one principal, the box's address, and no critical
+// at least 1, exactly one principal, the mailbox's address, and no critical
 // option; for an Ed25519 working key that passes the identity's own key
 // checks and is not the identity key; signed by the identity key, byte for
 // byte; begun, not ended, and ending at most MaxCertificateLifetime from now.
@@ -86,10 +86,10 @@ func CheckCertificate(id *Identity, key ssh.PublicKey, now time.Time) (*Certific
 
 // CheckCertificateRecord checks key as CheckCertificate does, by every rule
 // but its dates: that the identity id certified the working key, with every
-// field in its form. It is what a box asks of its own record at its server
+// field in its form. It is what a mailbox asks of its own record at its server
 // (PROTOCOL.md §12.4): which serial it stands at, and whether its identity
 // signed it. A certificate's dates bind what is signed under it, never a
-// renewal past it, so a record its server took is never one its box cannot
+// renewal past it, so a record its server took is never one its mailbox cannot
 // renew past for a date: one made for longer than the rule now allows, or
 // begun earlier than a client dates one, or ended.
 func CheckCertificateRecord(id *Identity, key ssh.PublicKey) (*Certificate, error) {
@@ -117,13 +117,13 @@ func certificateForm(id *Identity, key ssh.PublicKey) (*ssh.Certificate, error) 
 		return nil, fmt.Errorf("%w: its serial is not from 1 to 2^53 − 1", ErrCertificate)
 	}
 	if len(cert.ValidPrincipals) != 1 || cert.ValidPrincipals[0] != id.Address().String() {
-		return nil, fmt.Errorf("%w: its one principal must be the box's address", ErrCertificate)
+		return nil, fmt.Errorf("%w: its one principal must be the mailbox's address", ErrCertificate)
 	}
 	if len(cert.CriticalOptions) != 0 {
 		return nil, fmt.Errorf("%w: it carries a critical option", ErrCertificate)
 	}
 	if cert.SignatureKey == nil || !bytes.Equal(cert.SignatureKey.Marshal(), id.PublicKey().Marshal()) {
-		return nil, fmt.Errorf("%w: it is not signed by the box's identity", ErrCertificate)
+		return nil, fmt.Errorf("%w: it is not signed by the mailbox's identity", ErrCertificate)
 	}
 	if err := checkWorkingKey(id, cert.Key); err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrCertificate, err)
@@ -143,7 +143,7 @@ func certificateForm(id *Identity, key ssh.PublicKey) (*ssh.Certificate, error) 
 	}
 	// One that never ends (ssh.CertTimeInfinity) is no certificate of this
 	// protocol, whose verifier takes none that ends past a bound (§5): read as
-	// a record, it would end at no time a box can name.
+	// a record, it would end at no time a mailbox can name.
 	if cert.ValidBefore > 1<<62 {
 		return nil, fmt.Errorf("%w: it ends at no time", ErrCertificate)
 	}
@@ -211,7 +211,7 @@ func (c *Certificate) Marshal() []byte { return c.cert.Marshal() }
 // between machines that do not share a clock.
 func NewCertificate(id *Identity, identity ssh.Signer, work ssh.PublicKey, serial uint64, now time.Time) (*Certificate, error) {
 	if !bytes.Equal(identity.PublicKey().Marshal(), id.PublicKey().Marshal()) {
-		return nil, errors.New("the signer is not the box's identity key")
+		return nil, errors.New("the signer is not the mailbox's identity key")
 	}
 	unix := uint64(max(now.Unix(), 0))
 	cert := &ssh.Certificate{
@@ -230,14 +230,14 @@ func NewCertificate(id *Identity, identity ssh.Signer, work ssh.PublicKey, seria
 }
 
 // SerialAt is the serial a client gives a certificate it makes at now, for a
-// box whose highest serial it knows of is above, or 0 if it knows of none:
+// mailbox whose highest serial it knows of is above, or 0 if it knows of none:
 // the seconds since 1970 at its own clock, or one above that serial when the
 // clock gives nothing higher (PROTOCOL.md §5).
 //
-// An identity is a key, and a key keeps no record of what it signed: a box
+// An identity is a key, and a key keeps no record of what it signed: a mailbox
 // restored from its identity alone knows only what a server shows it, which
 // may be an older record, and no server has seen a certificate that was made
-// and not yet published. The clock is what such a box still has. Numbered by
+// and not yet published. The clock is what such a mailbox still has. Numbered by
 // it, the certificate made later has the higher serial whichever machine made
 // the earlier one, so the serials below a new certificate are those of every
 // certificate made before it, known to its maker or not.
@@ -291,7 +291,7 @@ func verifyCertified(id *Identity, message, signature []byte, namespace string, 
 // began: the moment to verify a signature at when the question is whether the
 // identity ever certified its key, and not whether it is good now. A refused
 // message's Findings ask that (whoMade), and keep the start beside a
-// signature that verified (signed); a box asks it of a prekey statement it
+// signature that verified (signed); a mailbox asks it of a prekey statement it
 // kept, and spends the serial of one whose certificate began less than
 // MaxSkew before its clock (signedPrekey, in the client).
 func CertificateBegan(signature []byte) (time.Time, error) {

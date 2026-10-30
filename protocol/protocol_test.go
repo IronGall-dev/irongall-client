@@ -94,7 +94,7 @@ func TestEnvelopeRoundTrip(t *testing.T) {
 		t.Error("accepted with the wrong signer")
 	}
 	if _, err := OpenEnvelope(b, from, from, now); err == nil {
-		t.Error("accepted for the wrong box")
+		t.Error("accepted for the wrong mailbox")
 	}
 	if _, err := OpenEnvelope(b, from, to, now.Add(TTL+time.Second)); err == nil {
 		t.Error("accepted after the TTL")
@@ -258,8 +258,8 @@ func TestQuotas(t *testing.T) {
 	if Quota("nope").Known() || Quota("nope").Subject() != "" || Subject("nope").Known() {
 		t.Error("an unknown quota or subject is known")
 	}
-	b, _ := json.Marshal(Problem{Type: CodeRateLimited.TypeURI(), Title: "t", Status: 429, Code: CodeRateLimited, QuotaID: QuotaSends, Subject: SubjectBox})
-	if string(b) != `{"type":"tag:dromas.dev,2026-10-26:errors/rate_limited","title":"t","status":429,"code":"rate_limited","quota_id":"sends","subject":"box"}` {
+	b, _ := json.Marshal(Problem{Type: CodeRateLimited.TypeURI(), Title: "t", Status: 429, Code: CodeRateLimited, QuotaID: QuotaSends, Subject: SubjectMailbox})
+	if string(b) != `{"type":"tag:dromas.dev,2026-10-26:errors/rate_limited","title":"t","status":429,"code":"rate_limited","quota_id":"sends","subject":"mailbox"}` {
 		t.Errorf("Problem JSON %s", b)
 	}
 }

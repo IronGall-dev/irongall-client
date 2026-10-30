@@ -26,11 +26,11 @@ func shortBound(t *testing.T) {
 	t.Cleanup(func() { requestTimeout = old })
 }
 
-// slowBox is a box whose default client reaches a server that the given
+// slowMailbox is a mailbox whose default client reaches a server that the given
 // transport plays, bounded as the default client is (stall).
-func slowBox(t *testing.T, rt roundTripper) *Box {
+func slowMailbox(t *testing.T, rt roundTripper) *Mailbox {
 	t.Helper()
-	b, err := newBox(t.TempDir(), Options{Base: "https://dromas.dev", HTTPClient: &http.Client{Transport: rt}})
+	b, err := newMailbox(t.TempDir(), Options{Base: "https://dromas.dev", HTTPClient: &http.Client{Transport: rt}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -117,7 +117,7 @@ func TestAPostRunsWhileItsBytesMove(t *testing.T) {
 		shortBound(t)
 		body := bytes.Repeat([]byte{1}, 64<<10)
 		var reads timeline
-		moving := slowBox(t, func(r *http.Request) (*http.Response, error) {
+		moving := slowMailbox(t, func(r *http.Request) (*http.Response, error) {
 			r.Body = reads.of(r.Body)
 			if _, err := readsEvery(r, 4<<10, stallBound/4); err != nil {
 				return nil, err
@@ -132,7 +132,7 @@ func TestAPostRunsWhileItsBytesMove(t *testing.T) {
 		if took := time.Since(start); took < 3*stallBound {
 			t.Fatalf("the slow link took %s, too little to show the bound is not on the whole", took)
 		}
-		stalled := slowBox(t, func(r *http.Request) (*http.Response, error) {
+		stalled := slowMailbox(t, func(r *http.Request) (*http.Response, error) {
 			if _, err := r.Body.Read(make([]byte, 4<<10)); err != nil {
 				return nil, err
 			}
@@ -159,7 +159,7 @@ func TestAPostSentAgainRunsWhileTheCopysBytesMove(t *testing.T) {
 		shortBound(t)
 		body := bytes.Repeat([]byte{1}, 64<<10)
 		var reads timeline
-		b := slowBox(t, func(r *http.Request) (*http.Response, error) {
+		b := slowMailbox(t, func(r *http.Request) (*http.Response, error) {
 			if _, err := r.Body.Read(make([]byte, 4<<10)); err != nil {
 				return nil, err
 			}
@@ -193,7 +193,7 @@ func TestAPostSentAgainRunsWhileTheCopysBytesMove(t *testing.T) {
 func TestTheWaitForTheHeadIsBounded(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		shortBound(t)
-		b := slowBox(t, func(r *http.Request) (*http.Response, error) {
+		b := slowMailbox(t, func(r *http.Request) (*http.Response, error) {
 			return nil, cutOrGiveUp(r)
 		})
 		start := time.Now()
@@ -232,11 +232,11 @@ func (tr *trickle) Close() error { return nil }
 // Any call but a ciphertext's send or fetch is bounded whole: an answer
 // whose body comes a byte at a time, never as long as requestTimeout without
 // one, is cut at requestTimeout all the same, so a server that trickles a
-// list or a read of a box cannot hold the box's lock (#381's trickle).
+// list or a read of a mailbox cannot hold the mailbox's lock (#381's trickle).
 func TestAnyOtherCallIsBoundedWhole(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		shortBound(t)
-		b := slowBox(t, func(r *http.Request) (*http.Response, error) {
+		b := slowMailbox(t, func(r *http.Request) (*http.Response, error) {
 			return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: &trickle{r.Context(), 40, stallBound / 4}}, nil
 		})
 		start := time.Now()
@@ -252,12 +252,12 @@ func TestAnyOtherCallIsBoundedWhole(t *testing.T) {
 // A post's answer, once its ciphertext is sent, is bounded whole: a receipt
 // that comes a byte at a time, never as long as requestTimeout without one,
 // is cut at requestTimeout all the same, so a server cannot hold a send, and
-// the box's lock, by trickling what it answers (#403 item 3).
+// the mailbox's lock, by trickling what it answers (#403 item 3).
 func TestAPostsAnswerIsBoundedWholeOnceItsBodyIsSent(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		shortBound(t)
 		body := bytes.Repeat([]byte{1}, 1<<10)
-		b := slowBox(t, func(r *http.Request) (*http.Response, error) {
+		b := slowMailbox(t, func(r *http.Request) (*http.Response, error) {
 			if _, err := io.ReadAll(r.Body); err != nil {
 				return nil, err
 			}
@@ -293,7 +293,7 @@ func (counted) Close() error { return nil }
 func TestAPostsAnswerIsReadNoFurtherThanAReceipt(t *testing.T) {
 	t.Parallel()
 	read := 0
-	b := slowBox(t, func(r *http.Request) (*http.Response, error) {
+	b := slowMailbox(t, func(r *http.Request) (*http.Response, error) {
 		if _, err := io.ReadAll(r.Body); err != nil {
 			return nil, err
 		}
@@ -315,7 +315,7 @@ func TestAPostsAnswerIsReadNoFurtherThanAReceipt(t *testing.T) {
 func TestAFetchsProblemIsBoundedWhole(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		shortBound(t)
-		b := slowBox(t, func(r *http.Request) (*http.Response, error) {
+		b := slowMailbox(t, func(r *http.Request) (*http.Response, error) {
 			return &http.Response{StatusCode: http.StatusNotFound, Header: http.Header{"Content-Type": {"application/problem+json"}}, Body: &trickle{r.Context(), 40, stallBound / 4}}, nil
 		})
 		start := time.Now()

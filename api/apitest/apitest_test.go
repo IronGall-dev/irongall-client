@@ -32,7 +32,7 @@ func (r *reported) Errorf(format string, args ...any) {
 }
 
 // An answer in gzip is one to a request that takes gzip, in gzip in fact,
-// and on an answer the description lets a server compress: a box's 404 is
+// and on an answer the description lets a server compress: a mailbox's 404 is
 // none of those.
 func TestAnAnswerInGzipIsHeldToTheRequestAndTheDescription(t *testing.T) {
 	c := protocol.CodeNoSuchMailbox
@@ -74,7 +74,7 @@ func TestAnAnswerInGzipIsHeldToTheRequestAndTheDescription(t *testing.T) {
 	}
 }
 
-// read is a box's read as a server answers it, with one header set.
+// read is a mailbox's read as a server answers it, with one header set.
 func read(t *testing.T, name, value string) []string {
 	const body = `{"identity":"c3NoLWVkMjU1MTk=","prekey":"cHJla2V5","prekey_signature":"c2ln","sender_key_types":["ssh-ed25519"]}` + "\n"
 	r := &reported{TB: t}
@@ -96,10 +96,10 @@ func read(t *testing.T, name, value string) []string {
 // and it passes a Set-Cookie on any answer.
 func TestAHeaderTheDescriptionDoesNotNameFails(t *testing.T) {
 	if errs := read(t, "", ""); len(errs) > 0 {
-		t.Fatalf("a box's read as a server answers it: %q", errs)
+		t.Fatalf("a mailbox's read as a server answers it: %q", errs)
 	}
 	if errs := read(t, "Vary", "Accept-Encoding"); len(errs) > 0 {
-		t.Fatalf("a box's read that says Vary: Accept-Encoding: %q", errs)
+		t.Fatalf("a mailbox's read that says Vary: Accept-Encoding: %q", errs)
 	}
 	for _, h := range [][2]string{
 		{"X-Other", "1"},
@@ -112,7 +112,7 @@ func TestAHeaderTheDescriptionDoesNotNameFails(t *testing.T) {
 		{"Set-Cookie", "a=b"},
 	} {
 		if errs := read(t, h[0], h[1]); len(errs) == 0 {
-			t.Errorf("a box's read with %s: %s passes", h[0], h[1])
+			t.Errorf("a mailbox's read with %s: %s passes", h[0], h[1])
 		}
 	}
 }
@@ -173,7 +173,7 @@ func TestALinkPagesQueryIsIgnored(t *testing.T) {
 		t.Errorf("the link page with a query: %q", errs)
 	}
 	if errs := call("/v1/"+addr+"?utm_source=chat", false); len(errs) == 0 {
-		t.Error("a box's read with a query it does not take, answered 200, passes")
+		t.Error("a mailbox's read with a query it does not take, answered 200, passes")
 	}
 }
 
@@ -255,7 +255,7 @@ func TestARangedFetchIsTheDescriptions(t *testing.T) {
 }
 
 // A HEAD is checked against its own operation, whose answers carry header
-// fields and no content (RFC 9110 §9.3.2): a box's read answered with the
+// fields and no content (RFC 9110 §9.3.2): a mailbox's read answered with the
 // body its handler writes, which net/http drops, and a 304 to its
 // If-None-Match, pass; one without a header field the operation requires
 // fails, as it would on the GET.
@@ -282,12 +282,12 @@ func TestAHeadIsCheckedWithoutItsContent(t *testing.T) {
 		return r.errs
 	}
 	if errs := head(http.StatusOK, true); len(errs) > 0 {
-		t.Errorf("a HEAD of a box's read: %q", errs)
+		t.Errorf("a HEAD of a mailbox's read: %q", errs)
 	}
 	if errs := head(http.StatusNotModified, true, "If-None-Match", "*"); len(errs) > 0 {
 		t.Errorf("a HEAD's 304: %q", errs)
 	}
 	if errs := head(http.StatusOK, false); len(errs) == 0 {
-		t.Error("a HEAD of a box's read without Cache-Control passes")
+		t.Error("a HEAD of a mailbox's read without Cache-Control passes")
 	}
 }

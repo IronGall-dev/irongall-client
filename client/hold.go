@@ -16,7 +16,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// A box that waits for mail holds its list (PROTOCOL.md §11.11), one held
+// A mailbox that waits for mail holds its list (PROTOCOL.md §11.11), one held
 // request after another, down one TLS connection that it keeps. Two layers
 // fail and recover apart:
 //
@@ -27,13 +27,13 @@ import (
 //     that drops before its hold ends is a network that forgets a silent
 //     connection sooner; the next is made with TCP keep-alive below the
 //     drop, so the connection lives and the wait stays long. A drop the
-//     box sees as it comes (a reset) names when the network forgot the
+//     mailbox sees as it comes (a reset) names when the network forgot the
 //     connection. One it sees only at its own deadline (a network that
 //     drops silently) names only a bound above that, so keep-alive halves
 //     at each such drop: a search for a bound no answer names, as path MTU
 //     discovery's binary search halves its range at each failed probe
 //     (RFC 4821 §7.3).
-//   - The request. Each asks the server to hold it for the box's wait,
+//   - The request. Each asks the server to hold it for the mailbox's wait,
 //     DefaultHold at first, and ends at that wait and a margin from the
 //     connection it got last, whether answered or not: a dead path is found
 //     there, never by a probe. Only a connection that drops with keep-alive
@@ -43,20 +43,20 @@ import (
 //     (holdEvery), so a connection that fails at once is a minute's poll,
 //     within the poll budget (PROTOCOL.md §11.5).
 
-// DefaultHold is how long a box asks the server to hold its list at first:
+// DefaultHold is how long a mailbox asks the server to hold its list at first:
 // under the 5 minutes at which common networks drop a silent connection.
 const DefaultHold = 4*time.Minute + 45*time.Second
 
-// MinHold is the shortest wait a box asks for, however its connections
+// MinHold is the shortest wait a mailbox asks for, however its connections
 // drop: the poll budget covers a list a minute.
 const MinHold = time.Minute
 
 // holdMargin is how long after its wait a held request may go unanswered
-// before the box takes its connection for dead: the server answers at the
+// before the mailbox takes its connection for dead: the server answers at the
 // wait at the latest.
 const holdMargin = 15 * time.Second
 
-// holdEvery and holdBurst pace the holds a box starts: one a minute on
+// holdEvery and holdBurst pace the holds a mailbox starts: one a minute on
 // average, two at once.
 const (
 	holdEvery = time.Minute
@@ -67,7 +67,7 @@ const (
 // TLS handshake has its own (net/http's TLSHandshakeTimeout).
 const dialTimeout = 10 * time.Second
 
-// holding is what a box has learned of its network while it holds its
+// holding is what a mailbox has learned of its network while it holds its
 // list: the wait it asks for, and the keep-alive its connections need.
 type holding struct {
 	mu        sync.Mutex
@@ -85,7 +85,7 @@ func (h *holding) current() (wait, keepAlive time.Duration) {
 	return h.wait, h.keepAlive
 }
 
-// minKeepAlive is the shortest keep-alive a box's connections get, however
+// minKeepAlive is the shortest keep-alive a mailbox's connections get, however
 // they drop.
 const minKeepAlive = MinHold / 2
 
@@ -94,7 +94,7 @@ const minKeepAlive = MinHold / 2
 // the hold's own deadline (silent) dropped at some time within the wait, so
 // keep-alive halves, from the wait at first. Once keep-alive is at its
 // floor, a drop shortens the wait instead: below held, or for a silent one
-// to half of it. It returns what the box asks for and sets from now on.
+// to half of it. It returns what the mailbox asks for and sets from now on.
 func (h *holding) dropped(held time.Duration, silent bool) (wait, keepAlive time.Duration) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -131,7 +131,7 @@ func (h *holding) limiter() *rate.Limiter {
 }
 
 // keepAliveOf is the keep-alive a connection of the default client gets:
-// none, or what the box's drops taught it (holding.dropped).
+// none, or what the mailbox's drops taught it (holding.dropped).
 func (h *holding) keepAliveOf() net.KeepAliveConfig {
 	_, ka := h.current()
 	if ka == 0 {
@@ -164,14 +164,14 @@ func defaultTransport(h *holding) *http.Transport {
 
 // HoldResult is what one held list came to.
 type HoldResult struct {
-	// Changed reports that the box's list changed, or that the box must
+	// Changed reports that the mailbox's list changed, or that the mailbox must
 	// receive to find out (its pass refused): a Receive follows.
 	Changed bool
 	// Dropped reports that a connection of the hold dropped: before the
 	// hold's answer, seen as it dropped or only at the hold's deadline, or
 	// on a reused connection that net/http sent the request again past,
 	// which the hold's answer then follows. Wait and KeepAlive are then what
-	// the box asks for from now on.
+	// the mailbox asks for from now on.
 	Dropped bool
 	// After is how long the request was held on the connection it got
 	// last.
@@ -201,7 +201,7 @@ func heldBound(ctx context.Context, d time.Duration) (context.Context, func()) {
 }
 
 // timedOut reports whether err is a call cut by a bound on its time, with
-// no answer: a drop the box did not see as it came.
+// no answer: a drop the mailbox did not see as it came.
 func timedOut(err error) bool {
 	var ne net.Error
 	return errors.Is(err, context.DeadlineExceeded) || errors.As(err, &ne) && ne.Timeout()
@@ -224,7 +224,7 @@ func Transient(err error) bool {
 	return errors.As(err, &te)
 }
 
-// turn waits for the box's turn to start a hold, one a minute on average,
+// turn waits for the mailbox's turn to start a hold, one a minute on average,
 // for up to wait: false is a turn later than that, whose wait it has waited
 // out instead.
 func (h *holding) turn(ctx context.Context, wait time.Duration) (bool, error) {
@@ -245,22 +245,22 @@ func (h *holding) turn(ctx context.Context, wait time.Duration) (bool, error) {
 	return d < wait, nil
 }
 
-// Hold holds the box's list for up to wait, or the box's own wait if that
+// Hold holds the mailbox's list for up to wait, or the mailbox's own wait if that
 // is shorter (DefaultHold, or what its drops taught it): the server answers
-// once the box's first page changes, or at the wait with nothing new. It
+// once the mailbox's first page changes, or at the wait with nothing new. It
 // first waits its turn (one a minute on average), and where the turn comes
 // past the wait, it waits the wait out and holds nothing. It then holds the
-// box's lock only to read its tag and its pass, never through the hold, so
-// the box's other commands go on meanwhile. The held request reads nothing
-// of the box's state: an answer about a revocation is proved under the lock
+// mailbox's lock only to read its tag and its pass, never through the hold, so
+// the mailbox's other commands go on meanwhile. The held request reads nothing
+// of the mailbox's state: an answer about a revocation is proved under the lock
 // once it comes (provedLocked).
 //
-// A box with no tag kept, one whose last list found mail, or whose pass the
+// A mailbox with no tag kept, one whose last list found mail, or whose pass the
 // server refused, is Changed at once, for a Receive to settle. An error is a
 // call that failed and that holding again may get past ([Transient]): a
 // refusal no wait mends (a revocation, an answer out of its form) is one
 // too, which a caller tells by its kind ([APIError], [RevokedError]).
-func (b *Box) Hold(ctx context.Context, wait time.Duration) (*HoldResult, error) {
+func (b *Mailbox) Hold(ctx context.Context, wait time.Duration) (*HoldResult, error) {
 	own, _ := b.holding.current()
 	wait = min(wait, own)
 	if ok, err := b.holding.turn(ctx, wait); err != nil || !ok {
@@ -276,7 +276,7 @@ func (b *Box) Hold(ctx context.Context, wait time.Duration) (*HoldResult, error)
 			return kept{}, err
 		}
 		pass, err := b.pass()
-		return kept{pass, hdr.Get("If-None-Match"), b.boxPath("/messages")}, err
+		return kept{pass, hdr.Get("If-None-Match"), b.mailboxPath("/messages")}, err
 	})
 	if err != nil {
 		return nil, err
@@ -343,9 +343,9 @@ func (b *Box) Hold(ctx context.Context, wait time.Duration) (*HoldResult, error)
 // which renews the prekey when it is due.
 const ReceiveEvery = time.Hour
 
-// Await holds the box's list, one held request after another (Hold), until
+// Await holds the mailbox's list, one held request after another (Hold), until
 // it changes, until passes or ReceiveEvery has, and returns for a Receive;
-// a zero until is no deadline, as for a box that waits for mail for as long
+// a zero until is no deadline, as for a mailbox that waits for mail for as long
 // as it runs. A call that holding again may get past (no answer, a server
 // error, a rate limit) is held again, after its Retry-After where it gives
 // one; a refusal no wait mends ends it, as its error. say, when not nil, is
@@ -355,7 +355,7 @@ const ReceiveEvery = time.Hour
 //
 // With under a second left Await waits it out, so the Receive after is the
 // caller's last, never one of a burst of polls until the deadline passes.
-func (b *Box) Await(ctx context.Context, until time.Time, say func(*HoldResult, error)) error {
+func (b *Mailbox) Await(ctx context.Context, until time.Time, say func(*HoldResult, error)) error {
 	if say == nil {
 		say = func(*HoldResult, error) {}
 	}

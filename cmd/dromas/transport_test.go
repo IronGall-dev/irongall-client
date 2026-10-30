@@ -98,8 +98,8 @@ func TestATransportErrorPrintsNoneOfTheServersWords(t *testing.T) {
 	}
 }
 
-// Three stdout lines carry an error's words, from calls of the box's own
-// server: renewal_failed and acl_not_sent from recv, box_unread from cert
+// Three stdout lines carry an error's words, from calls of the mailbox's own
+// server: renewal_failed and acl_not_sent from recv, mailbox_unread from cert
 // revoke-earlier. None carries the server's.
 func TestTheServersWordsReachNoStdoutLine(t *testing.T) {
 	ctx := context.Background()
@@ -108,20 +108,20 @@ func TestTheServersWordsReachNoStdoutLine(t *testing.T) {
 	clock := func() time.Time { return time.Now().Add(-time.Duration(ago.Load())) }
 	for _, c := range []struct {
 		typ, command string
-		setup        func(b, a *client.Box)
-		match        func(b *client.Box, r *http.Request) bool
+		setup        func(b, a *client.Mailbox)
+		match        func(b *client.Mailbox, r *http.Request) bool
 	}{
-		{"renewal_failed", "recv", nil, func(_ *client.Box, r *http.Request) bool {
+		{"renewal_failed", "recv", nil, func(_ *client.Mailbox, r *http.Request) bool {
 			return r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/prekey")
 		}},
-		{"acl_not_sent", "recv", func(b, a *client.Box) {
+		{"acl_not_sent", "recv", func(b, a *client.Mailbox) {
 			if err := os.WriteFile(filepath.Join(b.Dir(), "blocked"), []byte(a.Address().String()+"\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-		}, func(_ *client.Box, r *http.Request) bool {
+		}, func(_ *client.Mailbox, r *http.Request) bool {
 			return r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/acl")
 		}},
-		{"box_unread", "cert revoke-earlier", nil, func(b *client.Box, r *http.Request) bool {
+		{"mailbox_unread", "cert revoke-earlier", nil, func(b *client.Mailbox, r *http.Request) bool {
 			return r.Method == http.MethodGet && r.URL.Path == "/v1/"+b.Address().String()
 		}},
 	} {

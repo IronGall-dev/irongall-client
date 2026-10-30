@@ -56,14 +56,14 @@ func (b *Bytes) UnmarshalJSON(data []byte) error {
 }
 
 // AnySender is the one entry of a declaration of sender key types that is no
-// key type's name: the box does not say which types its client verifies, and
+// key type's name: the mailbox does not say which types its client verifies, and
 // a server makes no check for it.
 const AnySender = "any"
 
-// AcceptsSender reports whether a box that declared the sender key types
-// declared takes mail from a box whose identity is of type t, as far as the
+// AcceptsSender reports whether a mailbox that declared the sender key types
+// declared takes mail from a mailbox whose identity is of type t, as far as the
 // declaration says: IdentityEd25519 always, whatever was declared; any type
-// if it declared AnySender; otherwise only a type it listed. A box that
+// if it declared AnySender; otherwise only a type it listed. A mailbox that
 // declared nothing takes IdentityEd25519 only (PROTOCOL.md §7).
 func AcceptsSender(declared []string, t string) bool {
 	return t == IdentityEd25519 || slices.Contains(declared, t) || slices.Contains(declared, AnySender)
@@ -76,15 +76,15 @@ type RegisterRequest struct {
 	Identity        Bytes `json:"identity"`
 	Prekey          Bytes `json:"prekey"`
 	PrekeySignature Bytes `json:"prekey_signature"`
-	// SenderKeyTypes declares the identity key types the box's client
-	// verifies: the senders the box takes mail from (AcceptsSender). It is
-	// not signed, and it stands until the box's next prekey replaces it.
+	// SenderKeyTypes declares the identity key types the mailbox's client
+	// verifies: the senders the mailbox takes mail from (AcceptsSender). It is
+	// not signed, and it stands until the mailbox's next prekey replaces it.
 	SenderKeyTypes []string `json:"sender_key_types,omitempty"`
 }
 
 // PrekeyRequest is the body of PUT /v1/<address>/prekey: a new prekey
 // statement, signed by a working key the identity certified. The call carries
-// a pass under that certificate, which is how a box moves to a new one.
+// a pass under that certificate, which is how a mailbox moves to a new one.
 type PrekeyRequest struct {
 	Prekey          Bytes `json:"prekey"`
 	PrekeySignature Bytes `json:"prekey_signature"`
@@ -93,17 +93,17 @@ type PrekeyRequest struct {
 	SenderKeyTypes []string `json:"sender_key_types,omitempty"`
 }
 
-// BoxResponse is GET /v1/<address>, the one read of a box: everything a
+// MailboxResponse is GET /v1/<address>, the one read of a mailbox: everything a
 // sender needs before it posts (PROTOCOL.md §11.8). None of it is trusted
 // until checked: the document against the address, the signature's
 // certificate against the document, the statement against the certificate,
 // and the revocation of certificates against the identity. A revoked
 // address is answered 410 revoked with its record instead (Problem.Record).
-type BoxResponse struct {
+type MailboxResponse struct {
 	Identity        Bytes `json:"identity"`
 	Prekey          Bytes `json:"prekey"`
 	PrekeySignature Bytes `json:"prekey_signature"`
-	// SenderKeyTypes is what the box declared with that prekey, on the
+	// SenderKeyTypes is what the mailbox declared with that prekey, on the
 	// server's word: nothing signs it. A server that misstates it can only
 	// stop a message, which it can do without it.
 	SenderKeyTypes []string `json:"sender_key_types,omitempty"`
@@ -116,7 +116,7 @@ type BoxResponse struct {
 
 // Record is the revocation record that what b carries makes, or nil when it
 // carries no revocation of certificates.
-func (b *BoxResponse) Record() *Revocations {
+func (b *MailboxResponse) Record() *Revocations {
 	if len(b.RevokedCertificates) == 0 && len(b.RevokedCertificatesSignature) == 0 {
 		return nil
 	}
@@ -135,17 +135,17 @@ const CiphertextContentType = "application/octet-stream"
 const MaxCiphertext = 16 << 20
 
 // SendQuery is the query of POST /v1/<recipient>/messages, whose body is an
-// age file encrypted to the recipient's prekey. The sender is the box whose
+// age file encrypted to the recipient's prekey. The sender is the mailbox whose
 // pass the call carries. The message's signature is inside the file, so the
 // server is handed none.
 type SendQuery struct {
-	// PrekeySerial is the serial of the prekey encrypted to. When the box
+	// PrekeySerial is the serial of the prekey encrypted to. When the mailbox
 	// has a newer one the server answers stale_prekey, and the sender
 	// encrypts the same signed envelope again.
 	PrekeySerial uint64
 	// CertificateSerial is the serial of the certificate that prekey's
 	// statement is signed under. A prekey is named by the two together: a
-	// box's statements are ordered by certificate first, so a prekey serial
+	// mailbox's statements are ordered by certificate first, so a prekey serial
 	// can come again under a later certificate.
 	CertificateSerial uint64
 }
@@ -215,18 +215,18 @@ func ParseQuery(raw string, params ...string) (map[string]string, error) {
 }
 
 // AdoptRequest is the body of PUT /v1/<address>/account (with a pass): an adopt
-// key an account minted. The box joins that account, which may lift its
+// key an account minted. The mailbox joins that account, which may lift its
 // limits.
 type AdoptRequest struct {
 	Key string `json:"key"`
 }
 
-// AccountResponse names the account a box now belongs to.
+// AccountResponse names the account a mailbox now belongs to.
 type AccountResponse struct {
 	Account string `json:"account"`
 }
 
-// Receipt is the answer to a send. A send of a ciphertext the box holds
+// Receipt is the answer to a send. A send of a ciphertext the mailbox holds
 // unacked gets the receipt it holds (PROTOCOL.md §11.10, step 6).
 type Receipt struct {
 	ID         string `json:"id"` // lowercase hex SHA-256 of the ciphertext

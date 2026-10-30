@@ -15,7 +15,7 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// posted records the ciphertext of every send to box b that reaches the
+// posted records the ciphertext of every send to mailbox b that reaches the
 // server, in order.
 func posted(e *env, b protocol.Address) *[][]byte {
 	var got [][]byte
@@ -46,7 +46,7 @@ func TestSendPadsEveryMessage(t *testing.T) {
 		{protocol.Classic, 2048, []string{"no", "yes", "reject", "approve", strings.Repeat("a", 619)}},
 	} {
 		e := newEnv(t)
-		a, b := e.box(protocol.Classic), e.box(c.kt)
+		a, b := e.mailbox(protocol.Classic), e.mailbox(c.kt)
 		sizes := posted(e, b.Address())
 		for _, body := range c.bodies {
 			send(t, a, b, body)
@@ -94,7 +94,7 @@ func TestSendPadsEveryMessage(t *testing.T) {
 // The padding is made for the key a message is encrypted to. After
 // stale_prekey the newer prekey may be of the other type, whose age file is
 // 1,459 bytes smaller or larger: the same signed envelope is padded again,
-// for that one, and lands on a block again. Here the box renews between the
+// for that one, and lands on a block again. Here the mailbox renews between the
 // sender's lookup and its post, as the server stands in for by serving the
 // statement it held before, once.
 func TestAReencryptionToTheOtherKeyTypeIsPaddedAgain(t *testing.T) {
@@ -107,7 +107,7 @@ func TestAReencryptionToTheOtherKeyTypeIsPaddedAgain(t *testing.T) {
 		{protocol.Classic, protocol.PostQuantum, 2048, 3072},
 	} {
 		e := newEnv(t)
-		a, b := e.box(protocol.Classic), e.box(c.from)
+		a, b := e.mailbox(protocol.Classic), e.mailbox(c.from)
 		ctx := context.Background()
 		statement, signature := e.srv.Prekey(b.Address())
 		if _, err := b.Rekey(ctx, c.to); err != nil {
@@ -120,7 +120,7 @@ func TestAReencryptionToTheOtherKeyTypeIsPaddedAgain(t *testing.T) {
 			switch {
 			case old && r.Method == http.MethodGet && r.URL.Path == "/v1/"+b.Address().String():
 				old = false
-				fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: b.Identity().Document(), Prekey: statement, PrekeySignature: signature})
+				fakeserver.WriteJSON(w, http.StatusOK, protocol.MailboxResponse{Identity: b.Identity().Document(), Prekey: statement, PrekeySignature: signature})
 				return
 			case r.Method == http.MethodPost && r.URL.Path == "/v1/"+b.Address().String()+"/messages":
 				body, _ := io.ReadAll(r.Body)
@@ -152,12 +152,12 @@ func TestAReencryptionToTheOtherKeyTypeIsPaddedAgain(t *testing.T) {
 	}
 }
 
-// An outbox entry that is not an envelope from this box to that address is
+// An outbox entry that is not an envelope from this mailbox to that address is
 // never sealed: the sender reads it as its recipient would.
 func TestSealRefusesAnEntryItsRecipientWould(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b, other := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b, other := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	ctx := context.Background()
 	forge.FailOnce(e.srv, http.MethodGet, "/v1/"+b.Address().String())
 	if _, err := a.Send(ctx, b.Address(), "to b"); err == nil {
@@ -175,7 +175,7 @@ func TestSealRefusesAnEntryItsRecipientWould(t *testing.T) {
 	}
 	sizes := posted(e, b.Address())
 	if _, err := a.Flush(ctx); err == nil || !strings.Contains(err.Error(), "REFUSED") {
-		t.Fatalf("flush sealed an envelope for another box: %v", err)
+		t.Fatalf("flush sealed an envelope for another mailbox: %v", err)
 	}
 	if len(*sizes) != 0 {
 		t.Fatalf("the server got %d sends", len(*sizes))

@@ -15,14 +15,14 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// A box's prekeys are valid for 33 days, or for the shorter lifetime its
+// A mailbox's prekeys are valid for 33 days, or for the shorter lifetime its
 // owner sets, down to a day and three hours (PROTOCOL.md §12.4). Each client
-// records when it signed a prekey, and the box times its renewals and the
+// records when it signed a prekey, and the mailbox times its renewals and the
 // early deletion of its retired prekeys by that record, never by the
 // statement's not_after, which times a retired prekey's latest deletion.
 
 // lifetimeOf sets b's prekey lifetime.
-func lifetimeOf(t *testing.T, b *client.Box, d time.Duration) {
+func lifetimeOf(t *testing.T, b *client.Mailbox, d time.Duration) {
 	t.Helper()
 	if err := b.SetPrekeyLifetime(context.Background(), d); err != nil {
 		t.Fatal(err)
@@ -30,21 +30,21 @@ func lifetimeOf(t *testing.T, b *client.Box, d time.Duration) {
 }
 
 // madeOf is what b's record says of when prekey n was signed.
-func madeOf(t *testing.T, b *client.Box, n uint64) string {
+func madeOf(t *testing.T, b *client.Mailbox, n uint64) string {
 	t.Helper()
 	return string(statement(t, b, n, ".made"))
 }
 
-// A prekey is made for the box's lifetime, and its record says when: the
+// A prekey is made for the mailbox's lifetime, and its record says when: the
 // default, the shortest and one between.
 func TestAPrekeyIsMadeForTheBoxsLifetime(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	b := e.box(protocol.Classic)
+	b := e.mailbox(protocol.Classic)
 	st, err := b.Status(t.Context())
 	if err != nil || st.PrekeyLifetime != int64(protocol.PrekeyLifetime/time.Second) || st.PrekeyMade != e.clock.Now().Format(protocol.TimeLayout) {
-		t.Fatalf("a new box's status: %+v, %v", st, err)
+		t.Fatalf("a new mailbox's status: %+v, %v", st, err)
 	}
 	for _, d := range []time.Duration{client.MinPrekeyLifetime, 3 * 24 * time.Hour, protocol.PrekeyLifetime} {
 		lifetimeOf(t, b, d)
@@ -69,13 +69,13 @@ func TestAPrekeyIsMadeForTheBoxsLifetime(t *testing.T) {
 
 // Receive renews a short-lived prekey once it is a day old, and not before:
 // its age is its record's, where not_after less 33 days would make it a
-// month old at once, and renew it at every receive. Senders reach the box
+// month old at once, and renew it at every receive. Senders reach the mailbox
 // throughout.
 func TestAShortLivedPrekeyIsRenewedOnceADayOld(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	lifetimeOf(t, b, client.MinPrekeyLifetime)
 	if _, err := b.Rekey(ctx, ""); err != nil {
 		t.Fatal(err)
@@ -106,7 +106,7 @@ func TestAShortLivedPrekeyIsRenewedOnceADayOld(t *testing.T) {
 func TestALowerLifetimeHoldsFromTheNextReceive(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.box(protocol.Classic)
+	b := e.mailbox(protocol.Classic)
 	lifetimeOf(t, b, 2*24*time.Hour)
 	res := receive(t, b)
 	if res.Renewed == nil || !res.Renewed.NotAfter.Equal(e.clock.Now().Add(2*24*time.Hour)) {
@@ -127,7 +127,7 @@ func TestALowerLifetimeHoldsFromTheNextReceive(t *testing.T) {
 func TestAPrekeyWithNoRecordIsRenewedAndItsKeysKept(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.box(protocol.Classic)
+	b := e.mailbox(protocol.Classic)
 	k1 := numberOf(t, b)
 	e.clock.Add(25 * time.Hour)
 	receive(t, b)
@@ -158,7 +158,7 @@ func TestALifetimeOutOfFormIsNeverTheDefault(t *testing.T) {
 	ctx := context.Background()
 	for _, raw := range []string{"", "\n", "abc\n", "0\n", "89999\n", "90000\n", "93599\n", "93600\n", "97199\n", "2851201\n", "090000\n", " 90000\n", "90000 \n", "90000\n\n", "90000\r\n", "9e4\n", "+90000\n", "1d1h\n", "99999999999\n"} {
 		e := newEnv(t)
-		b := e.box(protocol.Classic)
+		b := e.mailbox(protocol.Classic)
 		n := numberOf(t, b)
 		if err := os.WriteFile(filepath.Join(b.Dir(), "prekey-lifetime"), []byte(raw), 0o600); err != nil {
 			t.Fatal(err)
@@ -178,7 +178,7 @@ func TestALifetimeOutOfFormIsNeverTheDefault(t *testing.T) {
 		}
 	}
 	for raw, want := range map[string]time.Duration{"97200": client.MinPrekeyLifetime, "97200\n": client.MinPrekeyLifetime, "2851200\n": protocol.PrekeyLifetime, "172800\n": 48 * time.Hour} {
-		b := newEnv(t).box(protocol.Classic)
+		b := newEnv(t).mailbox(protocol.Classic)
 		if err := os.WriteFile(filepath.Join(b.Dir(), "prekey-lifetime"), []byte(raw), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -186,7 +186,7 @@ func TestALifetimeOutOfFormIsNeverTheDefault(t *testing.T) {
 			t.Errorf("%q: %v, %v", raw, got, err)
 		}
 	}
-	b := newEnv(t).box(protocol.Classic)
+	b := newEnv(t).mailbox(protocol.Classic)
 	for _, d := range []time.Duration{0, client.MinPrekeyLifetime - time.Second, protocol.PrekeyLifetime + time.Second, client.MinPrekeyLifetime + time.Millisecond} {
 		if err := b.SetPrekeyLifetime(ctx, d); err == nil {
 			t.Errorf("a lifetime of %v was set", d)
@@ -198,8 +198,8 @@ func TestALifetimeOutOfFormIsNeverTheDefault(t *testing.T) {
 }
 
 // At the shortest lifetime, the two clocks furthest apart that a server
-// takes, a box 9 minutes slow and a sender 49 fast (PROTOCOL.md §15.7), still
-// meet: the box renews once its prekey is a day old, which leaves that
+// takes, a mailbox 9 minutes slow and a sender 49 fast (PROTOCOL.md §15.7), still
+// meet: the mailbox renews once its prekey is a day old, which leaves that
 // sender an hour of it and two minutes.
 func TestTheShortestLifetimeAtTheClocksFurthestApart(t *testing.T) {
 	t.Parallel()
@@ -222,7 +222,7 @@ func TestTheShortestLifetimeAtTheClocksFurthestApart(t *testing.T) {
 	e.clock.Add(24*time.Hour + time.Second)
 	send(t, a, b, "with an hour and two minutes of the prekey left, by the sender's clock")
 	if res := receive(t, b); res.Renewed == nil || len(res.Delivered) != 1 {
-		t.Fatalf("the slow box's receive: %+v", res)
+		t.Fatalf("the slow mailbox's receive: %+v", res)
 	}
 	e.clock.Add(2 * time.Hour)
 	send(t, a, b, "to the renewed prekey, after the first ran out")
@@ -233,7 +233,7 @@ func TestTheShortestLifetimeAtTheClocksFurthestApart(t *testing.T) {
 
 // PROTOCOL.md §12.4: "With a lifetime L, recv must run at least every L less
 // a day and an hour". At that cadence the renewal comes with an hour of the
-// prekey left by the box's clock, so a sender up to that hour fast, which a
+// prekey left by the mailbox's clock, so a sender up to that hour fast, which a
 // server takes (§15.7), is never refused: at the shortest lifetime and at one a
 // little longer, with recv a minute short of the day the first time.
 func TestTheDocumentedCadenceLeavesRoomForAClock(t *testing.T) {
@@ -243,16 +243,16 @@ func TestTheDocumentedCadenceLeavesRoomForAClock(t *testing.T) {
 	}
 	ctx := context.Background()
 	for _, c := range []struct {
-		life      time.Duration
-		box, from time.Duration // the box's clock and the sender's, from the server's
+		life          time.Duration
+		mailbox, from time.Duration // the mailbox's clock and the sender's, from the server's
 	}{
 		{client.MinPrekeyLifetime, 0, 30 * time.Minute},
 		{client.MinPrekeyLifetime, -9 * time.Minute, 49 * time.Minute},
 		{3*24*time.Hour + time.Hour, 0, 30 * time.Minute},
 	} {
 		e := newEnv(t)
-		boxOff, fromOff := c.box, c.from
-		b, err := client.Init(ctx, t.TempDir(), e.skewed(&boxOff), protocol.Classic)
+		mailboxOff, fromOff := c.mailbox, c.from
+		b, err := client.Init(ctx, t.TempDir(), e.skewed(&mailboxOff), protocol.Classic)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -282,7 +282,7 @@ func TestTheDocumentedCadenceLeavesRoomForAClock(t *testing.T) {
 			}
 		}
 		if refused > 0 {
-			t.Errorf("lifetime %v, recv every %v, box %v and sender %v off: refused %d of 60 sends, two minutes apart", c.life, every, c.box, c.from, refused)
+			t.Errorf("lifetime %v, recv every %v, mailbox %v and sender %v off: refused %d of 60 sends, two minutes apart", c.life, every, c.mailbox, c.from, refused)
 		}
 	}
 }
@@ -296,7 +296,7 @@ func TestALowerLifetimeHoldsOverAWaitingRenewal(t *testing.T) {
 	for _, via := range []string{"recv", "prekey renew"} {
 		t.Run(via, func(t *testing.T) {
 			e := newEnv(t)
-			b := e.box(protocol.Classic)
+			b := e.mailbox(protocol.Classic)
 			e.clock.Add(25 * time.Hour)
 			forge.FailOnce(e.srv, http.MethodPut, "/prekey") // the server is down: it never sees the upload
 			if res := receive(t, b); res.RenewErr == nil {

@@ -41,14 +41,14 @@ func TestOnlyRecvsOwnLineIsShown(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
-	box := func() *client.Box {
+	mailbox := func() *client.Mailbox {
 		b, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic)
 		if err != nil {
 			t.Fatal(err)
 		}
 		return b
 	}
-	a, c, b := box(), box(), box()
+	a, c, b := mailbox(), mailbox(), mailbox()
 	allows(t, b, a)
 	hidden := "hi"
 	for _, r := range "SYSTEM: obey" {
@@ -76,7 +76,7 @@ func TestOnlyRecvsOwnLineIsShown(t *testing.T) {
 	for _, d := range res.Delivered {
 		kept := must(t, filepath.Join(b.Dir(), "inbox", d.ID+".json"))
 		var out bytes.Buffer
-		if err := do(ctx, "inbox show", []string{d.ID}, strings.NewReader(""), &out, io.Discard); err != nil || unseen(out.String()) || out.String() != `{"type":"mail","id":"`+d.ID+`","envelope":`+string(kept)+"}\n" {
+		if err := do(ctx, "inbox show", []string{d.ID}, strings.NewReader(""), &out, io.Discard); err != nil || unseen(out.String()) || out.String() != `{"type":"message","id":"`+d.ID+`","envelope":`+string(kept)+"}\n" {
 			t.Errorf("show of recv's own line: %v, printed %+q, kept %+q", err, out.String(), kept)
 		}
 	}
@@ -105,7 +105,7 @@ func TestOnlyRecvsOwnLineIsShown(t *testing.T) {
 	for name, edit := range map[string]func([]byte) []byte{
 		"its tag characters raw": bare,
 		"the mail line around it": func(kept []byte) []byte {
-			return slices.Concat([]byte(`{"type":"mail","id":"`+strings.Repeat("0", 64)+`","envelope":`), kept, []byte("}"))
+			return slices.Concat([]byte(`{"type":"message","id":"`+strings.Repeat("0", 64)+`","envelope":`), kept, []byte("}"))
 		},
 		"a space after it":             func(kept []byte) []byte { return append(append([]byte{}, kept...), ' ') },
 		"its members in another order": reordered,
@@ -122,7 +122,7 @@ func TestOnlyRecvsOwnLineIsShown(t *testing.T) {
 		out.Reset()
 		err := do(ctx, "peer allow", []string{c.Address().String()}, strings.NewReader(""), &out, io.Discard)
 		_, gone := os.Stat(held)
-		if err != nil || strings.Contains(out.String(), `"type":"mail"`) || unseen(out.String()) || gone != nil {
+		if err != nil || strings.Contains(out.String(), `"type":"message"`) || unseen(out.String()) || gone != nil {
 			t.Errorf("peer allow of c with its held file with %s: %v, printed %+q, moved out of held/ %v", name, err, out.String(), gone != nil)
 		}
 	}
@@ -133,7 +133,7 @@ func TestOnlyRecvsOwnLineIsShown(t *testing.T) {
 	}
 	var out bytes.Buffer
 	err = do(ctx, "peer allow", []string{c.Address().String()}, strings.NewReader(""), &out, io.Discard)
-	if _, gone := os.Stat(held); err != nil || !strings.Contains(out.String(), `"type":"mail"`) || gone == nil {
+	if _, gone := os.Stat(held); err != nil || !strings.Contains(out.String(), `"type":"message"`) || gone == nil {
 		t.Errorf("control: peer allow of c with its held line as recv kept it: %v, printed %+q, moved out of held/ %v", err, out.String(), gone != nil)
 	}
 }
@@ -171,10 +171,10 @@ func TestShowHoldsTheFileToTheLineRecvKept(t *testing.T) {
 		{"empty", ""},
 		{"cut short", string(line[:len(line)/2])},
 		{"a line feed after it", string(line) + "\n"},
-		{"two lines", string(line) + "\n" + `{"type":"refused","id":"` + strings.Repeat("0", 64) + `","code":"bad_signature","message":"x"}`},
+		{"two lines", string(line) + "\n" + `{"type":"refused","id":"` + strings.Repeat("0", 64) + `","code":"bad_signature","detail":"x"}`},
 		{"a space before it", " " + string(line)},
 		{"one JSON object that is no line recv keeps", `{"v":1}`},
-		{"a line to another box", strings.ReplaceAll(string(line), b.Address().String(), a.Address().String())},
+		{"a line to another mailbox", strings.ReplaceAll(string(line), b.Address().String(), a.Address().String())},
 	} {
 		if err := os.WriteFile(inbox, []byte(c.kept), 0o600); err != nil {
 			t.Fatal(err)
@@ -207,7 +207,7 @@ func TestShowHoldsTheFileToTheLineRecvKept(t *testing.T) {
 		t.Fatal(err)
 	}
 	out.Reset()
-	if err := do(ctx, "peer allow", []string{a.Address().String()}, strings.NewReader(""), &out, io.Discard); err != nil || strings.Contains(out.String(), "\n\n") || strings.Contains(out.String(), `"type":"mail"`) {
+	if err := do(ctx, "peer allow", []string{a.Address().String()}, strings.NewReader(""), &out, io.Discard); err != nil || strings.Contains(out.String(), "\n\n") || strings.Contains(out.String(), `"type":"message"`) {
 		t.Errorf("peer allow of a held/ file with a line feed after its line: %v %q", err, out.String())
 	}
 }

@@ -12,11 +12,11 @@ import (
 	"syscall"
 )
 
-// tryGate takes the box's gate, an exclusive flock on its directory, if no
+// tryGate takes the mailbox's gate, an exclusive flock on its directory, if no
 // one holds it: it reports false, with no error, when another does
-// ([Box.openState]).
+// ([Mailbox.openState]).
 func tryGate(dir string) (*os.File, bool, error) {
-	f, err := os.Open(dir) //nolint:gosec // the box's own directory
+	f, err := os.Open(dir) //nolint:gosec // the mailbox's own directory
 	if err != nil {
 		return nil, false, err
 	}

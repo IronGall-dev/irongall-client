@@ -28,7 +28,7 @@ func TestVectorRevocation(t *testing.T) {
 		t.Errorf("SignRevocation differs from a/revoke.sig: %v\n%s", err, got)
 	}
 
-	// Box C's identity is a P-256 key: its revocation is checked the same way.
+	// Mailbox C's identity is a P-256 key: its revocation is checked the same way.
 	c := vectorIdentity(t, "c")
 	if !bytes.Equal(RevocationStatement(c.Address()), read(t, "c/revoke.txt")) {
 		t.Error("RevocationStatement differs from c/revoke.txt")
@@ -63,7 +63,7 @@ func TestVectorRevocationForms(t *testing.T) {
 	}
 }
 
-// What is not a revocation of box A. Each signature here is a good signature
+// What is not a revocation of mailbox A. Each signature here is a good signature
 // of something: none is the identity's own over A's statement.
 func TestVectorBadRevocations(t *testing.T) {
 	a, b := vectorIdentity(t, "a"), vectorIdentity(t, "b")
@@ -91,8 +91,8 @@ func TestVectorBadRevocations(t *testing.T) {
 	}{
 		{"A's revocation, for B's address", b.Address(), docA, read(t, "a/revoke.sig")},
 		{"A's revocation, with B's document", a.Address(), docB, read(t, "a/revoke.sig")},
-		{"A's signature over B's revocation, as B's", b.Address(), docB, read(t, "revoke/bad-of-another-box.sig")},
-		{"A's signature over B's revocation, with A's document", b.Address(), docA, read(t, "revoke/bad-of-another-box.sig")},
+		{"A's signature over B's revocation, as B's", b.Address(), docB, read(t, "revoke/bad-of-another-mailbox.sig")},
+		{"A's signature over B's revocation, with A's document", b.Address(), docA, read(t, "revoke/bad-of-another-mailbox.sig")},
 		{"a document with a byte added", a.Address(), append(bytes.Clone(docA), '\n'), read(t, "a/revoke.sig")},
 		{"no signature", a.Address(), docA, nil},
 		{"no document", a.Address(), nil, read(t, "a/revoke.sig")},

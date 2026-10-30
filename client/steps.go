@@ -1,8 +1,8 @@
 package client
 
-// A command writes the box in steps, each on disk before the next begins
+// A command writes the mailbox in steps, each on disk before the next begins
 // (writeFile, a transaction of the state file): a process killed between two
-// leaves the box as the first left it, and the next command goes on from
+// leaves the mailbox as the first left it, and the next command goes on from
 // there. step marks the point just past one, by its name; steps lists them by
 // what they are a step of. The crash tests kill a process at each
 // (crash_test.go), and a test holds this list to the calls in the code.

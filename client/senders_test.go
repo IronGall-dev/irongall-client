@@ -22,14 +22,14 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// Mail from a sender the box has not allowed passes every check and is held:
+// Mail from a sender the mailbox has not allowed passes every check and is held:
 // acked, kept in held/, never delivered. allow delivers what it held, and
 // the sender's next mail lands in inbox/.
 func TestMailFromASenderNotAllowedIsHeld(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+	a, b := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
 	send(t, a, b, "first")
 	send(t, a, b, "second")
 	res := receive(t, b)
@@ -61,7 +61,7 @@ func TestMailFromASenderNotAllowedIsHeld(t *testing.T) {
 	if res := receive(t, b); len(res.Delivered) != 1 || len(res.Held) != 0 || bodyOf(t, res.Delivered[0]) != "third" {
 		t.Fatalf("mail from a sender allowed: %+v", res)
 	}
-	// Under the default policy the server was told nothing: the box blocks
+	// Under the default policy the server was told nothing: the mailbox blocks
 	// nobody and lets every sender reach it, which is the server's own
 	// default.
 	if e.srv.ACL(b.Address()) != nil {
@@ -69,16 +69,16 @@ func TestMailFromASenderNotAllowedIsHeld(t *testing.T) {
 	}
 }
 
-// Writing to a box allows it, so its reply lands in inbox/; so does naming
+// Writing to a mailbox allows it, so its reply lands in inbox/; so does naming
 // it, and un-naming it is not blocking it.
 func TestWritingOrNamingAPeerAllowsIt(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b, c := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+	a, b, c := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
 	send(t, b, a, "hello")
 	send(t, a, b, "the reply")
 	if res := receive(t, b); len(res.Delivered) != 1 || len(res.Held) != 0 {
-		t.Fatalf("a reply from a box written to: %+v", res)
+		t.Fatalf("a reply from a mailbox written to: %+v", res)
 	}
 	if err := b.SetAlias(t.Context(), "carol", c.Address()); err != nil {
 		t.Fatal(err)
@@ -86,12 +86,12 @@ func TestWritingOrNamingAPeerAllowsIt(t *testing.T) {
 	if err := b.RemoveAlias(t.Context(), "carol"); err != nil {
 		t.Fatal(err)
 	}
-	send(t, c, b, "from a box once named")
+	send(t, c, b, "from a mailbox once named")
 	if res := receive(t, b); len(res.Delivered) != 1 || len(res.Held) != 0 {
-		t.Fatalf("mail from a box named, then un-named: %+v", res)
+		t.Fatalf("mail from a mailbox named, then un-named: %+v", res)
 	}
 	// An alias written by hand, which allowed never heard of, allows too.
-	d := e.heldBox(protocol.Classic)
+	d := e.heldMailbox(protocol.Classic)
 	f, err := os.OpenFile(filepath.Join(b.Dir(), "aliases"), os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		t.Fatal(err)
@@ -102,7 +102,7 @@ func TestWritingOrNamingAPeerAllowsIt(t *testing.T) {
 	_ = f.Close()
 	send(t, d, b, "named by hand")
 	if res := receive(t, b); len(res.Delivered) != 1 {
-		t.Fatalf("mail from a box an alias written by hand names: %+v", res)
+		t.Fatalf("mail from a mailbox an alias written by hand names: %+v", res)
 	}
 }
 
@@ -114,7 +114,7 @@ func TestBlockDropsASendersMailHereAndAtTheServer(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+	a, b := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
 	send(t, a, b, "held")
 	receive(t, b)
 	send(t, a, b, "waiting on the server")
@@ -131,7 +131,7 @@ func TestBlockDropsASendersMailHereAndAtTheServer(t *testing.T) {
 	}
 	_, err = a.Send(ctx, b.Address(), "refused")
 	if client.Code(err) != protocol.CodeSenderNotAllowed || !strings.Contains(err.Error(), "moved to outbox/failed/") {
-		t.Fatalf("a send to a box that blocked its sender: %v", err)
+		t.Fatalf("a send to a mailbox that blocked its sender: %v", err)
 	}
 	if failed, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "failed", "*.P")); len(failed) != 1 {
 		t.Fatalf("outbox/failed/ holds %v", failed)
@@ -141,7 +141,7 @@ func TestBlockDropsASendersMailHereAndAtTheServer(t *testing.T) {
 	}
 
 	// What held/ keeps from a sender goes when it is blocked.
-	c := e.heldBox(protocol.Classic)
+	c := e.heldMailbox(protocol.Classic)
 	send(t, c, b, "from c")
 	receive(t, b)
 	if n, err := b.Block(ctx, c.Address()); err != nil || n != 1 {
@@ -156,11 +156,11 @@ func TestBlockDropsASendersMailHereAndAtTheServer(t *testing.T) {
 }
 
 // Mail from a blocked sender that the server still delivers, its ACL not
-// yet taken, is dropped by the box itself, and the drain says so.
+// yet taken, is dropped by the mailbox itself, and the drain says so.
 func TestABoxDropsMailFromASenderItBlockedWhateverItsServerDoes(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+	a, b := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
 	send(t, a, b, "sent before the block")
 	if err := os.WriteFile(filepath.Join(b.Dir(), "blocked"), []byte(a.Address().String()+"\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -176,7 +176,7 @@ func TestABoxDropsMailFromASenderItBlockedWhateverItsServerDoes(t *testing.T) {
 	if len(res.Blocked) != 1 || len(res.Held)+len(res.Delivered) != 0 || res.ACLErr == nil || e.srv.Count(b.Address()) != 0 {
 		t.Fatalf("a drain with the sender blocked here only: %+v", res)
 	}
-	if st, err := b.Status(t.Context()); err != nil || !strings.Contains(strings.Join(st.Attention, "\n"), "holds no ACL this box sent") {
+	if st, err := b.Status(t.Context()); err != nil || !strings.Contains(strings.Join(st.Attention, "\n"), "holds no ACL this mailbox sent") {
 		t.Fatalf("status: %+v, %v", st, err)
 	}
 	e.srv.SetMiddle(nil)
@@ -185,29 +185,29 @@ func TestABoxDropsMailFromASenderItBlockedWhateverItsServerDoes(t *testing.T) {
 	}
 }
 
-// "unknown inbox" lands every sender's mail in inbox/, as a box did before
+// "unknown inbox" lands every sender's mail in inbox/, as a mailbox did before
 // it could hold any.
 func TestAPolicyCanLandEverySendersMailInInbox(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+	a, b := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
 	if err := os.WriteFile(filepath.Join(b.Dir(), "policy"), []byte("# every sender\nunknown inbox\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	send(t, a, b, "to an open box")
+	send(t, a, b, "to an open mailbox")
 	if res := receive(t, b); len(res.Delivered) != 1 || len(res.Held) != 0 {
 		t.Fatalf("%+v", res)
 	}
 }
 
-// Under "server allowed" the server refuses every sender the box has not
+// Under "server allowed" the server refuses every sender the mailbox has not
 // allowed, and learns who those are: a send to a new address tells it
 // before the message is posted, so the reply is not refused.
 func TestUnderServerAllowedTheServerRefusesTheRest(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b, stranger := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+	a, b, stranger := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
 	if err := b.SetPolicy(t.Context(), client.Policy{Unknown: client.LandHeld, Server: client.AdmitAllowed}); err != nil {
 		t.Fatal(err)
 	}
@@ -251,15 +251,15 @@ func TestUnderServerAllowedTheServerRefusesTheRest(t *testing.T) {
 	}
 }
 
-// An ACL replaces whatever the server holds, whoever sent it: a box whose
+// An ACL replaces whatever the server holds, whoever sent it: a mailbox whose
 // record of what its server took is gone, as on a second machine of the
-// box, sends the ACL its files say in one PUT, with no If-Match and no read
+// mailbox, sends the ACL its files say in one PUT, with no If-Match and no read
 // first, and keeps the server's answer.
 func TestAnACLReplacesWhatTheServerHolds(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+	a, b := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
 	if _, err := b.Block(ctx, a.Address()); err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +271,7 @@ func TestAnACLReplacesWhatTheServerHolds(t *testing.T) {
 		}
 		next.ServeHTTP(w, r)
 	})
-	c := e.heldBox(protocol.Classic)
+	c := e.heldMailbox(protocol.Classic)
 	if _, err := b.Block(ctx, c.Address()); err != nil {
 		t.Fatal(err)
 	}
@@ -289,16 +289,16 @@ func TestAnACLReplacesWhatTheServerHolds(t *testing.T) {
 	}
 }
 
-// An ACL another writer put at the server, another machine of the box or
-// whoever holds its pass, is read at the box's next renewal and replaced by
-// the box's own, which Receive reports; until then nothing asks the server
-// about it, neither a drain nor a send. A renewal that finds the box's own
+// An ACL another writer put at the server, another machine of the mailbox or
+// whoever holds its pass, is read at the mailbox's next renewal and replaced by
+// the mailbox's own, which Receive reports; until then nothing asks the server
+// about it, neither a drain nor a send. A renewal that finds the mailbox's own
 // reads it and sends nothing (dromas-dev/dromas-client#360).
 func TestARenewalReplacesAnACLAnotherWriterPut(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+	a, b := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
 	if _, err := b.Block(ctx, a.Address()); err != nil {
 		t.Fatal(err)
 	}
@@ -319,10 +319,10 @@ func TestARenewalReplacesAnACLAnotherWriterPut(t *testing.T) {
 
 	e.clock.Add(25 * time.Hour)
 	if res := receive(t, b); res.Renewed == nil || res.ACLReplaced || res.ACLErr != nil || strings.Join(calls, " ") != "GET" {
-		t.Fatalf("a renewal that finds the box's own ACL: %+v, calls %v", res, calls)
+		t.Fatalf("a renewal that finds the mailbox's own ACL: %+v, calls %v", res, calls)
 	}
 
-	// Another writer pauses the box. A drain and a send ask nothing of it.
+	// Another writer pauses the mailbox. A drain and a send ask nothing of it.
 	pause := &protocol.ACL{Deny: protocol.ACLList{Any: true}}
 	e.srv.PutACL(b.Address(), pause)
 	calls = nil
@@ -334,23 +334,23 @@ func TestARenewalReplacesAnACLAnotherWriterPut(t *testing.T) {
 		t.Fatalf("a drain and a send called %v, and the server holds %+v", calls, e.srv.ACL(b.Address()))
 	}
 
-	// The next renewal reads it, and puts the box's own in its place.
+	// The next renewal reads it, and puts the mailbox's own in its place.
 	e.clock.Add(25 * time.Hour)
 	res := receive(t, b)
 	if res.Renewed == nil || !res.ACLReplaced || res.ACLErr != nil || strings.Join(calls, " ") != "GET PUT" {
 		t.Fatalf("the renewal after another writer's ACL: %+v, calls %v", res, calls)
 	}
 	if !e.srv.ACL(b.Address()).SameLists(own) || took() != kept {
-		t.Fatalf("the server holds %+v, the box keeps %s; want %+v, %s", e.srv.ACL(b.Address()), took(), own, kept)
+		t.Fatalf("the server holds %+v, the mailbox keeps %s; want %+v, %s", e.srv.ACL(b.Address()), took(), own, kept)
 	}
 }
 
-// A renewal that reads another writer's ACL and whose PUT of the box's own
+// A renewal that reads another writer's ACL and whose PUT of the mailbox's own
 // the server does not take keeps what the server holds as the ACL it took
-// (#377): status says the box's ACL is pending, a reply is judged against
+// (#377): status says the mailbox's ACL is pending, a reply is judged against
 // the ACL the server holds, and the next recv, with no renewal, sends the
-// box's own and says it replaced another writer's, once. So for a pause and
-// for a deny list of addresses, which the box's files could say, and which
+// mailbox's own and says it replaced another writer's, once. So for a pause and
+// for a deny list of addresses, which the mailbox's files could say, and which
 // recv reports by the mark checkACL keeps beside it. Control: the PUT taken,
 // replaced and reported at the renewal.
 func TestARenewalWhosePUTIsNotTakenLeavesTheBoxsACLPending(t *testing.T) {
@@ -368,7 +368,7 @@ func TestARenewalWhosePUTIsNotTakenLeavesTheBoxsACLPending(t *testing.T) {
 		for _, fail := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s, the PUT not taken %v", other.name, fail), func(t *testing.T) {
 				e := newEnv(t)
-				a, b, c, d := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+				a, b, c, d := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
 				if _, err := b.Block(ctx, c.Address()); err != nil {
 					t.Fatal(err)
 				}
@@ -412,7 +412,7 @@ func TestARenewalWhosePUTIsNotTakenLeavesTheBoxsACLPending(t *testing.T) {
 				}
 				pending, perr := b.ACLPending(ctx)
 				st, serr := b.Status(ctx)
-				const what = "this box's server held an ACL another writer put there"
+				const what = "this mailbox's server held an ACL another writer put there"
 				if res.ACLReplaced || res.ACLErr == nil || !strings.Contains(res.ACLErr.Error(), what) || !pending || perr != nil || serr != nil || !strings.Contains(strings.Join(st.Attention, "\n"), what) {
 					t.Fatalf("the renewal whose PUT was refused: replaced %v, its error %v; pending %v (%v); attention %q (%v)", res.ACLReplaced, res.ACLErr, pending, perr, st.Attention, serr)
 				}
@@ -428,10 +428,10 @@ func TestARenewalWhosePUTIsNotTakenLeavesTheBoxsACLPending(t *testing.T) {
 				mu.Unlock()
 				again := receive(t, b)
 				if got := took(); again.Renewed != nil || !again.ACLReplaced || again.ACLErr != nil || strings.Join(got, " ") != "PUT" || !e.srv.ACL(b.Address()).SameLists(own) {
-					t.Fatalf("the next recv: %+v, calls %v; the server holds %+v, the box's own is %+v", again, got, e.srv.ACL(b.Address()), own)
+					t.Fatalf("the next recv: %+v, calls %v; the server holds %+v, the mailbox's own is %+v", again, got, e.srv.ACL(b.Address()), own)
 				}
 				if pending, _ := b.ACLPending(ctx); pending {
-					t.Fatal("the box's ACL is pending after the server took it")
+					t.Fatal("the mailbox's ACL is pending after the server took it")
 				}
 				if res := receive(t, b); res.ACLReplaced || len(took()) != 0 {
 					t.Fatalf("the replacement is reported again: %+v", res)
@@ -441,23 +441,23 @@ func TestARenewalWhosePUTIsNotTakenLeavesTheBoxsACLPending(t *testing.T) {
 	}
 }
 
-// Where the ACL a box's files say is not the one its server last took, the
+// Where the ACL a mailbox's files say is not the one its server last took, the
 // error of the sync that did not send it and status say what changed, never
-// that the box's ACL changed where its server's did: another writer's ACL a
+// that the mailbox's ACL changed where its server's did: another writer's ACL a
 // renewal's read found (TestARenewalWhosePUTIsNotTakenLeavesTheBoxsACLPending),
-// none taken from the box, the box's own lists changed, or an ACL a restore
-// adopted that holds what no file of the box says.
+// none taken from the mailbox, the mailbox's own lists changed, or an ACL a restore
+// adopted that holds what no file of the mailbox says.
 func TestWhatChangedInAnACLNotTakenIsSaid(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	for _, c := range []struct{ name, what string }{
-		{"none taken", "this box's server holds no ACL this box sent"},
-		{"its lists changed", "this box's lists have changed since its server last took its ACL"},
-		{"an adopted ACL holding what no file says", "the ACL this box adopted from its server when it was restored holds what no file of the box says"},
+		{"none taken", "this mailbox's server holds no ACL this mailbox sent"},
+		{"its lists changed", "this mailbox's lists have changed since its server last took its ACL"},
+		{"an adopted ACL holding what no file says", "the ACL this mailbox adopted from its server when it was restored holds what no file of the mailbox says"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv(t)
-			b, d, x := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+			b, d, x := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
 			var refusing atomic.Bool
 			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 				if refusing.Load() && r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/acl") {
@@ -466,7 +466,7 @@ func TestWhatChangedInAnACLNotTakenIsSaid(t *testing.T) {
 				}
 				next.ServeHTTP(w, r)
 			})
-			box := b
+			mailbox := b
 			switch c.name {
 			case "its lists changed":
 				if _, err := b.Block(ctx, d.Address()); err != nil {
@@ -474,20 +474,20 @@ func TestWhatChangedInAnACLNotTakenIsSaid(t *testing.T) {
 				}
 			case "an adopted ACL holding what no file says":
 				e.srv.PutACL(b.Address(), &protocol.ACL{Allow: protocol.ACLList{Any: true}, Deny: protocol.NewACLList(true, []protocol.Address{d.Address()})})
-				box = restore(t, e, b)
+				mailbox = restore(t, e, b)
 				e.clock.Add(time.Minute)
-				if _, err := box.Rekey(ctx, ""); err != nil {
+				if _, err := mailbox.Rekey(ctx, ""); err != nil {
 					t.Fatal(err)
 				}
 			}
 			refusing.Store(true)
 			var err error
 			if c.name == "an adopted ACL holding what no file says" {
-				err = box.SyncACL(ctx)
+				err = mailbox.SyncACL(ctx)
 			} else {
-				_, err = box.Block(ctx, x.Address())
+				_, err = mailbox.Block(ctx, x.Address())
 			}
-			st, serr := box.Status(ctx)
+			st, serr := mailbox.Status(ctx)
 			if err == nil || !strings.Contains(err.Error(), c.what) || serr != nil || !strings.Contains(strings.Join(st.Attention, "\n"), c.what) {
 				t.Fatalf("the sync not taken: %v; status %q, %v; want each to say %q", err, st.Attention, serr, c.what)
 			}
@@ -496,19 +496,19 @@ func TestWhatChangedInAnACLNotTakenIsSaid(t *testing.T) {
 }
 
 // The read of its server's ACL that a renewal owes is made only once the
-// server's ACL is answered and what it showed is kept: a list of the box's
+// server's ACL is answered and what it showed is kept: a list of the mailbox's
 // that cannot be read, a read the server does not answer, or a fault of the
-// box at the keep after it leave the read owed, and the next recv, with no
+// mailbox at the keep after it leave the read owed, and the next recv, with no
 // renewal due, makes it, once, replaces another writer's ACL and says so. A
 // restore's adoption read that fails leaves it owed too, and its own mark
 // has the next sync read the server's ACL either way.
 func TestAnACLReadNotMadeIsOwedToTheNextRecv(t *testing.T) {
 	ctx := context.Background()
 	full := &os.PathError{Op: "write", Path: "state", Err: syscall.ENOSPC}
-	for _, fault := range []string{"a list that cannot be read", "no answer to the read", "a fault of the box at the keep", "no answer to a restore's adoption read"} {
+	for _, fault := range []string{"a list that cannot be read", "no answer to the read", "a fault of the mailbox at the keep", "no answer to a restore's adoption read"} {
 		t.Run(fault, func(t *testing.T) {
 			e := newEnv(t)
-			b, c, d := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+			b, c, d := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
 			if _, err := b.Block(ctx, c.Address()); err != nil {
 				t.Fatal(err)
 			}
@@ -532,21 +532,21 @@ func TestAnACLReadNotMadeIsOwedToTheNextRecv(t *testing.T) {
 			failing := true
 			var calls []string
 			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-				if r.URL.Path != boxPath(b)+"/acl" {
+				if r.URL.Path != mailboxPath(b)+"/acl" {
 					next.ServeHTTP(w, r)
 					return
 				}
 				mu.Lock()
 				calls = append(calls, r.Method)
 				refuse := failing && r.Method == http.MethodGet && (fault == "no answer to the read" || fault == "no answer to a restore's adoption read")
-				keep := failing && r.Method == http.MethodGet && fault == "a fault of the box at the keep"
+				keep := failing && r.Method == http.MethodGet && fault == "a fault of the mailbox at the keep"
 				mu.Unlock()
 				if refuse {
 					fakeserver.WriteJSON(w, protocol.CodeUnavailable.Status(), protocol.Problem{Type: protocol.CodeUnavailable.TypeURI(), Code: protocol.CodeUnavailable, Status: int64(protocol.CodeUnavailable.Status())})
 					return
 				}
 				next.ServeHTTP(w, r)
-				armed.Store(keep) // the box's next write keeps what this read showed
+				armed.Store(keep) // the mailbox's next write keeps what this read showed
 			})
 			took := func() string {
 				mu.Lock()
@@ -581,7 +581,7 @@ func TestAnACLReadNotMadeIsOwedToTheNextRecv(t *testing.T) {
 				want, replaced = "GET", false // its lists are the server's: nothing to send
 			}
 			if got := took(); again.Renewed != nil || got != want || again.ACLReplaced != replaced || again.ACLErr != nil || !e.srv.ACL(b.Address()).SameLists(own) {
-				t.Fatalf("the next recv: renewed %v, calls %q, want %q; replaced %v, its ACL's error %v; the server holds %+v, the box's own is %+v", again.Renewed != nil, got, want, again.ACLReplaced, again.ACLErr, e.srv.ACL(b.Address()), own)
+				t.Fatalf("the next recv: renewed %v, calls %q, want %q; replaced %v, its ACL's error %v; the server holds %+v, the mailbox's own is %+v", again.Renewed != nil, got, want, again.ACLReplaced, again.ACLErr, e.srv.ACL(b.Address()), own)
 			}
 			if res := receive(t, x); res.ACLReplaced || took() != "" {
 				t.Fatalf("the recv after it: %+v", res)
@@ -590,7 +590,7 @@ func TestAnACLReadNotMadeIsOwedToTheNextRecv(t *testing.T) {
 	}
 }
 
-// A box whose renewal's PUT was not taken, and which its server then forgot,
+// A mailbox whose renewal's PUT was not taken, and which its server then forgot,
 // with the ACL another writer put there, says it replaced nothing when the
 // registration that brings it back sends its own: the server held no ACL by
 // then, and the registration drops the mark with the ACL kept (sendRenewal;
@@ -599,7 +599,7 @@ func TestARegistrationDropsTheMarkOfAnotherWritersACL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	b, c, d := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+	b, c, d := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
 	if _, err := b.Block(ctx, c.Address()); err != nil {
 		t.Fatal(err)
 	}
@@ -623,13 +623,13 @@ func TestARegistrationDropsTheMarkOfAnotherWritersACL(t *testing.T) {
 	e.clock.Add(time.Minute)
 	res := receive(t, b)
 	if res.Renewed == nil || res.ACLErr != nil || res.ACLReplaced || !e.srv.ACL(b.Address()).SameLists(own) {
-		t.Fatalf("the recv that registered the box again: renewed %v, its ACL's error %v, replaced %v; the server holds %+v, the box's own is %+v", res.Renewed != nil, res.ACLErr, res.ACLReplaced, e.srv.ACL(b.Address()), own)
+		t.Fatalf("the recv that registered the mailbox again: renewed %v, its ACL's error %v, replaced %v; the server holds %+v, the mailbox's own is %+v", res.Renewed != nil, res.ACLErr, res.ACLReplaced, e.srv.ACL(b.Address()), own)
 	}
 }
 
 // A restore adopts at most protocol.MaxACLEntries of its server's entries
 // (PROTOCOL.md §11.14; #440): an ACL answer with more is one that breaks its
-// form, so the box adopts nothing, writes none of its lists, and reads again
+// form, so the mailbox adopts nothing, writes none of its lists, and reads again
 // at its next command. The server holds the most there may be, then one
 // more.
 func TestARestoreAdoptsABoundedACL(t *testing.T) {
@@ -639,7 +639,7 @@ func TestARestoreAdoptsABoundedACL(t *testing.T) {
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
 			t.Parallel()
 			e := newEnv(t)
-			b := e.heldBox(protocol.Classic)
+			b := e.heldMailbox(protocol.Classic)
 			addrs := make([]protocol.Address, n-1) // and the allow list's *
 			for i := range addrs {
 				addrs[i] = protocol.Address(sha256.Sum256(fmt.Append(nil, i)))
@@ -665,18 +665,18 @@ func TestARestoreAdoptsABoundedACL(t *testing.T) {
 	}
 }
 
-// A box restored from its identity alone adopts the ACL its server holds, by
+// A mailbox restored from its identity alone adopts the ACL its server holds, by
 // each way a restore goes (init, prekey renew, and a recv that renews), so its
 // first renewal finds the two alike and the server's blocks stay; the heal
-// still replaces an ACL another writer puts there after (#366). A box
+// still replaces an ACL another writer puts there after (#366). A mailbox
 // restored with one of its lists beside the identity adopts nothing: its
 // files are its ACL, and its first renewal puts it.
-func TestARestoredBoxAdoptsItsServersACL(t *testing.T) {
+func TestARestoredMailboxAdoptsItsServersACL(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	lost := func(t *testing.T, e *env) (b, blocked, allowed *client.Box, own *protocol.ACL) {
+	lost := func(t *testing.T, e *env) (b, blocked, allowed *client.Mailbox, own *protocol.ACL) {
 		t.Helper()
-		a, b, c := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+		a, b, c := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
 		if _, err := b.Block(ctx, a.Address()); err != nil {
 			t.Fatal(err)
 		}
@@ -691,7 +691,7 @@ func TestARestoredBoxAdoptsItsServersACL(t *testing.T) {
 		}
 		own = e.srv.ACL(b.Address())
 		if own == nil || own.Allow.Any || !own.Allow.Has(c.Address()) || !own.Deny.Has(a.Address()) {
-			t.Fatalf("the lost box's ACL: %+v", own)
+			t.Fatalf("the lost mailbox's ACL: %+v", own)
 		}
 		return b, a, c, own
 	}
@@ -711,7 +711,7 @@ func TestARestoredBoxAdoptsItsServersACL(t *testing.T) {
 				var res *client.Result
 				res, err = r.Receive(ctx)
 				if err == nil && (res.Renewed == nil || res.ACLReplaced || res.ACLErr != nil) {
-					t.Fatalf("the recv that restored the box: %+v", res)
+					t.Fatalf("the recv that restored the mailbox: %+v", res)
 				}
 			}
 			if err != nil {
@@ -719,16 +719,16 @@ func TestARestoredBoxAdoptsItsServersACL(t *testing.T) {
 			}
 			e.clock.Add(25 * time.Hour)
 			if res := receive(t, r); res.Renewed == nil || res.ACLReplaced || res.ACLErr != nil || !e.srv.ACL(b.Address()).SameLists(own) {
-				t.Fatalf("the restored box's first renewal: %+v; the server holds %+v, the lost box's was %+v", res, e.srv.ACL(b.Address()), own)
+				t.Fatalf("the restored mailbox's first renewal: %+v; the server holds %+v, the lost mailbox's was %+v", res, e.srv.ACL(b.Address()), own)
 			}
 			blocked, _ := r.Blocked()
 			allowed, _ := r.Allowed()
 			policy, _ := r.Policy()
 			if !slices.Equal(blocked, []protocol.Address{a.Address()}) || !slices.Equal(allowed, []protocol.Address{c.Address()}) || policy != (client.Policy{Unknown: client.LandHeld, Server: client.AdmitAllowed}) {
-				t.Fatalf("the restored box's lists: blocked %v, allowed %v, %+v", blocked, allowed, policy)
+				t.Fatalf("the restored mailbox's lists: blocked %v, allowed %v, %+v", blocked, allowed, policy)
 			}
 
-			// Another writer pauses the box: the next renewal replaces it.
+			// Another writer pauses the mailbox: the next renewal replaces it.
 			e.srv.PutACL(b.Address(), &protocol.ACL{Deny: protocol.ACLList{Any: true}})
 			e.clock.Add(25 * time.Hour)
 			if res := receive(t, r); res.Renewed == nil || !res.ACLReplaced || !e.srv.ACL(b.Address()).SameLists(own) {
@@ -737,7 +737,7 @@ func TestARestoredBoxAdoptsItsServersACL(t *testing.T) {
 		})
 	}
 
-	// Each of the three files alone, as the lost box wrote it (#441 item 2),
+	// Each of the three files alone, as the lost mailbox wrote it (#441 item 2),
 	// and the ACL it makes: under the default policy, which admits all,
 	// allowed changes nothing; policy alone admits only the allowed, who are
 	// none.
@@ -768,23 +768,23 @@ func TestARestoredBoxAdoptsItsServersACL(t *testing.T) {
 			}
 			for _, f := range []string{"allowed", "blocked", "policy"} {
 				if _, err := os.Stat(filepath.Join(r.Dir(), f)); f != kept.file && !errors.Is(err, os.ErrNotExist) {
-					t.Errorf("a box restored with its %s file wrote %s: %v", kept.file, f, err)
+					t.Errorf("a mailbox restored with its %s file wrote %s: %v", kept.file, f, err)
 				}
 			}
 			e.clock.Add(25 * time.Hour)
 			if res := receive(t, r); res.Renewed == nil || !res.ACLReplaced || !e.srv.ACL(b.Address()).SameLists(kept.want(own)) {
-				t.Fatalf("the first renewal of a box restored with its %s file: %+v; the server holds %+v", kept.file, res, e.srv.ACL(b.Address()))
+				t.Fatalf("the first renewal of a mailbox restored with its %s file: %+v; the server holds %+v", kept.file, res, e.srv.ACL(b.Address()))
 			}
 		})
 	}
 }
 
-// What a restored box adopts and no file of it says, a pause (a deny of
+// What a restored mailbox adopts and no file of it says, a pause (a deny of
 // AnyAddress) or addresses beside an allow of AnyAddress, goes with the first
-// ACL the box sends, and recv reports that as the heal's acl_replaced, once:
+// ACL the mailbox sends, and recv reports that as the heal's acl_replaced, once:
 // whether a later recv's sync sends it, a send's sync, or the renewal of the
-// recv that restored the box (#366).
-func TestARestoredBoxReportsWhatItDidNotAdopt(t *testing.T) {
+// recv that restored the mailbox (#366).
+func TestARestoredMailboxReportsWhatItDidNotAdopt(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	for _, held := range []struct {
@@ -801,7 +801,7 @@ func TestARestoredBoxReportsWhatItDidNotAdopt(t *testing.T) {
 		for _, how := range []string{"recv after prekey renew", "send after prekey renew", "recv"} {
 			t.Run(held.name+", "+how, func(t *testing.T) {
 				e := newEnv(t)
-				a, b, c := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+				a, b, c := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
 				e.srv.PutACL(b.Address(), held.acl(a.Address(), c.Address()))
 				r := restore(t, e, b)
 				e.clock.Add(time.Minute)
@@ -819,7 +819,7 @@ func TestARestoredBoxReportsWhatItDidNotAdopt(t *testing.T) {
 					t.Fatalf("the recv after the restore: %+v; the server holds %+v", res, e.srv.ACL(b.Address()))
 				}
 				if blocked, _ := r.Blocked(); !slices.Equal(blocked, []protocol.Address{a.Address()}) {
-					t.Fatalf("the restored box blocks %v", blocked)
+					t.Fatalf("the restored mailbox blocks %v", blocked)
 				}
 				if res := receive(t, r); res.ACLReplaced {
 					t.Fatalf("the replacement is reported again: %+v", res)
@@ -829,14 +829,14 @@ func TestARestoredBoxReportsWhatItDidNotAdopt(t *testing.T) {
 	}
 }
 
-// A server that answers box_changed to an ACL (the box changed while it
+// A server that answers mailbox_changed to an ACL (the mailbox changed while it
 // handled the request) is sent it again, as it is: the write is not lost to
 // a race.
-func TestAnACLIsSentAgainWhenTheBoxChanged(t *testing.T) {
+func TestAnACLIsSentAgainWhenTheMailboxChanged(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+	a, b := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
 	var once sync.Once
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		raced := false
@@ -844,13 +844,13 @@ func TestAnACLIsSentAgainWhenTheBoxChanged(t *testing.T) {
 			once.Do(func() { raced = true })
 		}
 		if raced {
-			fakeserver.WriteJSON(w, protocol.CodeBoxChanged.Status(), protocol.Problem{Type: protocol.CodeBoxChanged.TypeURI(), Code: protocol.CodeBoxChanged, Status: int64(protocol.CodeBoxChanged.Status())})
+			fakeserver.WriteJSON(w, protocol.CodeMailboxChanged.Status(), protocol.Problem{Type: protocol.CodeMailboxChanged.TypeURI(), Code: protocol.CodeMailboxChanged, Status: int64(protocol.CodeMailboxChanged.Status())})
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
 	if _, err := b.Block(ctx, a.Address()); err != nil {
-		t.Fatalf("block when the box changed once: %v", err)
+		t.Fatalf("block when the mailbox changed once: %v", err)
 	}
 	if acl := e.srv.ACL(b.Address()); !acl.Deny.Has(a.Address()) {
 		t.Fatalf("the server holds %+v", acl)
@@ -862,7 +862,7 @@ func TestAnACLIsSentAgainWhenTheBoxChanged(t *testing.T) {
 func TestAPolicyThatCannotBeReadStopsTheDrain(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+	a, b := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
 	send(t, a, b, "waits")
 	for name, text := range map[string]string{"policy": "unknown deliver\n", "allowed": "not an address\n", "blocked": strings.ToUpper(a.Address().String()) + "\n"} {
 		if err := os.WriteFile(filepath.Join(b.Dir(), name), []byte(text), 0o600); err != nil {
@@ -889,7 +889,7 @@ func TestAPolicyThatCannotBeReadStopsTheDrain(t *testing.T) {
 func TestRebuildAllowed(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b, c, d := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+	a, b, c, d := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
 	send(t, b, a, "to a")
 	if err := b.SetAlias(t.Context(), "carol", c.Address()); err != nil {
 		t.Fatal(err)
@@ -909,13 +909,13 @@ func TestRebuildAllowed(t *testing.T) {
 	}
 }
 
-// A sender the box blocks is never allowed: allow is refused, naming the
+// A sender the mailbox blocks is never allowed: allow is refused, naming the
 // block, and its held mail stays where it is (#179).
 func TestAllowingABlockedSenderDoesNothing(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+	a, b := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
 	send(t, a, b, "held, then its sender blocked by hand")
 	if res := receive(t, b); len(res.Held) != 1 {
 		t.Fatalf("held %d", len(res.Held))
@@ -932,7 +932,7 @@ func TestAllowingABlockedSenderDoesNothing(t *testing.T) {
 	}
 }
 
-// A send waits for the box's ACL only when the one its server last took would
+// A send waits for the mailbox's ACL only when the one its server last took would
 // refuse the reply (#180): with none taken the server refuses no sender, so
 // the send posts and says the ACL was not taken; with one taken under server
 // allowed, a send to a peer it does not allow waits.
@@ -940,7 +940,7 @@ func TestASendWaitsOnTheACLOnlyWhenTheReplyWouldBeRefused(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b, c, d := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+	a, b, c, d := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
 	refuseACL := func() {
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if r.Method == http.MethodPut && strings.HasSuffix(r.URL.Path, "/acl") {
@@ -972,14 +972,14 @@ func TestASendWaitsOnTheACLOnlyWhenTheReplyWouldBeRefused(t *testing.T) {
 	}
 }
 
-// A line of the box's address lists that starts with "#" is a comment, as in
+// A line of the mailbox's address lists that starts with "#" is a comment, as in
 // its policy file: it stops no drain and no send (#181). One after an address
 // on its line is still no address.
 func TestACommentInTheAddressListsStopsNothing(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.heldBox(protocol.Classic), e.heldBox(protocol.Classic)
+	a, b := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
 	send(t, a, b, "waiting")
 	if err := os.WriteFile(filepath.Join(b.Dir(), "blocked"), []byte("# senders of spam, 2026-10\n\n"), 0o600); err != nil {
 		t.Fatal(err)

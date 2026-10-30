@@ -17,14 +17,14 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// A box is revoked by its identity's own signature, and by nothing else. So
+// A mailbox is revoked by its identity's own signature, and by nothing else. So
 // a client takes "revoked" from a server only with the revocation in hand,
 // keeps it once it has verified, and takes no server's word against it
 // afterwards. These tests play the operator both ways: one that says revoked
 // where nothing is, and one that hides a revocation that exists.
 
 // revoke publishes b's own revocation, as its owner would.
-func revoke(t *testing.T, e *env, b *client.Box) *protocol.Revocations {
+func revoke(t *testing.T, e *env, b *client.Mailbox) *protocol.Revocations {
 	t.Helper()
 	rec, err := b.Revocation(t.Context())
 	if err != nil {
@@ -48,12 +48,12 @@ func says(e *env, code protocol.Code, method, suffix string) {
 	})
 }
 
-func keptRevocation(a *client.Box, of protocol.Address) bool {
+func keptRevocation(a *client.Mailbox, of protocol.Address) bool {
 	_, ok := stateOf(a, "peers/"+of.String()+"/revoke.sig")
 	return ok
 }
 
-func failed(a *client.Box, to protocol.Address) int {
+func failed(a *client.Mailbox, to protocol.Address) int {
 	m, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "failed", to.String()+".*.P"))
 	return len(m)
 }
@@ -63,21 +63,21 @@ func isRevoked(err error, a protocol.Address, own bool) bool {
 	return errors.As(err, &gone) && gone.Address == a && gone.Own == own
 }
 
-// A server that says a box is revoked, and has no revocation to show, has
+// A server that says a mailbox is revoked, and has no revocation to show, has
 // revoked nothing: the message stays in the outbox and goes when the server
 // lets it.
 func TestAServersWordRevokesNothing(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	for _, where := range []struct{ name, method, suffix string }{
-		{"at the read of the box", http.MethodGet, ""},
+		{"at the read of the mailbox", http.MethodGet, ""},
 		{"at the send", http.MethodPost, "/messages"},
 	} {
 		t.Run(where.name, func(t *testing.T) {
 			e := newEnv(t)
-			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 			says(e, protocol.CodeRevoked, where.method, "/v1/"+b.Address().String()+where.suffix)
-			_, err := a.Send(ctx, b.Address(), "to a box the server calls revoked")
+			_, err := a.Send(ctx, b.Address(), "to a mailbox the server calls revoked")
 			if err == nil || isRevoked(err, b.Address(), false) || !strings.Contains(err.Error(), "kept in the outbox") || !strings.Contains(err.Error(), "no revocation") {
 				t.Fatalf("send: %v", err)
 			}
@@ -96,7 +96,7 @@ func TestAServersWordRevokesNothing(t *testing.T) {
 }
 
 // No answer proved checks, and never believes, ends a message for good: each
-// is final only once the box holds a revocation that verifies (PROTOCOL.md
+// is final only once the mailbox holds a revocation that verifies (PROTOCOL.md
 // §12.5). Both sets are the code's own (#414 item 2).
 func TestNoAnswerProvedIsUndeliverable(t *testing.T) {
 	t.Parallel()
@@ -112,9 +112,9 @@ func TestNoAnswerProvedIsUndeliverable(t *testing.T) {
 
 // A server that answers a post with any answer about a revocation that
 // proved checks, and holds no revocation to show, has revoked nothing: the
-// message stays in the outbox, the box holds no revocation of its own, and
+// message stays in the outbox, the mailbox holds no revocation of its own, and
 // the message goes once the server stops saying so. The answers are the
-// code's own (provedCodes); at 403 sender_revoked the box reads itself, once
+// code's own (provedCodes); at 403 sender_revoked the mailbox reads itself, once
 // (PROTOCOL.md §12.5; #414 item 2).
 func TestAServersWordAtAPostEndsNoMessage(t *testing.T) {
 	t.Parallel()
@@ -122,7 +122,7 @@ func TestAServersWordAtAPostEndsNoMessage(t *testing.T) {
 	for _, c := range client.ProvedCodes() {
 		t.Run(string(c), func(t *testing.T) {
 			e := newEnv(t)
-			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 			post := postTo(b)
 			var own atomic.Int32
 			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -130,17 +130,17 @@ func TestAServersWordAtAPostEndsNoMessage(t *testing.T) {
 					forge.Refuse(w, c)
 					return
 				}
-				if r.Method == http.MethodGet && r.URL.Path == boxPath(a) {
+				if r.Method == http.MethodGet && r.URL.Path == mailboxPath(a) {
 					own.Add(1)
 				}
 				next.ServeHTTP(w, r)
 			})
-			_, err := a.Send(ctx, b.Address(), "from a box the server says is revoked")
+			_, err := a.Send(ctx, b.Address(), "from a mailbox the server says is revoked")
 			if err == nil || finishedOwn(err) || !strings.Contains(err.Error(), "kept in the outbox") {
 				t.Errorf("send: %v", err)
 			}
 			if n := own.Load(); c == protocol.CodeSenderRevoked && n != 1 {
-				t.Errorf("the box read itself %d times after the 403, want 1", n)
+				t.Errorf("the mailbox read itself %d times after the 403, want 1", n)
 			}
 			if st, serr := a.Status(ctx); serr != nil || st.Revoked || keptRevocation(a, b.Address()) {
 				t.Errorf("a server's word was kept as a revocation: %+v, %v", st, serr)
@@ -166,7 +166,7 @@ func TestWhatIsNotARevocationRevokesNothing(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	ofC, err := c.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -181,12 +181,12 @@ func TestWhatIsNotARevocationRevokesNothing(t *testing.T) {
 	}
 	doc := b.Identity().Document()
 	for name, shown := range map[string]protocol.Revocations{
-		"another box's revocation":                          *ofC,
-		"another box's signature with this box's document":  {Identity: doc, Revocation: ofC.Revocation},
-		"this box's working key, under its own certificate": {Identity: doc, Revocation: byWorker},
-		"a signature in another namespace":                  {Identity: doc, Revocation: asPrekey},
-		"a document and no signature":                       {Identity: doc},
-		"nothing":                                           {},
+		"another mailbox's revocation":                             *ofC,
+		"another mailbox's signature with this mailbox's document": {Identity: doc, Revocation: ofC.Revocation},
+		"this mailbox's working key, under its own certificate":    {Identity: doc, Revocation: byWorker},
+		"a signature in another namespace":                         {Identity: doc, Revocation: asPrekey},
+		"a document and no signature":                              {Identity: doc},
+		"nothing":                                                  {},
 	} {
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if r.Method == http.MethodGet && r.URL.Path == "/v1/"+b.Address().String() {
@@ -210,19 +210,19 @@ func TestWhatIsNotARevocationRevokesNothing(t *testing.T) {
 }
 
 // A revocation that verifies is final: the message can never be delivered,
-// the revocation is kept, and a server that later serves the box as if
+// the revocation is kept, and a server that later serves the mailbox as if
 // nothing had happened is not asked and not believed.
 func TestARevocationIsCheckedAndSticks(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	send(t, a, b, "pins B") // A holds B's identity and prekey from before
 	revoke(t, e, b)
 
 	_, err := a.Send(ctx, b.Address(), "after the revocation")
 	if !isRevoked(err, b.Address(), false) || !strings.Contains(err.Error(), "outbox/failed") {
-		t.Fatalf("send to a revoked box: %v", err)
+		t.Fatalf("send to a revoked mailbox: %v", err)
 	}
 	if !keptRevocation(a, b.Address()) || failed(a, b.Address()) != 1 {
 		t.Fatal("the revocation was not kept, or the message not moved to outbox/failed/")
@@ -245,7 +245,7 @@ func TestARevocationIsCheckedAndSticks(t *testing.T) {
 	}
 }
 
-// Mail from a box that is then revoked is refused when it is read, whenever
+// Mail from a mailbox that is then revoked is refused when it is read, whenever
 // it was signed: nobody can vouch for when a signature was made. The server
 // is asked once for each sender in a drain, and what it answered is kept, so
 // a server that later hides the revocation and delivers that sender's mail is
@@ -253,7 +253,7 @@ func TestARevocationIsCheckedAndSticks(t *testing.T) {
 func TestMailFromARevokedSenderIsRefused(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	send(t, a, b, "delivered before anyone revoked")
 	if res := receive(t, b); len(res.Delivered) != 1 {
 		t.Fatal("the first message was not delivered")
@@ -288,25 +288,25 @@ func TestMailFromARevokedSenderIsRefused(t *testing.T) {
 	}
 }
 
-// A drain reads each sender's box once, however many of its messages it
-// holds, from senders this box holds no revocation of (PROTOCOL.md §12.3 check
-// 8), whatever the read answered: a box served, no such box, or "revoked"
+// A drain reads each sender's mailbox once, however many of its messages it
+// holds, from senders this mailbox holds no revocation of (PROTOCOL.md §12.3 check
+// 8), whatever the read answered: a mailbox served, no such mailbox, or "revoked"
 // with nothing that verifies (#447). The read marks the sender answered
-// (readBox), and judge reads none it has marked. Above, the sender is
+// (readMailbox), and judge reads none it has marked. Above, the sender is
 // revoked, so judge asks nothing after its first message, marked or not
 // (#384).
-func TestADrainReadsEachSendersBoxOnce(t *testing.T) {
+func TestADrainReadsEachSendersMailboxOnce(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	to, a, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
-	none, unproved := e.box(protocol.Classic), e.box(protocol.Classic)
+	to, a, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	none, unproved := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	for range 3 {
 		send(t, a, to, "from a")
 	}
 	for range 2 {
 		send(t, c, to, "from c")
-		send(t, none, to, "from a box its server says it holds none of")
-		send(t, unproved, to, "from a box its server says is revoked, showing nothing")
+		send(t, none, to, "from a mailbox its server says it holds none of")
+		send(t, unproved, to, "from a mailbox its server says is revoked, showing nothing")
 	}
 	op := watch(e, func(w http.ResponseWriter, r *http.Request) bool {
 		switch x, _ := forge.ReadOf(r); x {
@@ -320,14 +320,14 @@ func TestADrainReadsEachSendersBoxOnce(t *testing.T) {
 	if res := receive(t, to); len(res.Delivered) != 9 {
 		t.Fatalf("delivered %d of 9", len(res.Delivered))
 	}
-	for name, from := range map[string]*client.Box{
-		"three messages, its box served":          a,
-		"two, its box served":                     c,
-		"two, no such box":                        none,
+	for name, from := range map[string]*client.Mailbox{
+		"three messages, its mailbox served":      a,
+		"two, its mailbox served":                 c,
+		"two, no such mailbox":                    none,
 		"two, revoked with nothing that verifies": unproved,
 	} {
-		if n := op.count(http.MethodGet, boxPath(from)); n != 1 {
-			t.Errorf("a sender of %s: its box read %d times, want 1", name, n)
+		if n := op.count(http.MethodGet, mailboxPath(from)); n != 1 {
+			t.Errorf("a sender of %s: its mailbox read %d times, want 1", name, n)
 		}
 	}
 }
@@ -366,7 +366,7 @@ func misstatused(w http.ResponseWriter, status int, code protocol.Code) {
 func TestNoAnswerAboutASenderStopsTheDrain(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	send(t, a, b, "waits for an answer")
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		if x, ok := forge.ReadOf(r); ok && x == a.Address() {
@@ -382,10 +382,10 @@ func TestNoAnswerAboutASenderStopsTheDrain(t *testing.T) {
 	if q, _ := os.ReadDir(filepath.Join(b.Dir(), "refused")); len(q) != 0 {
 		t.Fatal("a message nobody could judge was kept in refused/")
 	}
-	// Nor has a 2xx whose body is no box, as PROTOCOL.md §3.3 reads one.
-	bad, _ := filepath.Glob("../testdata/vectors/answer/box-bad-*.json")
+	// Nor has a 2xx whose body is no mailbox, as PROTOCOL.md §3.3 reads one.
+	bad, _ := filepath.Glob("../testdata/vectors/answer/mailbox-bad-*.json")
 	if len(bad) == 0 {
-		t.Fatal("no answer/box-bad-* vectors")
+		t.Fatal("no answer/mailbox-bad-* vectors")
 	}
 	for _, f := range bad {
 		body, err := os.ReadFile(f) //nolint:gosec // a test vector
@@ -450,7 +450,7 @@ func TestARevocationHandedOver(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	rec, err := b.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -461,8 +461,8 @@ func TestARevocationHandedOver(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, bad := range map[string]*protocol.Revocations{
-		"another box's signature": {Identity: rec.Identity, Revocation: ofC.Revocation},
-		"no signature":            {Identity: rec.Identity},
+		"another mailbox's signature": {Identity: rec.Identity, Revocation: ofC.Revocation},
+		"no signature":                {Identity: rec.Identity},
 	} {
 		if _, _, err := a.KeepRevocation(t.Context(), bad); err == nil || keptRevocation(a, b.Address()) {
 			t.Fatalf("%s was kept as a revocation: %v", name, err)
@@ -476,55 +476,55 @@ func TestARevocationHandedOver(t *testing.T) {
 		asked.Add(1)
 		next.ServeHTTP(w, r)
 	})
-	if _, err := a.Send(ctx, b.Address(), "to a box revoked out of band"); !isRevoked(err, b.Address(), false) || asked.Load() != 0 {
+	if _, err := a.Send(ctx, b.Address(), "to a mailbox revoked out of band"); !isRevoked(err, b.Address(), false) || asked.Load() != 0 {
 		t.Fatalf("send: %v, after %d requests", err, asked.Load())
 	}
 	// And mail B's key still signs is refused, though the server delivers it.
 	e.srv.SetMiddle(nil)
-	send(t, b, a, "from a box revoked out of band")
+	send(t, b, a, "from a mailbox revoked out of band")
 	if res := receive(t, a); len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedRevoked {
 		t.Fatalf("mail from it: %+v", res)
 	}
 }
 
-// A box that is revoked learns it the same way, by the proof: it then knows
+// A mailbox that is revoked learns it the same way, by the proof: it then knows
 // it is finished, and says so. One whose server only says so knows better.
 func TestABoxLearnsItIsRevoked(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 
 	says(e, protocol.CodeRevoked, http.MethodGet, "/v1/"+a.Address().String()+"/messages")
 	if _, err := a.Receive(ctx); err == nil || isRevoked(err, a.Address(), true) || !strings.Contains(err.Error(), "no revocation") {
-		t.Fatalf("a box told it is revoked, with nothing shown: %v", err)
+		t.Fatalf("a mailbox told it is revoked, with nothing shown: %v", err)
 	}
 	if st, err := a.Status(t.Context()); err != nil || st.Revoked {
 		t.Fatalf("status after a server's word: %+v, %v", st, err)
 	}
 	e.srv.SetMiddle(nil)
 	if res := receive(t, a); res == nil {
-		t.Fatal("the box does not work once the server stops saying so")
+		t.Fatal("the mailbox does not work once the server stops saying so")
 	}
 
 	revoke(t, e, a)
 	if _, err := a.Receive(ctx); !isRevoked(err, a.Address(), true) {
-		t.Fatalf("a revoked box's drain: %v", err)
+		t.Fatalf("a revoked mailbox's drain: %v", err)
 	}
 	st, err := a.Status(t.Context())
 	if err != nil || !st.Revoked || len(st.Attention) == 0 || !strings.Contains(st.Attention[0], "revoked") {
-		t.Fatalf("status of a revoked box: %+v, %v", st, err)
+		t.Fatalf("status of a revoked mailbox: %+v, %v", st, err)
 	}
-	if _, err := a.Send(ctx, b.Address(), "from a revoked box"); !isRevoked(err, a.Address(), true) || failed(a, b.Address()) != 0 {
-		t.Fatalf("a revoked box's send: %v", err)
+	if _, err := a.Send(ctx, b.Address(), "from a revoked mailbox"); !isRevoked(err, a.Address(), true) || failed(a, b.Address()) != 0 {
+		t.Fatalf("a revoked mailbox's send: %v", err)
 	}
 }
 
 // Every 410 revoked carries the record its server answered from (PROTOCOL.md
-// §12.5; #353), at a send to a revoked box, at a revoked box's poll, and at
+// §12.5; #353), at a send to a revoked mailbox, at a revoked mailbox's poll, and at
 // the publish of a revocation it holds already. One that verifies is taken
 // as the read's is, with no second call. Where an operator puts none in its
-// place, or another box's revocation, the box reads the box the call named,
+// place, or another mailbox's revocation, the mailbox reads the mailbox the call named,
 // once, and takes it as revoked only because what that read carries
 // verifies.
 func TestA410CarriesTheRecord(t *testing.T) {
@@ -536,15 +536,15 @@ func TestA410CarriesTheRecord(t *testing.T) {
 	type call struct{ method, path string }
 	for _, at := range []struct {
 		name string
-		// do revokes a box in env e and makes the call a 410 answers,
+		// do revokes a mailbox in env e and makes the call a 410 answers,
 		// through forged, the middleware that answers that call. It returns
-		// the call, the box the call named, and its error.
+		// the call, the mailbox the call named, and its error.
 		do func(t *testing.T, e *env, forged func(w http.ResponseWriter, r *http.Request, next http.Handler)) (call, protocol.Address, error)
-		// revoked is what a box makes of a 410 whose record verifies.
+		// revoked is what a mailbox makes of a 410 whose record verifies.
 		revoked func(t *testing.T, err error, named protocol.Address)
 	}{
 		{"a send's", func(t *testing.T, e *env, forged func(http.ResponseWriter, *http.Request, http.Handler)) (call, protocol.Address, error) {
-			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 			revoke(t, e, b)
 			post := call{http.MethodPost, "/v1/" + b.Address().String() + "/messages"}
 			read := false
@@ -552,14 +552,14 @@ func TestA410CarriesTheRecord(t *testing.T) {
 				switch at, ok := forge.ReadOf(r); {
 				case ok && at == b.Address() && !read: // the read before the post serves B as it was
 					read = true
-					e.serve(w, r, next, func(*protocol.BoxResponse) {})
+					e.serve(w, r, next, func(*protocol.MailboxResponse) {})
 				case r.Method == post.method && r.URL.Path == post.path:
 					forged(w, r, next)
 				default:
 					next.ServeHTTP(w, r)
 				}
 			})
-			_, err := a.Send(ctx, b.Address(), "to a box revoked since its read")
+			_, err := a.Send(ctx, b.Address(), "to a mailbox revoked since its read")
 			if failed(a, b.Address()) != 1 || !keptRevocation(a, b.Address()) {
 				t.Errorf("the message was not moved to outbox/failed/, or the revocation not kept: %v", err)
 			}
@@ -570,7 +570,7 @@ func TestA410CarriesTheRecord(t *testing.T) {
 			}
 		}},
 		{"a poll's", func(t *testing.T, e *env, forged func(http.ResponseWriter, *http.Request, http.Handler)) (call, protocol.Address, error) {
-			a := e.box(protocol.Classic)
+			a := e.mailbox(protocol.Classic)
 			revoke(t, e, a)
 			poll := call{http.MethodGet, "/v1/" + a.Address().String() + "/messages"}
 			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -591,7 +591,7 @@ func TestA410CarriesTheRecord(t *testing.T) {
 			}
 		}},
 		{"a publish's", func(t *testing.T, e *env, forged func(http.ResponseWriter, *http.Request, http.Handler)) (call, protocol.Address, error) {
-			a := e.box(protocol.Classic)
+			a := e.mailbox(protocol.Classic)
 			rec := revoke(t, e, a)
 			put := call{http.MethodPut, "/v1/" + a.Address().String() + "/revocations"}
 			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -612,7 +612,7 @@ func TestA410CarriesTheRecord(t *testing.T) {
 		for _, c := range []struct {
 			name  string
 			carry func(t *testing.T, e *env) func(http.ResponseWriter, *http.Request, http.Handler)
-			reads int // of the box named, after the 410
+			reads int // of the mailbox named, after the 410
 		}{
 			{"its own record", func(*testing.T, *env) func(http.ResponseWriter, *http.Request, http.Handler) {
 				return func(w http.ResponseWriter, r *http.Request, next http.Handler) { next.ServeHTTP(w, r) }
@@ -620,8 +620,8 @@ func TestA410CarriesTheRecord(t *testing.T) {
 			{"no record", func(*testing.T, *env) func(http.ResponseWriter, *http.Request, http.Handler) {
 				return func(w http.ResponseWriter, r *http.Request, next http.Handler) { forge.Carry(w, r, next, nil) }
 			}, 1},
-			{"another box's revocation", func(t *testing.T, e *env) func(http.ResponseWriter, *http.Request, http.Handler) {
-				ofC, err := e.box(protocol.Classic).Revocation(t.Context())
+			{"another mailbox's revocation", func(t *testing.T, e *env) func(http.ResponseWriter, *http.Request, http.Handler) {
+				ofC, err := e.mailbox(protocol.Classic).Revocation(t.Context())
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -642,7 +642,7 @@ func TestA410CarriesTheRecord(t *testing.T) {
 					}
 				}
 				if after < 0 || reads != c.reads {
-					t.Errorf("%d reads of the box named after the 410, want %d: %+v", reads, c.reads, log)
+					t.Errorf("%d reads of the mailbox named after the 410, want %d: %+v", reads, c.reads, log)
 				}
 			})
 		}
@@ -655,7 +655,7 @@ func TestRevokeTakesOnlyARecordThatVerifies(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	rec, err := a.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -671,7 +671,7 @@ func TestRevokeTakesOnlyARecordThatVerifies(t *testing.T) {
 	})
 	for name, bad := range map[string]*protocol.Revocations{
 		"a working key's signature":  {Identity: rec.Identity, Revocation: byWorker},
-		"another box's document":     {Identity: b.Identity().Document(), Revocation: rec.Revocation},
+		"another mailbox's document": {Identity: b.Identity().Document(), Revocation: rec.Revocation},
 		"a record with no signature": {Identity: rec.Identity},
 	} {
 		if _, err := client.Revoke(ctx, e.opts(), bad); err == nil || asked.Load() != 0 {
@@ -683,16 +683,16 @@ func TestRevokeTakesOnlyARecordThatVerifies(t *testing.T) {
 	if _, err := protocolPut(e, a.Address(), &protocol.Revocations{Identity: rec.Identity, Revocation: byWorker}); client.Code(err) != protocol.CodeBadRevocation {
 		t.Fatalf("a working key's signature, put to the server: %v", err)
 	}
-	send(t, b, a, "in A's box when it is revoked")
+	send(t, b, a, "in A's mailbox when it is revoked")
 	for range 2 {
 		if _, err := client.Revoke(ctx, e.opts(), rec); err != nil {
 			t.Fatalf("revoke: %v", err)
 		}
 	}
 	if e.srv.Count(a.Address()) != 0 {
-		t.Fatal("a revoked box still holds mail")
+		t.Fatal("a revoked mailbox still holds mail")
 	}
-	if _, err := b.Send(ctx, a.Address(), "to the revoked box"); !isRevoked(err, a.Address(), false) {
+	if _, err := b.Send(ctx, a.Address(), "to the revoked mailbox"); !isRevoked(err, a.Address(), false) {
 		t.Fatalf("send to it: %v", err)
 	}
 }

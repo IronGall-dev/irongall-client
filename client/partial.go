@@ -13,9 +13,9 @@ import (
 )
 
 // A fetch that is cut keeps what it read, and the next fetch of that message
-// asks for the rest (PROTOCOL.md §12.3; #381): the bytes go to the box's
+// asks for the rest (PROTOCOL.md §12.3; #381): the bytes go to the mailbox's
 // partial file as they are read, the file is synced at the end of an
-// attempt that did not read them all, and only then does the box's state
+// attempt that did not read them all, and only then does the mailbox's state
 // record which message they are of and how many are synced, under
 // "partial", as "<id> <length>". A fetch trusts the file only up to the
 // length state records: whatever a crash left past it was never synced. The
@@ -24,20 +24,20 @@ import (
 // so bytes a server splices in are refused as any wrong ciphertext is. One
 // message's partial is kept at a time: a fetch of another starts the file
 // afresh. It goes once its message is judged or gone (drop), and a drain
-// that emptied the box drops whatever is left (dropPartials).
+// that emptied the mailbox drops whatever is left (dropPartials).
 
-// partialError is a fault of this box writing its partial file, never a
+// partialError is a fault of this mailbox writing its partial file, never a
 // server's: it is an error, and nothing is judged.
 type partialError struct{ err error }
 
-func (e *partialError) Error() string { return "the box's partial file: " + e.err.Error() }
+func (e *partialError) Error() string { return "the mailbox's partial file: " + e.err.Error() }
 func (e *partialError) Unwrap() error { return e.err }
 
 // partial is one fetch's ciphertext of message id, listed at size bytes, as
 // far as it is read: what earlier attempts kept (kept, synced, and asked
 // after), then what this attempt reads.
 type partial struct {
-	b    *Box
+	b    *Mailbox
 	id   string
 	size int64
 	kept int64
@@ -47,9 +47,9 @@ type partial struct {
 }
 
 // resume is the fetch of message id, listed at size bytes, with the bytes
-// an earlier attempt kept of it, when the box's state records some of it
+// an earlier attempt kept of it, when the mailbox's state records some of it
 // below its size and the partial file still holds them.
-func (b *Box) resume(id string, size int64) (*partial, error) {
+func (b *Mailbox) resume(id string, size int64) (*partial, error) {
 	p := &partial{b: b, id: id, size: size}
 	rid, n, err := b.partialRecord()
 	if err != nil || rid != id || n <= 0 || n >= size {
@@ -73,13 +73,13 @@ func (b *Box) resume(id string, size int64) (*partial, error) {
 	return p, nil
 }
 
-// partialRecord is what the box's state records of its partial: which
+// partialRecord is what the mailbox's state records of its partial: which
 // message, and how many of its bytes are synced; none is "" and 0, and so is
 // a record of another form, which only saves a fetch, and goes at the next
 // one (begin).
-func (b *Box) partialRecord() (id string, n int64, err error) {
+func (b *Mailbox) partialRecord() (id string, n int64, err error) {
 	err = b.view(func(s store) error {
-		rid, rn, ok := strings.Cut(string(s.get(bucketBox, "partial")), " ")
+		rid, rn, ok := strings.Cut(string(s.get(bucketMailbox, "partial")), " ")
 		v, perr := decimal([]byte(rn), "partial")
 		if ok && hexID.MatchString(rid) && perr == nil && v <= protocol.MaxCiphertext {
 			id, n = rid, int64(v) //nolint:gosec // at most protocol.MaxCiphertext
@@ -89,14 +89,14 @@ func (b *Box) partialRecord() (id string, n int64, err error) {
 	return id, n, err
 }
 
-// clearPartial deletes state's record of the box's partial, of whatever
+// clearPartial deletes state's record of the mailbox's partial, of whatever
 // message, where it keeps one.
-func (b *Box) clearPartial() error {
+func (b *Mailbox) clearPartial() error {
 	held := false
-	if err := b.view(func(s store) error { held = s.get(bucketBox, "partial") != nil; return nil }); err != nil || !held {
+	if err := b.view(func(s store) error { held = s.get(bucketMailbox, "partial") != nil; return nil }); err != nil || !held {
 		return err
 	}
-	return b.update(func(s store) error { return s.del(bucketBox, "partial") })
+	return b.update(func(s store) error { return s.del(bucketMailbox, "partial") })
 }
 
 // ask is the header a fetch sends: a Range for the bytes after those kept,
@@ -179,7 +179,7 @@ func (p *partial) end() error {
 		return errors.Join(&partialError{err}, p.drop())
 	}
 	if err := p.b.update(func(s store) error {
-		return s.put(bucketBox, "partial", fmt.Appendf(nil, "%s %d", p.id, len(p.have)))
+		return s.put(bucketMailbox, "partial", fmt.Appendf(nil, "%s %d", p.id, len(p.have)))
 	}); err != nil {
 		return err
 	}
@@ -206,10 +206,10 @@ func (p *partial) drop() error {
 	return nil
 }
 
-// dropPartials deletes the box's partial, whatever message it is of:
-// state's record, then the file. A drain that emptied the box left none of
+// dropPartials deletes the mailbox's partial, whatever message it is of:
+// state's record, then the file. A drain that emptied the mailbox left none of
 // its messages on the server.
-func (b *Box) dropPartials() error {
+func (b *Mailbox) dropPartials() error {
 	if err := b.clearPartial(); err != nil {
 		return err
 	}

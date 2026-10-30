@@ -18,20 +18,20 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// IsID reports whether s is a message's id as this box names it: the
+// IsID reports whether s is a message's id as this mailbox names it: the
 // SHA-256 of its ciphertext, as 64 lowercase hex. Each file inbox/, held/ and
 // refused/ keep is named by one.
 func IsID(s string) bool { return hexID.MatchString(s) }
 
 // InboxMessage returns the message inbox/<id>.json keeps, as Receive
-// delivered it but for Plaintext and Signature, which the box never kept:
-// its checked fields, as recv printed them ([Box.keptLine]). An id that is
+// delivered it but for Plaintext and Signature, which the mailbox never kept:
+// its checked fields, as recv printed them ([Mailbox.keptLine]). An id that is
 // not one is refused before any file is read.
-func (b *Box) InboxMessage(id string) (Delivery, error) {
+func (b *Mailbox) InboxMessage(id string) (Delivery, error) {
 	if !IsID(id) {
 		return Delivery{}, errors.New("not a message's id: 64 lowercase hex, as recv prints it")
 	}
-	data, err := os.ReadFile(b.path("inbox", id+".json")) //nolint:gosec // a path inside the box's own directory, named by 64 hex
+	data, err := os.ReadFile(b.path("inbox", id+".json")) //nolint:gosec // a path inside the mailbox's own directory, named by 64 hex
 	if errors.Is(err, fs.ErrNotExist) {
 		return Delivery{}, fmt.Errorf("inbox/ holds no message %s", id)
 	}
@@ -46,11 +46,11 @@ func (b *Box) InboxMessage(id string) (Delivery, error) {
 }
 
 // Inbox returns the mail inbox/ keeps, oldest first by sent_at (within a
-// second as [Box.keptMail] orders it), each as
-// [Box.InboxMessage] returns it: what recv delivered and nobody has pruned
+// second as [Mailbox.keptMail] orders it), each as
+// [Mailbox.InboxMessage] returns it: what recv delivered and nobody has pruned
 // since. A file that is not the line recv keeps is left out, as
-// [Box.InboxMessage] refuses it. It reads only inbox/, and calls no server.
-func (b *Box) Inbox() ([]Delivery, error) {
+// [Mailbox.InboxMessage] refuses it. It reads only inbox/, and calls no server.
+func (b *Mailbox) Inbox() ([]Delivery, error) {
 	ms, err := b.keptMail("inbox")
 	if err != nil {
 		return nil, err
@@ -63,14 +63,14 @@ func (b *Box) Inbox() ([]Delivery, error) {
 }
 
 // keptLine reads a file inbox/ or held/ keeps as the line recv wrote: one
-// that reads back as the record of a message to this box
+// that reads back as the record of a message to this mailbox
 // ([protocol.OpenEnvelopeRecord], which reads no clock) and is, byte for
 // byte, the line recv writes of that record (keptLineOf). A file cut short,
 // as a recv stopped midway can leave one, with more in it, members recv
 // never writes, or the same members written another way, is none: whoever
 // last wrote the file is not known here, and only recv's own line is
 // printed (#298).
-func (b *Box) keptLine(data []byte) (line []byte, from protocol.Address, env *protocol.Envelope, ok bool) {
+func (b *Mailbox) keptLine(data []byte) (line []byte, from protocol.Address, env *protocol.Envelope, ok bool) {
 	if len(data) == 0 || data[0] != '{' || bytes.ContainsAny(data, "\r\n") {
 		return nil, from, nil, false
 	}
@@ -103,7 +103,7 @@ func (b *Box) keptLine(data []byte) (line []byte, from protocol.Address, env *pr
 // one protocol.ParseTime reads), and is otherwise kept as <name>_b64, the
 // string as served in base64. So nothing the server chose is readable at a
 // glance, and nothing is lost. Its size is the ciphertext's, which the fetch
-// was held to. Why it was refused, and what the checks found, are the box's
+// was held to. Why it was refused, and what the checks found, are the mailbox's
 // state's (refusedRecord), which only this client writes (#280).
 type keptRefusal struct {
 	ID            string         `json:"id,omitempty"`
@@ -115,7 +115,7 @@ type keptRefusal struct {
 	Ciphertext    protocol.Bytes `json:"ciphertext"`
 }
 
-// refusedRecord is what the box's state keeps of a refused message, by
+// refusedRecord is what the mailbox's state keeps of a refused message, by
 // its id, beside the message refused/ keeps: the code it was refused for,
 // why, in this client's words, and what the checks established when they
 // judged it.
@@ -128,7 +128,7 @@ type refusedRecord struct {
 // keptFindings is what this client's checks established about a refused
 // message (protocol.Findings), so that its owner can judge it once its key is
 // gone: when it was judged, by this machine's clock; who signed it, or only
-// the identity it carries when the signature does not verify or the box
+// the identity it carries when the signature does not verify or the mailbox
 // holds a revocation of that address or that certificate (#265); and, with
 // who signed it, the certificate's serial and dates and the envelope's
 // sent_at and msg_id. Each is a value this client checked the form of.
@@ -167,8 +167,8 @@ func newKeptFindings(f *protocol.Findings) *keptFindings {
 
 // keepRefused keeps a refused message: refused/<id>.json, the message as
 // served (keptRefusal), written and synced first, then why it was refused and
-// what its checks found, in the box's state.
-func (b *Box) keepRefused(id string, m *protocol.MessageInfo, ct []byte, why *Refusal) error {
+// what its checks found, in the mailbox's state.
+func (b *Mailbox) keepRefused(id string, m *protocol.MessageInfo, ct []byte, why *Refusal) error {
 	raw, err := servedRefusal(m, ct)
 	if err != nil {
 		return err
@@ -220,7 +220,7 @@ func isTime(s string) bool { _, err := protocol.ParseTime(s); return err == nil 
 type RefusedMail struct {
 	ID                string `json:"id"`
 	Code              string `json:"code"`
-	Reason            string `json:"message,omitempty"`
+	Reason            string `json:"detail,omitempty"`
 	ReceivedAt        string `json:"received_at,omitempty"`
 	JudgedAt          string `json:"judged_at,omitempty"`
 	SignedBy          string `json:"signed_by,omitempty"`
@@ -233,15 +233,15 @@ type RefusedMail struct {
 }
 
 // RefusedMail lists refused/, by id: each message it keeps, with what the
-// box's state keeps of why it was refused. A message with no record there,
+// mailbox's state keeps of why it was refused. A message with no record there,
 // or one this client did not write, has the code "unknown" and nothing from
 // it. Each value is held to its form again as it is read.
-func (b *Box) RefusedMail(ctx context.Context) ([]RefusedMail, error) {
+func (b *Mailbox) RefusedMail(ctx context.Context) ([]RefusedMail, error) {
 	return reading(ctx, b, b.refusedMail)
 }
 
 // refusedMail is RefusedMail inside a command or a reading.
-func (b *Box) refusedMail() ([]RefusedMail, error) {
+func (b *Mailbox) refusedMail() ([]RefusedMail, error) {
 	names, err := filepath.Glob(b.path("refused", "*.json"))
 	if err != nil {
 		return nil, err
@@ -257,7 +257,7 @@ func (b *Box) refusedMail() ([]RefusedMail, error) {
 			var kept struct {
 				ReceivedAt any `json:"received_at"`
 			}
-			if data, err := os.ReadFile(name); err == nil && protocol.Unmarshal(data, &kept) == nil { //nolint:gosec // a path inside the box's own directory
+			if data, err := os.ReadFile(name); err == nil && protocol.Unmarshal(data, &kept) == nil { //nolint:gosec // a path inside the mailbox's own directory
 				if str, ok := kept.ReceivedAt.(string); ok && isTime(str) {
 					q.ReceivedAt = str
 				}
@@ -293,7 +293,7 @@ func (b *Box) refusedMail() ([]RefusedMail, error) {
 	return qs, err
 }
 
-// refusedRecordOf is what the box's state keeps of refused message id: its
+// refusedRecordOf is what the mailbox's state keeps of refused message id: its
 // code, "unknown" when it keeps none or one not of a code's form, and the
 // words after it, which this client wrote, given only as one line of
 // printable text.
@@ -309,14 +309,14 @@ func refusedRecordOf(s store, id string) refusedRecord {
 }
 
 // RemoveRefused deletes refused messages from refused/, each with what
-// the box's state keeps of it, and returns the ids it deleted; with no ids it
+// the mailbox's state keeps of it, and returns the ids it deleted; with no ids it
 // deletes them all.
 // An id that is not one, or that refused/ does not hold, is refused
 // before anything is deleted.
 //
-// It holds the box's lock from start to end ([Box.hold]), as every command
-// that writes the box does.
-func (b *Box) RemoveRefused(ctx context.Context, ids []string) ([]string, error) {
+// It holds the mailbox's lock from start to end ([Mailbox.hold]), as every command
+// that writes the mailbox does.
+func (b *Mailbox) RemoveRefused(ctx context.Context, ids []string) ([]string, error) {
 	return lockedFinished(ctx, b, func() ([]string, error) {
 		if len(ids) == 0 {
 			qs, err := b.refusedMail()

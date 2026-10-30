@@ -28,25 +28,25 @@ func (e *cli) tree() *cobra.Command {
 	root := e.group("dromas", "", "",
 		e.initCmd(), e.addrCmd(), e.sendCmd(), e.recvCmd(), e.statusCmd(), e.versionCmd(),
 		e.group("inbox", "mail recv delivered: list, show",
-			`recv keeps each message it delivers in inbox/, as the "mail" line it
+			`recv keeps each message it delivers in inbox/, as the "message" line it
 printed, until its file is deleted: deleting it forgets the message. These
 commands print those lines again, and read no server.`,
 			e.inboxListCmd(), e.inboxShowCmd()),
 		e.group("held", "mail from unknown senders, waiting for allow or block: list",
-			`Mail that passed every check, from an unknown sender (one this box has not
+			`Mail that passed every check, from an unknown sender (one this mailbox has not
 written to, named or allowed), is kept in held/, and recv does not print it.
 dromas peer allow delivers a sender's held mail to inbox/, and dromas peer
 block deletes it. Mail that failed a check is refused/'s, never held.`,
 			e.heldListCmd()),
-		e.group("peer", "who may write to this box: allow, block, list",
-			`Mail from a sender this box has not allowed is held in held/ (dromas held
-list lists it), and mail from a sender it blocked is dropped. Sending to a box, or
-naming it with dromas alias add, allows it too. The box's policy file says
+		e.group("peer", "who may write to this mailbox: allow, block, list",
+			`Mail from a sender this mailbox has not allowed is held in held/ (dromas held
+list lists it), and mail from a sender it blocked is dropped. Sending to a mailbox, or
+naming it with dromas alias add, allows it too. The mailbox's policy file says
 where mail from a sender not allowed lands, and whom its server takes mail
 from: dromas help has it.`,
 			e.allowCmd(), e.blockCmd(), e.peerListCmd()),
 		e.group("alias", "names for peers, which send takes in place of a link: add, rm, list",
-			`An alias is this box's own name for a peer, kept in its aliases file as
+			`An alias is this mailbox's own name for a peer, kept in its aliases file as
 "<name> <address>" lines, which a person may write too. A name
 allows its peer, as dromas peer allow does, and is never moved: to change
 one, remove it and add it again.`,
@@ -62,24 +62,24 @@ which print this client's words only: the files keep what the server served,
 with each of its strings in base64 that is not of its form.`,
 			e.refusedListCmd(), e.refusedRmCmd()),
 		e.group("prekey", "the key senders encrypt to: renew, lifetime",
-			`A prekey is valid for 33 days, or the shorter lifetime this box is set to,
+			`A prekey is valid for 33 days, or the shorter lifetime this mailbox is set to,
 under a working key and a certificate made with it. dromas recv renews it
-once it is a day old, so run recv at least monthly, and the box never lapses;
+once it is a day old, so run recv at least monthly, and the mailbox never lapses;
 dromas prekey lifetime --help says how often for a shorter lifetime.`,
 			e.renewCmd(), e.lifetimeCmd()),
-		e.group("cert", "this box's certificates: revoke-earlier, publish-revoked",
-			`This box's identity certifies a working key with each prekey, and the working
-key signs what the box says. A box whose working key may have been taken
+		e.group("cert", "this mailbox's certificates: revoke-earlier, publish-revoked",
+			`This mailbox's identity certifies a working key with each prekey, and the working
+key signs what the mailbox says. A mailbox whose working key may have been taken
 revokes every certificate before a new one: the address goes on. A copy of the
-whole box directory holds the identity too: revoke the address.`,
+whole mailbox directory holds the identity too: revoke the address.`,
 			e.revokeEarlierCmd(), e.publishRevokedCmd()),
-		e.group("account", "the account that can lift this box's limits: adopt, leave",
-			`An account can lift the limits of the boxes in it. An adopt key, from the
-account's holder, puts a box in it.`,
+		e.group("account", "the account that can lift this mailbox's limits: adopt, leave",
+			`An account can lift the limits of the mailboxes in it. An adopt key, from the
+account's holder, puts a mailbox in it.`,
 			e.adoptCmd(), e.leaveCmd()),
 		e.group("revocation", "ending an address for good: make, publish, keep, ask",
 			`A revocation ends an address for good, and only its identity's own signature
-makes one. A box keeps every revocation that verifies, of an address and of an
+makes one. A mailbox keeps every revocation that verifies, of an address and of an
 address's certificates, and checks what it sends and receives against them.`,
 			e.makeCmd(), e.publishCmd(), e.keepCmd(), e.askCmd()),
 	)
@@ -119,13 +119,13 @@ help, and dromas <group> help a group's.`,
 
 // versionCmd prints what this binary is, from the build information Go
 // records in it (runtime/debug), the same that go version -m reads. It reads
-// no box and no environment.
+// no mailbox and no environment.
 func (e *cli) versionCmd() *cobra.Command {
 	return command("version", "print this client's version, commit, Go release and platform",
 		`Print one line: the version this client was built at (a release's tag, or
 Go's pseudo-version for a build between releases), the commit when the build
 recorded it, the Go release that built it, and the system and architecture it
-was built for. It reads no box.`,
+was built for. It reads no mailbox.`,
 		nargs(0, 0), func(*cobra.Command, []string) error { return e.version() })
 }
 
@@ -156,8 +156,8 @@ func orNil(s string) any {
 func (e *cli) initCmd() *cobra.Command {
 	var noPQ bool
 	var idType string
-	c := command("init [flags]", "create this box and register it; prints its link",
-		`Create this box and register it, and print its address and its link,
+	c := command("init [flags]", "create this mailbox and register it; prints its link",
+		`Create this mailbox and register it, and print its address and its link,
 <server>/to/<address>, as addr does.`,
 		checked(nargs(0, 0), func(c *cobra.Command, _ []string) error {
 			if idType != "" && !slices.Contains(protocol.IdentityTypes(), idType) {
@@ -172,29 +172,29 @@ func (e *cli) initCmd() *cobra.Command {
 			opt := e.opt
 			var warning any
 			if opt.IdentityType = idType; idType != "" && idType != protocol.IdentityEd25519 {
-				warning = fmt.Sprintf("WARNING: a box whose identity is of the key type %s can neither write to nor hear from a box whose client does not verify that type. Every client verifies ssh-ed25519, which init makes without --identity-type.", idType)
+				warning = fmt.Sprintf("WARNING: a mailbox whose identity is of the key type %s can neither write to nor hear from a mailbox whose client does not verify that type. Every client verifies ssh-ed25519, which init makes without --identity-type.", idType)
 			}
 			b, err := client.Init(c.Context(), e.dir, opt, kt)
 			if err != nil {
 				return err
 			}
-			return e.out(line("box", "address", b.Address(), "link", b.Link(), "message", warning))
+			return e.out(line("mailbox", "address", b.Address(), "link", b.Link(), "detail", warning))
 		})
-	c.Flags().BoolVar(&noPQ, "no-pq", false, "make a box without post-quantum encryption (X25519 only), which age 1.2 can reach")
-	c.Flags().StringVar(&idType, "identity-type", "", "make the identity a key of this `type`, not ssh-ed25519: "+protocol.IdentityP256+". Every client verifies ssh-ed25519; a box of another type is reached only by boxes whose client verifies it")
+	c.Flags().BoolVar(&noPQ, "no-pq", false, "make a mailbox without post-quantum encryption (X25519 only), which age 1.2 can reach")
+	c.Flags().StringVar(&idType, "identity-type", "", "make the identity a key of this `type`, not ssh-ed25519: "+protocol.IdentityP256+". Every client verifies ssh-ed25519; a mailbox of another type is reached only by mailboxes whose client verifies it")
 	return c
 }
 
 func (e *cli) addrCmd() *cobra.Command {
-	return command("addr", "print this box's link, for whoever should write to it",
-		`Print this box's address and its link, <server>/to/<address>: give the link
-to whoever should write to this box.`,
+	return command("addr", "print this mailbox's link, for whoever should write to it",
+		`Print this mailbox's address and its link, <server>/to/<address>: give the link
+to whoever should write to this mailbox.`,
 		nargs(0, 0), func(*cobra.Command, []string) error {
-			b, err := e.box()
+			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
-			return e.out(line("box", "address", b.Address(), "link", b.Link()))
+			return e.out(line("mailbox", "address", b.Address(), "link", b.Link()))
 		})
 }
 
@@ -205,14 +205,14 @@ func (e *cli) sendCmd() *cobra.Command {
 		`Send one message to a link, a bare 64-hex address or an alias, with the body
 from the file, or from stdin, and print the server's id for it and its msg_id.
 It waits in outbox/ until a server takes it (dromas outbox flush posts it
-again), and is then kept in sent/ with the server's receipt. Sending to a box
+again), and is then kept in sent/ with the server's receipt. Sending to a mailbox
 allows it.
 
 The body is text, unless --json says it is one JSON value: then an object
 arrives as that object, not as a string. One its reader would refuse, a name
 twice in an object among them, is refused, and nothing is sent.`,
 		nargs(1, 2), func(c *cobra.Command, args []string) error {
-			b, err := e.box()
+			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
@@ -257,20 +257,20 @@ func (e *cli) recvCmd() *cobra.Command {
 	var wait, drain time.Duration
 	var headers bool
 	c := command("recv [flags]", "receive, verify and ack every message: one line of JSON each",
-		`Receive, verify and ack every message: a "mail" line for each, built from the
-verified fields, with this box's name for its sender as "alias" when it
+		`Receive, verify and ack every message: a "message" line for each, built from the
+verified fields, with this mailbox's name for its sender as "alias" when it
 named one (dromas alias add). It also renews the prekey once a day, so run it at least
-monthly and the box never lapses. It prints a "refused" line for each message
+monthly and the mailbox never lapses. It prints a "refused" line for each message
 it refused, keeping it in refused/, and a "held" line for each it held,
 keeping it in held/.
 
-With --headers, a "mail_headers" line takes each "mail" line's place: its
+With --headers, a "message_headers" line takes each "message" line's place: its
 "envelope" has the fields this client checked with none of the text the
 sender chose, no body and no subject, and the line has the body's size. Each
 message is kept in inbox/ as ever, and dromas inbox show <id> prints its
-"mail" line, so a reader can decide by sender before it reads what the sender wrote.
+"message" line, so a reader can decide by sender before it reads what the sender wrote.
 
-One drain runs for at most --drain-time, holding the box's lock: there it
+One drain runs for at most --drain-time, holding the mailbox's lock: there it
 stops with a "more" line, as at its other limits, and keeps what it read of
 the message it was fetching, which the next recv goes on from.`,
 		checked(nargs(0, 0), func(c *cobra.Command, _ []string) error {
@@ -280,7 +280,7 @@ the message it was fetching, which the next recv goes on from.`,
 			return nil
 		}), func(c *cobra.Command, _ []string) error {
 			e.opt.DrainTime = drain
-			b, err := e.box()
+			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
@@ -297,12 +297,12 @@ the message it was fetching, which the next recv goes on from.`,
 func (e *cli) inboxListCmd() *cobra.Command {
 	var headers bool
 	c := command("list [flags]", "list the mail inbox/ keeps, one line of JSON each",
-		`Print a "mail" line for each message inbox/ keeps, oldest first by sent_at,
+		`Print a "message" line for each message inbox/ keeps, oldest first by sent_at,
 as recv printed it: the mail recv delivered and nobody has pruned since. A
 file there that is not the line recv keeps is left out, and dromas inbox
 show names it.`,
 		nargs(0, 0), func(*cobra.Command, []string) error {
-			b, err := e.box()
+			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
@@ -319,7 +319,7 @@ show names it.`,
 func (e *cli) inboxShowCmd() *cobra.Command {
 	var headers bool
 	c := command("show <id> [flags]", "print a message inbox/ keeps, as recv printed it",
-		`Print the "mail" line of a message inbox/ keeps, by the id recv printed: what
+		`Print the "message" line of a message inbox/ keeps, by the id recv printed: what
 recv prints without --headers. An id that is not 64 lowercase hex is refused
 before any file is read.`,
 		checked(nargs(1, 1), func(c *cobra.Command, args []string) error {
@@ -328,7 +328,7 @@ before any file is read.`,
 			}
 			return nil
 		}), func(_ *cobra.Command, args []string) error {
-			b, err := e.box()
+			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
@@ -342,9 +342,9 @@ before any file is read.`,
 	return c
 }
 
-// mailLines prints a "mail" line for each of ds, or with headers a
-// "mail_headers" line, naming each sender as b names it.
-func (e *cli) mailLines(b *client.Box, ds []client.Delivery, headers bool) error {
+// mailLines prints a "message" line for each of ds, or with headers a
+// "message_headers" line, naming each sender as b names it.
+func (e *cli) mailLines(b *client.Mailbox, ds []client.Delivery, headers bool) error {
 	n := namesOf(b)
 	for _, d := range ds {
 		l := mail(d, n)
@@ -364,7 +364,7 @@ func (e *cli) refusedListCmd() *cobra.Command {
 its id, the code it was refused for (the README's table has each), and the
 time the server gave, only when it has its form.`,
 		nargs(0, 0), func(c *cobra.Command, _ []string) error {
-			b, err := e.box()
+			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
@@ -402,7 +402,7 @@ an id is not one, or names no message refused/ keeps.`,
 			}
 			return nil
 		}, func(c *cobra.Command, args []string) error {
-			b, err := e.box()
+			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
@@ -418,14 +418,14 @@ an id is not one, or names no message refused/ keeps.`,
 	return c
 }
 
-func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration, headers bool) error {
+func (e *cli) recv(c *cobra.Command, b *client.Mailbox, wait time.Duration, headers bool) error {
 	ctx := c.Context()
 	deadline := time.Now().Add(wait)
 	// renewErr is a renewal that was due and failed, and that no later
-	// Receive of this run made good; aclErr the same for the box's ACL;
-	// notMade what the box's last read of itself served that it did not make;
+	// Receive of this run made good; aclErr the same for the mailbox's ACL;
+	// notMade what the mailbox's last read of itself served that it did not make;
 	// and replaced that a renewal of this run found an ACL at the server that
-	// the box had not sent, and replaced it.
+	// the mailbox had not sent, and replaced it.
 	var renewErr, aclErr error
 	var notMade *client.NotMade
 	replaced := false
@@ -447,24 +447,24 @@ func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration, headers 
 				}
 			}
 			for _, id := range res.Duplicates {
-				lines = append(lines, line("duplicate", "id", id, "message", "a retry of a message already delivered: not delivered again"))
+				lines = append(lines, line("duplicate", "id", id, "detail", "a retry of a message already delivered: not delivered again"))
 			}
 			for _, r := range res.Refused {
-				lines = append(lines, line("refused", "id", r.ID, "code", r.Code, "message", r.Reason))
+				lines = append(lines, line("refused", "id", r.ID, "code", r.Code, "detail", r.Reason))
 			}
 			for _, h := range res.Held {
-				lines = append(lines, line("held", "id", h.ID, "from", h.Envelope.From, "message",
-					"from a sender this box has not allowed: kept in held/ (dromas held list lists it, and dromas peer allow delivers it)"))
+				lines = append(lines, line("held", "id", h.ID, "from", h.Envelope.From, "detail",
+					"from a sender this mailbox has not allowed: kept in held/ (dromas held list lists it, and dromas peer allow delivers it)"))
 			}
 			for _, id := range res.Blocked {
-				lines = append(lines, line("dropped", "id", id, "message", "from a sender this box blocked: dropped"))
+				lines = append(lines, line("dropped", "id", id, "detail", "from a sender this mailbox blocked: dropped"))
 			}
 			switch {
 			case res.Paced > 0:
-				lines = append(lines, line("paced", "retry_after", seconds(res.Again()), "message",
-					fmt.Sprintf("the server paces how much mail this box takes out: the rest is still on the server; run recv again in %d seconds or later", seconds(res.Again()))))
+				lines = append(lines, line("paced", "retry_after", seconds(res.Again()), "detail",
+					fmt.Sprintf("the server paces how much mail this mailbox takes out: the rest is still on the server; run recv again in %d seconds or later", seconds(res.Again()))))
 			case res.More:
-				lines = append(lines, line("more", "message", "this run stopped at the most one drain takes: run recv again for the rest, which is still on the server"))
+				lines = append(lines, line("more", "detail", "this run stopped at the most one drain takes: run recv again for the rest, which is still on the server"))
 			}
 			if res.RenewErr != nil {
 				renewErr = res.RenewErr
@@ -476,11 +476,11 @@ func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration, headers 
 			}
 			aclErr = res.ACLErr
 			if res.ACLErr != nil {
-				lines = append(lines, line("acl_not_sent", failure(fmt.Errorf("the next recv sends this box's ACL, and dromas status says whether it went through: %w", res.ACLErr))...))
+				lines = append(lines, line("acl_not_sent", failure(fmt.Errorf("the next recv sends this mailbox's ACL, and dromas status says whether it went through: %w", res.ACLErr))...))
 			}
 			if res.ACLReplaced {
 				replaced = true
-				lines = append(lines, line("acl_replaced", "message", "this box's server held an ACL other than the one this box last sent it, which another machine of this box, someone holding its pass or the server itself wrote: this box sent its own in its place"))
+				lines = append(lines, line("acl_replaced", "detail", "this mailbox's server held an ACL other than the one this mailbox last sent it, which another machine of this mailbox, someone holding its pass or the server itself wrote: this mailbox sent its own in its place"))
 			}
 			// Every delivery is also kept in inbox/, and every refusal in
 			// refused/, so a failed write to stdout loses nothing.
@@ -497,7 +497,7 @@ func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration, headers 
 		// A call that failed and that making again may get past (no answer,
 		// a server error, a rate limit) is made again after its Retry-After,
 		// or a minute: --wait waits it out when there is time to poll again
-		// after, as its holds do (client.Box.Await).
+		// after, as its holds do (client.Mailbox.Await).
 		var ae *client.APIError
 		if errors.As(err, &ae) && ae.RetryAfter > 0 {
 			pause = ae.RetryAfter
@@ -524,28 +524,28 @@ func (e *cli) recv(c *cobra.Command, b *client.Box, wait time.Duration, headers 
 	}
 }
 
-// hold holds b's list until it changes or deadline passes (client.Box.Await),
+// hold holds b's list until it changes or deadline passes (client.Mailbox.Await),
 // and returns for a Receive. Each held request that failed and is held again
 // is said on stderr, and so is a connection that dropped part way, with the
-// wait and keep-alive the box takes from then on.
-func (e *cli) hold(ctx context.Context, b *client.Box, deadline time.Time) error {
+// wait and keep-alive the mailbox takes from then on.
+func (e *cli) hold(ctx context.Context, b *client.Mailbox, deadline time.Time) error {
 	return b.Await(ctx, deadline, func(h *client.HoldResult, err error) {
 		if err != nil {
 			e.say(line("waiting", append([]any{"for", "server"}, failure(err)...)...))
 			return
 		}
 		e.say(line("waiting", "for", "connection", "held", seconds(h.After), "wait", seconds(h.Wait), "keep_alive", seconds(h.KeepAlive),
-			"message", "the connection dropped while the list was held: the next one keeps alive, and the wait shortens only if that one drops too"))
+			"detail", "the connection dropped while the list was held: the next one keeps alive, and the wait shortens only if that one drops too"))
 	})
 }
 
 func (e *cli) statusCmd() *cobra.Command {
-	return command("status", "say what this box holds and what needs a look, as one line of JSON",
-		`Say what this box holds and what needs a look, as one "status" line, from its
+	return command("status", "say what this mailbox holds and what needs a look, as one line of JSON",
+		`Say what this mailbox holds and what needs a look, as one "status" line, from its
 own files and with no call to the server: its prekey, a renewal that has not
 gone through, refused mail in refused/, held mail, mail not yet delivered.`,
 		nargs(0, 0), func(c *cobra.Command, _ []string) error {
-			b, err := e.box()
+			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
@@ -569,13 +569,13 @@ gone through, refused mail in refused/, held mail, mail not yet delivered.`,
 
 func (e *cli) heldListCmd() *cobra.Command {
 	return command("list", "list the mail held/ keeps, one line of JSON for each sender",
-		`List the mail held/ keeps, from senders this box has not allowed: a
+		`List the mail held/ keeps, from senders this mailbox has not allowed: a
 "unknown_sender" line for each sender, with its address, the ids, and the first
-and last sent_at. held/<id>.json is the message recv's "mail" line would have
+and last sent_at. held/<id>.json is the message recv's "message" line would have
 carried. dromas peer allow delivers a sender's held mail to inbox/, and
 dromas peer block deletes it.`,
 		nargs(0, 0), func(*cobra.Command, []string) error {
-			b, err := e.box()
+			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
@@ -609,7 +609,7 @@ allowed file that was lost.`,
 			}
 			return nargs(1, 1)(c, args)
 		}, func(c *cobra.Command, args []string) error {
-			b, err := e.box()
+			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
@@ -650,7 +650,7 @@ from it, then print a "blocked" line. Blocking wins over allowing. The server
 then refuses that sender's next send as sender_not_allowed, which is final,
 so the sender learns that it is refused.`,
 		nargs(1, 1), func(c *cobra.Command, args []string) error {
-			b, err := e.box()
+			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
@@ -672,12 +672,12 @@ so the sender learns that it is refused.`,
 func (e *cli) peerListCmd() *cobra.Command {
 	var allowed, blocked bool
 	c := command("list [flags]", "list the senders allowed and blocked",
-		`List the senders this box allows and blocks, an "allowed" or a "blocked" line
+		`List the senders this mailbox allows and blocks, an "allowed" or a "blocked" line
 each, with its address. The allowed are those its allowed file lists and
 those an alias names. Blocking wins over allowing, so an address can be on
 both.`,
 		nargs(0, 0), func(*cobra.Command, []string) error {
-			b, err := e.box()
+			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
@@ -712,11 +712,11 @@ both.`,
 
 func (e *cli) aliasAddCmd() *cobra.Command {
 	return command("add <name> <link or address>", "name a peer, so send takes the name",
-		`Name a peer for this box only, so send takes the name. A name is up to 32
+		`Name a peer for this mailbox only, so send takes the name. A name is up to 32
 lowercase letters, digits, '.', '_' and '-', starting with a letter or a
 digit. It allows its peer.`,
 		nargs(2, 2), func(c *cobra.Command, args []string) error {
-			b, err := e.box()
+			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
@@ -741,7 +741,7 @@ digit. It allows its peer.`,
 func (e *cli) aliasRmCmd() *cobra.Command {
 	return command("rm <name>", "remove a name", `Remove the alias of this name, and print an "alias_removed" line.`,
 		nargs(1, 1), func(c *cobra.Command, args []string) error {
-			b, err := e.box()
+			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
@@ -754,10 +754,10 @@ func (e *cli) aliasRmCmd() *cobra.Command {
 
 func (e *cli) aliasListCmd() *cobra.Command {
 	return command("list", "list the names, an \"alias\" line each",
-		`List the names this box has given its peers, an "alias" line each, with the
+		`List the names this mailbox has given its peers, an "alias" line each, with the
 name and its address.`,
 		nargs(0, 0), func(*cobra.Command, []string) error {
-			b, err := e.box()
+			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
@@ -774,10 +774,10 @@ name and its address.`,
 func (e *cli) flushCmd() *cobra.Command {
 	return command("flush", "post again what is still in the outbox",
 		`Post again every message still in the outbox, each sealed afresh to what the
-box holds now, and print a "sent" line for each the server takes, as send
+mailbox holds now, and print a "sent" line for each the server takes, as send
 does. One that can never be delivered moves to outbox/failed/.`,
 		nargs(0, 0), func(c *cobra.Command, _ []string) error {
-			b, err := e.box()
+			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
@@ -797,20 +797,20 @@ does. One that can never be delivered moves to outbox/failed/.`,
 		})
 }
 
-// aclNotSent says that a post went ahead though the box's ACL was not taken,
-// since the one its server last took admits the reply: the box needs a look.
+// aclNotSent says that a post went ahead though the mailbox's ACL was not taken,
+// since the one its server last took admits the reply: the mailbox needs a look.
 func (e *cli) aclNotSent(err error) error {
 	if err == nil {
 		return nil
 	}
-	if werr := e.out(line("acl_not_sent", failure(fmt.Errorf("the box's server takes the reply under the ACL it last took: the next send or recv sends this box's, and dromas status says whether it went through: %w", err))...)); werr != nil {
+	if werr := e.out(line("acl_not_sent", failure(fmt.Errorf("the mailbox's server takes the reply under the ACL it last took: the next send or recv sends this mailbox's, and dromas status says whether it went through: %w", err))...)); werr != nil {
 		return werr
 	}
 	return &needsALook{}
 }
 
 // keyType is the prekey type --no-pq or --pq asks for, and none for neither:
-// the box keeps the type it has.
+// the mailbox keeps the type it has.
 func keyType(noPQ, pq bool) (protocol.KeyType, error) {
 	switch {
 	case noPQ && pq:
@@ -827,7 +827,7 @@ func (e *cli) renewCmd() *cobra.Command {
 	var noPQ, pq bool
 	c := command("renew [flags]", "publish a new prekey now, or change its type",
 		`Publish a new prekey now, under a new working key and certificate. With
-neither --no-pq nor --pq it keeps the type the box has.`,
+neither --no-pq nor --pq it keeps the type the mailbox has.`,
 		checked(nargs(0, 0), func(c *cobra.Command, _ []string) error {
 			if _, err := keyType(noPQ, pq); err != nil {
 				return wrong(c, "%v", err)
@@ -835,13 +835,13 @@ neither --no-pq nor --pq it keeps the type the box has.`,
 			return nil
 		}), func(c *cobra.Command, _ []string) error {
 			kt, _ := keyType(noPQ, pq)
-			b, err := e.box()
+			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
 			p, err := b.Rekey(c.Context(), kt)
 			if p != nil {
-				// Published, whatever fault of this box came after.
+				// Published, whatever fault of this mailbox came after.
 				if werr := e.out(prekey(p)); err == nil {
 					err = werr
 				}
@@ -872,13 +872,13 @@ const shortLifetime = 2*24*time.Hour + time.Hour + protocol.MaxSkew
 
 func (e *cli) lifetimeCmd() *cobra.Command {
 	return command("lifetime [<time>]", "how long each new prekey is valid for: print it, or set it",
-		`Print how long each new prekey of this box is valid for, or set it, from
+		`Print how long each new prekey of this mailbox is valid for, or set it, from
 1d3h to 33d, the default. A time is written as sshd writes one: numbers, each
 with its unit, s, m, h, d or w, added together, as in 2d2h or 90m; a number
 with no unit is seconds. recv renews the prekey once it is a day old, so with
 a lifetime L it must run at least every L less a day and two hours, or the
 prekey runs out, or comes so near it that a sender whose clock is ahead
-refuses it, and senders are refused until the box renews. A lifetime set
+refuses it, and senders are refused until the mailbox renews. A lifetime set
 lower holds from the next recv, which renews a prekey made for longer.`,
 		checked(nargs(0, 1), func(c *cobra.Command, args []string) error {
 			if len(args) == 0 {
@@ -893,7 +893,7 @@ lower holds from the next recv, which renews a prekey made for longer.`,
 			}
 			return nil
 		}), func(c *cobra.Command, args []string) error {
-			b, err := e.box()
+			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
@@ -909,9 +909,9 @@ lower holds from the next recv, which renews a prekey made for longer.`,
 			}
 			var warning any
 			if d < shortLifetime {
-				warning = fmt.Sprintf("WARNING: a lifetime under %s risks a single missed daily check-in leaving this box unable to receive messages. At %s, run dromas recv at least every %s.", formatTime(shortLifetime), formatTime(d), formatTime(client.RecvWithin(d)))
+				warning = fmt.Sprintf("WARNING: a lifetime under %s risks a single missed daily check-in leaving this mailbox unable to receive messages. At %s, run dromas recv at least every %s.", formatTime(shortLifetime), formatTime(d), formatTime(client.RecvWithin(d)))
 			}
-			return e.out(line("prekey_lifetime", "seconds", int64(d/time.Second), "lifetime", formatTime(d), "message", warning))
+			return e.out(line("prekey_lifetime", "seconds", int64(d/time.Second), "lifetime", formatTime(d), "detail", warning))
 		})
 }
 
@@ -936,7 +936,7 @@ var timeUnits = map[byte]time.Duration{'s': time.Second, 'm': time.Minute, 'h': 
 // is under a second, which the truncation drops: what parseTime takes there
 // is the seconds the rest of the time names, every time convtime takes reads
 // as the same seconds here, and the only time parseTime reads is one the
-// box's owner types (prekey lifetime).
+// mailbox's owner types (prekey lifetime).
 func parseTime(s string) (time.Duration, error) {
 	no := fmt.Errorf("%.40q is no time: one is numbers, each with its unit (s, m, h, d or w), as in 2d1h", s)
 	if s == "" {
@@ -1012,12 +1012,12 @@ func formatTime(d time.Duration) string {
 func (e *cli) revokeEarlierCmd() *cobra.Command {
 	var noPQ, pq bool
 	c := command("revoke-earlier [flags]", "revoke every certificate before a new one, then publish a new prekey under it",
-		`For a box whose working key may have been taken: make a new prekey, under a
+		`For a mailbox whose working key may have been taken: make a new prekey, under a
 new working key and certificate, revoke every certificate before that one, and
-then publish the new prekey. The address goes on, and mail this box sent that
+then publish the new prekey. The address goes on, and mail this mailbox sent that
 is still unread is refused with the rest, so send it again. Until the server
-takes the new prekey, the box sends no mail, and once its server holds the
-revocation it takes none there either. A copy of the whole box directory holds
+takes the new prekey, the mailbox sends no mail, and once its server holds the
+revocation it takes none there either. A copy of the whole mailbox directory holds
 the identity too: revoke the address.`,
 		checked(nargs(0, 0), func(c *cobra.Command, _ []string) error {
 			if _, err := keyType(noPQ, pq); err != nil {
@@ -1026,7 +1026,7 @@ the identity too: revoke the address.`,
 			return nil
 		}), func(c *cobra.Command, _ []string) error {
 			kt, _ := keyType(noPQ, pq)
-			b, err := e.box()
+			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
@@ -1038,11 +1038,11 @@ the identity too: revoke the address.`,
 	return c
 }
 
-// remedied prints what the remedy of box own did, r and err as
+// remedied prints what the remedy of mailbox own did, r and err as
 // RenewAndRevoke returned them, and returns the command's error: what became
-// of the new prekey first, then of the revocation, then a fault of the box
+// of the new prekey first, then of the revocation, then a fault of the mailbox
 // after what a server took, which is never dropped (#110, #383). What a
-// server took is said as taken. A box shown its own revocation says that
+// server took is said as taken. A mailbox shown its own revocation says that
 // alone (#326), and RenewAndRevoke's error is then that revocation
 // (outcome), so nothing is dropped there.
 func (e *cli) remedied(own protocol.Address, r *client.Remedy, err error) error {
@@ -1053,13 +1053,13 @@ func (e *cli) remedied(own protocol.Address, r *client.Remedy, err error) error 
 		}
 		return fmt.Errorf("no new prekey, and nothing is revoked: %w", err)
 	}
-	// A box shown its own revocation before its renewal was taken says
+	// A mailbox shown its own revocation before its renewal was taken says
 	// that alone: it sends nothing again and renews nothing (#326).
 	if gone := (*client.RevokedError)(nil); errors.As(r.NotRenewed, &gone) && gone.Own {
 		return r.NotRenewed
 	}
 	if r.Unread != nil {
-		if err := e.out(line("box_unread", failure(fmt.Errorf("this box's server could not be read, or served what this box does not take, so the new certificate was numbered from what this box knows: %w", r.Unread))...)); err != nil {
+		if err := e.out(line("mailbox_unread", failure(fmt.Errorf("this mailbox's server could not be read, or served what this mailbox does not take, so the new certificate was numbered from what this mailbox knows: %w", r.Unread))...)); err != nil {
 			return err
 		}
 	}
@@ -1069,18 +1069,18 @@ func (e *cli) remedied(own protocol.Address, r *client.Remedy, err error) error 
 		}
 	}
 	if r.Revoked != nil {
-		const resend = "Mail this box sent before now, and that its reader has not read yet, was signed under a certificate just revoked and will be refused: send it again."
-		if err := e.out(line("certificates_revoked", "address", own, "through", r.Revoked.Through, "message", resend)); err != nil {
+		const resend = "Mail this mailbox sent before now, and that its reader has not read yet, was signed under a certificate just revoked and will be refused: send it again."
+		if err := e.out(line("certificates_revoked", "address", own, "through", r.Revoked.Through, "detail", resend)); err != nil {
 			return err
 		}
 	}
-	dark := fmt.Sprintf("Every certificate before %d is revoked, the one this box was using among them, so it sends no mail, and its server takes none for it, until the new prekey is taken: dromas prekey renew sends it again, and so does dromas recv", r.Below)
+	dark := fmt.Sprintf("Every certificate before %d is revoked, the one this mailbox was using among them, so it sends no mail, and its server takes none for it, until the new prekey is taken: dromas prekey renew sends it again, and so does dromas recv", r.Below)
 	// What a line printed above has not said, the prekey's first.
 	var said error
 	switch {
 	case r.NotRenewed == nil && r.NotRevoked == nil && r.Revoked == nil:
 		if err == nil {
-			return e.out(line("no_earlier_certificate", "message", "no earlier certificate to revoke"))
+			return e.out(line("no_earlier_certificate", "detail", "no earlier certificate to revoke"))
 		}
 	case r.NotRenewed == nil && r.NotRevoked == nil:
 	case r.NotRenewed == nil:
@@ -1090,7 +1090,7 @@ func (e *cli) remedied(own protocol.Address, r *client.Remedy, err error) error 
 	default:
 		said = fmt.Errorf("the new prekey is NOT published: %w, and nothing is revoked: %v. dromas cert revoke-earlier tries both again", r.NotRenewed, r.NotRevoked)
 	}
-	// Then the fault of this box after what a server took, in every case.
+	// Then the fault of this mailbox after what a server took, in every case.
 	switch {
 	case said == nil:
 		return err
@@ -1104,11 +1104,11 @@ func (e *cli) publishRevokedCmd() *cobra.Command {
 	return command("publish-revoked [<file>]", "send a revocation of certificates to the server again",
 		`Send a record that carries a revocation of certificates, and none of an
 address, to the server, and keep it: the file named, or with none the one
-this box keeps of its own certificates, when a server did not take it. A
+this mailbox keeps of its own certificates, when a server did not take it. A
 record that ends an address is refused: dromas revocation publish takes
 that one, with the address in full.`,
 		nargs(0, 1), func(c *cobra.Command, args []string) error {
-			b, err := e.box()
+			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
@@ -1118,7 +1118,7 @@ that one, with the address in full.`,
 			} else {
 				rec, err = b.CertificatesRecord(c.Context())
 				if err == nil && rec == nil {
-					err = errors.New("this box holds no revocation of its certificates: dromas cert revoke-earlier makes one")
+					err = errors.New("this mailbox holds no revocation of its certificates: dromas cert revoke-earlier makes one")
 				}
 			}
 			if err != nil {
@@ -1142,19 +1142,19 @@ that one, with the address in full.`,
 			}
 			through, said := certs.Through, "published to the server"
 			if a == b.Address() {
-				// A server that held a higher one showed it, and the box keeps
+				// A server that held a higher one showed it, and the mailbox keeps
 				// that one.
 				if held, err := b.CertificatesRecord(c.Context()); err == nil && held != nil {
 					if h, err := protocol.ParseRevokedCertificates(held.RevokedCertificates); err == nil && h.Through > through {
-						through, said = h.Through, "the server holds a revocation of this box's certificates through a higher serial, which covers this one: this box keeps that one"
+						through, said = h.Through, "the server holds a revocation of this mailbox's certificates through a higher serial, which covers this one: this mailbox keeps that one"
 					}
 				}
 			}
-			if err := e.out(line("certificates_revoked", "address", a, "through", through, "message", said)); err != nil {
+			if err := e.out(line("certificates_revoked", "address", a, "through", through, "detail", said)); err != nil {
 				return err
 			}
 			// A server that holds the address revoked took the record as done
-			// once its revocation verified, and the box keeps that one.
+			// once its revocation verified, and the mailbox keeps that one.
 			if a != b.Address() {
 				return nil
 			}
@@ -1162,13 +1162,13 @@ that one, with the address in full.`,
 			if err != nil || !st.Revoked {
 				return err
 			}
-			return e.out(line("revoked", "address", a, "message", "the server holds this address revoked, and the revocation verifies: this box signs nothing more"))
+			return e.out(line("revoked", "address", a, "detail", "the server holds this address revoked, and the revocation verifies: this mailbox signs nothing more"))
 		})
 }
 
 func (e *cli) adoptCmd() *cobra.Command {
 	return command("adopt", "join the account an adopt key names: the key on stdin",
-		`Join the account an adopt key names, which can lift this box's limits. The key
+		`Join the account an adopt key names, which can lift this mailbox's limits. The key
 is read from stdin, never from the command line, where ps, a shell's history
 and an agent's transcript would keep it: dromas account adopt < key.txt.
 What is read is held to an adopt key's form before anything is sent, so a
@@ -1178,7 +1178,7 @@ wrong file goes nowhere, and no error prints the key.`,
 			if err != nil {
 				return err
 			}
-			b, err := e.box()
+			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
@@ -1213,30 +1213,30 @@ var adoptKeyForm = regexp.MustCompile(`\Adra1_[A-Za-z0-9_-]+\z`)
 const maxAdoptKey = 1024
 
 func (e *cli) leaveCmd() *cobra.Command {
-	return command("leave", "leave the box's account", `Leave the box's account.`,
+	return command("leave", "leave the mailbox's account", `Leave the mailbox's account.`,
 		nargs(0, 0), func(c *cobra.Command, _ []string) error {
-			b, err := e.box()
+			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
 			if err := b.Leave(c.Context()); err != nil {
 				return err
 			}
-			return e.out(line("account", "account", json.RawMessage("null"), "message", "in no account"))
+			return e.out(line("account", "account", json.RawMessage("null"), "detail", "in no account"))
 		})
 }
 
 func (e *cli) makeCmd() *cobra.Command {
-	return command("make", "print this box's revocation, and publish nothing",
-		`Print this box's revocation record, one "revocation_record" line, and publish
+	return command("make", "print this mailbox's revocation, and publish nothing",
+		`Print this mailbox's revocation record, one "revocation_record" line, and publish
 nothing. Whoever publishes that record ends this address for good, with no
-key: keep it where only you can read it, somewhere other than this box, for
-the day the box is lost (umask 077; dromas revocation make > <file>). The
+key: keep it where only you can read it, somewhere other than this mailbox, for
+the day the mailbox is lost (umask 077; dromas revocation make > <file>). The
 line is the record as every server takes it: dromas revocation publish
 --record publishes it, and so does a PUT of it to
 <server>/v1/<address>/revocations.`,
 		nargs(0, 0), func(c *cobra.Command, _ []string) error {
-			b, err := e.box()
+			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
@@ -1257,10 +1257,10 @@ line is the record as every server takes it: dromas revocation publish
 func (e *cli) publishCmd() *cobra.Command {
 	var record string
 	const how = "dromas revocation publish takes the 64-character address, in full: it is the confirmation, and a revocation cannot be undone"
-	c := command("publish [flags] <address>", "revoke this box's address, FOR GOOD",
-		`Revoke this box's address, FOR GOOD: nothing undoes it. The address written
+	c := command("publish [flags] <address>", "revoke this mailbox's address, FOR GOOD",
+		`Revoke this mailbox's address, FOR GOOD: nothing undoes it. The address written
 out in full is the confirmation. --record <file> publishes a record made
-earlier by dromas revocation make, and needs no box here. It goes to the
+earlier by dromas revocation make, and needs no mailbox here. It goes to the
 server, and the command fails unless the server took it: run it again.`,
 		func(c *cobra.Command, args []string) error {
 			if len(args) != 1 {
@@ -1272,9 +1272,9 @@ server, and the command fails unless the server took it: run it again.`,
 			if err != nil {
 				return errors.New(how)
 			}
-			// The box here, if there is one, keeps the record once the server
+			// The mailbox here, if there is one, keeps the record once the server
 			// took it. With --record none is needed.
-			b, openErr := e.box()
+			b, openErr := e.mailbox()
 			var rec *protocol.Revocations
 			if record != "" {
 				if rec, err = readRecord(record); err != nil {
@@ -1288,7 +1288,7 @@ server, and the command fails unless the server took it: run it again.`,
 					return openErr
 				}
 				if b.Address() != a {
-					return errors.New("that is not this box's address: nothing was published. dromas revocation publish takes this box's own address, or a record of another with --record")
+					return errors.New("that is not this mailbox's address: nothing was published. dromas revocation publish takes this mailbox's own address, or a record of another with --record")
 				}
 				if rec, err = b.Revocation(c.Context()); err != nil {
 					return err
@@ -1303,27 +1303,27 @@ server, and the command fails unless the server took it: run it again.`,
 			if perr != nil {
 				return perr
 			}
-			// Once the server has taken it, it is out. If the box it is about is
+			// Once the server has taken it, it is out. If the mailbox it is about is
 			// the one here, it keeps it too.
 			if openErr == nil && b.Address() == a {
 				if _, _, err := b.KeepRevocation(c.Context(), rec); err != nil {
 					return err
 				}
 			}
-			return e.out(line("revoked", "address", a, "message", "published to the server"))
+			return e.out(line("revoked", "address", a, "detail", "published to the server"))
 		})
-	c.Flags().StringVar(&record, "record", "", "publish the record in this `file`, made earlier by dromas revocation make, in place of signing one with this box's identity")
+	c.Flags().StringVar(&record, "record", "", "publish the record in this `file`, made earlier by dromas revocation make, in place of signing one with this mailbox's identity")
 	return c
 }
 
 func (e *cli) keepCmd() *cobra.Command {
 	return command("keep <file>", "keep a revocation someone handed you",
-		`Take a revocation of another box that someone handed you (a record as
-dromas revocation make prints), check it, and keep it: this box then sends
+		`Take a revocation of another mailbox that someone handed you (a record as
+dromas revocation make prints), check it, and keep it: this mailbox then sends
 that address nothing and takes nothing from it. A record may carry a
-revocation of the box's certificates, which is kept the same way.`,
+revocation of the mailbox's certificates, which is kept the same way.`,
 		nargs(1, 1), func(c *cobra.Command, args []string) error {
-			b, err := e.box()
+			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
@@ -1340,11 +1340,11 @@ revocation of the box's certificates, which is kept the same way.`,
 }
 
 func (e *cli) askCmd() *cobra.Command {
-	return command("ask <link, address or alias>", "ask the server what it holds about a box, and keep what verifies",
-		`Ask the server what it holds about a box, and keep what verifies. send does that by itself, before it
+	return command("ask <link, address or alias>", "ask the server what it holds about a mailbox, and keep what verifies",
+		`Ask the server what it holds about a mailbox, and keep what verifies. send does that by itself, before it
 posts.`,
 		nargs(1, 1), func(c *cobra.Command, args []string) error {
-			b, err := e.box()
+			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
@@ -1360,7 +1360,7 @@ posts.`,
 		})
 }
 
-// sayHeld says what the box holds of an address, which is what it checks a
+// sayHeld says what the mailbox holds of an address, which is what it checks a
 // send and a read against. A server's "none" is its word, and is said as that.
 func (e *cli) sayHeld(a protocol.Address, held *client.Held) error {
 	switch {
@@ -1369,16 +1369,16 @@ func (e *cli) sayHeld(a protocol.Address, held *client.Held) error {
 	case held.Certificates != nil:
 		return e.out(line("certificates_revoked", "address", a, "through", held.Certificates.Through))
 	}
-	return e.out(line("not_revoked", "address", a, "message", "no revocation shown. That is the server's word, and it can keep a record back: a record from the box's owner settles it (dromas revocation keep <file>)."))
+	return e.out(line("not_revoked", "address", a, "detail", "no revocation shown. That is the server's word, and it can keep a record back: a record from the mailbox's owner settles it (dromas revocation keep <file>)."))
 }
 
-// sent is the line for a message the server took, with the box's name for
+// sent is the line for a message the server took, with the mailbox's name for
 // its recipient (names).
 func sent(s *client.Sent, n names) []byte {
 	return line("sent", "id", s.ID, "msg_id", s.MsgID, "to", s.To, "alias", n.of(s.To))
 }
 
-// prekey is the line for a prekey this box published.
+// prekey is the line for a prekey this mailbox published.
 func prekey(p *protocol.Prekey) []byte {
 	return line("prekey", "serial", p.Serial, "not_after", p.NotAfter.UTC().Format(protocol.TimeLayout))
 }
@@ -1387,10 +1387,10 @@ func prekey(p *protocol.Prekey) []byte {
 // kilobyte.
 const maxRecord = 64 << 10
 
-// notMadeLine is the line that says the box's server served a statement in
+// notMadeLine is the line that says the mailbox's server served a statement in
 // its name that it did not make.
 func notMadeLine(nm *client.NotMade) []byte {
-	return line("prekey_not_made", "serial", nm.Serial, "certificate_serial", nm.CertificateSerial, "own_certificate", nm.OwnCertificate, "at", nm.At, "message", nm.Words())
+	return line("prekey_not_made", "serial", nm.Serial, "certificate_serial", nm.CertificateSerial, "own_certificate", nm.OwnCertificate, "at", nm.At, "detail", nm.Words())
 }
 
 // readRecord reads a revocation record: the JSON dromas revocation make

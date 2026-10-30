@@ -45,7 +45,7 @@ func TestAReplayIsRefusedAfterTheClockStepsBack(t *testing.T) {
 				t.Fatal(err)
 			}
 			landAll(t, r)
-			s := e.box(protocol.Classic)
+			s := e.mailbox(protocol.Classic)
 			var kept []byte
 			e.srv.SetMiddle(func(w http.ResponseWriter, q *http.Request, next http.Handler) {
 				if q.Method == http.MethodPost && strings.HasSuffix(q.URL.Path, "/messages") {
@@ -102,7 +102,7 @@ func TestAReplayIsRefusedAfterTheClockStepsBack(t *testing.T) {
 }
 
 // A recv refused for its clock prunes nothing, whether its server refuses the
-// pass or the box its own certificate first: the seen-set is pruned only once
+// pass or the mailbox its own certificate first: the seen-set is pruned only once
 // the server has taken a pass dated by that clock.
 func TestARefusedDrainPrunesNothing(t *testing.T) {
 	t.Parallel()
@@ -114,7 +114,7 @@ func TestARefusedDrainPrunesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	landAll(t, r)
-	send(t, e.box(protocol.Classic), r, "hello")
+	send(t, e.mailbox(protocol.Classic), r, "hello")
 	receive(t, r)
 	before, ok := stateOf(r, "seen")
 	if !ok || len(before) == 0 {
@@ -141,8 +141,8 @@ func TestTheSeenFloor(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	r := e.box(protocol.Classic)
-	s := e.box(protocol.Classic)
+	r := e.mailbox(protocol.Classic)
+	s := e.mailbox(protocol.Classic)
 	send(t, s, r, "first")
 	receive(t, r)
 	if has(r, "seen-floor") {
@@ -155,7 +155,7 @@ func TestTheSeenFloor(t *testing.T) {
 		t.Fatalf("the floor after a prune dropped a line: %q; want the cutoff it dropped it at, %q", raw, want)
 	}
 
-	s = e.box(protocol.Classic) // a sender whose certificate is valid now
+	s = e.mailbox(protocol.Classic) // a sender whose certificate is valid now
 	send(t, s, r, "second")
 	if res := receive(t, r); len(res.Delivered) != 1 {
 		t.Fatalf("delivered %d after the prune, want 1", len(res.Delivered))

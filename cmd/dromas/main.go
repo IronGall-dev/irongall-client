@@ -29,16 +29,16 @@ import (
 )
 
 // about is the end of the top-level help: what holds for every command.
-const about = `The box lives in $DROMAS_HOME, or ${XDG_CONFIG_HOME:-~/.config}/dromas/${DROMAS_BOX:-default}.
+const about = `The mailbox lives in $DROMAS_HOME, or ${XDG_CONFIG_HOME:-~/.config}/dromas/${DROMAS_MAILBOX:-default}.
 Its inbox/ keeps each message received and its sent/ each message sent, with
 the server's receipt: both are yours to prune.
 The server is $DROMAS_SERVER_URL, or https://dromas.dev: https, or http only
 to a server on this machine, and a redirect is never followed.
-The box's policy file says where mail from a sender it has not allowed
+The mailbox's policy file says where mail from a sender it has not allowed
 lands, "unknown held" (the default) or "unknown inbox", and whom its server
 takes mail from, "server all" (the default: everyone it has not blocked) or
 "server allowed" (only those it allowed, which tells the server who they are).
-With each prekey a box declares which identity key types its client verifies,
+With each prekey a mailbox declares which identity key types its client verifies,
 and so whose mail it takes: every type this client verifies, unless
 $DROMAS_SENDER_KEY_TYPES says otherwise ("any": do not say).
 
@@ -51,26 +51,26 @@ Every command prints JSON lines, one object a line, whose "type" says what
 the line is. What it did and what it met on the way go to stdout, mail and
 refusals alike. Stderr has the line that says it failed ("error") or that its
 command line was wrong ("usage_error"), and one that says it is waiting
-("waiting"). A "message" is this client's own words, never a sender's or a
+("waiting"). A "detail" is this client's own words, never a sender's or a
 server's. Help is the one thing printed as text.
 
 Exit status: 0, done. 1, the command failed. 2, the command line was wrong
-and nothing ran. 3, the command did its work and the box needs a look: from
+and nothing ran. 3, the command did its work and the mailbox needs a look: from
 recv, mail was received as printed and the prekey, due for renewal, was not
-renewed ("renewal_failed"), its server served a prekey the box did not make
-("prekey_not_made"), the box's ACL was not sent to its server
-("acl_not_sent"), or its server held an ACL the box had not sent, which it
+renewed ("renewal_failed"), its server served a prekey the mailbox did not make
+("prekey_not_made"), the mailbox's ACL was not sent to its server
+("acl_not_sent"), or its server held an ACL the mailbox had not sent, which it
 replaced ("acl_replaced"); from send and outbox flush, the post went ahead
-though the box's ACL was not sent ("acl_not_sent"); from prekey renew, its
-server served a prekey the box did not make ("prekey_not_made"); from status,
+though the mailbox's ACL was not sent ("acl_not_sent"); from prekey renew, its
+server served a prekey the mailbox did not make ("prekey_not_made"); from status,
 its "attention" list is not empty. recv prints
 a "refused" line for each message it refused, keeping it in refused/, a
 "held" line for each it held in held/, and a "dropped" line for each from a
-sender this box blocked: none of them changes its exit status, since any
+sender this mailbox blocked: none of them changes its exit status, since any
 sender can cause them. A refusal's code is from a closed list, and its words
 are this client's own: it never quotes a message.
 
-To try the whole loop, send anything to dromas.dev's echo box,
+To try the whole loop, send anything to dromas.dev's echo mailbox,
 ` + client.DefaultBase + protocol.LinkPath + client.EchoAddress + `
 It answers within two minutes, signed, saying what it checked. Mail to it
 is readable by dromas.dev's operator.
@@ -96,11 +96,11 @@ func main() {
 	os.Exit(report(err, os.Stderr))
 }
 
-// needsALook is how a command says it did its work and the box needs a look:
+// needsALook is how a command says it did its work and the mailbox needs a look:
 // exit status 3, where a failure is 1. The lines it printed say why.
 type needsALook struct{}
 
-func (e *needsALook) Error() string { return "the box needs a look" }
+func (e *needsALook) Error() string { return "the mailbox needs a look" }
 
 // usageError is a command line that is wrong, so nothing ran: exit status 2,
 // with a "usage_error" line on stderr: what was wrong, the command's usage
@@ -113,7 +113,7 @@ type usageError struct {
 
 func (e *usageError) Error() string { return e.msg }
 
-// cli is what every command shares: where its box is, how to reach its
+// cli is what every command shares: where its mailbox is, how to reach its
 // server, and where it reads and writes.
 type cli struct {
 	dir            string
@@ -122,9 +122,9 @@ type cli struct {
 	stdout, stderr io.Writer
 }
 
-func (e *cli) box() (*client.Box, error) { return client.Open(e.dir, e.opt) }
+func (e *cli) mailbox() (*client.Mailbox, error) { return client.Open(e.dir, e.opt) }
 
-// environment reads where the box is and how to reach its server, once the
+// environment reads where the mailbox is and how to reach its server, once the
 // command line is known to be one that runs.
 func (e *cli) environment() error {
 	dir, err := client.Dir()
@@ -140,7 +140,7 @@ func (e *cli) environment() error {
 }
 
 // checked is args, then check: the values a command takes are a usage
-// error before anything is read, the environment and the box included.
+// error before anything is read, the environment and the mailbox included.
 func checked(args cobra.PositionalArgs, check cobra.PositionalArgs) cobra.PositionalArgs {
 	return func(c *cobra.Command, a []string) error {
 		if err := args(c, a); err != nil {
@@ -152,20 +152,20 @@ func checked(args cobra.PositionalArgs, check cobra.PositionalArgs) cobra.Positi
 
 // run runs the command line args, the program's name left out. The line is
 // read first: help and a wrong line are answered before anything else, the
-// environment and the box included (#223), since cobra decides both before
+// environment and the mailbox included (#223), since cobra decides both before
 // the hook that reads the environment (environment), and each command
 // checks the values it takes in its own argument check.
 func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	return runWith(ctx, client.Options{}, args, stdin, stdout, stderr)
 }
 
-// runWith is run with the box's options opt, its server's address left to
+// runWith is run with the mailbox's options opt, its server's address left to
 // the environment: a test's client of a server in memory.
 func runWith(ctx context.Context, opt client.Options, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	// Said once, so that a wait is not read as a hang.
 	opt.Waiting = func() {
-		_, _ = fmt.Fprintf(stderr, "%s\n", line("waiting", "for", "lock", "message",
-			"waiting for this box's lock: another command of this box is running, and a box's commands write its files one at a time"))
+		_, _ = fmt.Fprintf(stderr, "%s\n", line("waiting", "for", "lock", "detail",
+			"waiting for this mailbox's lock: another command of this mailbox is running, and a mailbox's commands write its files one at a time"))
 	}
 	e := &cli{opt: opt, stdin: stdin, stdout: stdout, stderr: stderr}
 	root := e.tree()

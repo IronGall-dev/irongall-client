@@ -1,7 +1,7 @@
-// Package sign holds a box's keys: its identity, which signs certificates
+// Package sign holds a mailbox's keys: its identity, which signs certificates
 // and revocations and nothing else, and its working keys, which sign what the
-// box says (PROTOCOL.md §5). Nothing else in the client signs with them
-// (TestOnlySignSigns), and every signature first asks whether the box holds
+// mailbox says (PROTOCOL.md §5). Nothing else in the client signs with them
+// (TestOnlySignSigns), and every signature first asks whether the mailbox holds
 // its own revocation, and is refused if it does (PROTOCOL.md §12.5): no path,
 // a new one included, can sign around that check.
 package sign
@@ -14,16 +14,16 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// Finished returns why the box may sign nothing more, or nil.
+// Finished returns why the mailbox may sign nothing more, or nil.
 type Finished func() error
 
-// Identity is a box's identity key.
+// Identity is a mailbox's identity key.
 type Identity struct {
 	key      ssh.Signer
 	finished Finished
 }
 
-// NewIdentity holds key, the box's identity, for a box that says whether it
+// NewIdentity holds key, the mailbox's identity, for a mailbox that says whether it
 // is finished.
 func NewIdentity(key ssh.Signer, finished Finished) *Identity {
 	return &Identity{key: key, finished: finished}
@@ -64,7 +64,7 @@ type Work struct {
 	finished Finished
 }
 
-// NewWork holds key, a working key under its certificate, for a box that
+// NewWork holds key, a working key under its certificate, for a mailbox that
 // says whether it is finished.
 func NewWork(key ssh.Signer, finished Finished) *Work {
 	return &Work{key: key, finished: finished}
@@ -79,7 +79,7 @@ func (k *Work) Signature(message []byte, namespace string) ([]byte, error) {
 	return protocol.Sign(k.key, message, namespace)
 }
 
-// Pass signs a pass of the box a, for the server named server, dated now
+// Pass signs a pass of the mailbox a, for the server named server, dated now
 // (protocol.NewPass).
 func (k *Work) Pass(a protocol.Address, server string, now time.Time) (string, time.Time, error) {
 	if err := k.finished(); err != nil {

@@ -30,7 +30,7 @@ func TestVectorJSON(t *testing.T) {
 // answerTypes is what each kind of answer/ vector is read into, as the Go
 // client reads that answer.
 var answerTypes = map[string]func() any{
-	"box":     func() any { return new(BoxResponse) },
+	"mailbox": func() any { return new(MailboxResponse) },
 	"list":    func() any { return new(MessageList) },
 	"record":  func() any { return new(Revocations) },
 	"receipt": func() any { return new(Receipt) },

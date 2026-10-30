@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// Every box's transport calls a server on this machine, or one named
+// Every mailbox's transport calls a server on this machine, or one named
 // localhost in any case, through no proxy, whatever the environment names,
 // and every other through the proxy the transport it was given chooses
 // (PROTOCOL.md §11.1; #290). Read from the transport's own Proxy, so the
@@ -33,15 +33,15 @@ func TestNoProxyForThisMachine(t *testing.T) {
 }
 
 // The transport holds every request's URL to checkServerURL, whatever made
-// the request and whatever HTTP client the box was given: nothing goes over
+// the request and whatever HTTP client the mailbox was given: nothing goes over
 // http off this machine (PROTOCOL.md §11.1).
 func TestEveryRequestIsHeldToTheServerRule(t *testing.T) {
 	t.Parallel()
 	for _, c := range []*http.Client{nil, {}, {Transport: roundTripper(func(*http.Request) (*http.Response, error) {
-		t.Error("a request the box refuses reached the transport it was given")
+		t.Error("a request the mailbox refuses reached the transport it was given")
 		return nil, http.ErrHandlerTimeout
 	})}} {
-		b, err := newBox(t.TempDir(), Options{Base: "https://dromas.dev", HTTPClient: c})
+		b, err := newMailbox(t.TempDir(), Options{Base: "https://dromas.dev", HTTPClient: c})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -50,8 +50,8 @@ func TestEveryRequestIsHeldToTheServerRule(t *testing.T) {
 			t.Errorf("a request over http off this machine: %v", err)
 		}
 	}
-	if _, err := newBox("", Options{Base: "http://dromas.dev"}); err == nil {
-		t.Error("a box was made for a server over http off this machine")
+	if _, err := newMailbox("", Options{Base: "http://dromas.dev"}); err == nil {
+		t.Error("a mailbox was made for a server over http off this machine")
 	}
 }
 

@@ -14,10 +14,10 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// twoOpens is one box opened twice, as two processes would: a, for a
-// command, and r, for a reading, each a Box with a slot of its own, and the
+// twoOpens is one mailbox opened twice, as two processes would: a, for a
+// command, and r, for a reading, each a Mailbox with a slot of its own, and the
 // path of their state file.
-func twoOpens(t *testing.T) (a, r *Box, state string) {
+func twoOpens(t *testing.T) (a, r *Mailbox, state string) {
 	t.Helper()
 	srv := fakeserver.New(t, time.Now)
 	opt := Options{Base: srv.URL}
@@ -39,7 +39,7 @@ func twoOpens(t *testing.T) (a, r *Box, state string) {
 // opens none that a command makes after that open: Status's views, behind a
 // command that made the file again and holds it, would each wait for that
 // command with no context, up to lockPatience (#382). What the reading waited
-// on is what its Box is told (Options.Waiting), which here also lets the
+// on is what its Mailbox is told (Options.Waiting), which here also lets the
 // command go, so a reading that waits is seen at once and on no clock (#509).
 func TestAReadingThatFoundNoStateFileWaitsForNoCommand(t *testing.T) {
 	t.Parallel()
@@ -70,7 +70,7 @@ func TestAReadingThatFoundNoStateFileWaitsForNoCommand(t *testing.T) {
 		case <-holding:
 		case cmdErr = <-cmd:
 			cmdDone = true
-			return nil, errors.New("the command ended without holding the box")
+			return nil, errors.New("the command ended without holding the mailbox")
 		}
 		return r.status()
 	})
@@ -86,7 +86,7 @@ func TestAReadingThatFoundNoStateFileWaitsForNoCommand(t *testing.T) {
 	}
 }
 
-// One reading, two views, a command's write between them, on a box whose
+// One reading, two views, a command's write between them, on a mailbox whose
 // state file was gone at the reading's open: both views read one state, the
 // one with no file (#329, #382).
 func TestAReadingThatFoundNoStateFileReadsOneState(t *testing.T) {
@@ -97,7 +97,7 @@ func TestAReadingThatFoundNoStateFileReadsOneState(t *testing.T) {
 	}
 	read := func() string {
 		var v []byte
-		if err := r.view(func(s store) error { v = s.get(bucketBox, "written"); return nil }); err != nil {
+		if err := r.view(func(s store) error { v = s.get(bucketMailbox, "written"); return nil }); err != nil {
 			return "error: " + err.Error()
 		}
 		return string(v)
@@ -108,7 +108,7 @@ func TestAReadingThatFoundNoStateFileReadsOneState(t *testing.T) {
 		first := read()
 		go func() {
 			done <- a.lockedFinishedDo(context.Background(), func() error {
-				return a.update(func(s store) error { return s.put(bucketBox, "written", []byte("written by a command")) })
+				return a.update(func(s store) error { return s.put(bucketMailbox, "written", []byte("written by a command")) })
 			})
 		}()
 		select {

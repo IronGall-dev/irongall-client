@@ -22,11 +22,11 @@ import (
 )
 
 // maxResponse bounds what is read of any answer but a fetch's: a list, the
-// read of a box, a problem. It is this client's own, which the protocol does
+// read of a mailbox, a problem. It is this client's own, which the protocol does
 // not fix, and only stops a server from filling memory. A fetch is bounded by
 // the protocol's largest ciphertext instead (protocol.MaxCiphertext), which
 // every reader takes, so that this bound moves without changing which mail a
-// box reads.
+// mailbox reads.
 const maxResponse = 16 << 20
 
 // maxReceipt bounds what is read of a post's answer once the server took it,
@@ -53,12 +53,12 @@ type ciphertext struct {
 	keep  *partial
 }
 
-// call makes one API request of this box's server. A request body is sent as
+// call makes one API request of this mailbox's server. A request body is sent as
 // JSON, or as it is when it is a message's ciphertext; a 2xx response body is
 // read into out when out is not nil: as JSON, or as the ciphertext's bytes.
 // A 304 to a request that carried If-None-Match is answered, with nothing
 // read into out; one to a request that did not breaks its form. Any other
-// status outside 2xx is an *APIError, a redirect among them, which no box
+// status outside 2xx is an *APIError, a redirect among them, which no mailbox
 // follows ([followNone]). A call that got no answer it could read is a
 // [transportError], in this client's words. A server whose URL
 // [checkServerURL] refuses is called not at all. It returns the response,
@@ -66,12 +66,12 @@ type ciphertext struct {
 //
 // Every answer passes here, so what one says of a revocation is proved here
 // and nowhere else (proved): a caller meets a [RevokedError] that verified,
-// or the call's error. A request made outside the box's lock, which call
+// or the call's error. A request made outside the mailbox's lock, which call
 // would race the command holding it on, is exchange's, and its answer is
-// proved under the lock (provedLocked). A command that has kept its box's own revocation asks
+// proved under the lock (provedLocked). A command that has kept its mailbox's own revocation asks
 // nothing more: each call of it after that returns the revocation before any
 // request is made.
-func (b *Box) call(ctx context.Context, method, path string, in any, hdr http.Header, out any) (*http.Response, error) {
+func (b *Mailbox) call(ctx context.Context, method, path string, in any, hdr http.Header, out any) (*http.Response, error) {
 	if b.ended != nil {
 		return nil, b.ended
 	}
@@ -80,7 +80,7 @@ func (b *Box) call(ctx context.Context, method, path string, in any, hdr http.He
 }
 
 // exchange is call's request and its answer, as the server gave it.
-func (b *Box) exchange(ctx context.Context, method, path string, in any, hdr http.Header, out any) (*http.Response, error) {
+func (b *Mailbox) exchange(ctx context.Context, method, path string, in any, hdr http.Header, out any) (*http.Response, error) {
 	if err := checkServerURL(b.base); err != nil {
 		return nil, err
 	}
@@ -213,7 +213,7 @@ func (b *Box) exchange(ctx context.Context, method, path string, in any, hdr htt
 // It reads the monotonic clock alone: when a byte last moved is kept as an
 // offset from its start, so a step of the wall clock while a call is in
 // flight moves no bound (#403 item 4). A nil stall cuts nothing: a client
-// the box was given keeps its own timeouts.
+// the mailbox was given keeps its own timeouts.
 type stall struct {
 	cancel  context.CancelCauseFunc
 	ctx     context.Context
@@ -444,27 +444,27 @@ func passRefused(c protocol.Code) bool {
 	return false
 }
 
-// owner makes a request as this box, with in as its body when not nil (call):
-// a call that carries the box's pass. If the server refuses the pass, because
+// owner makes a request as this mailbox, with in as its body when not nil (call):
+// a call that carries the mailbox's pass. If the server refuses the pass, because
 // it ran out sooner by the server's clock or was signed under a certificate
-// the server no longer takes, the box signs another and tries once more. A
-// pass under a certificate that is not the box's current one at the server
-// has the box read itself there first (known), which records a renewal the
-// server took whose answer the box never had.
-func (b *Box) owner(ctx context.Context, method, path string, in, out any) (*http.Response, error) {
+// the server no longer takes, the mailbox signs another and tries once more. A
+// pass under a certificate that is not the mailbox's current one at the server
+// has the mailbox read itself there first (known), which records a renewal the
+// server took whose answer the mailbox never had.
+func (b *Mailbox) owner(ctx context.Context, method, path string, in, out any) (*http.Response, error) {
 	return b.ownerWith(ctx, method, path, nil, in, out)
 }
 
 // ownerWith is owner, with the request's headers hdr beside the pass.
-func (b *Box) ownerWith(ctx context.Context, method, path string, hdr http.Header, in, out any) (*http.Response, error) {
+func (b *Mailbox) ownerWith(ctx context.Context, method, path string, hdr http.Header, in, out any) (*http.Response, error) {
 	resp, _, err := b.ownerTaken(ctx, method, path, hdr, in, out)
 	return resp, err
 }
 
 // ownerTaken is ownerWith, and, once the server has answered, the reading
-// of this box's clock it took: the date of the pass the answered call
+// of this mailbox's clock it took: the date of the pass the answered call
 // carried.
-func (b *Box) ownerTaken(ctx context.Context, method, path string, hdr http.Header, in, out any) (*http.Response, taken, error) {
+func (b *Mailbox) ownerTaken(ctx context.Context, method, path string, hdr http.Header, in, out any) (*http.Response, taken, error) {
 	for attempt := 0; ; attempt++ {
 		pass, err := b.pass()
 		if err != nil {
@@ -494,13 +494,13 @@ func (b *Box) ownerTaken(ctx context.Context, method, path string, hdr http.Head
 	}
 }
 
-// taken is a reading of this box's clock that a server took, which every
+// taken is a reading of this mailbox's clock that a server took, which every
 // deletion by the clock is by: a pass is the only way to one
 // (client/internal/taken).
 type taken = tk.Reading
 
-// lookup GETs box a from this box's server (GET /v1/<a>), with no pass: the
+// lookup GETs mailbox a from this mailbox's server (GET /v1/<a>), with no pass: the
 // read is public, and a server reads no pass on it (PROTOCOL.md §11.8).
-func (b *Box) lookup(ctx context.Context, a protocol.Address, out any) (*http.Response, error) {
+func (b *Mailbox) lookup(ctx context.Context, a protocol.Address, out any) (*http.Response, error) {
 	return b.call(ctx, http.MethodGet, "/v1/"+a.String(), nil, nil, out)
 }

@@ -23,31 +23,31 @@ import (
 )
 
 // A working key can be taken without the identity, so an identity can revoke
-// the certificates it made and keep its address. These tests play a box
+// the certificates it made and keep its address. These tests play a mailbox
 // whose working key was taken, and an operator that helps the thief.
 
-func keptList(b *client.Box, of protocol.Address) bool {
+func keptList(b *client.Mailbox, of protocol.Address) bool {
 	_, ok := stateOf(b, "peers/"+of.String()+"/revoked-certs.json")
 	return ok
 }
 
-// mailAs injects mail that signer signed as box from, to box to, as an
+// mailAs injects mail that signer signed as mailbox from, to mailbox to, as an
 // operator delivering what a thief made.
-func mailAs(t *testing.T, e *env, from, to *client.Box, signer ssh.Signer, body string) {
+func mailAs(t *testing.T, e *env, from, to *client.Mailbox, signer ssh.Signer, body string) {
 	t.Helper()
 	line := e.line(from.Identity().Document(), from.Address(), to.Address(), body)
 	e.seal(to, line, forge.Sign(t, signer, line, to.Address()))
 }
 
-// A box renews under a new certificate and revokes every one before it. Mail
-// under the old certificate is refused when it is read, the box's own
+// A mailbox renews under a new certificate and revokes every one before it. Mail
+// under the old certificate is refused when it is read, the mailbox's own
 // included, and whatever a thief signs with the old key afterwards. The
-// address goes on: the box writes and is written to.
+// address goes on: the mailbox writes and is written to.
 func TestRevokeEarlierEndsWhatAnOldWorkingKeySigns(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	stolen := worker(t, a) // read before the renewal deletes it
 	first := numberOf(t, a)
 	send(t, a, b, "sent under the first certificate, and unread")
@@ -79,9 +79,9 @@ func TestRevokeEarlierEndsWhatAnOldWorkingKeySigns(t *testing.T) {
 	e.srv.SetMiddle(nil)
 
 	// The address goes on, both ways.
-	send(t, b, a, "to the box that revoked its old certificates")
+	send(t, b, a, "to the mailbox that revoked its old certificates")
 	if res := receive(t, a); len(res.Delivered) != 1 {
-		t.Fatalf("the box no longer receives: %+v", res)
+		t.Fatalf("the mailbox no longer receives: %+v", res)
 	}
 
 	// A second time, after another renewal: through a higher serial,
@@ -94,7 +94,7 @@ func TestRevokeEarlierEndsWhatAnOldWorkingKeySigns(t *testing.T) {
 	}
 }
 
-// RevokeEarlier after a renewal the server took whose answer the box never
+// RevokeEarlier after a renewal the server took whose answer the mailbox never
 // had, its process killed at "renewal taken": its read of itself records that
 // renewal (noteServed), so it revokes below the certificate in use once the
 // read is done, the one before the renewal among them, and a reader refuses
@@ -110,9 +110,9 @@ func TestRevokeEarlierAfterARenewalTakenUnseenRevokesTheCertificateBeforeIt(t *t
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
 			e := newEnv(t)
-			b, c := e.box(protocol.Classic), e.box(protocol.Classic)
+			b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 			before := numberOf(t, b)
-			stolen := worker(t, b) // in use before the renewal: whoever copied the box holds it
+			stolen := worker(t, b) // in use before the renewal: whoever copied the mailbox holds it
 			e.clock.Add(2 * time.Second)
 			if killed {
 				crash(t, e, b, "rekey", "renewal taken", protocol.Address{})
@@ -128,8 +128,8 @@ func TestRevokeEarlierAfterARenewalTakenUnseenRevokesTheCertificateBeforeIt(t *t
 			if err != nil || certs == nil || certs.Through != inUse-1 || !certs.Revokes(before) || inUse != servedSerial(t, e, x) {
 				t.Errorf("RevokeEarlier, with %d in use before the renewal and %d after (the server's %d): %+v, %v", before, inUse, servedSerial(t, e, x), certs, err)
 			}
-			// What that working key signs after, as b, put in c's box by
-			// whoever holds it and the server: c reads b's box, with its
+			// What that working key signs after, as b, put in c's mailbox by
+			// whoever holds it and the server: c reads b's mailbox, with its
 			// revocation of certificates, before it judges.
 			mailAs(t, e, x, c, stolen, "signed with the working key b used before its renewal")
 			if res := receive(t, c); len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedCertificate {
@@ -146,9 +146,9 @@ func TestOnlyTheIdentitysHighestRevocationCounts(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	doc := a.Identity().Document()
-	// show serves A's box with rec's revocation of certificates in place of
+	// show serves A's mailbox with rec's revocation of certificates in place of
 	// what the server holds, and counts the reads it served so.
 	var shown atomic.Int32
 	show := func(rec protocol.Revocations) {
@@ -156,7 +156,7 @@ func TestOnlyTheIdentitysHighestRevocationCounts(t *testing.T) {
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if x, ok := forge.ReadOf(r); ok && x == a.Address() {
 				shown.Add(1)
-				e.serve(w, r, next, func(br *protocol.BoxResponse) {
+				e.serve(w, r, next, func(br *protocol.MailboxResponse) {
 					br.RevokedCertificates, br.RevokedCertificatesSignature = rec.RevokedCertificates, rec.RevokedCertificatesSignature
 				})
 				return
@@ -165,7 +165,7 @@ func TestOnlyTheIdentitysHighestRevocationCounts(t *testing.T) {
 		})
 	}
 
-	// What a working key can sign: a revocation of the box's own
+	// What a working key can sign: a revocation of the mailbox's own
 	// certificate.
 	forged, err := protocol.NewRevokedCertificates(a.Address(), numberOf(t, a))
 	if err != nil {
@@ -190,13 +190,13 @@ func TestOnlyTheIdentitysHighestRevocationCounts(t *testing.T) {
 	if _, err := a.RevokeEarlier(ctx); err != nil {
 		t.Fatal(err)
 	}
-	var served protocol.BoxResponse
+	var served protocol.MailboxResponse
 	resp, err := http.Get(e.srv.URL + "/v1/" + a.Address().String())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&served); err != nil || served.Record() == nil {
-		t.Fatalf("the read of a box with its certificates revoked: %+v, %v", served, err)
+		t.Fatalf("the read of a mailbox with its certificates revoked: %+v, %v", served, err)
 	}
 	_ = resp.Body.Close()
 	firstList := *served.Record()
@@ -228,15 +228,15 @@ func TestOnlyTheIdentitysHighestRevocationCounts(t *testing.T) {
 	}
 }
 
-// A box's statements are ordered by certificate first. So whoever took a
+// A mailbox's statements are ordered by certificate first. So whoever took a
 // working key can publish a prekey at the highest serial there is and hold
-// nothing: the box's next certificate passes it, at the server and at every
+// nothing: the mailbox's next certificate passes it, at the server and at every
 // sender that had pinned the thief's.
 func TestALaterCertificateOutranksAnyPrekeySerial(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	stolen := worker(t, a)
 	first := numberOf(t, a)
 	st, _ := e.srv.Prekey(a.Address())
@@ -271,15 +271,15 @@ func TestALaterCertificateOutranksAnyPrekeySerial(t *testing.T) {
 	if err != nil || got.Serial <= first || got.Serial >= protocol.MaxSerial {
 		t.Fatalf("a renewal after a prekey at the last serial: %+v, %v", got, err)
 	}
-	// B follows the box to the later certificate, and mail reaches A again.
-	send(t, b, a, "to the box that took its address back")
+	// B follows the mailbox to the later certificate, and mail reaches A again.
+	send(t, b, a, "to the mailbox that took its address back")
 	if res := receive(t, a); len(res.Delivered) != 1 {
 		t.Fatalf("mail after the renewal: %+v", res)
 	}
 	// And never back: the thief's statement, served again, is a rollback.
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/"+a.Address().String() {
-			fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: a.Identity().Document(), Prekey: p.Statement(), PrekeySignature: sig})
+			fakeserver.WriteJSON(w, http.StatusOK, protocol.MailboxResponse{Identity: a.Identity().Document(), Prekey: p.Statement(), PrekeySignature: sig})
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -289,22 +289,22 @@ func TestALaterCertificateOutranksAnyPrekeySerial(t *testing.T) {
 	}
 }
 
-// A revocation of certificates the box keeps that no longer verifies, or is
-// no record, is an error at each use, never nothing revoked: the box's own
+// A revocation of certificates the mailbox keeps that no longer verifies, or is
+// no record, is an error at each use, never nothing revoked: the mailbox's own
 // stops a renewal, and a peer's a send to it and a drain of its mail, which
 // stays on the server (#69).
 func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnError(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	if _, err := a.Rekey(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.RevokeEarlier(ctx); err != nil {
 		t.Fatal(err)
 	}
-	send(t, b, a, "keeps what a's box carries")
+	send(t, b, a, "keeps what a's mailbox carries")
 	raw, ok := a.Record(t, "revoked-certs.json")
 	if !ok {
 		t.Fatal("a keeps no revocation of its certificates")
@@ -331,33 +331,33 @@ func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnError(t *testing.T) {
 		}
 	}
 	b.SetRecord(t, "peers/"+a.Address().String()+"/revoked-certs.json", tampered)
-	if _, err := b.Send(ctx, a.Address(), "to a box whose revocation b keeps broken"); err == nil || !strings.Contains(err.Error(), "no longer verifies") {
+	if _, err := b.Send(ctx, a.Address(), "to a mailbox whose revocation b keeps broken"); err == nil || !strings.Contains(err.Error(), "no longer verifies") {
 		t.Errorf("a peer's that no longer verifies: send %v", err)
 	}
 	a.SetRecord(t, "revoked-certs.json", raw)
-	send(t, a, b, "from a box whose revocation b keeps broken")
+	send(t, a, b, "from a mailbox whose revocation b keeps broken")
 	if _, err := b.Receive(ctx); err == nil || !strings.Contains(err.Error(), "no longer verifies") || e.srv.Count(b.Address()) != 1 {
 		t.Errorf("a peer's that no longer verifies: recv %v, the server holds %d", err, e.srv.Count(b.Address()))
 	}
 }
 
-// So it is where the server shows none of the box's revocations, and what a
-// box keeps is all there is (PROTOCOL.md §10.2): above, each command meets
-// the fault first in its keep of what the read of a's box shows, so each use
+// So it is where the server shows none of the mailbox's revocations, and what a
+// mailbox keeps is all there is (PROTOCOL.md §10.2): above, each command meets
+// the fault first in its keep of what the read of a's mailbox shows, so each use
 // of the kept record is held here, the renewal's (nextNumber), the send's
 // (resolve) and the drain's (judge) (#392).
 func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnErrorWhereTheServerShowsNone(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	if _, err := a.Rekey(ctx, ""); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := a.RevokeEarlier(ctx); err != nil {
 		t.Fatal(err)
 	}
-	send(t, b, a, "keeps what a's box carries")
+	send(t, b, a, "keeps what a's mailbox carries")
 	raw, ok := b.Record(t, "peers/"+a.Address().String()+"/revoked-certs.json")
 	if !ok {
 		t.Fatal("b keeps no revocation of a's certificates")
@@ -377,8 +377,8 @@ func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnErrorWhereTheServerSh
 	}
 	b.SetRecord(t, "peers/"+a.Address().String()+"/revoked-certs.json", tampered)
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if r.Method == http.MethodGet && r.URL.Path == boxPath(a) {
-			e.serve(w, r, next, func(br *protocol.BoxResponse) { br.RevokedCertificates, br.RevokedCertificatesSignature = nil, nil })
+		if r.Method == http.MethodGet && r.URL.Path == mailboxPath(a) {
+			e.serve(w, r, next, func(br *protocol.MailboxResponse) { br.RevokedCertificates, br.RevokedCertificatesSignature = nil, nil })
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -388,14 +388,14 @@ func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnErrorWhereTheServerSh
 	published := numberOf(t, a)
 	e.clock.Add(2 * time.Second)
 	if _, err := a.Rekey(ctx, ""); err == nil || !strings.Contains(err.Error(), "no longer verifies") || numberOf(t, a) != published {
-		t.Errorf("a renewal past a kept revocation of the box's own certificates that does not verify: %v, published %d of %d", err, numberOf(t, a), published)
+		t.Errorf("a renewal past a kept revocation of the mailbox's own certificates that does not verify: %v, published %d of %d", err, numberOf(t, a), published)
 	}
 	a.SetRecord(t, "revoked-certs.json", own)
 	n := e.srv.Count(a.Address())
-	if _, err := b.Send(ctx, a.Address(), "to a box whose revocation b keeps broken"); err == nil || !strings.Contains(err.Error(), "no longer verifies") || e.srv.Count(a.Address()) != n {
+	if _, err := b.Send(ctx, a.Address(), "to a mailbox whose revocation b keeps broken"); err == nil || !strings.Contains(err.Error(), "no longer verifies") || e.srv.Count(a.Address()) != n {
 		t.Errorf("a send past a kept revocation of the peer's certificates that does not verify: %v; the server holds %d for a, %d before", err, e.srv.Count(a.Address()), n)
 	}
-	send(t, a, b, "from a box whose revocation b keeps broken")
+	send(t, a, b, "from a mailbox whose revocation b keeps broken")
 	res, err := b.Receive(ctx)
 	if err == nil || !strings.Contains(err.Error(), "no longer verifies") || e.srv.Count(b.Address()) != 1 {
 		t.Errorf("a drain past a kept revocation of the sender's certificates that does not verify: %v, delivered %d; the server holds %d", err, len(res.Delivered), e.srv.Count(b.Address()))
@@ -407,7 +407,7 @@ func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnErrorWhereTheServerSh
 func TestASendNamesBothSerials(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	if _, err := b.Rekey(context.Background(), ""); err != nil {
 		t.Fatal(err)
 	}
@@ -430,7 +430,7 @@ func TestASendNamesBothSerials(t *testing.T) {
 	if contentType != protocol.CiphertextContentType || !bytes.HasPrefix(body, []byte("age-encryption.org/v1\n")) || hex.EncodeToString(h[:]) != id {
 		t.Errorf("a send's body, %s: %q…, not the ciphertext the receipt names", contentType, body[:min(len(body), 40)])
 	}
-	// A statement whose serial is not its certificate's: a box makes none, so
+	// A statement whose serial is not its certificate's: a mailbox makes none, so
 	// here its working key signs one five above, and the two serials differ.
 	st, _ := e.srv.Prekey(b.Address())
 	p, err := protocol.ParsePrekey(st)
@@ -445,10 +445,10 @@ func TestASendNamesBothSerials(t *testing.T) {
 	query = ""
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == boxPath(b):
-			fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: b.Identity().Document(), Prekey: p.Statement(), PrekeySignature: sig})
+		case r.Method == http.MethodGet && r.URL.Path == mailboxPath(b):
+			fakeserver.WriteJSON(w, http.StatusOK, protocol.MailboxResponse{Identity: b.Identity().Document(), Prekey: p.Statement(), PrekeySignature: sig})
 			return
-		case r.Method == http.MethodPost && r.URL.Path == boxPath(b)+"/messages" && query == "":
+		case r.Method == http.MethodPost && r.URL.Path == mailboxPath(b)+"/messages" && query == "":
 			query = r.URL.RawQuery
 		}
 		next.ServeHTTP(w, r)

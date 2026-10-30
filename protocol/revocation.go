@@ -13,8 +13,8 @@ import (
 // to the address and the signature verifies under the document's key, so it
 // is worth the same from any server or from a file a person handed over.
 //
-// It is also the record a box's owner makes in advance and keeps apart from
-// the box. It holds the identity document because a box that is lost no
+// It is also the record a mailbox's owner makes in advance and keeps apart from
+// the mailbox. It holds the identity document because a mailbox that is lost no
 // longer has one.
 //
 // It names its own type, RecordType, in its member type, so that one JSON
@@ -65,7 +65,7 @@ func (r *Revocations) checkType() error {
 // statement.
 var ErrRevocation = errors.New("not a revocation of that address")
 
-// SignRevocation signs the revocation of box a with its identity key. The
+// SignRevocation signs the revocation of mailbox a with its identity key. The
 // statement is fixed text with no date in it, so the signature can be made
 // long before it is used.
 func SignRevocation(identity ssh.Signer, a Address) ([]byte, error) {

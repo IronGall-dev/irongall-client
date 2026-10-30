@@ -40,7 +40,7 @@ func (w *world) answering(method, suffix string, edit func(rw http.ResponseWrite
 // form, costs one drain that much, with the mail left on the server.
 func TestScriptRefusesInItsOwnWords(t *testing.T) {
 	w := newWorld(t)
-	a, b := w.box(), w.box()
+	a, b := w.mailbox(), w.mailbox()
 	q0, p0 := len(b.files("refused")), len(b.files("peers"))
 	now, id := time.Now().UTC().Format(protocol.TimeLayout), b64(a.read("identity.doc"))
 	var evil1 string
@@ -68,7 +68,7 @@ func TestScriptRefusesInItsOwnWords(t *testing.T) {
 	op := w.operator()
 	n := len(w.srv.Requests())
 	for range 3 {
-		m := &sbox{w: w, dir: filepath.Join(t.TempDir(), "made")}
+		m := &shMailbox{w: w, dir: filepath.Join(t.TempDir(), "made")}
 		m.must(`mkdir -p "$DR"; ssh-keygen -q -t ed25519 -N '' -C '' -f "$DR/identity"; printf 'dromas-v1\n%s\n' "$(cut -d' ' -f1,2 "$DR/identity.pub")" > "$DR/identity.doc"; sha256sum < "$DR/identity.doc" | cut -c1-64 > "$DR/address"`)
 		m.addr = mustAddress(t, m.dir)
 		l := m.line(b.addr, "00000000-0000-4000-8000-000000000000", "from a sender the server made up", 0)
@@ -164,7 +164,7 @@ func matches(pattern, s string) bool {
 // A code counts only beside its own type, and a Retry-After is delay-seconds,
 // digits alone, of at most a day.
 func TestScriptReadsAProblemsCodeAndWait(t *testing.T) {
-	b := &sbox{w: newWorld(t), dir: t.TempDir()}
+	b := &shMailbox{w: newWorld(t), dir: t.TempDir()}
 	out := b.must(`p(){ printf '%s\n%s\n\n' "$1" "$2" > "$DR/error.meta"; printf %s "$3" > "$DR/error.json"; }
 p 429 0017 '{"type":"tag:dromas.dev,2026-10-26:errors/rate_limited","status":429,"code":"rate_limited"}'; echo "1 $(dr_code) $(dr_wait)"
 p 429 0017 '{"type":"https://dromas.dev/errors/rate_limited","status":429,"code":"rate_limited"}'; echo "2 $(dr_code)"
@@ -193,7 +193,7 @@ func onBlock(n int) bool {
 // certificate with 33 days or less left signs no mail.
 func TestScriptPads(t *testing.T) {
 	w := newWorld(t)
-	p, q := w.box(), w.box()
+	p, q := w.mailbox(), w.mailbox()
 	var sizes []int
 	posts := func() {
 		sizes = nil
@@ -264,8 +264,8 @@ func TestScriptPads(t *testing.T) {
 	}
 	// The sender reads its envelope as the recipient will, and checks the size of what age wrote.
 	n := w.posts(q.addr)
-	writeFile(t, p.file("other.P"), envelope(t, p.addr, w.operator().addr, []byte(p.read("identity.doc")), "33333333-2222-4333-8444-555555555555", "for another box", 0))
-	if r := p.sh("dr_seal " + q.addr.String() + ` "$DR/other"`); r.rc == 0 || !strings.Contains(r.err, "is not one this box made for that address: reattributed") {
+	writeFile(t, p.file("other.P"), envelope(t, p.addr, w.operator().addr, []byte(p.read("identity.doc")), "33333333-2222-4333-8444-555555555555", "for another mailbox", 0))
+	if r := p.sh("dr_seal " + q.addr.String() + ` "$DR/other"`); r.rc == 0 || !strings.Contains(r.err, "is not one this mailbox made for that address: reattributed") {
 		t.Errorf("an envelope that names another recipient: %v", r)
 	}
 	if r := p.sh(`age(){ command age "$@" && printf x; }; printf 'a size that tells' | dr_send ` + q.addr.String()); r.rc == 0 || !strings.Contains(r.err, "is not the 2048 bytes its padding was made for") || w.posts(q.addr) != n {
@@ -276,8 +276,8 @@ func TestScriptPads(t *testing.T) {
 	}
 }
 
-// prekeyOf is a box's prekey statement as the server holds it.
-func prekeyOf(w *world, b *sbox) []byte {
+// prekeyOf is a mailbox's prekey statement as the server holds it.
+func prekeyOf(w *world, b *shMailbox) []byte {
 	st, _ := w.srv.Prekey(b.addr)
 	return st
 }
