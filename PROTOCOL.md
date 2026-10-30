@@ -398,6 +398,7 @@ What each code means, and what a client does on it:
 | 409 | `stale_prekey` | a newer prekey exists: read the mailbox again and seal the same envelope (`prekey_serial`, `certificate_serial` name the current one) |
 | 409 | `prekey_expired` | the recipient's prekey has ended, or is under a revoked certificate: its owner must renew |
 | 410 | `revoked` | the address is revoked, for good; `record` carries the server's record of it (Section 10.3), which a client checks (Section 12.5) |
+| 410 | `version_retired` | the server no longer takes the version the request names (Section 11.17); `min_version`, when the server sets a floor, is the lowest it takes |
 | 412 | `precondition_failed` | a precondition was false (Section 11.2) |
 | 413 | `too_large` | a body or ciphertext over its cap, or an ACL with more entries than the server takes; `limit` gives the cap |
 | 429 | `rate_limited` | past a limit (Section 11.5); `subject`, `quota_id`, and for a number a day `limit` |
@@ -410,8 +411,9 @@ Every `429` carries `Retry-After`.
 
 ### 11.4. The order of refusals
 
-Which refusal a server answers first is its own, but for three rules. Otherwise, where a request fails several checks, a server answers the one it finds first, and a client acts on whichever comes; the steps of Sections 11.7 and 11.10 are numbered to be cited, not to order them.
+Which refusal a server answers first is its own, but for four rules. Otherwise, where a request fails several checks, a server answers the one it finds first, and a client acts on whichever comes; the steps of Sections 11.7 and 11.10 are numbered to be cited, not to order them.
 
+0. **A retired version comes before everything** (Section 11.17): such a request is answered `410 version_retired` with nothing of it read, its pass included, and counts against nothing but the address's `requests`.
 1. **A mailbox's state comes before any pass.** A call answers the state of the mailbox whose pass it carries, and a read of a mailbox the state of the mailbox it reads, before any pass is judged: a call with a mailbox's own pass, `404 no_such_mailbox` for a mailbox unknown, `410 revoked`, and `401 certificate_revoked` where it takes a pass under the mailbox's current certificate and the identity has revoked that certificate; a send, of its sender, `403 unknown_sender`, `403 sender_revoked` and `401 certificate_revoked`; the read of a mailbox, `404 no_such_mailbox` or `410 revoked` with its record; the read of revocations, `404 not_revoked` or `200` with the record. So a mailbox learns its own state whatever pass it carries.
 2. **What could change nothing is answered from what is kept.** A registration of a mailbox the server holds is answered from its record (Section 11.7, step 5), and an identical retry of it, or of a renewal, is `200 {}`; a revocation of an address the server holds revoked, or of certificates through a serial no higher than the one held, is answered from what is held (Section 11.15); a send of a ciphertext its recipient holds unacked gets the receipt it holds, whatever has changed at that mailbox since (Section 11.10, step 6). None of them is refused by a count of what it would make new. The budgets that bound any call may still defer one with a `429`: the address's `requests` and `misses`, and the mailbox's `calls`.
 3. **Preconditions are evaluated once the call knows its target's state** (by its route, its method, its pass where it takes one, and the read of its target) **and before it acts** (RFC 9110 §13.2.1, §13.2.2). What is refused before that point is answered as without them. After it, a false one is a call that does nothing but count: a list's is a poll, a fetch's or an ack's one of the mailbox's calls, and it takes no cursor and no new message, marks nothing fetched and writes nothing. A send evaluates them before its dedupe (Section 11.10, step 6).
@@ -582,6 +584,28 @@ A mailbox may belong to one account at its server. The protocol fixes how a mail
 - **An account id** is 1 to 32 of `a`–`z`, `0`–`9` and `-`.
 - **An account's caps on a ciphertext** stay at most 16 MiB.
 
+### 11.17. Versions
+
+- **Every request names the version of the client that makes it,** in `Dromas-Version`: the version of its release as SemVer 2.0.0 writes one ([SemVer] §2, §9), `MAJOR.MINOR.PATCH` and an optional pre-release, with no `v` and no build metadata. A client's major and minor are the protocol's that it implements, and a major of `0` is a release before version 1 is declared. A request without the field, or with a value of another form, is read as version `0.0.0`.
+- **A server's version policy** is its own, in four parts: a floor, the versions it deems deprecated from a date (its deprecations), the versions it has scheduled to stop taking (its sunsets), and the latest version it names, if it names one. A version in the policy is written `MAJOR.MINOR` or `MAJOR.MINOR.PATCH`. A deprecation or a sunset is a date and either `below` a version, which covers every version SemVer orders before it (a version written `MAJOR.MINOR` stands there for `MAJOR.MINOR.0`), or `version`, which covers every version whose major, minor and, where it is written, patch are its own. A server MUST NOT schedule a sunset earlier than a deprecation of the same `below` or `version` (RFC 9745 §4).
+- **`Deprecation`.** An answer under `/v1/` to a request whose version a deprecation covers carries `Deprecation` (RFC 9745) as RFC 9745 §2.1 writes it, a Date (RFC 9651 §3.3.7), `@` and the date's Unix time in seconds: the earliest date of the deprecations that cover it. A date passed says the version is deprecated, and one to come that it will be then. Its scope is the version the request names, on every route under `/v1/`, wider than the resource RFC 9745 §2.2 gives the field by default. No other answer carries it, and no answer carries a `deprecation` link (RFC 9745 §3): a URL is a server's text, which a client never shows (Section 11.3).
+- **`Sunset`.** An answer under `/v1/` to a request whose version a sunset covers carries `Sunset` (RFC 8594), with the same scope: the earliest date of the sunsets that cover it. No other answer carries it.
+- **A retired version.** A request whose version is below the floor, or covered by a sunset whose date has passed at the server's clock, is answered `410 version_retired`, with `min_version` where the server sets a floor (Section 11.4, rule 0). `GET /v1/` takes every version.
+- **A client reads `Deprecation` on every answer as a Date, `@` and an Integer, an optional `-` and 1 to 15 digits (RFC 9651 §3.3.1, §3.3.7), and `Sunset` as an HTTP-date (RFC 9110 §5.6.7), and nothing more:** a value of any other form is none, and neither is shown as the server's words (Section 11.3). A client tells its reader of a deprecation and of a sunset of its own version, each with its date, on every command that meets one.
+- **The latest version.** A client SHOULD read the server's document (Section 11.18) at most once a day, and compares its own version with the document's `latest_version` in the parts that writes, from the major on: where `latest_version`'s is higher in one of them, it SHOULD tell its reader an upgrade is available; where the two are equal in every part `latest_version` writes, it MUST NOT, nor where its own is the higher: a client may be released before its server names that release.
+
+### 11.18. The server's document
+
+`GET /v1/` takes no pass and answers the server's version policy and the capabilities it serves, the same to every caller:
+
+- **`min_version`** is the floor, when the server sets one.
+- **`latest_version`** is the latest version the server names, when it names one.
+- **`deprecations`** lists each deprecation as `below` or `version`, and `at`, its date, a time (Section 2.2).
+- **`sunsets`** lists each scheduled sunset the same way. A sunset whose date has passed stays until the server raises its floor past it.
+- **`capabilities`** lists each capability of version 1 the server serves, by `name`. A name is 1 to 64 of `a`–`z`, `0`–`9` and `_`, beginning with a letter, and is defined in this section. A client ignores a name it does not know, and never uses a capability the server does not list. This version defines none.
+
+A server answers at most 64 deprecations, 64 sunsets and 64 capabilities, and a client reads no more: a document with more, or with a sunset earlier than a deprecation of the same `below` or `version`, breaks its form.
+
 ## 12. Clients
 
 ### 12.1. Keys and what a client keeps
@@ -732,6 +756,7 @@ Until version 1 is declared stable, nothing is final. From that declaration:
 - **Signed statements match their format exactly:** the identity document, the prekey statement, the pass, and the two revocations. A new format takes a new tag. Each namespace is versioned on its own.
 - **A new member is optional.**
 - **A server MAY add a route.** A client reads a plain `404` or `405` as a route that server does not offer (Section 11.2).
+- **A client names its version on every request, and a server says when it stops taking one** (Section 11.17): a `Deprecation` on every answer to a version it deems deprecated, a `Sunset` on every answer to one it will stop taking, and `410 version_retired` once it has. A feature that is not in version 1.0 is a capability the server lists at `GET /v1/` (Section 11.18), or a later minor's, and a client uses it only where the server lists it or names that minor as its latest.
 - **`dromas-revoke-v1` stays valid for good,** so a revocation signed in advance keeps working.
 - **A new identity key type is an addition inside v1:** the identity document has one form for every type (Section 4.1), so a type defined later takes no new tag, and a mailbox declares the types its client verifies (Section 7).
 - **A new prekey type is an addition inside v1** the same way (Section 6).
@@ -842,7 +867,8 @@ Dromas protects a message's content from everyone but its recipient, and its sen
 - **[BIP 173]** Bech32
 - **[FIPS 180-4]**, **[FIPS 186-5]**
 - **[RFC 2119]**, **[RFC 8174]** BCP 14
-- **[RFC 3339]** timestamps · **[RFC 4151]** the `tag` URI scheme · **[RFC 4251]**, **[RFC 4253]** SSH · **[RFC 4648]** base64 · **[RFC 5656]** ECDSA in SSH · **[RFC 6454]** origins · **[RFC 7457]** TLS attacks · **[RFC 7493]** I-JSON · **[RFC 8032]** EdDSA · **[RFC 8259]** JSON · **[RFC 8555]** ACME · **[RFC 8709]** Ed25519 in SSH · **[RFC 9110]** HTTP semantics · **[RFC 9457]** problem details · **[RFC 9562]** UUIDs
+- **[RFC 3339]** timestamps · **[RFC 4151]** the `tag` URI scheme · **[RFC 4251]**, **[RFC 4253]** SSH · **[RFC 4648]** base64 · **[RFC 5656]** ECDSA in SSH · **[RFC 6454]** origins · **[RFC 7457]** TLS attacks · **[RFC 7493]** I-JSON · **[RFC 8032]** EdDSA · **[RFC 8259]** JSON · **[RFC 8555]** ACME · **[RFC 8594]** the `Sunset` header field · **[RFC 8709]** Ed25519 in SSH · **[RFC 9110]** HTTP semantics · **[RFC 9457]** problem details · **[RFC 9562]** UUIDs · **[RFC 9651]** Structured Field Values · **[RFC 9745]** the `Deprecation` header field
+- **[SemVer]** Semantic Versioning 2.0.0, https://semver.org/spec/v2.0.0.html
 
 ## Appendix A. Where OpenSSH releases differ (informative)
 

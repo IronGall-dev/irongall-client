@@ -27,7 +27,7 @@ import (
 //
 // Its buckets:
 //
-//	mailbox          the mailbox's own records, each by its name: serial, pass, etag, seen-floor, acl, acl-another-writer, acl-replaced, revoked, revoked-certs, renew-failed, not-made, partial
+//	mailbox          the mailbox's own records, each by its name: serial, pass, etag, seen-floor, acl, acl-another-writer, acl-replaced, revoked, revoked-certs, renew-failed, not-made, partial, deprecation, sunset, document-read, latest (version.go)
 //	prekeys      each prekey statement this mailbox signed, by its serial: the statement, its signature and when it was signed, in one value
 //	intent       the renewal under way, under "renewal": the number it took; under "adopt-acl", a restore's adoption of its server's ACL, until it is done; and under "acl-read", the read of its server's ACL a renewal recv began owes, with the serial the mailbox had published then, until it is made
 //	peers        what this mailbox pinned of each peer, by its address, in one value

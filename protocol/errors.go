@@ -56,7 +56,8 @@ const (
 	CodeRequestTimeout Code = "request_timeout" // the body did not arrive in the time the server waits for it: send it again
 
 	// 410
-	CodeRevoked Code = "revoked" // the mailbox you named is revoked, forever
+	CodeRevoked        Code = "revoked"         // the mailbox you named is revoked, forever
+	CodeVersionRetired Code = "version_retired" // the server no longer takes the client's version: upgrade (PROTOCOL.md §11.17)
 
 	// 412
 	CodePreconditionFailed Code = "precondition_failed" // an If-Match the server evaluated false (RFC 9110 §13.1.1)
@@ -108,6 +109,7 @@ var codes = map[Code]struct {
 	CodePrekeyExpired:         {http.StatusConflict, "Prekey expired"},
 	CodeRequestTimeout:        {http.StatusRequestTimeout, "Request timeout"},
 	CodeRevoked:               {http.StatusGone, "Revoked"},
+	CodeVersionRetired:        {http.StatusGone, "Version retired"},
 	CodePreconditionFailed:    {http.StatusPreconditionFailed, "Precondition failed"},
 	CodeTooLarge:              {http.StatusRequestEntityTooLarge, "Too large"},
 	CodeRateLimited:           {http.StatusTooManyRequests, "Rate limited"},
@@ -190,6 +192,10 @@ type Problem struct {
 	// Member is the request member or query parameter that is missing,
 	// unknown, given twice or not of its form (bad_request).
 	Member string `json:"member,omitempty"`
+	// MinVersion is the lowest version a server that retired the request's
+	// takes, where it sets a floor (version_retired): a policy's version
+	// (ParsePolicyVersion), which a client shows only once it has that form.
+	MinVersion string `json:"min_version,omitempty"`
 	// Record is the revocation record of the address a 410 revoked names,
 	// which the read of a mailbox always carries, and any other call's where its
 	// server answers from the record (PROTOCOL.md §11.3). A client checks it,

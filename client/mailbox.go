@@ -95,6 +95,15 @@ type Options struct {
 	// (Result.More), and a fetch under way keeps what it read for the next
 	// Receive to go on from. Zero is DefaultDrainTime.
 	DrainTime time.Duration
+	// Version is the version every request names in Dromas-Version
+	// (PROTOCOL.md §11.17): the function [Version] if empty, and that is the one to
+	// use. Another is for a test, and must be of a request's form
+	// (protocol.ParseVersion).
+	Version string
+	// Versions, if not nil, keeps what every mailbox made with these options
+	// meets of its version, for the caller to say once its command is done
+	// ([Versions]). Otherwise each Mailbox keeps its own.
+	Versions *Versions
 }
 
 // Mailbox is one mailbox: its state directory and the server it talks to. It is
@@ -139,6 +148,10 @@ type Mailbox struct {
 	// holding is what the mailbox has learned of its network while it holds
 	// its list (Hold), which the default client's connections follow.
 	holding holding
+	// version is the version every request names (Options.Version), and met
+	// what the answers to them said of it (Versions).
+	version string
+	met     *Versions
 }
 
 // Open opens an existing mailbox's state directory, its owner's alone as Init
@@ -194,6 +207,19 @@ func newMailbox(dir string, opt Options) (*Mailbox, error) {
 	if b.drainTime <= 0 {
 		b.drainTime = DefaultDrainTime
 	}
+	b.version = opt.Version
+	if b.version == "" {
+		b.version = Version()
+	} else if _, err := protocol.ParseVersion(b.version); err != nil {
+		return nil, fmt.Errorf("%.80q is not a version a request names: MAJOR.MINOR.PATCH and an optional pre-release, with no v", b.version)
+	}
+	b.met = opt.Versions
+	if b.met == nil {
+		b.met = &Versions{}
+	}
+	b.met.mu.Lock()
+	b.met.own, b.met.now = b.version, b.now
+	b.met.mu.Unlock()
 	return b, nil
 }
 

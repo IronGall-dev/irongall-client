@@ -16,10 +16,10 @@ info:
 
     No server publishes this file. `api/apitest` holds servers to it.
 
-    What every request and answer under `/v1/` shares (`Date`,
-    `Cache-Control`, problem details, the JSON rules, unknown members,
-    preconditions, `HEAD` and unknown routes) is `PROTOCOL.md` §11.2, §11.3,
-    §3.3 and §14.
+    What every request and answer under `/v1/` shares (`Dromas-Version`,
+    `Deprecation`, `Sunset`, `Date`, `Cache-Control`, problem details, the
+    JSON rules, unknown members, preconditions, `HEAD` and unknown routes)
+    is `PROTOCOL.md` §11.2, §11.3, §11.17, §3.3 and §14.
   license:
     name: Apache-2.0
     identifier: Apache-2.0
@@ -28,6 +28,8 @@ security:
   - pass: []
 
 tags:
+  - name: server
+    description: The server's version policy and the capabilities it serves (`PROTOCOL.md` §11.17, §11.18).
   - name: mailbox
     description: Registering a mailbox, and the read of a mailbox (`PROTOCOL.md` §11.7, §11.8).
   - name: messages
@@ -40,8 +42,80 @@ tags:
     description: The page a mailbox's link opens (`PROTOCOL.md` §4.3).
 
 paths:
+  /v1/:
+    parameters:
+      - $ref: '#/components/parameters/DromasVersion'
+    get:
+      tags: [server]
+      operationId: getDocument
+      summary: The server's version policy and capabilities
+      description: The server's document (`PROTOCOL.md` §11.18), the same to every caller. It takes every version.
+      security: []
+      responses:
+        '200':
+          description: The server's document.
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
+            Content-Security-Policy:
+              $ref: '#/components/headers/Content-Security-Policy'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/X-Content-Type-Options'
+            Referrer-Policy:
+              $ref: '#/components/headers/Referrer-Policy'
+            Cross-Origin-Resource-Policy:
+              $ref: '#/components/headers/Cross-Origin-Resource-Policy'
+            Cross-Origin-Opener-Policy:
+              $ref: '#/components/headers/Cross-Origin-Opener-Policy'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServerDocument'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+    head:
+      tags: [server]
+      operationId: headDocument
+      summary: The server's document, without content
+      description: 'The `GET` beside it, answered without content (RFC 9110 §9.3.2; `PROTOCOL.md` §11.2).'
+      security: []
+      responses:
+        '200':
+          description: The server's document, without content.
+          headers:
+            Date:
+              $ref: '#/components/headers/Date'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
+            Cache-Control:
+              $ref: '#/components/headers/Cache-Control'
+            Content-Security-Policy:
+              $ref: '#/components/headers/Content-Security-Policy'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/X-Content-Type-Options'
+            Referrer-Policy:
+              $ref: '#/components/headers/Referrer-Policy'
+            Cross-Origin-Resource-Policy:
+              $ref: '#/components/headers/Cross-Origin-Resource-Policy'
+            Cross-Origin-Opener-Policy:
+              $ref: '#/components/headers/Cross-Origin-Opener-Policy'
+        '429':
+          $ref: '#/components/responses/HeadTooManyRequests'
+        '503':
+          $ref: '#/components/responses/HeadUnavailable'
   /v1/{addr}:
     parameters:
+      - $ref: '#/components/parameters/DromasVersion'
       - $ref: '#/components/parameters/addr'
     get:
       tags: [mailbox]
@@ -61,6 +135,10 @@ paths:
           headers:
             Date:
               $ref: '#/components/headers/Date'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
             Content-Security-Policy:
@@ -86,6 +164,10 @@ paths:
           headers:
             Date:
               $ref: '#/components/headers/Date'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
             Content-Security-Policy:
@@ -105,10 +187,14 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '410':
-          description: '`revoked`, with the revocation record this server holds in `record`.'
+          description: '`revoked`, with the revocation record this server holds in `record`; or `version_retired` (`PROTOCOL.md` §11.17).'
           headers:
             Date:
               $ref: '#/components/headers/Date'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
             Content-Security-Policy:
@@ -126,14 +212,20 @@ paths:
               schema:
                 allOf:
                   - $ref: '#/components/schemas/Problem'
-                  - required: [record]
-                    properties:
+                  - properties:
                       status:
                         const: 410
                       code:
-                        const: revoked
+                        enum: [revoked, version_retired]
                       record:
                         $ref: '#/components/schemas/RevokedRecord'
+                  - if:
+                      required: [code]
+                      properties:
+                        code:
+                          const: revoked
+                    then:
+                      required: [record]
         '412':
           $ref: '#/components/responses/PreconditionFailed'
         '429':
@@ -155,6 +247,10 @@ paths:
           headers:
             Date:
               $ref: '#/components/headers/Date'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
             Content-Security-Policy:
@@ -176,6 +272,10 @@ paths:
           headers:
             Date:
               $ref: '#/components/headers/Date'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
             Content-Security-Policy:
@@ -245,6 +345,7 @@ paths:
 
   /v1/{addr}/prekey:
     parameters:
+      - $ref: '#/components/parameters/DromasVersion'
       - $ref: '#/components/parameters/addr'
     put:
       tags: [owner]
@@ -288,6 +389,7 @@ paths:
 
   /v1/{addr}/revocations:
     parameters:
+      - $ref: '#/components/parameters/DromasVersion'
       - $ref: '#/components/parameters/addr'
     get:
       tags: [revocation]
@@ -306,6 +408,10 @@ paths:
           headers:
             Date:
               $ref: '#/components/headers/Date'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
             Content-Security-Policy:
@@ -327,6 +433,10 @@ paths:
           headers:
             Date:
               $ref: '#/components/headers/Date'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
             Content-Security-Policy:
@@ -343,6 +453,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/VersionRetired'
         '412':
           $ref: '#/components/responses/PreconditionFailed'
         '429':
@@ -364,6 +476,10 @@ paths:
           headers:
             Date:
               $ref: '#/components/headers/Date'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
             Content-Security-Policy:
@@ -381,6 +497,10 @@ paths:
           headers:
             Date:
               $ref: '#/components/headers/Date'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
             Content-Security-Policy:
@@ -396,6 +516,8 @@ paths:
         '400':
           $ref: '#/components/responses/HeadRefused'
         '404':
+          $ref: '#/components/responses/HeadRefused'
+        '410':
           $ref: '#/components/responses/HeadRefused'
         '412':
           $ref: '#/components/responses/HeadRefused'
@@ -445,6 +567,7 @@ paths:
 
   /v1/{addr}/acl:
     parameters:
+      - $ref: '#/components/parameters/DromasVersion'
       - $ref: '#/components/parameters/addr'
     put:
       tags: [owner]
@@ -523,6 +646,10 @@ paths:
           headers:
             Date:
               $ref: '#/components/headers/Date'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
             Content-Security-Policy:
@@ -576,6 +703,10 @@ paths:
           headers:
             Date:
               $ref: '#/components/headers/Date'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
             Content-Security-Policy:
@@ -595,6 +726,10 @@ paths:
           headers:
             Date:
               $ref: '#/components/headers/Date'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
             Content-Security-Policy:
@@ -625,6 +760,7 @@ paths:
           $ref: '#/components/responses/HeadUnavailable'
   /v1/{addr}/account:
     parameters:
+      - $ref: '#/components/parameters/DromasVersion'
       - $ref: '#/components/parameters/addr'
     put:
       tags: [owner]
@@ -646,6 +782,10 @@ paths:
           headers:
             Date:
               $ref: '#/components/headers/Date'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
             Content-Security-Policy:
@@ -714,6 +854,7 @@ paths:
 
   /v1/{addr}/messages:
     parameters:
+      - $ref: '#/components/parameters/DromasVersion'
       - $ref: '#/components/parameters/addr'
     post:
       tags: [messages]
@@ -748,6 +889,10 @@ paths:
           headers:
             Date:
               $ref: '#/components/headers/Date'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
             Content-Security-Policy:
@@ -769,6 +914,10 @@ paths:
           headers:
             Date:
               $ref: '#/components/headers/Date'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
             Content-Security-Policy:
@@ -847,6 +996,10 @@ paths:
           headers:
             Date:
               $ref: '#/components/headers/Date'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
             Content-Security-Policy:
@@ -872,6 +1025,10 @@ paths:
           headers:
             Date:
               $ref: '#/components/headers/Date'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
             Content-Security-Policy:
@@ -944,6 +1101,10 @@ paths:
           headers:
             Date:
               $ref: '#/components/headers/Date'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
             Content-Security-Policy:
@@ -965,6 +1126,10 @@ paths:
           headers:
             Date:
               $ref: '#/components/headers/Date'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
             Content-Security-Policy:
@@ -1000,6 +1165,7 @@ paths:
           $ref: '#/components/responses/HeadUnavailable'
   /v1/{addr}/messages/{id}:
     parameters:
+      - $ref: '#/components/parameters/DromasVersion'
       - $ref: '#/components/parameters/addr'
       - $ref: '#/components/parameters/id'
     get:
@@ -1030,6 +1196,10 @@ paths:
           headers:
             Date:
               $ref: '#/components/headers/Date'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
             Content-Security-Policy:
@@ -1049,6 +1219,10 @@ paths:
           headers:
             Date:
               $ref: '#/components/headers/Date'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
             Content-Security-Policy:
@@ -1074,6 +1248,10 @@ paths:
           headers:
             Date:
               $ref: '#/components/headers/Date'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
             Content-Security-Policy:
@@ -1130,6 +1308,10 @@ paths:
           headers:
             Date:
               $ref: '#/components/headers/Date'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
             Content-Security-Policy:
@@ -1147,6 +1329,10 @@ paths:
           headers:
             Date:
               $ref: '#/components/headers/Date'
+            Deprecation:
+              $ref: '#/components/headers/Deprecation'
+            Sunset:
+              $ref: '#/components/headers/Sunset'
             Cache-Control:
               $ref: '#/components/headers/Cache-Control'
             Content-Security-Policy:
@@ -1379,6 +1565,13 @@ components:
         `401` carries `WWW-Authenticate: dromas-pass`.
 
   parameters:
+    DromasVersion:
+      name: Dromas-Version
+      in: header
+      required: false
+      description: The version of the client that makes the request, SemVer's `MAJOR.MINOR.PATCH` and an optional pre-release, with no `v` and no build metadata (`PROTOCOL.md` §11.17). Every client sends it; a request without it, or with a value of another form, is read as `0.0.0`.
+      schema:
+        type: string
     addr:
       name: addr
       in: path
@@ -1409,6 +1602,17 @@ components:
         type: string
 
   headers:
+    Deprecation:
+      description: 'RFC 9745''s `Deprecation`, a Structured Field Date (RFC 9651 §3.3.7): `@` and the Unix time from which the server deems the version the request names deprecated, on every answer under `/v1/` to a version a deprecation covers (`PROTOCOL.md` §11.17).'
+      required: false
+      schema:
+        type: string
+        pattern: '^@-?[0-9]{1,15}$'
+    Sunset:
+      description: RFC 8594's `Sunset`, an HTTP-date (RFC 9110 §5.6.7) from which the server stops taking the version the request names, on every answer under `/v1/` to a version a sunset covers (`PROTOCOL.md` §11.17).
+      required: false
+      schema:
+        type: string
     Date:
       description: The time by the clock the server's checks read (`PROTOCOL.md` §11.2).
       required: true
@@ -1496,6 +1700,10 @@ components:
       headers:
         Date:
           $ref: '#/components/headers/Date'
+        Deprecation:
+          $ref: '#/components/headers/Deprecation'
+        Sunset:
+          $ref: '#/components/headers/Sunset'
         Cache-Control:
           $ref: '#/components/headers/Cache-Control'
         Content-Security-Policy:
@@ -1517,6 +1725,10 @@ components:
       headers:
         Date:
           $ref: '#/components/headers/Date'
+        Deprecation:
+          $ref: '#/components/headers/Deprecation'
+        Sunset:
+          $ref: '#/components/headers/Sunset'
         Cache-Control:
           $ref: '#/components/headers/Cache-Control'
         Content-Security-Policy:
@@ -1534,6 +1746,10 @@ components:
       headers:
         Date:
           $ref: '#/components/headers/Date'
+        Deprecation:
+          $ref: '#/components/headers/Deprecation'
+        Sunset:
+          $ref: '#/components/headers/Sunset'
         Cache-Control:
           $ref: '#/components/headers/Cache-Control'
         Content-Security-Policy:
@@ -1557,6 +1773,10 @@ components:
       headers:
         Date:
           $ref: '#/components/headers/Date'
+        Deprecation:
+          $ref: '#/components/headers/Deprecation'
+        Sunset:
+          $ref: '#/components/headers/Sunset'
         Cache-Control:
           $ref: '#/components/headers/Cache-Control'
         Content-Security-Policy:
@@ -1583,6 +1803,10 @@ components:
       headers:
         Date:
           $ref: '#/components/headers/Date'
+        Deprecation:
+          $ref: '#/components/headers/Deprecation'
+        Sunset:
+          $ref: '#/components/headers/Sunset'
         Cache-Control:
           $ref: '#/components/headers/Cache-Control'
         Content-Security-Policy:
@@ -1613,6 +1837,10 @@ components:
       headers:
         Date:
           $ref: '#/components/headers/Date'
+        Deprecation:
+          $ref: '#/components/headers/Deprecation'
+        Sunset:
+          $ref: '#/components/headers/Sunset'
         Cache-Control:
           $ref: '#/components/headers/Cache-Control'
         Content-Security-Policy:
@@ -1645,6 +1873,10 @@ components:
       headers:
         Date:
           $ref: '#/components/headers/Date'
+        Deprecation:
+          $ref: '#/components/headers/Deprecation'
+        Sunset:
+          $ref: '#/components/headers/Sunset'
         Cache-Control:
           $ref: '#/components/headers/Cache-Control'
         Content-Security-Policy:
@@ -1675,6 +1907,10 @@ components:
       headers:
         Date:
           $ref: '#/components/headers/Date'
+        Deprecation:
+          $ref: '#/components/headers/Deprecation'
+        Sunset:
+          $ref: '#/components/headers/Sunset'
         Cache-Control:
           $ref: '#/components/headers/Cache-Control'
         Content-Security-Policy:
@@ -1706,6 +1942,10 @@ components:
       headers:
         Date:
           $ref: '#/components/headers/Date'
+        Deprecation:
+          $ref: '#/components/headers/Deprecation'
+        Sunset:
+          $ref: '#/components/headers/Sunset'
         Cache-Control:
           $ref: '#/components/headers/Cache-Control'
         Content-Security-Policy:
@@ -1732,9 +1972,15 @@ components:
       description: |
         `revoked`. Every `410 revoked` a server answers from the record it
         holds carries that record in `record` (`PROTOCOL.md` §11.3, §12.5).
+        Or `version_retired`, with `min_version` where the server sets a
+        floor (`PROTOCOL.md` §11.17).
       headers:
         Date:
           $ref: '#/components/headers/Date'
+        Deprecation:
+          $ref: '#/components/headers/Deprecation'
+        Sunset:
+          $ref: '#/components/headers/Sunset'
         Cache-Control:
           $ref: '#/components/headers/Cache-Control'
         Content-Security-Policy:
@@ -1756,14 +2002,49 @@ components:
                   status:
                     const: 410
                   code:
-                    const: revoked
+                    enum: [revoked, version_retired]
                   record:
                     $ref: '#/components/schemas/RevokedRecord'
+    VersionRetired:
+      description: '`version_retired`, with `min_version` where the server sets a floor: the server no longer takes the version the request names (`PROTOCOL.md` §11.17, §11.4 rule 0).'
+      headers:
+        Date:
+          $ref: '#/components/headers/Date'
+        Deprecation:
+          $ref: '#/components/headers/Deprecation'
+        Sunset:
+          $ref: '#/components/headers/Sunset'
+        Cache-Control:
+          $ref: '#/components/headers/Cache-Control'
+        Content-Security-Policy:
+          $ref: '#/components/headers/Content-Security-Policy'
+        X-Content-Type-Options:
+          $ref: '#/components/headers/X-Content-Type-Options'
+        Referrer-Policy:
+          $ref: '#/components/headers/Referrer-Policy'
+        Cross-Origin-Resource-Policy:
+          $ref: '#/components/headers/Cross-Origin-Resource-Policy'
+        Cross-Origin-Opener-Policy:
+          $ref: '#/components/headers/Cross-Origin-Opener-Policy'
+      content:
+        application/problem+json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/Problem'
+              - properties:
+                  status:
+                    const: 410
+                  code:
+                    const: version_retired
     RequestTimeout:
       description: '`request_timeout`: the body did not arrive in the time the server waits for it (RFC 9110 §15.5.9; `PROTOCOL.md` §11.2).'
       headers:
         Date:
           $ref: '#/components/headers/Date'
+        Deprecation:
+          $ref: '#/components/headers/Deprecation'
+        Sunset:
+          $ref: '#/components/headers/Sunset'
         Cache-Control:
           $ref: '#/components/headers/Cache-Control'
         Content-Security-Policy:
@@ -1791,6 +2072,10 @@ components:
       headers:
         Date:
           $ref: '#/components/headers/Date'
+        Deprecation:
+          $ref: '#/components/headers/Deprecation'
+        Sunset:
+          $ref: '#/components/headers/Sunset'
         Cache-Control:
           $ref: '#/components/headers/Cache-Control'
         Content-Security-Policy:
@@ -1818,6 +2103,10 @@ components:
       headers:
         Date:
           $ref: '#/components/headers/Date'
+        Deprecation:
+          $ref: '#/components/headers/Deprecation'
+        Sunset:
+          $ref: '#/components/headers/Sunset'
         Cache-Control:
           $ref: '#/components/headers/Cache-Control'
         Content-Security-Policy:
@@ -1850,6 +2139,10 @@ components:
       headers:
         Date:
           $ref: '#/components/headers/Date'
+        Deprecation:
+          $ref: '#/components/headers/Deprecation'
+        Sunset:
+          $ref: '#/components/headers/Sunset'
         Cache-Control:
           $ref: '#/components/headers/Cache-Control'
         Content-Security-Policy:
@@ -1879,6 +2172,10 @@ components:
       headers:
         Date:
           $ref: '#/components/headers/Date'
+        Deprecation:
+          $ref: '#/components/headers/Deprecation'
+        Sunset:
+          $ref: '#/components/headers/Sunset'
         Cache-Control:
           $ref: '#/components/headers/Cache-Control'
         Content-Security-Policy:
@@ -1909,6 +2206,10 @@ components:
       headers:
         Date:
           $ref: '#/components/headers/Date'
+        Deprecation:
+          $ref: '#/components/headers/Deprecation'
+        Sunset:
+          $ref: '#/components/headers/Sunset'
         Cache-Control:
           $ref: '#/components/headers/Cache-Control'
         Content-Security-Policy:
@@ -1926,6 +2227,10 @@ components:
       headers:
         Date:
           $ref: '#/components/headers/Date'
+        Deprecation:
+          $ref: '#/components/headers/Deprecation'
+        Sunset:
+          $ref: '#/components/headers/Sunset'
         Cache-Control:
           $ref: '#/components/headers/Cache-Control'
         Content-Security-Policy:
@@ -1945,6 +2250,10 @@ components:
       headers:
         Date:
           $ref: '#/components/headers/Date'
+        Deprecation:
+          $ref: '#/components/headers/Deprecation'
+        Sunset:
+          $ref: '#/components/headers/Sunset'
         Cache-Control:
           $ref: '#/components/headers/Cache-Control'
         Content-Security-Policy:
@@ -1964,6 +2273,10 @@ components:
       headers:
         Date:
           $ref: '#/components/headers/Date'
+        Deprecation:
+          $ref: '#/components/headers/Deprecation'
+        Sunset:
+          $ref: '#/components/headers/Sunset'
         Cache-Control:
           $ref: '#/components/headers/Cache-Control'
         Content-Security-Policy:
@@ -1980,6 +2293,56 @@ components:
           $ref: '#/components/headers/Retry-After'
 
   schemas:
+    PolicyVersion:
+      description: A version as a server's policy writes one, `MAJOR.MINOR` or `MAJOR.MINOR.PATCH` (`PROTOCOL.md` §11.17).
+      type: string
+      pattern: '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(\.(0|[1-9][0-9]*))?$'
+    Scheduled:
+      description: A deprecation or a sunset of the versions `below` or `version` names, exactly one of the two, from `at` (`PROTOCOL.md` §11.17, §11.18).
+      type: object
+      required: [at]
+      properties:
+        below:
+          $ref: '#/components/schemas/PolicyVersion'
+        version:
+          $ref: '#/components/schemas/PolicyVersion'
+        at:
+          $ref: '#/components/schemas/Time'
+      oneOf:
+        - required: [below]
+        - required: [version]
+    Capability:
+      description: A capability of version 1 the server serves (`PROTOCOL.md` §11.18).
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z][a-z0-9_]{0,63}$'
+    ServerDocument:
+      description: The server's version policy and the capabilities it serves (`PROTOCOL.md` §11.18).
+      type: object
+      required: [deprecations, sunsets, capabilities]
+      properties:
+        min_version:
+          $ref: '#/components/schemas/PolicyVersion'
+        latest_version:
+          $ref: '#/components/schemas/PolicyVersion'
+        deprecations:
+          type: array
+          maxItems: 64
+          items:
+            $ref: '#/components/schemas/Scheduled'
+        sunsets:
+          type: array
+          maxItems: 64
+          items:
+            $ref: '#/components/schemas/Scheduled'
+        capabilities:
+          type: array
+          maxItems: 64
+          items:
+            $ref: '#/components/schemas/Capability'
     Integer:
       description: An integer in digits alone, from 0 to 2^53 − 1 (`PROTOCOL.md` §3.3).
       type: integer
@@ -2321,6 +2684,9 @@ components:
           type: [string, 'null']
         member:
           description: '`bad_request`: the request member or query parameter that is missing, unknown or given twice, or holds a value its call does not take.'
+          type: [string, 'null']
+        min_version:
+          description: '`version_retired`: the lowest version the server takes, where it sets a floor, `MAJOR.MINOR` or `MAJOR.MINOR.PATCH` (`PROTOCOL.md` §11.17).'
           type: [string, 'null']
         record:
           description: '`revoked`: the revocation record the server holds (`PROTOCOL.md` §10.3), on the read of a mailbox always and on any other call where the server answers from it.'

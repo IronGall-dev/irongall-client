@@ -127,6 +127,8 @@ func (b *Mailbox) exchange(ctx context.Context, method, path string, in any, hdr
 	for k, v := range hdr {
 		req.Header[k] = v
 	}
+	// Every request names this client's version (PROTOCOL.md §11.17).
+	req.Header.Set(protocol.VersionHeader, b.version)
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
@@ -143,6 +145,10 @@ func (b *Mailbox) exchange(ctx context.Context, method, path string, in any, hdr
 		}
 		return nil, noAnswer(name, "no answer that is HTTP", cut.why(err))
 	}
+	// What every answer says of this client's version, 2xx or not, is kept
+	// for its command to say (Versions): a Deprecation and a Sunset of their
+	// forms, and nothing else of the header.
+	b.met.answer(resp.Header)
 	answered := resp.StatusCode >= 200 && resp.StatusCode <= 299
 	if raw && answered {
 		resp.Body = cut.reading(resp.Body)
@@ -175,7 +181,7 @@ func (b *Mailbox) exchange(ctx context.Context, method, path string, in any, hdr
 		return nil, noAnswer(name, "an answer whose body could not be read", cut.why(err))
 	}
 	if !answered {
-		e := &APIError{Status: resp.StatusCode}
+		e := &APIError{Status: resp.StatusCode, Version: b.version}
 		// A body that is not problem+json, read as any answer is, leaves the
 		// code empty: one that breaks a rule is no answer, so nothing it got as
 		// far as is kept (PROTOCOL.md §3.3). So does a code this client does

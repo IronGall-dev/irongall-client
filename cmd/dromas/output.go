@@ -207,6 +207,10 @@ func failure(err error) []any {
 			if slices.Contains(protocol.IdentityTypes(), p.KeyType) {
 				kv = append(kv, "key_type", p.KeyType)
 			}
+			// A version is printed only once it has a policy version's form.
+			if v, ok := client.MinVersion(p); ok {
+				kv = append(kv, "min_version", v)
+			}
 		}
 		if ae.RetryAfter > 0 {
 			kv = append(kv, "retry_after", seconds(ae.RetryAfter))

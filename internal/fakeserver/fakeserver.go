@@ -45,9 +45,10 @@ type Server struct {
 	held      map[protocol.Address]*held // the revocations of addresses with no mailbox here
 	keys      map[string]string          // adopt key → account, each good once
 	middle    func(w http.ResponseWriter, r *http.Request, next http.Handler)
-	page      int           // the most messages a list's page holds
-	hold      time.Duration // the longest this server holds a list (SetHold)
-	log       []Request     // every call, oldest first
+	page      int                     // the most messages a list's page holds
+	hold      time.Duration           // the longest this server holds a list (SetHold)
+	log       []Request               // every call, oldest first
+	policy    protocol.ServerDocument // GET /v1/, and what every answer under /v1/ says of a version by it (SetPolicy)
 }
 
 // Request is one call the server was sent, as the client sent it, before
@@ -55,6 +56,7 @@ type Server struct {
 type Request struct {
 	Method, Path, Query string // the path and the raw query apart
 	Pass                bool   // it carried an Authorization header
+	Version             string // its Dromas-Version, as sent: "" for none
 }
 
 type mailbox struct {
@@ -124,8 +126,10 @@ func (s *Server) Client() *http.Client { return s.srv.Client() }
 
 // newServer is a server on the clock now, and the handler that serves it.
 func newServer(t testing.TB, now func() time.Time) (*Server, http.Handler) {
-	s := &Server{now: now, mailboxes: map[protocol.Address]*mailbox{}, held: map[protocol.Address]*held{}, keys: map[string]string{}, page: MaxPage, hold: MaxHold}
+	s := &Server{now: now, mailboxes: map[protocol.Address]*mailbox{}, held: map[protocol.Address]*held{}, keys: map[string]string{}, page: MaxPage, hold: MaxHold,
+		policy: protocol.ServerDocument{Deprecations: []protocol.Scheduled{}, Sunsets: []protocol.Scheduled{}, Capabilities: []protocol.Capability{}}}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET "+protocol.DocumentPath+"{$}", s.document)
 	mux.HandleFunc("GET /v1/{addr}", s.getMailbox)
 	mux.HandleFunc("PUT /v1/{addr}", s.register)
 	mux.HandleFunc("POST /v1/{addr}/messages", s.send)
@@ -144,14 +148,16 @@ func newServer(t testing.TB, now func() time.Time) (*Server, http.Handler) {
 	api := apitest.Handler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Date", s.now().UTC().Format(http.TimeFormat))
 		w.Header().Set("Cache-Control", "no-store")
-		mux.ServeHTTP(w, r)
+		if s.versioned(w, r) {
+			mux.ServeHTTP(w, r)
+		}
 	}))
 	return s, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Dated by the server's own clock, which a test sets: a client
 		// compares an answer's Date with its clock when a pass is refused.
 		w.Header().Set("Date", s.now().UTC().Format(http.TimeFormat))
 		s.mu.Lock()
-		s.log = append(s.log, Request{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Pass: r.Header.Get("Authorization") != ""})
+		s.log = append(s.log, Request{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery, Pass: r.Header.Get("Authorization") != "", Version: r.Header.Get(protocol.VersionHeader)})
 		m := s.middle
 		s.mu.Unlock()
 		if m != nil {
@@ -160,6 +166,60 @@ func newServer(t testing.TB, now func() time.Time) (*Server, http.Handler) {
 		}
 		api.ServeHTTP(w, r)
 	})
+}
+
+// SetPolicy sets the server's version policy, which GET /v1/ answers, and
+// by which every answer under /v1/ carries Deprecation and Sunset for a
+// request whose version a deprecation or a sunset covers, and a request whose version is retired is answered 410
+// version_retired before anything else (PROTOCOL.md §11.17, §11.4 rule 0),
+// as a server does. Until a test sets one, the policy is empty: no floor, no
+// sunset, no latest version.
+func (s *Server) SetPolicy(d protocol.ServerDocument) {
+	if d.Deprecations == nil {
+		d.Deprecations = []protocol.Scheduled{}
+	}
+	if d.Sunsets == nil {
+		d.Sunsets = []protocol.Scheduled{}
+	}
+	if d.Capabilities == nil {
+		d.Capabilities = []protocol.Capability{}
+	}
+	s.mu.Lock()
+	s.policy = d
+	s.mu.Unlock()
+}
+
+// versioned puts what the policy says of the request's version on its
+// answer: Deprecation where a deprecation covers it, Sunset where a sunset
+// does, and 410 version_retired, with
+// min_version where there is a floor, where it is retired at the server's
+// clock, but on GET /v1/, which takes every version. It reports whether the
+// request goes on.
+func (s *Server) versioned(w http.ResponseWriter, r *http.Request) bool {
+	s.mu.Lock()
+	d := s.policy
+	s.mu.Unlock()
+	v := protocol.RequestVersion(r.Header.Get(protocol.VersionHeader))
+	if at, ok := d.DeprecationFor(v); ok {
+		w.Header().Set(protocol.DeprecationHeader, protocol.FormatDeprecation(at))
+	}
+	if at, ok := d.SunsetFor(v); ok {
+		w.Header().Set(protocol.SunsetHeader, protocol.FormatSunset(at))
+	}
+	if r.URL.Path == protocol.DocumentPath || !d.Retired(v, s.now()) {
+		return true
+	}
+	problem(w, protocol.CodeVersionRetired, "this server no longer takes this client's version: upgrade", func(p *protocol.Problem) { p.MinVersion = d.MinVersion })
+	return false
+}
+
+// document answers GET /v1/: the server's version policy and the
+// capabilities it serves (PROTOCOL.md §11.18).
+func (s *Server) document(w http.ResponseWriter, _ *http.Request) {
+	s.mu.Lock()
+	d := s.policy
+	s.mu.Unlock()
+	WriteJSON(w, http.StatusOK, d)
 }
 
 // Close stops the server for good, as one that is gone: whoever calls it
