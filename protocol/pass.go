@@ -90,7 +90,7 @@ type Pass struct {
 // longer value, in any form, before it reads it, so before it knows the mailbox
 // (PROTOCOL.md §8). So the bound is the most any identity key type allows,
 // and whitespace a sender adds counts toward it.
-const MaxPassAuthorization = len(PassScheme+` address="", not_after="", signature=""`) + 64 + len(TimeLayout) + (MaxSignature+2)/3*4
+const MaxPassAuthorization = len(PassScheme+` address="", not_after="", signature=""`) + AddressLen + len(TimeLayout) + (MaxSignature+2)/3*4
 
 // passSignature is the form of a pass's signature value: standard base64,
 // padded, with nothing else in it (Go's decoder would skip a line break).

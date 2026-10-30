@@ -13,12 +13,12 @@ import (
 )
 
 // aliasGrammar is an alias: 1 to 32 of a-z, 0-9, '.', '_' and '-', starting
-// with a letter or a digit. So an alias is never an address (64 hex
+// with a letter or a digit. So an alias is never an address (77
 // characters) and never a link.
 var aliasGrammar = regexp.MustCompile(`\A[a-z0-9][a-z0-9._-]{0,31}\z`)
 
 // Alias is this mailbox's own name for a peer's address: a word to send to in
-// place of 64 hex characters. Aliases live in the mailbox's aliases file, one
+// place of an address's 77 characters. Aliases live in the mailbox's aliases file, one
 // "<name> <address>" line each, and never leave the mailbox: neither the server
 // nor the peer sees them. An alias is only as good as where its address came
 // from.

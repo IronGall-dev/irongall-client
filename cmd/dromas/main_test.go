@@ -839,7 +839,7 @@ func TestTheLink(t *testing.T) {
 		srv.URL + ".example/to/" + b.Address().String():        "a link to another server",
 		b.Link() + "/":                          "not an address, a link to one, or an alias",
 		srv.URL + "/v1/" + b.Address().String(): "not an address, a link to one, or an alias",
-		"+" + b.Address().String()[1:]:          "not an address, a link to one, or an alias", // base64's alphabet, not base64url's
+		strings.ToUpper(b.Address().String()):   "not an address, a link to one, or an alias",
 	} {
 		err := do(ctx, "send", []string{to}, strings.NewReader("x"), io.Discard, io.Discard)
 		var r *client.RefusedError
@@ -2135,7 +2135,7 @@ func TestCertRevokeEarlierSaysWhatHappenedToEach(t *testing.T) {
 // (#383). A fake server makes no fault of the mailbox, so the remedy's result is
 // built here.
 func TestCertRevokeEarlierSaysARevocationTakenAndNotKeptIsRevoked(t *testing.T) {
-	own, err := protocol.ParseAddress(strings.Repeat("ab", 32))
+	own, err := protocol.ParseAddress(strings.Repeat("ab", 38) + "a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2178,7 +2178,7 @@ func TestCertRevokeEarlierSaysARevocationTakenAndNotKeptIsRevoked(t *testing.T) 
 // revocation refused, the fault after the renewal was not printed. The
 // remedy's result is built here, as a fake server makes no fault of the mailbox.
 func TestCertRevokeEarlierSaysAFaultOfTheMailboxAfterWhatBecameOfEach(t *testing.T) {
-	own, err := protocol.ParseAddress(strings.Repeat("ab", 32))
+	own, err := protocol.ParseAddress(strings.Repeat("ab", 38) + "a")
 	if err != nil {
 		t.Fatal(err)
 	}

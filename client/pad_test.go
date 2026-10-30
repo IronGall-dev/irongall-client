@@ -42,8 +42,8 @@ func TestSendPadsEveryMessage(t *testing.T) {
 		first  int // the smallest block's size for this key type
 		bodies []string
 	}{
-		{protocol.PostQuantum, 3072, []string{"no", "yes", "reject", "approve", strings.Repeat("a", 184)}},
-		{protocol.Classic, 2048, []string{"no", "yes", "reject", "approve", strings.Repeat("a", 619)}},
+		{protocol.PostQuantum, 3072, []string{"no", "yes", "reject", "approve", strings.Repeat("a", 126)}},
+		{protocol.Classic, 2048, []string{"no", "yes", "reject", "approve", strings.Repeat("a", 561)}},
 	} {
 		e := newEnv(t)
 		a, b := e.mailbox(protocol.Classic), e.mailbox(c.kt)

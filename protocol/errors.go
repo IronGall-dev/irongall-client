@@ -17,7 +17,7 @@ type Code string
 const (
 	// 400
 	CodeBadRequest         Code = "bad_request"          // not JSON, a missing or unknown field, a bad cursor
-	CodeBadAddress         Code = "bad_address"          // not 64 hex characters, or a from that is not lowercase
+	CodeBadAddress         Code = "bad_address"          // not 77 characters of lowercase base32
 	CodeBadEncoding        Code = "bad_encoding"         // a byte field that is not base64
 	CodeIdentityMismatch   Code = "identity_mismatch"    // the identity does not hash to the address, or breaks its grammar
 	CodeBadKey             Code = "bad_key"              // an identity key, certificate or prekey statement that is malformed or does not verify

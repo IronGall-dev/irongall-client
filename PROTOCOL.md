@@ -25,10 +25,10 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 - A *line* ends in LF (0x0A). A text "of N lines" is exactly N lines: no CR, and nothing after the last LF.
 - `‖` is concatenation. `str(x)` is a uint32 big-endian length followed by the bytes of `x` (RFC 4251 §5).
-- An **address** is written as 64 characters of unpadded base64url (RFC 4648 §5), wherever it appears: a path, a statement, an envelope, a namespace.
+- An **address** is written as 77 characters of lowercase base32 (RFC 4648 §6) without padding, wherever it appears: a path, a statement, an envelope, a namespace.
 - A **time** is RFC 3339 in UTC to the second, exactly `YYYY-MM-DDTHH:MM:SSZ`. What ends at a time has ended at that second: it is valid while a clock reads before it.
 - A **serial** is a decimal integer from 1 to 2^53 − 1 with no leading zero. 2^53 − 1 is the largest integer every JSON reader holds exactly (Section 3.3).
-- **base64** is standard base64 (RFC 4648 §4) in its one encoding: padded, with no character outside the alphabet (a line break included), and the unused bits of its last character zero, so that encoding the bytes again gives the same text. Three places differ, and say so: the armour of a signature (Section 3.2), an address (Section 4.2) and an adopt key (Section 11.16).
+- **base64** is standard base64 (RFC 4648 §4) in its one encoding: padded, with no character outside the alphabet (a line break included), and the unused bits of its last character zero, so that encoding the bytes again gives the same text. Two places differ, and say so: the armour of a signature (Section 3.2) and an adopt key (Section 11.16).
 - In a namespace or a statement, `<A>` is the address of the mailbox that signs it.
 
 ### 2.3. Terms
@@ -132,21 +132,21 @@ The key MUST be of a type this section defines, in its one encoding, and MUST pa
 
 ### 4.2. The address
 
-The address is the SHA-384 of `D`, its 48 bytes in base64url without padding (RFC 4648 §5), 64 characters of `A`–`Z`, `a`–`z`, `0`–`9`, `-` and `_`: `openssl dgst -sha384 -binary < identity.doc | openssl base64 -A | tr '+/' '-_'`. 48 bytes need no padding, and every 64 characters of that alphabet are the one encoding of 48 bytes.
+The address is the SHA-384 of `D`, its 48 bytes in base32 (RFC 4648 §6) without padding and in lowercase, as Tor writes an onion address: 77 characters of `a`–`z` and `2`–`7`, `openssl dgst -sha384 -binary < identity.doc | base32 | tr -d '=' | tr A-Z a-z`. 384 bits leave the last character one unused bit, which is zero, so each address has one text form.
 
 - **SHA-384 is NIST's category 4 for collisions** (SHA-256 is category 2), and the address is the one part of a mailbox that never changes: whatever else is renewed, a second preimage of it names the mailbox for good.
+- **It has one case and never begins with `-`:** no two addresses differ only in case, so a file named by one is that address's alone on any file system, and a command line never reads one as an option.
 
 - It commits to the identity alone, so renewing or changing the type of the prekey never changes it.
 - It has no checksum: a mistyped address names no mailbox.
 - Line 1 of `D` is the protocol's version. Another deployment of this protocol uses its own tag, and so its own address space.
-- A client MUST write `from` (Section 9.1) as this section gives it: a reader compares it with the verified signer as an exact string, and a letter in the other case is another address.
-- **A file named by an address, on a file system that folds case, is one file for every spelling of it in other cases.** The 64 characters have at most 2^64 such spellings, so an identity whose address folds to a given one costs a second preimage of SHA-384 against at most 2^64 targets: at least 2^320 hashes.
+- A client MUST write `from` (Section 9.1) in lowercase: a reader compares it with the verified signer as an exact string.
 
 ### 4.3. The link
 
 An address is shared as the link `https://<server>/to/<address>`.
 
-- A server MUST serve a page there for exactly 64 characters of base64url, and `404` for any other path. The page is fixed text, the address and the server's own link to it, and never text a mailbox supplied, sent with `Referrer-Policy: no-referrer` and `X-Robots-Tag: noindex`. A query on the link is ignored.
+- A server MUST serve a page there for exactly 77 characters of lowercase base32, and `404` for any other path. The page is fixed text, the address and the server's own link to it, and never text a mailbox supplied, sent with `Referrer-Policy: no-referrer` and `X-Robots-Tag: noindex`. A query on the link is ignored.
 - A client given a link MUST take the address from its path, MUST NOT fetch the page, and MUST refuse a link to any server but its own.
 
 ## 5. The working key and its certificate
@@ -377,7 +377,7 @@ What each code means, and what a client does on it:
 | Status | Code | Meaning |
 |---|---|---|
 | 400 | `bad_request` | not a JSON text Section 3.3 takes; a member or query parameter missing, unknown, given twice, or holding a value its call does not take. `member` names it |
-| 400 | `bad_address` | an address in the path that is not 64 characters of base64url |
+| 400 | `bad_address` | an address in the path that is not 77 characters of lowercase base32 |
 | 400 | `bad_encoding` | a byte member that is not base64 in its one encoding |
 | 400 | `identity_mismatch` | an identity document that does not hash to the address, or breaks its form (Section 4.1) |
 | 400 | `unsupported_key_type` | an identity of a key type this protocol does not define, or this server does not register; `key_types` lists what it registers |
@@ -473,7 +473,7 @@ Every call names a mailbox, and this is what each does in each state.
 
 The server checks:
 
-1. The address in the path is 64 characters of base64url → otherwise `bad_address`.
+1. The address in the path is 77 characters of lowercase base32 → otherwise `bad_address`.
 2. The body has exactly those members → otherwise `bad_request`, naming the member.
 3. `identity` hashes to the address and has the form of an identity document (Section 4.1) → otherwise `identity_mismatch`.
 4. **The key's type and the key.** A type this protocol does not define → `unsupported_key_type`. The key in its one encoding → otherwise `identity_mismatch`. The type's key checks → otherwise `bad_key`. A server registers `ssh-ed25519` and whichever other defined types its operator chooses, and answers the rest `unsupported_key_type`, naming its list.
@@ -556,7 +556,7 @@ The server checks, and only step 9 stores anything. Every count is taken before 
 A mailbox's ACL is whom its server takes the mailbox's messages from.
 
 - **Semantics.** A mailbox with no ACL takes messages from everyone. With one, `deny` is checked first, then `allow`, and a sender matched by neither is refused, `403 sender_not_allowed`.
-- **`PUT /v1/<B>/acl`,** with the pass, replaces it whole with `allow` and `deny`. Each entry is an address, or `*`, which matches every address; there is no other pattern, and repeats are taken once. `allow` is REQUIRED (`["*"]` is everyone and `[]` nobody): a document without it is `400 bad_request`. `deny` may be left out, for none. More entries, in both lists together, than the server takes is `413 too_large`. A server MUST NOT take more than 10,000, and MAY take fewer. The answer is `200` with the ACL as held, `*` first and then each address once in ascending order of its 48 bytes (not of its text, whose alphabet is not in byte order), and no `ETag`.
+- **`PUT /v1/<B>/acl`,** with the pass, replaces it whole with `allow` and `deny`. Each entry is an address, or `*`, which matches every address; there is no other pattern, and repeats are taken once. `allow` is REQUIRED (`["*"]` is everyone and `[]` nobody): a document without it is `400 bad_request`. `deny` may be left out, for none. More entries, in both lists together, than the server takes is `413 too_large`. A server MUST NOT take more than 10,000, and MAY take fewer. The answer is `200` with the ACL as held, `*` first and then each address once in ascending order of its 48 bytes (not of its text, whose alphabet puts `2`–`7` after `z`), and no `ETag`.
 - **`GET /v1/<B>/acl`,** with the pass, answers the ACL as held, in that order, with its `ETag`, a strong validator that changes whenever the lists change. A mailbox with none answers `{"allow":["*"],"deny":[]}`, and has a tag too. A client MUST treat an ACL answer holding more than 10,000 entries, in both lists together, as an answer that breaks its form. There is no `DELETE`.
 - **A `PUT` MAY carry `If-Match`,** so that it replaces only the ACL its writer read: compared strongly with the tag of the ACL held now, a mailbox with none included. `If-None-Match: *`, or one naming the ACL's tag, is false, since a mailbox always has an ACL. A `PUT` without a precondition replaces whatever is held.
 - **It deletes no message:** a change refuses later sends only, and what the mailbox holds stays until it is acked or expires. A send that passed the check while the ACL changed may still be stored after it.
@@ -871,7 +871,7 @@ Dromas protects a message's content from everyone but its recipient, and its sen
 - **[BIP 173]** Bech32
 - **[FIPS 180-4]**, **[FIPS 186-5]**
 - **[RFC 2119]**, **[RFC 8174]** BCP 14
-- **[RFC 3339]** timestamps · **[RFC 4151]** the `tag` URI scheme · **[RFC 4251]**, **[RFC 4253]** SSH · **[RFC 4648]** base64 and base64url · **[RFC 5656]** ECDSA in SSH · **[RFC 6454]** origins · **[RFC 7457]** TLS attacks · **[RFC 7493]** I-JSON · **[RFC 8032]** EdDSA · **[RFC 8259]** JSON · **[RFC 8555]** ACME · **[RFC 8594]** the `Sunset` header field · **[RFC 8709]** Ed25519 in SSH · **[RFC 9110]** HTTP semantics · **[RFC 9457]** problem details · **[RFC 9562]** UUIDs · **[RFC 9651]** Structured Field Values · **[RFC 9745]** the `Deprecation` header field
+- **[RFC 3339]** timestamps · **[RFC 4151]** the `tag` URI scheme · **[RFC 4251]**, **[RFC 4253]** SSH · **[RFC 4648]** base64 and base32 · **[RFC 5656]** ECDSA in SSH · **[RFC 6454]** origins · **[RFC 7457]** TLS attacks · **[RFC 7493]** I-JSON · **[RFC 8032]** EdDSA · **[RFC 8259]** JSON · **[RFC 8555]** ACME · **[RFC 8594]** the `Sunset` header field · **[RFC 8709]** Ed25519 in SSH · **[RFC 9110]** HTTP semantics · **[RFC 9457]** problem details · **[RFC 9562]** UUIDs · **[RFC 9651]** Structured Field Values · **[RFC 9745]** the `Deprecation` header field
 - **[SemVer]** Semantic Versioning 2.0.0, https://semver.org/spec/v2.0.0.html
 
 ## Appendix A. Where OpenSSH releases differ (informative)

@@ -42,8 +42,8 @@ dr_out(){ jq -cn --arg type "$1" "${@:2}" '$ARGS.named'; }      # <type> [--arg 
 dr_err(){ jq -cn --arg m "$*" '{type:"error", detail:$m}' >&2; }      # <words> → the line on stderr that says a command failed, in this script's own words
 dr_refuse(){ dr_err "REFUSED: $*"; return 1; }
 dr_hex(){ [[ $1 =~ ^[0-9a-f]{64}$ ]]; }      # a message's id: the SHA-256 of its ciphertext, 64 lowercase hex
-dr_isaddr(){ [[ $1 =~ ^[A-Za-z0-9_-]{64}$ ]]; }      # an address: 64 characters of unpadded base64url, each string of them the one encoding of 48 bytes (RFC 4648 §5), compared exactly
-dr_address(){ local h; h=$(sha384sum < "$1" | cut -c1-96) && [[ $h =~ ^[0-9a-f]{96}$ ]] || return 1; printf "$(printf %s "$h" | sed 's/../\\x&/g')" | base64 | tr -d '\n' | tr '+/' '-_'; }      # <file> → its address: the SHA-384 of its bytes, in unpadded base64url. 48 bytes are 64 characters with no padding to strip
+dr_isaddr(){ [[ $1 =~ ^[a-z2-7]{76}[acegikmoqsuwy246]$ ]]; }      # an address: 77 characters of lowercase base32 (RFC 4648 §6), the last carrying 4 bits and a zero bit, so each address has one spelling, in one case
+dr_address(){ local h b= o= i c a=abcdefghijklmnopqrstuvwxyz234567; h=$(sha384sum < "$1" | cut -c1-96) && [[ $h =~ ^[0-9a-f]{96}$ ]] || return 1; for ((i = 0; i < 96; i++)); do c=$((16#${h:i:1})); b+=$((c >> 3 & 1))$((c >> 2 & 1))$((c >> 1 & 1))$((c & 1)); done; b+=0000; for ((i = 0; i + 5 <= ${#b}; i += 5)); do o+=${a:$((2#${b:i:5})):1}; done; printf %s "$o"; }      # <file> → its address: the SHA-384 of its bytes in lowercase base32 without padding, 384 bits read 5 at a time with a zero bit after the last, in bash alone
 dr_b64(){ base64 < "$1" | tr -d '\n'; }
 dr_now(){ date -u +%s; }   # the one clock every check reads
 dr_time(){ # <timestamp> → its Unix time, only for exactly YYYY-MM-DDTHH:MM:SSZ naming a real time
@@ -223,7 +223,7 @@ dr_init(){ # [--no-pq] → creates this mailbox, or finishes a half-done init, a
   h=$(dr_pass "$n") && { dr_api PUT "/v1/$A" "$DR/register.json" -H "Authorization: $h" > /dev/null || { dr_clock; dr_own; false; }; } && mv "$DR/pass.new" "$DR/pass" && dr_putline "$DR/serial" "$n" && dr_addr
 }
 dr_addr(){ local a; dr_held || { [ -s "$DR/identity" ] && [ -s "$DR/address" ]; } || { dr_lock dr_addr; return; }; a=$(cat "$DR/address") && dr_out mailbox --arg address "$a" --arg link "$DR_SERVER_URL/to/$a"; }      # the mailbox's address and its link: what to give whoever should write to it. Read with no lock; with no mailbox, dr_lock's refusal, and a mailbox restored from its identity alone has its files made under the lock first (dr_identity), as the Go client's Open makes them
-dr_dest(){ # <link or address> → the address: 64 characters of base64url, or taken from a link to this mailbox's server, $DR_SERVER_URL/to/<address>
+dr_dest(){ # <link or address> → the address: 77 characters of lowercase base32, or taken from a link to this mailbox's server, $DR_SERVER_URL/to/<address>
   local a=${1#"$DR_SERVER_URL/to/"}
   dr_isaddr "$a" && { printf '%s\n' "$a"; return 0; }
   [[ $1 != *://* || $1 = "$DR_SERVER_URL/"* ]] || { dr_refuse "a link to another server: this mailbox's server is $DR_SERVER_URL"; return 1; }
@@ -299,7 +299,7 @@ dr_cert(){ # <signature> <identity document> <address> → "<serial> <valid afte
   dr_u64 && n=$v && [ "$n" -ge 1 ] && [ "$n" -le 9007199254740991 ] || return 1      # the serial: from 1 to 2^53 - 1, as a prekey's
   [ "${x:o:8}" = 00000001 ] || return 1; o=$((o + 8))      # a user certificate
   dr_str && [ "$v" = "$(dr_asc dromas-cert-v1)" ] || return 1      # the key id
-  dr_str && [ "$v" = "00000040$(dr_asc "$3")" ] || return 1      # exactly one principal: the address
+  dr_str && [ "$v" = "$(printf %08x ${#3})$(dr_asc "$3")" ] || return 1      # exactly one principal: the address
   dr_u64 && a=$v && dr_u64 && b=$v || return 1      # valid after, valid before
   dr_str && [ -z "$v" ] || return 1      # no critical option: one a verifier does not know is refused, and none is known here
   dr_str && dr_exts "$v" && dr_str || return 1      # the extensions, each ignored, as one a verifier does not know is; then reserved, whatever it holds, ignored too

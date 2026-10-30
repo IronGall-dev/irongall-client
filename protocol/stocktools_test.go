@@ -21,8 +21,8 @@ import (
 // exactly its plaintext, and with the other mailbox's not at all; head and sed split that plaintext into the line and
 // its signature; ssh-keygen reads each certificate and verifies each signature
 // under it, at the vectors' time, and each certificate file is the one its
-// signatures carry; and openssl gives each address, the SHA-384 of its
-// identity document in base64url. Nothing
+// signatures carry; and openssl and base32 give each address, the SHA-384
+// of its identity document in lowercase base32. Nothing
 // from this package reads a vector here: the namespaces are the spec's.
 func TestVectorsByToolsNotOurs(t *testing.T) {
 	dir, err := filepath.Abs(vectors)
@@ -72,21 +72,22 @@ func TestVectorsByToolsNotOurs(t *testing.T) {
 	// The vectors' time, as ssh-keygen's verify-time takes one.
 	at := strings.NewReplacer("-", "", "T", "", ":", "").Replace(strings.TrimSpace(string(file(t, "now"))))
 
-	t.Run("openssl", func(t *testing.T) {
+	t.Run("openssl and base32", func(t *testing.T) {
 		tool(t, "openssl")
+		tool(t, "base32")
 		for _, mailbox := range []string{"a", "b", "c"} {
 			sum, err := run(t, file(t, mailbox+"/identity.doc"), "openssl", "dgst", "-sha384", "-binary")
 			if err != nil {
 				t.Fatal(err)
 			}
-			b64, err := run(t, sum, "openssl", "base64", "-A")
+			b32, err := run(t, sum, "base32")
 			if err != nil {
 				t.Fatal(err)
 			}
-			// RFC 4648 §5 is §4's alphabet with these two characters swapped, as
-			// RFC 7515 Appendix C makes it, with tr, from base64.
-			if got := strings.NewReplacer("+", "-", "/", "_").Replace(strings.TrimSpace(string(b64))); got != address(t, mailbox) {
-				t.Errorf("%s: openssl's SHA-384 of identity.doc, in base64url, is %s, the address is %s", mailbox, got, address(t, mailbox))
+			// RFC 4648 §6's base32, its padding dropped and its letters lowered,
+			// as Tor writes an onion address.
+			if got := strings.ToLower(strings.TrimRight(strings.Join(strings.Fields(string(b32)), ""), "=")); got != address(t, mailbox) {
+				t.Errorf("%s: openssl's SHA-384 of identity.doc, in base32 by base32, is %s, the address is %s", mailbox, got, address(t, mailbox))
 			}
 		}
 	})

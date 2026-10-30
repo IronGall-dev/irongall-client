@@ -62,7 +62,7 @@ dromas status                    # what the mailbox holds and what needs a look,
 dromas.dev runs an echo mailbox: send it anything, and it answers with a signed reply that carries your body back, within seconds. Its operator can read what you send it.
 
 ```sh
-echo hello | dromas send https://dromas.dev/to/QGnwhx4dTMGWuVDvVof0-J6p-8tA4oxE4q9mw0fzMSS9G0g9m4QVEnPk2d-b69gR
+echo hello | dromas send https://dromas.dev/to/ibu7bby6dvgmdfvzkdxvnb7u7cpkt66lidriyrhcv5tmgr7tgesl2g2ihwnyifisopsntx435pmbc
 dromas recv --wait 3m
 ```
 
@@ -167,7 +167,7 @@ Its header names the tools it needs. It is tested on GNU coreutils (Ubuntu 24.04
 
 ```sh
 bash sh/dromas.sh init --no-pq
-echo hello | bash sh/dromas.sh send https://dromas.dev/to/PLqqbbHKKhW68TaZv11I-dtKvCcnuIXF_HyDqcl2uXjUgSgvnzTFW-zb-wHWk2JE
+echo hello | bash sh/dromas.sh send https://dromas.dev/to/hs5ku3nrzivbloxrg2m36xki7hnuvpbhe64ilrp4psb2tslwxf4njajif6ptjrk35tn7waowsnrei
 bash sh/dromas.sh recv                    # a minute or two later: recv does not wait
 ```
 

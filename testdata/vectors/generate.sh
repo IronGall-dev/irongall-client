@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Regenerates the dromas v1 test vectors with stock tools only: bash, od, base64, fold,
-# sha256sum, ssh-keygen and openssl (dgst -sha384, base64), plus age >= 1.3 for the two ciphertexts.
+# sha256sum, ssh-keygen, openssl (dgst -sha384) and base32, plus age >= 1.3 for the two ciphertexts.
 # Everything is deterministic (Ed25519 signatures are), except what is made once and kept:
 # each certificate (ssh-keygen puts a random nonce in one, and an ECDSA signature differs each
 # time it is made) and each message/*.age.
@@ -31,7 +31,7 @@ asc() { printf '%s' "$1" | od -An -tx1 | tr -d ' \n'; }
 str() { printf '%08x%s' $(( ${#1} / 2 )) "$1"; }           # an RFC 4251 string, from hex
 bin() { printf "$(printf '%s' "$1" | sed 's/../\\x&/g')"; } # hex → bytes on stdout
 b64() { base64 | tr -d '\n'; }
-address() { openssl dgst -sha384 -binary | openssl base64 -A | tr "+/" "-_"; echo; } # stdin → its SHA-384 in unpadded base64url (RFC 4648 §5; 48 bytes take no padding), as an address file holds it
+address() { openssl dgst -sha384 -binary | base32 -w 0 | tr -d = | tr A-Z a-z; echo; } # stdin → its SHA-384 in base32 (RFC 4648 §6), lowercase, without padding, as an address file holds it
 # An age recipient as age writes one: Bech32 (BIP 173) of bytes under a human-readable part, in lowercase, with no
 # limit on its length (age has none).
 bech32() { # <human-readable part> <bytes, hex>
@@ -79,7 +79,7 @@ identity_doc() { printf 'dromas-v1\nssh-ed25519 %s\n' "$(bin "$(str "$(asc ssh-e
 p256_doc() { printf 'dromas-v1\necdsa-sha2-nistp256 %s\n' "$(bin "$(p256_wire "$@")" | b64)"; }
 
 KEYS=$(mktemp -d) # private keys live only here, and only while this runs
-cleanup() { local k; for k in a b c a-work b-work a-work-2 c-work small-work; do rm -f "$KEYS/$k" "$KEYS/$k.pub" "$KEYS/$k-cert.pub"; done; rmdir "$KEYS"; }
+cleanup() { local k; for k in a b c a-work b-work a-work-2 c-work small-work; do rm -f "$KEYS/$k" "$KEYS/$k.pub" "$KEYS/$k-cert.pub"; done; rm -f "$KEYS/padded.sig"; rmdir "$KEYS"; }
 trap cleanup EXIT
 
 printf '%s\n' "$NOW" > now
@@ -175,7 +175,7 @@ printf 'dromas-revoked-certs-v1\n%s\n1\n1-4\n' "$A" > revoked/bad-a-list.txt; th
 printf 'dromas-revoke-certs-v1\r\n%s\r\n4\r\n' "$A" > revoked/bad-crlf.txt; thsig bad-crlf
 printf 'dromas-revoke-certs-v1\n%s\n4' "$A" > revoked/bad-no-final-newline.txt; thsig bad-no-final-newline
 printf 'dromas-revoke-certs-v2\n%s\n4\n' "$A" > revoked/bad-another-tag.txt; thsig bad-another-tag
-through bad-address-in-base64 "+${A:1}" 4; thsig bad-address-in-base64 # base64's alphabet (RFC 4648 §4), not base64url's
+through bad-address-in-uppercase "$(tr a-z A-Z <<< "$A")" 4; thsig bad-address-in-uppercase
 printf 'dromas-revoke-certs-v1\n%s\n4\0\n' "$A" > revoked/bad-nul.txt; thsig bad-nul      # a NUL, which a shell variable drops: a reader that tests the variable alone takes it
 
 # A pass of mailbox A for a server it calls dromas.example, good for ten minutes from NOW, and the header it travels in.
@@ -214,7 +214,7 @@ pv bad-a-backslash-in-a-quoted-value 'dromas-pass address="\\%s", not_after="%s"
 pv bad-a-quoted-value-not-closed 'dromas-pass address="%s", not_after="%s", signature="%s' "$A" "$PT" "$PS"
 pv bad-not-after-as-a-token 'dromas-pass address="%s", not_after=%s, signature="%s"' "$A" "$PT" "$PS" # ":" is not a token's
 pv bad-a-space-in-the-signature 'dromas-pass address="%s", not_after="%s", signature="%s %s"' "$A" "$PT" "${PS:0:8}" "${PS:8}"
-pv bad-the-address-in-base64 'dromas-pass address="%s", not_after="%s", signature="%s"' "+${A:1}" "$PT" "$PS"
+pv bad-the-address-in-capitals 'dromas-pass address="%s", not_after="%s", signature="%s"' "$(tr a-z A-Z <<< "$A")" "$PT" "$PS"
 pv bad-a-semicolon-between-parameters 'dromas-pass address="%s"; not_after="%s"; signature="%s"' "$A" "$PT" "$PS"
 pv bad-a-line-feed-at-the-end 'dromas-pass address="%s", not_after="%s", signature="%s"\n' "$A" "$PT" "$PS"
 pv bad-a-quoted-name 'dromas-pass "address"="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
@@ -292,11 +292,14 @@ sed '$d' "$S" > sig/bad-no-end-line.sig
 sed '$s/^/ /' "$S" > sig/bad-end-line-indented.sig
 sed '2s/^./!/' "$S" > sig/bad-not-base64.sig
 { head -n 1 "$S"; printf '\0'; tail -n +2 "$S"; } > sig/bad-nul.sig
-t=$(sed -n 'x;$p' "$S"); p=${t##*[!=]}; t=${t%"$p"}; c=${t: -1}; B64=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/; i=${B64%%"$c"*}      # the last base64 line: its padding p, one = or two, and the character before it
+# The padding forms need a blob whose length is no multiple of 3. When S's is one, P is S with a byte in its reserved
+# field, which a verifier ignores (ok-reserved-not-empty): the padding is then all that is wrong with each.
+P=$S; [ $(( ${#X} / 2 % 3 )) -ne 0 ] || { P=$KEYS/padded.sig; armor "${X:0:o}$(str "$(asc .)")${X:o+8}" > "$P"; }
+t=$(sed -n 'x;$p' "$P"); p=${t##*[!=]}; t=${t%"$p"}; c=${t: -1}; B64=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/; i=${B64%%"$c"*}      # the last base64 line: its padding p, one = or two, and the character before it
 # Before one = the last character has 2 unused bits, before two 4: none may be set yet, and setting the lowest sets one of them.
 [ -n "$p" ] && [ $(( ${#i} % (${#p} == 1 ? 4 : 16) )) -eq 0 ] || { echo "the last base64 line has no padding, or its last character already has a padding bit set" >&2; exit 1; }
-sed "$(( $(wc -l < "$S") - 1 ))s/$c$p\$/${B64:${#i}+1:1}$p/" "$S" > sig/bad-padding-bits.sig      # one of the unused bits of the last character set
-sed "$(( $(wc -l < "$S") - 1 ))s/=*\$//" "$S" > sig/bad-no-padding.sig
+sed "$(( $(wc -l < "$P") - 1 ))s/$c$p\$/${B64:${#i}+1:1}$p/" "$P" > sig/bad-padding-bits.sig      # one of the unused bits of the last character set
+sed "$(( $(wc -l < "$P") - 1 ))s/=*\$//" "$P" > sig/bad-no-padding.sig
 armor "$(plusl "$X" $((${#X} - 64)))" > sig/bad-s-plus-l.sig      # the working key's S
 armor "$(plusl "$X" $((28 + 2 * 16#${X:20:8} - 64)))" > sig/bad-certificate-s-plus-l.sig      # the identity's S on the certificate, its last 32 bytes
 armor "${X}00" > sig/bad-trailing-byte-in-the-blob.sig
@@ -419,7 +422,7 @@ bad bad-time-lowercase-z 'dromas-prekey-v1\n%s\n1\n%s\n2026-11-11T00:00:00z\n' "
 bad bad-time-fraction 'dromas-prekey-v1\n%s\n1\n%s\n2026-11-11T00:00:00.5Z\n' "$A" "$PQ"
 bad bad-time-offset 'dromas-prekey-v1\n%s\n1\n%s\n2026-11-11T00:00:00+00:00\n' "$A" "$PQ"
 bad bad-tag 'dromas-prekey-v2\n%s\n1\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
-bad bad-address-in-base64 'dromas-prekey-v1\n%s\n1\n%s\n%s\n' "+${A:1}" "$PQ" "$NOT_AFTER"
+bad bad-address-uppercase 'dromas-prekey-v1\n%s\n1\n%s\n%s\n' "$(printf '%s' "$A" | tr a-z A-Z)" "$PQ" "$NOT_AFTER"
 bad bad-four-lines 'dromas-prekey-v1\n%s\n1\n%s\n' "$A" "$PQ"
 bad bad-six-lines 'dromas-prekey-v1\n%s\n1\n%s\n%s\n\n' "$A" "$PQ" "$NOT_AFTER"
 bad bad-crlf 'dromas-prekey-v1\r\n%s\r\n1\r\n%s\r\n%s\r\n' "$A" "$PQ" "$NOT_AFTER"
@@ -464,7 +467,7 @@ case_env accept-1-hour-ahead "{$H,\"sent_at\":\"2026-10-10T01:00:00Z\",\"msg_id\
 case_env refuse-1-hour-and-1s-ahead "{$H,\"sent_at\":\"2026-10-10T01:00:01Z\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
 case_env refuse-from-not-signer "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$B" "$B"
 case_env refuse-to-another-mailbox "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$A"
-case_env refuse-from-in-base64 "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "+${A:1}" "$B"
+case_env refuse-from-uppercase "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$(printf '%s' "$A" | tr a-z A-Z)" "$B"
 case_env refuse-version-2 "{\"v\":2,\"from\":\"%s\",\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
 case_env refuse-no-version "{\"from\":\"%s\",\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
 case_env refuse-no-body "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\"}" "$A" "$B"
@@ -479,7 +482,7 @@ case_env refuse-sent-at-second-60 "{$H,\"sent_at\":\"2026-10-09T23:59:60Z\",\"ms
 # Parser differentials: every reader must take the same values from one envelope.
 case_env accept-case-variant-key "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"benign\",\"BODY\":\"evil\"}" "$A" "$B"
 case_env refuse-version-string "{\"v\":\"1\",\"from\":\"%s\",\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
-case_env refuse-to-in-base64 "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "+${B:1}"
+case_env refuse-to-uppercase "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$(printf '%s' "$B" | tr a-z A-Z)"
 case_env refuse-from-null "{\"v\":1,\"from\":null,\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$B" # null is a member left out: it names no sender
 # v is an integer member, written in digits alone (PROTOCOL.md §3.3). jq gives back 1e0 as 1, so the script takes that one: how jq reads a number, a difference that guards none of the five (AGENTS.md § The shell client).
 case_env refuse-version-written-with-a-fraction "{\"v\":1.0,\"from\":\"%s\",\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"

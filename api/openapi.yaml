@@ -1391,7 +1391,7 @@ paths:
       - name: addr
         in: path
         required: true
-        description: A mailbox's address, 64 characters of unpadded base64url. Any other path is `404`.
+        description: A mailbox's address, 77 characters of lowercase base32. Any other path is `404`.
         schema:
           $ref: '#/components/schemas/Address'
     get:
@@ -1576,7 +1576,7 @@ components:
       name: addr
       in: path
       required: true
-      description: A mailbox's address, 64 characters of unpadded base64url (`PROTOCOL.md` §4.2), compared exactly. Any other form is `400 bad_address`.
+      description: A mailbox's address, 77 characters of lowercase base32 (`PROTOCOL.md` §4.2). Any other form, uppercase among them, is `400 bad_address`.
       schema:
         $ref: '#/components/schemas/Address'
     id:
@@ -1692,7 +1692,7 @@ components:
       required: true
       schema:
         type: string
-        pattern: '^/v1/[A-Za-z0-9_-]{64}/messages/[0-9a-f]{64}$'
+        pattern: '^/v1/[a-z2-7]{76}[acegikmoqsuwy246]/messages/[0-9a-f]{64}$'
 
   responses:
     Done:
@@ -2353,9 +2353,9 @@ components:
       type: string
       pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
     Address:
-      description: A mailbox's address, the SHA-384 of its identity document in unpadded base64url (RFC 4648 §5), 64 characters (`PROTOCOL.md` §4.2).
+      description: A mailbox's address, the SHA-384 of its identity document in base32 (RFC 4648 §6), lowercase and without padding, 77 characters, the last with its unused bit zero (`PROTOCOL.md` §4.2).
       type: string
-      pattern: '^[A-Za-z0-9_-]{64}$'
+      pattern: '^[a-z2-7]{76}[acegikmoqsuwy246]$'
     MessageID:
       description: A message id, the lowercase hex SHA-256 of its ciphertext.
       type: string
@@ -2597,7 +2597,7 @@ components:
     ACLEntry:
       description: An address, or `*`, which matches every address.
       type: string
-      pattern: '^(\*|[A-Za-z0-9_-]{64})$'
+      pattern: '^(\*|[a-z2-7]{76}[acegikmoqsuwy246])$'
     AdoptRequest:
       type: object
       additionalProperties: false

@@ -864,7 +864,7 @@ func TestAPolicyThatCannotBeReadStopsTheDrain(t *testing.T) {
 	e := newEnv(t)
 	a, b := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
 	send(t, a, b, "waits")
-	for name, text := range map[string]string{"policy": "unknown deliver\n", "allowed": "not an address\n", "blocked": "+" + a.Address().String()[1:] + "\n"} {
+	for name, text := range map[string]string{"policy": "unknown deliver\n", "allowed": "not an address\n", "blocked": strings.ToUpper(a.Address().String()) + "\n"} {
 		if err := os.WriteFile(filepath.Join(b.Dir(), name), []byte(text), 0o600); err != nil {
 			t.Fatal(err)
 		}

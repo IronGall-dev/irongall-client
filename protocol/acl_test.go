@@ -3,6 +3,7 @@ package protocol
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -85,7 +86,7 @@ func TestCheckACL(t *testing.T) {
 		`{}`,             // no allow list
 		`{"deny":["*"]}`, // no allow list
 		`{"allow":null}`, // null is left out
-		`{"allow":["*"],"deny":["+` + a[1:] + `"]}`, // base64's alphabet, not base64url's
+		`{"allow":["*"],"deny":["` + strings.ToUpper(a) + `"]}`,
 		`{"allow":["` + a[:63] + `"]}`,
 		`{"allow":["*` + a[1:] + `"]}`, // no partial pattern
 		`{"allow":["**"]}`,

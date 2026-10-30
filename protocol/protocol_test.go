@@ -12,28 +12,24 @@ import (
 )
 
 func TestParseAddress(t *testing.T) {
-	good := "EGIfCV9Wqn1ltBM3ZVmUcIhspECsXYkOmBzHju6bCr5h-W3G_sCxNGEl9Saqx8fg" // testdata/vectors/a/address
+	good := "cbrb6ck7k2vh2znucm3wkwmuocegzjcavroysduydtdy53u3bk7gd6lny37mbmjumes7kjvky7d6a" // testdata/vectors/a/address
 	a, err := ParseAddress(good)
-	if err != nil || a.String() != good {
+	if err != nil || a.String() != good || len(good) != AddressLen {
 		t.Fatalf("ParseAddress(%q) = %v, %v", good, a, err)
 	}
 	if a != AddressOf(read(t, "a/identity.doc")) {
 		t.Fatal("vector a's address is not the SHA-384 of its identity document")
 	}
-	// Base64's own alphabet (RFC 4648 §4) is not base64url's: + and / are
-	// refused, as is padding, which 48 bytes never need.
-	for _, s := range []string{"", good[:63], good + "A", good[:63] + "=", "+" + good[1:], "/" + good[1:], good[:63] + ".", " " + good[1:]} {
+	// The last character carries a zero bit: "b" is "a" with it set, the
+	// same 48 bytes to a decoder that drops it.
+	for _, s := range []string{"", good[:76], good + "a", strings.ToUpper(good), good[:76] + "b", good[:76] + "=", good[:75] + "1a", good[:75] + "8a", " " + good[1:]} {
 		if _, err := ParseAddress(s); err == nil {
 			t.Errorf("accepted %q", s)
 		}
 	}
-	// A letter in the other case is another address, never this one folded.
-	if b, err := ParseAddress(strings.ToUpper(good)); err != nil || b == a {
-		t.Errorf("the address in capitals: %v, the same address %v", err, b == a)
-	}
 	var got struct{ A Address }
-	if err := json.Unmarshal([]byte(`{"A":"+`+good[1:]+`"}`), &got); err == nil {
-		t.Error("JSON accepted an address in base64's alphabet")
+	if err := json.Unmarshal([]byte(`{"A":"`+strings.ToUpper(good)+`"}`), &got); err == nil {
+		t.Error("JSON accepted an uppercase address")
 	}
 }
 

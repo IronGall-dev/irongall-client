@@ -38,13 +38,13 @@ const DefaultBase = "https://dromas.dev"
 // it anything, and it answers with a signed reply saying what it checked and
 // carrying the body back. Its prekey is post-quantum. A message to it is readable
 // by dromas.dev's operator, who runs it.
-const EchoAddress = "QGnwhx4dTMGWuVDvVof0-J6p-8tA4oxE4q9mw0fzMSS9G0g9m4QVEnPk2d-b69gR"
+const EchoAddress = "ibu7bby6dvgmdfvzkdxvnb7u7cpkt66lidriyrhcv5tmgr7tgesl2g2ihwnyifisopsntx435pmbc"
 
 // EchoAddressNoPQ is dromas.dev's second echo mailbox, whose prekey is X25519
 // only: the one a sender on age 1.2 can reach (sh/dromas.sh; this client
 // reaches both). It answers as EchoAddress does, and a message to it is as
 // readable by dromas.dev's operator.
-const EchoAddressNoPQ = "PLqqbbHKKhW68TaZv11I-dtKvCcnuIXF_HyDqcl2uXjUgSgvnzTFW-zb-wHWk2JE"
+const EchoAddressNoPQ = "hs5ku3nrzivbloxrg2m36xki7hnuvpbhe64ilrp4psb2tslwxf4njajif6ptjrk35tn7waowsnrei"
 
 // requestTimeout bounds a request of the default HTTP client (stall): the
 // bytes of a ciphertext it sends or fetches, by how long they may go with

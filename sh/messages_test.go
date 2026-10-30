@@ -228,7 +228,7 @@ func TestScriptSendsAndReads(t *testing.T) {
 			t.Errorf("a link to another server, %s: %v", l, r)
 		}
 	}
-	for _, l := range []string{w.srv.URL + "/to/" + b.addr.String() + "/", w.srv.URL + "/v1/" + b.addr.String(), "+" + b.addr.String()[1:]} {
+	for _, l := range []string{w.srv.URL + "/to/" + b.addr.String() + "/", w.srv.URL + "/v1/" + b.addr.String(), strings.ToUpper(b.addr.String())} {
 		if r := a.send(l, "x"); r.rc == 0 || !strings.Contains(r.err, "not an address or a link to one") {
 			t.Errorf("neither an address nor a link, %s: %v", l, r)
 		}
