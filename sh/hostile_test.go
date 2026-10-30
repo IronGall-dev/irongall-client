@@ -69,7 +69,7 @@ func TestScriptRefusesInItsOwnWords(t *testing.T) {
 	n := len(w.srv.Requests())
 	for range 3 {
 		m := &shMailbox{w: w, dir: filepath.Join(t.TempDir(), "made")}
-		m.must(`mkdir -p "$DR"; ssh-keygen -q -t ed25519 -N '' -C '' -f "$DR/identity"; printf 'dromas-v1\n%s\n' "$(cut -d' ' -f1,2 "$DR/identity.pub")" > "$DR/identity.doc"; sha256sum < "$DR/identity.doc" | cut -c1-64 > "$DR/address"`)
+		m.must(`mkdir -p "$DR"; ssh-keygen -q -t ed25519 -N '' -C '' -f "$DR/identity"; printf 'dromas-v1\n%s\n' "$(cut -d' ' -f1,2 "$DR/identity.pub")" > "$DR/identity.doc"; { dr_address "$DR/identity.doc"; echo; } > "$DR/address"`)
 		m.addr = mustAddress(t, m.dir)
 		l := m.line(b.addr, "00000000-0000-4000-8000-000000000000", "from a sender the server made up", 0)
 		w.inject(b, "", l, w.signWith(filepath.Join(op.dir, "work-cert.pub"), b.addr, l))

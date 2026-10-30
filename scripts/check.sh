@@ -45,6 +45,11 @@ case $(uname -s) in
   # are held to sha256sum on every other runner.
   OpenBSD | NetBSD | DragonFly) allowed+=(-e 'sha256sum is not installed') ;;
 esac
+case $(uname -s) in
+  # Their base systems ship no base32(1): the addresses are held to coreutils'
+  # base32 on Linux and on Windows.
+  Darwin | FreeBSD | OpenBSD | NetBSD | DragonFly) allowed+=(-e 'base32 is not installed') ;;
+esac
 
 pkgs=$(go list ./...)
 if [ -n "$nosh" ]; then

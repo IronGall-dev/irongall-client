@@ -2,7 +2,7 @@ package client_test
 
 import (
 	"context"
-	"crypto/sha256"
+	"crypto/sha512"
 	"errors"
 	"fmt"
 	"net/http"
@@ -642,7 +642,7 @@ func TestARestoreAdoptsABoundedACL(t *testing.T) {
 			b := e.heldMailbox(protocol.Classic)
 			addrs := make([]protocol.Address, n-1) // and the allow list's *
 			for i := range addrs {
-				addrs[i] = protocol.Address(sha256.Sum256(fmt.Append(nil, i)))
+				addrs[i] = protocol.Address(sha512.Sum384(fmt.Append(nil, i)))
 			}
 			e.srv.PutACL(b.Address(), &protocol.ACL{Allow: protocol.ACLList{Any: true}, Deny: protocol.NewACLList(false, addrs)})
 			r := restore(t, e, b)

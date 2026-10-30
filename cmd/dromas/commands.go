@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -202,7 +201,7 @@ func (e *cli) sendCmd() *cobra.Command {
 	var f client.Fields
 	var asJSON bool
 	c := command("send [flags] <link, address or alias> [file]", "send a message: the body from a file, or stdin",
-		`Send one message to a link, a bare 64-hex address or an alias, with the body
+		`Send one message to a link, a bare address or an alias, with the body
 from the file, or from stdin, and print the server's id for it and its msg_id.
 It waits in outbox/ until a server takes it (dromas outbox flush posts it
 again), and is then kept in sent/ with the server's receipt. Sending to a mailbox
@@ -1258,7 +1257,7 @@ line is the record as every server takes it: dromas revocation publish
 
 func (e *cli) publishCmd() *cobra.Command {
 	var record string
-	const how = "dromas revocation publish takes the 64-character address, in full: it is the confirmation, and a revocation cannot be undone"
+	const how = "dromas revocation publish takes the 77-character address, in full: it is the confirmation, and a revocation cannot be undone"
 	c := command("publish [flags] <address>", "revoke this mailbox's address, FOR GOOD",
 		`Revoke this mailbox's address, FOR GOOD: nothing undoes it. The address written
 out in full is the confirmation. --record <file> publishes a record made
@@ -1282,7 +1281,7 @@ server, and the command fails unless the server took it: run it again.`,
 				if rec, err = readRecord(record); err != nil {
 					return err
 				}
-				if protocol.Address(sha256.Sum256(rec.Identity)) != a {
+				if protocol.AddressOf(rec.Identity) != a {
 					return errors.New("the record is a revocation of another address than the one named: nothing was published")
 				}
 			} else {

@@ -1,7 +1,6 @@
 package protocol
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 
@@ -85,7 +84,7 @@ func SignRevocation(identity ssh.Signer, a Address) ([]byte, error) {
 // as from ParseIdentity: nothing it signed can be checked here, a revocation
 // included. Everything else that fails is ErrRevocation.
 func VerifyRevocation(a Address, document, signature []byte) (*Identity, error) {
-	if Address(sha256.Sum256(document)) != a {
+	if AddressOf(document) != a {
 		return nil, ErrRevocation
 	}
 	id, err := ParseIdentity(document)

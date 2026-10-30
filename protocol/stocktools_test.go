@@ -21,7 +21,8 @@ import (
 // exactly its plaintext, and with the other mailbox's not at all; head and sed split that plaintext into the line and
 // its signature; ssh-keygen reads each certificate and verifies each signature
 // under it, at the vectors' time, and each certificate file is the one its
-// signatures carry; and sha256sum gives each address. Nothing
+// signatures carry; and openssl and base32 give each address, the SHA-384
+// of its identity document in lowercase base32. Nothing
 // from this package reads a vector here: the namespaces are the spec's.
 func TestVectorsByToolsNotOurs(t *testing.T) {
 	dir, err := filepath.Abs(vectors)
@@ -71,15 +72,22 @@ func TestVectorsByToolsNotOurs(t *testing.T) {
 	// The vectors' time, as ssh-keygen's verify-time takes one.
 	at := strings.NewReplacer("-", "", "T", "", ":", "").Replace(strings.TrimSpace(string(file(t, "now"))))
 
-	t.Run("sha256sum", func(t *testing.T) {
-		tool(t, "sha256sum")
+	t.Run("openssl and base32", func(t *testing.T) {
+		tool(t, "openssl")
+		tool(t, "base32")
 		for _, mailbox := range []string{"a", "b", "c"} {
-			out, err := run(t, file(t, mailbox+"/identity.doc"), "sha256sum")
+			sum, err := run(t, file(t, mailbox+"/identity.doc"), "openssl", "dgst", "-sha384", "-binary")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := strings.Fields(string(out))[0]; got != address(t, mailbox) {
-				t.Errorf("%s: sha256sum of identity.doc is %s, the address is %s", mailbox, got, address(t, mailbox))
+			b32, err := run(t, sum, "base32")
+			if err != nil {
+				t.Fatal(err)
+			}
+			// RFC 4648 §6's base32, its padding dropped and its letters lowered,
+			// as Tor writes an onion address.
+			if got := strings.ToLower(strings.TrimRight(strings.Join(strings.Fields(string(b32)), ""), "=")); got != address(t, mailbox) {
+				t.Errorf("%s: openssl's SHA-384 of identity.doc, in base32 by base32, is %s, the address is %s", mailbox, got, address(t, mailbox))
 			}
 		}
 	})

@@ -11,7 +11,7 @@
 // tool reads the file (an OpenSSH key, age key files):
 //
 //	identity, identity.pub     the identity key, OpenSSH format: Ed25519 unless the mailbox was made on another type; back it up. It signs certificates and revocations only
-//	identity.doc, address      the identity document and its SHA-256
+//	identity.doc, address      the identity document and its SHA-384, the address
 //	work/<serial>              working keys, each with its certificate (.pub, -cert.pub): they sign what the mailbox says
 //	prekeys/<serial>.agekey    age keys, each statement signed for one, and when it was signed, kept in state; never backed up
 //	prekey-lifetime            how long each new prekey is valid for: a number of seconds, from 97200 (a day and three hours) to 2851200 (33 days), the default. Yours to write, or dromas prekey lifetime's

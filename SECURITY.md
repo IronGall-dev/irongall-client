@@ -34,8 +34,8 @@ Each row is a claim the code makes, the section of `PROTOCOL.md` with the whole 
 
 | The claim | `PROTOCOL.md` | Held by |
 |---|---|---|
-| **Standard cryptography only, nothing home-rolled:** age to encrypt (ML-KEM-768 + X25519 by default), SSHSIG over Ed25519 to sign, SHA-256 for addresses | §3.1 | `protocol/`, `sshsig/` (the API the Go team accepted for x/crypto); the vectors, checked against `ssh-keygen` and `age` themselves |
-| **An address is the SHA-256 of its identity document, which holds its identity key.** Only that key, and a working key it certified, can speak for the address; a server can make neither | §4, §5 | `protocol/identity.go`, `protocol/certificate.go`; `client/forgery_test.go` |
+| **Standard cryptography only, nothing home-rolled:** age to encrypt (ML-KEM-768 + X25519 by default), SSHSIG over Ed25519 to sign, SHA-384 for addresses | §3.1 | `protocol/`, `sshsig/` (the API the Go team accepted for x/crypto); the vectors, checked against `ssh-keygen` and `age` themselves |
+| **An address is the SHA-384 of its identity document, which holds its identity key.** Only that key, and a working key it certified, can speak for the address; a server can make neither | §4, §5 | `protocol/identity.go`, `protocol/certificate.go`; `client/forgery_test.go` |
 | **Every document is accepted or refused as its vector names it:** each identity, certificate, prekey statement, pass, revocation of an address or of certificates, envelope and decrypted message | §4–§10, §16 | `protocol/`, `testdata/vectors/` |
 | **The server never sees plaintext or a private key.** A message is signed, then encrypted, on the sender's machine; the signature is inside the ciphertext | §9.2, §9.4 | `protocol/signed.go`, `client/send.go` |
 | **The reader decides who sent a message,** from the sender's own signature, and never asks the server nor reads a sender it lists | §12.3 | `judge` in `client/`; `client/forgery_test.go` refuses each forgery an operator can make, one by one, and `TestAFromTheServerListsIsNotRead` delivers a message as its signer's whatever the list names; `client/hostile_test.go` |

@@ -2,7 +2,7 @@ package protocol
 
 import (
 	"bytes"
-	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -106,7 +106,7 @@ func TestVectorBadRevocations(t *testing.T) {
 	// An identity of a key type this build does not verify says so: nothing
 	// it signed can be checked here.
 	other := read(t, "identity/unsupported-type.doc")
-	if _, err := VerifyRevocation(Address(sha256.Sum256(other)), other, read(t, "a/revoke.sig")); !errors.Is(err, ErrIdentityType) {
+	if _, err := VerifyRevocation(Address(sha512.Sum384(other)), other, read(t, "a/revoke.sig")); !errors.Is(err, ErrIdentityType) {
 		t.Errorf("a document of another key type: %v", err)
 	}
 }

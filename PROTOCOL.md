@@ -25,7 +25,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 - A *line* ends in LF (0x0A). A text "of N lines" is exactly N lines: no CR, and nothing after the last LF.
 - `‖` is concatenation. `str(x)` is a uint32 big-endian length followed by the bytes of `x` (RFC 4251 §5).
-- An **address** is written as 64 lowercase hexadecimal characters, wherever it appears: a path, a statement, an envelope, a namespace.
+- An **address** is written as 77 characters of lowercase base32 (RFC 4648 §6) without padding, wherever it appears: a path, a statement, an envelope, a namespace.
 - A **time** is RFC 3339 in UTC to the second, exactly `YYYY-MM-DDTHH:MM:SSZ`. What ends at a time has ended at that second: it is valid while a clock reads before it.
 - A **serial** is a decimal integer from 1 to 2^53 − 1 with no leading zero. 2^53 − 1 is the largest integer every JSON reader holds exactly (Section 3.3).
 - **base64** is standard base64 (RFC 4648 §4) in its one encoding: padded, with no character outside the alphabet (a line break included), and the unused bits of its last character zero, so that encoding the bytes again gives the same text. Two places differ, and say so: the armour of a signature (Section 3.2) and an adopt key (Section 11.16).
@@ -35,7 +35,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 
 - **Mailbox:** an address, its keys and its messages.
 - **Identity key:** a mailbox's long-term signing key, of a key type Section 4 defines. It signs certificates (Section 5) and revocations (Section 10), and nothing else.
-- **Identity document `D`:** the two-line text that carries the identity's public key (Section 4.1). **Address `H`:** the SHA-256 of `D` (Section 4.2). One identity key has exactly one address.
+- **Identity document `D`:** the two-line text that carries the identity's public key (Section 4.1). **Address `H`:** the SHA-384 of `D` (Section 4.2). One identity key has exactly one address.
 - **Working key:** an Ed25519 key that the identity certifies for at most 64 days and an hour. It signs everything else a mailbox signs: prekey statements, messages and passes.
 - **Certificate:** the OpenSSH user certificate by which the identity certifies a working key (Section 5).
 - **Statement:** a fixed-form text of lines, each ended by LF, that a key signs with SSHSIG (Section 3.2): a prekey statement (Section 6), a pass (Section 8), a revocation (Section 10).
@@ -65,10 +65,11 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 | SSHSIG | every signature: the signer's signature over SHA-512 or SHA-256 of the message, in a namespace | OpenSSH `PROTOCOL.sshsig` |
 | SSH public key text | `<key type> <base64 of the wire key>` | RFC 4253 §6.6, RFC 8709, RFC 5656 |
 | OpenSSH certificate | the certificate of a working key | draft-ietf-sshm-cert |
-| SHA-256 | the address; a message's id | FIPS 180-4 |
+| SHA-384 | the address | FIPS 180-4 |
+| SHA-256 | a message's id | FIPS 180-4 |
 | UUID | an envelope's `msg_id` | RFC 9562 |
 
-A keyed hash in this protocol is HMAC or HKDF, inside age. Plain SHA-256 is applied only to public inputs: the identity document and the ciphertext.
+A keyed hash in this protocol is HMAC or HKDF, inside age. Plain SHA-384 and SHA-256 are applied only to public inputs: the identity document and the ciphertext.
 
 ### 3.2. Signatures
 
@@ -131,7 +132,10 @@ The key MUST be of a type this section defines, in its one encoding, and MUST pa
 
 ### 4.2. The address
 
-The address is the lowercase hexadecimal SHA-256 of `D`, 64 characters: `sha256sum < identity.doc | cut -c1-64`.
+The address is the SHA-384 of `D`, its 48 bytes in base32 (RFC 4648 §6) without padding and in lowercase, as Tor writes an onion address: 77 characters of `a`–`z` and `2`–`7`, `openssl dgst -sha384 -binary < identity.doc | base32 | tr -d '=' | tr A-Z a-z`. 384 bits leave the last character one unused bit, which is zero, so each address has one text form.
+
+- **SHA-384 is NIST's category 4 for collisions** (SHA-256 is category 2), and the address is the one part of a mailbox that never changes: whatever else is renewed, a second preimage of it names the mailbox for good.
+- **It has one case and never begins with `-`:** no two addresses differ only in case, so a file named by one is that address's alone on any file system, and a command line never reads one as an option.
 
 - It commits to the identity alone, so renewing or changing the type of the prekey never changes it.
 - It has no checksum: a mistyped address names no mailbox.
@@ -142,7 +146,7 @@ The address is the lowercase hexadecimal SHA-256 of `D`, 64 characters: `sha256s
 
 An address is shared as the link `https://<server>/to/<address>`.
 
-- A server MUST serve a page there for exactly 64 lowercase hexadecimal characters, and `404` for any other path. The page is fixed text, the address and the server's own link to it, and never text a mailbox supplied, sent with `Referrer-Policy: no-referrer` and `X-Robots-Tag: noindex`. A query on the link is ignored.
+- A server MUST serve a page there for exactly 77 characters of lowercase base32, and `404` for any other path. The page is fixed text, the address and the server's own link to it, and never text a mailbox supplied, sent with `Referrer-Policy: no-referrer` and `X-Robots-Tag: noindex`. A query on the link is ignored.
 - A client given a link MUST take the address from its path, MUST NOT fetch the page, and MUST refuse a link to any server but its own.
 
 ## 5. The working key and its certificate
@@ -373,7 +377,7 @@ What each code means, and what a client does on it:
 | Status | Code | Meaning |
 |---|---|---|
 | 400 | `bad_request` | not a JSON text Section 3.3 takes; a member or query parameter missing, unknown, given twice, or holding a value its call does not take. `member` names it |
-| 400 | `bad_address` | an address in the path that is not 64 lowercase hexadecimal characters |
+| 400 | `bad_address` | an address in the path that is not 77 characters of lowercase base32 |
 | 400 | `bad_encoding` | a byte member that is not base64 in its one encoding |
 | 400 | `identity_mismatch` | an identity document that does not hash to the address, or breaks its form (Section 4.1) |
 | 400 | `unsupported_key_type` | an identity of a key type this protocol does not define, or this server does not register; `key_types` lists what it registers |
@@ -469,7 +473,7 @@ Every call names a mailbox, and this is what each does in each state.
 
 The server checks:
 
-1. The address in the path is 64 lowercase hexadecimal characters → otherwise `bad_address`.
+1. The address in the path is 77 characters of lowercase base32 → otherwise `bad_address`.
 2. The body has exactly those members → otherwise `bad_request`, naming the member.
 3. `identity` hashes to the address and has the form of an identity document (Section 4.1) → otherwise `identity_mismatch`.
 4. **The key's type and the key.** A type this protocol does not define → `unsupported_key_type`. The key in its one encoding → otherwise `identity_mismatch`. The type's key checks → otherwise `bad_key`. A server registers `ssh-ed25519` and whichever other defined types its operator chooses, and answers the rest `unsupported_key_type`, naming its list.
@@ -552,7 +556,7 @@ The server checks, and only step 9 stores anything. Every count is taken before 
 A mailbox's ACL is whom its server takes the mailbox's messages from.
 
 - **Semantics.** A mailbox with no ACL takes messages from everyone. With one, `deny` is checked first, then `allow`, and a sender matched by neither is refused, `403 sender_not_allowed`.
-- **`PUT /v1/<B>/acl`,** with the pass, replaces it whole with `allow` and `deny`. Each entry is an address, or `*`, which matches every address; there is no other pattern, and repeats are taken once. `allow` is REQUIRED (`["*"]` is everyone and `[]` nobody): a document without it is `400 bad_request`. `deny` may be left out, for none. More entries, in both lists together, than the server takes is `413 too_large`. A server MUST NOT take more than 10,000, and MAY take fewer. The answer is `200` with the ACL as held, `*` first and then each address once in ascending order, and no `ETag`.
+- **`PUT /v1/<B>/acl`,** with the pass, replaces it whole with `allow` and `deny`. Each entry is an address, or `*`, which matches every address; there is no other pattern, and repeats are taken once. `allow` is REQUIRED (`["*"]` is everyone and `[]` nobody): a document without it is `400 bad_request`. `deny` may be left out, for none. More entries, in both lists together, than the server takes is `413 too_large`. A server MUST NOT take more than 10,000, and MAY take fewer. The answer is `200` with the ACL as held, `*` first and then each address once in ascending order of its 48 bytes (not of its text, whose alphabet puts `2`–`7` after `z`), and no `ETag`.
 - **`GET /v1/<B>/acl`,** with the pass, answers the ACL as held, in that order, with its `ETag`, a strong validator that changes whenever the lists change. A mailbox with none answers `{"allow":["*"],"deny":[]}`, and has a tag too. A client MUST treat an ACL answer holding more than 10,000 entries, in both lists together, as an answer that breaks its form. There is no `DELETE`.
 - **A `PUT` MAY carry `If-Match`,** so that it replaces only the ACL its writer read: compared strongly with the tag of the ACL held now, a mailbox with none included. `If-None-Match: *`, or one naming the ACL's tag, is false, since a mailbox always has an ACL. A `PUT` without a precondition replaces whatever is held.
 - **It deletes no message:** a change refuses later sends only, and what the mailbox holds stays until it is acked or expires. A send that passed the check while the ACL changed may still be stored after it.
@@ -791,7 +795,7 @@ Dromas protects a message's content from everyone but its recipient, and its sen
 - **It sees:** addresses, identity documents, certificates and prekeys; who sends to whom; each message's size to within a padding block (Section 9.3); times and IP addresses; ciphertext; each mailbox's passes; which account a mailbox is in; and each mailbox's ACL, which under an allow list names senders the mailbox takes messages from who may never have written to it.
 - **It never sees:** plaintext, a private key, an age file key, or any message's signature. **It holds nothing signed that says who wrote to whom:** a pass names a mailbox and a time, and no recipient and no message.
 - **It can:** deny service; drop, delay or delete messages, undetectably; say a mailbox is revoked when it is not, which a client checks and does not believe (Section 12.5); keep a revocation from a peer that has never seen it (Section 15.6); replay old messages, which Section 12.3 refuses; serve a stale prekey to a sender, but only one the mailbox's working key signed, and only until its `not_after`, and not to a sender that has seen a newer one; act as a mailbox toward itself; take messages a mailbox's ACL refuses, which the mailbox's client still judges, or refuse messages it admits, which it could drop anyway; lie once in the ACL a mailbox restored without its own lists adopts, so that a verified sender's messages land as allowed, or messages it could drop anyway are dropped; write anything in an error's words, which a client never shows, or in a receipt, an account id or a cursor, which a client checks to their forms before it uses one (Section 11.3); and serve altered instructions to an agent that runs what it is served.
-- **It cannot,** against a client that verifies and gates: read messages, forge a sender, reattribute a message, substitute a key (that would need a SHA-256 second preimage or a signature forgery), alter a message undetected, end an address, make a pass, or turn a pass into plaintext or a signature on a message.
+- **It cannot,** against a client that verifies and gates: read messages, forge a sender, reattribute a message, substitute a key (that would need a SHA-384 second preimage or a signature forgery), alter a message undetected, end an address, make a pass, or turn a pass into plaintext or a signature on a message.
 
 ### 15.3. Forward secrecy
 
@@ -867,7 +871,7 @@ Dromas protects a message's content from everyone but its recipient, and its sen
 - **[BIP 173]** Bech32
 - **[FIPS 180-4]**, **[FIPS 186-5]**
 - **[RFC 2119]**, **[RFC 8174]** BCP 14
-- **[RFC 3339]** timestamps · **[RFC 4151]** the `tag` URI scheme · **[RFC 4251]**, **[RFC 4253]** SSH · **[RFC 4648]** base64 · **[RFC 5656]** ECDSA in SSH · **[RFC 6454]** origins · **[RFC 7457]** TLS attacks · **[RFC 7493]** I-JSON · **[RFC 8032]** EdDSA · **[RFC 8259]** JSON · **[RFC 8555]** ACME · **[RFC 8594]** the `Sunset` header field · **[RFC 8709]** Ed25519 in SSH · **[RFC 9110]** HTTP semantics · **[RFC 9457]** problem details · **[RFC 9562]** UUIDs · **[RFC 9651]** Structured Field Values · **[RFC 9745]** the `Deprecation` header field
+- **[RFC 3339]** timestamps · **[RFC 4151]** the `tag` URI scheme · **[RFC 4251]**, **[RFC 4253]** SSH · **[RFC 4648]** base64 and base32 · **[RFC 5656]** ECDSA in SSH · **[RFC 6454]** origins · **[RFC 7457]** TLS attacks · **[RFC 7493]** I-JSON · **[RFC 8032]** EdDSA · **[RFC 8259]** JSON · **[RFC 8555]** ACME · **[RFC 8594]** the `Sunset` header field · **[RFC 8709]** Ed25519 in SSH · **[RFC 9110]** HTTP semantics · **[RFC 9457]** problem details · **[RFC 9562]** UUIDs · **[RFC 9651]** Structured Field Values · **[RFC 9745]** the `Deprecation` header field
 - **[SemVer]** Semantic Versioning 2.0.0, https://semver.org/spec/v2.0.0.html
 
 ## Appendix A. Where OpenSSH releases differ (informative)

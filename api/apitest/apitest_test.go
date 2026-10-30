@@ -63,7 +63,7 @@ func TestAnAnswerInGzipIsHeldToTheRequestAndTheDescription(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write(k.answer)
 		}))
-		req := httptest.NewRequest(http.MethodGet, "/v1/"+strings.Repeat("ab", 32), nil)
+		req := httptest.NewRequest(http.MethodGet, "/v1/"+strings.Repeat("ab", 38)+"a", nil)
 		if k.accept != "" {
 			req.Header.Set("Accept-Encoding", k.accept)
 		}
@@ -87,7 +87,7 @@ func read(t *testing.T, name, value string) []string {
 		}
 		_, _ = w.Write([]byte(body))
 	}))
-	srv.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/"+strings.Repeat("ab", 32), nil))
+	srv.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/v1/"+strings.Repeat("ab", 38)+"a", nil))
 	return r.errs
 }
 
@@ -121,7 +121,7 @@ func TestAHeaderTheDescriptionDoesNotNameFails(t *testing.T) {
 // in digits alone: JSON Schema counts 1.0 and 1e0 as integers, and both
 // clients refuse them. No JSON request a server takes holds a number.
 func TestEveryNumberIsAnIntegerInDigitsAlone(t *testing.T) {
-	addr := "/v1/" + strings.Repeat("ab", 32)
+	addr := "/v1/" + strings.Repeat("ab", 38) + "a"
 	list := func(count string) []string {
 		r := &reported{TB: t}
 		srv := apitest.Handler(r, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -168,7 +168,7 @@ func TestALinkPagesQueryIsIgnored(t *testing.T) {
 		srv.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, path, nil))
 		return r.errs
 	}
-	addr := strings.Repeat("ab", 32)
+	addr := strings.Repeat("ab", 38) + "a"
 	if errs := call(protocol.LinkPath+addr+"?utm_source=chat&x=1", true); len(errs) > 0 {
 		t.Errorf("the link page with a query: %q", errs)
 	}
@@ -220,7 +220,7 @@ func TestARouteTheDescriptionLacksTakesOnlyALimitsOwn429(t *testing.T) {
 // answer of the description's, and neither Range nor If-Range is a header
 // the description refuses.
 func TestARangedFetchIsTheDescriptions(t *testing.T) {
-	path := "/v1/" + strings.Repeat("ab", 32) + "/messages/" + strings.Repeat("cd", 32)
+	path := "/v1/" + strings.Repeat("ab", 38) + "a" + "/messages/" + strings.Repeat("cd", 32)
 	fetch := func(status int, contentRange string, hdr ...string) []string {
 		r := &reported{TB: t}
 		h := apitest.Handler(r, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -274,7 +274,7 @@ func TestAHeadIsCheckedWithoutItsContent(t *testing.T) {
 				_, _ = w.Write([]byte(body))
 			}
 		}))
-		req := httptest.NewRequest(http.MethodHead, "/v1/"+strings.Repeat("ab", 32), nil)
+		req := httptest.NewRequest(http.MethodHead, "/v1/"+strings.Repeat("ab", 38)+"a", nil)
 		for i := 0; i+1 < len(hdr); i += 2 {
 			req.Header.Set(hdr[i], hdr[i+1])
 		}

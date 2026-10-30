@@ -201,7 +201,7 @@ func (e *Envelope) Line() ([]byte, error) {
 
 // OpenEnvelope parses an envelope and checks it, in this order: it is UTF-8
 // JSON, one object with no key twice; it has a body, and every member it
-// reads is of its type (from and to are addresses, 64 lowercase hex); it is
+// reads is of its type (from and to are addresses, 77 characters of lowercase base32); it is
 // version 1, an integer written as one; its from is the VERIFIED signer and
 // its to is this mailbox (a signature holds for one recipient, so a mismatch is a
 // message passed on to a mailbox it was not written to, or one whose from names a

@@ -99,7 +99,7 @@ func (e *APIError) words() string {
 	case protocol.CodeBadRequest:
 		return "the server could not read the request: a bug in this client, or a server that reads the protocol otherwise"
 	case protocol.CodeBadAddress:
-		return "the server does not take that as an address, which is 64 lowercase hex characters"
+		return "the server does not take that as an address, which is 77 characters of lowercase base32"
 	case protocol.CodeBadEncoding:
 		return "the server read a byte field as not base64 in its one encoding: a bug in this client, or in the server"
 	case protocol.CodeIdentityMismatch:

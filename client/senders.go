@@ -135,7 +135,7 @@ func (b *Mailbox) addresses(name string) ([]protocol.Address, error) {
 		}
 		a, err := protocol.ParseAddress(line)
 		if err != nil {
-			return nil, refuse("%s, line %d: not an address (64 lowercase hex characters)", b.path(name), i+1)
+			return nil, refuse("%s, line %d: not an address (77 characters of lowercase base32)", b.path(name), i+1)
 		}
 		out = append(out, a)
 	}

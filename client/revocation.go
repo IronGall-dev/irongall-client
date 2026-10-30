@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -80,7 +79,7 @@ func Revoke(ctx context.Context, opt Options, rec *protocol.Revocations) (protoc
 
 // Revoke is [Revoke] as this mailbox: to its own server.
 func (b *Mailbox) Revoke(ctx context.Context, rec *protocol.Revocations) (protocol.Address, error) {
-	a := protocol.Address(sha256.Sum256(rec.Identity))
+	a := protocol.AddressOf(rec.Identity)
 	if _, err := protocol.VerifyRevocation(a, rec.Identity, rec.Revocation); err != nil {
 		return a, refuse("the record is not a revocation: %v", err)
 	}
@@ -130,13 +129,13 @@ func (b *Mailbox) KeepRevocation(ctx context.Context, rec *protocol.Revocations)
 		return struct{}{}, err
 	})
 	if err != nil && a == (protocol.Address{}) {
-		a = protocol.Address(sha256.Sum256(rec.Identity))
+		a = protocol.AddressOf(rec.Identity)
 	}
 	return a, h, err
 }
 
 func (b *Mailbox) keepRevocationRecord(rec *protocol.Revocations) (protocol.Address, *Held, error) {
-	a := protocol.Address(sha256.Sum256(rec.Identity))
+	a := protocol.AddressOf(rec.Identity)
 	if len(rec.Revocation) == 0 && len(rec.RevokedCertificates) == 0 {
 		return a, nil, refuse("the record holds no revocation of the address and none of its certificates")
 	}
@@ -883,7 +882,7 @@ func Publish(ctx context.Context, opt Options, rec *protocol.Revocations) (proto
 // shows when it answers that it holds as much already, once that verifies, as
 // of every answer (proved).
 func (b *Mailbox) Publish(ctx context.Context, rec *protocol.Revocations) (protocol.Address, error) {
-	a := protocol.Address(sha256.Sum256(rec.Identity))
+	a := protocol.AddressOf(rec.Identity)
 	if len(rec.Revocation) == 0 && len(rec.RevokedCertificates) == 0 {
 		return a, refuse("the record holds no revocation of the address and none of its certificates")
 	}

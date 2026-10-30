@@ -258,7 +258,7 @@ func (w *world) operator() *operator {
 		o := &operator{dir: filepath.Join(w.work, "op")}
 		b := &shMailbox{w: w, dir: o.dir}
 		b.must(`mkdir -p "$DR"; cd "$DR"
-ssh-keygen -q -t ed25519 -N '' -C '' -f identity; printf 'dromas-v1\n%s\n' "$(cut -d' ' -f1,2 identity.pub)" > identity.doc; sha256sum < identity.doc | cut -c1-64 > address
+ssh-keygen -q -t ed25519 -N '' -C '' -f identity; printf 'dromas-v1\n%s\n' "$(cut -d' ' -f1,2 identity.pub)" > identity.doc; { dr_address identity.doc; echo; } > address
 ssh-keygen -q -t ed25519 -N '' -C '' -f work
 ssh-keygen -q -s identity -I dromas-cert-v1 -n "$(cat address)" -z 1 -V "$(date -u -d '1 hour ago' +%Y%m%d%H%M%SZ):$(date -u -d '64 days' +%Y%m%d%H%M%SZ)" -O clear work.pub
 age-keygen -o agekey 2> /dev/null; age-keygen -y agekey > recipient`)

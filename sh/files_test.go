@@ -157,7 +157,7 @@ func TestAnInitRunAgainRewritesNothing(t *testing.T) {
 	before := stats(t, dir, files...)
 	done := make(chan error, 1)
 	go func() {
-		_, err := bash(t, env, `sha256sum(){ sleep 2; command sha256sum "$@"; }; dr_init --no-pq`)
+		_, err := bash(t, env, `sha384sum(){ sleep 2; command sha384sum "$@"; }; dr_init --no-pq`)
 		done <- err
 	}()
 	time.Sleep(time.Second)

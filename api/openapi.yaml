@@ -1391,7 +1391,7 @@ paths:
       - name: addr
         in: path
         required: true
-        description: A mailbox's address, 64 lowercase hex characters. Any other path is `404`.
+        description: A mailbox's address, 77 characters of lowercase base32. Any other path is `404`.
         schema:
           $ref: '#/components/schemas/Address'
     get:
@@ -1576,7 +1576,7 @@ components:
       name: addr
       in: path
       required: true
-      description: A mailbox's address, 64 lowercase hex characters (`PROTOCOL.md` §4.2). Any other form, uppercase among them, is `400 bad_address`.
+      description: A mailbox's address, 77 characters of lowercase base32 (`PROTOCOL.md` §4.2). Any other form, uppercase among them, is `400 bad_address`.
       schema:
         $ref: '#/components/schemas/Address'
     id:
@@ -1692,7 +1692,7 @@ components:
       required: true
       schema:
         type: string
-        pattern: '^/v1/[0-9a-f]{64}/messages/[0-9a-f]{64}$'
+        pattern: '^/v1/[a-z2-7]{76}[acegikmoqsuwy246]/messages/[0-9a-f]{64}$'
 
   responses:
     Done:
@@ -1742,7 +1742,7 @@ components:
         Cross-Origin-Opener-Policy:
           $ref: '#/components/headers/Cross-Origin-Opener-Policy'
     ACL:
-      description: The ACL as held, `*` first, then each address once, in ascending order of its hex, with its tag.
+      description: The ACL as held, `*` first, then each address once, in ascending order of its 48 bytes, with its tag.
       headers:
         Date:
           $ref: '#/components/headers/Date'
@@ -1769,7 +1769,7 @@ components:
           schema:
             $ref: '#/components/schemas/ACL'
     ACLTaken:
-      description: The ACL as held once the `PUT` took it, `*` first, then each address once, in ascending order of its hex. No `ETag` (RFC 9110 §9.3.4; `PROTOCOL.md` §11.14).
+      description: The ACL as held once the `PUT` took it, `*` first, then each address once, in ascending order of its 48 bytes. No `ETag` (RFC 9110 §9.3.4; `PROTOCOL.md` §11.14).
       headers:
         Date:
           $ref: '#/components/headers/Date'
@@ -2353,9 +2353,9 @@ components:
       type: string
       pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
     Address:
-      description: A mailbox's address, the lowercase hex SHA-256 of its identity document (`PROTOCOL.md` §4.2).
+      description: A mailbox's address, the SHA-384 of its identity document in base32 (RFC 4648 §6), lowercase and without padding, 77 characters, the last with its unused bit zero (`PROTOCOL.md` §4.2).
       type: string
-      pattern: '^[0-9a-f]{64}$'
+      pattern: '^[a-z2-7]{76}[acegikmoqsuwy246]$'
     MessageID:
       description: A message id, the lowercase hex SHA-256 of its ciphertext.
       type: string
@@ -2597,7 +2597,7 @@ components:
     ACLEntry:
       description: An address, or `*`, which matches every address.
       type: string
-      pattern: '^(\*|[0-9a-f]{64})$'
+      pattern: '^(\*|[a-z2-7]{76}[acegikmoqsuwy246])$'
     AdoptRequest:
       type: object
       additionalProperties: false

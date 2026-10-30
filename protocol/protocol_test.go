@@ -12,12 +12,17 @@ import (
 )
 
 func TestParseAddress(t *testing.T) {
-	good := strings.Repeat("0123456789abcdef", 4)
+	good := "cbrb6ck7k2vh2znucm3wkwmuocegzjcavroysduydtdy53u3bk7gd6lny37mbmjumes7kjvky7d6a" // testdata/vectors/a/address
 	a, err := ParseAddress(good)
-	if err != nil || a.String() != good {
+	if err != nil || a.String() != good || len(good) != AddressLen {
 		t.Fatalf("ParseAddress(%q) = %v, %v", good, a, err)
 	}
-	for _, s := range []string{"", good[:63], good + "0", strings.ToUpper(good), good[:63] + "g", " " + good[1:]} {
+	if a != AddressOf(read(t, "a/identity.doc")) {
+		t.Fatal("vector a's address is not the SHA-384 of its identity document")
+	}
+	// The last character carries a zero bit: "b" is "a" with it set, the
+	// same 48 bytes to a decoder that drops it.
+	for _, s := range []string{"", good[:76], good + "a", strings.ToUpper(good), good[:76] + "b", good[:76] + "=", good[:75] + "1a", good[:75] + "8a", " " + good[1:]} {
 		if _, err := ParseAddress(s); err == nil {
 			t.Errorf("accepted %q", s)
 		}

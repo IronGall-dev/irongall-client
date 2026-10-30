@@ -2,7 +2,6 @@ package protocol
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"errors"
 	"strconv"
 
@@ -95,7 +94,7 @@ func SignRevokedCertificates(identity ssh.Signer, r *RevokedCertificates) ([]byt
 // An identity of a key type this build does not verify is ErrIdentityType.
 // Everything else that fails is ErrRevokedCertificates.
 func VerifyRevokedCertificates(a Address, document, statement, signature []byte) (*RevokedCertificates, error) {
-	if Address(sha256.Sum256(document)) != a {
+	if AddressOf(document) != a {
 		return nil, ErrRevokedCertificates
 	}
 	id, err := ParseIdentity(document)

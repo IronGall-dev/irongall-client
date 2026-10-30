@@ -3,7 +3,6 @@ package protocol
 import (
 	"bytes"
 	"crypto/ed25519"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
@@ -130,7 +129,7 @@ func ParseIdentity(doc []byte) (*Identity, error) {
 	return &Identity{
 		doc:  bytes.Clone(doc),
 		key:  key,
-		addr: sha256.Sum256(doc),
+		addr: AddressOf(doc),
 	}, nil
 }
 
@@ -154,7 +153,7 @@ func IdentityOf(key ssh.PublicKey) (*Identity, error) {
 // Document returns the identity document, exactly as hashed.
 func (id *Identity) Document() []byte { return bytes.Clone(id.doc) }
 
-// Address returns the address: the SHA-256 of the identity document.
+// Address returns the address: the SHA-384 of the identity document.
 func (id *Identity) Address() Address { return id.addr }
 
 // PublicKey returns the identity key, for verifying its signatures.

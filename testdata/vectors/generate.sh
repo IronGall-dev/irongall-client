@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Regenerates the dromas v1 test vectors with stock tools only: bash, od, base64, fold,
-# sha256sum and ssh-keygen, plus age >= 1.3 for the two ciphertexts.
+# sha256sum, ssh-keygen, openssl (dgst -sha384) and base32, plus age >= 1.3 for the two ciphertexts.
 # Everything is deterministic (Ed25519 signatures are), except what is made once and kept:
 # each certificate (ssh-keygen puts a random nonce in one, and an ECDSA signature differs each
 # time it is made) and each message/*.age.
@@ -31,6 +31,7 @@ asc() { printf '%s' "$1" | od -An -tx1 | tr -d ' \n'; }
 str() { printf '%08x%s' $(( ${#1} / 2 )) "$1"; }           # an RFC 4251 string, from hex
 bin() { printf "$(printf '%s' "$1" | sed 's/../\\x&/g')"; } # hex → bytes on stdout
 b64() { base64 | tr -d '\n'; }
+address() { openssl dgst -sha384 -binary | base32 -w 0 | tr -d = | tr A-Z a-z; echo; } # stdin → its SHA-384 in base32 (RFC 4648 §6), lowercase, without padding, as an address file holds it
 # An age recipient as age writes one: Bech32 (BIP 173) of bytes under a human-readable part, in lowercase, with no
 # limit on its length (age has none).
 bech32() { # <human-readable part> <bytes, hex>
@@ -78,7 +79,7 @@ identity_doc() { printf 'dromas-v1\nssh-ed25519 %s\n' "$(bin "$(str "$(asc ssh-e
 p256_doc() { printf 'dromas-v1\necdsa-sha2-nistp256 %s\n' "$(bin "$(p256_wire "$@")" | b64)"; }
 
 KEYS=$(mktemp -d) # private keys live only here, and only while this runs
-cleanup() { local k; for k in a b c a-work b-work a-work-2 c-work small-work; do rm -f "$KEYS/$k" "$KEYS/$k.pub" "$KEYS/$k-cert.pub"; done; rmdir "$KEYS"; }
+cleanup() { local k; for k in a b c a-work b-work a-work-2 c-work small-work; do rm -f "$KEYS/$k" "$KEYS/$k.pub" "$KEYS/$k-cert.pub"; done; rm -f "$KEYS/padded.sig"; rmdir "$KEYS"; }
 trap cleanup EXIT
 
 printf '%s\n' "$NOW" > now
@@ -91,7 +92,7 @@ for mailbox in a b a-work b-work a-work-2 c-work; do
 done
 for mailbox in a b; do
   printf 'dromas-v1\n%s\n' "$(cut -d' ' -f1,2 "$KEYS/$mailbox.pub")" > "$mailbox/identity.doc"
-  sha256sum < "$mailbox/identity.doc" | cut -c1-64 > "$mailbox/address"
+  address < "$mailbox/identity.doc" > "$mailbox/address"
 done
 A=$(cat a/address); B=$(cat b/address)
 
@@ -101,7 +102,7 @@ openssh_p256_key "$scalar" "$POINT" "$KEYS/c"
 ssh-keygen -y -f "$KEYS/c" > "$KEYS/c.pub"
 [ "$(cut -d' ' -f2 "$KEYS/c.pub")" = "$(bin "$(p256_wire "04$POINT")" | b64)" ] || { echo "the c key file does not hold the RFC 6979 key" >&2; exit 1; }
 printf 'dromas-v1\n%s\n' "$(cut -d' ' -f1,2 "$KEYS/c.pub")" > c/identity.doc
-sha256sum < c/identity.doc | cut -c1-64 > c/address
+address < c/identity.doc > c/address
 C=$(cat c/address)
 
 # A certificate: what "ssh-keygen -s" writes for a working key, made once and kept without its comment.
@@ -174,7 +175,7 @@ printf 'dromas-revoked-certs-v1\n%s\n1\n1-4\n' "$A" > revoked/bad-a-list.txt; th
 printf 'dromas-revoke-certs-v1\r\n%s\r\n4\r\n' "$A" > revoked/bad-crlf.txt; thsig bad-crlf
 printf 'dromas-revoke-certs-v1\n%s\n4' "$A" > revoked/bad-no-final-newline.txt; thsig bad-no-final-newline
 printf 'dromas-revoke-certs-v2\n%s\n4\n' "$A" > revoked/bad-another-tag.txt; thsig bad-another-tag
-through bad-address-in-uppercase "$(tr a-f A-F <<< "$A")" 4; thsig bad-address-in-uppercase
+through bad-address-in-uppercase "$(tr a-z A-Z <<< "$A")" 4; thsig bad-address-in-uppercase
 printf 'dromas-revoke-certs-v1\n%s\n4\0\n' "$A" > revoked/bad-nul.txt; thsig bad-nul      # a NUL, which a shell variable drops: a reader that tests the variable alone takes it
 
 # A pass of mailbox A for a server it calls dromas.example, good for ten minutes from NOW, and the header it travels in.
@@ -213,7 +214,7 @@ pv bad-a-backslash-in-a-quoted-value 'dromas-pass address="\\%s", not_after="%s"
 pv bad-a-quoted-value-not-closed 'dromas-pass address="%s", not_after="%s", signature="%s' "$A" "$PT" "$PS"
 pv bad-not-after-as-a-token 'dromas-pass address="%s", not_after=%s, signature="%s"' "$A" "$PT" "$PS" # ":" is not a token's
 pv bad-a-space-in-the-signature 'dromas-pass address="%s", not_after="%s", signature="%s %s"' "$A" "$PT" "${PS:0:8}" "${PS:8}"
-pv bad-the-address-in-capitals 'dromas-pass address="%s", not_after="%s", signature="%s"' "$(tr a-f A-F <<< "$A")" "$PT" "$PS"
+pv bad-the-address-in-capitals 'dromas-pass address="%s", not_after="%s", signature="%s"' "$(tr a-z A-Z <<< "$A")" "$PT" "$PS"
 pv bad-a-semicolon-between-parameters 'dromas-pass address="%s"; not_after="%s"; signature="%s"' "$A" "$PT" "$PS"
 pv bad-a-line-feed-at-the-end 'dromas-pass address="%s", not_after="%s", signature="%s"\n' "$A" "$PT" "$PS"
 pv bad-a-quoted-name 'dromas-pass "address"="%s", not_after="%s", signature="%s"' "$A" "$PT" "$PS"
@@ -291,11 +292,14 @@ sed '$d' "$S" > sig/bad-no-end-line.sig
 sed '$s/^/ /' "$S" > sig/bad-end-line-indented.sig
 sed '2s/^./!/' "$S" > sig/bad-not-base64.sig
 { head -n 1 "$S"; printf '\0'; tail -n +2 "$S"; } > sig/bad-nul.sig
-t=$(sed -n 'x;$p' "$S"); p=${t##*[!=]}; t=${t%"$p"}; c=${t: -1}; B64=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/; i=${B64%%"$c"*}      # the last base64 line: its padding p, one = or two, and the character before it
+# The padding forms need a blob whose length is no multiple of 3. When S's is one, P is S with a byte in its reserved
+# field, which a verifier ignores (ok-reserved-not-empty): the padding is then all that is wrong with each.
+P=$S; [ $(( ${#X} / 2 % 3 )) -ne 0 ] || { P=$KEYS/padded.sig; armor "${X:0:o}$(str "$(asc .)")${X:o+8}" > "$P"; }
+t=$(sed -n 'x;$p' "$P"); p=${t##*[!=]}; t=${t%"$p"}; c=${t: -1}; B64=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/; i=${B64%%"$c"*}      # the last base64 line: its padding p, one = or two, and the character before it
 # Before one = the last character has 2 unused bits, before two 4: none may be set yet, and setting the lowest sets one of them.
 [ -n "$p" ] && [ $(( ${#i} % (${#p} == 1 ? 4 : 16) )) -eq 0 ] || { echo "the last base64 line has no padding, or its last character already has a padding bit set" >&2; exit 1; }
-sed "$(( $(wc -l < "$S") - 1 ))s/$c$p\$/${B64:${#i}+1:1}$p/" "$S" > sig/bad-padding-bits.sig      # one of the unused bits of the last character set
-sed "$(( $(wc -l < "$S") - 1 ))s/=*\$//" "$S" > sig/bad-no-padding.sig
+sed "$(( $(wc -l < "$P") - 1 ))s/$c$p\$/${B64:${#i}+1:1}$p/" "$P" > sig/bad-padding-bits.sig      # one of the unused bits of the last character set
+sed "$(( $(wc -l < "$P") - 1 ))s/=*\$//" "$P" > sig/bad-no-padding.sig
 armor "$(plusl "$X" $((${#X} - 64)))" > sig/bad-s-plus-l.sig      # the working key's S
 armor "$(plusl "$X" $((28 + 2 * 16#${X:20:8} - 64)))" > sig/bad-certificate-s-plus-l.sig      # the identity's S on the certificate, its last 32 bytes
 armor "${X}00" > sig/bad-trailing-byte-in-the-blob.sig
@@ -418,7 +422,7 @@ bad bad-time-lowercase-z 'dromas-prekey-v1\n%s\n1\n%s\n2026-11-11T00:00:00z\n' "
 bad bad-time-fraction 'dromas-prekey-v1\n%s\n1\n%s\n2026-11-11T00:00:00.5Z\n' "$A" "$PQ"
 bad bad-time-offset 'dromas-prekey-v1\n%s\n1\n%s\n2026-11-11T00:00:00+00:00\n' "$A" "$PQ"
 bad bad-tag 'dromas-prekey-v2\n%s\n1\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
-bad bad-address-uppercase 'dromas-prekey-v1\n%s\n1\n%s\n%s\n' "$(printf '%s' "$A" | tr a-f A-F)" "$PQ" "$NOT_AFTER"
+bad bad-address-uppercase 'dromas-prekey-v1\n%s\n1\n%s\n%s\n' "$(printf '%s' "$A" | tr a-z A-Z)" "$PQ" "$NOT_AFTER"
 bad bad-four-lines 'dromas-prekey-v1\n%s\n1\n%s\n' "$A" "$PQ"
 bad bad-six-lines 'dromas-prekey-v1\n%s\n1\n%s\n%s\n\n' "$A" "$PQ" "$NOT_AFTER"
 bad bad-crlf 'dromas-prekey-v1\r\n%s\r\n1\r\n%s\r\n%s\r\n' "$A" "$PQ" "$NOT_AFTER"
@@ -463,7 +467,7 @@ case_env accept-1-hour-ahead "{$H,\"sent_at\":\"2026-10-10T01:00:00Z\",\"msg_id\
 case_env refuse-1-hour-and-1s-ahead "{$H,\"sent_at\":\"2026-10-10T01:00:01Z\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
 case_env refuse-from-not-signer "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$B" "$B"
 case_env refuse-to-another-mailbox "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$A"
-case_env refuse-from-uppercase "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$(printf '%s' "$A" | tr a-f A-F)" "$B"
+case_env refuse-from-uppercase "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$(printf '%s' "$A" | tr a-z A-Z)" "$B"
 case_env refuse-version-2 "{\"v\":2,\"from\":\"%s\",\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
 case_env refuse-no-version "{\"from\":\"%s\",\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
 case_env refuse-no-body "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\"}" "$A" "$B"
@@ -478,7 +482,7 @@ case_env refuse-sent-at-second-60 "{$H,\"sent_at\":\"2026-10-09T23:59:60Z\",\"ms
 # Parser differentials: every reader must take the same values from one envelope.
 case_env accept-case-variant-key "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"benign\",\"BODY\":\"evil\"}" "$A" "$B"
 case_env refuse-version-string "{\"v\":\"1\",\"from\":\"%s\",\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
-case_env refuse-to-uppercase "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$(printf '%s' "$B" | tr a-f A-F)"
+case_env refuse-to-uppercase "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$(printf '%s' "$B" | tr a-z A-Z)"
 case_env refuse-from-null "{\"v\":1,\"from\":null,\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$B" # null is a member left out: it names no sender
 # v is an integer member, written in digits alone (PROTOCOL.md §3.3). jq gives back 1e0 as 1, so the script takes that one: how jq reads a number, a difference that guards none of the five (AGENTS.md § The shell client).
 case_env refuse-version-written-with-a-fraction "{\"v\":1.0,\"from\":\"%s\",\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
@@ -560,7 +564,7 @@ sed 's/"body":"hello"/"body":"hellp"/' message/a-to-b.line > "$L"; cat "$L" "$GO
 # with unsupported_key_type by one that does not. Then one of a type nobody verifies: refused so if the document is
 # the sender's, and as reattributed if it is not.
 line "$C" "$B" "$(b64 < c/identity.doc)" > "$L"; refuse accept-p256-sender "$L" under c-work c/work-cert.pub "dromas-msg-v1:$B"
-line "$(sha256sum < identity/unsupported-type.doc | cut -c1-64)" "$B" "$(b64 < identity/unsupported-type.doc)" > "$L"; refuse refuse-unsupported-key-type "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
+line "$(address < identity/unsupported-type.doc)" "$B" "$(b64 < identity/unsupported-type.doc)" > "$L"; refuse refuse-unsupported-key-type "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
 line "$A" "$B" "$(b64 < identity/unsupported-type.doc)" > "$L"; refuse refuse-from-is-not-the-identity-of-an-unknown-type "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
 # Who it is from. The first is the forgery an identity member invites: A's document beside a
 # certificate that B's identity signed. The signature is good and the certificate is B's own.
@@ -571,9 +575,9 @@ line "$A" "$B" "not base64" > "$L"; refuse refuse-identity-not-base64 "$L" under
 line "$A" "$B" "$ID_A\\n" > "$L"; refuse refuse-identity-ending-in-a-line-feed "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B" # a JSON escape: the document's base64 and a line feed
 line "$A" "$B" "$ID_A\\u0000" > "$L"; refuse refuse-identity-ending-in-a-nul "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
 printf '{"v":1,"from":null,"to":"%s","sent_at":"%s","msg_id":"%s","identity":"%s","body":"hello"}\n' "$B" "$NOW" "$MSG_ID" "$ID_A" > "$L"; refuse refuse-from-null "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B" # null is a member left out: it names no sender
-line "$(sha256sum < identity/small-order-1.doc | cut -c1-64)" "$B" "$(b64 < identity/small-order-1.doc)" > "$L"; refuse refuse-identity-of-small-order "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
-line "$(sha256sum < identity/off-curve.doc | cut -c1-64)" "$B" "$(b64 < identity/off-curve.doc)" > "$L"; refuse refuse-identity-off-curve "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
-line "$(sha256sum < identity/length-field.doc | cut -c1-64)" "$B" "$(b64 < identity/length-field.doc)" > "$L"; refuse refuse-identity-with-its-length-written-33 "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B" # A's key bytes, in a document that breaks its form
+line "$(address < identity/small-order-1.doc)" "$B" "$(b64 < identity/small-order-1.doc)" > "$L"; refuse refuse-identity-of-small-order "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
+line "$(address < identity/off-curve.doc)" "$B" "$(b64 < identity/off-curve.doc)" > "$L"; refuse refuse-identity-off-curve "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
+line "$(address < identity/length-field.doc)" "$B" "$(b64 < identity/length-field.doc)" > "$L"; refuse refuse-identity-with-its-length-written-33 "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B" # A's key bytes, in a document that breaks its form
 line "$A" "$A" "$ID_A" > "$L"; refuse refuse-to-another-mailbox "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
 # The layout. Each part has one place, and nothing is searched for.
 head -c -1 message/a-to-b.line > plain/refuse-no-line-feed.txt

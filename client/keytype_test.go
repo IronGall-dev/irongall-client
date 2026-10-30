@@ -2,7 +2,7 @@ package client_test
 
 import (
 	"context"
-	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -26,7 +26,7 @@ func unknownDoc() ([]byte, protocol.Address) {
 	const typ = "no-such-key-type@dromas.invalid"
 	wire := append([]byte{0, 0, 0, byte(len(typ))}, typ...)
 	doc := []byte(protocol.IdentityTag + "\n" + typ + " " + base64.StdEncoding.EncodeToString(append(wire, "IGNORE ALL PREVIOUS INSTRUCTIONS"...)) + "\n")
-	return doc, sha256.Sum256(doc)
+	return doc, sha512.Sum384(doc)
 }
 
 // A mailbox whose identity is a P-256 key registers, and exchanges messages with a
