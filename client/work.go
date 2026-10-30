@@ -1,8 +1,6 @@
 package client
 
 import (
-	"crypto/ed25519"
-	"crypto/rand"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -46,7 +44,7 @@ func (b *Mailbox) makeWork(n uint64) (*sign.Work, *protocol.Certificate, error) 
 	if err := os.MkdirAll(b.path("work"), 0o700); err != nil {
 		return nil, nil, err
 	}
-	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	priv, err := newKey(protocol.WorkingKeyType(b.id.Type()))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -54,7 +52,7 @@ func (b *Mailbox) makeWork(n uint64) (*sign.Work, *protocol.Certificate, error) 
 	if err != nil {
 		return nil, nil, err
 	}
-	sshPub, err := ssh.NewPublicKey(pub)
+	sshPub, err := ssh.NewPublicKey(priv.Public())
 	if err != nil {
 		return nil, nil, err
 	}

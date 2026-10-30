@@ -53,13 +53,16 @@ var (
 var identityForm = regexp.MustCompile(`\A` + IdentityTag + `\n([!-+\--~]{1,64}) ([A-Za-z0-9+/]+={0,2})\n\z`)
 
 // A defined type: the checks its key must pass beyond being a key of that
-// type in its one encoding, and the most bytes a signature by a mailbox of that
-// type may be (SignatureBound). Its document's form is the one every type
-// shares (identityForm), with the key in its one encoding: the base64 of the
-// wire key as it is written back once parsed (PROTOCOL.md §4.1). Ed25519's is 91
-// bytes and P-256's 171.
+// type in its one encoding, the type of the working keys an identity of that
+// type certifies (WorkingKeyType), and the most bytes a signature by a mailbox
+// of that type may be (SignatureBound). Its document's form is the one every
+// type shares (identityForm), with the key in its one encoding: the base64 of
+// the wire key as it is written back once parsed (PROTOCOL.md §4.1). Ed25519's
+// is 91 bytes and P-256's 171. A working key's type is itself a type defined
+// here, and its key is held to that type's checks.
 var identityTypes = map[string]struct {
 	check func(ssh.PublicKey) error
+	work  string
 	bound int
 }{
 	// Its largest signature is 846 bytes, a prekey statement's.
@@ -67,6 +70,7 @@ var identityTypes = map[string]struct {
 		check: func(k ssh.PublicKey) error {
 			return checkEd25519(k.(ssh.CryptoPublicKey).CryptoPublicKey().(ed25519.PublicKey))
 		},
+		work:  IdentityEd25519,
 		bound: 4096,
 	},
 	// Its largest signature is 939 bytes, a prekey statement's. Its key has
@@ -75,9 +79,15 @@ var identityTypes = map[string]struct {
 	// size, and that is all OpenSSH from 10.3p1 holds a point to.
 	IdentityP256: {
 		check: func(ssh.PublicKey) error { return nil },
+		work:  IdentityEd25519,
 		bound: 4096,
 	},
 }
+
+// WorkingKeyType returns the key type of every working key an identity of
+// key type t certifies (PROTOCOL.md §4.1, §5), and "" for a type not defined
+// here.
+func WorkingKeyType(t string) string { return identityTypes[t].work }
 
 // Identity is a mailbox's identity: its identity document, the key in it, and the
 // address that document hashes to.
