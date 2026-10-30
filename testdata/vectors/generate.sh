@@ -225,9 +225,9 @@ pv bad-an-address-of-63-hex 'dromas-pass address="%s", not_after="%s", signature
 pv bad-not-after-not-a-time 'dromas-pass address="%s", not_after="%s", signature="%s"' "$A" 2026-13-10T00:10:00Z "$PS" # month 13, quoted, so it is read to its form
 pv bad-the-signature-with-padding-bits-set 'dromas-pass address="%s", not_after="%s", signature="%sLR=="' "$A" "$PT" "${PS:0:${#PS}-4}" # the pattern's, and no writer's: "LQ==" is that byte (RFC 4648 §3.5)
 # The longest a value may be (§8: the form a client writes with a signature of the most any identity key type
-# allows, 4,096 bytes), made so with empty list elements, one for each byte that signature's base64 is longer than
+# allows, 16,384 bytes), made so with empty list elements, one for each byte that signature's base64 is longer than
 # A's, and a byte longer.
-printf -v PC '%*s' $(( (4096 + 2) / 3 * 4 - ${#PS} )) ''
+printf -v PC '%*s' $(( (16384 + 2) / 3 * 4 - ${#PS} )) ''
 pv ok-as-long-as-a-pass-can-be 'dromas-pass address="%s", not_after="%s", signature="%s"%s' "$A" "$PT" "$PS" "${PC// /,}"
 pv bad-a-byte-longer-than-a-pass-can-be 'dromas-pass address="%s", not_after="%s", signature="%s"%s,' "$A" "$PT" "$PS" "${PC// /,}"
 

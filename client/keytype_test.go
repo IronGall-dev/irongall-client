@@ -85,6 +85,50 @@ func TestAMailboxOnAP256Identity(t *testing.T) {
 	}
 }
 
+// A mailbox whose identity is an ssh-mldsa44-ed25519 key certifies working
+// keys of that type, registers, and exchanges messages with a mailbox on an
+// Ed25519 identity, which verifies it (PROTOCOL.md §4.1, §5).
+func TestAMailboxOnAnMLDSA44Ed25519Identity(t *testing.T) {
+	t.Parallel()
+	e := newEnv(t)
+	o := e.opts()
+	o.IdentityType = protocol.IdentityMLDSA44Ed25519
+	dir := t.TempDir()
+	h, err := client.Init(context.Background(), dir, o, protocol.PostQuantum)
+	if err != nil {
+		t.Fatalf("init: %v", err)
+	}
+	ed := e.mailbox(protocol.PostQuantum)
+	if h.Identity().Type() != protocol.IdentityMLDSA44Ed25519 {
+		t.Fatalf("an identity of type %s", h.Identity().Type())
+	}
+	works, _ := filepath.Glob(filepath.Join(dir, "work", "*[0-9].pub"))
+	for _, w := range works {
+		if pub, _ := os.ReadFile(w); !strings.HasPrefix(string(pub), protocol.IdentityMLDSA44Ed25519+" ") {
+			t.Errorf("%s is %.40q", filepath.Base(w), pub)
+		}
+	}
+	if len(works) == 0 {
+		t.Error("no working key")
+	}
+	send(t, h, ed, "from the hybrid mailbox")
+	send(t, ed, h, "to the hybrid mailbox")
+	if res := receive(t, ed); len(res.Delivered) != 1 || res.Delivered[0].Envelope.From != h.Address() || bodyOf(t, res.Delivered[0]) != "from the hybrid mailbox" {
+		t.Fatalf("the Ed25519 mailbox: %+v", res)
+	}
+	if res := receive(t, h); len(res.Delivered) != 1 || res.Delivered[0].Envelope.From != ed.Address() {
+		t.Fatalf("the hybrid mailbox: %+v", res)
+	}
+	e.clock.Add(48 * time.Hour)
+	if _, err := h.Rekey(context.Background(), protocol.PostQuantum); err != nil {
+		t.Fatalf("rekey: %v", err)
+	}
+	send(t, ed, h, "after the renewal")
+	if res := receive(t, h); len(res.Delivered) != 1 {
+		t.Fatalf("after a renewal: %+v", res)
+	}
+}
+
 // A message whose sender's identity is of a key type this client does not verify
 // is refused with its own code: nothing is wrong with the document, and
 // nothing it signed can be checked. If the document is not the sender's, that

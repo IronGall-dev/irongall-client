@@ -180,7 +180,7 @@ func (e *cli) initCmd() *cobra.Command {
 			return e.out(line("mailbox", "address", b.Address(), "link", b.Link(), "detail", warning))
 		})
 	c.Flags().BoolVar(&noPQ, "no-pq", false, "make a mailbox without post-quantum encryption (X25519 only), which age 1.2 can reach")
-	c.Flags().StringVar(&idType, "identity-type", "", "make the identity a key of this `type`, not ssh-ed25519: "+protocol.IdentityP256+". Every client verifies ssh-ed25519; a mailbox of another type is reached only by mailboxes whose client verifies it")
+	c.Flags().StringVar(&idType, "identity-type", "", "make the identity a key of this `type`, not ssh-ed25519: "+strings.Join(protocol.IdentityTypes()[1:], " or ")+". Every client verifies ssh-ed25519; a mailbox of another type is reached only by mailboxes whose client verifies it")
 	return c
 }
 

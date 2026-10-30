@@ -26,13 +26,16 @@ const (
 // is optional: a mailbox of one is reached only by clients that verify it
 // (PROTOCOL.md §4.1).
 const (
-	IdentityEd25519 = ssh.KeyAlgoED25519
-	IdentityP256    = ssh.KeyAlgoECDSA256
+	IdentityEd25519        = ssh.KeyAlgoED25519
+	IdentityP256           = ssh.KeyAlgoECDSA256
+	IdentityMLDSA44Ed25519 = ssh.KeyAlgoMLDSA44Ed25519
 )
 
 // IdentityTypes returns the identity key types this package verifies, the one
 // every client must verify first.
-func IdentityTypes() []string { return []string{IdentityEd25519, IdentityP256} }
+func IdentityTypes() []string {
+	return []string{IdentityEd25519, IdentityP256, IdentityMLDSA44Ed25519}
+}
 
 // Every ParseIdentity error wraps one of these: the document breaks its
 // format, its key fails the key checks, or it is a well-formed document of a
@@ -81,6 +84,21 @@ var identityTypes = map[string]struct {
 		check: func(ssh.PublicKey) error { return nil },
 		work:  IdentityEd25519,
 		bound: 4096,
+	},
+	// OpenSSH's composite of ML-DSA-44 and Ed25519 (draft-ietf-sshm-composite-sigs),
+	// whose signature verifies only if both halves do. Its largest signature
+	// is 10,997 bytes, a prekey statement's, which carries the working key's
+	// certificate: the working key, the identity key and the identity's
+	// signature, each of this type. Its key's Ed25519 half, the wire key's
+	// last 32 bytes, is held to Ed25519's checks; the library reads the
+	// ML-DSA half as FIPS 204 encodes it.
+	IdentityMLDSA44Ed25519: {
+		check: func(k ssh.PublicKey) error {
+			wire := k.Marshal()
+			return checkEd25519(ed25519.PublicKey(wire[len(wire)-ed25519.PublicKeySize:]))
+		},
+		work:  IdentityMLDSA44Ed25519,
+		bound: 16384,
 	},
 }
 

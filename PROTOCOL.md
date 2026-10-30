@@ -62,6 +62,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 | age v1 | encryption to a prekey: `mlkem768x25519` (the hybrid ML-KEM-768 + X25519 recipient), or `X25519` | C2SP age |
 | Ed25519 | the identity key of type `ssh-ed25519`; the working key of an identity of either type of Section 4.1 | RFC 8032 |
 | ECDSA P-256 | the identity key of the optional type `ecdsa-sha2-nistp256` | FIPS 186-5, RFC 5656 |
+| ML-DSA-44 + Ed25519 | the identity key of the optional type `ssh-mldsa44-ed25519`, and its working key: a composite that verifies only if both halves do | draft-ietf-sshm-composite-sigs, FIPS 204, RFC 8032 |
 | SSHSIG | every signature: the signer's signature over SHA-512 or SHA-256 of the message, in a namespace | OpenSSH `PROTOCOL.sshsig` |
 | SSH public key text | `<key type> <base64 of the wire key>` | RFC 4253 §6.6, RFC 8709, RFC 5656 |
 | OpenSSH certificate | the certificate of a working key | draft-ietf-sshm-cert |
@@ -88,7 +89,7 @@ A verifier MUST read a signature as OpenSSH's `sshsig.c`, and the key and signat
 - **Armour.** The BEGIN line, ending in LF or CRLF; then the base64, in which space, tab, LF, VT, FF and CR are skipped wherever they stand, and which is otherwise in its one encoding; then LF and the END line. Nothing after the END line is read. One NUL MAY be the last byte before that LF; any other NUL or byte outside the alphabet in the base64 is refused.
 - **Blob.** Its version is 0 or 1. A string read where no signature covers it (the namespace, the hash name, each signature's key type, and a bare key's type and curve) MAY end in one NUL, which is not part of it; a NUL before its last byte is refused. The signed data is built from those strings without the NUL. What an identity signed inside a certificate is read byte for byte (Section 5). An ECDSA signature's r and s are each at most 2,049 bytes.
 - **Reserved.** The signed data's reserved string is empty; the blob's reserved field is read and skipped, whatever it holds.
-- **First additional check: a bound on size, per identity key type:** 4,096 bytes for `ssh-ed25519` and 4,096 for `ecdsa-sha2-nistp256`. Everything a mailbox signs, with its identity or with a working key under its identity's certificate, is held to its identity's bound. The bound counts every byte of the field that carries the signature, anything after the END line included; in a message it is the block from its BEGIN line through its END line (Section 9.2). Every verifier, a server included, MUST refuse a longer signature before verifying it, and one longer than the largest bound of any key type before reading it, and MUST NOT shorten one. A key type added later states its own bound and leaves the others unchanged.
+- **First additional check: a bound on size, per identity key type:** 4,096 bytes for `ssh-ed25519`, 4,096 for `ecdsa-sha2-nistp256` and 16,384 for `ssh-mldsa44-ed25519`. Everything a mailbox signs, with its identity or with a working key under its identity's certificate, is held to its identity's bound. The bound counts every byte of the field that carries the signature, anything after the END line included; in a message it is the block from its BEGIN line through its END line (Section 9.2). Every verifier, a server included, MUST refuse a longer signature before verifying it, and one longer than the largest bound of any key type before reading it, and MUST NOT shorten one. A key type added later states its own bound and leaves the others unchanged.
 - **Second additional check: an Ed25519 signature's S is below the group order L** (RFC 8032 §5.1.7), in an SSHSIG and on a certificate.
 - **The Ed25519 equation** is RFC 8032 §5.1.7's without the cofactor, `[S]B = R + [k]A'`, compared as encodings: a neutral R is taken, and R with a point of small order added is refused.
 
@@ -126,6 +127,7 @@ The key MUST be of a type this section defines, in its one encoding, and MUST pa
 |---|---|---|---|---|
 | `ssh-ed25519` | 91 bytes | the key's length, 32 (RFC 8709 §4) | a canonical point, not of small order | `ssh-ed25519` |
 | `ecdsa-sha2-nistp256` | 171 bytes | the curve's name, `nistp256`, and an uncompressed point | the point on the curve, not the point at infinity, each coordinate below the field's size | `ssh-ed25519` |
+| `ssh-mldsa44-ed25519` | 1,859 bytes | the key's length, 1,344: the ML-DSA-44 key, then the Ed25519 key (draft-ietf-sshm-composite-sigs) | the Ed25519 key's, above | `ssh-mldsa44-ed25519` |
 
 - **Every client MUST verify `ssh-ed25519`,** and a client MUST NOT make an identity of any other type unless its owner asks for one. Every other type is OPTIONAL: a client verifies it or not, and a server registers it or not (Section 11.7). A mailbox of an optional type can be written to, and heard from, only by mailboxes whose clients verify that type (Section 7).
 - **The working key column** is the type of every working key an identity of that type certifies (Section 5). A type defined later states its own, as it states its own signature bound (Section 3.2).
@@ -856,7 +858,7 @@ Dromas protects a message's content from everyone but its recipient, and its sen
 ### 15.10. Post-quantum
 
 - **Content** is protected against harvest-now-decrypt-later for a mailbox with a post-quantum prekey, the default. A mailbox that moved from an X25519 prekey can be held on its old key for at most its lifetime.
-- **Signatures are classical,** Ed25519 or P-256. A forgery needs a quantum computer at signing time, and the transferable audit trail holds until one exists. A post-quantum signature key would be added as an identity key type inside v1 (Section 14), with a new address for the mailbox that moves to it.
+- **Signatures are classical for a mailbox of type `ssh-ed25519` or `ecdsa-sha2-nistp256`,** the default and the optional: a forgery needs a quantum computer at signing time, and the transferable audit trail holds until one exists. **A mailbox of type `ssh-mldsa44-ed25519` signs everything post-quantum,** its certificates by its identity and what it says by a working key of the same type, each signature valid only if its ML-DSA-44 half and its Ed25519 half both verify. It is optional: such a mailbox reaches only mailboxes whose client verifies the type (Section 7), and a mailbox moves to it with a new address.
 - **The TLS connections are separate,** and protected as their endpoints negotiate.
 
 ## 16. Test vectors
@@ -867,10 +869,11 @@ Dromas protects a message's content from everyone but its recipient, and its sen
 
 - **[age]** C2SP, "age", https://c2sp.org/age
 - **[draft-ietf-sshm-cert]** "OpenSSH certificates", draft-ietf-sshm-cert
+- **[draft-ietf-sshm-composite-sigs]** "Post-Quantum Composite Signatures in SSH", draft-ietf-sshm-composite-sigs
 - **[PROTOCOL.sshsig]** OpenSSH, `PROTOCOL.sshsig`
 - **[AEP-158]**, **[AEP-193]** API Enhancement Proposals: pagination; errors
 - **[BIP 173]** Bech32
-- **[FIPS 180-4]**, **[FIPS 186-5]**
+- **[FIPS 180-4]**, **[FIPS 186-5]**, **[FIPS 204]**
 - **[RFC 2119]**, **[RFC 8174]** BCP 14
 - **[RFC 3339]** timestamps · **[RFC 4151]** the `tag` URI scheme · **[RFC 4251]**, **[RFC 4253]** SSH · **[RFC 4648]** base64 and base32 · **[RFC 5656]** ECDSA in SSH · **[RFC 6454]** origins · **[RFC 7457]** TLS attacks · **[RFC 7493]** I-JSON · **[RFC 8032]** EdDSA · **[RFC 8259]** JSON · **[RFC 8555]** ACME · **[RFC 8594]** the `Sunset` header field · **[RFC 8709]** Ed25519 in SSH · **[RFC 9110]** HTTP semantics · **[RFC 9457]** problem details · **[RFC 9562]** UUIDs · **[RFC 9651]** Structured Field Values · **[RFC 9745]** the `Deprecation` header field
 - **[SemVer]** Semantic Versioning 2.0.0, https://semver.org/spec/v2.0.0.html
