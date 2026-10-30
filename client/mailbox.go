@@ -138,6 +138,9 @@ type Mailbox struct {
 	// none is set while a reading runs whose open found no state file
 	// ([reading]): each of its views reads nothing ([Mailbox.view]).
 	none bool
+	// format is the mailbox's format, as Open read it or a command since
+	// brought it forward (client/format.go).
+	format int
 	// slot is held by the one command or reading of this Mailbox under way, of
 	// whichever goroutine ([Mailbox.claim]).
 	slot chan struct{}
@@ -154,11 +157,14 @@ type Mailbox struct {
 	met     *Versions
 }
 
-// Open opens an existing mailbox's state directory, its owner's alone as Init
-// leaves it (makeDirs). A directory holding only the identity, a mailbox
-// restored from its backup, gets the mailbox's other directories; [Mailbox.Rekey]
-// then gives it a working key and a prekey, and
-// the lists its server's ACL holds when it has none of its own.
+// Open opens an existing mailbox's state directory, reading its identity alone
+// and guarding its directory (guardDir): the mailbox's format is read, and its
+// other directories made, by each command, once it has the state file
+// (bringForward, makeDirs). A directory
+// holding only the identity, a mailbox restored from its backup, gets the
+// mailbox's other directories at its first command that writes it;
+// [Mailbox.Rekey] then gives it a working key and a prekey, and the lists its
+// server's ACL holds when it has none of its own.
 func Open(dir string, opt Options) (*Mailbox, error) {
 	b, err := newMailbox(dir, opt)
 	if err != nil {
@@ -167,7 +173,7 @@ func Open(dir string, opt Options) (*Mailbox, error) {
 	if err := b.loadIdentity(); err != nil {
 		return nil, err
 	}
-	if err := b.makeDirs(); err != nil {
+	if err := b.guardDir(); err != nil {
 		return nil, err
 	}
 	return b, nil
@@ -335,7 +341,7 @@ func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*M
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, err
 	}
-	if err := b.makeDirs(); err != nil {
+	if err := b.guardDir(); err != nil {
 		return nil, err
 	}
 	// Under the mailbox's lock from its identity on, as every command that writes
@@ -456,14 +462,28 @@ func (b *Mailbox) recordTaken(n uint64, pass string) error {
 	return b.dropWork(n)
 }
 
-// makeDirs makes the mailbox's directories that are missing, its .gitignore and
-// its state file, and the mailbox's directory and each of its own its owner's
-// alone (private), at every open: a mailbox restored from its identity alone, or
-// a directory made before the mailbox by someone else, is held to it too.
-func (b *Mailbox) makeDirs() error {
+// guardDir makes the mailbox's directory its owner's alone (private) and gives
+// it its .gitignore, at every open: a mailbox restored from its identity alone,
+// or a directory made before the mailbox by someone else, is held to it too.
+// Both are the directory's own, outside any format (client/format.go).
+func (b *Mailbox) guardDir() error {
 	if err := private(b.dir); err != nil {
 		return fmt.Errorf("the mailbox's directory, made its owner's alone: %w", err)
 	}
+	// The directory ignores itself, wherever it is and whatever made it: a
+	// mailbox restored from its identity alone too (#292). Written only where its
+	// bytes differ, since every command opens the mailbox.
+	if got, err := os.ReadFile(b.path(".gitignore")); err != nil || string(got) != "*\n" {
+		return writeFile(b.path(".gitignore"), []byte("*\n"))
+	}
+	return nil
+}
+
+// makeDirs makes the mailbox's directories that are missing, and each its
+// owner's alone (private), at every command that writes the mailbox, once its
+// format is this client's (hold): a mailbox restored from its identity alone,
+// or a directory made before the mailbox by someone else, is held to it too.
+func (b *Mailbox) makeDirs() error {
 	made := false
 	for _, d := range []string{"work", "prekeys", "inbox", "held", "refused", "outbox", "sent"} {
 		if _, err := os.Stat(b.path(d)); err != nil {
@@ -478,19 +498,9 @@ func (b *Mailbox) makeDirs() error {
 	}
 	// A new directory is there after a crash only once its parent is synced.
 	if made {
-		if err := syncDir(b.dir); err != nil {
-			return err
-		}
+		return syncDir(b.dir)
 	}
-	// The directory ignores itself, wherever it is and whatever made it: a
-	// mailbox restored from its identity alone too (#292). Written only where its
-	// bytes differ, since every command opens the mailbox.
-	if got, err := os.ReadFile(b.path(".gitignore")); err != nil || string(got) != "*\n" {
-		if err := writeFile(b.path(".gitignore"), []byte("*\n")); err != nil {
-			return err
-		}
-	}
-	return b.makeState()
+	return nil
 }
 
 // newIdentityKey makes a new identity key, written as ssh-keygen writes one
@@ -618,7 +628,7 @@ func (b *Mailbox) makePrekey(serial uint64, kt protocol.KeyType) (*protocol.Prek
 		}
 		return protocol.ParsePrekey(rec.Statement)
 	}
-	lifetime, err := b.PrekeyLifetime()
+	lifetime, err := b.prekeyLifetime()
 	if err != nil {
 		return nil, err
 	}

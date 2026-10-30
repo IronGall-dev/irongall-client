@@ -33,6 +33,7 @@ import (
 //	peers        what this mailbox pinned of each peer, by its address, in one value
 //	seen         the replay set, by ciphertext hash; seen-sender by sender and msg_id, and seen-time by sent_at, its two indexes
 //	refused      what this client's checks found of each message it refused, by its id: refused/ keeps the message as served
+//	meta         the mailbox's format, under "format" (format.go)
 const (
 	bucketMailbox    = "box" // the name stored in every state file, kept as it was
 	bucketPrekeys    = "prekeys"

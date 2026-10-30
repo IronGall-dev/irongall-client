@@ -66,7 +66,12 @@ func (p Policy) check() error {
 // most once, with blank lines and lines starting with "#" skipped. A file
 // with any other line is an error, never a default: a policy that cannot be
 // read stops what depends on it until it is put right.
-func (b *Mailbox) Policy() (Policy, error) {
+func (b *Mailbox) Policy(ctx context.Context) (Policy, error) {
+	return reading(ctx, b, b.policy)
+}
+
+// policy is Policy, read under the reading or command that holds the mailbox.
+func (b *Mailbox) policy() (Policy, error) {
 	p := DefaultPolicy()
 	data, err := os.ReadFile(b.path("policy"))
 	if errors.Is(err, fs.ErrNotExist) {
@@ -183,12 +188,17 @@ func (b *Mailbox) addAll(name string, addrs []protocol.Address) (int, error) {
 
 // Allowed returns the senders whose messages land in inbox/ whatever the
 // policy says: those the allowed file lists and those an alias names.
-func (b *Mailbox) Allowed() ([]protocol.Address, error) {
+func (b *Mailbox) Allowed(ctx context.Context) ([]protocol.Address, error) {
+	return reading(ctx, b, b.allowed)
+}
+
+// allowed is Allowed, read under the reading or command that holds the mailbox.
+func (b *Mailbox) allowed() ([]protocol.Address, error) {
 	allowed, err := b.addresses("allowed")
 	if err != nil {
 		return nil, err
 	}
-	as, err := b.Aliases()
+	as, err := b.aliases()
 	if err != nil {
 		return nil, err
 	}
@@ -200,7 +210,12 @@ func (b *Mailbox) Allowed() ([]protocol.Address, error) {
 
 // Blocked returns the senders whose messages this mailbox drops, and its server
 // refuses.
-func (b *Mailbox) Blocked() ([]protocol.Address, error) {
+func (b *Mailbox) Blocked(ctx context.Context) ([]protocol.Address, error) {
+	return reading(ctx, b, b.blocked)
+}
+
+// blocked is Blocked, read under the reading or command that holds the mailbox.
+func (b *Mailbox) blocked() ([]protocol.Address, error) {
 	blocked, err := b.addresses("blocked")
 	if err != nil {
 		return nil, err
@@ -222,15 +237,15 @@ type senders struct {
 }
 
 func (b *Mailbox) readSenders() (*senders, error) {
-	p, err := b.Policy()
+	p, err := b.policy()
 	if err != nil {
 		return nil, err
 	}
-	allowed, err := b.Allowed()
+	allowed, err := b.allowed()
 	if err != nil {
 		return nil, err
 	}
-	blocked, err := b.Blocked()
+	blocked, err := b.blocked()
 	if err != nil {
 		return nil, err
 	}
@@ -316,7 +331,12 @@ func (b *Mailbox) keptMessages(dir string) ([]keptMessage, error) {
 
 // HeldMessages returns the messages held/ keeps, by sender, the sender with the oldest
 // first. It reads only held/, and calls no server.
-func (b *Mailbox) HeldMessages() ([]UnknownSender, error) {
+func (b *Mailbox) HeldMessages(ctx context.Context) ([]UnknownSender, error) {
+	return reading(ctx, b, b.heldMessages)
+}
+
+// heldMessages is HeldMessages, read under the reading or command that holds the mailbox.
+func (b *Mailbox) heldMessages() ([]UnknownSender, error) {
 	ms, err := b.keptMessages("held")
 	if err != nil {
 		return nil, err
@@ -356,7 +376,7 @@ func (b *Mailbox) Allow(ctx context.Context, a protocol.Address) ([]Delivery, er
 func (b *Mailbox) allow(a protocol.Address) ([]Delivery, error) {
 	// Blocking wins: allowing a sender the mailbox blocks would move its messages to
 	// inbox/ while its later messages are dropped, so nothing is done (#179).
-	blocked, err := b.Blocked()
+	blocked, err := b.blocked()
 	if err != nil {
 		return nil, err
 	}
@@ -437,7 +457,7 @@ func (b *Mailbox) RebuildAllowed(ctx context.Context) (int, error) {
 }
 
 func (b *Mailbox) rebuildAllowed() (int, error) {
-	as, err := b.Aliases()
+	as, err := b.aliases()
 	if err != nil {
 		return 0, err
 	}

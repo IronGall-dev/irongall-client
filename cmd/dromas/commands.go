@@ -238,7 +238,7 @@ twice in an object among them, is refused, and nothing is sent.`,
 			if err != nil {
 				return err
 			}
-			if err := e.out(sent(s, namesOf(b))); err != nil {
+			if err := e.out(sent(s, namesOf(c.Context(), b))); err != nil {
 				return err
 			}
 			return e.aclNotSent(s.ACLErr)
@@ -301,16 +301,16 @@ func (e *cli) inboxListCmd() *cobra.Command {
 as recv printed it: the messages recv delivered and nobody has pruned since. A
 file there that is not the line recv keeps is left out, and dromas inbox
 show names it.`,
-		nargs(0, 0), func(*cobra.Command, []string) error {
+		nargs(0, 0), func(c *cobra.Command, _ []string) error {
 			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
-			ds, err := b.Inbox()
+			ds, err := b.Inbox(c.Context())
 			if err != nil {
 				return err
 			}
-			return e.messageLines(b, ds, headers)
+			return e.messageLines(c.Context(), b, ds, headers)
 		})
 	c.Flags().BoolVar(&headers, "headers", false, "print each message's checked fields and its body's size, without its body or subject, as recv --headers does")
 	return c
@@ -327,16 +327,16 @@ before any file is read.`,
 				return wrong(c, "%s takes a message's id, 64 lowercase hex, as recv prints it", c.CommandPath())
 			}
 			return nil
-		}), func(_ *cobra.Command, args []string) error {
+		}), func(c *cobra.Command, args []string) error {
 			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
-			d, err := b.InboxMessage(args[0])
+			d, err := b.InboxMessage(c.Context(), args[0])
 			if err != nil {
 				return err
 			}
-			return e.messageLines(b, []client.Delivery{d}, headers)
+			return e.messageLines(c.Context(), b, []client.Delivery{d}, headers)
 		})
 	c.Flags().BoolVar(&headers, "headers", false, "print the message's checked fields and its body's size, without its body or subject, as recv --headers does")
 	return c
@@ -344,8 +344,8 @@ before any file is read.`,
 
 // messageLines prints a "message" line for each of ds, or with headers a
 // "message_headers" line, naming each sender as b names it.
-func (e *cli) messageLines(b *client.Mailbox, ds []client.Delivery, headers bool) error {
-	n := namesOf(b)
+func (e *cli) messageLines(ctx context.Context, b *client.Mailbox, ds []client.Delivery, headers bool) error {
+	n := namesOf(ctx, b)
 	for _, d := range ds {
 		l := message(d, n)
 		if headers {
@@ -429,7 +429,7 @@ func (e *cli) recv(c *cobra.Command, b *client.Mailbox, wait time.Duration, head
 	var renewErr, aclErr error
 	var notMade *client.NotMade
 	replaced := false
-	n := namesOf(b)
+	n := namesOf(c.Context(), b)
 	for {
 		res, err := b.Receive(ctx)
 		if res != nil {
@@ -542,8 +542,10 @@ func (e *cli) hold(ctx context.Context, b *client.Mailbox, deadline time.Time) e
 func (e *cli) statusCmd() *cobra.Command {
 	return command("status", "say what this mailbox holds and what needs a look, as one line of JSON",
 		`Say what this mailbox holds and what needs a look, as one "status" line, from its
-own files and with no call to the server: its prekey, a renewal that has not
-gone through, refused messages in refused/, held messages, messages not yet delivered.`,
+own files and with no call to the server: its format and where it keeps each of
+its files, its prekey, a renewal that has not gone through, refused messages in
+refused/, held messages, messages not yet delivered. A mailbox in another
+format than this client's is refused, its "error" line naming both.`,
 		nargs(0, 0), func(c *cobra.Command, _ []string) error {
 			b, err := e.mailbox()
 			if err != nil {
@@ -574,12 +576,12 @@ func (e *cli) heldListCmd() *cobra.Command {
 and last sent_at. held/<id>.json is the message recv's "message" line would have
 carried. dromas peer allow delivers a sender's held messages to inbox/, and
 dromas peer block deletes them.`,
-		nargs(0, 0), func(*cobra.Command, []string) error {
+		nargs(0, 0), func(c *cobra.Command, _ []string) error {
 			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
-			hs, err := b.HeldMessages()
+			hs, err := b.HeldMessages(c.Context())
 			for _, h := range hs {
 				l, jerr := json.Marshal(h)
 				if jerr == nil {
@@ -628,7 +630,7 @@ allowed file that was lost.`,
 				return err
 			}
 			moved, err := b.Allow(c.Context(), a)
-			n := namesOf(b)
+			n := namesOf(c.Context(), b)
 			for _, d := range moved {
 				if werr := e.out(message(d, n)); werr != nil && err == nil {
 					err = werr
@@ -676,7 +678,7 @@ func (e *cli) peerListCmd() *cobra.Command {
 each, with its address. The allowed are those its allowed file lists and
 those an alias names. Blocking wins over allowing, so an address can be on
 both.`,
-		nargs(0, 0), func(*cobra.Command, []string) error {
+		nargs(0, 0), func(cc *cobra.Command, _ []string) error {
 			b, err := e.mailbox()
 			if err != nil {
 				return err
@@ -684,16 +686,16 @@ both.`,
 			if !allowed && !blocked {
 				allowed, blocked = true, true
 			}
-			n := namesOf(b)
+			n := namesOf(cc.Context(), b)
 			for _, l := range []struct {
 				on   bool
 				name string
-				list func() ([]protocol.Address, error)
+				list func(context.Context) ([]protocol.Address, error)
 			}{{allowed, "allowed", b.Allowed}, {blocked, "blocked", b.Blocked}} {
 				if !l.on {
 					continue
 				}
-				as, err := l.list()
+				as, err := l.list(cc.Context())
 				if err != nil {
 					return err
 				}
@@ -756,12 +758,12 @@ func (e *cli) aliasListCmd() *cobra.Command {
 	return command("list", "list the names, an \"alias\" line each",
 		`List the names this mailbox has given its peers, an "alias" line each, with the
 name and its address.`,
-		nargs(0, 0), func(*cobra.Command, []string) error {
+		nargs(0, 0), func(c *cobra.Command, _ []string) error {
 			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
-			as, err := b.Aliases()
+			as, err := b.Aliases(c.Context())
 			for _, a := range as {
 				if werr := e.out(line("alias", "name", a.Name, "address", a.Address)); werr != nil && err == nil {
 					err = werr
@@ -782,7 +784,7 @@ does. One that can never be delivered moves to outbox/failed/.`,
 				return err
 			}
 			ss, err := b.Flush(c.Context())
-			n := namesOf(b)
+			n := namesOf(c.Context(), b)
 			var aclErr error
 			for _, s := range ss {
 				if werr := e.out(sent(s, n)); werr != nil && err == nil {
@@ -903,7 +905,7 @@ lower holds from the next recv, which renews a prekey made for longer.`,
 					return err
 				}
 			}
-			d, err := b.PrekeyLifetime()
+			d, err := b.PrekeyLifetime(c.Context())
 			if err != nil {
 				return err
 			}

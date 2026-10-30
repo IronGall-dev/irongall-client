@@ -43,7 +43,7 @@ func TestAMessageFromASenderNotAllowedIsHeld(t *testing.T) {
 	if err != nil || st.Held != 2 || !strings.Contains(strings.Join(st.Attention, "\n"), "2 held in held/") {
 		t.Fatalf("status: %+v, %v", st, err)
 	}
-	held, err := b.HeldMessages()
+	held, err := b.HeldMessages(t.Context())
 	if err != nil || len(held) != 1 || held[0].From != a.Address() || len(held[0].IDs) != 2 || held[0].FirstSentAt == "" {
 		t.Fatalf("held: %+v, %v", held, err)
 	}
@@ -150,7 +150,7 @@ func TestBlockDropsASendersMessagesHereAndAtTheServer(t *testing.T) {
 	if left, _ := filepath.Glob(filepath.Join(b.Dir(), "held", "*.json")); len(left) != 0 {
 		t.Fatalf("held/ still holds %v", left)
 	}
-	if blocked, err := b.Blocked(); err != nil || len(blocked) != 2 {
+	if blocked, err := b.Blocked(t.Context()); err != nil || len(blocked) != 2 {
 		t.Fatalf("blocked: %v, %v", blocked, err)
 	}
 }
@@ -648,7 +648,7 @@ func TestARestoreAdoptsABoundedACL(t *testing.T) {
 			r := restore(t, e, b)
 			e.clock.Add(time.Minute)
 			_, err := r.Rekey(ctx, "")
-			blocked, _ := r.Blocked()
+			blocked, _ := r.Blocked(t.Context())
 			if n <= protocol.MaxACLEntries {
 				if err != nil || len(blocked) != n-1 {
 					t.Fatalf("a restore against %d entries: %v, %d blocked", n, err, len(blocked))
@@ -721,9 +721,9 @@ func TestARestoredMailboxAdoptsItsServersACL(t *testing.T) {
 			if res := receive(t, r); res.Renewed == nil || res.ACLReplaced || res.ACLErr != nil || !e.srv.ACL(b.Address()).SameLists(own) {
 				t.Fatalf("the restored mailbox's first renewal: %+v; the server holds %+v, the lost mailbox's was %+v", res, e.srv.ACL(b.Address()), own)
 			}
-			blocked, _ := r.Blocked()
-			allowed, _ := r.Allowed()
-			policy, _ := r.Policy()
+			blocked, _ := r.Blocked(t.Context())
+			allowed, _ := r.Allowed(t.Context())
+			policy, _ := r.Policy(t.Context())
 			if !slices.Equal(blocked, []protocol.Address{a.Address()}) || !slices.Equal(allowed, []protocol.Address{c.Address()}) || policy != (client.Policy{Unknown: client.LandHeld, Server: client.AdmitAllowed}) {
 				t.Fatalf("the restored mailbox's lists: blocked %v, allowed %v, %+v", blocked, allowed, policy)
 			}
@@ -818,7 +818,7 @@ func TestARestoredMailboxReportsWhatItDidNotAdopt(t *testing.T) {
 				if !res.ACLReplaced || res.ACLErr != nil || !e.srv.ACL(b.Address()).SameLists(own) {
 					t.Fatalf("the recv after the restore: %+v; the server holds %+v", res, e.srv.ACL(b.Address()))
 				}
-				if blocked, _ := r.Blocked(); !slices.Equal(blocked, []protocol.Address{a.Address()}) {
+				if blocked, _ := r.Blocked(t.Context()); !slices.Equal(blocked, []protocol.Address{a.Address()}) {
 					t.Fatalf("the restored mailbox blocks %v", blocked)
 				}
 				if res := receive(t, r); res.ACLReplaced {
@@ -901,7 +901,7 @@ func TestRebuildAllowed(t *testing.T) {
 	if err != nil || n != 2 {
 		t.Fatalf("rebuild: %d, %v", n, err)
 	}
-	if allowed, err := b.Allowed(); err != nil || len(allowed) != 3 {
+	if allowed, err := b.Allowed(t.Context()); err != nil || len(allowed) != 3 {
 		t.Fatalf("allowed: %v, %v", allowed, err)
 	}
 	if n, err := b.RebuildAllowed(t.Context()); err != nil || n != 0 {
@@ -926,7 +926,7 @@ func TestAllowingABlockedSenderDoesNothing(t *testing.T) {
 	moved, err := b.Allow(ctx, a.Address())
 	inbox, _ := filepath.Glob(filepath.Join(b.Dir(), "inbox", "*.json"))
 	held, _ := filepath.Glob(filepath.Join(b.Dir(), "held", "*.json"))
-	allowed, _ := b.Allowed()
+	allowed, _ := b.Allowed(t.Context())
 	if err == nil || !strings.Contains(err.Error(), "is blocked") || len(moved) != 0 || len(inbox) != 0 || len(held) != 1 || slices.Contains(allowed, a.Address()) {
 		t.Fatalf("allow of a blocked sender: %v, moved %d, inbox %d, held %d, allowed %v", err, len(moved), len(inbox), len(held), allowed)
 	}
@@ -993,7 +993,7 @@ func TestACommentInTheAddressListsStopsNothing(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(b.Dir(), "blocked"), []byte(a.Address().String()+" # spam\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Blocked(); err == nil {
+	if _, err := b.Blocked(t.Context()); err == nil {
 		t.Fatal("an address with a comment after it was read as an address")
 	}
 }

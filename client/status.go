@@ -15,6 +15,13 @@ import (
 // the server: what a wrapper reads to learn that the mailbox needs a look.
 type Status struct {
 	Address protocol.Address `json:"address"`
+	// Format is the mailbox's format (client/doc.go), this client's: a
+	// mailbox in another is refused, never read ([FormatError]).
+	Format int `json:"format"`
+	// Paths is where the mailbox keeps each of its files and directories, as
+	// this run found the mailbox, by name: "mailbox", its directory, then
+	// each in it (paths).
+	Paths map[string]string `json:"paths"`
 	// PrekeySerial and PrekeyNotAfter are the prekey this mailbox published
 	// last: zero and empty if it holds none.
 	PrekeySerial   uint64 `json:"prekey_serial"`
@@ -55,6 +62,15 @@ type Status struct {
 	Attention []string `json:"attention"`
 }
 
+// paths are the files and directories of a mailbox its owner reads, writes or
+// backs up, by the name Status gives each, and their paths in its directory.
+var paths = []struct{ name, path string }{
+	{"mailbox", ""}, {"identity", "identity"}, {"state", "state"},
+	{"work", "work"}, {"prekeys", "prekeys"}, {"prekey_lifetime", "prekey-lifetime"},
+	{"inbox", "inbox"}, {"held", "held"}, {"refused", "refused"}, {"outbox", "outbox"}, {"sent", "sent"},
+	{"aliases", "aliases"}, {"allowed", "allowed"}, {"blocked", "blocked"}, {"policy", "policy"},
+}
+
 // Status reads the mailbox's own files and its state, read-only: it waits while a
 // command writes the mailbox, and changes nothing.
 func (b *Mailbox) Status(ctx context.Context) (*Status, error) {
@@ -62,7 +78,14 @@ func (b *Mailbox) Status(ctx context.Context) (*Status, error) {
 }
 
 func (b *Mailbox) status() (*Status, error) {
-	s := &Status{Address: b.id.Address(), Attention: []string{}}
+	s := &Status{Address: b.id.Address(), Format: b.format, Paths: map[string]string{}, Attention: []string{}}
+	for _, p := range paths {
+		abs, err := filepath.Abs(b.path(p.path))
+		if err != nil {
+			return nil, err
+		}
+		s.Paths[p.name] = abs
+	}
 	// A revoked mailbox is finished, and that comes before anything else it holds.
 	if gone, err := b.revoked(b.id.Address()); err != nil {
 		return nil, err
@@ -71,7 +94,7 @@ func (b *Mailbox) status() (*Status, error) {
 		s.Attention = append(s.Attention, "this mailbox's address is revoked, for good, and the revocation verifies: it sends and receives nothing more. Make a new mailbox and give its address to those who wrote to this one")
 	}
 	var err error
-	if s.Policy, err = b.Policy(); err != nil {
+	if s.Policy, err = b.policy(); err != nil {
 		s.Attention = append(s.Attention, fmt.Sprintf("the mailbox's policy cannot be read, so it neither sends nor receives until that is put right: %v", err))
 	}
 	switch pending, perr := b.aclPending(); {
@@ -92,7 +115,7 @@ func (b *Mailbox) status() (*Status, error) {
 		}
 		*n = len(names)
 	}
-	if d, err := b.PrekeyLifetime(); err != nil {
+	if d, err := b.prekeyLifetime(); err != nil {
 		s.Attention = append(s.Attention, fmt.Sprintf("the mailbox's prekey lifetime cannot be read, so it renews no prekey until that is put right (dromas prekey lifetime sets it): %v", err))
 	} else {
 		s.PrekeyLifetime = int64(d / time.Second)

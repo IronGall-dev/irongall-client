@@ -26,4 +26,13 @@
 //	gate                       on Windows alone, an empty file whose lock is the mailbox's gate, which a waiting writer holds so that readings that overlap do not hold it back: elsewhere the gate is a flock on the directory itself, where the system has flock (gate_unix.go)
 //	state                      a bbolt database of what the client writes about the mailbox itself, each change one transaction (client/store.go): the prekey serial it published last, each prekey statement it signed and when, the renewal under way and one that failed, a restore's adoption of its server's ACL until it is done, a statement its server served in its name that it did not make, the pass it last signed, the ETag of the last empty poll, the ACL its server last took, and that a sync replaced one holding what no file of the mailbox says until recv reports it, its own revocations once one verifies, what its server's answers last said of its version (a deprecation and a sunset, each with its date) and when it last read its server's document, with the latest version that named, what it pinned of each peer, the replay set and its floor, and why each message in refused/ was refused. It is the mailbox's lock too: each command that writes the mailbox holds it open from its start to its end, a second process waits for it, and one killed leaves nothing. A mailbox directory on NFS is not supported
 //	.gitignore                 "*": the mailbox ignores itself in any repository it lands in
+//
+// The mailbox's format is one number for how these files are laid out and what
+// each holds, the state file's records among them, kept in the state file
+// (format.go): every command refuses a mailbox of a newer format, a reading one
+// of an older, and a command that writes the mailbox brings an older one
+// forward. A change to what a file holds, or where it is, is a new format, with
+// its step and its line here; each format and what it changed:
+//
+//	1   the files above, and the state file's buckets as client/store.go lists them
 package client
