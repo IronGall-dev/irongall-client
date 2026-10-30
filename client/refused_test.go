@@ -69,16 +69,16 @@ func refusedFindings(t *testing.T, kind string) {
 	if err != nil || len(res.Refused) != 2 || len(res.Delivered) != 0 {
 		t.Fatalf("%+v, %v", res, err)
 	}
-	qs, err := b.RefusedMail(t.Context())
+	qs, err := b.RefusedMessages(t.Context())
 	if err != nil || len(qs) != 2 {
 		t.Fatalf("%+v, %v", qs, err)
 	}
-	byID := map[string]client.RefusedMail{}
+	byID := map[string]client.RefusedMessage{}
 	for _, q := range qs {
 		byID[q.ID] = q
 	}
 	q := byID[notBegun]
-	want := client.RefusedMail{
+	want := client.RefusedMessage{
 		ID:                notBegun,
 		Code:              protocol.RefusedSignature,
 		Reason:            "the certificate of the key that signed it has not begun, by this machine's clock",
@@ -95,7 +95,7 @@ func refusedFindings(t *testing.T, kind string) {
 		t.Errorf("under a certificate that has not begun:\n got %+v\nwant %+v", q, want)
 	}
 	q = byID[forgery]
-	want = client.RefusedMail{
+	want = client.RefusedMessage{
 		ID:             forgery,
 		Code:           protocol.RefusedSignature,
 		Reason:         "it is not signed under a certificate of the sender's identity",
@@ -142,7 +142,7 @@ func TestADeliveryLeavesNothingOfAnEarlierRefusal(t *testing.T) {
 	if res := receive(t, b); len(res.Delivered) != 1 || res.Delivered[0].ID != id {
 		t.Fatalf("the same message once the clock reached it: %+v", res)
 	}
-	if qs, err := b.RefusedMail(t.Context()); err != nil || len(qs) != 0 || exists(filepath.Join(b.Dir(), "refused", id+".json")) || has(b, "refused/"+id+".reason") {
+	if qs, err := b.RefusedMessages(t.Context()); err != nil || len(qs) != 0 || exists(filepath.Join(b.Dir(), "refused", id+".json")) || has(b, "refused/"+id+".reason") {
 		t.Errorf("after its delivery the mailbox keeps %+v, %v of its refusal", qs, err)
 	}
 }
@@ -308,9 +308,9 @@ func identityKey(t *testing.T, b *client.Mailbox) ssh.Signer {
 }
 
 // refusedAs is what refused list gives of message id.
-func refusedAs(t *testing.T, b *client.Mailbox, id string) client.RefusedMail {
+func refusedAs(t *testing.T, b *client.Mailbox, id string) client.RefusedMessage {
 	t.Helper()
-	qs, err := b.RefusedMail(t.Context())
+	qs, err := b.RefusedMessages(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,5 +320,5 @@ func refusedAs(t *testing.T, b *client.Mailbox, id string) client.RefusedMail {
 		}
 	}
 	t.Fatalf("refused/ holds no %s: %+v", id, qs)
-	return client.RefusedMail{}
+	return client.RefusedMessage{}
 }

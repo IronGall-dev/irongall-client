@@ -531,7 +531,7 @@ func (b *Mailbox) seal(ctx context.Context, to protocol.Address, stem string, l 
 	}
 	// Mail may wait 33 days to be read, and its certificate must still be
 	// valid then.
-	if !cert.SignsMail(b.now()) {
+	if !cert.SignsMessages(b.now()) {
 		return nil, refuse("this mailbox's certificate ends within %d days, too soon to sign mail that may wait that long: dromas prekey renew makes a new one, as dromas recv does daily", protocol.TTL/(24*time.Hour))
 	}
 	pk, under, err := b.resolve(ctx, to, l)

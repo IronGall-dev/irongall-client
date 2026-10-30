@@ -187,10 +187,10 @@ func (c *Certificate) NotAfter() time.Time {
 	return time.Unix(int64(c.cert.ValidBefore), 0).UTC() //nolint:gosec // certificateForm bounded it to 2^62
 }
 
-// SignsMail reports whether mail may still be signed under the certificate at
+// SignsMessages reports whether mail may still be signed under the certificate at
 // now: it has more than TTL left, so it outlasts the mail, which may wait
 // that long to be read. One a client makes signs mail for its first 31 days.
-func (c *Certificate) SignsMail(now time.Time) bool { return c.NotAfter().Sub(now) > TTL }
+func (c *Certificate) SignsMessages(now time.Time) bool { return c.NotAfter().Sub(now) > TTL }
 
 // PublicKey returns the certificate as the key its signatures verify under.
 func (c *Certificate) PublicKey() ssh.PublicKey { return c.cert }

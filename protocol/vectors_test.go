@@ -259,7 +259,7 @@ func TestVectorCertificates(t *testing.T) {
 			t.Errorf("%s: %v", c.file, err)
 			continue
 		}
-		if cert.Serial() != 1 || !cert.NotAfter().Equal(now.Add(CertificateLifetime)) || !cert.SignsMail(now) {
+		if cert.Serial() != 1 || !cert.NotAfter().Equal(now.Add(CertificateLifetime)) || !cert.SignsMessages(now) {
 			t.Errorf("%s: serial %d, ends %s", c.file, cert.Serial(), cert.NotAfter())
 		}
 	}

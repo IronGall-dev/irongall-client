@@ -297,7 +297,7 @@ func TestABoxSharedByGoroutinesRunsOneAtATime(t *testing.T) {
 func waits(b, c *client.Mailbox, rec *protocol.Revocations, opt client.Options) map[string]func(context.Context) error {
 	return map[string]func(context.Context) error{
 		"Status":             func(ctx context.Context) error { _, err := b.Status(ctx); return err },
-		"RefusedMail":        func(ctx context.Context) error { _, err := b.RefusedMail(ctx); return err },
+		"RefusedMail":        func(ctx context.Context) error { _, err := b.RefusedMessages(ctx); return err },
 		"NotMade":            func(ctx context.Context) error { _, err := b.NotMade(ctx); return err },
 		"Revocation":         func(ctx context.Context) error { _, err := b.Revocation(ctx); return err },
 		"CertificatesRecord": func(ctx context.Context) error { _, err := b.CertificatesRecord(ctx); return err },

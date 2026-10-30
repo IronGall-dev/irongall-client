@@ -208,7 +208,7 @@ func TestBytesSplicedIntoARangeAreRefusedAsAWrongCiphertext(t *testing.T) {
 		if len(res.Refused) != 1 || len(res.Delivered) != 0 || res.Refused[0].ID == id || e.srv.Count(b.Address()) != 0 {
 			t.Fatalf("spliced %v: %+v; the server holds %d", spliced, res, e.srv.Count(b.Address()))
 		}
-		if qs, err := b.RefusedMail(t.Context()); err != nil || len(qs) != 1 {
+		if qs, err := b.RefusedMessages(t.Context()); err != nil || len(qs) != 1 {
 			t.Fatalf("spliced %v: refused/ holds %+v, %v", spliced, qs, err)
 		}
 		noPartial(t, b)

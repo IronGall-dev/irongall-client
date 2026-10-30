@@ -383,14 +383,14 @@ func TestRefusedKeepsNoServerTextInTheClear(t *testing.T) {
 	}
 	// What the checks established is this client's: neither decrypted, so
 	// nothing is known of either but when it was judged.
-	qs, err := b.RefusedMail(t.Context())
+	qs, err := b.RefusedMessages(t.Context())
 	if err != nil || len(qs) != 2 {
 		t.Fatalf("RefusedMail: %+v, %v", qs, err)
 	}
-	byID := map[string]client.RefusedMail{qs[0].ID: qs[0], qs[1].ID: qs[1]}
+	byID := map[string]client.RefusedMessage{qs[0].ID: qs[0], qs[1].ID: qs[1]}
 	for id, received := range map[string]string{first.Refused[0].ID: "", second.Refused[0].ID: str(kept["received_at"])} {
 		q := byID[id]
-		want := client.RefusedMail{ID: id, Code: client.RefusedDecrypt, Reason: "it does not decrypt with this mailbox's prekeys", ReceivedAt: received, JudgedAt: q.JudgedAt}
+		want := client.RefusedMessage{ID: id, Code: client.RefusedDecrypt, Reason: "it does not decrypt with this mailbox's prekeys", ReceivedAt: received, JudgedAt: q.JudgedAt}
 		if q != want || !protocolTime(q.JudgedAt) {
 			t.Errorf("%s is listed as %+v", id, q)
 		}
@@ -403,7 +403,7 @@ func TestRefusedKeepsNoServerTextInTheClear(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(b.Dir(), "refused", old+".json"), []byte(`{"id":"`+injected+`","from":"`+injected+`","received_at":"`+injected+`","ciphertext":"QUJD","judged":`+j+`}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if qs, err := b.RefusedMail(t.Context()); err != nil || len(qs) != 3 || !slices.Contains(qs, client.RefusedMail{ID: old, Code: "unknown"}) {
+	if qs, err := b.RefusedMessages(t.Context()); err != nil || len(qs) != 3 || !slices.Contains(qs, client.RefusedMessage{ID: old, Code: "unknown"}) {
 		t.Fatalf("RefusedMail with a file of the old form: %+v, %v", qs, err)
 	}
 	// What the checks found is the mailbox's state's, which only this client
@@ -413,7 +413,7 @@ func TestRefusedKeepsNoServerTextInTheClear(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(b.Dir(), "refused", old+".json"), []byte(`{"id":"`+old+`","ciphertext":"QUJD","judged":`+planted+`}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if qs, err := b.RefusedMail(t.Context()); err != nil || len(qs) != 3 || !slices.Contains(qs, client.RefusedMail{ID: old, Code: "unknown"}) {
+	if qs, err := b.RefusedMessages(t.Context()); err != nil || len(qs) != 3 || !slices.Contains(qs, client.RefusedMessage{ID: old, Code: "unknown"}) {
 		t.Fatalf("RefusedMail with findings planted in a file: %+v, %v", qs, err)
 	}
 	// A file is read as every JSON text is (PROTOCOL.md §3.3): a name in
@@ -426,7 +426,7 @@ func TestRefusedKeepsNoServerTextInTheClear(t *testing.T) {
 		if err := os.WriteFile(f, []byte(rec), 0o600); err != nil {
 			t.Fatal(err)
 		}
-		if qs, err := b.RefusedMail(t.Context()); err != nil || len(qs) != 4 || !slices.Contains(qs, client.RefusedMail{ID: other, Code: "unknown"}) {
+		if qs, err := b.RefusedMessages(t.Context()); err != nil || len(qs) != 4 || !slices.Contains(qs, client.RefusedMessage{ID: other, Code: "unknown"}) {
 			t.Errorf("RefusedMail with %s: %+v, %v", rec, qs, err)
 		}
 		if err := os.Remove(f); err != nil {
@@ -434,7 +434,7 @@ func TestRefusedKeepsNoServerTextInTheClear(t *testing.T) {
 		}
 	}
 	b.SetRecord(t, "refused/"+old+".reason", []byte("bad_signature: \x1b[2J"+injected))
-	if qs, err := b.RefusedMail(t.Context()); err != nil || len(qs) != 3 || !slices.Contains(qs, client.RefusedMail{ID: old, Code: protocol.RefusedSignature}) {
+	if qs, err := b.RefusedMessages(t.Context()); err != nil || len(qs) != 3 || !slices.Contains(qs, client.RefusedMessage{ID: old, Code: protocol.RefusedSignature}) {
 		t.Fatalf("RefusedMail with a reason of control bytes: %+v, %v", qs, err)
 	}
 	if gone, err := b.RemoveRefused(ctx, []string{old}); err != nil || len(gone) != 1 {
@@ -449,7 +449,7 @@ func TestRefusedKeepsNoServerTextInTheClear(t *testing.T) {
 			t.Errorf("RemoveRefused %v: no error", ids)
 		}
 	}
-	if qs, _ := b.RefusedMail(t.Context()); len(qs) != 2 {
+	if qs, _ := b.RefusedMessages(t.Context()); len(qs) != 2 {
 		t.Fatalf("a refused RemoveRefused deleted mail: %+v", qs)
 	}
 	if gone, err := b.RemoveRefused(ctx, []string{first.Refused[0].ID}); err != nil || len(gone) != 1 {

@@ -314,9 +314,9 @@ func (b *Mailbox) keptMail(dir string) ([]keptMessage, error) {
 	return out, nil
 }
 
-// HeldMail returns the mail held/ keeps, by sender, the sender with the oldest
+// HeldMessages returns the mail held/ keeps, by sender, the sender with the oldest
 // first. It reads only held/, and calls no server.
-func (b *Mailbox) HeldMail() ([]UnknownSender, error) {
+func (b *Mailbox) HeldMessages() ([]UnknownSender, error) {
 	ms, err := b.keptMail("held")
 	if err != nil {
 		return nil, err

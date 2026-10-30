@@ -117,7 +117,7 @@ func (b *Mailbox) status() (*Status, error) {
 		}
 	} else {
 		s.CertificateSerial, s.CertificateNotAfter = cert.Serial(), cert.NotAfter().Format(protocol.TimeLayout)
-		if !cert.SignsMail(b.now()) {
+		if !cert.SignsMessages(b.now()) {
 			s.Attention = append(s.Attention, fmt.Sprintf("the certificate ends at %s, too soon to sign mail: sends are refused until dromas recv or dromas prekey renew renews it", s.CertificateNotAfter))
 		}
 	}
@@ -167,7 +167,7 @@ func (b *Mailbox) status() (*Status, error) {
 // what the mailbox's state keeps of each: a message it keeps no code for counts
 // as "unknown".
 func (b *Mailbox) refusedCodes() string {
-	qs, _ := b.refusedMail()
+	qs, _ := b.refusedMessages()
 	var codes []string
 	for _, q := range qs {
 		if !slices.Contains(codes, q.Code) {

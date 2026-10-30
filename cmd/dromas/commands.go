@@ -368,7 +368,7 @@ time the server gave, only when it has its form.`,
 			if err != nil {
 				return err
 			}
-			qs, err := b.RefusedMail(c.Context())
+			qs, err := b.RefusedMessages(c.Context())
 			for _, q := range qs {
 				l, jerr := json.Marshal(q)
 				if jerr == nil {
@@ -579,7 +579,7 @@ dromas peer block deletes it.`,
 			if err != nil {
 				return err
 			}
-			hs, err := b.HeldMail()
+			hs, err := b.HeldMessages()
 			for _, h := range hs {
 				l, jerr := json.Marshal(h)
 				if jerr == nil {

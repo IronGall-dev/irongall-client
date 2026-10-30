@@ -212,12 +212,12 @@ func servedRefusal(m *protocol.MessageInfo, ct []byte) ([]byte, error) {
 
 func isTime(s string) bool { _, err := protocol.ParseTime(s); return err == nil }
 
-// RefusedMail is a refused message in refused/, in this client's words:
+// RefusedMessage is a refused message in refused/, in this client's words:
 // its id, the code it was refused for and why, the time the server gave,
 // and what this client's checks established about it when it judged it
 // (keptFindings), each only when it has its form. Nothing else of
 // what the server or the sender wrote is in it.
-type RefusedMail struct {
+type RefusedMessage struct {
 	ID                string `json:"id"`
 	Code              string `json:"code"`
 	Reason            string `json:"detail,omitempty"`
@@ -232,28 +232,28 @@ type RefusedMail struct {
 	MsgID             string `json:"msg_id,omitempty"`
 }
 
-// RefusedMail lists refused/, by id: each message it keeps, with what the
+// RefusedMessages lists refused/, by id: each message it keeps, with what the
 // mailbox's state keeps of why it was refused. A message with no record there,
 // or one this client did not write, has the code "unknown" and nothing from
 // it. Each value is held to its form again as it is read.
-func (b *Mailbox) RefusedMail(ctx context.Context) ([]RefusedMail, error) {
-	return reading(ctx, b, b.refusedMail)
+func (b *Mailbox) RefusedMessages(ctx context.Context) ([]RefusedMessage, error) {
+	return reading(ctx, b, b.refusedMessages)
 }
 
-// refusedMail is RefusedMail inside a command or a reading.
-func (b *Mailbox) refusedMail() ([]RefusedMail, error) {
+// refusedMessages is RefusedMail inside a command or a reading.
+func (b *Mailbox) refusedMessages() ([]RefusedMessage, error) {
 	names, err := filepath.Glob(b.path("refused", "*.json"))
 	if err != nil {
 		return nil, err
 	}
-	var qs []RefusedMail
+	var qs []RefusedMessage
 	err = b.view(func(s store) error {
 		for _, name := range names {
 			id := strings.TrimSuffix(filepath.Base(name), ".json")
 			if !IsID(id) {
 				continue
 			}
-			q := RefusedMail{ID: id}
+			q := RefusedMessage{ID: id}
 			var kept struct {
 				ReceivedAt any `json:"received_at"`
 			}
@@ -319,7 +319,7 @@ func refusedRecordOf(s store, id string) refusedRecord {
 func (b *Mailbox) RemoveRefused(ctx context.Context, ids []string) ([]string, error) {
 	return lockedFinished(ctx, b, func() ([]string, error) {
 		if len(ids) == 0 {
-			qs, err := b.refusedMail()
+			qs, err := b.refusedMessages()
 			if err != nil {
 				return nil, err
 			}

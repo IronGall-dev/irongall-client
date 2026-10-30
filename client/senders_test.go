@@ -43,7 +43,7 @@ func TestMailFromASenderNotAllowedIsHeld(t *testing.T) {
 	if err != nil || st.Held != 2 || !strings.Contains(strings.Join(st.Attention, "\n"), "2 held in held/") {
 		t.Fatalf("status: %+v, %v", st, err)
 	}
-	held, err := b.HeldMail()
+	held, err := b.HeldMessages()
 	if err != nil || len(held) != 1 || held[0].From != a.Address() || len(held[0].IDs) != 2 || held[0].FirstSentAt == "" {
 		t.Fatalf("held: %+v, %v", held, err)
 	}
