@@ -23,27 +23,27 @@ import (
 // not take it, that one is sent again, unchanged, until it can no longer be
 // sent (PROTOCOL.md §12.4): it has expired or does not verify by this clock,
 // its certificate began less than an hour before the clock or is at or below
-// a serial the identity revoked, it was made for longer than the box's
-// lifetime now allows or has no record of when it was made, this box no
+// a serial the identity revoked, it was made for longer than the mailbox's
+// lifetime now allows or has no record of when it was made, this mailbox no
 // longer holds its key or its working key, or another type is asked for. A
 // key is signed once, so no key is encrypted to for longer than its
-// lifetime, at most 33 days or the box's shorter one, whatever the server
+// lifetime, at most 33 days or the mailbox's shorter one, whatever the server
 // does with what it was sent. It needs only the identity, so it also
-// recovers a box that lost its prekeys or its working key, and such a box
+// recovers a mailbox that lost its prekeys or its working key, and such a mailbox
 // needs no record of the numbers the lost machine used; one that lost its
 // allowed, blocked and policy files too takes them from the ACL its server
 // holds (adoptPending). The upload carries a pass under the new
 // certificate, and the server then takes no pass under an older one.
-// [Box.Receive] renews the prekey once it is more than a day old, so a box
+// [Mailbox.Receive] renews the prekey once it is more than a day old, so a mailbox
 // received at least monthly never lapses; Rekey is for a new key type, for
-// recovery, and for boxes that are only ever sent from.
+// recovery, and for mailboxes that are only ever sent from.
 //
-// It holds the box's lock, so two runs never make the same serial's key at
-// once, and it refuses a served serial below the highest this box has
+// It holds the mailbox's lock, so two runs never make the same serial's key at
+// once, and it refuses a served serial below the highest this mailbox has
 // published (a rollback), whose next serial's key was already published. A
-// prekey with an error is one the server took, and a fault of this box after
+// prekey with an error is one the server took, and a fault of this mailbox after
 // that.
-func (b *Box) Rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey, error) {
+func (b *Mailbox) Rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey, error) {
 	return locked(ctx, b, func() (*protocol.Prekey, error) { return b.rekeyAdopting(ctx, kt) })
 }
 
@@ -51,7 +51,7 @@ func (b *Box) Rekey(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey,
 // holds once its renewal is taken (adoptPending; #366): Rekey and Init's
 // restore from an identity alone. Receive's renewal adopts it where it reads
 // the server's ACL (checkACL).
-func (b *Box) rekeyAdopting(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey, error) {
+func (b *Mailbox) rekeyAdopting(ctx context.Context, kt protocol.KeyType) (*protocol.Prekey, error) {
 	p, err := b.rekey(ctx, kt, true)
 	if p == nil || err != nil {
 		return p, err
@@ -61,10 +61,10 @@ func (b *Box) rekeyAdopting(ctx context.Context, kt protocol.KeyType) (*protocol
 }
 
 // rekey is Rekey with the lock held. It returns the prekey once the server
-// took it: an error beside it is a fault of this box after that. With asked
-// unset, a renewal the box makes on its own (Receive's), it renews nothing
-// above a statement the box did not make (renew).
-func (b *Box) rekey(ctx context.Context, kt protocol.KeyType, asked bool) (*protocol.Prekey, error) {
+// took it: an error beside it is a fault of this mailbox after that. With asked
+// unset, a renewal the mailbox makes on its own (Receive's), it renews nothing
+// above a statement the mailbox did not make (renew).
+func (b *Mailbox) rekey(ctx context.Context, kt protocol.KeyType, asked bool) (*protocol.Prekey, error) {
 	p, at, err := b.renew(ctx, kt, asked)
 	if err != nil {
 		return p, err
@@ -73,29 +73,29 @@ func (b *Box) rekey(ctx context.Context, kt protocol.KeyType, asked bool) (*prot
 	return p, b.prune(at)
 }
 
-// renew reads the box at its server, numbers and makes the renewal, and
+// renew reads the mailbox at its server, numbers and makes the renewal, and
 // sends it. It returns the prekey and the reading the server took it at once
-// it is taken, with an error beside them only for a fault of this box after
+// it is taken, with an error beside them only for a fault of this mailbox after
 // that (#110).
 //
 // A renewal its owner did not ask for (asked unset) goes no further where the
-// read served a statement the box did not make, once it has published one of
-// its own (PROTOCOL.md §12.4): above it the box would take its address back
+// read served a statement the mailbox did not make, once it has published one of
+// its own (PROTOCOL.md §12.4): above it the mailbox would take its address back
 // from whoever made it, whom only its owner can judge, and recommend revoking
-// the address to ([NotMade]). A box that has published none is a restore.
-func (b *Box) renew(ctx context.Context, kt protocol.KeyType, asked bool) (*protocol.Prekey, taken, error) {
+// the address to ([NotMade]). A mailbox that has published none is a restore.
+func (b *Mailbox) renew(ctx context.Context, kt protocol.KeyType, asked bool) (*protocol.Prekey, taken, error) {
 	st, err := b.readOwn(ctx, kt, false)
 	if err != nil {
 		return nil, taken{}, err
 	}
 	if st.notMade && !asked {
-		return nil, taken{}, refuse("this box's server serves a prekey statement in its name that this box did not make, and recv renews nothing above one: dromas status says what to do, and dromas prekey renew renews above it, for its owner to run")
+		return nil, taken{}, refuse("this mailbox's server serves a prekey statement in its name that this mailbox did not make, and recv renews nothing above one: dromas status says what to do, and dromas prekey renew renews above it, for its owner to run")
 	}
 	return b.renewFrom(ctx, st)
 }
 
-// renewFrom is renew from what the box knows of itself at its server, st.
-func (b *Box) renewFrom(ctx context.Context, st *ownRead) (*protocol.Prekey, taken, error) {
+// renewFrom is renew from what the mailbox knows of itself at its server, st.
+func (b *Mailbox) renewFrom(ctx context.Context, st *ownRead) (*protocol.Prekey, taken, error) {
 	next, signed, err := b.nextNumber(st, false)
 	if err != nil {
 		return nil, taken{}, err
@@ -115,15 +115,15 @@ func (b *Box) renewFrom(ctx context.Context, st *ownRead) (*protocol.Prekey, tak
 }
 
 // tookRenewal decides whether renewal n is taken once sendRenewal has
-// returned at and err for it, from the box's state: n recorded published,
+// returned at and err for it, from the mailbox's state: n recorded published,
 // which publish writes of an upload its server took and a read of itself
 // writes of a statement its server serves (noteServed), the one place that
 // fact is kept, never the upload's answer. An upload answered otherwise,
 // whose read again served it, is taken with no reading to prune by, and that
 // answer is no error (#402 item 1). The reading at is the server's having
-// taken the upload where a fault of this box kept it from being recorded
-// (#110). The error beside a renewal taken is a fault of this box.
-func (b *Box) tookRenewal(n uint64, at taken, err error) (bool, error) {
+// taken the upload where a fault of this mailbox kept it from being recorded
+// (#110). The error beside a renewal taken is a fault of this mailbox.
+func (b *Mailbox) tookRenewal(n uint64, at taken, err error) (bool, error) {
 	if !at.None() {
 		return true, err
 	}
@@ -141,36 +141,36 @@ func (b *Box) tookRenewal(n uint64, at taken, err error) (bool, error) {
 // renewal is a renewal made and signed, ready to send.
 type renewal struct {
 	req protocol.PrekeyRequest
-	// forgotten is set when the box's server holds no box at its address: it
+	// forgotten is set when the mailbox's server holds no mailbox at its address: it
 	// forgot it, past its record's expiry. The renewal then goes as a
-	// registration, which is how such a box comes back (PROTOCOL.md §11.7, §13).
+	// registration, which is how such a mailbox comes back (PROTOCOL.md §11.7, §13).
 	forgotten bool
 }
 
 // sendRenewal publishes renewal r of statement n: as a new prekey, or to a
-// server that forgot the box, as its registration, for every renewal (Rekey,
-// Receive's, Init's, the remedy's). A server may forget a box past its
+// server that forgot the mailbox, as its registration, for every renewal (Rekey,
+// Receive's, Init's, the remedy's). A server may forget a mailbox past its
 // record's expiry at any moment, and answer its upload 404 no_such_mailbox
-// after a read that served it (PROTOCOL.md §11.9): the box then reads itself
-// once more (known, whose error, a fault of the box or its own revocation,
-// ends the renewal there), and where that read shows no box, every call
+// after a read that served it (PROTOCOL.md §11.9): the mailbox then reads itself
+// once more (known, whose error, a fault of the mailbox or its own revocation,
+// ends the renewal there), and where that read shows no mailbox, every call
 // answered, the same statement goes as its registration (#386); otherwise it
-// returns the upload's answer, and whether the renewal was taken is the box's
+// returns the upload's answer, and whether the renewal was taken is the mailbox's
 // state's to say (tookRenewal), which that read wrote if it served the
 // statement (noteServed).
 //
-// A server that holds no box holds no ACL of it, and a box registered anew
-// has none there, so what this box kept of the last one the server took goes
+// A server that holds no mailbox holds no ACL of it, and a mailbox registered anew
+// has none there, so what this mailbox kept of the last one the server took goes
 // before the registration is sent, and with it any mark that another writer
 // put it (keepHeld): whatever becomes of the answer, a fault after it or a
 // process ended before it is recorded, the next send or recv sends the ACL
 // again (#324), and reports no ACL another writer put replaced, since the
-// server dropped it with the box. So does a restore's adoption of it, which
+// server dropped it with the mailbox. So does a restore's adoption of it, which
 // has nothing to adopt (#366). It returns the reading the server took, as
 // publish does.
-func (b *Box) sendRenewal(ctx context.Context, r renewal, n uint64) (taken, error) {
+func (b *Mailbox) sendRenewal(ctx context.Context, r renewal, n uint64) (taken, error) {
 	if !r.forgotten {
-		at, err := b.publish(ctx, b.boxPath("/prekey"), r.req, n)
+		at, err := b.publish(ctx, b.mailboxPath("/prekey"), r.req, n)
 		if !at.None() || code(err) != protocol.CodeNoSuchMailbox {
 			return at, err
 		}
@@ -184,7 +184,7 @@ func (b *Box) sendRenewal(ctx context.Context, r renewal, n uint64) (taken, erro
 	}
 	if err := b.update(func(s store) error {
 		for _, k := range []string{"acl", "acl-another-writer"} {
-			if err := s.del(bucketBox, k); err != nil {
+			if err := s.del(bucketMailbox, k); err != nil {
 				return err
 			}
 		}
@@ -193,46 +193,46 @@ func (b *Box) sendRenewal(ctx context.Context, r renewal, n uint64) (taken, erro
 		return taken{}, err
 	}
 	reg := protocol.RegisterRequest{Identity: b.id.Document(), Prekey: r.req.Prekey, PrekeySignature: r.req.PrekeySignature, SenderKeyTypes: r.req.SenderKeyTypes}
-	return b.publish(ctx, b.boxPath(""), reg, n)
+	return b.publish(ctx, b.mailboxPath(""), reg, n)
 }
 
-// ownRead is what a renewal learned from its read of its own box.
+// ownRead is what a renewal learned from its read of its own mailbox.
 type ownRead struct {
-	// forgotten is set when the box's server holds no box at its address.
+	// forgotten is set when the mailbox's server holds no mailbox at its address.
 	forgotten bool
-	// known is the highest certificate serial this box knows it has used:
+	// known is the highest certificate serial this mailbox knows it has used:
 	// what it published, and the served certificate's when the read could be
 	// used.
 	known uint64
 	// kt is the key type the renewal makes: the one asked for, or the one this
-	// box published last, by its own record, never a served statement's
+	// mailbox published last, by its own record, never a served statement's
 	// (#61), or else post-quantum.
 	kt protocol.KeyType
 	// unread is why the remedy went on without its server's answer, or nil.
 	unread error
-	// notMade is set when the statement served is one this box did not make
-	// ([NotMade]), and the box has published one of its own.
+	// notMade is set when the statement served is one this mailbox did not make
+	// ([NotMade]), and the mailbox has published one of its own.
 	notMade bool
 }
 
-// readOwn reads this box at its server (known), as a renewal does before
-// it numbers anything, keeping what verifies of the box's own revocations.
+// readOwn reads this mailbox at its server (known), as a renewal does before
+// it numbers anything, keeping what verifies of the mailbox's own revocations.
 // Every renewal asks, so the certificate it makes next is numbered above the
 // highest serial it has been shown revoked, and is never revoked as it is
-// made (PROTOCOL.md §5), on a box restored from its identity too. A read
-// that showed the box its own revocation is known's error, which ends the
-// renewal here, in those words: such a box signs nothing more (§12.5; #339).
+// made (PROTOCOL.md §5), on a mailbox restored from its identity too. A read
+// that showed the mailbox its own revocation is known's error, which ends the
+// renewal here, in those words: such a mailbox signs nothing more (§12.5; #339).
 //
-// A server that holds no box at this address shows nothing to number above
-// or to hold to its order: the renewal is numbered above what this box knows
+// A server that holds no mailbox at this address shows nothing to number above
+// or to hold to its order: the renewal is numbered above what this mailbox knows
 // of its own, and goes as a registration.
 //
 // With unused set, for the remedy, an answer it cannot use stops nothing: no
 // answer, a served statement that does not verify, or one ordered before
-// what this box published. The renewal is numbered from what the box knows,
+// what this mailbox published. The renewal is numbered from what the mailbox knows,
 // and the revocation still goes to the server (PROTOCOL.md §12.6). A plain
 // renewal stops there: the refusal is the check.
-func (b *Box) readOwn(ctx context.Context, kt protocol.KeyType, unused bool) (*ownRead, error) {
+func (b *Mailbox) readOwn(ctx context.Context, kt protocol.KeyType, unused bool) (*ownRead, error) {
 	out := &ownRead{kt: kt}
 	o, err := b.known(ctx)
 	if err != nil {
@@ -241,7 +241,7 @@ func (b *Box) readOwn(ctx context.Context, kt protocol.KeyType, unused bool) (*o
 	out.forgotten = o.at == atNone
 	// A restore from the identity alone adopts its server's ACL once a
 	// renewal is taken: marked before anything is signed (#366). A server
-	// that holds no box holds no ACL of it, so a registration adopts none.
+	// that holds no mailbox holds no ACL of it, so a registration adopts none.
 	if !out.forgotten {
 		if err := b.beginAdoption(); err != nil {
 			return nil, err
@@ -262,16 +262,16 @@ func (b *Box) readOwn(ctx context.Context, kt protocol.KeyType, unused bool) (*o
 		var err error
 		switch {
 		case o.bad != nil:
-			err = refuse("this box's current prekey, as served: %v. dromas cert revoke-earlier renews past it, revoking every certificate before the new one", o.bad)
-		// A box's statements are ordered by certificate first, then by
-		// serial, and this box gives a renewal's certificate and prekey one
+			err = refuse("this mailbox's current prekey, as served: %v. dromas cert revoke-earlier renews past it, revoking every certificate before the new one", o.bad)
+		// A mailbox's statements are ordered by certificate first, then by
+		// serial, and this mailbox gives a renewal's certificate and prekey one
 		// number. So what it published is (published, published), and the
 		// server may serve nothing ordered before it.
 		case before(o.cert.Serial(), o.statement.Serial, published, published):
-			err = refuse("rollback: the server serves this box's prekey serial %d under certificate %d, before serial %d, which this box published. dromas cert revoke-earlier renews past it, revoking every certificate before the new one", o.statement.Serial, o.cert.Serial(), published)
+			err = refuse("rollback: the server serves this mailbox's prekey serial %d under certificate %d, before serial %d, which this mailbox published. dromas cert revoke-earlier renews past it, revoking every certificate before the new one", o.statement.Serial, o.cert.Serial(), published)
 		default:
 			out.known = max(o.cert.Serial(), published)
-			// A box that has published nothing, restored from its identity
+			// A mailbox that has published nothing, restored from its identity
 			// alone or its state lost, has no statement of its own to judge
 			// the served one by: its first renewal is the restore.
 			out.notMade = o.notMade && published > 0
@@ -287,7 +287,7 @@ func (b *Box) readOwn(ctx context.Context, kt protocol.KeyType, unused bool) (*o
 		out.kt = b.publishedType(published)
 	}
 	if out.kt == "" {
-		// Nothing published: a new box, or one restored from its identity
+		// Nothing published: a new mailbox, or one restored from its identity
 		// alone. It takes init's default, whatever a server serves in its name.
 		out.kt = protocol.PostQuantum
 	}
@@ -303,24 +303,24 @@ func (b *Box) readOwn(ctx context.Context, kt protocol.KeyType, unused bool) (*o
 // renewal and keeps what it was sent the same key for 33 more days at
 // each retry, without end. Once such a statement can no longer be sent
 // (it expired, or a key of another type is wanted), a new number is
-// taken, above it: its key stays, as a retired one, for mail it may yet
-// decrypt. Nothing at or below the highest serial this box signed is
+// taken, above it: its key stays, as a retired one, for messages it may yet
+// decrypt. Nothing at or below the highest serial this mailbox signed is
 // signed anew, and that one's files are never pruned, so a serial is
 // never used twice.
 //
 // With unused set it takes nothing an earlier attempt left: not a statement
 // signed before this call, and not a key or working key made for one. It is
-// for a box whose working key may have been taken ([Box.RenewAndRevoke]):
-// whoever copied the box while a renewal waited holds that renewal's working
-// key too, so sent again it would hand them the box's next certificate.
-func (b *Box) nextNumber(st *ownRead, unused bool) (uint64, *protocol.Prekey, error) {
+// for a mailbox whose working key may have been taken ([Mailbox.RenewAndRevoke]):
+// whoever copied the mailbox while a renewal waited holds that renewal's working
+// key too, so sent again it would hand them the mailbox's next certificate.
+func (b *Mailbox) nextNumber(st *ownRead, unused bool) (uint64, *protocol.Prekey, error) {
 	// The number must be above the served CERTIFICATE's serial, not the
 	// served prekey's: the new statement is under a new certificate, which
 	// outranks any prekey serial under the one before. So a prekey published
-	// in this box's name at the highest serial there is, by whoever took its
+	// in this mailbox's name at the highest serial there is, by whoever took its
 	// working key, holds nothing: the next certificate passes it.
-	// And above every serial this box's identity has revoked: a certificate
-	// numbered there would be revoked as it was made, and the box could not
+	// And above every serial this mailbox's identity has revoked: a certificate
+	// numbered there would be revoked as it was made, and the mailbox could not
 	// renew until its identity revoked fewer, which it never does. So a
 	// waiting statement at or below one is passed over too.
 	known := st.known
@@ -334,7 +334,7 @@ func (b *Box) nextNumber(st *ownRead, unused bool) (uint64, *protocol.Prekey, er
 	// A number an earlier attempt took, and that nothing has passed since,
 	// is kept: its statement is the one sent again, and a key made for it
 	// and never signed is used. Any other renewal takes a new number, from
-	// this machine's clock (protocol.SerialAt): a box restored from its
+	// this machine's clock (protocol.SerialAt): a mailbox restored from its
 	// identity knows only what the server shows it, and the clock puts its
 	// certificate above every one made before, on whatever machine.
 	begun, err := b.highestBegun()
@@ -363,17 +363,17 @@ func (b *Box) nextNumber(st *ownRead, unused bool) (uint64, *protocol.Prekey, er
 }
 
 // noneAbove is the refusal of a renewal numbered above n, the highest serial
-// this box knows of its own or holds revoked, when n is the highest serial
+// this mailbox knows of its own or holds revoked, when n is the highest serial
 // there is (protocol.MaxSerial): no later certificate can be made.
 func noneAbove(n uint64) error {
 	if n < protocol.MaxSerial {
 		return nil
 	}
-	return refuse("this box's certificates run through the highest serial there is, its own or revoked by its identity, so no later certificate can be made: the address cannot renew")
+	return refuse("this mailbox's certificates run through the highest serial there is, its own or revoked by its identity, so no later certificate can be made: the address cannot renew")
 }
 
 // before reports whether a statement at prekey serial n under certificate
-// cert stands before one at (seenN, seenCert) in its box's order: by
+// cert stands before one at (seenN, seenCert) in its mailbox's order: by
 // certificate first, then by the prekey's own serial (PROTOCOL.md §5;
 // decided on #48). A later certificate passes any serial under an earlier one.
 func before(cert, n, seenCert, seenN uint64) bool {
@@ -382,7 +382,7 @@ func before(cert, n, seenCert, seenN uint64) bool {
 
 // makeRenewal makes and signs renewal next, of st's key type, or takes p,
 // the statement an earlier attempt signed at next, and reads what it sends.
-func (b *Box) makeRenewal(st *ownRead, next uint64, p *protocol.Prekey) (*protocol.Prekey, renewal, error) {
+func (b *Mailbox) makeRenewal(st *ownRead, next uint64, p *protocol.Prekey) (*protocol.Prekey, renewal, error) {
 	out := renewal{forgotten: st.forgotten}
 	req := &out.req
 	if p == nil {
@@ -396,15 +396,15 @@ func (b *Box) makeRenewal(st *ownRead, next uint64, p *protocol.Prekey) (*protoc
 		return nil, out, err
 	}
 	if rec == nil {
-		return nil, out, fmt.Errorf("the box's state file keeps no statement of prekey %d", next)
+		return nil, out, fmt.Errorf("the mailbox's state file keeps no statement of prekey %d", next)
 	}
 	req.SenderKeyTypes, req.Prekey, req.PrekeySignature = b.senderKeyTypes, rec.Statement, rec.Signature
 	return p, out, nil
 }
 
-// publishedType is the key type of statement n, which this box published, or
+// publishedType is the key type of statement n, which this mailbox published, or
 // "", the client's default, when it holds no statement n to read.
-func (b *Box) publishedType(n uint64) protocol.KeyType {
+func (b *Mailbox) publishedType(n uint64) protocol.KeyType {
 	p, err := b.prekeyStatement(n)
 	if err != nil {
 		return ""
@@ -414,32 +414,32 @@ func (b *Box) publishedType(n uint64) protocol.KeyType {
 
 // signedPrekey looks at what an earlier attempt left for a serial. If it
 // signed a statement that can still be sent, that statement is returned: the
-// box's own, for this serial and the key it holds, of type kt, not expired,
-// made for no longer than the box's lifetime now allows, under a certificate
+// mailbox's own, for this serial and the key it holds, of type kt, not expired,
+// made for no longer than the mailbox's lifetime now allows, under a certificate
 // that is valid now, began at least protocol.MaxSkew before now (so was not
 // made while the clock read ahead of where it reads now: a reader whose clock
 // a server takes may not have reached its start), and whose working key the
-// box holds. If it signed one that cannot be, the serial is spent. If it
+// mailbox holds. If it signed one that cannot be, the serial is spent. If it
 // signed nothing, neither: a key it made and never signed is free to use.
-func (b *Box) signedPrekey(serial uint64, kt protocol.KeyType) (p *protocol.Prekey, spent bool, err error) {
+func (b *Mailbox) signedPrekey(serial uint64, kt protocol.KeyType) (p *protocol.Prekey, spent bool, err error) {
 	rec, err := b.prekeyOf(serial)
 	if err != nil || rec == nil {
 		return nil, false, err
 	}
 	p, _, err = protocol.VerifyPrekey(b.id, rec.Statement, rec.Signature, b.now())
 	if err != nil || p.Serial != serial || p.Type() != kt || p.Expired(b.now()) {
-		return nil, true, nil //nolint:nilerr // a statement that does not verify is one this box will not send
+		return nil, true, nil //nolint:nilerr // a statement that does not verify is one this mailbox will not send
 	}
 	if began, err := protocol.CertificateBegan(rec.Signature); err != nil || began.After(b.now().Add(-protocol.MaxSkew)) {
 		return nil, true, nil //nolint:nilerr // under a certificate made while the clock read ahead
 	}
 	if _, _, err := b.worker(serial); err != nil {
-		return nil, true, nil //nolint:nilerr // a statement whose working key this box cannot sign a pass with
+		return nil, true, nil //nolint:nilerr // a statement whose working key this mailbox cannot sign a pass with
 	}
 	if held, err := ageRecipient(b.path("prekeys", strconv.FormatUint(serial, 10)+".agekey")); err != nil || held != p.Key {
-		return nil, true, nil //nolint:nilerr // a statement for a key this box does not hold
+		return nil, true, nil //nolint:nilerr // a statement for a key this mailbox does not hold
 	}
-	// Made for longer than the box's lifetime now allows, or with no record
+	// Made for longer than the mailbox's lifetime now allows, or with no record
 	// of when: spent, as an expired one is, so a lifetime set lower holds
 	// from the next renewal whatever waited (PROTOCOL.md §12.4).
 	lifetime, err := b.PrekeyLifetime()
@@ -447,15 +447,15 @@ func (b *Box) signedPrekey(serial uint64, kt protocol.KeyType) (p *protocol.Prek
 		return nil, false, err
 	}
 	if made, err := b.made(serial); err != nil || p.NotAfter.Sub(made) > lifetime {
-		return nil, true, nil //nolint:nilerr // a statement made for longer than this box now signs one for
+		return nil, true, nil //nolint:nilerr // a statement made for longer than this mailbox now signs one for
 	}
 	return p, false, nil
 }
 
-// highestBegun returns the highest serial this box has begun a prekey at: the
+// highestBegun returns the highest serial this mailbox has begun a prekey at: the
 // renewal under way, or the highest statement it signed, published or not. It
-// is 0 when the box has begun none.
-func (b *Box) highestBegun() (top uint64, err error) {
+// is 0 when the mailbox has begun none.
+func (b *Mailbox) highestBegun() (top uint64, err error) {
 	err = b.view(func(s store) error {
 		n, err := decimal(s.get(bucketIntent, "renewal"), "renewal")
 		top = n
@@ -471,26 +471,26 @@ func (b *Box) highestBegun() (top uint64, err error) {
 	return top, err
 }
 
-// publishedSerial returns the highest prekey serial this box has published,
+// publishedSerial returns the highest prekey serial this mailbox has published,
 // or 0 if none is recorded.
-func (b *Box) publishedSerial() (n uint64, err error) {
+func (b *Mailbox) publishedSerial() (n uint64, err error) {
 	err = b.view(func(s store) error {
-		n, err = decimal(s.get(bucketBox, "serial"), "serial")
+		n, err = decimal(s.get(bucketMailbox, "serial"), "serial")
 		return err
 	})
 	return n, err
 }
 
 // recordPublished records serial as published, unless a higher one is.
-func (b *Box) recordPublished(s store, serial uint64) error {
-	cur, err := decimal(s.get(bucketBox, "serial"), "serial")
+func (b *Mailbox) recordPublished(s store, serial uint64) error {
+	cur, err := decimal(s.get(bucketMailbox, "serial"), "serial")
 	if err != nil || serial <= cur {
 		return err
 	}
-	return s.put(bucketBox, "serial", strconv.AppendUint(nil, serial, 10))
+	return s.put(bucketMailbox, "serial", strconv.AppendUint(nil, serial, 10))
 }
 
-// decimal is a number the box's state keeps in decimal digits, or 0 when it
+// decimal is a number the mailbox's state keeps in decimal digits, or 0 when it
 // keeps none: one of anything else is an error, never 0.
 func decimal(v []byte, name string) (uint64, error) {
 	if v == nil {
@@ -498,29 +498,29 @@ func decimal(v []byte, name string) (uint64, error) {
 	}
 	n, err := strconv.ParseUint(string(v), 10, 64)
 	if err != nil || strconv.FormatUint(n, 10) != string(v) {
-		return 0, fmt.Errorf("the box's state file holds a %s that is no number", name)
+		return 0, fmt.Errorf("the mailbox's state file holds a %s that is no number", name)
 	}
 	return n, nil
 }
 
 // renewAfter is how old the current prekey may get before Receive renews
-// it: a day, so a box received at least monthly never lapses, and a busy
-// box renews at most daily.
+// it: a day, so a mailbox received at least monthly never lapses, and a busy
+// mailbox renews at most daily.
 const renewAfter = 24 * time.Hour
 
 // renewTime is the room a renewal leaves for its own calls, beside
 // protocol.MaxSkew: from the start of the Receive that renews to the server
-// taking the new prekey, the read of the box's own box and the upload.
+// taking the new prekey, the read of the mailbox's own mailbox and the upload.
 const renewTime = time.Hour
 
-// MinPrekeyLifetime is the shortest a box's prekeys may be valid for: the
+// MinPrekeyLifetime is the shortest a mailbox's prekeys may be valid for: the
 // day Receive waits to renew one (renewAfter), an hour of slip for when recv
 // runs, renewTime, and protocol.MaxSkew for clocks, the hour a sender's may
-// read ahead of the box's (PROTOCOL.md §3.4, §12.4). At it, an hourly recv
+// read ahead of the mailbox's (PROTOCOL.md §3.4, §12.4). At it, an hourly recv
 // renews in time.
 const MinPrekeyLifetime = renewAfter + time.Hour + renewTime + protocol.MaxSkew
 
-// RecvWithin is how often a box must run Receive for a prekey of the given
+// RecvWithin is how often a mailbox must run Receive for a prekey of the given
 // lifetime to be renewed while every sender whose clock a server takes still
 // takes it: Receive renews one once it is a day old, and the prekey then has
 // renewTime and protocol.MaxSkew left, the room whoever makes a time-limited
@@ -529,16 +529,16 @@ func RecvWithin(lifetime time.Duration) time.Duration {
 	return lifetime - renewAfter - renewTime - protocol.MaxSkew
 }
 
-// lifetimeGrammar is what a box's prekey-lifetime file holds: a number of
+// lifetimeGrammar is what a mailbox's prekey-lifetime file holds: a number of
 // seconds, alone on its line. Both clients hold the file to it.
 var lifetimeGrammar = regexp.MustCompile(`\A[1-9][0-9]{0,9}\n?\z`)
 
-// PrekeyLifetime is how long each new prekey of this box is valid for: the
+// PrekeyLifetime is how long each new prekey of this mailbox is valid for: the
 // seconds its prekey-lifetime file names, or protocol.PrekeyLifetime when it
 // has none. A file that names anything but a lifetime from
 // MinPrekeyLifetime to protocol.PrekeyLifetime is an error, never read as the
-// default: the box renews no prekey until it is put right.
-func (b *Box) PrekeyLifetime() (time.Duration, error) {
+// default: the mailbox renews no prekey until it is put right.
+func (b *Mailbox) PrekeyLifetime() (time.Duration, error) {
 	raw, err := os.ReadFile(b.path("prekey-lifetime"))
 	if errors.Is(err, fs.ErrNotExist) {
 		return protocol.PrekeyLifetime, nil
@@ -552,17 +552,17 @@ func (b *Box) PrekeyLifetime() (time.Duration, error) {
 			return d, nil
 		}
 	}
-	return 0, fmt.Errorf("this box's prekey-lifetime file names no lifetime: %s", lifetimeRule)
+	return 0, fmt.Errorf("this mailbox's prekey-lifetime file names no lifetime: %s", lifetimeRule)
 }
 
-// lifetimeRule is what a prekey lifetime is, as a box's owner is told it.
+// lifetimeRule is what a prekey lifetime is, as a mailbox's owner is told it.
 var lifetimeRule = fmt.Sprintf("one is a number of seconds, alone on its line, from %d (a day and three hours) to %d (33 days)", int64(MinPrekeyLifetime/time.Second), int64(protocol.PrekeyLifetime/time.Second))
 
-// SetPrekeyLifetime writes the box's prekey-lifetime file: each prekey made
+// SetPrekeyLifetime writes the mailbox's prekey-lifetime file: each prekey made
 // from now on is valid for d, a whole number of seconds from
 // MinPrekeyLifetime to protocol.PrekeyLifetime. The prekey in use keeps its
 // own; Receive renews it at once if it was made for longer.
-func (b *Box) SetPrekeyLifetime(ctx context.Context, d time.Duration) error {
+func (b *Mailbox) SetPrekeyLifetime(ctx context.Context, d time.Duration) error {
 	if d < MinPrekeyLifetime || d > protocol.PrekeyLifetime || d%time.Second != 0 {
 		return fmt.Errorf("%v is no prekey lifetime: %s", d, lifetimeRule)
 	}
@@ -579,42 +579,42 @@ const retiredGrace = time.Hour
 // refused one (a rate limit, a server that is down) is not tried every poll.
 const renewRetry = time.Hour
 
-// current returns the serial of the prekey this box published last.
-func (b *Box) current() (uint64, error) {
+// current returns the serial of the prekey this mailbox published last.
+func (b *Mailbox) current() (uint64, error) {
 	n, err := b.publishedSerial()
 	if err == nil && n == 0 {
-		err = errors.New("this box has published no prekey")
+		err = errors.New("this mailbox has published no prekey")
 	}
 	return n, err
 }
 
-// made returns when prekey n was signed, as the box keeps it with the
+// made returns when prekey n was signed, as the mailbox keeps it with the
 // statement. Nothing is inferred from the statement, whose lifetime is the
-// box's to set.
-func (b *Box) made(n uint64) (time.Time, error) {
+// mailbox's to set.
+func (b *Mailbox) made(n uint64) (time.Time, error) {
 	rec, err := b.prekeyOf(n)
 	if err != nil {
 		return time.Time{}, err
 	}
 	if rec == nil {
-		return time.Time{}, fmt.Errorf("this box keeps no statement of prekey %d", n)
+		return time.Time{}, fmt.Errorf("this mailbox keeps no statement of prekey %d", n)
 	}
 	return protocol.ParseTime(rec.Made)
 }
 
-// prekeyStatement returns prekey n's statement, as this box signed it.
-func (b *Box) prekeyStatement(n uint64) (*protocol.Prekey, error) {
+// prekeyStatement returns prekey n's statement, as this mailbox signed it.
+func (b *Mailbox) prekeyStatement(n uint64) (*protocol.Prekey, error) {
 	rec, err := b.prekeyOf(n)
 	if err != nil {
 		return nil, err
 	}
 	if rec == nil {
-		return nil, fmt.Errorf("this box keeps no statement of prekey %d", n)
+		return nil, fmt.Errorf("this mailbox keeps no statement of prekey %d", n)
 	}
 	return protocol.ParsePrekey(rec.Statement)
 }
 
-// renewFailure is a renewal Receive tried that did not go through, as the box
+// renewFailure is a renewal Receive tried that did not go through, as the mailbox
 // keeps it: when, by this machine's clock, and why, in this client's words.
 // It is one the server did not take, or one it took that did not mend the
 // drain it was made for.
@@ -626,10 +626,10 @@ type renewFailure struct {
 // renewIfDue publishes a new prekey, of the current type, when renewDue
 // says so. The caller holds the lock. A failure is kept, and tried again only
 // renewRetry after it, by whichever process runs then (#10); until then each
-// Receive says why the last one failed, so recv says the box needs a look
+// Receive says why the last one failed, so recv says the mailbox needs a look
 // until a renewal is taken. A failure dated after the clock's reading holds
 // nothing back: the clock has gone back since (#201).
-func (b *Box) renewIfDue(ctx context.Context) (*protocol.Prekey, error) {
+func (b *Mailbox) renewIfDue(ctx context.Context) (*protocol.Prekey, error) {
 	if !b.renewDue() {
 		return nil, nil
 	}
@@ -637,15 +637,15 @@ func (b *Box) renewIfDue(ctx context.Context) (*protocol.Prekey, error) {
 }
 
 // renewNow is renewIfDue's renewal, held to the same hour after a failure.
-func (b *Box) renewNow(ctx context.Context) (*protocol.Prekey, error) {
+func (b *Mailbox) renewNow(ctx context.Context) (*protocol.Prekey, error) {
 	var last renewFailure
 	if err := b.view(func(s store) error {
-		if raw := s.get(bucketBox, "renew-failed"); raw != nil {
+		if raw := s.get(bucketMailbox, "renew-failed"); raw != nil {
 			return protocol.Unmarshal(raw, &last)
 		}
 		return nil
 	}); err != nil {
-		return nil, fmt.Errorf("the box's state file keeps a failed renewal it cannot read: %w", err)
+		return nil, fmt.Errorf("the mailbox's state file keeps a failed renewal it cannot read: %w", err)
 	}
 	if at, err := protocol.ParseTime(last.At); err == nil {
 		if since := b.now().Sub(at); since >= 0 && since < renewRetry {
@@ -661,7 +661,7 @@ func (b *Box) renewNow(ctx context.Context) (*protocol.Prekey, error) {
 	}
 	p, err := b.rekey(ctx, "", false)
 	if p == nil && err != nil {
-		// A box that holds its own revocation renews nothing again: there
+		// A mailbox that holds its own revocation renews nothing again: there
 		// is nothing to try in an hour.
 		var gone *RevokedError
 		if errors.As(err, &gone) {
@@ -674,23 +674,23 @@ func (b *Box) renewNow(ctx context.Context) (*protocol.Prekey, error) {
 
 // holdRenewal keeps why a renewal did not go through, so renewNow tries the
 // next one only renewRetry after it.
-func (b *Box) holdRenewal(why error) error {
+func (b *Mailbox) holdRenewal(why error) error {
 	failed, err := json.Marshal(renewFailure{At: b.now().UTC().Format(protocol.TimeLayout), Error: why.Error()})
 	if err != nil {
 		return err
 	}
-	return b.update(func(s store) error { return s.put(bucketBox, "renew-failed", failed) })
+	return b.update(func(s store) error { return s.put(bucketMailbox, "renew-failed", failed) })
 }
 
 // renewDue reports whether the current prekey is to be renewed: once it is
 // more than renewAfter old; when it, or the record of when it was made,
-// cannot be read; when it was made for longer than the box's prekey
+// cannot be read; when it was made for longer than the mailbox's prekey
 // lifetime now allows, so a lifetime set lower holds from the next recv; when
 // that lifetime cannot be read, so that the renewal fails and says why; and
-// when this box's own identity has revoked the certificate it is using: such
-// a box takes no mail until it publishes under a new one, and
-// [Box.RenewAndRevoke] leaves it so when the server refused its renewal.
-func (b *Box) renewDue() bool {
+// when this mailbox's own identity has revoked the certificate it is using: such
+// a mailbox takes no messages until it publishes under a new one, and
+// [Mailbox.RenewAndRevoke] leaves it so when the server refused its renewal.
+func (b *Mailbox) renewDue() bool {
 	n, err := b.current()
 	if err != nil || b.ownRevokes(n) {
 		return true
@@ -705,16 +705,16 @@ func (b *Box) renewDue() bool {
 }
 
 // dropRetired deletes every retired prekey but the newest, after a drain
-// that emptied the box and whose list the server took at a reading more than
+// that emptied the mailbox and whose list the server took at a reading more than
 // retiredGrace after the newest retired prekey was made: every older one was
 // retired by then. A send must
-// name the recipient's current prekey serial, so mail encrypted to a retired
+// name the recipient's current prekey serial, so a message encrypted to a retired
 // prekey reached the server before the renewal that retired it, or with a
 // send already in progress: such a drain collected all of it. The newest
-// retired prekey is kept regardless. After this, mail encrypted to a deleted
-// prekey is unrecoverable from the box's keys. dromas.sh does not do this;
+// retired prekey is kept regardless. After this, a message encrypted to a deleted
+// prekey is unrecoverable from the mailbox's keys. dromas.sh does not do this;
 // it keeps every retired prekey until prune's deletion time.
-func (b *Box) dropRetired(at taken) error {
+func (b *Mailbox) dropRetired(at taken) error {
 	cur, err := b.publishedSerial()
 	if err != nil {
 		return err
@@ -748,7 +748,7 @@ func (b *Box) dropRetired(at taken) error {
 // made with it, if a renewal the server never took left one: the files
 // first, then the record, so a crash in between leaves a record of a key
 // gone, which the next prune deletes again, and never a key no record names.
-func (b *Box) removePrekey(n uint64) error {
+func (b *Mailbox) removePrekey(n uint64) error {
 	if err := removeIfExists(b.path("prekeys", strconv.FormatUint(n, 10)+".agekey")); err != nil {
 		return err
 	}
@@ -760,15 +760,15 @@ func (b *Box) removePrekey(n uint64) error {
 	return b.update(func(s store) error { return s.del(bucketPrekeys, serialKey(n)) })
 }
 
-// prune deletes every prekey but the newest this box holds whose deletion
+// prune deletes every prekey but the newest this mailbox holds whose deletion
 // time has come by the reading at, one a server took: its not_after plus
-// protocol.TTL. All mail encrypted to it arrived by its not_after and has
-// expired by then; after this, that mail is unrecoverable from the box's
+// protocol.TTL. Every message encrypted to it arrived by its not_after and has
+// expired by then; after this, those messages are unrecoverable from the mailbox's
 // keys. A drain's list taken, and a renewal taken, each run it, by the date
 // of the pass that call carried: a clock far ahead is stopped at that pass,
 // and one that moves while the call is in flight deletes nothing by where it
 // went.
-func (b *Box) prune(at taken) error {
+func (b *Mailbox) prune(at taken) error {
 	signed, err := b.prekeys()
 	if err != nil || len(signed) == 0 {
 		return err

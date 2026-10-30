@@ -37,10 +37,10 @@ func (w *world) answering(method, suffix string, edit func(rw http.ResponseWrite
 // A refusal names its check by a code, in the script's own words, never with
 // what the sender wrote; senders a server makes up leave nothing; and a
 // server that lists without end, or answers a fetch or a list out of its
-// form, costs one drain that much, with the mail left on the server.
+// form, costs one drain that much, with the messages left on the server.
 func TestScriptRefusesInItsOwnWords(t *testing.T) {
 	w := newWorld(t)
-	a, b := w.box(), w.box()
+	a, b := w.mailbox(), w.mailbox()
 	q0, p0 := len(b.files("refused")), len(b.files("peers"))
 	now, id := time.Now().UTC().Format(protocol.TimeLayout), b64(a.read("identity.doc"))
 	var evil1 string
@@ -56,7 +56,7 @@ func TestScriptRefusesInItsOwnWords(t *testing.T) {
 		}
 	}
 	d := b.recv()
-	if len(d.mail) != 0 || d.refused("bad_envelope") != 3 || d.refused("bad_identity") != 1 || strings.Contains(d.said, "IGNORE") || strings.Contains(d.said, "EVIL") || strings.Contains(d.said, "RUN THIS") || strings.Contains(d.said, "SYSTEM") {
+	if len(d.messages) != 0 || d.refused("bad_envelope") != 3 || d.refused("bad_identity") != 1 || strings.Contains(d.said, "IGNORE") || strings.Contains(d.said, "EVIL") || strings.Contains(d.said, "RUN THIS") || strings.Contains(d.said, "SYSTEM") {
 		t.Errorf("a refusal that prints what the sender wrote: %v", d)
 	}
 	_, said, _ := strings.Cut(d.said, "REFUSED "+evil1+": ")
@@ -64,11 +64,11 @@ func TestScriptRefusesInItsOwnWords(t *testing.T) {
 	if strings.TrimSpace(b.read("refused/"+evil1+".reason")) != said || len(b.files("refused")) != q0+8 {
 		t.Errorf("refused/<hash>.reason does not keep what was said: %q, %q; %d files", b.read("refused/"+evil1+".reason"), said, len(b.files("refused")))
 	}
-	// Senders the server makes up, whose mail does not verify or does not decrypt.
+	// Senders the server makes up, whose messages do not verify or do not decrypt.
 	op := w.operator()
 	n := len(w.srv.Requests())
 	for range 3 {
-		m := &sbox{w: w, dir: filepath.Join(t.TempDir(), "made")}
+		m := &shMailbox{w: w, dir: filepath.Join(t.TempDir(), "made")}
 		m.must(`mkdir -p "$DR"; ssh-keygen -q -t ed25519 -N '' -C '' -f "$DR/identity"; printf 'dromas-v1\n%s\n' "$(cut -d' ' -f1,2 "$DR/identity.pub")" > "$DR/identity.doc"; sha256sum < "$DR/identity.doc" | cut -c1-64 > "$DR/address"`)
 		m.addr = mustAddress(t, m.dir)
 		l := m.line(b.addr, "00000000-0000-4000-8000-000000000000", "from a sender the server made up", 0)
@@ -164,7 +164,7 @@ func matches(pattern, s string) bool {
 // A code counts only beside its own type, and a Retry-After is delay-seconds,
 // digits alone, of at most a day.
 func TestScriptReadsAProblemsCodeAndWait(t *testing.T) {
-	b := &sbox{w: newWorld(t), dir: t.TempDir()}
+	b := &shMailbox{w: newWorld(t), dir: t.TempDir()}
 	out := b.must(`p(){ printf '%s\n%s\n\n' "$1" "$2" > "$DR/error.meta"; printf %s "$3" > "$DR/error.json"; }
 p 429 0017 '{"type":"tag:dromas.dev,2026-10-26:errors/rate_limited","status":429,"code":"rate_limited"}'; echo "1 $(dr_code) $(dr_wait)"
 p 429 0017 '{"type":"https://dromas.dev/errors/rate_limited","status":429,"code":"rate_limited"}'; echo "2 $(dr_code)"
@@ -190,10 +190,10 @@ func onBlock(n int) bool {
 // Every message is a whole number of blocks on the wire, padded after the
 // signature, for the key it is encrypted to; what a sender seals is read
 // back as its reader will, and an age file of another size is not sent; a
-// certificate with 33 days or less left signs no mail.
+// certificate with 33 days or less left signs no message.
 func TestScriptPads(t *testing.T) {
 	w := newWorld(t)
-	p, q := w.box(), w.box()
+	p, q := w.mailbox(), w.mailbox()
 	var sizes []int
 	posts := func() {
 		sizes = nil
@@ -260,24 +260,24 @@ func TestScriptPads(t *testing.T) {
 		t.Errorf("a re-encryption after stale_prekey, to an X25519 prekey, is %q bytes", size)
 	}
 	if d := q.recv(); !slices.Equal(d.bodies(), []string{"sealed twice"}) {
-		t.Errorf("the mail sealed again: %v", d)
+		t.Errorf("the message sealed again: %v", d)
 	}
 	// The sender reads its envelope as the recipient will, and checks the size of what age wrote.
 	n := w.posts(q.addr)
-	writeFile(t, p.file("other.P"), envelope(t, p.addr, w.operator().addr, []byte(p.read("identity.doc")), "33333333-2222-4333-8444-555555555555", "for another box", 0))
-	if r := p.sh("dr_seal " + q.addr.String() + ` "$DR/other"`); r.rc == 0 || !strings.Contains(r.err, "is not one this box made for that address: reattributed") {
+	writeFile(t, p.file("other.P"), envelope(t, p.addr, w.operator().addr, []byte(p.read("identity.doc")), "33333333-2222-4333-8444-555555555555", "for another mailbox", 0))
+	if r := p.sh("dr_seal " + q.addr.String() + ` "$DR/other"`); r.rc == 0 || !strings.Contains(r.err, "is not one this mailbox made for that address: reattributed") {
 		t.Errorf("an envelope that names another recipient: %v", r)
 	}
 	if r := p.sh(`age(){ command age "$@" && printf x; }; printf 'a size that tells' | dr_send ` + q.addr.String()); r.rc == 0 || !strings.Contains(r.err, "is not the 2048 bytes its padding was made for") || w.posts(q.addr) != n {
 		t.Errorf("an age file that is not the size the padding was made for: %v", r)
 	}
 	if r := p.sh(igNow(33*24*time.Hour) + "printf 'too late to sign' | dr_send " + q.addr.String()); r.rc == 0 || !strings.Contains(r.err, "ends within 33 days") || w.posts(q.addr) != n {
-		t.Errorf("mail signed under a certificate with 33 days or less left: %v", r)
+		t.Errorf("a message signed under a certificate with 33 days or less left: %v", r)
 	}
 }
 
-// prekeyOf is a box's prekey statement as the server holds it.
-func prekeyOf(w *world, b *sbox) []byte {
+// prekeyOf is a mailbox's prekey statement as the server holds it.
+func prekeyOf(w *world, b *shMailbox) []byte {
 	st, _ := w.srv.Prekey(b.addr)
 	return st
 }

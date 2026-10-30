@@ -16,10 +16,10 @@ import (
 
 // Every command prints JSON lines: one object a line, whose first member,
 // "type", says what the line is. Its members follow, and last, where this
-// client has something to say, "message", in its own words: never a
+// client has something to say, "detail", in its own words: never a
 // sender's, never a server's. Help is the one thing printed as text.
 //
-// What a command did and what it met on the way go to stdout, mail and
+// What a command did and what it met on the way go to stdout, messages and
 // refusals alike, so a reader of stdout alone misses nothing. Stderr carries
 // the line that says the command failed, or that its command line was
 // wrong, and the line that says it is waiting.
@@ -84,27 +84,27 @@ func typed(typ string, obj []byte) []byte {
 	return append(append(b[:len(b)-1], ','), obj[1:]...)
 }
 
-// mail is a message's line: its id, the SHA-256 of its ciphertext, and its
+// message is a message's line: its id, the SHA-256 of its ciphertext, and its
 // envelope, the line inbox/<id>.json keeps, as its bytes are, which this
 // client built from the checked fields of the envelope. The envelope's
 // members are only ever inside "envelope", so one it gains later (PROTOCOL.md
 // §14) never meets a member of the line's own (#356; PRECEDENTS.md, Part 2,
-// § 3e). Beside it, "alias" is the box's own name for the sender, when it
+// § 3e). Beside it, "alias" is the mailbox's own name for the sender, when it
 // has one (names).
-func mail(d client.Delivery, n names) []byte {
-	return line("mail", "id", d.ID, "alias", n.of(d.Envelope.From), "envelope", raw(d.Line))
+func message(d client.Delivery, n names) []byte {
+	return line("message", "id", d.ID, "alias", n.of(d.Envelope.From), "envelope", raw(d.Line))
 }
 
-// names is the box's own name for each peer it has named (dromas alias add),
+// names is the mailbox's own name for each peer it has named (dromas alias add),
 // the first by name where it gave one several. A line that names a peer
 // carries it as "alias", beside the address and never in its place: the
-// address is what the client verified, and a name is the box owner's word,
-// never the peer's. A box whose aliases file cannot be read names nobody, and
+// address is what the client verified, and a name is the mailbox owner's word,
+// never the peer's. A mailbox whose aliases file cannot be read names nobody, and
 // its lines carry the addresses alone.
 type names map[protocol.Address]string
 
 // namesOf is the names b gives its peers.
-func namesOf(b *client.Box) names {
+func namesOf(b *client.Mailbox) names {
 	n := names{}
 	as, err := b.Aliases()
 	if err != nil {
@@ -126,14 +126,14 @@ func (n names) of(a protocol.Address) any {
 	return nil
 }
 
-// mailHeaders is a message's line without the text its sender chose: its id,
-// the box's name for its sender (mail),
+// messageHeaders is a message's line without the text its sender chose: its id,
+// the mailbox's name for its sender (message),
 // its envelope with the checked fields but its body and subject, and the
 // size of its body in bytes, as the envelope carries it. in_reply_to and
 // supersedes are the sender's words, which a reader holds only to being
 // strings, so each is here only when it has a msg_id's form; dromas inbox
 // show prints them as sent.
-func mailHeaders(d client.Delivery, n names) []byte {
+func messageHeaders(d client.Delivery, n names) []byte {
 	env := d.Envelope
 	msgID := func(s string) any {
 		if !protocol.IsMsgID(s) {
@@ -141,7 +141,7 @@ func mailHeaders(d client.Delivery, n names) []byte {
 		}
 		return s
 	}
-	return line("mail_headers", "id", d.ID, "alias", n.of(env.From),
+	return line("message_headers", "id", d.ID, "alias", n.of(env.From),
 		"envelope", raw(object("v", protocol.EnvelopeVersion, "from", env.From, "to", env.To,
 			"sent_at", env.SentAt.UTC().Format(protocol.TimeLayout), "msg_id", env.MsgID,
 			"in_reply_to", msgID(env.InReplyTo), "supersedes", msgID(env.Supersedes))),
@@ -212,11 +212,11 @@ func failure(err error) []any {
 			kv = append(kv, "retry_after", seconds(ae.RetryAfter))
 		}
 	}
-	return append(kv, "message", err.Error())
+	return append(kv, "detail", err.Error())
 }
 
 // report prints how a command ended, on stderr, and gives its exit status:
-// 0 done, 1 failed, 2 a command line that was wrong, 3 done and the box
+// 0 done, 1 failed, 2 a command line that was wrong, 3 done and the mailbox
 // needs a look.
 func report(err error, stderr io.Writer) int {
 	var look *needsALook
@@ -225,7 +225,7 @@ func report(err error, stderr io.Writer) int {
 	case err == nil:
 		return 0
 	case errors.As(err, &wrong):
-		_, _ = fmt.Fprintf(stderr, "%s\n", line("usage_error", "usage", omit(wrong.usage), "help", wrong.help, "message", wrong.msg))
+		_, _ = fmt.Fprintf(stderr, "%s\n", line("usage_error", "usage", omit(wrong.usage), "help", wrong.help, "detail", wrong.msg))
 		return 2
 	case errors.As(err, &look):
 		return 3

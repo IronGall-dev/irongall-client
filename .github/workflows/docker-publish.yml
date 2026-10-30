@@ -1,4 +1,4 @@
-# The echo box's image, for linux/amd64 and linux/arm64, pushed to the
+# The echo mailbox's image, for linux/amd64 and linux/arm64, pushed to the
 # GitHub Container Registry with an attestation of how and where it was
 # built: GitHub's "Publishing Docker images" workflow, with Buildx for the
 # two platforms. On every push to main, and by hand. Actions are pinned by
@@ -49,7 +49,7 @@ jobs:
             type=sha,format=long
           labels: |
             org.opencontainers.image.title=dromas-echo
-            org.opencontainers.image.description=The Dromas echo box, a client: it answers every message that passes every check with a signed reply carrying the body back, and holds the dromas command beside it. Apache-2.0.
+            org.opencontainers.image.description=The Dromas echo mailbox, a client: it answers every message that passes every check with a signed reply carrying the body back, and holds the dromas command beside it. Apache-2.0.
       - id: push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:

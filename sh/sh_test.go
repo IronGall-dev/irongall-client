@@ -1,7 +1,7 @@
 // Package sh_test runs dromas.sh, the stock-tools client, from go test:
 // against the fake server, which a test makes forge, a shell per command
 // (world_test.go); its verdicts on the test vectors against the Go client's;
-// and the two clients exchanging mail.
+// and the two clients exchanging messages.
 package sh_test
 
 import (
@@ -68,7 +68,7 @@ var bashMajor = sync.OnceValue(func() int {
 
 var scriptTools = []string{"bash", "age", "age-keygen", "ssh-keygen", "jq", "iconv", "sha256sum", "base64", "od", "sync"}
 
-// TestMain puts an age that makes post-quantum boxes first in PATH for every
+// TestMain puts an age that makes post-quantum mailboxes first in PATH for every
 // test and every shell they run: the local one when it can, else go.mod's.
 func TestMain(m *testing.M) {
 	path, err := agetool.Path()
@@ -132,13 +132,13 @@ func exists(name string) bool {
 	return err == nil && fi.Size() > 0
 }
 
-// linkIn is the link in the box line init and addr print: one line of JSON,
+// linkIn is the link in the mailbox line init and addr print: one line of JSON,
 // its type first, whose link ends in its address.
 func linkIn(t *testing.T, out string) string {
 	t.Helper()
 	var l struct{ Type, Address, Link string }
-	if !strings.HasPrefix(out, `{"type":"box",`) || strings.Count(out, "\n") != 1 || json.Unmarshal([]byte(out), &l) != nil || l.Address == "" || !strings.HasSuffix(l.Link, "/"+l.Address) {
-		t.Fatalf("not a box line: %q", out)
+	if !strings.HasPrefix(out, `{"type":"mailbox",`) || strings.Count(out, "\n") != 1 || json.Unmarshal([]byte(out), &l) != nil || l.Address == "" || !strings.HasSuffix(l.Link, "/"+l.Address) {
+		t.Fatalf("not a mailbox line: %q", out)
 	}
 	return l.Link
 }
@@ -171,18 +171,18 @@ func vectorNow(t *testing.T) (time.Time, string) {
 	return now, fmt.Sprintf("dr_now(){ echo %d; }\n", now.Unix())
 }
 
-// identity returns a vector box's address and the path of its identity
+// identity returns a vector mailbox's address and the path of its identity
 // document: what the script checks a signature against.
-func identity(t *testing.T, box string) (string, string) {
+func identity(t *testing.T, mailbox string) (string, string) {
 	t.Helper()
-	addr, err := os.ReadFile(filepath.Join(vectors, box, "address"))
+	addr, err := os.ReadFile(filepath.Join(vectors, mailbox, "address"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	return strings.TrimSpace(string(addr)), abs(t, filepath.Join(vectors, box, "identity.doc"))
+	return strings.TrimSpace(string(addr)), abs(t, filepath.Join(vectors, mailbox, "identity.doc"))
 }
 
-// scratch is a directory for the script's scratch files, as its box's is.
+// scratch is a directory for the script's scratch files, as its mailbox's is.
 func scratch(t *testing.T) []string { return []string{"DR_HOME=" + t.TempDir()} }
 
 // The script's verdict on every vector is the one the vectors name, as the
@@ -191,17 +191,17 @@ func TestVectorsIdentity(t *testing.T) {
 	t.Parallel()
 	need(t, scriptTools...)
 	t.Logf("ssh-keygen: %s", sshBuild())
-	for _, box := range []string{"a", "b", "c"} { // c's identity is a P-256 key
-		if box == "c" && !p256() {
+	for _, mailbox := range []string{"a", "b", "c"} { // c's identity is a P-256 key
+		if mailbox == "c" && !p256() {
 			t.Logf("%s reads no P-256 key, so the script refuses c/identity.doc: a known variance (PROTOCOL.md Appendix A)", sshBuild())
 			continue
 		}
-		a, _ := identity(t, box)
-		if _, err := bash(t, nil, fmt.Sprintf("dr_idcheck %s %s", abs(t, filepath.Join(vectors, box, "identity.doc")), a)); err != nil {
-			t.Errorf("%s/identity.doc refused: %v", box, err)
+		a, _ := identity(t, mailbox)
+		if _, err := bash(t, nil, fmt.Sprintf("dr_idcheck %s %s", abs(t, filepath.Join(vectors, mailbox, "identity.doc")), a)); err != nil {
+			t.Errorf("%s/identity.doc refused: %v", mailbox, err)
 		}
-		if _, err := bash(t, nil, fmt.Sprintf("dr_idcheck %s %s", abs(t, filepath.Join(vectors, box, "identity.doc")), strings.Repeat("0", 64))); err == nil {
-			t.Errorf("%s/identity.doc accepted for another address", box)
+		if _, err := bash(t, nil, fmt.Sprintf("dr_idcheck %s %s", abs(t, filepath.Join(vectors, mailbox, "identity.doc")), strings.Repeat("0", 64))); err == nil {
+			t.Errorf("%s/identity.doc accepted for another address", mailbox)
 		}
 	}
 	docs, _ := filepath.Glob(filepath.Join(vectors, "identity", "*.doc"))
@@ -265,7 +265,7 @@ func TestVectorsIdentity(t *testing.T) {
 }
 
 // A signature under each certificate of cert/ is refused, as the Go client
-// refuses it, and one under a box's own certificate verifies. The signatures
+// refuses it, and one under a mailbox's own certificate verifies. The signatures
 // themselves are good: it is the certificate's form, its signer or its dates
 // that fail, which ssh-keygen -Y verify alone does not all check.
 func TestVectorsCertificate(t *testing.T) {
@@ -480,7 +480,7 @@ func TestVectorsPrekey(t *testing.T) {
 // client).
 var envelopeFive = map[string]bool{
 	"refuse-from-not-signer": true, "refuse-from-null": true, "refuse-from-uppercase": true,
-	"refuse-to-another-box": true, "refuse-to-uppercase": true,
+	"refuse-to-another-mailbox": true, "refuse-to-uppercase": true,
 	"refuse-duplicate-key": true, "refuse-key-twice-in-the-body": true, "refuse-not-json": true, "refuse-two-objects": true,
 	"refuse-no-msg-id": true, "refuse-msg-id-grouped-wrongly": true, "refuse-msg-id-newline": true, "refuse-msg-id-uppercase": true,
 	"refuse-sent-at-ending-in-a-line-feed": true, "refuse-sent-at-ending-in-a-nul": true, "refuse-sent-at-malformed": true, "refuse-sent-at-second-60": true,
@@ -601,13 +601,13 @@ func TestVectorsEnvelope(t *testing.T) {
 // answerBytes names each kind of answer's byte members, which the script
 // reads with dr_bytes.
 var answerBytes = map[string]string{
-	"box":    "identity prekey prekey_signature revoked_certificates revoked_certificates_signature",
-	"record": "identity revocation_signature revoked_certificates revoked_certificates_signature",
+	"mailbox": "identity prekey prekey_signature revoked_certificates revoked_certificates_signature",
+	"record":  "identity revocation_signature revoked_certificates revoked_certificates_signature",
 }
 
 // answerTypes is what the Go client reads each kind of answer into.
 var answerTypes = map[string]func() any{
-	"box":     func() any { return new(protocol.BoxResponse) },
+	"mailbox": func() any { return new(protocol.MailboxResponse) },
 	"list":    func() any { return new(protocol.MessageList) },
 	"record":  func() any { return new(protocol.Revocations) },
 	"receipt": func() any { return new(protocol.Receipt) },
@@ -625,7 +625,7 @@ var answerTypes = map[string]func() any{
 // record; in problem-bad-code-twice the code is held to its status and type,
 // and a server that wrote both codes could have written either alone.
 var answerRead = map[string]bool{
-	"box-bad-prekey-a-number": true, "box-bad-revoked-certificates-a-number": true, "box-bad-signature-unpadded": true,
+	"mailbox-bad-prekey-a-number": true, "mailbox-bad-revoked-certificates-a-number": true, "mailbox-bad-signature-unpadded": true,
 	"list-bad-cursor-a-number": true, "list-bad-cursor-a-percent": true, "list-bad-cursor-a-slash": true, "list-bad-cursor-empty": true,
 	"list-bad-id-a-number": true, "list-bad-messages-an-object": true, "list-bad-size-a-string": true, "list-bad-size-past-the-largest": true, "receipt-bad-id-an-array": true,
 	"record-bad-a-second-value": true, "record-bad-an-array": true, "record-bad-empty": true, "record-bad-identity-a-number": true,
@@ -682,7 +682,7 @@ func TestVectorsAnswer(t *testing.T) {
 	}
 }
 
-// What a box decrypts gets the Go client's verdict from the script, code for
+// What a mailbox decrypts gets the Go client's verdict from the script, code for
 // code, for every plain/ vector. The script need not give a code it cannot;
 // none differs today, and one that comes to is named here as a known variance: the layout, the identity the envelope
 // carries, the signature under its certificate, and the envelope. An accepted
@@ -793,15 +793,15 @@ func TestPaddingIsTheGoClients(t *testing.T) {
 	}
 }
 
-// A box whose identity is a P-256 key, the optional type, run by either
-// client, exchanges mail with a box of the other client on an Ed25519 key:
+// A mailbox whose identity is a P-256 key, the optional type, run by either
+// client, exchanges messages with a mailbox of the other client on an Ed25519 key:
 // each verifies what the other's P-256 identity certified. The script takes
-// the identity key it finds, so its box's key is made with ssh-keygen first.
-func TestAP256BoxInBothClients(t *testing.T) {
+// the identity key it finds, so its mailbox's key is made with ssh-keygen first.
+func TestAP256MailboxInBothClients(t *testing.T) {
 	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	if !p256() {
-		t.Skipf("%s reads no P-256 key, so the script runs no P-256 box: a known variance (PROTOCOL.md Appendix A)", sshBuild())
+		t.Skipf("%s reads no P-256 key, so the script runs no P-256 mailbox: a known variance (PROTOCOL.md Appendix A)", sshBuild())
 	}
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -827,7 +827,7 @@ func TestAP256BoxInBothClients(t *testing.T) {
 	se := addr(sh(shEd, "dr_init"))
 	doc, _ := os.ReadFile(filepath.Join(shP256, "identity.doc")) //nolint:gosec // the test's own directory
 	if id, err := protocol.ParseIdentity(doc); err != nil || id.Type() != protocol.IdentityP256 || id.Address() != sp {
-		t.Fatalf("the script's P-256 box: %v", err)
+		t.Fatalf("the script's P-256 mailbox: %v", err)
 	}
 	gp, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, IdentityType: protocol.IdentityP256}, kt)
 	if err != nil {
@@ -840,7 +840,7 @@ func TestAP256BoxInBothClients(t *testing.T) {
 	}
 	landAll(t, ge)
 
-	// The script's P-256 box and the Go client's Ed25519 one.
+	// The script's P-256 mailbox and the Go client's Ed25519 one.
 	sh(shP256, "printf 'from the script on P-256' | dr_send "+ge.Link())
 	if res, err := ge.Receive(ctx); err != nil || len(res.Delivered) != 1 || res.Delivered[0].Envelope.From != sp {
 		t.Fatalf("the Go client received %+v, %v", res, err)
@@ -851,7 +851,7 @@ func TestAP256BoxInBothClients(t *testing.T) {
 	if out := sh(shP256, "dr_recv"); !strings.Contains(out, `"body":"to the script on P-256"`) {
 		t.Fatalf("dr_recv: %q", out)
 	}
-	// The Go client's P-256 box and the script's Ed25519 one.
+	// The Go client's P-256 mailbox and the script's Ed25519 one.
 	if _, err := gp.Send(ctx, se, "from Go on P-256"); err != nil {
 		t.Fatal(err)
 	}
@@ -860,18 +860,18 @@ func TestAP256BoxInBothClients(t *testing.T) {
 	}
 	sh(shEd, "printf 'to Go on P-256' | dr_send "+gp.Link())
 	if res, err := gp.Receive(ctx); err != nil || len(res.Delivered) != 1 || res.Delivered[0].Envelope.From != se {
-		t.Fatalf("the Go client's P-256 box received %+v, %v", res, err)
+		t.Fatalf("the Go client's P-256 mailbox received %+v, %v", res, err)
 	}
 }
 
-// A box declares the identity key types its build verifies, at init and at
+// A mailbox declares the identity key types its build verifies, at init and at
 // each renewal (PROTOCOL.md §7; #358): ecdsa-sha2-nistp256 only where its
 // ssh-keygen reads a P-256 key. A build without OpenSSL reads none, and the
 // script refuses every P-256 identity there; here an ssh-keygen that reads
 // no P-256 key stands for one.
 func TestTheScriptDeclaresTheKeyTypesItsBuildVerifies(t *testing.T) {
 	w := newWorld(t)
-	declared := func(b *sbox) string {
+	declared := func(b *shMailbox) string {
 		t.Helper()
 		return strings.TrimSpace(b.must(`dr_look "$(cat "$DR/address")" | jq -c .sender_key_types`))
 	}
@@ -882,7 +882,7 @@ func TestTheScriptDeclaresTheKeyTypesItsBuildVerifies(t *testing.T) {
 		here = ed
 		t.Logf("%s reads no P-256 key, so the script declares ssh-ed25519 alone: a known variance (PROTOCOL.md Appendix A)", sshBuild())
 	}
-	b := w.box()
+	b := w.mailbox()
 	n := w.empty()
 	n.must(noP256 + "dr_init")
 	n.addr = mustAddress(t, n.dir)
@@ -896,9 +896,9 @@ func TestTheScriptDeclaresTheKeyTypesItsBuildVerifies(t *testing.T) {
 	}
 }
 
-// A box whose ACL does not admit the script's box refuses its send, and the
+// A mailbox whose ACL does not admit the script's mailbox refuses its send, and the
 // script says so and keeps nothing: only the recipient can change that.
-func TestTheScriptsSendABoxDeniesFails(t *testing.T) {
+func TestTheScriptsSendAMailboxDeniesFails(t *testing.T) {
 	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
@@ -924,19 +924,19 @@ func TestTheScriptsSendABoxDeniesFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !srv.ACL(g.Address()).Deny.Has(shAddr) {
-		t.Fatal("the Go box's block never reached the server")
+		t.Fatal("the Go mailbox's block never reached the server")
 	}
-	_, err = sh("printf 'to a box that blocked this one' | dr_send " + g.Link())
+	_, err = sh("printf 'to a mailbox that blocked this one' | dr_send " + g.Link())
 	if err == nil || !strings.Contains(err.Error(), "sender_not_allowed") || !strings.Contains(err.Error(), "nothing is sent") {
-		t.Fatalf("dr_send to a box that denies it: %v", err)
+		t.Fatalf("dr_send to a mailbox that denies it: %v", err)
 	}
 	if sent, _ := filepath.Glob(filepath.Join(shDir, "sent", "*")); exists(filepath.Join(shDir, "outbox")) || len(sent) != 0 {
 		t.Fatal("a refused send left something")
 	}
 }
 
-// The two clients exchange mail through the honest fake server, and each runs
-// a box the other made: one on-disk format.
+// The two clients exchange messages through the honest fake server, and each runs
+// a mailbox the other made: one on-disk format.
 func TestWithGoClient(t *testing.T) {
 	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
@@ -954,7 +954,7 @@ func TestWithGoClient(t *testing.T) {
 	shLink := linkIn(t, out)
 	shAddr, err := protocol.ParseAddress(strings.TrimPrefix(shLink, srv.URL+protocol.LinkPath))
 	if err != nil || shLink != srv.URL+protocol.LinkPath+shAddr.String() {
-		t.Fatalf("dr_init printed %q, not the box's link", out)
+		t.Fatalf("dr_init printed %q, not the mailbox's link", out)
 	}
 	g, err := client.Init(ctx, goDir, client.Options{Base: srv.URL}, kt)
 	if err != nil {
@@ -964,14 +964,14 @@ func TestWithGoClient(t *testing.T) {
 
 	// An API error prints its status and code, and nothing the server wrote
 	// (PROTOCOL.md §11.3).
-	if _, err := sh(shDir, "printf x | dr_send "+strings.Repeat("0", 64)); err == nil || !strings.Contains(err.Error(), `"code":"no_such_mailbox","message":"ERROR 404 no_such_mailbox"}`) || strings.Contains(err.Error(), "no box has this address") {
-		t.Fatalf("dr_send to no box: %v", err)
+	if _, err := sh(shDir, "printf x | dr_send "+strings.Repeat("0", 64)); err == nil || !strings.Contains(err.Error(), `"code":"no_such_mailbox","detail":"ERROR 404 no_such_mailbox"}`) || strings.Contains(err.Error(), "no mailbox has this address") {
+		t.Fatalf("dr_send to no mailbox: %v", err)
 	}
 	// A hostile server's words are not printed at all, and an answer that is
 	// not one the Go client reads, a code it does not know or one under
 	// another status, prints no code either: as the script prints a read of
-	// the box it would seal to (dr_resolve) that is refused. A send reads the
-	// box first, asking what is held about it (dr_lookup), and a read that
+	// the mailbox it would seal to (dr_resolve) that is refused. A send reads the
+	// mailbox first, asking what is held about it (dr_lookup), and a read that
 	// fails there is no answer about the message, whatever it carries: the
 	// send says that, and nothing the server wrote.
 	hostile := map[string]protocol.Code{
@@ -994,21 +994,21 @@ func TestWithGoClient(t *testing.T) {
 		next.ServeHTTP(w, r)
 	})
 	_, err = sh(shDir, "dr_resolve "+strings.Repeat("3", 64))
-	if err == nil || !strings.Contains(err.Error(), `{"type":"error","status":429,"code":"rate_limited","quota_id":"requests","subject":"ip","retry_after":40,"message":"ERROR 429 rate_limited: the limit requests, counted against this machine's IP address; the server asks to wait 40 seconds"}`) {
+	if err == nil || !strings.Contains(err.Error(), `{"type":"error","status":429,"code":"rate_limited","quota_id":"requests","subject":"ip","retry_after":40,"detail":"ERROR 429 rate_limited: the limit requests, counted against this machine's IP address; the server asks to wait 40 seconds"}`) {
 		t.Fatalf("a limit the script knows, as it prints it: %v", err)
 	}
 	_, err = sh(shDir, "dr_resolve "+strings.Repeat("0", 64))
-	if err == nil || strings.Contains(err.Error(), "SYSTEM") || strings.ContainsRune(err.Error(), '\x1b') || strings.Contains(err.Error(), "AAAA") || !strings.Contains(err.Error(), `{"type":"error","status":429,"code":"rate_limited","retry_after":40,"message":"ERROR 429 rate_limited; the server asks to wait 40 seconds"}`) {
+	if err == nil || strings.Contains(err.Error(), "SYSTEM") || strings.ContainsRune(err.Error(), '\x1b') || strings.Contains(err.Error(), "AAAA") || !strings.Contains(err.Error(), `{"type":"error","status":429,"code":"rate_limited","retry_after":40,"detail":"ERROR 429 rate_limited; the server asks to wait 40 seconds"}`) {
 		t.Fatalf("a hostile error, as the script prints it: %v", err)
 	}
 	for _, d := range []string{"1", "2"} {
-		if _, err := sh(shDir, "dr_resolve "+strings.Repeat(d, 64)); err == nil || strings.Contains(err.Error(), "SYSTEM") || !strings.Contains(err.Error(), `{"type":"error","status":429,"retry_after":40,"message":"ERROR 429: an answer this client does not know; the server asks to wait 40 seconds"}`) {
+		if _, err := sh(shDir, "dr_resolve "+strings.Repeat(d, 64)); err == nil || strings.Contains(err.Error(), "SYSTEM") || !strings.Contains(err.Error(), `{"type":"error","status":429,"retry_after":40,"detail":"ERROR 429: an answer this client does not know; the server asks to wait 40 seconds"}`) {
 			t.Fatalf("a code that is not one this client knows under its status, as the script prints it: %v", err)
 		}
 	}
 	for _, d := range []string{"0", "1", "2"} {
 		if _, err := sh(shDir, "printf x | dr_send "+strings.Repeat(d, 64)); err == nil || strings.Contains(err.Error(), "SYSTEM") || strings.ContainsRune(err.Error(), '\x1b') || strings.Contains(err.Error(), "AAAA") || !strings.Contains(err.Error(), "could not be read, so nothing is sent") {
-			t.Fatalf("a send whose read of the box is refused, as the script prints it: %v", err)
+			t.Fatalf("a send whose read of the mailbox is refused, as the script prints it: %v", err)
 		}
 	}
 	// A receipt that names another ciphertext is no receipt, nor is one whose
@@ -1023,7 +1023,7 @@ func TestWithGoClient(t *testing.T) {
 		next.ServeHTTP(w, r)
 	})
 	_, err = sh(shDir, fmt.Sprintf("printf 'from the script' | dr_send %s", g.Link()))
-	if sent, _ := filepath.Glob(filepath.Join(shDir, "sent", "*")); err == nil || !strings.Contains(err.Error(), "does not name the ciphertext this box posted") || len(sent) != 0 {
+	if sent, _ := filepath.Glob(filepath.Join(shDir, "sent", "*")); err == nil || !strings.Contains(err.Error(), "does not name the ciphertext this mailbox posted") || len(sent) != 0 {
 		t.Fatalf("dr_send with a receipt for another ciphertext: %v, sent/ %v", err, sent)
 	}
 	srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -1092,7 +1092,7 @@ func TestWithGoClient(t *testing.T) {
 		t.Fatalf("dr_recv: %q %v", out, err)
 	}
 
-	// The script renews its box, and both keep exchanging mail.
+	// The script renews its mailbox, and both keep exchanging messages.
 	if _, err := sh(shDir, "dr_rekey"); err != nil {
 		t.Fatalf("dr_rekey: %v", err)
 	}
@@ -1141,10 +1141,10 @@ func sameButReceipt(t *testing.T, record string, delivered []byte, id string) {
 	if err := json.Unmarshal(delivered, &want); err != nil {
 		t.Fatal(err)
 	}
-	// A mail line as recv prints it carries the line inbox/ keeps as its
+	// A message line as recv prints it carries the line inbox/ keeps as its
 	// envelope, behind its type and its id, which is the receipt's.
 	if _, printed := want["type"]; printed {
-		if want["type"] != "mail" || want["id"] != id || len(want) != 3 {
+		if want["type"] != "message" || want["id"] != id || len(want) != 3 {
 			t.Errorf("the line delivered is %v, the message %s", want, id)
 		}
 		want, _ = want["envelope"].(map[string]any)
@@ -1160,7 +1160,7 @@ func sameButReceipt(t *testing.T, record string, delivered []byte, id string) {
 
 // A revocation is taken or refused by the script exactly as the Go client
 // takes or refuses it, on every vector. One of the refused is a good
-// signature under the box's own certificate, which ssh-keygen verifies when
+// signature under the mailbox's own certificate, which ssh-keygen verifies when
 // it is told the identity is a certificate authority: the script's signers
 // line for a revocation never says so.
 func TestVectorsRevocation(t *testing.T) {
@@ -1180,7 +1180,7 @@ func TestVectorsRevocation(t *testing.T) {
 	type vector struct{ addr, doc, sig string }
 	cases := []vector{
 		{a, aDoc, "a/revoke.sig"}, {a, aDoc, "a/revoke.sha256.sig"}, {c, cDoc, "c/revoke.sig"},
-		{b, aDoc, "a/revoke.sig"}, {a, bDoc, "a/revoke.sig"}, {b, bDoc, "revoke/bad-of-another-box.sig"}, {a, aDoc, "a/prekey-1.txt.sig"},
+		{b, aDoc, "a/revoke.sig"}, {a, bDoc, "a/revoke.sig"}, {b, bDoc, "revoke/bad-of-another-mailbox.sig"}, {a, aDoc, "a/prekey-1.txt.sig"},
 	}
 	bads, _ := filepath.Glob(filepath.Join(vectors, "revoke", "bad-*.sig"))
 	if len(bads) != 5 {
@@ -1208,7 +1208,7 @@ func TestVectorsRevocation(t *testing.T) {
 		}
 	}
 	if !p256() {
-		t.Logf("%s reads no P-256 key, so the script refuses every revocation of box C: a known variance (PROTOCOL.md Appendix A), and those are not compared", sshBuild())
+		t.Logf("%s reads no P-256 key, so the script refuses every revocation of mailbox C: a known variance (PROTOCOL.md Appendix A), and those are not compared", sshBuild())
 		kept := cases[:0]
 		for _, v := range cases {
 			if v.addr != c {
@@ -1252,8 +1252,8 @@ func TestVectorsRevocation(t *testing.T) {
 }
 
 // A revocation checked by each client for itself, against one server: the
-// record of a script box is one the Go client takes, and mail from a revoked
-// box is refused by whichever reads it.
+// record of a script mailbox is one the Go client takes, and a message from a revoked
+// mailbox is refused by whichever reads it.
 func TestRevocationInBothClients(t *testing.T) {
 	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
@@ -1264,7 +1264,7 @@ func TestRevocationInBothClients(t *testing.T) {
 	sh := func(dir, commands string) (string, error) {
 		return bash(t, []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}, commands)
 	}
-	scriptBox := func() (string, protocol.Address) {
+	scriptMailbox := func() (string, protocol.Address) {
 		t.Helper()
 		dir := t.TempDir()
 		out, err := sh(dir, "dr_init")
@@ -1277,7 +1277,7 @@ func TestRevocationInBothClients(t *testing.T) {
 		}
 		return dir, a
 	}
-	goBox := func() *client.Box {
+	goMailbox := func() *client.Mailbox {
 		t.Helper()
 		b, err := client.Init(ctx, t.TempDir(), opt, kt)
 		if err != nil {
@@ -1288,7 +1288,7 @@ func TestRevocationInBothClients(t *testing.T) {
 	}
 	var gone *client.RevokedError
 
-	// A box's record, made from a script box's identity with ssh-keygen as
+	// A mailbox's record, made from a script mailbox's identity with ssh-keygen as
 	// PROTOCOL.md §10.3 shows it: the script makes and publishes none, and the
 	// Go client takes it.
 	record := func(dir string) *protocol.Revocations {
@@ -1303,19 +1303,19 @@ func TestRevocationInBothClients(t *testing.T) {
 		}
 		return &r
 	}
-	s1, s1Addr := scriptBox()
-	g1 := goBox()
+	s1, s1Addr := scriptMailbox()
+	g1 := goMailbox()
 	if a, _, err := g1.KeepRevocation(t.Context(), record(s1)); err != nil || a != s1Addr {
-		t.Fatalf("the Go client refuses the record of the script's box: %v", err)
+		t.Fatalf("the Go client refuses the record of the script's mailbox: %v", err)
 	}
-	if _, err := g1.Send(ctx, s1Addr, "to a box whose record was handed over"); !errors.As(err, &gone) {
+	if _, err := g1.Send(ctx, s1Addr, "to a mailbox whose record was handed over"); !errors.As(err, &gone) {
 		t.Fatalf("the Go client sent to it: %v", err)
 	}
 
-	// A script box's address revoked at the server: the Go client is shown
-	// the proof, checks it, and refuses the mail that box had sent it.
-	s2, s2Addr := scriptBox()
-	g2 := goBox()
+	// A script mailbox's address revoked at the server: the Go client is shown
+	// the proof, checks it, and refuses the message that mailbox had sent it.
+	s2, s2Addr := scriptMailbox()
+	g2 := goMailbox()
 	if _, err := sh(s2, "printf 'sent before the revocation' | dr_send "+g2.Address().String()); err != nil {
 		t.Fatal(err)
 	}
@@ -1324,15 +1324,15 @@ func TestRevocationInBothClients(t *testing.T) {
 	}
 	res, err := g2.Receive(ctx)
 	if err != nil || len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedRevoked {
-		t.Fatalf("the Go client's drain of mail from a revoked script box: %+v %v", res, err)
+		t.Fatalf("the Go client's drain of a message from a revoked script mailbox: %+v %v", res, err)
 	}
-	if _, err := g2.Send(ctx, s2Addr, "to a revoked script box"); !errors.As(err, &gone) {
+	if _, err := g2.Send(ctx, s2Addr, "to a revoked script mailbox"); !errors.As(err, &gone) {
 		t.Fatalf("the Go client sent to it: %v", err)
 	}
 
 	// And the other way: the Go client revokes, and the script refuses.
-	s3, _ := scriptBox()
-	g3 := goBox()
+	s3, _ := scriptMailbox()
+	g3 := goMailbox()
 	s3Addr, err := sh(s3, `cat "$DR/address"`)
 	if err != nil {
 		t.Fatal(err)
@@ -1353,7 +1353,7 @@ func TestRevocationInBothClients(t *testing.T) {
 	}
 	out, err := sh(s3, "dr_recv 2>&1")
 	if err != nil || !strings.Contains(out, `"code":"revoked"`) || strings.Contains(out, `"body"`) {
-		t.Fatalf("the script's drain of mail from a box the Go client revoked: %q %v", out, err)
+		t.Fatalf("the script's drain of a message from a mailbox the Go client revoked: %q %v", out, err)
 	}
 	if _, err := sh(s3, "printf x | dr_send "+g3.Address().String()); err == nil || !strings.Contains(err.Error(), "REVOKED") {
 		t.Fatalf("the script sent to it: %v", err)
@@ -1363,7 +1363,7 @@ func TestRevocationInBothClients(t *testing.T) {
 // A revocation of certificates is taken or refused by the script exactly as
 // the Go client takes or refuses it, on every vector, and one both take runs
 // through the same serial for both. One of the refused is a good signature
-// under the box's own certificate: the script's signers line for it, as for
+// under the mailbox's own certificate: the script's signers line for it, as for
 // a revocation of the address, never names the identity a certificate
 // authority.
 func TestVectorsRevokedCertificates(t *testing.T) {
@@ -1432,8 +1432,8 @@ func TestVectorsRevokedCertificates(t *testing.T) {
 	}
 
 	// A kept one revokes the same serials for both, at 2^53 - 1 too.
-	box := t.TempDir()
-	kept := filepath.Join(box, "peers", a)
+	mailbox := t.TempDir()
+	kept := filepath.Join(mailbox, "peers", a)
 	if err := os.MkdirAll(kept, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -1445,7 +1445,7 @@ func TestVectorsRevokedCertificates(t *testing.T) {
 		}
 		return data
 	}
-	// A box keeps it as the record that carries it, one line of JSON.
+	// A mailbox keeps it as the record that carries it, one line of JSON.
 	keep := func(statement, sig []byte) {
 		t.Helper()
 		line, err := json.Marshal(protocol.Revocations{Identity: read(aDoc), RevokedCertificates: statement, RevokedCertificatesSignature: sig})
@@ -1459,7 +1459,7 @@ func TestVectorsRevokedCertificates(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(kept, "identity.doc"), read(aDoc), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	env := []string{"DR_HOME=" + box}
+	env := []string{"DR_HOME=" + mailbox}
 	for _, c := range []struct {
 		name  string
 		certs *protocol.RevokedCertificates
@@ -1533,8 +1533,8 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 	gAddr := g.Address().String()
 	first := numberOf(t, g)
 
-	// Mail under the Go box's first certificate, then a renewal and the
-	// revocation of every certificate before the new one, then mail under
+	// A message under the Go mailbox's first certificate, then a renewal and the
+	// revocation of every certificate before the new one, then one under
 	// the second: the script reads all of it in one drain.
 	if _, err := g.Send(ctx, script, "under the first certificate"); err != nil {
 		t.Fatal(err)
@@ -1551,7 +1551,7 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 	}
 	out, err = sh("dr_recv 2>&1")
 	if err != nil || strings.Count(out, `"code":"certificate_revoked"`) != 1 || !strings.Contains(out, `"body":"under the second certificate"`) || strings.Contains(out, "under the first certificate") {
-		t.Fatalf("the script's drain of mail from a box that revoked its first certificate: %q %v", out, err)
+		t.Fatalf("the script's drain of messages from a mailbox that revoked its first certificate: %q %v", out, err)
 	}
 	// The script keeps it as the Go client does: one file, the record that
 	// carries it, which verifies with nothing else.
@@ -1570,41 +1570,41 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 		t.Fatal("the script took a revocation of certificates as a revocation of the address")
 	}
 
-	// The script writes to the Go box under its second certificate, and the
-	// Go box reads it: the send named both serials, or the server would
+	// The script writes to the Go mailbox under its second certificate, and the
+	// Go mailbox reads it: the send named both serials, or the server would
 	// have called the prekey stale without end.
-	if _, err := sh("printf 'to the box at its second certificate' | dr_send " + gAddr); err != nil {
-		t.Fatalf("the script's send to a box that moved to a later certificate: %v", err)
+	if _, err := sh("printf 'to the mailbox at its second certificate' | dr_send " + gAddr); err != nil {
+		t.Fatalf("the script's send to a mailbox that moved to a later certificate: %v", err)
 	}
 	if out, err := sh(fmt.Sprintf(`cat "$DR/peers/%s/serial" "$DR/peers/%s/cert-serial"`, gAddr, gAddr)); err != nil || out != fmt.Sprintf("%d\n%d\n", numberOf(t, g), numberOf(t, g)) {
-		t.Fatalf("what the script recorded of the box's statement: %q %v", out, err)
+		t.Fatalf("what the script recorded of the mailbox's statement: %q %v", out, err)
 	}
 	res, err := g.Receive(ctx)
-	if err != nil || len(res.Delivered) != 1 || len(res.Refused) != 0 || string(res.Delivered[0].Envelope.Body) != `"to the box at its second certificate"` {
-		t.Fatalf("the Go client's drain of the script's mail: %+v %v", res, err)
+	if err != nil || len(res.Delivered) != 1 || len(res.Refused) != 0 || string(res.Delivered[0].Envelope.Body) != `"to the mailbox at its second certificate"` {
+		t.Fatalf("the Go client's drain of the script's messages: %+v %v", res, err)
 	}
 
-	// The script's box renews, and the Go client follows it.
+	// The script's mailbox renews, and the Go client follows it.
 	if _, err := sh("dr_rekey"); err != nil {
 		t.Fatalf("dr_rekey: %v", err)
 	}
-	if _, err := g.Send(ctx, script, "to the script's box at its second certificate"); err != nil {
-		t.Fatalf("the Go client's send to a script box that renewed: %v", err)
+	if _, err := g.Send(ctx, script, "to the script's mailbox at its second certificate"); err != nil {
+		t.Fatalf("the Go client's send to a script mailbox that renewed: %v", err)
 	}
 	out, err = sh("dr_recv 2>&1")
-	if err != nil || !strings.Contains(out, `"body":"to the script's box at its second certificate"`) {
+	if err != nil || !strings.Contains(out, `"body":"to the script's mailbox at its second certificate"`) {
 		t.Fatalf("the script's drain after its renewal: %q %v", out, err)
 	}
 }
 
-// numberOf is the number of the prekey a Go box published last, which is its
-// working key's and its certificate's too: its serial file. A box takes each
+// numberOf is the number of the prekey a Go mailbox published last, which is its
+// working key's and its certificate's too: its serial file. A mailbox takes each
 // number from its clock, so a test reads the number and never assumes one.
-func numberOf(t *testing.T, b *client.Box) uint64 {
+func numberOf(t *testing.T, b *client.Mailbox) uint64 {
 	t.Helper()
 	st, err := b.Status(t.Context())
 	if err != nil || st.PrekeySerial == 0 {
-		t.Fatalf("the Go box's status: %+v, %v", st, err)
+		t.Fatalf("the Go mailbox's status: %+v, %v", st, err)
 	}
 	return st.PrekeySerial
 }
@@ -1641,7 +1641,7 @@ func TestAJSONBodyFromTheGoClient(t *testing.T) {
 		}
 		return v
 	}
-	scriptGot := func() []any { // the bodies of the mail lines dr_recv prints
+	scriptGot := func() []any { // the bodies of the message lines dr_recv prints
 		t.Helper()
 		out, err := sh("dr_recv")
 		if err != nil {
@@ -1653,7 +1653,7 @@ func TestAJSONBodyFromTheGoClient(t *testing.T) {
 				Type     string
 				Envelope struct{ Body json.RawMessage }
 			}
-			if err := json.Unmarshal([]byte(l), &line); err != nil || line.Type != "mail" {
+			if err := json.Unmarshal([]byte(l), &line); err != nil || line.Type != "message" {
 				t.Fatalf("dr_recv printed %q", out)
 			}
 			bodies = append(bodies, value(line.Envelope.Body))
@@ -1670,10 +1670,10 @@ func TestAJSONBodyFromTheGoClient(t *testing.T) {
 	}
 }
 
-// landAll gives a Go box the policy that lands every sender's mail in
+// landAll gives a Go mailbox the policy that lands every sender's messages in
 // inbox/: these tests are of what the two clients send each other, and where
-// mail from a sender not allowed lands is the Go client's own (client/).
-func landAll(t *testing.T, b *client.Box) {
+// a message from a sender not allowed lands is the Go client's own (client/).
+func landAll(t *testing.T, b *client.Mailbox) {
 	t.Helper()
 	if err := b.SetPolicy(t.Context(), client.Policy{Unknown: client.LandInbox, Server: client.AdmitAll}); err != nil {
 		t.Fatal(err)
@@ -1736,18 +1736,18 @@ func TestTheCommandLine(t *testing.T) {
 			t.Errorf("dromas.sh %v: %d %q, stderr %q", line, code, out, errs)
 		}
 	}
-	if _, errs, _ := run("", "send"); errs != `{"type":"usage_error","usage":"bash dromas.sh send <link> [file]","help":"bash dromas.sh help send","message":"dromas.sh send takes 1 to 2 arguments, and was given 0"}`+"\n" {
+	if _, errs, _ := run("", "send"); errs != `{"type":"usage_error","usage":"bash dromas.sh send <link> [file]","help":"bash dromas.sh help send","detail":"dromas.sh send takes 1 to 2 arguments, and was given 0"}`+"\n" {
 		t.Errorf("a wrong number of arguments: %q", errs)
 	}
 	if res, err := g.Receive(ctx); err != nil || len(res.Delivered) != 0 {
-		t.Fatalf("a wrong command line sent mail: %v %v", res, err)
+		t.Fatalf("a wrong command line sent a message: %v %v", res, err)
 	}
 	// And the commands run.
 	if out, errs, code := run("from the command line", "send", g.Link()); code != 0 || !strings.HasPrefix(out, `{"type":"sent","id":"`) || strings.Count(out, "\n") != 1 {
 		t.Fatalf("send: %d %q %s", code, out, errs)
 	}
 	if res, err := g.Receive(ctx); err != nil || len(res.Delivered) != 1 {
-		t.Fatalf("the Go box did not get the script's mail: %v %v", res, err)
+		t.Fatalf("the Go mailbox did not get the script's message: %v %v", res, err)
 	}
 	if out, errs, code := run("", "prekey", "renew", "--no-pq"); code != 0 || !strings.HasPrefix(out, `{"type":"prekey","serial":`) || strings.Count(out, "\n") != 1 {
 		t.Fatalf("prekey renew: %d %q %s", code, out, errs)
@@ -1760,7 +1760,7 @@ func TestTheCommandLine(t *testing.T) {
 // A send that starts while recv drains waits for the drain's lock, so it
 // cannot rewrite a file the drain has yet to read (#96, and #62's other
 // direction): the drain still sees the sender's revocation and refuses its
-// mail. The hook runs a whole send, in a shell of its own on the same box,
+// message. The hook runs a whole send, in a shell of its own on the same mailbox,
 // after the drain has read the sender's revocation and before it takes it.
 func TestASendDuringADrainHidesNoRevocation(t *testing.T) {
 	t.Parallel()
@@ -1776,7 +1776,7 @@ func TestASendDuringADrainHidesNoRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic) // the script box sends here
+	c, err := client.Init(ctx, t.TempDir(), opt, protocol.Classic) // the script mailbox sends here
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1799,9 +1799,9 @@ func TestASendDuringADrainHidesNoRevocation(t *testing.T) {
 dr_take(){ bash -c '. ` + abs(t, "dromas.sh") + `; printf x | dr_send ` + c.Address().String() + `' > /dev/null 2>> ` + sendErr + `; orig_take "$@"; }
 dr_recv`
 	if out, _ := bash(t, env, hook); strings.Contains(out, g.Address().String()) {
-		t.Error("mail from a revoked sender delivered")
+		t.Error("a message from a revoked sender delivered")
 	}
-	if e, _ := os.ReadFile(sendErr); !strings.Contains(string(e), "waiting for this box's lock") {
+	if e, _ := os.ReadFile(sendErr); !strings.Contains(string(e), "waiting for this mailbox's lock") {
 		t.Errorf("the send beside the drain did not wait for the lock: %q", e)
 	}
 }
@@ -1849,7 +1849,7 @@ func TestBothClientsCallTheSameServers(t *testing.T) {
 		goTakes := err == nil || !strings.Contains(err.Error(), refusal)
 		_, shErr := bash(t, []string{"U=" + u}, `dr_tls "$U"`)
 		if goTakes != (shErr == nil) {
-			t.Errorf("%q as the box's server: the Go client %v, the script %v", u, err, shErr)
+			t.Errorf("%q as the mailbox's server: the Go client %v, the script %v", u, err, shErr)
 		}
 		if !goTakes && (shErr == nil || !strings.Contains(shErr.Error(), refusal)) {
 			t.Errorf("%q: the script's refusal: %v", u, shErr)
@@ -1983,7 +1983,7 @@ func TestNoCallOfTheScriptFollowsARedirect(t *testing.T) {
 	}
 }
 
-// stderr carries only the script's own JSON lines (AGENTS.md § What a box
+// stderr carries only the script's own JSON lines (AGENTS.md § What a mailbox
 // prints), whatever an error's answer holds, a body or none.
 func TestAnAnswerWithNoBodyPutsOnlyJSONOnStderr(t *testing.T) {
 	t.Parallel()
@@ -2021,7 +2021,7 @@ func TestAServerThatIsNotThereIsNoAnswer(t *testing.T) {
 	base := "http://" + l.Addr().String()
 	_ = l.Close()
 	_, err = bash(t, []string{"DR_HOME=" + t.TempDir(), "DR_SERVER_URL=" + base}, "dr_api GET /v1/x")
-	if err == nil || !strings.Contains(err.Error(), `{"type":"error","message":"no answer from `+base+`"}`) || strings.Contains(err.Error(), "curl") || strings.Contains(err.Error(), `"status":`) {
+	if err == nil || !strings.Contains(err.Error(), `{"type":"error","detail":"no answer from `+base+`"}`) || strings.Contains(err.Error(), "curl") || strings.Contains(err.Error(), `"status":`) {
 		t.Errorf("a server that is not there: %v", err)
 	}
 }
@@ -2107,7 +2107,7 @@ func TestTheScriptReadsNoCurlrc(t *testing.T) {
 	t.Cleanup(front.Close)
 	env = []string{"DR_HOME=" + t.TempDir(), "DR_SERVER_URL=" + front.URL, curlrc("insecure")}
 	if out, err := bash(t, env, "dr_init && dr_recv"); err == nil {
-		t.Errorf("insecure: a server whose certificate nobody signed made a box and drained it: %q", out)
+		t.Errorf("insecure: a server whose certificate nobody signed made a mailbox and drained it: %q", out)
 	}
 }
 
@@ -2202,7 +2202,7 @@ func TestTheScriptHoldsALowerLifetimeOverAWaitingRenewal(t *testing.T) {
 	if _, err := bash(t, env, "dr_rekey"); err != nil {
 		t.Fatalf("dr_rekey: %v", err)
 	}
-	// Read from the script box's own files: its serial, and that prekey's
+	// Read from the script mailbox's own files: its serial, and that prekey's
 	// record of when it was signed and its statement.
 	serial, err := os.ReadFile(filepath.Join(dir, "serial"))
 	if err != nil {

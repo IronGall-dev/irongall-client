@@ -1,4 +1,4 @@
-# The echo box (cmd/dromas-echo): a client on a published address that
+# The echo mailbox (cmd/dromas-echo): a client on a published address that
 # answers every message passing every check with a signed reply carrying
 # the body back, with the dromas command beside it for the operator (addr,
 # adopt). How it runs, its state in a tmpfs and its identity key mounted in:

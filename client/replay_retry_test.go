@@ -42,8 +42,8 @@ func TestARetryAboveTheFloorIsDeliveredAgain(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv(t)
-			r := e.box(protocol.Classic)
-			s := e.box(protocol.Classic)
+			r := e.mailbox(protocol.Classic)
+			s := e.mailbox(protocol.Classic)
 			path := "/v1/" + r.Address().String() + "/messages"
 			var retry []byte
 			mode := "lose"
@@ -122,7 +122,7 @@ func TestARetryAfterAStepOfTheHour(t *testing.T) {
 		t.Fatal(err)
 	}
 	landAll(t, r)
-	s := e.box(protocol.Classic)
+	s := e.mailbox(protocol.Classic)
 	mode := "lose"
 	var retry []byte
 	e.srv.SetMiddle(func(w http.ResponseWriter, q *http.Request, next http.Handler) {
@@ -175,7 +175,7 @@ func TestARetryAfterAStepOfTheHour(t *testing.T) {
 
 // The Go client's second seal after 409 stale_prekey is dated when it is
 // made, with no second look at the outbox's 33 days. The hostile server
-// answers the box read and the post each after 59s (under the client's
+// answers the mailbox read and the post each after 59s (under the client's
 // one-minute request timeout), the post 409 stale_prekey, and keeps the
 // retry sealed again: dated 1m58s past W + TTL. The reader's clock is then
 // 50m fast at the drain that prunes and 9m59s slow a second later: passes an
@@ -187,8 +187,8 @@ func TestAStretchedRetryAtClocksAnHonestServerTakes(t *testing.T) {
 	fast, slow := 50*time.Minute, -(9*time.Minute + 59*time.Second)
 	for _, c := range []struct {
 		name          string
-		stretch       bool          // the box read and the post each answered after 59s, the post 409 stale_prekey
-		slowRead      bool          // the box read answered after 59s, the post kept, no 409
+		stretch       bool          // the mailbox read and the post each answered after 59s, the post 409 stale_prekey
+		slowRead      bool          // the mailbox read answered after 59s, the post kept, no 409
 		prune         time.Duration // true time of the drain that prunes, after W + 2TTL
 		fast, slow    time.Duration // the reader's clock at the drain that prunes, and at the replay
 		refuseRenewal bool          // the renewal the pruning drain makes is refused, so the retry's key stays the newest retired
@@ -198,7 +198,7 @@ func TestAStretchedRetryAtClocksAnHonestServerTakes(t *testing.T) {
 		{"stretched, one drain 3h ahead taken by the server, then right", true, false, -2*time.Hour + 2*time.Second, 0, 0, true, 3 * time.Hour},
 		{"control: stretched, 50m fast then 9m59s slow, the renewal taken", true, false, 10*time.Minute + time.Second, fast, slow, false, 0},
 		{"control: not stretched, 50m fast then 9m59s slow", false, false, 10*time.Minute + time.Second, fast, slow, true, 0},
-		{"control: a box read of 59s and no 409, 50m fast then 9m59s slow", false, true, 10*time.Minute + time.Second, fast, slow, true, 0},
+		{"control: a mailbox read of 59s and no 409, 50m fast then 9m59s slow", false, true, 10*time.Minute + time.Second, fast, slow, true, 0},
 		{"control: stretched, clocks right, read in the retry's life", true, false, time.Minute, 0, 0, true, 0},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -209,23 +209,23 @@ func TestAStretchedRetryAtClocksAnHonestServerTakes(t *testing.T) {
 				t.Fatal(err)
 			}
 			landAll(t, r)
-			s := e.box(protocol.Classic)
-			box := "/v1/" + r.Address().String()
+			s := e.mailbox(protocol.Classic)
+			mailbox := "/v1/" + r.Address().String()
 			mode := "lose"
 			posts, reads := 0, 0
 			var retry []byte
 			e.srv.SetMiddle(func(w http.ResponseWriter, q *http.Request, next http.Handler) {
 				switch {
-				case q.Method == http.MethodPost && q.URL.Path == box+"/messages" && mode == "lose":
+				case q.Method == http.MethodPost && q.URL.Path == mailbox+"/messages" && mode == "lose":
 					next.ServeHTTP(httptest.NewRecorder(), q)
 					http.Error(w, "lost", http.StatusServiceUnavailable)
 					return
-				case q.Method == http.MethodGet && q.URL.Path == box && mode == "keep" && (c.stretch || c.slowRead):
+				case q.Method == http.MethodGet && q.URL.Path == mailbox && mode == "keep" && (c.stretch || c.slowRead):
 					reads++
 					if reads == 1 {
-						e.clock.Add(59 * time.Second) // the box read answered after 59s
+						e.clock.Add(59 * time.Second) // the mailbox read answered after 59s
 					}
-				case q.Method == http.MethodPost && q.URL.Path == box+"/messages" && mode == "keep":
+				case q.Method == http.MethodPost && q.URL.Path == mailbox+"/messages" && mode == "keep":
 					posts++
 					if c.stretch && posts == 1 {
 						e.clock.Add(59 * time.Second) // the post answered after 59s: 409 stale_prekey
@@ -317,8 +317,8 @@ func TestADailyReaderWhoseRenewalsAreRefused(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			e := newEnv(t)
-			r := e.box(protocol.Classic)
-			s := e.box(protocol.Classic)
+			r := e.mailbox(protocol.Classic)
+			s := e.mailbox(protocol.Classic)
 			path := "/v1/" + r.Address().String() + "/messages"
 			var retry []byte
 			mode := "lose"
@@ -390,7 +390,7 @@ func TestADailyReaderWhoseRenewalsAreRefused(t *testing.T) {
 }
 
 // A copy is never dated before its entry was written (#334): seal dates the
-// post once resolve has read the recipient's box, and the clock may step back
+// post once resolve has read the recipient's mailbox, and the clock may step back
 // while that read is in flight, after post's look at the entry. A copy dated
 // X before the entry was written puts a retry, dated up to wrote + TTL, TTL +
 // X after the copy its reader delivered: past SeenFor's hour once the
@@ -399,7 +399,7 @@ func TestADailyReaderWhoseRenewalsAreRefused(t *testing.T) {
 // was written, as one written ahead of the clock does.
 //
 // The sender's clock reads step fast when it writes the entry, and is
-// stepped back to right while the first post's box read is in flight. The
+// stepped back to right while the first post's mailbox read is in flight. The
 // server is hostile only in losing the first answer, keeping the retry the
 // sender posts at W + TTL, and listing it once the reader's line is gone;
 // every pass here is one an honest server takes. The reader runs recv
@@ -412,7 +412,7 @@ func TestAFirstCopyIsNeverDatedBeforeItWasWritten(t *testing.T) {
 	fast, slow := 50*time.Minute, -(9*time.Minute + 59*time.Second)
 	for _, c := range []struct {
 		name       string
-		step       time.Duration // the sender's clock reads this fast when it writes, and is stepped back to right during the first post's box read
+		step       time.Duration // the sender's clock reads this fast when it writes, and is stepped back to right during the first post's mailbox read
 		fast, slow time.Duration // the reader's clock at the drain that prunes, and a second later at the replay
 		prune      time.Duration // true time of the drain that prunes, after the first copy's sent_at + 2TTL
 	}{
@@ -437,20 +437,20 @@ func TestAFirstCopyIsNeverDatedBeforeItWasWritten(t *testing.T) {
 				t.Fatal(err)
 			}
 			offS = c.step
-			box := "/v1/" + r.Address().String()
+			mailbox := "/v1/" + r.Address().String()
 			mode := "lose"
 			stepArmed := true
 			var retry []byte
 			e.srv.SetMiddle(func(w http.ResponseWriter, q *http.Request, next http.Handler) {
 				switch {
-				case q.Method == http.MethodGet && q.URL.Path == box && stepArmed:
+				case q.Method == http.MethodGet && q.URL.Path == mailbox && stepArmed:
 					stepArmed = false
-					offS = 0 // NTP steps the sender's clock back to right while its box read is in flight
-				case q.Method == http.MethodPost && q.URL.Path == box+"/messages" && mode == "lose":
+					offS = 0 // NTP steps the sender's clock back to right while its mailbox read is in flight
+				case q.Method == http.MethodPost && q.URL.Path == mailbox+"/messages" && mode == "lose":
 					next.ServeHTTP(httptest.NewRecorder(), q) // stored and listed; the answer is lost
 					http.Error(w, "lost", http.StatusServiceUnavailable)
 					return
-				case q.Method == http.MethodPost && q.URL.Path == box+"/messages" && mode == "keep":
+				case q.Method == http.MethodPost && q.URL.Path == mailbox+"/messages" && mode == "keep":
 					retry, _ = io.ReadAll(q.Body) // kept, answered 503
 					http.Error(w, "down", http.StatusServiceUnavailable)
 					return
@@ -486,7 +486,7 @@ func TestAFirstCopyIsNeverDatedBeforeItWasWritten(t *testing.T) {
 			e.clock.Add(30 * day)
 			receive(t, r)
 			e.clock.Add(wrote.Add(protocol.TTL - time.Hour).Sub(e.clock.Now()))
-			receive(t, s)          // the sender renews, so its certificate signs mail that waits
+			receive(t, s)          // the sender renews, so its certificate signs a message that waits
 			e.clock.Add(time.Hour) // the sender's clock reads W + TTL: the outbox's last second
 			mode = "keep"
 			_, err = s.Flush(ctx)

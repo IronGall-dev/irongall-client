@@ -19,28 +19,28 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// A statement the box's server serves in its name that it did not make is
+// A statement the mailbox's server serves in its name that it did not make is
 // said where an owner looks, by its kind, recommending that the address be
-// revoked (#74, #428): one signed with a taken working key, under the box's
+// revoked (#74, #428): one signed with a taken working key, under the mailbox's
 // own certificate, and one under a certificate the identity made for someone
 // else's key. recv renews nothing above either; prekey renew, its owner's,
-// does, of the box's own type, never the served one's (#61). A read that
-// serves the box's own statement clears it.
-func TestRecvRenewsNothingAboveAStatementTheBoxDidNotMake(t *testing.T) {
+// does, of the mailbox's own type, never the served one's (#61). A read that
+// serves the mailbox's own statement clears it.
+func TestRecvRenewsNothingAboveAStatementTheMailboxDidNotMake(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
 		name string
 		own  bool
-		// above is how far above the box's own the other certificate is
+		// above is how far above the mailbox's own the other certificate is
 		// numbered: 0, its own serial, which only the key it certifies tells
-		// from the box's own.
+		// from the mailbox's own.
 		above uint64
 	}{{"under its own certificate", true, 0}, {"under a later certificate it did not make", false, 10}, {"under a certificate it did not make at its own serial", false, 0}} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
 			e := newEnv(t)
-			b := e.box(protocol.PostQuantum)
+			b := e.mailbox(protocol.PostQuantum)
 			n := numberOf(t, b)
 			signer, certSerial := worker(t, b), n
 			if !c.own {
@@ -76,8 +76,8 @@ func TestRecvRenewsNothingAboveAStatementTheBoxDidNotMake(t *testing.T) {
 				t.Fatal(err)
 			}
 			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-				if r.Method == http.MethodGet && r.URL.Path == boxPath(b) {
-					fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: b.Identity().Document(), Prekey: p.Statement(), PrekeySignature: sig})
+				if r.Method == http.MethodGet && r.URL.Path == mailboxPath(b) {
+					fakeserver.WriteJSON(w, http.StatusOK, protocol.MailboxResponse{Identity: b.Identity().Document(), Prekey: p.Statement(), PrekeySignature: sig})
 					return
 				}
 				next.ServeHTTP(w, r)
@@ -88,7 +88,7 @@ func TestRecvRenewsNothingAboveAStatementTheBoxDidNotMake(t *testing.T) {
 				t.Fatalf("recv shown a statement it did not make: %+v", res)
 			}
 			if res.Renewed != nil || res.RenewErr == nil {
-				t.Fatalf("recv renewed above a statement the box did not make: renewed %+v, %v", res.Renewed, res.RenewErr)
+				t.Fatalf("recv renewed above a statement the mailbox did not make: renewed %+v, %v", res.Renewed, res.RenewErr)
 			}
 			if !strings.Contains(res.NotMade.Words(), "revocation publish") {
 				t.Errorf("no recommendation to revoke the address: %s", res.NotMade.Words())
@@ -97,19 +97,19 @@ func TestRecvRenewsNothingAboveAStatementTheBoxDidNotMake(t *testing.T) {
 				t.Fatalf("status: %+v, %v", st, err)
 			}
 			// Under its own certificate, whose working key another holds, it
-			// signs no mail: the entry waits for the box's next certificate.
-			to := e.box(protocol.PostQuantum)
+			// signs no message: the entry waits for the mailbox's next certificate.
+			to := e.mailbox(protocol.PostQuantum)
 			_, err = b.Send(ctx, to.Address(), "while another holds its working key")
 			if (err != nil) != c.own {
-				t.Fatalf("a send while a statement the box did not make is served: %v", err)
+				t.Fatalf("a send while a statement the mailbox did not make is served: %v", err)
 			}
-			// Its owner's renewal goes above it, of the box's own type.
+			// Its owner's renewal goes above it, of the mailbox's own type.
 			if p, err := b.Rekey(ctx, ""); err != nil || p.Serial <= certSerial+5 || p.Type() != protocol.PostQuantum {
-				t.Fatalf("prekey renew above a statement the box did not make: %+v, %v", p, err)
+				t.Fatalf("prekey renew above a statement the mailbox did not make: %+v, %v", p, err)
 			}
 			if c.own {
 				if sent, err := b.Flush(ctx); err != nil || len(sent) != 1 {
-					t.Fatalf("the waiting entry once the box has its next certificate: %d sent, %v", len(sent), err)
+					t.Fatalf("the waiting entry once the mailbox has its next certificate: %d sent, %v", len(sent), err)
 				}
 			}
 			e.srv.SetMiddle(nil)
@@ -123,16 +123,16 @@ func TestRecvRenewsNothingAboveAStatementTheBoxDidNotMake(t *testing.T) {
 	}
 }
 
-// seal holds a send by the record of the box's last read of itself
+// seal holds a send by the record of the mailbox's last read of itself
 // (noteServed, which only known writes), and a send makes no such read: a
-// statement signed with the box's own working key, served since that read,
+// statement signed with the mailbox's own working key, served since that read,
 // lets a send through, and once a read of itself has shown it (revocation
 // ask of its own address), the next send waits (#442 item 1).
-func TestASendIsHeldByTheBoxsLastReadOfItself(t *testing.T) {
+func TestASendIsHeldByTheMailboxsLastReadOfItself(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	b, to := e.box(protocol.PostQuantum), e.box(protocol.PostQuantum)
+	b, to := e.mailbox(protocol.PostQuantum), e.mailbox(protocol.PostQuantum)
 	n := numberOf(t, b)
 	st, _ := e.srv.Prekey(b.Address())
 	p, err := protocol.ParsePrekey(st)
@@ -149,36 +149,36 @@ func TestASendIsHeldByTheBoxsLastReadOfItself(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if r.Method == http.MethodGet && r.URL.Path == boxPath(b) {
-			fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: b.Identity().Document(), Prekey: p.Statement(), PrekeySignature: sig})
+		if r.Method == http.MethodGet && r.URL.Path == mailboxPath(b) {
+			fakeserver.WriteJSON(w, http.StatusOK, protocol.MailboxResponse{Identity: b.Identity().Document(), Prekey: p.Statement(), PrekeySignature: sig})
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
-	if _, err := b.Send(ctx, to.Address(), "before the box has read itself"); err != nil {
-		t.Fatalf("a send before the box has read the statement: %v", err)
+	if _, err := b.Send(ctx, to.Address(), "before the mailbox has read itself"); err != nil {
+		t.Fatalf("a send before the mailbox has read the statement: %v", err)
 	}
 	if _, err := b.Ask(ctx, b.Address()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.Send(ctx, to.Address(), "once the box has read itself"); err == nil || !strings.Contains(err.Error(), "someone else holds the working key") {
-		t.Fatalf("a send once the box has read the statement: %v", err)
+	if _, err := b.Send(ctx, to.Address(), "once the mailbox has read itself"); err == nil || !strings.Contains(err.Error(), "someone else holds the working key") {
+		t.Fatalf("a send once the mailbox has read the statement: %v", err)
 	}
 }
 
-// A renewal the server took, and a fault of the box after it, is a renewal
+// A renewal the server took, and a fault of the mailbox after it, is a renewal
 // taken: Rekey and the remedy return the new prekey with the fault, and the
-// box holds it as the one it published (#110).
+// mailbox holds it as the one it published (#110).
 func TestAFaultAfterARenewalWasTakenLeavesItTaken(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
 	for _, c := range []struct {
 		name  string
-		renew func(*client.Box) (*protocol.Prekey, error)
+		renew func(*client.Mailbox) (*protocol.Prekey, error)
 	}{
-		{"prekey renew", func(b *client.Box) (*protocol.Prekey, error) { return b.Rekey(ctx, "") }},
-		{"the remedy", func(b *client.Box) (*protocol.Prekey, error) {
+		{"prekey renew", func(b *client.Mailbox) (*protocol.Prekey, error) { return b.Rekey(ctx, "") }},
+		{"the remedy", func(b *client.Mailbox) (*protocol.Prekey, error) {
 			r, err := b.RenewAndRevoke(ctx, "")
 			if r == nil {
 				return nil, err
@@ -186,11 +186,11 @@ func TestAFaultAfterARenewalWasTakenLeavesItTaken(t *testing.T) {
 			return r.Prekey, err
 		}},
 	} {
-		b := e.box(protocol.Classic)
+		b := e.mailbox(protocol.Classic)
 		old := numberOf(t, b)
 		e.clock.Add(2 * time.Second)
 		// The older working key's public half cannot be deleted: a fault of
-		// the box once the new prekey is taken.
+		// the mailbox once the new prekey is taken.
 		pub := workFile(b, old, ".pub")
 		if err := os.Remove(pub); err != nil {
 			t.Fatal(err)
@@ -230,14 +230,14 @@ func TestAnInitWhoseFirstStatementExpiredRegisters(t *testing.T) {
 		t.Fatalf("init once the first statement expired: %v", err)
 	}
 	if servedSerial(t, e, b) != numberOf(t, b) {
-		t.Fatalf("the server serves %d, the box published %d", servedSerial(t, e, b), numberOf(t, b))
+		t.Fatalf("the server serves %d, the mailbox published %d", servedSerial(t, e, b), numberOf(t, b))
 	}
 }
 
-// A box reads its own record at its server by every rule but its
+// A mailbox reads its own record at its server by every rule but its
 // certificate's dates (PROTOCOL.md §12.4): a record its server took under a
 // rule since changed, a certificate made for 65 days, one begun two hours
-// back or one valid from 1970, is never one its box cannot renew past.
+// back or one valid from 1970, is never one its mailbox cannot renew past.
 // recv renews past each as past any record of its own. A record that does
 // not verify at all stops the renewal, saying the way out, and the remedy,
 // which goes on past what it cannot use, is that way.
@@ -254,7 +254,7 @@ func TestARenewalGoesPastItsOwnRecordWhateverItsDates(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			e := newEnv(t)
-			b := e.box(protocol.PostQuantum)
+			b := e.mailbox(protocol.PostQuantum)
 			n := numberOf(t, b)
 			unix := uint64(e.clock.Now().Unix())
 			cert := &ssh.Certificate{
@@ -274,8 +274,8 @@ func TestARenewalGoesPastItsOwnRecordWhateverItsDates(t *testing.T) {
 				t.Fatal(err)
 			}
 			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-				if r.Method == http.MethodGet && r.URL.Path == boxPath(b) {
-					fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: b.Identity().Document(), Prekey: st, PrekeySignature: sig})
+				if r.Method == http.MethodGet && r.URL.Path == mailboxPath(b) {
+					fakeserver.WriteJSON(w, http.StatusOK, protocol.MailboxResponse{Identity: b.Identity().Document(), Prekey: st, PrekeySignature: sig})
 					return
 				}
 				next.ServeHTTP(w, r)
@@ -291,15 +291,15 @@ func TestARenewalGoesPastItsOwnRecordWhateverItsDates(t *testing.T) {
 		t.Parallel()
 		ctx := context.Background()
 		e := newEnv(t)
-		b, other := e.box(protocol.PostQuantum), e.box(protocol.PostQuantum)
+		b, other := e.mailbox(protocol.PostQuantum), e.mailbox(protocol.PostQuantum)
 		st, _ := e.srv.Prekey(b.Address())
 		forged, err := protocol.Sign(worker(t, other), st, protocol.PrekeyNamespace(b.Address()))
 		if err != nil {
 			t.Fatal(err)
 		}
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-			if r.Method == http.MethodGet && r.URL.Path == boxPath(b) {
-				fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: b.Identity().Document(), Prekey: st, PrekeySignature: forged})
+			if r.Method == http.MethodGet && r.URL.Path == mailboxPath(b) {
+				fakeserver.WriteJSON(w, http.StatusOK, protocol.MailboxResponse{Identity: b.Identity().Document(), Prekey: st, PrekeySignature: forged})
 				return
 			}
 			next.ServeHTTP(w, r)

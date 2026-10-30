@@ -11,8 +11,8 @@ import (
 // or this.
 const AnyAddress = "*"
 
-// ACLDocument is a box's sender ACL as it travels (PROTOCOL.md §11.14): the
-// body of PUT /v1/<address>/acl, which replaces the box's ACL whole, and
+// ACLDocument is a mailbox's sender ACL as it travels (PROTOCOL.md §11.14): the
+// body of PUT /v1/<address>/acl, which replaces the mailbox's ACL whole, and
 // the answer to GET. It carries no version: the server's ETag of it is what
 // a writer that read it names in If-Match. Allow is required, so that an ACL
 // always says whom it lets in: a document with none is refused, where Matrix
@@ -24,9 +24,9 @@ type ACLDocument struct {
 	Deny  []string `json:"deny"`
 }
 
-// ACL is a sender ACL in its checked form: who may send to a box. Deny is
+// ACL is a sender ACL in its checked form: who may send to a mailbox. Deny is
 // read first and then allow, as Matrix reads a room's server ACL, and a
-// sender neither matches is refused. A box with no ACL takes mail from
+// sender neither matches is refused. A mailbox with no ACL takes messages from
 // everyone: a nil *ACL is that.
 type ACL struct {
 	Allow ACLList
@@ -86,7 +86,7 @@ func NewACLList(all bool, addrs []Address) ACLList {
 
 func compareAddresses(x, y Address) int { return bytes.Compare(x[:], y[:]) }
 
-// Admits reports whether a box whose ACL is a takes mail from a sender:
+// Admits reports whether a mailbox whose ACL is a takes messages from a sender:
 // with no ACL, everyone; with one, a sender its deny list does not match and
 // its allow list does.
 func (a *ACL) Admits(from Address) bool {
@@ -101,7 +101,7 @@ func (a *ACL) SameLists(b *ACL) bool {
 	return x.Allow.Equal(y.Allow) && x.Deny.Equal(y.Deny)
 }
 
-// orOpen is a, or the ACL a box with none has: allowing AnyAddress and
+// orOpen is a, or the ACL a mailbox with none has: allowing AnyAddress and
 // denying nothing.
 func (a *ACL) orOpen() *ACL {
 	if a == nil {
@@ -111,7 +111,7 @@ func (a *ACL) orOpen() *ACL {
 }
 
 // Document is the ACL as it travels, in its one form: each list as Entries
-// writes it. A box with none answers GET with this of nil: allowing
+// writes it. A mailbox with none answers GET with this of nil: allowing
 // AnyAddress and denying nothing.
 func (a *ACL) Document() ACLDocument {
 	o := a.orOpen()

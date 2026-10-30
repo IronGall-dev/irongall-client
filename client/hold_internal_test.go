@@ -44,7 +44,7 @@ func TestNoKeepAliveUntilAConnectionDrops(t *testing.T) {
 	// net.Dialer: keep-alive is off only with KeepAliveConfig.Enable false
 	// and KeepAlive negative.
 	if d := h.dialer(); d.KeepAliveConfig.Enable || d.KeepAlive >= 0 {
-		t.Fatalf("a box that has seen no drop dials with keep-alive: %+v", d)
+		t.Fatalf("a mailbox that has seen no drop dials with keep-alive: %+v", d)
 	}
 	h.dropped(3*time.Minute, false)
 	d := h.dialer()

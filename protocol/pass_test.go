@@ -19,11 +19,11 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// passBox is a certBox with a certificate two hours old at now, and the signer
+// passMailbox is a certMailbox with a certificate two hours old at now, and the signer
 // that carries it.
-func passBox(t *testing.T, now time.Time) (certBox, *Certificate, ssh.Signer) {
+func passMailbox(t *testing.T, now time.Time) (certMailbox, *Certificate, ssh.Signer) {
 	t.Helper()
-	b := newCertBox(t)
+	b := newCertMailbox(t)
 	cert, err := NewCertificate(b.id, b.identity, b.work.PublicKey(), 3, now.Add(-2*time.Hour))
 	if err != nil {
 		t.Fatal(err)
@@ -37,7 +37,7 @@ func passBox(t *testing.T, now time.Time) (certBox, *Certificate, ssh.Signer) {
 
 func TestPassRoundTrip(t *testing.T) {
 	now := time.Date(2026, 10, 12, 21, 30, 15, 500, time.UTC)
-	b, cert, signer := passBox(t, now)
+	b, cert, signer := passMailbox(t, now)
 	a := b.id.Address()
 	header, notAfter, err := NewPass(signer, a, "dromas.dev", now)
 	if err != nil {
@@ -61,7 +61,7 @@ func TestPassRoundTrip(t *testing.T) {
 		t.Error("the certificate returned is not the one the pass was signed under")
 	}
 	// Good to the last second, for a server whose clock is up to
-	// MaxPassLifetime less PassLifetime behind the box's.
+	// MaxPassLifetime less PassLifetime behind the mailbox's.
 	if _, err := pass.Verify(b.id, "dromas.dev", notAfter.Add(-time.Second)); err != nil {
 		t.Errorf("a second before it runs out: %v", err)
 	}
@@ -69,22 +69,22 @@ func TestPassRoundTrip(t *testing.T) {
 		t.Errorf("exactly %v before it runs out: %v", MaxPassLifetime, err)
 	}
 
-	other := newCertBox(t)
+	other := newCertMailbox(t)
 	for name, tc := range map[string]struct {
 		id     *Identity
 		server string
 		at     time.Time
 		want   error
 	}{
-		"run out":                {b.id, "dromas.dev", notAfter, ErrPassExpired},
-		"long after":             {b.id, "dromas.dev", notAfter.Add(24 * time.Hour), ErrPassExpired},
-		"too far ahead":          {b.id, "dromas.dev", notAfter.Add(-MaxPassLifetime - time.Second), ErrPass},
-		"another server":         {b.id, "example.org", now, ErrPass},
-		"the same host, a port":  {b.id, "dromas.dev:8443", now, ErrPass},
-		"another box's identity": {other.id, "dromas.dev", now, ErrPass},
-		"no server name":         {b.id, "", now, ErrPass},
-		"a name in capitals":     {b.id, "Dromas.dev", now, ErrPass},
-		"a name with a path":     {b.id, "dromas.dev/v1", now, ErrPass},
+		"run out":                    {b.id, "dromas.dev", notAfter, ErrPassExpired},
+		"long after":                 {b.id, "dromas.dev", notAfter.Add(24 * time.Hour), ErrPassExpired},
+		"too far ahead":              {b.id, "dromas.dev", notAfter.Add(-MaxPassLifetime - time.Second), ErrPass},
+		"another server":             {b.id, "example.org", now, ErrPass},
+		"the same host, a port":      {b.id, "dromas.dev:8443", now, ErrPass},
+		"another mailbox's identity": {other.id, "dromas.dev", now, ErrPass},
+		"no server name":             {b.id, "", now, ErrPass},
+		"a name in capitals":         {b.id, "Dromas.dev", now, ErrPass},
+		"a name with a path":         {b.id, "dromas.dev/v1", now, ErrPass},
 	} {
 		if _, err := pass.Verify(tc.id, tc.server, tc.at); !errors.Is(err, tc.want) {
 			t.Errorf("%s: got %v, want %v", name, err, tc.want)
@@ -124,7 +124,7 @@ func TestPassRoundTrip(t *testing.T) {
 		t.Errorf("a not_after that was not signed: %v", err)
 	}
 	// A pass that is good, under a certificate that has ended, is refused for the certificate.
-	b2, _, signer2 := passBox(t, now.Add(-CertificateLifetime+2*time.Hour+5*time.Minute))
+	b2, _, signer2 := passMailbox(t, now.Add(-CertificateLifetime+2*time.Hour+5*time.Minute))
 	h2, _, err := NewPass(signer2, b2.id.Address(), "dromas.dev", now)
 	if err != nil {
 		t.Fatal(err)
@@ -141,15 +141,15 @@ func TestPassRoundTrip(t *testing.T) {
 	}
 }
 
-// VerifyUnder is Verify for a caller that checked the box's certificate
+// VerifyUnder is Verify for a caller that checked the mailbox's certificate
 // before and kept its hash: the pass must be under exactly that certificate,
 // for this server, not run out, and the working key's signature must verify.
 // It is the same for an identity of either type, since the identity's own
 // signature is not what it checks.
 func TestPassVerifyUnder(t *testing.T) {
 	now := time.Date(2026, 10, 12, 21, 30, 15, 0, time.UTC)
-	ed, edCert, edSigner := passBox(t, now)
-	p256 := p256Box(t)
+	ed, edCert, edSigner := passMailbox(t, now)
+	p256 := p256Mailbox(t)
 	pCert, err := NewCertificate(p256.id, p256.identity, p256.work.PublicKey(), 3, now.Add(-2*time.Hour))
 	if err != nil {
 		t.Fatal(err)
@@ -159,11 +159,11 @@ func TestPassVerifyUnder(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, b := range map[string]struct {
-		box    certBox
-		cert   *Certificate
-		signer ssh.Signer
+		mailbox certMailbox
+		cert    *Certificate
+		signer  ssh.Signer
 	}{"ssh-ed25519": {ed, edCert, edSigner}, "ecdsa-sha2-nistp256": {p256, pCert, pSigner}} {
-		a := b.box.id.Address()
+		a := b.mailbox.id.Address()
 		header, notAfter, err := NewPass(b.signer, a, "dromas.dev", now)
 		if err != nil {
 			t.Fatal(err)
@@ -179,24 +179,24 @@ func TestPassVerifyUnder(t *testing.T) {
 		}
 		// What it returns is the certificate, which CheckCertificate then
 		// holds to the identity: together they are what Verify checks.
-		if checked, err := CheckCertificate(b.box.id, under, now); err != nil || sha256.Sum256(checked.Marshal()) != sum {
+		if checked, err := CheckCertificate(b.mailbox.id, under, now); err != nil || sha256.Sum256(checked.Marshal()) != sum {
 			t.Fatalf("%s: the certificate VerifyUnder returned: %v", name, err)
 		}
 		// What Verify takes, VerifyUnder takes, and the certificate is the same one.
-		if got, err := pass.Verify(b.box.id, "dromas.dev", now); err != nil || sha256.Sum256(got.Marshal()) != sum {
+		if got, err := pass.Verify(b.mailbox.id, "dromas.dev", now); err != nil || sha256.Sum256(got.Marshal()) != sum {
 			t.Fatalf("%s: Verify: %v", name, err)
 		}
 		// A later certificate of the same identity for the same key: the pass is not under it.
-		later, err := NewCertificate(b.box.id, b.box.identity, b.box.work.PublicKey(), 4, now)
+		later, err := NewCertificate(b.mailbox.id, b.mailbox.identity, b.mailbox.work.PublicKey(), 4, now)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if _, err := pass.VerifyUnder(sha256.Sum256(later.Marshal()), "dromas.dev", now); !errors.Is(err, ErrCertificate) {
 			t.Errorf("%s: under another certificate: %v", name, err)
 		}
-		// A pass that names another box, signed by this box's working key
-		// under this box's certificate: the certificate is for this box.
-		elsewhere, _, err := NewPass(b.signer, newCertBox(t).id.Address(), "dromas.dev", now)
+		// A pass that names another mailbox, signed by this mailbox's working key
+		// under this mailbox's certificate: the certificate is for this mailbox.
+		elsewhere, _, err := NewPass(b.signer, newCertMailbox(t).id.Address(), "dromas.dev", now)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -205,7 +205,7 @@ func TestPassVerifyUnder(t *testing.T) {
 			t.Fatal(err)
 		}
 		if _, err := ep.VerifyUnder(sum, "dromas.dev", now); !errors.Is(err, ErrPass) {
-			t.Errorf("%s: a pass naming another box, under this box's certificate: %v", name, err)
+			t.Errorf("%s: a pass naming another mailbox, under this mailbox's certificate: %v", name, err)
 		}
 		if _, err := pass.VerifyUnder(sum, "example.org", now); !errors.Is(err, ErrPass) {
 			t.Errorf("%s: for another server: %v", name, err)
@@ -220,7 +220,7 @@ func TestPassVerifyUnder(t *testing.T) {
 		// carries this certificate: the hash matches, and the signature does
 		// not verify. A signature does not cover the key it names, so the
 		// certificate can be put in place of the signer's own.
-		other := newCertBox(t)
+		other := newCertMailbox(t)
 		bare, err := Sign(other.work, PassStatement(a, "dromas.dev", notAfter), PassNamespace(a))
 		if err != nil {
 			t.Fatal(err)
@@ -241,7 +241,7 @@ func TestPassVerifyUnder(t *testing.T) {
 		if _, err := fp.VerifyUnder(sum, "dromas.dev", now); !errors.Is(err, ErrPass) {
 			t.Errorf("%s: a pass another key signed, carrying the certificate: %v", name, err)
 		}
-		if _, err := fp.Verify(b.box.id, "dromas.dev", now); !errors.Is(err, ErrPass) {
+		if _, err := fp.Verify(b.mailbox.id, "dromas.dev", now); !errors.Is(err, ErrPass) {
 			t.Errorf("%s: Verify took a pass another key signed, carrying the certificate: %v", name, err)
 		}
 		// A certificate that has ended: a pass signed under it a moment before it ends, checked a moment after.

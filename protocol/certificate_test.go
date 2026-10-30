@@ -17,14 +17,14 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// certBox is an identity, its signer, and a working key with its signer.
-type certBox struct {
+// certMailbox is an identity, its signer, and a working key with its signer.
+type certMailbox struct {
 	id       *Identity
 	identity ssh.Signer
 	work     ssh.Signer
 }
 
-func newCertBox(t *testing.T) certBox {
+func newCertMailbox(t *testing.T) certMailbox {
 	t.Helper()
 	signer := func() (ed25519.PublicKey, ssh.Signer) {
 		pub, priv, err := ed25519.GenerateKey(rand.Reader)
@@ -43,12 +43,12 @@ func newCertBox(t *testing.T) certBox {
 		t.Fatal(err)
 	}
 	_, work := signer()
-	return certBox{id: id, identity: identity, work: work}
+	return certMailbox{id: id, identity: identity, work: work}
 }
 
 // rawCert is the certificate NewCertificate would make at now, unsigned, for
 // a test to change before it signs.
-func (b certBox) rawCert(now time.Time) *ssh.Certificate {
+func (b certMailbox) rawCert(now time.Time) *ssh.Certificate {
 	unix := uint64(now.Unix())
 	return &ssh.Certificate{
 		Key:             b.work.PublicKey(),
@@ -62,7 +62,7 @@ func (b certBox) rawCert(now time.Time) *ssh.Certificate {
 }
 
 func TestCertificateRoundTrip(t *testing.T) {
-	b := newCertBox(t)
+	b := newCertMailbox(t)
 	now := time.Date(2026, 10, 12, 19, 19, 1, 0, time.UTC)
 	cert, err := NewCertificate(b.id, b.identity, b.work.PublicKey(), 7, now)
 	if err != nil {
@@ -95,7 +95,7 @@ func TestCertificateRoundTrip(t *testing.T) {
 	}
 
 	// The signature holds for that message, that namespace and that identity only.
-	other := newCertBox(t)
+	other := newCertMailbox(t)
 	if _, err := VerifyCertified(b.id, []byte("hello droma5\n"), sig, ns, now); err == nil {
 		t.Error("verified an altered message")
 	}
@@ -129,8 +129,8 @@ func TestCertificateRoundTrip(t *testing.T) {
 }
 
 func TestCertificateRules(t *testing.T) {
-	b := newCertBox(t)
-	other := newCertBox(t)
+	b := newCertMailbox(t)
+	other := newCertMailbox(t)
 	now := time.Date(2026, 10, 12, 19, 19, 1, 0, time.UTC)
 	unix := uint64(now.Unix())
 	lifetime := uint64(MaxCertificateLifetime / time.Second)
@@ -164,7 +164,7 @@ func TestCertificateRules(t *testing.T) {
 		{name: "no key id", change: func(c *ssh.Certificate) { c.KeyId = "" }, want: ErrCertificate},
 		{name: "serial 0", change: func(c *ssh.Certificate) { c.Serial = 0 }, want: ErrCertificate},
 		{name: "no principal", change: func(c *ssh.Certificate) { c.ValidPrincipals = nil }, want: ErrCertificate},
-		{name: "another box's address", change: func(c *ssh.Certificate) { c.ValidPrincipals = []string{other.id.Address().String()} }, want: ErrCertificate},
+		{name: "another mailbox's address", change: func(c *ssh.Certificate) { c.ValidPrincipals = []string{other.id.Address().String()} }, want: ErrCertificate},
 		{name: "two principals", change: func(c *ssh.Certificate) { c.ValidPrincipals = append(c.ValidPrincipals, other.id.Address().String()) }, want: ErrCertificate},
 		{name: "the address in capitals", change: func(c *ssh.Certificate) { c.ValidPrincipals = []string{strings.ToUpper(b.id.Address().String())} }, want: ErrCertificate},
 		{name: "an extension OpenSSH defines", change: func(c *ssh.Certificate) { c.Extensions = map[string]string{"permit-pty": ""} }},
@@ -357,9 +357,9 @@ func TestSerialAt(t *testing.T) {
 		above uint64
 		want  uint64
 	}{
-		{"a new box: the clock", 1_800_000_000, 0, 1_800_000_000},
+		{"a new mailbox: the clock", 1_800_000_000, 0, 1_800_000_000},
 		{"the clock has moved on: the clock", 1_800_000_000, 1_700_000_000, 1_800_000_000},
-		{"a box numbered by a count before: the clock", 1_800_000_000, 7, 1_800_000_000},
+		{"a mailbox numbered by a count before: the clock", 1_800_000_000, 7, 1_800_000_000},
 		{"one below the clock: the clock", 1_800_000_000, 1_799_999_999, 1_800_000_000},
 		{"the same second: one above", 1_800_000_000, 1_800_000_000, 1_800_000_001},
 		{"the clock reads behind the last: one above", 1_800_000_000, 1_900_000_000, 1_900_000_001},
@@ -373,11 +373,11 @@ func TestSerialAt(t *testing.T) {
 	}
 }
 
-// A box's own record is judged by every rule of a certificate but its dates
+// A mailbox's own record is judged by every rule of a certificate but its dates
 // (CheckCertificateRecord; PROTOCOL.md §12.4): what CheckCertificate refuses
 // at now for a date, it takes; what it refuses for anything else, it refuses.
 func TestARecordIsJudgedByEveryRuleButItsDates(t *testing.T) {
-	b, other := newCertBox(t), newCertBox(t)
+	b, other := newCertMailbox(t), newCertMailbox(t)
 	now := time.Date(2026, 10, 25, 1, 0, 0, 0, time.UTC)
 	unix := uint64(now.Unix())
 	for _, tc := range []struct {

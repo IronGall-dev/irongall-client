@@ -15,7 +15,7 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// A server that paces how much mail a box takes out (a 429 with Retry-After
+// A server that paces the messages a mailbox takes out (a 429 with Retry-After
 // on a fetch, PROTOCOL.md §11.5) stops the drain as the drain's own limits do:
 // what was delivered stays delivered, the rest waits on the server, the
 // Result says how long, and nothing is an error. A pace past the poll
@@ -24,7 +24,7 @@ import (
 func TestAPacedDrainStopsAndResumes(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	for _, body := range []string{"1", "2", "3"} {
 		send(t, a, b, body)
 	}
@@ -60,8 +60,8 @@ func TestAPacedDrainStopsAndResumes(t *testing.T) {
 }
 
 // Only a paced fetch stops a drain quietly. Any other 429 met in a drain, a
-// sender's lookup the box's call budget refused among them, is an error, and
-// the mail stays on the server: such a refusal says nothing of the mail, and
+// sender's lookup the mailbox's call budget refused among them, is an error, and
+// the messages stay on the server: such a refusal says nothing of them, and
 // a drain that ended quietly on it would hide that a sender went unchecked
 // (#116).
 func TestOnlyAPacedFetchEndsADrainQuietly(t *testing.T) {
@@ -82,7 +82,7 @@ func TestOnlyAPacedFetchEndsADrainQuietly(t *testing.T) {
 		{"a call budget's 429 on the fetch", fetch, http.StatusTooManyRequests, protocol.CodeRateLimited},
 	} {
 		e := newEnv(t)
-		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 		send(t, a, b, "1")
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if !c.match(r) {
@@ -111,7 +111,7 @@ func TestOnlyAPacedFetchEndsADrainQuietly(t *testing.T) {
 func TestAWaitTheServerAsksForIsAtMostADay(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.box(protocol.Classic)
+	b := e.mailbox(protocol.Classic)
 	const huge = "9223372037" // seconds: one past what a time.Duration holds
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/messages") {
@@ -147,7 +147,7 @@ func TestAWaitTheServerAsksForIsAtMostADay(t *testing.T) {
 func TestARetryAfterIsDigitsAlone(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.box(protocol.Classic)
+	b := e.mailbox(protocol.Classic)
 	for value, want := range map[string]time.Duration{
 		"17":                             17 * time.Second,
 		"0017":                           17 * time.Second,

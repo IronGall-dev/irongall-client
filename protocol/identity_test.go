@@ -17,8 +17,8 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// p256Box is a box whose identity is a P-256 key, with an Ed25519 working key.
-func p256Box(t *testing.T) certBox {
+// p256Mailbox is a mailbox whose identity is a P-256 key, with an Ed25519 working key.
+func p256Mailbox(t *testing.T) certMailbox {
 	t.Helper()
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -40,7 +40,7 @@ func p256Box(t *testing.T) certBox {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return certBox{id: id, identity: identity, work: work}
+	return certMailbox{id: id, identity: identity, work: work}
 }
 
 func docOf(typ string, wire []byte) []byte {
@@ -124,7 +124,7 @@ func TestAnIdentityOfATypeThisClientLacks(t *testing.T) {
 // A P-256 identity certifies an Ed25519 working key, and what that key signs
 // verifies under it; a certificate another P-256 key signed does not.
 func TestAP256IdentityCertifies(t *testing.T) {
-	b, other := p256Box(t), p256Box(t)
+	b, other := p256Mailbox(t), p256Mailbox(t)
 	now := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
 	cert, err := NewCertificate(b.id, b.identity, b.work.PublicKey(), 3, now)
 	if err != nil {

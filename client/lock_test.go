@@ -23,13 +23,13 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// holdState holds box b's lock as another command of it would: its state
+// holdState holds mailbox b's lock as another command of it would: its state
 // file, open in bbolt. The function it returns lets go.
-func holdState(t *testing.T, b *client.Box) func() {
+func holdState(t *testing.T, b *client.Mailbox) func() {
 	t.Helper()
 	db, err := bolt.Open(filepath.Join(b.Dir(), "state"), 0o600, &bolt.Options{Timeout: time.Second})
 	if err != nil {
-		t.Fatalf("the box's lock is not free: %v", err)
+		t.Fatalf("the mailbox's lock is not free: %v", err)
 	}
 	return func() {
 		if err := db.Close(); err != nil {
@@ -38,9 +38,9 @@ func holdState(t *testing.T, b *client.Box) func() {
 	}
 }
 
-// Every command that writes the box holds its lock from start to end, and
+// Every command that writes the mailbox holds its lock from start to end, and
 // one that finds it held waits, says so once, and runs once it is free:
-// two commands of a box never share its files (#62, #83, #96). The commands
+// two commands of a mailbox never share its files (#62, #83, #96). The commands
 // are lockingCommands', which TestEveryLockingCommandIsTriedFinished holds
 // to the code.
 func TestEveryCommandWaitsForTheLock(t *testing.T) {
@@ -52,7 +52,7 @@ func TestEveryCommandWaitsForTheLock(t *testing.T) {
 	for i, c := range append(refused, run...) {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv(t)
-			a, peer := e.box(protocol.Classic), e.box(protocol.Classic)
+			a, peer := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 			rec, err := peer.Revocation(t.Context())
 			if err != nil {
 				t.Fatal(err)
@@ -101,31 +101,31 @@ func TestEveryCommandWaitsForTheLock(t *testing.T) {
 	}
 }
 
-// A box with no state file, restored or made before there was one, makes it
+// A mailbox with no state file, restored or made before there was one, makes it
 // at its first command, beside its place and linked in, and commands that
 // make it at once all run: a link replaces nothing another made first. Both
 // makers race: Open's, and a command's own once the file is gone after its
-// box was opened (#327).
+// mailbox was opened (#327).
 func TestTheStateFileIsMadeAtTheFirstCommand(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {
 		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
 	}
 	e := newEnv(t)
-	b := e.box(protocol.Classic)
+	b := e.mailbox(protocol.Classic)
 	for _, maker := range []string{"Open", "a command"} {
 		for i := range 10 {
 			if err := os.Remove(filepath.Join(b.Dir(), "state")); err != nil {
 				t.Fatal(err)
 			}
-			var boxes []*client.Box
+			var mailboxes []*client.Mailbox
 			if maker == "a command" {
 				for range 8 {
 					x, err := client.Open(b.Dir(), e.opts())
 					if err != nil {
 						t.Fatal(err)
 					}
-					boxes = append(boxes, x)
+					mailboxes = append(mailboxes, x)
 				}
 				if err := os.Remove(filepath.Join(b.Dir(), "state")); err != nil {
 					t.Fatal(err)
@@ -137,11 +137,11 @@ func TestTheStateFileIsMadeAtTheFirstCommand(t *testing.T) {
 			for k := range 8 {
 				wg.Go(func() {
 					<-start
-					x, err := (*client.Box)(nil), error(nil)
+					x, err := (*client.Mailbox)(nil), error(nil)
 					if maker == "Open" {
 						x, err = client.Open(b.Dir(), e.opts())
 					} else {
-						x = boxes[k]
+						x = mailboxes[k]
 					}
 					if err == nil {
 						_, err = x.Receive(context.Background())
@@ -179,7 +179,7 @@ func TestAnEmptyStateFileIsRefusedAndLeftAsItIs(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	b := e.box(protocol.Classic)
+	b := e.mailbox(protocol.Classic)
 	state := filepath.Join(b.Dir(), "state")
 	if err := os.Truncate(state, 0); err != nil {
 		t.Fatal(err)
@@ -205,13 +205,13 @@ func TestAnEmptyStateFileIsRefusedAndLeftAsItIs(t *testing.T) {
 	}
 }
 
-// One Box shared by goroutines runs one command or reading at a time: a
+// One Mailbox shared by goroutines runs one command or reading at a time: a
 // reading of one goroutine waits for another's command, as a reading of
 // another process does, and never reads inside it (#329).
-func TestABoxSharedByGoroutinesRunsOneAtATime(t *testing.T) {
+func TestAMailboxSharedByGoroutinesRunsOneAtATime(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	send(t, a, b, "landed while another goroutine reads")
 	var read atomic.Int32
 	done := make(chan error, 1)
@@ -232,15 +232,15 @@ func TestABoxSharedByGoroutinesRunsOneAtATime(t *testing.T) {
 		t.Fatalf("%+v", res)
 	}
 	if err := <-done; err != nil || read.Load() != 1 {
-		t.Fatalf("a reading beside a command of the same Box: it ran inside it %v, %v", read.Load() == 2, err)
+		t.Fatalf("a reading beside a command of the same Mailbox: it ran inside it %v, %v", read.Load() == 2, err)
 	}
 
 	// Many at once, one goroutine receiving, one setting an alias and two
-	// reading, none failing: readings of one Box at once would share its
+	// reading, none failing: readings of one Mailbox at once would share its
 	// fields, each closing the state file another reads. Two commands are
 	// ordered by the state file's lock as well as by the slot, so no test
 	// tells the slot's half for commands: it is there so that what orders
-	// their writes of the Box's fields is Go's, which the race detector does
+	// their writes of the Mailbox's fields is Go's, which the race detector does
 	// not stand in for (it takes file I/O as synchronization). Run under
 	// -race at every push (client AGENTS.md).
 	stop := make(chan struct{})
@@ -288,16 +288,16 @@ func TestABoxSharedByGoroutinesRunsOneAtATime(t *testing.T) {
 	}
 }
 
-// waits are the entries that wait for box b's lock, each a reading or a
-// command, by its name: every exported function and Box method that takes the
-// lock or reads the box, and every Box method that calls one of those (Send,
+// waits are the entries that wait for mailbox b's lock, each a reading or a
+// command, by its name: every exported function and Mailbox method that takes the
+// lock or reads the mailbox, and every Mailbox method that calls one of those (Send,
 // Revoke). TestEveryEntryThatWaitsIsTriedWithItsContext holds the list to the
 // code. c is a peer, rec c's revocation, and opt the options b was opened
 // with.
-func waits(b, c *client.Box, rec *protocol.Revocations, opt client.Options) map[string]func(context.Context) error {
+func waits(b, c *client.Mailbox, rec *protocol.Revocations, opt client.Options) map[string]func(context.Context) error {
 	return map[string]func(context.Context) error{
 		"Status":             func(ctx context.Context) error { _, err := b.Status(ctx); return err },
-		"RefusedMail":        func(ctx context.Context) error { _, err := b.RefusedMail(ctx); return err },
+		"RefusedMessages":    func(ctx context.Context) error { _, err := b.RefusedMessages(ctx); return err },
 		"NotMade":            func(ctx context.Context) error { _, err := b.NotMade(ctx); return err },
 		"Revocation":         func(ctx context.Context) error { _, err := b.Revocation(ctx); return err },
 		"CertificatesRecord": func(ctx context.Context) error { _, err := b.CertificatesRecord(ctx); return err },
@@ -343,11 +343,11 @@ func waits(b, c *client.Box, rec *protocol.Revocations, opt client.Options) map[
 	}
 }
 
-// Every entry that waits for a box's lock is one of waits', and every one of
+// Every entry that waits for a mailbox's lock is one of waits', and every one of
 // waits' is one that waits, so each is tried with its context (#406 item 2):
-// an exported function or Box method that takes the lock or reads the box
-// (locked, lockedFinished, lockedDo, lockedFinishedDo, reading), and a Box
-// method that calls one of those on its own box, whatever it does first.
+// an exported function or Mailbox method that takes the lock or reads the mailbox
+// (locked, lockedFinished, lockedDo, lockedFinishedDo, reading), and a Mailbox
+// method that calls one of those on its own mailbox, whatever it does first.
 func TestEveryEntryThatWaitsIsTriedWithItsContext(t *testing.T) {
 	t.Parallel()
 	names, err := filepath.Glob("*.go")
@@ -356,7 +356,7 @@ func TestEveryEntryThatWaitsIsTriedWithItsContext(t *testing.T) {
 	}
 	type entry struct {
 		name string
-		recv string // the Box method's receiver, or "" for a function
+		recv string // the Mailbox method's receiver, or "" for a function
 		body *ast.BlockStmt
 	}
 	var entries []entry
@@ -376,7 +376,7 @@ func TestEveryEntryThatWaitsIsTriedWithItsContext(t *testing.T) {
 			switch {
 			case fn.Recv == nil:
 				entries = append(entries, entry{"client." + fn.Name.Name, "", fn.Body})
-			case len(fn.Recv.List[0].Names) == 1 && types.ExprString(fn.Recv.List[0].Type) == "*Box":
+			case len(fn.Recv.List[0].Names) == 1 && types.ExprString(fn.Recv.List[0].Type) == "*Mailbox":
 				entries = append(entries, entry{fn.Name.Name, fn.Recv.List[0].Names[0].Name, fn.Body})
 			}
 		}
@@ -402,7 +402,7 @@ func TestEveryEntryThatWaitsIsTriedWithItsContext(t *testing.T) {
 	tried := waits(nil, nil, nil, client.Options{})
 	for name, w := range wait {
 		if _, ok := tried[name]; w && !ok {
-			t.Errorf("%s waits for the box's lock and is not tried with its context: add it to waits", name)
+			t.Errorf("%s waits for the mailbox's lock and is not tried with its context: add it to waits", name)
 		}
 	}
 	for name := range tried {
@@ -462,7 +462,7 @@ func endsWithItsContext(t *testing.T, held string, waits map[string]func(context
 
 // writtenNothing fails the test if b keeps an alias, or c's revocation,
 // which waits would have written had a wait not ended.
-func writtenNothing(t *testing.T, b, c *client.Box) {
+func writtenNothing(t *testing.T, b, c *client.Mailbox) {
 	t.Helper()
 	if as, err := b.Aliases(); err != nil || len(as) != 0 {
 		t.Errorf("an alias was written after its wait ended: %+v, %v", as, err)
@@ -472,7 +472,7 @@ func writtenNothing(t *testing.T, b, c *client.Box) {
 	}
 }
 
-// A wait for the box's lock ends with the caller's context, at every entry
+// A wait for the mailbox's lock ends with the caller's context, at every entry
 // that waits, and what it would have written is not written (#330).
 func TestAWaitForTheLockEndsWithItsContext(t *testing.T) {
 	if testing.Short() {
@@ -480,7 +480,7 @@ func TestAWaitForTheLockEndsWithItsContext(t *testing.T) {
 	}
 	client.SetLockPatience(t, 3*time.Second) // a wait that ignores its context fails at this, not at two minutes
 	e := newEnv(t)
-	b, c := e.box(protocol.Classic), e.box(protocol.Classic)
+	b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	rec, err := c.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -493,8 +493,8 @@ func TestAWaitForTheLockEndsWithItsContext(t *testing.T) {
 	writtenNothing(t, b, c)
 }
 
-// So does a wait for the Box's slot, which a command of another goroutine
-// sharing the Box holds, at every entry (claim; #330). Each entry takes the
+// So does a wait for the Mailbox's slot, which a command of another goroutine
+// sharing the Mailbox holds, at every entry (claim; #330). Each entry takes the
 // slot before the state file, so the slot's is the wait timed: holdState,
 // above, times only the file's (#380).
 func TestAWaitForTheSlotEndsWithItsContext(t *testing.T) {
@@ -503,7 +503,7 @@ func TestAWaitForTheSlotEndsWithItsContext(t *testing.T) {
 	}
 	client.SetLockPatience(t, 3*time.Second) // a wait that ignores its context ends at this, refused, not at two minutes
 	e := newEnv(t)
-	b, c := e.box(protocol.Classic), e.box(protocol.Classic)
+	b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	rec, err := c.Revocation(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -513,7 +513,7 @@ func TestAWaitForTheSlotEndsWithItsContext(t *testing.T) {
 	in, out := make(chan struct{}), make(chan struct{})
 	listed := sync.OnceFunc(func() { close(in) })
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if r.Method == http.MethodGet && r.URL.Path == boxPath(b)+"/messages" {
+		if r.Method == http.MethodGet && r.URL.Path == mailboxPath(b)+"/messages" {
 			listed()
 			<-out
 		}
@@ -531,7 +531,7 @@ func TestAWaitForTheSlotEndsWithItsContext(t *testing.T) {
 	writtenNothing(t, b, c)
 }
 
-// A command that waits for the box's lock goes before readings that come
+// A command that waits for the mailbox's lock goes before readings that come
 // after it, however they overlap: two readings back to back held a Receive
 // back past its patience, since a flock gives a waiting writer no preference
 // (#344). Each reading is had too: one refused would leave the Receive alone
@@ -542,7 +542,7 @@ func TestAWaitingCommandGoesBeforeReadingsThatOverlap(t *testing.T) {
 	}
 	client.SetLockPatience(t, 5*time.Second)
 	e := newEnv(t)
-	b := e.box(protocol.Classic)
+	b := e.mailbox(protocol.Classic)
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
 	var refused atomic.Int64
@@ -579,7 +579,7 @@ func TestAWaitingCommandGoesBeforeReadingsThatOverlap(t *testing.T) {
 	}
 }
 
-// Two commands of one box keeping two revocations of one address's
+// Two commands of one mailbox keeping two revocations of one address's
 // certificates at once keep the higher (#83): with no lock, both read before
 // either wrote, and the last rename won whatever its serial.
 func TestTwoProcessesKeepTheHigherSerial(t *testing.T) {
@@ -588,7 +588,7 @@ func TestTwoProcessesKeepTheHigherSerial(t *testing.T) {
 		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
 	}
 	e := newEnv(t)
-	a := e.box(protocol.Classic)
+	a := e.mailbox(protocol.Classic)
 	key, err := os.ReadFile(filepath.Join(a.Dir(), "identity"))
 	if err != nil {
 		t.Fatal(err)
@@ -610,7 +610,7 @@ func TestTwoProcessesKeepTheHigherSerial(t *testing.T) {
 	}
 	low, high := rec(200), rec(300)
 	for i := range 30 {
-		b := e.box(protocol.Classic) // neither record held yet
+		b := e.mailbox(protocol.Classic) // neither record held yet
 		p1, err := client.Open(b.Dir(), e.opts())
 		if err != nil {
 			t.Fatal(err)
@@ -631,13 +631,13 @@ func TestTwoProcessesKeepTheHigherSerial(t *testing.T) {
 	}
 }
 
-// A reading of the box, status, opens its state file read-only: it waits
+// A reading of the mailbox, status, opens its state file read-only: it waits
 // while a command holds it, says so once, and reads once it is free; one
-// that waits past the box's patience is refused, never read half written.
+// that waits past the mailbox's patience is refused, never read half written.
 // Readings at once share it.
 func TestStatusWaitsForACommandThatWrites(t *testing.T) {
 	e := newEnv(t)
-	b := e.box(protocol.Classic)
+	b := e.mailbox(protocol.Classic)
 	release := holdState(t, b)
 	told := make(chan struct{}, 1)
 	opt := e.opts()
@@ -651,19 +651,19 @@ func TestStatusWaitsForACommandThatWrites(t *testing.T) {
 	select {
 	case <-told:
 	case err := <-done:
-		t.Fatalf("status read the box while a command held it: %v", err)
+		t.Fatalf("status read the mailbox while a command held it: %v", err)
 	case <-time.After(10 * time.Second):
 		t.Fatal("status neither waited nor read")
 	}
 	release()
 	if err := <-done; err != nil {
-		t.Fatalf("status once the box was free: %v", err)
+		t.Fatalf("status once the mailbox was free: %v", err)
 	}
 
 	client.SetLockPatience(t, 300*time.Millisecond)
 	release = holdState(t, b)
 	if _, err := x.Status(t.Context()); err == nil || !strings.Contains(err.Error(), "held its lock") {
-		t.Fatalf("status past the box's patience: %v", err)
+		t.Fatalf("status past the mailbox's patience: %v", err)
 	}
 	release()
 

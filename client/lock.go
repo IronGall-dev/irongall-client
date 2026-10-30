@@ -11,28 +11,28 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-// The box's lock is its state file, the bbolt database "state", held open by
-// a command from its start to its end ([Box.hold]). bbolt takes an exclusive
-// flock on it, so one command of a box runs at a time and none reads what
+// The mailbox's lock is its state file, the bbolt database "state", held open by
+// a command from its start to its end ([Mailbox.hold]). bbolt takes an exclusive
+// flock on it, so one command of a mailbox runs at a time and none reads what
 // another is half way through writing, and the kernel lets go of it however
 // the process that held it ended (#235). signal-cli does the same with one
 // lock on an account's file, held for a whole command and waited for by the
 // next. A lock-free layout, Maildir's name per message renamed into place,
-// fits a file written once, and not what a box reads, compares and writes
+// fits a file written once, and not what a mailbox reads, compares and writes
 // again, such as its revocations and a peer's serials (decided on #62, #83 and
-// #96). A box directory on NFS, where a flock is not one to rely on, is not
+// #96). A mailbox directory on NFS, where a flock is not one to rely on, is not
 // supported (#188).
 //
-// In one process, goroutines that share a Box take turns in its slot first
+// In one process, goroutines that share a Mailbox take turns in its slot first
 // (claim), at each exported entry that reads or writes the state file, so a
 // command of one waits for another's as a command of another process does
 // (#329).
 
-// errLocked is returned when another command still holds the box's lock once
+// errLocked is returned when another command still holds the mailbox's lock once
 // a command has waited for it as long as it waits.
-var errLocked = refuse("another command of this box held its lock, its state file, for as long as a command waits for it: a box's commands write its files one at a time")
+var errLocked = refuse("another command of this mailbox held its lock, its state file, for as long as a command waits for it: a mailbox's commands write its files one at a time")
 
-// lockPatience is how long a command waits for the box's lock while another
+// lockPatience is how long a command waits for the mailbox's lock while another
 // command holds it: what apt waits for its own lock when no one is at a
 // terminal.
 var lockPatience = 2 * time.Minute
@@ -41,12 +41,12 @@ var lockPatience = 2 * time.Minute
 // attempts, a command that waits checks its context and its patience.
 const lockTry = 100 * time.Millisecond
 
-// hold takes the box's lock for a command, waiting up to lockPatience while
+// hold takes the mailbox's lock for a command, waiting up to lockPatience while
 // another command holds it (openState), and keeps the state file it opened on
-// the box for the command's transactions until release.
-func (b *Box) hold(ctx context.Context) (func() error, error) {
+// the mailbox for the command's transactions until release.
+func (b *Mailbox) hold(ctx context.Context) (func() error, error) {
 	if err := b.makeState(); err != nil {
-		return nil, fmt.Errorf("the box's state file: %w", err)
+		return nil, fmt.Errorf("the mailbox's state file: %w", err)
 	}
 	db, err := b.openState(ctx, false)
 	// Removed between makeState and the open: made again beside its place,
@@ -60,7 +60,7 @@ func (b *Box) hold(ctx context.Context) (func() error, error) {
 		if errors.Is(err, errLocked) || ctx.Err() != nil {
 			return nil, err
 		}
-		return nil, fmt.Errorf("the box's state file: %w", err)
+		return nil, fmt.Errorf("the mailbox's state file: %w", err)
 	}
 	b.db = db
 	return func() error {
@@ -69,14 +69,14 @@ func (b *Box) hold(ctx context.Context) (func() error, error) {
 	}, nil
 }
 
-// makeState makes the box's state file where it has none, as writeFile makes
-// every file a box keeps: bbolt makes the database beside it and syncs it,
+// makeState makes the mailbox's state file where it has none, as writeFile makes
+// every file a mailbox keeps: bbolt makes the database beside it and syncs it,
 // and only then is it linked into place, where a link replaces nothing
 // another command made first. bbolt writes a new database where it is
 // opened, and one that a crash or a full disk cut off there can fault every
 // process that opens it after (bbolt's README, of a database's first
 // initialization; etcd-io/etcd#16596).
-func (b *Box) makeState() error {
+func (b *Mailbox) makeState() error {
 	if _, err := os.Lstat(b.path("state")); !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
@@ -106,10 +106,10 @@ func (b *Box) makeState() error {
 	return syncDir(b.dir)
 }
 
-// claim takes the Box's slot for one command or reading, waiting while
+// claim takes the Mailbox's slot for one command or reading, waiting while
 // another goroutine's holds it as hold waits for the state file: up to
 // lockPatience, while ctx lasts, telling Options.Waiting once (#329).
-func (b *Box) claim(ctx context.Context) (func(), error) {
+func (b *Mailbox) claim(ctx context.Context) (func(), error) {
 	select {
 	case b.slot <- struct{}{}:
 		return func() { <-b.slot }, nil
@@ -130,14 +130,14 @@ func (b *Box) claim(ctx context.Context) (func(), error) {
 	}
 }
 
-// reading runs f, a reading of the box that writes nothing, in the Box's
+// reading runs f, a reading of the mailbox that writes nothing, in the Mailbox's
 // slot (claim) and with its state file open read-only throughout, which
-// waits while a command writes the box: what f's views read is one state,
+// waits while a command writes the mailbox: what f's views read is one state,
 // never a command's half done (#329), and the wait ends with ctx (#330).
 // Where the open finds no state file, every view of f reads none, and opens
 // none that a command makes in the meantime, which would read a second state
 // and wait for that command with no context (#382).
-func reading[T any](ctx context.Context, b *Box, f func() (T, error)) (v T, err error) {
+func reading[T any](ctx context.Context, b *Mailbox, f func() (T, error)) (v T, err error) {
 	release, err := b.claim(ctx)
 	if err != nil {
 		return v, err
@@ -160,13 +160,13 @@ func reading[T any](ctx context.Context, b *Box, f func() (T, error)) (v T, err 
 	return f()
 }
 
-// locked runs f with the box's lock held ([Box.hold]), and lets go of it
+// locked runs f with the mailbox's lock held ([Mailbox.hold]), and lets go of it
 // after, on every way out of f, a panic among them. It is the one entry of
-// every command that writes the box, so a box that holds its own revocation
+// every command that writes the mailbox, so a mailbox that holds its own revocation
 // is refused here, before anything is asked or written (PROTOCOL.md §12.5):
 // only what §12.5 lets it still do runs on one, through lockedFinished. A
 // command that learns it part way returns it at its exit (outcome).
-func locked[T any](ctx context.Context, b *Box, f func() (T, error)) (v T, err error) {
+func locked[T any](ctx context.Context, b *Mailbox, f func() (T, error)) (v T, err error) {
 	return lockedFinished(ctx, b, func() (T, error) {
 		if err := b.finished(); err != nil {
 			return v, err
@@ -176,25 +176,25 @@ func locked[T any](ctx context.Context, b *Box, f func() (T, error)) (v T, err e
 	})
 }
 
-// outcome is what a command that began with its box unfinished returns:
-// what it returned, or once it kept the box's own revocation on the way
+// outcome is what a command that began with its mailbox unfinished returns:
+// what it returned, or once it kept the mailbox's own revocation on the way
 // (keepRevocation), that revocation alone as its error, beside what it did
 // before (#332), whatever else it met after, a call refused among them.
-func outcome[T any](b *Box, v T, err error) (T, error) {
+func outcome[T any](b *Mailbox, v T, err error) (T, error) {
 	if b.ended != nil {
 		return v, b.ended
 	}
 	return v, err
 }
 
-// lockedFinished is locked for a command a box that holds its own
+// lockedFinished is locked for a command a mailbox that holds its own
 // revocation still runs, since it neither carries a pass nor asks for
 // anything §12.5 refuses: asking about a revocation and keeping one, a flush,
-// which moves what waits to outbox/failed/, and a change to the box's own
+// which moves what waits to outbox/failed/, and a change to the mailbox's own
 // files alone. Each signs nothing (sign). Each begins having kept no
 // revocation of its own, and asks nothing once it has (call); finishing the
-// box is what some of them are for, so none is held to locked's outcome.
-func lockedFinished[T any](ctx context.Context, b *Box, f func() (T, error)) (v T, err error) {
+// mailbox is what some of them are for, so none is held to locked's outcome.
+func lockedFinished[T any](ctx context.Context, b *Mailbox, f func() (T, error)) (v T, err error) {
 	unclaim, err := b.claim(ctx)
 	if err != nil {
 		return v, err
@@ -215,13 +215,13 @@ func lockedFinished[T any](ctx context.Context, b *Box, f func() (T, error)) (v 
 }
 
 // lockedDo is locked, for an f that returns only an error.
-func (b *Box) lockedDo(ctx context.Context, f func() error) error {
+func (b *Mailbox) lockedDo(ctx context.Context, f func() error) error {
 	_, err := locked(ctx, b, func() (struct{}, error) { return struct{}{}, f() })
 	return err
 }
 
 // lockedFinishedDo is lockedFinished, for an f that returns only an error.
-func (b *Box) lockedFinishedDo(ctx context.Context, f func() error) error {
+func (b *Mailbox) lockedFinishedDo(ctx context.Context, f func() error) error {
 	_, err := lockedFinished(ctx, b, func() (struct{}, error) { return struct{}{}, f() })
 	return err
 }

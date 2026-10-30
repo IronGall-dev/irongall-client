@@ -91,7 +91,7 @@ func TestEachBodyHasItsTypesMembers(t *testing.T) {
 	for name, typ := range map[string]any{
 		"RegisterRequest":  protocol.RegisterRequest{},
 		"PrekeyRequest":    protocol.PrekeyRequest{},
-		"BoxResponse":      protocol.BoxResponse{},
+		"MailboxResponse":  protocol.MailboxResponse{},
 		"Receipt":          protocol.Receipt{},
 		"MessageList":      protocol.MessageList{},
 		"MessageInfo":      protocol.MessageInfo{},

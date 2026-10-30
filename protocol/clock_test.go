@@ -13,14 +13,14 @@ import (
 // time-limited thing leaves MaxSkew of room (PROTOCOL.md §3.4). MaxSkew is the
 // width of the clocks a server's pass check takes. This holds the claim
 // itself, with the real checks: it finds the fastest and the slowest clock a
-// server takes a new pass from, and then has the box with the fastest clock
+// server takes a new pass from, and then has the mailbox with the fastest clock
 // make a certificate, a prekey statement and an envelope, and the server and
-// the box with the slowest clock check them.
-func TestWhatABoxWithTheFastestClockMakesIsTakenByTheSlowest(t *testing.T) {
-	b := newCertBox(t)
+// the mailbox with the slowest clock check them.
+func TestWhatAMailboxWithTheFastestClockMakesIsTakenByTheSlowest(t *testing.T) {
+	b := newCertMailbox(t)
 	server := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
 	const name = "dromas.example"
-	taken := func(off time.Duration) bool { // is a box whose clock is off by this much taken by the server?
+	taken := func(off time.Duration) bool { // is a mailbox whose clock is off by this much taken by the server?
 		at := server.Add(off)
 		cert, err := NewCertificate(b.id, b.identity, b.work.PublicKey(), 1, at)
 		if err != nil {
@@ -57,7 +57,7 @@ func TestWhatABoxWithTheFastestClockMakesIsTakenByTheSlowest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for who, at := range map[string]time.Time{"the slowest box": slow, "the server": server} {
+	for who, at := range map[string]time.Time{"the slowest mailbox": slow, "the server": server} {
 		if _, err := CheckCertificate(b.id, cert.PublicKey(), at); err != nil {
 			t.Errorf("a certificate made by the fastest clock, checked by %s: %v", who, err)
 		}
@@ -67,7 +67,7 @@ func TestWhatABoxWithTheFastestClockMakesIsTakenByTheSlowest(t *testing.T) {
 		t.Errorf("a prekey statement signed by the fastest clock: %v", err)
 	}
 	// An envelope the fastest dates is one the slowest reads.
-	other := newCertBox(t)
+	other := newCertMailbox(t)
 	env, err := NewEnvelope(b.id.Address(), other.id.Address(), "hello", fast)
 	if err != nil {
 		t.Fatal(err)
@@ -94,7 +94,7 @@ func TestWhatABoxWithTheFastestClockMakesIsTakenByTheSlowest(t *testing.T) {
 // signed. Bytes that name the identity as their signer and carry no
 // signature of it are not "not begun": they are not the identity's.
 func TestOnlyACertificateTheIdentitySignedIsJudgedByItsDates(t *testing.T) {
-	b := newCertBox(t)
+	b := newCertMailbox(t)
 	now := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
 	for name, change := range map[string]func(c *ssh.Certificate){
 		"not begun": func(c *ssh.Certificate) { c.ValidAfter = uint64(now.Add(time.Hour).Unix()) },
@@ -125,7 +125,7 @@ func TestOnlyACertificateTheIdentitySignedIsJudgedByItsDates(t *testing.T) {
 // is that far behind its maker's takes it at once, and one a second further
 // behind does not.
 func TestACertificateStartsMaxSkewBeforeItIsMade(t *testing.T) {
-	b := newCertBox(t)
+	b := newCertMailbox(t)
 	made := time.Date(2026, 10, 13, 12, 0, 30, 0, time.UTC)
 	cert, err := NewCertificate(b.id, b.identity, b.work.PublicKey(), 1, made)
 	if err != nil {

@@ -21,7 +21,7 @@ func TestAPostIsDatedAtThePost(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	r, s := e.box(protocol.Classic), e.box(protocol.Classic)
+	r, s := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	e.srv.SetMiddle(func(w http.ResponseWriter, q *http.Request, next http.Handler) {
 		if q.Method == http.MethodPost && strings.HasSuffix(q.URL.Path, "/messages") {
 			http.Error(w, "down", http.StatusServiceUnavailable)
@@ -84,7 +84,7 @@ func TestARetryDatedAfreshIsDeliveredOnce(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
-	r, s := e.box(protocol.Classic), e.box(protocol.Classic)
+	r, s := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	e.srv.SetMiddle(func(w http.ResponseWriter, q *http.Request, next http.Handler) {
 		if q.Method == http.MethodPost && strings.HasSuffix(q.URL.Path, "/messages") {
 			next.ServeHTTP(httptest.NewRecorder(), q) // stored, and the answer never comes

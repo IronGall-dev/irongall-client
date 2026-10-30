@@ -23,22 +23,22 @@ import (
 
 // A server can list a from beside each message, a member PROTOCOL.md §11.11
 // does not give a list, so a reader ignores it, whatever its value (§3.3). A
-// message is its signature's, so A's message listed as another box's, as
+// message is its signature's, so A's message listed as another mailbox's, as
 // what is no address or as no string at all, is delivered as A's, and the
-// box the list names is neither pinned nor asked about.
+// mailbox the list names is neither pinned nor asked about.
 func TestAFromTheServerListsIsNotRead(t *testing.T) {
 	t.Parallel()
-	for name, listed := range map[string]func(a, c *client.Box) any{
-		"another box's address": func(_, c *client.Box) any { return c.Address().String() },
-		"a path":                func(*client.Box, *client.Box) any { return "../../" + strings.Repeat("x", 58) },
-		"A's with a line feed":  func(a, _ *client.Box) any { return a.Address().String() + "\n" },
-		"a number":              func(*client.Box, *client.Box) any { return 5 },
-		"an object":             func(a, _ *client.Box) any { return map[string]string{"address": a.Address().String()} },
+	for name, listed := range map[string]func(a, c *client.Mailbox) any{
+		"another mailbox's address": func(_, c *client.Mailbox) any { return c.Address().String() },
+		"a path":                    func(*client.Mailbox, *client.Mailbox) any { return "../../" + strings.Repeat("x", 58) },
+		"A's with a line feed":      func(a, _ *client.Mailbox) any { return a.Address().String() + "\n" },
+		"a number":                  func(*client.Mailbox, *client.Mailbox) any { return 5 },
+		"an object":                 func(a, _ *client.Mailbox) any { return map[string]string{"address": a.Address().String()} },
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			e := newEnv(t)
-			a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+			a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 			send(t, a, b, "from A")
 			named := 0
 			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -63,7 +63,7 @@ func TestAFromTheServerListsIsNotRead(t *testing.T) {
 }
 
 // TestAFromTheServerListsDecidesNothing: a from the list names is read for
-// nothing a box decides: where a message lands, by whom it allowed or
+// nothing a mailbox decides: where a message lands, by whom it allowed or
 // blocked, and the replay set's (from, msg_id), which takes its retry as a
 // duplicate.
 func TestAFromTheServerListsDecidesNothing(t *testing.T) {
@@ -72,8 +72,8 @@ func TestAFromTheServerListsDecidesNothing(t *testing.T) {
 	t.Run("where it lands", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t)
-		a, c, d := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
-		b := e.heldBox(protocol.Classic)
+		a, c, d := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+		b := e.heldMailbox(protocol.Classic)
 		if _, err := b.Allow(ctx, a.Address()); err != nil {
 			t.Fatal(err)
 		}
@@ -81,7 +81,7 @@ func TestAFromTheServerListsDecidesNothing(t *testing.T) {
 			t.Fatal(err)
 		}
 		// Listed as one b has not allowed, then as one it blocked.
-		for _, named := range []*client.Box{d, c} {
+		for _, named := range []*client.Mailbox{d, c} {
 			send(t, a, b, "from A")
 			e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 				forge.List(t, w, r, next, func(l *forge.Listed) {
@@ -98,7 +98,7 @@ func TestAFromTheServerListsDecidesNothing(t *testing.T) {
 	t.Run("the replay set", func(t *testing.T) {
 		t.Parallel()
 		e := newEnv(t)
-		a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+		a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 		path := "/v1/" + b.Address().String() + "/messages"
 		lose := true
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -131,23 +131,23 @@ func TestAFromTheServerListsDecidesNothing(t *testing.T) {
 
 // TestForgeries plays the operator, who controls every byte the server sends
 // and stores. Each forgery must be refused by the client: never delivered,
-// never encrypted to, never pinned. Refused mail is kept in refused/ and acked, so
+// never encrypted to, never pinned. A refused message is kept in refused/ and acked, so
 // it leaves the server, and the refusal never blocks the claimed sender.
 //
-//	mail made in another box's name       O signs an envelope carrying A's identity → refused: not under a certificate of A's identity
-//	a second message after the signature  C's signed envelope in the padding   → A's is delivered, and nothing after its signature is read
-//	a forged identity on a send           C's identity served as B's           → the send refuses, nothing pinned
-//	swapped prekey                        C's valid prekey served as B's       → the send refuses to encrypt
-//	an expired prekey                     B's prekey past its not_after        → the send refuses to encrypt
-//	rollback of a peer's prekey           B's older prekey served again        → the send refuses (serial went down)
-//	a stolen working key, replaced since  a new prekey under B's old certificate → the send refuses (certificate serial went down)
-//	a lower serial, the same certificate  B's working key signs one below      → the send refuses (serial went down)
-//	rollback of the box's own prekey      the box's own older prekey served    → rekey refuses (it published a higher one)
-//	its own lower, the same certificate   its working key signs one below      → rekey refuses (it published a higher one)
-//	replay under a new id                 a delivered ciphertext, stored again → refused as a replay
-//	sent_at older than 33 days            an envelope dated 33 days and 1 s ago → refused as stale
-//	not encrypted to this box             A's message to C, stored in B's box  → refused: it does not decrypt
-//	an id that is not the hash            a message listed under another id    → refused; files are named by the hash
+//	a message made in another mailbox's name  O signs an envelope carrying A's identity → refused: not under a certificate of A's identity
+//	a second message after the signature      C's signed envelope in the padding        → A's is delivered, and nothing after its signature is read
+//	a forged identity on a send               C's identity served as B's                → the send refuses, nothing pinned
+//	swapped prekey                            C's valid prekey served as B's            → the send refuses to encrypt
+//	an expired prekey                         B's prekey past its not_after             → the send refuses to encrypt
+//	rollback of a peer's prekey               B's older prekey served again             → the send refuses (serial went down)
+//	a stolen working key, replaced since      a new prekey under B's old certificate    → the send refuses (certificate serial went down)
+//	a lower serial, the same certificate      B's working key signs one below           → the send refuses (serial went down)
+//	rollback of the mailbox's own prekey      the mailbox's own older prekey served     → rekey refuses (it published a higher one)
+//	its own lower, the same certificate       its working key signs one below           → rekey refuses (it published a higher one)
+//	replay under a new id                     a delivered ciphertext, stored again      → refused as a replay
+//	sent_at older than 33 days                an envelope dated 33 days and 1 s ago     → refused as stale
+//	not encrypted to this mailbox             A's message to C, stored in B's mailbox   → refused: it does not decrypt
+//	an id that is not the hash                a message listed under another id         → refused; files are named by the hash
 func TestForgeries(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {
@@ -160,9 +160,9 @@ func TestForgeries(t *testing.T) {
 			t.Fatalf("delivered %d, refused %v; want refused as %s for %q", len(res.Delivered), res.Refused, code, why)
 		}
 	}
-	t.Run("mail made in another box's name", func(t *testing.T) {
+	t.Run("a message made in another mailbox's name", func(t *testing.T) {
 		e := newEnv(t)
-		a, b, o := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+		a, b, o := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 		// The forger's own working key and certificate sign an envelope that
 		// carries A's identity document and says it is from A. The signature
 		// is good. The certificate is the forger's.
@@ -176,7 +176,7 @@ func TestForgeries(t *testing.T) {
 
 	t.Run("a second message after the signature", func(t *testing.T) {
 		e := newEnv(t)
-		a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+		a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 		genuine := e.line(a.Identity().Document(), a.Address(), b.Address(), "real, from A")
 		hidden := e.line(c.Identity().Document(), c.Address(), b.Address(), "hidden, from C")
 		id := e.seal(b, genuine, forge.Sign(t, worker(t, a), genuine, b.Address()), hidden, forge.Sign(t, worker(t, c), hidden, b.Address()))
@@ -201,11 +201,11 @@ func TestForgeries(t *testing.T) {
 
 	t.Run("a forged identity on a send", func(t *testing.T) {
 		e := newEnv(t)
-		a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+		a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 		st, sig := e.srv.Prekey(c.Address())
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if r.Method == http.MethodGet && r.URL.Path == "/v1/"+b.Address().String() {
-				fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: c.Identity().Document(), Prekey: st, PrekeySignature: sig})
+				fakeserver.WriteJSON(w, http.StatusOK, protocol.MailboxResponse{Identity: c.Identity().Document(), Prekey: st, PrekeySignature: sig})
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -220,11 +220,11 @@ func TestForgeries(t *testing.T) {
 
 	t.Run("swapped prekey", func(t *testing.T) {
 		e := newEnv(t)
-		a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+		a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 		st, sig := e.srv.Prekey(c.Address())
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if r.Method == http.MethodGet && r.URL.Path == "/v1/"+b.Address().String() {
-				fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: b.Identity().Document(), Prekey: st, PrekeySignature: sig})
+				fakeserver.WriteJSON(w, http.StatusOK, protocol.MailboxResponse{Identity: b.Identity().Document(), Prekey: st, PrekeySignature: sig})
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -243,9 +243,9 @@ func TestForgeries(t *testing.T) {
 
 	t.Run("an expired prekey", func(t *testing.T) {
 		e := newEnv(t)
-		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 		e.clock.Add(protocol.PrekeyLifetime)
-		if _, err := a.Rekey(ctx, ""); err != nil { // a certificate that still signs mail
+		if _, err := a.Rekey(ctx, ""); err != nil { // a certificate that still signs messages
 			t.Fatal(err)
 		}
 		if _, err := a.Send(ctx, b.Address(), "too late"); err == nil || !strings.Contains(err.Error(), "expired") {
@@ -258,7 +258,7 @@ func TestForgeries(t *testing.T) {
 
 	t.Run("rollback of a peer's prekey", func(t *testing.T) {
 		e := newEnv(t)
-		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 		st, sig := e.srv.Prekey(b.Address())
 		if _, err := b.Rekey(ctx, ""); err != nil {
 			t.Fatal(err)
@@ -266,7 +266,7 @@ func TestForgeries(t *testing.T) {
 		send(t, a, b, "sees the second prekey")
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if r.Method == http.MethodGet && r.URL.Path == "/v1/"+b.Address().String() {
-				fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: b.Identity().Document(), Prekey: st, PrekeySignature: sig})
+				fakeserver.WriteJSON(w, http.StatusOK, protocol.MailboxResponse{Identity: b.Identity().Document(), Prekey: st, PrekeySignature: sig})
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -278,7 +278,7 @@ func TestForgeries(t *testing.T) {
 
 	t.Run("a stolen working key, replaced since", func(t *testing.T) {
 		e := newEnv(t)
-		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 		stolen := worker(t, b) // read before the renewal deletes it
 		first := numberOf(t, b)
 		old, _ := e.srv.Prekey(b.Address())
@@ -300,7 +300,7 @@ func TestForgeries(t *testing.T) {
 		}
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if r.Method == http.MethodGet && r.URL.Path == "/v1/"+b.Address().String() {
-				fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: b.Identity().Document(), Prekey: p.Statement(), PrekeySignature: sig})
+				fakeserver.WriteJSON(w, http.StatusOK, protocol.MailboxResponse{Identity: b.Identity().Document(), Prekey: p.Statement(), PrekeySignature: sig})
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -310,19 +310,19 @@ func TestForgeries(t *testing.T) {
 		}
 	})
 
-	t.Run("rollback of the box's own prekey", func(t *testing.T) {
+	t.Run("rollback of the mailbox's own prekey", func(t *testing.T) {
 		e := newEnv(t)
-		b := e.box(protocol.Classic)
+		b := e.mailbox(protocol.Classic)
 		st, sig := e.srv.Prekey(b.Address())
 		if _, err := b.Rekey(ctx, ""); err != nil {
 			t.Fatal(err)
 		}
 		published, _ := e.srv.Prekey(b.Address())
 		// The first statement again: rekey would number from it, at or below
-		// what this box published, and publish over its own later statement.
+		// what this mailbox published, and publish over its own later statement.
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if r.Method == http.MethodGet && r.URL.Path == "/v1/"+b.Address().String() {
-				fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: b.Identity().Document(), Prekey: st, PrekeySignature: sig})
+				fakeserver.WriteJSON(w, http.StatusOK, protocol.MailboxResponse{Identity: b.Identity().Document(), Prekey: st, PrekeySignature: sig})
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -337,7 +337,7 @@ func TestForgeries(t *testing.T) {
 
 	// below serves b's statement in use at one serial below it, under the same
 	// certificate, signed by its working key, which whoever took it holds.
-	below := func(t *testing.T, e *env, b *client.Box) {
+	below := func(t *testing.T, e *env, b *client.Mailbox) {
 		t.Helper()
 		st, _ := e.srv.Prekey(b.Address())
 		p, err := protocol.ParsePrekey(st)
@@ -350,8 +350,8 @@ func TestForgeries(t *testing.T) {
 			t.Fatal(err)
 		}
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-			if r.Method == http.MethodGet && r.URL.Path == boxPath(b) {
-				fakeserver.WriteJSON(w, http.StatusOK, protocol.BoxResponse{Identity: b.Identity().Document(), Prekey: p.Statement(), PrekeySignature: sig})
+			if r.Method == http.MethodGet && r.URL.Path == mailboxPath(b) {
+				fakeserver.WriteJSON(w, http.StatusOK, protocol.MailboxResponse{Identity: b.Identity().Document(), Prekey: p.Statement(), PrekeySignature: sig})
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -360,7 +360,7 @@ func TestForgeries(t *testing.T) {
 
 	t.Run("a lower serial, the same certificate", func(t *testing.T) {
 		e := newEnv(t)
-		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 		send(t, a, b, "sees the prekey in use")
 		below(t, e, b)
 		if _, err := a.Send(ctx, b.Address(), "secret"); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("serial %d is below %d", numberOf(t, b)-1, numberOf(t, b))) {
@@ -373,7 +373,7 @@ func TestForgeries(t *testing.T) {
 
 	t.Run("its own lower, the same certificate", func(t *testing.T) {
 		e := newEnv(t)
-		b := e.box(protocol.Classic)
+		b := e.mailbox(protocol.Classic)
 		published, _ := e.srv.Prekey(b.Address())
 		below(t, e, b)
 		if _, err := b.Rekey(ctx, ""); err == nil || !strings.Contains(err.Error(), "rollback") || !strings.Contains(err.Error(), "dromas cert revoke-earlier") {
@@ -386,7 +386,7 @@ func TestForgeries(t *testing.T) {
 
 	t.Run("replay under a new id", func(t *testing.T) {
 		e := newEnv(t)
-		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 		sent := forge.Capture(e.srv, http.MethodPost, "/v1/"+b.Address().String()+"/messages")
 		send(t, a, b, "once")
 		e.srv.SetMiddle(nil)
@@ -398,7 +398,7 @@ func TestForgeries(t *testing.T) {
 
 	t.Run("sent_at older than 33 days", func(t *testing.T) {
 		e := newEnv(t)
-		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 		env, err := protocol.NewEnvelope(a.Address(), b.Address(), "stale", e.clock.Now().Add(-protocol.TTL-time.Second))
 		if err != nil {
 			t.Fatal(err)
@@ -412,10 +412,10 @@ func TestForgeries(t *testing.T) {
 		refusedFor(t, receive(t, b), protocol.RefusedStale, "older than 33 days")
 	})
 
-	t.Run("not encrypted to this box", func(t *testing.T) {
+	t.Run("not encrypted to this mailbox", func(t *testing.T) {
 		e := newEnv(t)
-		a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
-		// A's message to C, stored in B's box as it is.
+		a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+		// A's message to C, stored in B's mailbox as it is.
 		sent := forge.Capture(e.srv, http.MethodPost, "/v1/"+c.Address().String()+"/messages")
 		send(t, a, c, "for C's key")
 		e.srv.SetMiddle(nil)
@@ -426,7 +426,7 @@ func TestForgeries(t *testing.T) {
 
 	t.Run("an id that is not the hash", func(t *testing.T) {
 		e := newEnv(t)
-		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 		realID := send(t, a, b, "listed under another id").ID
 		h := sha256.Sum256([]byte("not the hash"))
 		fake := hex.EncodeToString(h[:])

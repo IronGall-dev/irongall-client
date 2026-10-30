@@ -17,9 +17,9 @@ import (
 // characters) and never a link.
 var aliasGrammar = regexp.MustCompile(`\A[a-z0-9][a-z0-9._-]{0,31}\z`)
 
-// Alias is this box's own name for a peer's address: a word to send to in
-// place of 64 hex characters. Aliases live in the box's aliases file, one
-// "<name> <address>" line each, and never leave the box: neither the server
+// Alias is this mailbox's own name for a peer's address: a word to send to in
+// place of 64 hex characters. Aliases live in the mailbox's aliases file, one
+// "<name> <address>" line each, and never leave the mailbox: neither the server
 // nor the peer sees them. An alias is only as good as where its address came
 // from.
 type Alias struct {
@@ -35,9 +35,9 @@ func ValidAlias(name string) error {
 	return nil
 }
 
-// Aliases returns the box's aliases, sorted by name. A line of the aliases
+// Aliases returns the mailbox's aliases, sorted by name. A line of the aliases
 // file that is not "<name> <address>" names nothing and is skipped.
-func (b *Box) Aliases() ([]Alias, error) {
+func (b *Mailbox) Aliases() ([]Alias, error) {
 	lines, err := b.aliasLines()
 	if err != nil {
 		return nil, err
@@ -52,18 +52,18 @@ func (b *Box) Aliases() ([]Alias, error) {
 	return as, nil
 }
 
-// SetAlias names a peer's address, and allows it: its mail lands in inbox/
-// ([Box.Allow]). A name that already names another address is refused,
+// SetAlias names a peer's address, and allows it: its messages land in inbox/
+// ([Mailbox.Allow]). A name that already names another address is refused,
 // never moved: remove it first, so no send goes to a peer other than the
 // one the name meant when it was learned.
-func (b *Box) SetAlias(ctx context.Context, name string, a protocol.Address) error {
+func (b *Mailbox) SetAlias(ctx context.Context, name string, a protocol.Address) error {
 	if err := ValidAlias(name); err != nil {
 		return err
 	}
 	return b.lockedFinishedDo(ctx, func() error { return b.setAlias(name, a) })
 }
 
-func (b *Box) setAlias(name string, a protocol.Address) error {
+func (b *Mailbox) setAlias(name string, a protocol.Address) error {
 	switch have, err := b.aliased(name); {
 	case err != nil:
 		return err
@@ -83,13 +83,13 @@ func (b *Box) setAlias(name string, a protocol.Address) error {
 	return err
 }
 
-// RemoveAlias removes a name. The peer's pinned identity and mail stay, and
+// RemoveAlias removes a name. The peer's pinned identity and messages stay, and
 // it stays allowed: un-naming a peer is not blocking it.
-func (b *Box) RemoveAlias(ctx context.Context, name string) error {
+func (b *Mailbox) RemoveAlias(ctx context.Context, name string) error {
 	return b.lockedFinishedDo(ctx, func() error { return b.removeAlias(name) })
 }
 
-func (b *Box) removeAlias(name string) error {
+func (b *Mailbox) removeAlias(name string) error {
 	lines, err := b.aliasLines()
 	if err != nil {
 		return err
@@ -106,7 +106,7 @@ func (b *Box) removeAlias(name string) error {
 
 // alias returns the address a name names. A name on two lines with two
 // addresses names neither.
-func (b *Box) alias(name string) (protocol.Address, error) {
+func (b *Mailbox) alias(name string) (protocol.Address, error) {
 	found, err := b.aliased(name)
 	switch {
 	case err != nil:
@@ -120,7 +120,7 @@ func (b *Box) alias(name string) (protocol.Address, error) {
 }
 
 // aliased returns every distinct address the aliases file gives a name.
-func (b *Box) aliased(name string) ([]protocol.Address, error) {
+func (b *Mailbox) aliased(name string) ([]protocol.Address, error) {
 	as, err := b.Aliases()
 	if err != nil {
 		return nil, err
@@ -143,7 +143,7 @@ func parseAlias(line string) (Alias, bool) {
 	return Alias{Name: f[0], Address: a}, err == nil
 }
 
-func (b *Box) aliasLines() ([]string, error) {
+func (b *Mailbox) aliasLines() ([]string, error) {
 	data, err := os.ReadFile(b.path("aliases"))
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
@@ -158,7 +158,7 @@ func (b *Box) aliasLines() ([]string, error) {
 	return lines, nil
 }
 
-func (b *Box) writeAliases(lines []string) error {
+func (b *Mailbox) writeAliases(lines []string) error {
 	var out strings.Builder
 	for _, l := range lines {
 		out.WriteString(l + "\n")

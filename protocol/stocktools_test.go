@@ -18,7 +18,7 @@ import (
 // tools this project did not write, so that each is the standard's format and
 // not this code's reading of it (testdata/vectors/README.md, PROTOCOL.md §16):
 // age decrypts each message with its prekey's published test identity to
-// exactly its plaintext, and with the other box's not at all; head and sed split that plaintext into the line and
+// exactly its plaintext, and with the other mailbox's not at all; head and sed split that plaintext into the line and
 // its signature; ssh-keygen reads each certificate and verifies each signature
 // under it, at the vectors' time, and each certificate file is the one its
 // signatures carry; and sha256sum gives each address. Nothing
@@ -55,16 +55,16 @@ func TestVectorsByToolsNotOurs(t *testing.T) {
 		}
 		return b
 	}
-	address := func(t *testing.T, box string) string {
+	address := func(t *testing.T, mailbox string) string {
 		t.Helper()
-		return strings.TrimSpace(string(file(t, box+"/address")))
+		return strings.TrimSpace(string(file(t, mailbox+"/address")))
 	}
 	// The key line of an identity document, as an authorized_keys line.
-	key := func(t *testing.T, box string) string {
+	key := func(t *testing.T, mailbox string) string {
 		t.Helper()
-		lines := strings.Split(string(file(t, box+"/identity.doc")), "\n")
+		lines := strings.Split(string(file(t, mailbox+"/identity.doc")), "\n")
 		if len(lines) < 2 {
-			t.Fatalf("%s/identity.doc has no key line", box)
+			t.Fatalf("%s/identity.doc has no key line", mailbox)
 		}
 		return lines[1]
 	}
@@ -73,13 +73,13 @@ func TestVectorsByToolsNotOurs(t *testing.T) {
 
 	t.Run("sha256sum", func(t *testing.T) {
 		tool(t, "sha256sum")
-		for _, box := range []string{"a", "b", "c"} {
-			out, err := run(t, file(t, box+"/identity.doc"), "sha256sum")
+		for _, mailbox := range []string{"a", "b", "c"} {
+			out, err := run(t, file(t, mailbox+"/identity.doc"), "sha256sum")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := strings.Fields(string(out))[0]; got != address(t, box) {
-				t.Errorf("%s: sha256sum of identity.doc is %s, the address is %s", box, got, address(t, box))
+			if got := strings.Fields(string(out))[0]; got != address(t, mailbox) {
+				t.Errorf("%s: sha256sum of identity.doc is %s, the address is %s", mailbox, got, address(t, mailbox))
 			}
 		}
 	})
@@ -94,7 +94,7 @@ func TestVectorsByToolsNotOurs(t *testing.T) {
 		t.Logf("age %s", strings.TrimSpace(string(v)))
 		for _, m := range []struct{ msg, key, other string }{{"a-to-b", "b-1.pq", "c-1.classic"}, {"a-to-c", "c-1.classic", "b-1.pq"}} {
 			if _, err := run(t, nil, "age", "-d", "-i", "input/"+m.other+".key", "message/"+m.msg+".age"); err == nil {
-				t.Errorf("%s: age decrypts it with %s, another box's prekey", m.msg, m.other)
+				t.Errorf("%s: age decrypts it with %s, another mailbox's prekey", m.msg, m.other)
 			}
 			out, err := run(t, nil, "age", "-d", "-i", "input/"+m.key+".key", "message/"+m.msg+".age")
 			if err != nil {
@@ -128,20 +128,20 @@ func TestVectorsByToolsNotOurs(t *testing.T) {
 	t.Run("ssh-keygen", func(t *testing.T) {
 		tool(t, "ssh-keygen")
 		work := t.TempDir()
-		signers := func(name, box string, ca bool) string {
-			line := address(t, box) + " "
+		signers := func(name, mailbox string, ca bool) string {
+			line := address(t, mailbox) + " "
 			if ca {
 				line += "cert-authority "
 			}
 			p := filepath.Join(work, name)
-			if err := os.WriteFile(p, []byte(line+key(t, box)+"\n"), 0o600); err != nil {
+			if err := os.WriteFile(p, []byte(line+key(t, mailbox)+"\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			return p
 		}
-		verify := func(t *testing.T, signersFile, box, ns, msg, sig string) {
+		verify := func(t *testing.T, signersFile, mailbox, ns, msg, sig string) {
 			t.Helper()
-			if _, err := run(t, file(t, msg), "ssh-keygen", "-Y", "verify", "-f", signersFile, "-I", address(t, box), "-n", ns, "-s", sig, "-O", "verify-time="+at); err != nil {
+			if _, err := run(t, file(t, msg), "ssh-keygen", "-Y", "verify", "-f", signersFile, "-I", address(t, mailbox), "-n", ns, "-s", sig, "-O", "verify-time="+at); err != nil {
 				t.Errorf("%s over %s: %v", sig, msg, err)
 			}
 		}
@@ -181,12 +181,12 @@ func TestVectorsByToolsNotOurs(t *testing.T) {
 				t.Errorf("%s does not carry the certificate in %s", sig, pub)
 			}
 		}
-		// Every signature in a box's directory that carries a certificate carries
-		// that box's work-cert.pub; message/ holds A's. The rest carry the bare
+		// Every signature in a mailbox's directory that carries a certificate carries
+		// that mailbox's work-cert.pub; message/ holds A's. The rest carry the bare
 		// identity, verified below.
-		for box, sigs := range map[string]string{"a": "a/*.sig", "b": "b/*.sig", "c": "c/*.sig", "message": "message/*.sig"} {
-			owner, certified := box, 0
-			if box == "message" {
+		for mailbox, sigs := range map[string]string{"a": "a/*.sig", "b": "b/*.sig", "c": "c/*.sig", "message": "message/*.sig"} {
+			owner, certified := mailbox, 0
+			if mailbox == "message" {
 				owner = "a"
 			}
 			for _, s := range globIn(t, dir, sigs) {
@@ -207,10 +207,10 @@ func TestVectorsByToolsNotOurs(t *testing.T) {
 		for _, c := range globIn(t, dir, "cert/*.pub") {
 			carries(t, c, strings.TrimSuffix(c, ".pub")+".sig")
 		}
-		ns := func(tag, box string) string { return tag + ":" + address(t, box) }
-		for _, box := range []string{"a", "b", "c"} {
-			under := signers(box+"-ca", box, true)
-			verify(t, under, box, ns("dromas-prekey-v1", box), box+"/prekey-1.txt", box+"/prekey-1.txt.sig")
+		ns := func(tag, mailbox string) string { return tag + ":" + address(t, mailbox) }
+		for _, mailbox := range []string{"a", "b", "c"} {
+			under := signers(mailbox+"-ca", mailbox, true)
+			verify(t, under, mailbox, ns("dromas-prekey-v1", mailbox), mailbox+"/prekey-1.txt", mailbox+"/prekey-1.txt.sig")
 		}
 		underA := signers("a-ca", "a", true)
 		verify(t, underA, "a", ns("dromas-prekey-v1", "a"), "a/prekey-2.txt", "a/prekey-2.txt.sig")
@@ -225,9 +225,9 @@ func TestVectorsByToolsNotOurs(t *testing.T) {
 			verify(t, underA, "a", ns("dromas-prekey-v1", "a"), "a/prekey-1.txt", strings.TrimSuffix(c, ".pub")+".sig")
 		}
 		// What the identity signs itself is verified under its bare key.
-		for _, box := range []string{"a", "c"} {
-			bare := signers(box+"-bare", box, false)
-			verify(t, bare, box, ns("dromas-revoke-v1", box), box+"/revoke.txt", box+"/revoke.sig")
+		for _, mailbox := range []string{"a", "c"} {
+			bare := signers(mailbox+"-bare", mailbox, false)
+			verify(t, bare, mailbox, ns("dromas-revoke-v1", mailbox), mailbox+"/revoke.txt", mailbox+"/revoke.sig")
 		}
 		bareA := signers("a-bare", "a", false)
 		verify(t, bareA, "a", ns("dromas-revoke-v1", "a"), "a/revoke.txt", "a/revoke.sha256.sig")

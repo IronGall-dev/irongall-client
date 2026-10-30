@@ -19,7 +19,7 @@ const (
 	armorWidth = 70 // ssh-keygen's line length
 )
 
-// MaxSignature is the most bytes an armored signature may be for a box of any
+// MaxSignature is the most bytes an armored signature may be for a mailbox of any
 // identity key type defined here: the largest of their bounds
 // (SignatureBound). A field that carries one counts every byte it holds; in a
 // message it is the block from the BEGIN line through the END line. Dearmor
@@ -27,8 +27,8 @@ const (
 // it knows whose signature it is.
 const MaxSignature = 4096
 
-// SignatureBound returns the most bytes an armored signature may be for a box
-// whose identity is of key type t (PROTOCOL.md §3.2): what the box signs, by its
+// SignatureBound returns the most bytes an armored signature may be for a mailbox
+// whose identity is of key type t (PROTOCOL.md §3.2): what the mailbox signs, by its
 // identity or by a working key under a certificate its identity signed. Each
 // type states its own, several times the largest that type makes, and a new
 // type leaves the others where they are: were one bound to rise, a block
@@ -206,7 +206,7 @@ func cstring(s []byte) ([]byte, error) {
 // keyAsRead is a signing key, in SSH wire form, as OpenSSH reads it: a bare
 // key's type, and an ECDSA key's curve, are cstrings. A certificate is left
 // as its identity signed it, but for its own signature, which nothing
-// signs: an Ed25519 working key's certificate is the one kind a box has.
+// signs: an Ed25519 working key's certificate is the one kind a mailbox has.
 // OpenSSH checks the identity's signature over a certificate's bytes as they
 // came, its type among them, so a NUL added to that type is refused there,
 // and it is left here for the checks after this to refuse.

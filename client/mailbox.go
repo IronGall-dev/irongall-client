@@ -31,18 +31,18 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// DefaultBase is the server every box talks to unless told otherwise.
+// DefaultBase is the server every mailbox talks to unless told otherwise.
 const DefaultBase = "https://dromas.dev"
 
-// EchoAddress is the echo box dromas.dev runs (cmd/dromas-echo): send
+// EchoAddress is the echo mailbox dromas.dev runs (cmd/dromas-echo): send
 // it anything, and it answers with a signed reply saying what it checked and
-// carrying the body back. Its prekey is post-quantum. Mail to it is readable
+// carrying the body back. Its prekey is post-quantum. A message to it is readable
 // by dromas.dev's operator, who runs it.
 const EchoAddress = "82be51e181471140db80904d4992a99383028c1fbc92e1f53614341def8c2225"
 
-// EchoAddressNoPQ is dromas.dev's second echo box, whose prekey is X25519
+// EchoAddressNoPQ is dromas.dev's second echo mailbox, whose prekey is X25519
 // only: the one a sender on age 1.2 can reach (sh/dromas.sh; this client
-// reaches both). It answers as EchoAddress does, and mail to it is as
+// reaches both). It answers as EchoAddress does, and a message to it is as
 // readable by dromas.dev's operator.
 const EchoAddressNoPQ = "518a0a89c533354f0d5a890599722a86d01b9b2d8c87549bb24c3276e819048c"
 
@@ -52,13 +52,13 @@ const EchoAddressNoPQ = "518a0a89c533354f0d5a890599722a86d01b9b2d8c87549bb24c327
 // for a test (SetRequestTimeout).
 var requestTimeout = time.Minute
 
-// Options configures a [Box]. The zero value is ready to use.
+// Options configures a [Mailbox]. The zero value is ready to use.
 type Options struct {
 	// Base is the server's base URL; DefaultBase if empty. It is https, or
 	// http only to a server on this machine ([checkServerURL]).
 	Base string
 	// HTTPClient makes the requests; if nil, a client that cuts a request
-	// after a minute, so a server that stops answering cannot hold the box's
+	// after a minute, so a server that stops answering cannot hold the mailbox's
 	// lock for ever: a send or a fetch of a ciphertext once a minute passes
 	// with no byte of it moving, the wait for its answer's head among them,
 	// with no bound on the whole, so a message of any size moves on a slow
@@ -66,41 +66,41 @@ type Options struct {
 	// ciphertext is sent and a fetch's answer that is not its ciphertext, and
 	// any other request, after a minute in all. A client
 	// given here is used as it is, its own timeouts its choice, and none of
-	// those bounds is added. The box uses a copy of it that follows no
+	// those bounds is added. The mailbox uses a copy of it that follows no
 	// redirect ([followNone]).
 	HTTPClient *http.Client
 	// Now is the clock; time.Now if nil.
 	Now func() time.Time
-	// IdentityType is the type of identity key Init makes for a new box:
+	// IdentityType is the type of identity key Init makes for a new mailbox:
 	// protocol.IdentityEd25519 if empty, and that is the one to use. Every
-	// client verifies an Ed25519 identity; a box of any other type can
-	// neither send to nor receive from a box whose client does not verify
+	// client verifies an Ed25519 identity; a mailbox of any other type can
+	// neither send to nor receive from a mailbox whose client does not verify
 	// that type. An existing identity key is used as it is, whatever this
 	// says.
 	IdentityType string
-	// SenderKeyTypes is what the box declares with each prekey it
-	// publishes: the identity key types of the senders it takes mail from
+	// SenderKeyTypes is what the mailbox declares with each prekey it
+	// publishes: the identity key types of the senders it takes messages from
 	// (protocol.AcceptsSender). Nil: every type this client verifies, which
-	// is the one to use. The one entry protocol.AnySender is for a box that
-	// would not show which types it verifies: the server then takes mail
+	// is the one to use. The one entry protocol.AnySender is for a mailbox that
+	// would not show which types it verifies: the server then takes messages
 	// for it from a sender of any type, and this client refuses what it
 	// cannot verify.
 	SenderKeyTypes []string
-	// Waiting, if not nil, is told when a command finds the box's lock held
-	// by another command of the box, once, before it waits for it: a box's
+	// Waiting, if not nil, is told when a command finds the mailbox's lock held
+	// by another command of the mailbox, once, before it waits for it: a mailbox's
 	// commands write its files one at a time.
 	Waiting func()
 	// DrainTime is how long one Receive drains while bytes move, holding the
-	// box's lock: past it the drain stops, as at its other limits
+	// mailbox's lock: past it the drain stops, as at its other limits
 	// (Result.More), and a fetch under way keeps what it read for the next
 	// Receive to go on from. Zero is DefaultDrainTime.
 	DrainTime time.Duration
 }
 
-// Box is one box: its state directory and the server it talks to. It is
+// Mailbox is one mailbox: its state directory and the server it talks to. It is
 // safe for concurrent use: a command or reading of one goroutine waits for
 // another's, as one of another process does.
-type Box struct {
+type Mailbox struct {
 	dir  string
 	base string
 	http *http.Client
@@ -109,45 +109,45 @@ type Box struct {
 	stall bool
 	now   func() time.Time
 	// identity is the identity key, which signs certificates and revocations
-	// and nothing else, and none once the box is finished (sign).
+	// and nothing else, and none once the mailbox is finished (sign).
 	identity *sign.Identity
 	id       *protocol.Identity
-	// identityType is the type of key Init makes when the box has none.
+	// identityType is the type of key Init makes when the mailbox has none.
 	identityType string
-	// senderKeyTypes is what the box declares with each prekey it publishes.
+	// senderKeyTypes is what the mailbox declares with each prekey it publishes.
 	senderKeyTypes []string
-	// waiting is told when a command waits for the box's lock ([Box.hold]).
+	// waiting is told when a command waits for the mailbox's lock ([Mailbox.hold]).
 	waiting func()
 	// drainTime bounds a Receive's drain (Options.DrainTime).
 	drainTime time.Duration
-	// db is the box's state file while a command holds it ([Box.hold]) or a
+	// db is the mailbox's state file while a command holds it ([Mailbox.hold]) or a
 	// reading has it open read-only ([reading]), and tx the transaction of
-	// it under way ([Box.view], [Box.update]). A Box runs one command or
-	// reading at a time ([Box.claim]).
+	// it under way ([Mailbox.view], [Mailbox.update]). A Mailbox runs one command or
+	// reading at a time ([Mailbox.claim]).
 	db *bolt.DB
 	tx *bolt.Tx
 	// none is set while a reading runs whose open found no state file
-	// ([reading]): each of its views reads nothing ([Box.view]).
+	// ([reading]): each of its views reads nothing ([Mailbox.view]).
 	none bool
-	// slot is held by the one command or reading of this Box under way, of
-	// whichever goroutine ([Box.claim]).
+	// slot is held by the one command or reading of this Mailbox under way, of
+	// whichever goroutine ([Mailbox.claim]).
 	slot chan struct{}
-	// ended is this box's own revocation once the command under way has kept
+	// ended is this mailbox's own revocation once the command under way has kept
 	// it, having begun with none (keepRevocation): that command asks nothing
 	// more (call), and returns it (locked). Each command begins with none.
 	ended *RevokedError
-	// holding is what the box has learned of its network while it holds
+	// holding is what the mailbox has learned of its network while it holds
 	// its list (Hold), which the default client's connections follow.
 	holding holding
 }
 
-// Open opens an existing box's state directory, its owner's alone as Init
-// leaves it (makeDirs). A directory holding only the identity, a box
-// restored from its backup, gets the box's other directories; [Box.Rekey]
+// Open opens an existing mailbox's state directory, its owner's alone as Init
+// leaves it (makeDirs). A directory holding only the identity, a mailbox
+// restored from its backup, gets the mailbox's other directories; [Mailbox.Rekey]
 // then gives it a working key and a prekey, and
 // the lists its server's ACL holds when it has none of its own.
-func Open(dir string, opt Options) (*Box, error) {
-	b, err := newBox(dir, opt)
+func Open(dir string, opt Options) (*Mailbox, error) {
+	b, err := newMailbox(dir, opt)
 	if err != nil {
 		return nil, err
 	}
@@ -160,13 +160,13 @@ func Open(dir string, opt Options) (*Box, error) {
 	return b, nil
 }
 
-// newBox is how every box is made, its directory read or not: its server's
+// newMailbox is how every mailbox is made, its directory read or not: its server's
 // URL is held to checkServerURL, and an identity type to the ones this client
 // makes, before anything is done, so Init writes nothing for either, and its
 // HTTP client takes every request through one transport (newTransport) and
 // follows no redirect (followNone).
-func newBox(dir string, opt Options) (*Box, error) {
-	b := &Box{dir: dir, base: strings.TrimRight(opt.Base, "/"), http: opt.HTTPClient, now: opt.Now, identityType: opt.IdentityType, senderKeyTypes: opt.SenderKeyTypes, waiting: opt.Waiting, slot: make(chan struct{}, 1)}
+func newMailbox(dir string, opt Options) (*Mailbox, error) {
+	b := &Mailbox{dir: dir, base: strings.TrimRight(opt.Base, "/"), http: opt.HTTPClient, now: opt.Now, identityType: opt.IdentityType, senderKeyTypes: opt.SenderKeyTypes, waiting: opt.Waiting, slot: make(chan struct{}, 1)}
 	if b.senderKeyTypes == nil {
 		b.senderKeyTypes = protocol.IdentityTypes()
 	}
@@ -197,7 +197,7 @@ func newBox(dir string, opt Options) (*Box, error) {
 	return b, nil
 }
 
-// transport is every box's: it holds each request's URL to checkServerURL,
+// transport is every mailbox's: it holds each request's URL to checkServerURL,
 // whatever made the request, before anything is sent.
 type transport struct{ next http.RoundTripper }
 
@@ -231,7 +231,7 @@ func newTransport(rt http.RoundTripper) http.RoundTripper {
 	return transport{rt}
 }
 
-// followNone is every box's redirect policy: a 3xx comes back as the answer
+// followNone is every mailbox's redirect policy: a 3xx comes back as the answer
 // it is, an [*APIError]. The API redirects nowhere (PROTOCOL.md §11.1), so a
 // redirect is a server's mistake or its attack, and what one can do is send
 // the pass, or the address a lookup asks about, somewhere else: Go's own
@@ -239,7 +239,7 @@ func newTransport(rt http.RoundTripper) http.RoundTripper {
 // subdomain of it, whatever its scheme or port. The script's curl follows none either.
 func followNone(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
-// checkServerURL holds the URL of the server a box calls to https, or to http only for a server on this
+// checkServerURL holds the URL of the server a mailbox calls to https, or to http only for a server on this
 // machine (onThisMachine). A pass is a bearer credential for the minutes it
 // has left, and a lookup names the address it asks about, so neither
 // crosses a network in the clear (RFC 6750 §5.3). Nothing allows more.
@@ -262,17 +262,17 @@ func onThisMachine(host string) bool {
 	return ip != nil && !strings.Contains(host, ":") && ip.To4()[0] == 127
 }
 
-// Address returns the box's address.
-func (b *Box) Address() protocol.Address { return b.id.Address() }
+// Address returns the mailbox's address.
+func (b *Mailbox) Address() protocol.Address { return b.id.Address() }
 
-// Link returns the box's link, <server>/to/<address>: what to give whoever
+// Link returns the mailbox's link, <server>/to/<address>: what to give whoever
 // should write to it.
-func (b *Box) Link() string { return b.base + protocol.LinkPath + b.Address().String() }
+func (b *Mailbox) Link() string { return b.base + protocol.LinkPath + b.Address().String() }
 
-// Destination parses where to send: an address, a link to one on this box's
-// server, or one of this box's aliases (see [Box.SetAlias]). A link to
-// another server is refused, since a box sends only through its own.
-func (b *Box) Destination(s string) (protocol.Address, error) {
+// Destination parses where to send: an address, a link to one on this mailbox's
+// server, or one of this mailbox's aliases (see [Mailbox.SetAlias]). A link to
+// another server is refused, since a mailbox sends only through its own.
+func (b *Mailbox) Destination(s string) (protocol.Address, error) {
 	if aliasGrammar.MatchString(s) {
 		return b.alias(s)
 	}
@@ -281,28 +281,28 @@ func (b *Box) Destination(s string) (protocol.Address, error) {
 	case err == nil:
 		return a, nil
 	case strings.Contains(s, "://") && !strings.HasPrefix(s, b.base+"/"):
-		return a, refuse("a link to another server: this box's server is %s", b.base)
+		return a, refuse("a link to another server: this mailbox's server is %s", b.base)
 	}
 	return a, refuse("not an address, a link to one, or an alias: %s", s)
 }
 
-// Identity returns the box's identity.
-func (b *Box) Identity() *protocol.Identity { return b.id }
+// Identity returns the mailbox's identity.
+func (b *Mailbox) Identity() *protocol.Identity { return b.id }
 
-// Dir returns the box's state directory.
-func (b *Box) Dir() string { return b.dir }
+// Dir returns the mailbox's state directory.
+func (b *Mailbox) Dir() string { return b.dir }
 
-func (b *Box) path(elem ...string) string {
+func (b *Mailbox) path(elem ...string) string {
 	return filepath.Join(append([]string{b.dir}, elem...)...)
 }
 
-// Init creates a box in dir, or finishes an init that stopped half way:
+// Init creates a mailbox in dir, or finishes an init that stopped half way:
 // it makes the identity, the first working key with its certificate, and the
-// first prekey (of type kt) if they are missing, and registers the box. The
-// registration carries a pass the working key signs, so the box is in use at
-// once. Run again on a finished box, it changes nothing.
-func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*Box, error) {
-	b, err := newBox(dir, opt)
+// first prekey (of type kt) if they are missing, and registers the mailbox. The
+// registration carries a pass the working key signs, so the mailbox is in use at
+// once. Run again on a finished mailbox, it changes nothing.
+func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*Mailbox, error) {
+	b, err := newMailbox(dir, opt)
 	if err != nil {
 		return nil, err
 	}
@@ -312,16 +312,16 @@ func Init(ctx context.Context, dir string, opt Options, kt protocol.KeyType) (*B
 	if err := b.makeDirs(); err != nil {
 		return nil, err
 	}
-	// Under the box's lock from its identity on, as every command that writes
-	// the box, and with its outcome, once init has read that the box is not
+	// Under the mailbox's lock from its identity on, as every command that writes
+	// the mailbox, and with its outcome, once init has read that the mailbox is not
 	// finished.
-	return lockedFinished(ctx, b, func() (*Box, error) {
+	return lockedFinished(ctx, b, func() (*Mailbox, error) {
 		r, err := b.init(ctx, kt)
 		return outcome(b, r, err)
 	})
 }
 
-func (b *Box) init(ctx context.Context, kt protocol.KeyType) (*Box, error) {
+func (b *Mailbox) init(ctx context.Context, kt protocol.KeyType) (*Mailbox, error) {
 	fresh := !exists(b.path("identity"))
 	if fresh {
 		if err := b.newIdentityKey(); err != nil {
@@ -332,7 +332,7 @@ func (b *Box) init(ctx context.Context, kt protocol.KeyType) (*Box, error) {
 		return nil, err
 	}
 	if t := b.identityType; t != "" && t != b.id.Type() {
-		return nil, fmt.Errorf("this box's identity is already a key of the type %s: its address is that key's, so its type cannot change", b.id.Type())
+		return nil, fmt.Errorf("this mailbox's identity is already a key of the type %s: its address is that key's, so its type cannot change", b.id.Type())
 	}
 	if err := b.finished(); err != nil {
 		return nil, err
@@ -344,10 +344,10 @@ func (b *Box) init(ctx context.Context, kt protocol.KeyType) (*Box, error) {
 	if published > 0 {
 		return b, nil
 	}
-	// The box's first prekey is a renewal as every later one is (Rekey): read
-	// from what its server holds of the box (known), numbered by this
+	// The mailbox's first prekey is a renewal as every later one is (Rekey): read
+	// from what its server holds of the mailbox (known), numbered by this
 	// machine's clock above all that shows, and sent as a registration where
-	// the server holds no box for it. So a box restored from its identity
+	// the server holds no mailbox for it. So a mailbox restored from its identity
 	// alone and a registration whose answer was lost take one path, and what
 	// an earlier attempt signed is sent again only while it can be
 	// (PROTOCOL.md §12.4; #87). An identity made by this call has no history
@@ -371,13 +371,13 @@ func (b *Box) init(ctx context.Context, kt protocol.KeyType) (*Box, error) {
 
 // publish sends a registration or a new prekey, whose statement working key
 // n signed, with a pass that key signs: the server takes a pass under the
-// certificate of the statement a call brings, which is how a box gets a
+// certificate of the statement a call brings, which is how a mailbox gets a
 // certificate on record. Once the server has taken it, n is the prekey this
-// box published last, its working key is the one in use, and older working
+// mailbox published last, its working key is the one in use, and older working
 // keys go. It returns the reading the server took, the pass's date, once the
-// server has answered: an error beside it is a fault of this box after the
+// server has answered: an error beside it is a fault of this mailbox after the
 // server took the call (#110).
-func (b *Box) publish(ctx context.Context, path string, req any, n uint64) (taken, error) {
+func (b *Mailbox) publish(ctx context.Context, path string, req any, n uint64) (taken, error) {
 	work, _, err := b.worker(n)
 	if err != nil {
 		return taken{}, err
@@ -398,12 +398,12 @@ func (b *Box) publish(ctx context.Context, path string, req any, n uint64) (take
 }
 
 // recordTaken records statement n as one the server took, before anything
-// else is done, in one transaction: n as the prekey this box published last,
+// else is done, in one transaction: n as the prekey this mailbox published last,
 // unless a higher one is; the renewal under way done, with any that failed
 // before it, unless a later one is under way; and pass, which is under the
-// certificate the server now holds this box to, as the pass the box keeps,
+// certificate the server now holds this mailbox to, as the pass the mailbox keeps,
 // or with none given, no pass. Then the working keys older than n go.
-func (b *Box) recordTaken(n uint64, pass string) error {
+func (b *Mailbox) recordTaken(n uint64, pass string) error {
 	if err := b.update(func(s store) error {
 		if err := b.recordPublished(s, n); err != nil {
 			return err
@@ -413,16 +413,16 @@ func (b *Box) recordTaken(n uint64, pass string) error {
 			return err
 		}
 		if begun <= n {
-			for _, k := range []struct{ bucket, key string }{{bucketIntent, "renewal"}, {bucketBox, "renew-failed"}} {
+			for _, k := range []struct{ bucket, key string }{{bucketIntent, "renewal"}, {bucketMailbox, "renew-failed"}} {
 				if err := s.del(k.bucket, k.key); err != nil {
 					return err
 				}
 			}
 		}
 		if pass == "" {
-			return s.del(bucketBox, "pass")
+			return s.del(bucketMailbox, "pass")
 		}
-		return s.put(bucketBox, "pass", []byte(pass))
+		return s.put(bucketMailbox, "pass", []byte(pass))
 	}); err != nil {
 		return err
 	}
@@ -430,13 +430,13 @@ func (b *Box) recordTaken(n uint64, pass string) error {
 	return b.dropWork(n)
 }
 
-// makeDirs makes the box's directories that are missing, its .gitignore and
-// its state file, and the box's directory and each of its own its owner's
-// alone (private), at every open: a box restored from its identity alone, or
-// a directory made before the box by someone else, is held to it too.
-func (b *Box) makeDirs() error {
+// makeDirs makes the mailbox's directories that are missing, its .gitignore and
+// its state file, and the mailbox's directory and each of its own its owner's
+// alone (private), at every open: a mailbox restored from its identity alone, or
+// a directory made before the mailbox by someone else, is held to it too.
+func (b *Mailbox) makeDirs() error {
 	if err := private(b.dir); err != nil {
-		return fmt.Errorf("the box's directory, made its owner's alone: %w", err)
+		return fmt.Errorf("the mailbox's directory, made its owner's alone: %w", err)
 	}
 	made := false
 	for _, d := range []string{"work", "prekeys", "inbox", "held", "refused", "outbox", "sent"} {
@@ -447,7 +447,7 @@ func (b *Box) makeDirs() error {
 			made = true
 		}
 		if err := private(b.path(d)); err != nil {
-			return fmt.Errorf("the box's %s/, made its owner's alone: %w", d, err)
+			return fmt.Errorf("the mailbox's %s/, made its owner's alone: %w", d, err)
 		}
 	}
 	// A new directory is there after a crash only once its parent is synced.
@@ -457,8 +457,8 @@ func (b *Box) makeDirs() error {
 		}
 	}
 	// The directory ignores itself, wherever it is and whatever made it: a
-	// box restored from its identity alone too (#292). Written only where its
-	// bytes differ, since every command opens the box.
+	// mailbox restored from its identity alone too (#292). Written only where its
+	// bytes differ, since every command opens the mailbox.
 	if got, err := os.ReadFile(b.path(".gitignore")); err != nil || string(got) != "*\n" {
 		if err := writeFile(b.path(".gitignore"), []byte("*\n")); err != nil {
 			return err
@@ -468,9 +468,9 @@ func (b *Box) makeDirs() error {
 }
 
 // newIdentityKey makes a new identity key, written as ssh-keygen writes one
-// with no passphrase and no comment: Ed25519, unless the box was told another
+// with no passphrase and no comment: Ed25519, unless the mailbox was told another
 // type this client can make.
-func (b *Box) newIdentityKey() error {
+func (b *Mailbox) newIdentityKey() error {
 	var priv crypto.Signer
 	var err error
 	switch b.identityType {
@@ -500,10 +500,10 @@ func (b *Box) newIdentityKey() error {
 
 // loadIdentity reads the identity key, and writes identity.doc and address
 // from it, so all three always agree.
-func (b *Box) loadIdentity() error {
+func (b *Mailbox) loadIdentity() error {
 	pemBytes, err := os.ReadFile(b.path("identity"))
 	if err != nil {
-		return fmt.Errorf("no box here: %w", err)
+		return fmt.Errorf("no mailbox here: %w", err)
 	}
 	raw, err := ssh.ParseRawPrivateKey(pemBytes)
 	var missing *ssh.PassphraseMissingError
@@ -519,7 +519,7 @@ func (b *Box) loadIdentity() error {
 	}
 	id, err := protocol.IdentityOf(signer.PublicKey())
 	if errors.Is(err, protocol.ErrIdentityType) {
-		return fmt.Errorf("the identity key is of the type %s, and this client runs a box on %s", signer.PublicKey().Type(), strings.Join(protocol.IdentityTypes(), " or "))
+		return fmt.Errorf("the identity key is of the type %s, and this client runs a mailbox on %s", signer.PublicKey().Type(), strings.Join(protocol.IdentityTypes(), " or "))
 	}
 	if err != nil {
 		return err
@@ -537,10 +537,10 @@ func (b *Box) loadIdentity() error {
 	return nil
 }
 
-// prekeyRecord is a prekey statement this box signed, as the prekeys bucket
+// prekeyRecord is a prekey statement this mailbox signed, as the prekeys bucket
 // keeps it by its serial: the statement, its signature, and when it was
-// signed, which is what the box times its renewals and the early deletion of
-// its retired prekeys by ([Box.made]; PROTOCOL.md §12.4), in one value, so the
+// signed, which is what the mailbox times its renewals and the early deletion of
+// its retired prekeys by ([Mailbox.made]; PROTOCOL.md §12.4), in one value, so the
 // three are never out of line (#192). Its key is prekeys/<serial>.agekey.
 type prekeyRecord struct {
 	Statement protocol.Bytes `json:"statement"`
@@ -548,8 +548,8 @@ type prekeyRecord struct {
 	Made      string         `json:"made"`
 }
 
-// prekeyOf is the statement this box signed at serial n, or nil.
-func (b *Box) prekeyOf(n uint64) (p *prekeyRecord, err error) {
+// prekeyOf is the statement this mailbox signed at serial n, or nil.
+func (b *Mailbox) prekeyOf(n uint64) (p *prekeyRecord, err error) {
 	err = b.view(func(s store) error {
 		raw := s.get(bucketPrekeys, serialKey(n))
 		if raw == nil {
@@ -557,15 +557,15 @@ func (b *Box) prekeyOf(n uint64) (p *prekeyRecord, err error) {
 		}
 		p = &prekeyRecord{}
 		if err := protocol.Unmarshal(raw, p); err != nil {
-			return fmt.Errorf("the box's state file keeps no statement of prekey %d it can read: %w", n, err)
+			return fmt.Errorf("the mailbox's state file keeps no statement of prekey %d it can read: %w", n, err)
 		}
 		return nil
 	})
 	return p, err
 }
 
-// prekeys is the serial of every statement this box keeps, lowest first.
-func (b *Box) prekeys() (ns []uint64, err error) {
+// prekeys is the serial of every statement this mailbox keeps, lowest first.
+func (b *Mailbox) prekeys() (ns []uint64, err error) {
 	err = b.view(func(s store) error {
 		return s.each(bucketPrekeys, func(k, _ []byte) error {
 			n, err := keySerial(k)
@@ -576,8 +576,8 @@ func (b *Box) prekeys() (ns []uint64, err error) {
 	return ns, err
 }
 
-// makePrekey makes prekey serial, a NEW key of type kt valid for the box's
-// prekey lifetime ([Box.PrekeyLifetime]), and its statement, signed by a NEW
+// makePrekey makes prekey serial, a NEW key of type kt valid for the mailbox's
+// prekey lifetime ([Mailbox.PrekeyLifetime]), and its statement, signed by a NEW
 // working key under a new certificate, unless its statement is already
 // signed. The number is recorded as the renewal under way before anything is
 // made, and the statement, with when it was signed, once it is: so a key or a
@@ -585,7 +585,7 @@ func (b *Box) prekeys() (ns []uint64, err error) {
 // attempt made and never signed is used, but never a working key, whose
 // certificate began when that attempt ran (#197). A statement never outlives
 // the certificate it is signed under.
-func (b *Box) makePrekey(serial uint64, kt protocol.KeyType) (*protocol.Prekey, error) {
+func (b *Mailbox) makePrekey(serial uint64, kt protocol.KeyType) (*protocol.Prekey, error) {
 	if rec, err := b.prekeyOf(serial); err != nil || rec != nil {
 		if err != nil {
 			return nil, err
@@ -599,7 +599,7 @@ func (b *Box) makePrekey(serial uint64, kt protocol.KeyType) (*protocol.Prekey, 
 	if err := b.begin(serial); err != nil {
 		return nil, err
 	}
-	// The working key and its certificate first: a box that may sign nothing
+	// The working key and its certificate first: a mailbox that may sign nothing
 	// more is stopped at the certificate, before any key is written.
 	worker, cert, err := b.makeWork(serial)
 	if err != nil {
@@ -642,7 +642,7 @@ func (b *Box) makePrekey(serial uint64, kt protocol.KeyType) (*protocol.Prekey, 
 // earlier attempt took and left unsigned, which this one passes over, leaves
 // nothing: no statement named its key or its working key, so neither was
 // ever sent.
-func (b *Box) begin(serial uint64) error {
+func (b *Mailbox) begin(serial uint64) error {
 	var old uint64
 	if err := b.view(func(s store) error {
 		var err error
@@ -727,7 +727,7 @@ func keyType(name string) protocol.KeyType {
 }
 
 func readAgeKeys(name string) ([]age.Identity, error) {
-	f, err := os.Open(name) //nolint:gosec // a path inside the box's own directory
+	f, err := os.Open(name) //nolint:gosec // a path inside the mailbox's own directory
 	if err != nil {
 		return nil, err
 	}
@@ -741,7 +741,7 @@ func readAgeKeys(name string) ([]age.Identity, error) {
 
 // prekeyIdentities returns every retained prekey, to decrypt with once
 // oneNative has taken the file (decrypt).
-func (b *Box) prekeyIdentities() ([]age.Identity, error) {
+func (b *Mailbox) prekeyIdentities() ([]age.Identity, error) {
 	names, err := filepath.Glob(b.path("prekeys", "*.agekey"))
 	if err != nil {
 		return nil, err
@@ -755,7 +755,7 @@ func (b *Box) prekeyIdentities() ([]age.Identity, error) {
 		all = append(all, ids...)
 	}
 	if len(all) == 0 {
-		return nil, errors.New("this box holds no prekeys: publish a new one with dromas prekey renew")
+		return nil, errors.New("this mailbox holds no prekeys: publish a new one with dromas prekey renew")
 	}
 	return all, nil
 }
@@ -774,7 +774,7 @@ func decrypt(ct []byte, ids []age.Identity) (io.Reader, error) {
 // of a type a prekey has (protocol.PostQuantum, protocol.Classic), as every
 // server takes a send (PROTOCOL.md §11.10 step 7, §12.3 check 1); a grease stanza
 // and any other age ignores, as it does. age tries every identity on every
-// stanza, up to 1,024, so a file of 1,024 native stanzas costs a box about a
+// stanza, up to 1,024, so a file of 1,024 native stanzas costs a mailbox about a
 // thousand times what an honest message does, for each prekey it keeps (#49,
 // measured; PRECEDENTS.md, Part 2, § 4), and only a server can serve one.
 // The stanzas are read and counted once, before anything is decrypted, by
@@ -802,4 +802,4 @@ var errNotOneNative = errors.New("more than one native recipient stanza")
 // refuses.
 var errNoNative = errors.New("no native recipient stanza")
 
-func (b *Box) boxPath(rest string) string { return "/v1/" + b.id.Address().String() + rest }
+func (b *Mailbox) mailboxPath(rest string) string { return "/v1/" + b.id.Address().String() + rest }

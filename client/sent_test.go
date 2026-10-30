@@ -15,8 +15,8 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// sentRecords returns a box's sent/ files, by name.
-func sentRecords(t *testing.T, b *client.Box) map[string][]byte {
+// sentRecords returns a mailbox's sent/ files, by name.
+func sentRecords(t *testing.T, b *client.Mailbox) map[string][]byte {
 	t.Helper()
 	names, err := filepath.Glob(filepath.Join(b.Dir(), "sent", "*"))
 	if err != nil {
@@ -38,7 +38,7 @@ func sentRecords(t *testing.T, b *client.Box) map[string][]byte {
 func TestSendWithFields(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	f := client.Fields{Subject: "re: <yours> & \"mine\"", InReplyTo: "11111111-2222-4333-8444-555555555555", Supersedes: "22222222-2222-4333-8444-555555555555"}
 	if _, err := a.SendWith(context.Background(), b.Address(), "the answer", f); err != nil {
 		t.Fatal(err)
@@ -68,12 +68,12 @@ func TestSendWithFields(t *testing.T) {
 }
 
 // in_reply_to and supersedes name a message by its msg_id. Anything else is
-// refused before any mail is made: above all the 64-character id the server
+// refused before any message is made: above all the 64-character id the server
 // gives a message, which is what send prints.
 func TestSendRefusesFieldsThatAreNotMsgIDs(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	r := send(t, a, b, "first")
 	posts := 0
 	e.srv.SetMiddle(func(w http.ResponseWriter, req *http.Request, next http.Handler) {
@@ -97,7 +97,7 @@ func TestSendRefusesFieldsThatAreNotMsgIDs(t *testing.T) {
 		t.Errorf("the refusal does not name the field: %v", err)
 	}
 	if made, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "*")); len(made) != 0 || posts != 0 {
-		t.Fatalf("a refused field made mail: %v, %d posts", made, posts)
+		t.Fatalf("a refused field made a message: %v, %d posts", made, posts)
 	}
 }
 
@@ -107,7 +107,7 @@ func TestSendRefusesFieldsThatAreNotMsgIDs(t *testing.T) {
 func TestSendJSON(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	in := "{\"action\": \"approve\",\n \"ids\": [3, 1.50, 2e3], \"note\": \"<&>\", \"none\": null}\n"
 	want := `{"action":"approve","ids":[3,1.50,2e3],"note":"<&>","none":null}`
 	s, err := a.SendJSON(context.Background(), b.Address(), []byte(in), client.Fields{Subject: "the order"})
@@ -133,7 +133,7 @@ func TestSendJSON(t *testing.T) {
 func TestNothingIsWrittenForAMessageItsReaderRefuses(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	op := watch(e, nil)
 	ctx := context.Background()
 	nonchar := string(rune(0xFFFE))
@@ -161,7 +161,7 @@ func TestNothingIsWrittenForAMessageItsReaderRefuses(t *testing.T) {
 	made, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "*"))
 	allowed, _ := os.ReadFile(filepath.Join(a.Dir(), "allowed")) //nolint:gosec // a test's own directory
 	if len(made) != 0 || op.count(http.MethodPost, postTo(b)) != 0 || strings.Contains(string(allowed), b.Address().String()) {
-		t.Fatalf("a refused message made mail: outbox %v, %d posts, allowed %q", made, op.count(http.MethodPost, postTo(b)), allowed)
+		t.Fatalf("a refused message made a message: outbox %v, %d posts, allowed %q", made, op.count(http.MethodPost, postTo(b)), allowed)
 	}
 }
 
@@ -172,7 +172,7 @@ func TestNothingIsWrittenForAMessageItsReaderRefuses(t *testing.T) {
 func TestSentKeepsTheEnvelopeAndTheReceipt(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	body := "kept\u0085 by   its   sender"
 	r, err := a.SendWith(context.Background(), b.Address(), body, client.Fields{Subject: "s"})
 	if err != nil {
@@ -212,7 +212,7 @@ func TestSentKeepsTheEnvelopeAndTheReceipt(t *testing.T) {
 func TestSentHoldsOnlyWhatTheServerTook(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	ctx := context.Background()
 	forge.FailOnce(e.srv, http.MethodPost, "/v1/"+b.Address().String()+"/messages")
 	if _, err := a.Send(ctx, b.Address(), "fails once"); err == nil {

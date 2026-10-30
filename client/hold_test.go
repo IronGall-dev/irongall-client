@@ -18,7 +18,7 @@ import (
 
 // held runs b.Hold for up to wait in a goroutine and returns what it came
 // to on the channel.
-func held(b *client.Box, wait time.Duration) <-chan *client.HoldResult {
+func held(b *client.Mailbox, wait time.Duration) <-chan *client.HoldResult {
 	c := make(chan *client.HoldResult, 1)
 	go func() {
 		h, err := b.Hold(context.Background(), wait)
@@ -30,11 +30,11 @@ func held(b *client.Box, wait time.Duration) <-chan *client.HoldResult {
 	return c
 }
 
-func TestAHeldListIsAnsweredWhenMailArrives(t *testing.T) {
+func TestAHeldListIsAnsweredWhenAMessageArrives(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := newMemEnv(t)
-		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
-		receive(t, b) // an empty box: its tag kept
+		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+		receive(t, b) // an empty mailbox: its tag kept
 		c := held(b, time.Hour)
 		time.Sleep(time.Minute)
 		synctest.Wait()
@@ -54,10 +54,10 @@ func TestAHeldListIsAnsweredWhenMailArrives(t *testing.T) {
 	})
 }
 
-func TestAHeldListWithNothingNewEndsAtTheBoxsWait(t *testing.T) {
+func TestAHeldListWithNothingNewEndsAtTheMailboxsWait(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := newMemEnv(t)
-		b := e.box(protocol.Classic)
+		b := e.mailbox(protocol.Classic)
 		receive(t, b)
 		h := <-held(b, time.Hour)
 		if h == nil || h.Changed || h.Dropped || h.After != client.DefaultHold {
@@ -70,15 +70,15 @@ func TestAHeldListWithNothingNewEndsAtTheBoxsWait(t *testing.T) {
 	})
 }
 
-func TestAHoldLetsTheBoxsOtherCommandsGoOn(t *testing.T) {
+func TestAHoldLetsTheMailboxsOtherCommandsGoOn(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := newMemEnv(t)
-		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 		receive(t, b)
 		c := held(b, time.Hour)
 		time.Sleep(time.Second)
 		start := time.Now()
-		send(t, b, a, "sent while the box's own list is held")
+		send(t, b, a, "sent while the mailbox's own list is held")
 		if waited := time.Since(start); waited != 0 {
 			t.Fatalf("the send waited %v for the hold", waited)
 		}
@@ -89,13 +89,13 @@ func TestAHoldLetsTheBoxsOtherCommandsGoOn(t *testing.T) {
 	})
 }
 
-// A held list answered 410 with the box's own revocation is proved as any
-// call's answer is: the box keeps the revocation, and Hold returns it.
-func TestAHeldListShownTheBoxsOwnRevocationKeepsIt(t *testing.T) {
+// A held list answered 410 with the mailbox's own revocation is proved as any
+// call's answer is: the mailbox keeps the revocation, and Hold returns it.
+func TestAHeldListShownTheMailboxsOwnRevocationKeepsIt(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx := context.Background()
 		e := newMemEnv(t)
-		b := e.box(protocol.Classic)
+		b := e.mailbox(protocol.Classic)
 		receive(t, b)
 		rec, err := b.Revocation(ctx)
 		if err != nil {
@@ -110,27 +110,27 @@ func TestAHeldListShownTheBoxsOwnRevocationKeepsIt(t *testing.T) {
 			next.ServeHTTP(w, r)
 		})
 		if _, err := b.Hold(ctx, time.Hour); !finishedOwn(err) {
-			t.Fatalf("the hold: %v, want the box's own revocation", err)
+			t.Fatalf("the hold: %v, want the mailbox's own revocation", err)
 		}
 		if s, err := b.Status(ctx); err != nil || !s.Revoked {
-			t.Fatalf("the box after the hold: %+v, %v; want its revocation kept", s, err)
+			t.Fatalf("the mailbox after the hold: %+v, %v; want its revocation kept", s, err)
 		}
 	})
 }
 
-// path is a network between a box and its server that forgets a
+// path is a network between a mailbox and its server that forgets a
 // connection idle for idle: a held list's answer comes through when its
-// wait is under idle, or when the box keeps its connection alive below idle
+// wait is under idle, or when the mailbox keeps its connection alive below idle
 // and the path's keepAlive says probes reach what forgets (a NAT's table,
 // not an HTTP proxy's timeout). Otherwise the connection drops at idle: by
-// a reset the box sees, or, silent, with the answer never coming.
+// a reset the mailbox sees, or, silent, with the answer never coming.
 type path struct {
 	idle              time.Duration
 	silent, keepAlive bool
 }
 
 // on has e's server answer b's held lists through p, and counts them.
-func (p path) on(e *env, b *client.Box) *atomic.Int32 {
+func (p path) on(e *env, b *client.Mailbox) *atomic.Int32 {
 	var n atomic.Int32
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		if !r.URL.Query().Has("wait") {
@@ -139,13 +139,13 @@ func (p path) on(e *env, b *client.Box) *atomic.Int32 {
 		}
 		n.Add(1)
 		s, _ := strconv.Atoi(r.URL.Query().Get("wait"))
-		ka := client.KeepAliveOf(b) // as the connection was dialled: a box's own reads it then
+		ka := client.KeepAliveOf(b) // as the connection was dialled: a mailbox's own reads it then
 		if time.Duration(s)*time.Second < p.idle || p.keepAlive && ka > 0 && ka < p.idle {
 			next.ServeHTTP(w, r)
 			return
 		}
 		if p.silent {
-			<-r.Context().Done() // the answer never reaches the box
+			<-r.Context().Done() // the answer never reaches the mailbox
 			return
 		}
 		time.Sleep(p.idle)
@@ -156,7 +156,7 @@ func (p path) on(e *env, b *client.Box) *atomic.Int32 {
 
 // settle holds b's list until a hold neither drops nor fails, and returns
 // how many holds that took, the last one's result and the time it all took.
-func settle(t *testing.T, b *client.Box) (int, *client.HoldResult, time.Duration) {
+func settle(t *testing.T, b *client.Mailbox) (int, *client.HoldResult, time.Duration) {
 	t.Helper()
 	start := time.Now()
 	for i := 1; i <= 20; i++ {
@@ -169,7 +169,7 @@ func settle(t *testing.T, b *client.Box) (int, *client.HoldResult, time.Duration
 	return 0, nil, 0
 }
 
-// TestADropIsLearnedInAFewHolds: a box learns how its path forgets a held
+// TestADropIsLearnedInAFewHolds: a mailbox learns how its path forgets a held
 // connection within a few holds, with keep-alive below the path's idle
 // timeout where probes reach it and its wait kept, and its wait below that
 // timeout only where they do not. A drop seen only at the hold's deadline
@@ -188,7 +188,7 @@ func TestADropIsLearnedInAFewHolds(t *testing.T) {
 			client.DefaultHold, 2*time.Minute + 22*time.Second},
 		{"a NAT at 2 minutes that drops silently", path{2 * time.Minute, true, true}, 3, 14*time.Minute + 45*time.Second,
 			client.DefaultHold, time.Minute + 11*time.Second},
-		// The reset comes on the connection the box's first receive left
+		// The reset comes on the connection the mailbox's first receive left
 		// idle, which net/http sends the request again past, on a new
 		// connection that keeps alive below it: one hold that drops and is
 		// answered, then one that is not dropped.
@@ -207,7 +207,7 @@ func TestADropIsLearnedInAFewHolds(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				e := newMemEnv(t)
-				b := e.box(protocol.Classic)
+				b := e.mailbox(protocol.Classic)
 				receive(t, b)
 				c.p.on(e, b)
 				holds, h, took := settle(t, b)
@@ -227,7 +227,7 @@ func TestADropIsLearnedInAFewHolds(t *testing.T) {
 func TestADropAtOnceTeachesNothing(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := newMemEnv(t)
-		b := e.box(protocol.Classic)
+		b := e.mailbox(protocol.Classic)
 		receive(t, b)
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if r.URL.Query().Has("wait") {
@@ -245,7 +245,7 @@ func TestADropAtOnceTeachesNothing(t *testing.T) {
 func TestHoldsStartAtMostOnceAMinute(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := newMemEnv(t)
-		b := e.box(protocol.Classic) // never received: no tag kept, so each hold ends at once
+		b := e.mailbox(protocol.Classic) // never received: no tag kept, so each hold ends at once
 		start := time.Now()
 		var at []time.Duration
 		for range 4 {
@@ -269,7 +269,7 @@ func TestHoldsStartAtMostOnceAMinute(t *testing.T) {
 func TestAwaitReturnsForAReceiveEveryHour(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := newMemEnv(t)
-		b := e.box(protocol.Classic)
+		b := e.mailbox(protocol.Classic)
 		receive(t, b)
 		start := time.Now()
 		if err := b.Await(context.Background(), start.Add(3*time.Hour), nil); err != nil || time.Since(start) != client.ReceiveEvery {
@@ -284,7 +284,7 @@ func TestAwaitReturnsForAReceiveEveryHour(t *testing.T) {
 func TestAwaitEndsAtARefusalNoWaitMends(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := newMemEnv(t)
-		b := e.box(protocol.Classic)
+		b := e.mailbox(protocol.Classic)
 		receive(t, b)
 		var mu sync.Mutex
 		var at []time.Duration
@@ -322,7 +322,7 @@ func TestAwaitEndsAtARefusalNoWaitMends(t *testing.T) {
 func TestAHoldWhosePassIsRefusedIsChanged(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := newMemEnv(t)
-		b := e.box(protocol.Classic)
+		b := e.mailbox(protocol.Classic)
 		receive(t, b)
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if r.URL.Query().Has("wait") {
@@ -342,7 +342,7 @@ func TestAHoldWhosePassIsRefusedIsChanged(t *testing.T) {
 func TestAwaitReturnsByItsDeadline(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := newMemEnv(t)
-		b := e.box(protocol.Classic)
+		b := e.mailbox(protocol.Classic)
 		receive(t, b)
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if r.URL.Query().Has("wait") {

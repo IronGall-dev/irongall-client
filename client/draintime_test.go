@@ -22,18 +22,18 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// largest lists box b's first message as a ciphertext of the protocol's
+// largest lists mailbox b's first message as a ciphertext of the protocol's
 // largest size, all zeros, and answers its fetch as the server answers one,
 // a Range included, each fetch's bytes counted in served, in chunks of 64
 // KiB after each pause: none for a link at full speed. It returns the id.
-func largest(t *testing.T, e *env, b *client.Box, pause func() time.Duration, served *[]*atomic.Int64, mu *sync.Mutex) string {
+func largest(t *testing.T, e *env, b *client.Mailbox, pause func() time.Duration, served *[]*atomic.Int64, mu *sync.Mutex) string {
 	t.Helper()
 	ct := make([]byte, protocol.MaxCiphertext)
 	sum := sha256.Sum256(ct)
 	id := hex.EncodeToString(sum[:])
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 		switch {
-		case r.Method == http.MethodGet && r.URL.Path == boxPath(b)+"/messages":
+		case r.Method == http.MethodGet && r.URL.Path == mailboxPath(b)+"/messages":
 			rec := httptest.NewRecorder()
 			next.ServeHTTP(rec, r)
 			var list protocol.MessageList
@@ -43,7 +43,7 @@ func largest(t *testing.T, e *env, b *client.Box, pause func() time.Duration, se
 			}
 			list.Messages[0].ID, list.Messages[0].Size = id, protocol.MaxCiphertext
 			fakeserver.WriteList(w, list)
-		case r.Method == http.MethodGet && r.URL.Path == boxPath(b)+"/messages/"+id:
+		case r.Method == http.MethodGet && r.URL.Path == mailboxPath(b)+"/messages/"+id:
 			n := &atomic.Int64{}
 			mu.Lock()
 			*served = append(*served, n)
@@ -77,14 +77,14 @@ func largest(t *testing.T, e *env, b *client.Box, pause func() time.Duration, se
 	return id
 }
 
-// A drain holds the box's lock for as long as it runs, and runs no longer
+// A drain holds the mailbox's lock for as long as it runs, and runs no longer
 // than its time while bytes move (#2): a fetch of the largest ciphertext,
 // trickled at about 1.25 MiB/s, holds the lock past a second command's
 // patience, which then fails as locked having asked the server nothing; a
 // reading started during it reads once the drain lets go; and the drain,
 // cut at its time, stops as at its other limits, with More and no error,
 // keeping what it read. The next recv finishes the fetch from there, asking
-// only for the bytes the box did not keep. The bounds are the test's own,
+// only for the bytes the mailbox did not keep. The bounds are the test's own,
 // seconds, through the package's seams (SetLockPatience, Options.DrainTime),
 // on a testing/synctest bubble's fake time against a server in memory: the
 // drain ends by the time the reading started during it gives up, and no
@@ -94,7 +94,7 @@ func TestADrainHoldsTheLockForItsTimeAndTheNextGoesOnFromIt(t *testing.T) {
 		const patience, drainTime = 2 * time.Second, 6 * time.Second
 		client.SetLockPatience(t, patience)
 		e := newMemEnv(t)
-		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 		send(t, a, b, "listed as the largest a ciphertext may be")
 		var mu sync.Mutex
 		var served []*atomic.Int64
@@ -176,7 +176,7 @@ func TestADrainHoldsTheLockForItsTimeAndTheNextGoesOnFromIt(t *testing.T) {
 		}
 
 		// The next recv finishes the fetch from what was kept: the server serves
-		// the rest, and no byte the box kept.
+		// the rest, and no byte the mailbox kept.
 		slow.Store(false)
 		z, err := client.Open(b.Dir(), e.opts())
 		if err != nil {
@@ -193,18 +193,18 @@ func TestADrainHoldsTheLockForItsTimeAndTheNextGoesOnFromIt(t *testing.T) {
 	})
 }
 
-// At the drain's bound in time, a fault of the box itself at keeping what
+// At the drain's bound in time, a fault of the mailbox itself at keeping what
 // the cut fetch read (here its state's write of the record, as a full disk
 // fails it) is the drain's error, never More with no error: the drain takes
 // a cut at its time as the bound reached, and the fault comes back ahead of
 // the cut's error, out of its reach (#403 item 2).
 func TestAFaultKeepingThePartialAtTheDrainsTimeIsAnError(t *testing.T) {
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	send(t, a, b, strings.Repeat("trickled until the drain's time cuts it. ", 3000))
 	var armed, failed atomic.Bool
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, boxPath(b)+"/messages/") {
+		if r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, mailboxPath(b)+"/messages/") {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -215,7 +215,7 @@ func TestAFaultKeepingThePartialAtTheDrainsTimeIsAnError(t *testing.T) {
 		}
 		w.WriteHeader(rec.Code)
 		ct := rec.Body.Bytes()
-		armed.Store(true) // the next write of the box's state fails, once
+		armed.Store(true) // the next write of the mailbox's state fails, once
 		for i := 0; i < len(ct); i += 4 << 10 {
 			if _, err := w.Write(ct[i:min(i+4<<10, len(ct))]); err != nil {
 				return
@@ -242,6 +242,6 @@ func TestAFaultKeepingThePartialAtTheDrainsTimeIsAnError(t *testing.T) {
 		t.Fatal("the fault never fired")
 	}
 	if !errors.Is(err, syscall.ENOSPC) || res != nil && res.More {
-		t.Errorf("the box's own fault keeping the partial at the drain's time: More %v, error %v", res != nil && res.More, err)
+		t.Errorf("the mailbox's own fault keeping the partial at the drain's time: More %v, error %v", res != nil && res.More, err)
 	}
 }

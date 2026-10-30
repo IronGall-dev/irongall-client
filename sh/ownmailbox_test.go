@@ -20,18 +20,18 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// The script's box is a directory of its own, by its own variables: its
+// The script's mailbox is a directory of its own, by its own variables: its
 // default is not the Go client's, nor is a directory the Go client's
 // DROMAS_HOME names, and it refuses a directory holding the Go client's
-// state file, at init and at every command that writes the box, writing
+// state file, at init and at every command that writes the mailbox, writing
 // nothing there (#331).
-func TestTheScriptRunsABoxOfItsOwnOnly(t *testing.T) {
+func TestTheScriptRunsAMailboxOfItsOwnOnly(t *testing.T) {
 	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	home := t.TempDir()
-	out, err := bash(t, []string{"HOME=" + home, "DR_HOME=", "DR_BOX=", "XDG_CONFIG_HOME=", "DROMAS_HOME=" + filepath.Join(home, "go-box")}, `printf '%s' "$DR"`)
+	out, err := bash(t, []string{"HOME=" + home, "DR_HOME=", "DR_MAILBOX=", "XDG_CONFIG_HOME=", "DROMAS_HOME=" + filepath.Join(home, "go-mailbox")}, `printf '%s' "$DR"`)
 	if err != nil || out != filepath.Join(home, ".config", "dromas-sh", "default") {
-		t.Fatalf("the script's default box: %q, %v", out, err)
+		t.Fatalf("the script's default mailbox: %q, %v", out, err)
 	}
 
 	srv := fakeserver.New(t, time.Now)
@@ -47,11 +47,11 @@ func TestTheScriptRunsABoxOfItsOwnOnly(t *testing.T) {
 	before, calls := files(), len(srv.Requests())
 	for _, cmd := range []string{"dr_init --no-pq", "dr_rekey", "dr_recv"} {
 		if out, err := bash(t, []string{"DR_HOME=" + g.Dir(), "DR_SERVER_URL=" + srv.URL}, cmd); err == nil || !strings.Contains(err.Error(), "state file") {
-			t.Errorf("%s in a Go box: %q, %v", cmd, out, err)
+			t.Errorf("%s in a Go mailbox: %q, %v", cmd, out, err)
 		}
 	}
 	if after := files(); !slicesEqual(before, after) || len(srv.Requests()) != calls {
-		t.Errorf("the script wrote the Go box or asked its server: %d files were %d, %d calls were %d", len(after), len(before), len(srv.Requests()), calls)
+		t.Errorf("the script wrote the Go mailbox or asked its server: %d files were %d, %d calls were %d", len(after), len(before), len(srv.Requests()), calls)
 	}
 }
 
@@ -67,7 +67,7 @@ func slicesEqual(a, b []string) bool {
 	return true
 }
 
-// scriptRevocation is the record of the script box in dir's own revocation,
+// scriptRevocation is the record of the script mailbox in dir's own revocation,
 // as its identity signs it.
 func scriptRevocation(t *testing.T, dir string) *protocol.Revocations {
 	t.Helper()
@@ -108,7 +108,7 @@ func putRevocation(t *testing.T, next http.Handler, rec *protocol.Revocations) {
 	}
 }
 
-// A script box shown its own revocation by its server keeps it once it
+// A script mailbox shown its own revocation by its server keeps it once it
 // verifies, and signs nothing more, there or at a server it is pointed at
 // after, which never saw it: at its renewal's read, answered 410 with the
 // record; at a registration of its identity alone, refused 410; and at a
@@ -158,7 +158,7 @@ func TestTheScriptKeepsItsOwnRevocationFromA410(t *testing.T) {
 				t.Fatalf("%s: %q, %v", cmd, out, err)
 			}
 			if _, err := os.Stat(filepath.Join(dir, "revoked.sig")); err != nil {
-				t.Fatalf("the box keeps no revocation of itself: %v", err)
+				t.Fatalf("the mailbox keeps no revocation of itself: %v", err)
 			}
 			if at == "its renewal's read" && passes.Load() != 0 {
 				t.Errorf("a pass went out after a read that showed the revocation: %d", passes.Load())

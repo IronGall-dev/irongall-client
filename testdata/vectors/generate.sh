@@ -83,19 +83,19 @@ trap cleanup EXIT
 
 printf '%s\n' "$NOW" > now
 mkdir -p a b c message identity prekey envelope cert plain
-for box in a b a-work b-work a-work-2 c-work; do
-  { read -r seed; read -r pub; } < "input/$box.ed25519"
-  openssh_key "$seed" "$pub" "$KEYS/$box"
-  ssh-keygen -y -f "$KEYS/$box" > "$KEYS/$box.pub"
-  [ "$(cut -d' ' -f2 "$KEYS/$box.pub")" = "$(bin "$(str "$(asc ssh-ed25519)")$(str "$pub")" | b64)" ] || { echo "the $box key file does not hold the RFC 8032 key" >&2; exit 1; }
+for mailbox in a b a-work b-work a-work-2 c-work; do
+  { read -r seed; read -r pub; } < "input/$mailbox.ed25519"
+  openssh_key "$seed" "$pub" "$KEYS/$mailbox"
+  ssh-keygen -y -f "$KEYS/$mailbox" > "$KEYS/$mailbox.pub"
+  [ "$(cut -d' ' -f2 "$KEYS/$mailbox.pub")" = "$(bin "$(str "$(asc ssh-ed25519)")$(str "$pub")" | b64)" ] || { echo "the $mailbox key file does not hold the RFC 8032 key" >&2; exit 1; }
 done
-for box in a b; do
-  printf 'dromas-v1\n%s\n' "$(cut -d' ' -f1,2 "$KEYS/$box.pub")" > "$box/identity.doc"
-  sha256sum < "$box/identity.doc" | cut -c1-64 > "$box/address"
+for mailbox in a b; do
+  printf 'dromas-v1\n%s\n' "$(cut -d' ' -f1,2 "$KEYS/$mailbox.pub")" > "$mailbox/identity.doc"
+  sha256sum < "$mailbox/identity.doc" | cut -c1-64 > "$mailbox/address"
 done
 A=$(cat a/address); B=$(cat b/address)
 
-# Box C, whose identity is of the optional type ecdsa-sha2-nistp256.
+# Mailbox C, whose identity is of the optional type ecdsa-sha2-nistp256.
 { read -r scalar; read -r POINT; } < input/c.p256
 openssh_p256_key "$scalar" "$POINT" "$KEYS/c"
 ssh-keygen -y -f "$KEYS/c" > "$KEYS/c.pub"
@@ -114,12 +114,12 @@ sign() { ssh-keygen -q -Y sign -n "$2" -f "$KEYS/$1" "${@:3}"; } # <key> <namesp
 under() { cp "$2" "$KEYS/$1-cert.pub"; ssh-keygen -q -Y sign -n "$3" -f "$KEYS/$1-cert.pub" "${@:4}"; } # <working key> <certificate> <namespace> [-O …] < message > signature under that certificate
 statement() { printf 'dromas-prekey-v1\n%s\n%s\n%s\n%s\n' "$@"; } # <address> <serial> <recipient> <not_after>
 
-# Each box's working key, certified by its identity.
+# Each mailbox's working key, certified by its identity.
 cert a/work-cert.pub a a-work $(good "$A")
 cert b/work-cert.pub b b-work $(good "$B")
 cert c/work-cert.pub c c-work $(good "$C")
 
-# The two boxes, their prekeys and A's revocation.
+# The two mailboxes, their prekeys and A's revocation.
 for k in b-1.pq c-1.classic; do [ "$(age-keygen -y "input/$k.key")" = "$(cat "input/$k")" ] || { echo "input/$k is not the recipient of input/$k.key" >&2; exit 1; }; done
 statement "$A" 1 "$(cat input/a-1.pq)" "$NOT_AFTER" > a/prekey-1.txt
 statement "$A" 2 "$(cat input/a-2.classic)" "$NOT_AFTER" > a/prekey-2.txt
@@ -134,8 +134,8 @@ sign a "dromas-revoke-v1:$A" < a/revoke.txt > a/revoke.sig
 
 # Revocations. A's again with the other hash SSHSIG allows, and C's, by a P-256 identity: an ECDSA
 # signature differs each time it is made, so C's is made once and kept. Then signatures every
-# implementation must refuse as a revocation of box A: by a working key under A's own certificate, by
-# another box's identity, in another namespace, and A's signature over the revocation of another box.
+# implementation must refuse as a revocation of mailbox A: by a working key under A's own certificate, by
+# another mailbox's identity, in another namespace, and A's signature over the revocation of another mailbox.
 mkdir -p revoke
 sign a "dromas-revoke-v1:$A" -O hashalg=sha256 < a/revoke.txt > a/revoke.sha256.sig
 printf 'dromas-revoke-v1\n%s\n' "$C" > c/revoke.txt
@@ -144,9 +144,9 @@ under a-work a/work-cert.pub "dromas-revoke-v1:$A" < a/revoke.txt > revoke/bad-b
 sign b "dromas-revoke-v1:$A" < a/revoke.txt > revoke/bad-by-another-identity.sig
 sign a "dromas-prekey-v1:$A" < a/revoke.txt > revoke/bad-another-namespace.sig
 X=$(blob a/revoke.sig); armor "$(plusl "$X" $((${#X} - 64)))" > revoke/bad-s-plus-l.sig      # A's own, with L added to its S
-printf 'dromas-revoke-v1\n%s\n' "$B" | sign a "dromas-revoke-v1:$B" > revoke/bad-of-another-box.sig
+printf 'dromas-revoke-v1\n%s\n' "$B" | sign a "dromas-revoke-v1:$B" > revoke/bad-of-another-mailbox.sig
 
-# Revocations of box A's certificates (PROTOCOL.md §10.2): the tag, the address and the serial every certificate up
+# Revocations of mailbox A's certificates (PROTOCOL.md §10.2): the tag, the address and the serial every certificate up
 # to and including which is revoked, each on a line, signed by A's identity itself in A's namespace for them. Then what
 # is not one. Each bad-* is signed by A's identity in that namespace, so only what its name says is wrong with it, but
 # for the first two.
@@ -177,7 +177,7 @@ printf 'dromas-revoke-certs-v2\n%s\n4\n' "$A" > revoked/bad-another-tag.txt; ths
 through bad-address-in-uppercase "$(tr a-f A-F <<< "$A")" 4; thsig bad-address-in-uppercase
 printf 'dromas-revoke-certs-v1\n%s\n4\0\n' "$A" > revoked/bad-nul.txt; thsig bad-nul      # a NUL, which a shell variable drops: a reader that tests the variable alone takes it
 
-# A pass of box A for a server it calls dromas.example, good for ten minutes from NOW, and the header it travels in.
+# A pass of mailbox A for a server it calls dromas.example, good for ten minutes from NOW, and the header it travels in.
 printf 'dromas-pass-v1\n%s\ndromas.example\n2026-10-10T00:10:00Z\n' "$A" > a/pass.txt
 under a-work a/work-cert.pub "dromas-pass-v1:$A" < a/pass.txt > a/pass.sig
 printf 'dromas-pass address="%s", not_after="2026-10-10T00:10:00Z", signature="%s"\n' "$A" "$(b64 < a/pass.sig)" > a/pass.authorization
@@ -230,7 +230,7 @@ printf -v PC '%*s' $(( (4096 + 2) / 3 * 4 - ${#PS} )) ''
 pv ok-as-long-as-a-pass-can-be 'dromas-pass address="%s", not_after="%s", signature="%s"%s' "$A" "$PT" "$PS" "${PC// /,}"
 pv bad-a-byte-longer-than-a-pass-can-be 'dromas-pass address="%s", not_after="%s", signature="%s"%s,' "$A" "$PT" "$PS" "${PC// /,}"
 
-# Certificates every implementation must refuse for box A at ./now, each with a signature made under
+# Certificates every implementation must refuse for mailbox A at ./now, each with a signature made under
 # it over a/prekey-1.txt in A's prekey namespace: the signature itself is good, the certificate is not.
 badcert() { # <name> <signing key> <certified key> <ssh-keygen options…>
   local name=$1 key=$3
@@ -244,7 +244,7 @@ badcert bad-extension-twice a a-work $(good "$A") -O extension:nobody-defines@dr
 badcert bad-extension-value-an-empty-string a a-work $(good "$A") -O extension:nobody-defines@dromas.invalid=
 badcert bad-key-id a a-work -I dromas-cert-v2 -n "$A" -z 1 -V "$V_OK" -O clear
 badcert bad-two-principals a a-work -I dromas-cert-v1 -n "$A,$B" -z 1 -V "$V_OK" -O clear
-badcert bad-principal-another-box a a-work $(good "$B")
+badcert bad-principal-another-mailbox a a-work $(good "$B")
 badcert bad-serial-zero a a-work $(good "$A" 0)
 badcert bad-serial-above-2-53 a a-work $(good "$A" 9007199254740992)
 badcert bad-host-certificate a a-work $(good "$A") -h
@@ -393,7 +393,7 @@ printf 'dromas-v1\n%s\0%s' "${GOOD:0:40}" "${GOOD:40}" > identity/nul-in-the-key
 printf 'dromas-v1\n%s\0' "$GOOD_C" > identity/p256-nul-for-the-final-newline.doc
 printf 'dromas-v1\n%s\0' "$(sed -n 2p identity/unsupported-type.doc)" > identity/nul-in-an-unknown-type.doc
 
-# Prekey statements of box A. bad-*: signature or format must be refused. expired-*: valid, but
+# Prekey statements of mailbox A. bad-*: signature or format must be refused. expired-*: valid, but
 # expired at ./now, so a sender must not encrypt to it. longest: valid, and the longest a server
 # takes, an hour past the 33 days a client asks for. too-long: a second past that, so valid and not
 # expired, but a server must refuse to publish it. Each is signed by A in A's prekey namespace
@@ -407,7 +407,7 @@ cp a/prekey-1.txt prekey/bad-signed-by-a-bare-working-key.txt; sign a-work "drom
 # A statement may not outlive the certificate it is signed under: this one's certificate ends in 10 days.
 cert prekey/bad-outlives-its-certificate.cert.pub a a-work-2 $(good "$A" 2 "$V_SHORT")
 cp a/prekey-1.txt prekey/bad-outlives-its-certificate.txt; under a-work-2 prekey/bad-outlives-its-certificate.cert.pub "dromas-prekey-v1:$A" < a/prekey-1.txt > prekey/bad-outlives-its-certificate.txt.sig
-bad bad-names-another-box 'dromas-prekey-v1\n%s\n1\n%s\n%s\n' "$B" "$PQ" "$NOT_AFTER"
+bad bad-names-another-mailbox 'dromas-prekey-v1\n%s\n1\n%s\n%s\n' "$B" "$PQ" "$NOT_AFTER"
 bad bad-serial-zero 'dromas-prekey-v1\n%s\n0\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
 bad bad-serial-leading-zero 'dromas-prekey-v1\n%s\n01\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
 bad bad-serial-19-digits 'dromas-prekey-v1\n%s\n1000000000000000000\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
@@ -445,7 +445,7 @@ bad too-long 'dromas-prekey-v1\n%s\n1\n%s\n2026-11-12T01:00:01Z\n' "$A" "$PQ"
 [ "$(bech32 age b77249f1180299c3eb1399abb0cced137e6923bf34ce8b2d8d50c374feafa915)" = "$(cat input/a-2.classic)" ] || { echo "bech32 does not write input/a-2.classic's key as age wrote it" >&2; exit 1; }
 bad unsupported-type 'dromas-prekey-v1\n%s\n1\n%s\n%s\n' "$A" "$(bech32 age1nosuchtype 8520f0098930a754748b7ddcb43ef75a0dbf3a0d26381af4eba4a98eaa9b4e6a)" "$NOT_AFTER"
 
-# Envelopes, judged as a message whose signature by A verified, received by box B, at ./now.
+# Envelopes, judged as a message whose signature by A verified, received by mailbox B, at ./now.
 case_env() { local name=$1; shift; printf "$@" > "envelope/$name.json"; }
 H='"v":1,"from":"%s","to":"%s"'
 case_env accept-minimal "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
@@ -462,7 +462,7 @@ case_env refuse-33-days-and-1s-old "{$H,\"sent_at\":\"2026-09-06T23:59:59Z\",\"m
 case_env accept-1-hour-ahead "{$H,\"sent_at\":\"2026-10-10T01:00:00Z\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
 case_env refuse-1-hour-and-1s-ahead "{$H,\"sent_at\":\"2026-10-10T01:00:01Z\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
 case_env refuse-from-not-signer "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$B" "$B"
-case_env refuse-to-another-box "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$A"
+case_env refuse-to-another-mailbox "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$A"
 case_env refuse-from-uppercase "{$H,\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$(printf '%s' "$A" | tr a-f A-F)" "$B"
 case_env refuse-version-2 "{\"v\":2,\"from\":\"%s\",\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
 case_env refuse-no-version "{\"from\":\"%s\",\"to\":\"%s\",\"sent_at\":\"$NOW\",\"msg_id\":\"$MSG_ID\",\"body\":\"hello\"}" "$A" "$B"
@@ -531,7 +531,7 @@ for m in a-to-b:b-1.pq a-to-c:c-1.classic; do
   age -d -i "input/${m#*:}.key" "message/${m%:*}.age" | cmp -s - "message/${m%:*}.plain" || { echo "message/${m%:*}.age does not decrypt to its .plain with input/${m#*:}.key" >&2; exit 1; }
 done
 
-# What box B decrypts, judged at ./now: accept-* are delivered, refuse-* are not.
+# What mailbox B decrypts, judged at ./now: accept-* are delivered, refuse-* are not.
 GOOD_SIG=message/a-to-b.sig
 cat message/a-to-b.line "$GOOD_SIG" > plain/accept-no-padding.txt
 cp message/a-to-b.plain plain/accept-padded.txt
@@ -548,7 +548,7 @@ refuse() { # <name> <line file> <signature command…>: the line, then the signa
 }
 L=$(mktemp)
 # The signature.
-refuse refuse-signed-for-another-box message/a-to-b.line under a-work a/work-cert.pub "dromas-msg-v1:$A"
+refuse refuse-signed-for-another-mailbox message/a-to-b.line under a-work a/work-cert.pub "dromas-msg-v1:$A"
 refuse refuse-signed-by-the-identity message/a-to-b.line sign a "dromas-msg-v1:$B"
 refuse refuse-signed-by-a-bare-working-key message/a-to-b.line sign a-work "dromas-msg-v1:$B"
 refuse refuse-certificate-ended message/a-to-b.line under a-work cert/bad-ended.pub "dromas-msg-v1:$B"
@@ -564,7 +564,7 @@ line "$(sha256sum < identity/unsupported-type.doc | cut -c1-64)" "$B" "$(b64 < i
 line "$A" "$B" "$(b64 < identity/unsupported-type.doc)" > "$L"; refuse refuse-from-is-not-the-identity-of-an-unknown-type "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
 # Who it is from. The first is the forgery an identity member invites: A's document beside a
 # certificate that B's identity signed. The signature is good and the certificate is B's own.
-refuse refuse-another-box-s-identity-document message/a-to-b.line under b-work b/work-cert.pub "dromas-msg-v1:$B"
+refuse refuse-another-mailbox-s-identity-document message/a-to-b.line under b-work b/work-cert.pub "dromas-msg-v1:$B"
 line "$B" "$B" "$ID_A" > "$L"; refuse refuse-from-is-not-the-identity "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
 printf '{"v":1,"from":"%s","to":"%s","sent_at":"%s","msg_id":"%s","body":"hello"}\n' "$A" "$B" "$NOW" "$MSG_ID" > "$L"; refuse refuse-no-identity "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
 line "$A" "$B" "not base64" > "$L"; refuse refuse-identity-not-base64 "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
@@ -574,7 +574,7 @@ printf '{"v":1,"from":null,"to":"%s","sent_at":"%s","msg_id":"%s","identity":"%s
 line "$(sha256sum < identity/small-order-1.doc | cut -c1-64)" "$B" "$(b64 < identity/small-order-1.doc)" > "$L"; refuse refuse-identity-of-small-order "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
 line "$(sha256sum < identity/off-curve.doc | cut -c1-64)" "$B" "$(b64 < identity/off-curve.doc)" > "$L"; refuse refuse-identity-off-curve "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
 line "$(sha256sum < identity/length-field.doc | cut -c1-64)" "$B" "$(b64 < identity/length-field.doc)" > "$L"; refuse refuse-identity-with-its-length-written-33 "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B" # A's key bytes, in a document that breaks its form
-line "$A" "$A" "$ID_A" > "$L"; refuse refuse-to-another-box "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
+line "$A" "$A" "$ID_A" > "$L"; refuse refuse-to-another-mailbox "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
 # The layout. Each part has one place, and nothing is searched for.
 head -c -1 message/a-to-b.line > plain/refuse-no-line-feed.txt
 cp message/a-to-b.line plain/refuse-no-signature.txt
@@ -681,13 +681,13 @@ at record-ok-type-null '{"type":null,"identity":"%s","revocation_signature":"%s"
 at record-bad-type-another '{"type":"revocation","identity":"%s","revocation_signature":"%s"}' "$ID_A" "$REV" # and never another
 at record-bad-type-empty '{"type":"","identity":"%s","revocation_signature":"%s"}' "$ID_A" "$REV"
 at record-bad-type-a-number '{"type":1,"identity":"%s","revocation_signature":"%s"}' "$ID_A" "$REV"
-at box-ok '{"identity":"%s","prekey":"%s","prekey_signature":"%s"}' "$ID_A" "$P1" "$P1S"
-at box-ok-sender-key-types '{"identity":"%s","prekey":"%s","prekey_signature":"%s","sender_key_types":["ecdsa-sha2-nistp256"]}' "$ID_A" "$P1" "$P1S"
-at box-ok-revoked-certificates '{"identity":"%s","prekey":"%s","prekey_signature":"%s","revoked_certificates":"%s","revoked_certificates_signature":"%s"}' "$ID_A" "$P1" "$P1S" "$RC" "$RCS" # the revocation of its certificates the server holds, beside the box
-at box-bad-sender-key-types-a-string '{"identity":"%s","prekey":"%s","prekey_signature":"%s","sender_key_types":"any"}' "$ID_A" "$P1" "$P1S"
-at box-bad-signature-unpadded '{"identity":"%s","prekey":"%s","prekey_signature":"%s"}' "$ID_A" "$P1" "$NOPAD"
-at box-bad-prekey-a-number '{"identity":"%s","prekey":1,"prekey_signature":"%s"}' "$ID_A" "$P1S"
-at box-bad-revoked-certificates-a-number '{"identity":"%s","prekey":"%s","prekey_signature":"%s","revoked_certificates":4}' "$ID_A" "$P1" "$P1S"
+at mailbox-ok '{"identity":"%s","prekey":"%s","prekey_signature":"%s"}' "$ID_A" "$P1" "$P1S"
+at mailbox-ok-sender-key-types '{"identity":"%s","prekey":"%s","prekey_signature":"%s","sender_key_types":["ecdsa-sha2-nistp256"]}' "$ID_A" "$P1" "$P1S"
+at mailbox-ok-revoked-certificates '{"identity":"%s","prekey":"%s","prekey_signature":"%s","revoked_certificates":"%s","revoked_certificates_signature":"%s"}' "$ID_A" "$P1" "$P1S" "$RC" "$RCS" # the revocation of its certificates the server holds, beside the mailbox
+at mailbox-bad-sender-key-types-a-string '{"identity":"%s","prekey":"%s","prekey_signature":"%s","sender_key_types":"any"}' "$ID_A" "$P1" "$P1S"
+at mailbox-bad-signature-unpadded '{"identity":"%s","prekey":"%s","prekey_signature":"%s"}' "$ID_A" "$P1" "$NOPAD"
+at mailbox-bad-prekey-a-number '{"identity":"%s","prekey":1,"prekey_signature":"%s"}' "$ID_A" "$P1S"
+at mailbox-bad-revoked-certificates-a-number '{"identity":"%s","prekey":"%s","prekey_signature":"%s","revoked_certificates":4}' "$ID_A" "$P1" "$P1S"
 at list-ok '{"count":1,"messages":[{"id":"%s","size":%s,"received_at":"%s","expires_at":"2026-11-12T00:00:00Z"}],"next_cursor":null}' "$HASH" "$(wc -c < message/a-to-b.age)" "$NOW"
 at list-ok-empty '{"count":0,"messages":[],"next_cursor":null}'
 at list-bad-count-negative '{"count":-1,"messages":[],"next_cursor":null}'
@@ -714,13 +714,13 @@ at problem-bad-code-twice '{"type":"tag:dromas.dev,2026-10-26:errors/not_revoked
 at problem-bad-status-a-string '{"status":"404","code":"not_revoked"}'
 at problem-bad-status-a-fraction-after-the-code '{"code":"not_revoked","status":1.5}' # a reader that kept what it read before the fault would act on the code
 # The members a problem carries beside its words (PROTOCOL.md §11.3), each of its type: a client reads them, never the words
-at problem-ok-members '{"type":"tag:dromas.dev,2026-10-26:errors/rate_limited","title":"Rate limited","status":429,"detail":"this box has sent its 20 messages a day","code":"rate_limited","hint":"wait","limit":20,"quota_id":"sends","subject":"box","count":3,"prekey_serial":2,"certificate_serial":1792000000,"through":5,"key_types":["ssh-ed25519",null],"key_type":"ecdsa-sha2-nistp256","member":"prekey_serial"}'
+at problem-ok-members '{"type":"tag:dromas.dev,2026-10-26:errors/rate_limited","title":"Rate limited","status":429,"detail":"this mailbox has sent its 20 messages a day","code":"rate_limited","hint":"wait","limit":20,"quota_id":"sends","subject":"mailbox","count":3,"prekey_serial":2,"certificate_serial":1792000000,"through":5,"key_types":["ssh-ed25519",null],"key_type":"ecdsa-sha2-nistp256","member":"prekey_serial"}'
 at problem-bad-limit-negative '{"code":"rate_limited","status":429,"limit":-1}'
-at problem-bad-quota-id-a-number '{"code":"rate_limited","status":429,"quota_id":5,"subject":"box"}'
-at problem-bad-subject-an-array '{"code":"rate_limited","status":429,"subject":["box"]}'
+at problem-bad-quota-id-a-number '{"code":"rate_limited","status":429,"quota_id":5,"subject":"mailbox"}'
+at problem-bad-subject-an-array '{"code":"rate_limited","status":429,"subject":["mailbox"]}'
 at problem-bad-limit-written-with-an-exponent '{"code":"too_large","status":413,"limit":1e3}'
 at problem-bad-through-above-2-53 '{"code":"conflict","status":409,"through":9007199254740992}'
 at problem-bad-key-types-a-string '{"code":"unsupported_key_type","status":400,"key_types":"ssh-ed25519"}'
 at problem-bad-member-a-number '{"code":"bad_request","status":400,"member":7}'
-at problem-ok-record '{"type":"tag:dromas.dev,2026-10-26:errors/revoked","title":"Revoked","status":410,"detail":"this box is revoked","code":"revoked","record":{"type":"revocation_record","identity":"%s","revocation_signature":"%s"}}' "$ID_A" "$REV" # a read of a revoked box carries its record
+at problem-ok-record '{"type":"tag:dromas.dev,2026-10-26:errors/revoked","title":"Revoked","status":410,"detail":"this mailbox is revoked","code":"revoked","record":{"type":"revocation_record","identity":"%s","revocation_signature":"%s"}}' "$ID_A" "$REV" # a read of a revoked mailbox carries its record
 at problem-bad-record-another-type '{"code":"revoked","status":410,"record":{"type":"revocation","identity":"%s","revocation_signature":"%s"}}' "$ID_A" "$REV" # held to its type as a record alone is

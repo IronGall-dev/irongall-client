@@ -23,24 +23,24 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// A fetch that is cut keeps what it read in the box's partial file, and the
+// A fetch that is cut keeps what it read in the mailbox's partial file, and the
 // next fetch of that message asks for the rest by range (PROTOCOL.md §12.3;
 // #381). The fake answers ranges as dromas-server does, so these tests
 // meet a 206 from an honest server; a middleware plays the link that cuts
 // and the server that lies.
 
-// fetches watches the fetches of box b's mail: what Range each asked, and
+// fetches watches the fetches of mailbox b's messages: what Range each asked, and
 // how many bytes of body the server wrote to them.
 type fetches struct {
-	b      *client.Box
+	b      *client.Mailbox
 	mu     sync.Mutex
 	ranges []string
 	served atomic.Int64
 }
 
-// is reports whether r is a fetch of b's mail, and keeps its Range.
+// is reports whether r is a fetch of b's messages, and keeps its Range.
 func (f *fetches) is(r *http.Request) bool {
-	if r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, boxPath(f.b)+"/messages/") {
+	if r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, mailboxPath(f.b)+"/messages/") {
 		return false
 	}
 	f.mu.Lock()
@@ -91,10 +91,10 @@ func cutAfter(f *fetches, w http.ResponseWriter, ct []byte, n int) {
 	panic(http.ErrAbortHandler)
 }
 
-// partialOf is what box b keeps of a message a fetch was cut in: the message
+// partialOf is what mailbox b keeps of a message a fetch was cut in: the message
 // its state names, how many bytes it records, and how many the partial file
 // holds, -1 for none.
-func partialOf(t *testing.T, b *client.Box) (string, int64, int64) {
+func partialOf(t *testing.T, b *client.Mailbox) (string, int64, int64) {
 	t.Helper()
 	id, n, err := b.Partial()
 	if err != nil {
@@ -107,18 +107,18 @@ func partialOf(t *testing.T, b *client.Box) (string, int64, int64) {
 	return id, n, size
 }
 
-// noPartial fails the test unless box b keeps no partial, in state or as a
+// noPartial fails the test unless mailbox b keeps no partial, in state or as a
 // file.
-func noPartial(t *testing.T, b *client.Box) {
+func noPartial(t *testing.T, b *client.Mailbox) {
 	t.Helper()
 	if id, n, size := partialOf(t, b); id != "" || n != 0 || size != -1 {
-		t.Fatalf("the box keeps a partial of %q, %d bytes recorded, a file of %d", id, n, size)
+		t.Fatalf("the mailbox keeps a partial of %q, %d bytes recorded, a file of %d", id, n, size)
 	}
 }
 
 // cutOnce sends a message to b, and has its first fetch cut half way: it
 // returns the message's id and its ciphertext, as the server holds it.
-func cutOnce(t *testing.T, e *env, a, b *client.Box, f *fetches) (string, []byte) {
+func cutOnce(t *testing.T, e *env, a, b *client.Mailbox, f *fetches) (string, []byte) {
 	t.Helper()
 	id := send(t, a, b, strings.Repeat("a message cut in the middle of its fetch. ", 1500)).ID
 	var held atomic.Pointer[[]byte]
@@ -137,7 +137,7 @@ func cutOnce(t *testing.T, e *env, a, b *client.Box, f *fetches) (string, []byte
 	e.srv.SetMiddle(nil)
 	ct := *held.Load()
 	if got, n, size := partialOf(t, b); got != id || n != int64(len(ct)/2) || size != n {
-		t.Fatalf("after a fetch cut at %d of %d bytes the box keeps %d of %q, a file of %d", len(ct)/2, len(ct), n, got, size)
+		t.Fatalf("after a fetch cut at %d of %d bytes the mailbox keeps %d of %q, a file of %d", len(ct)/2, len(ct), n, got, size)
 	}
 	return id, ct
 }
@@ -148,7 +148,7 @@ func cutOnce(t *testing.T, e *env, a, b *client.Box, f *fetches) (string, []byte
 func TestACutFetchGoesOnFromWhatItKept(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	f := &fetches{b: b}
 	id, ct := cutOnce(t, e, a, b, f)
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -183,7 +183,7 @@ func TestBytesSplicedIntoARangeAreRefusedAsAWrongCiphertext(t *testing.T) {
 	var codes []string
 	for _, spliced := range []bool{false, true} {
 		e := newEnv(t)
-		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 		f := &fetches{b: b}
 		var id string
 		if spliced {
@@ -208,7 +208,7 @@ func TestBytesSplicedIntoARangeAreRefusedAsAWrongCiphertext(t *testing.T) {
 		if len(res.Refused) != 1 || len(res.Delivered) != 0 || res.Refused[0].ID == id || e.srv.Count(b.Address()) != 0 {
 			t.Fatalf("spliced %v: %+v; the server holds %d", spliced, res, e.srv.Count(b.Address()))
 		}
-		if qs, err := b.RefusedMail(t.Context()); err != nil || len(qs) != 1 {
+		if qs, err := b.RefusedMessages(t.Context()); err != nil || len(qs) != 1 {
 			t.Fatalf("spliced %v: refused/ holds %+v, %v", spliced, qs, err)
 		}
 		noPartial(t, b)
@@ -255,7 +255,7 @@ func TestA206ThatIsNotTheRangeAskedBreaksItsForm(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv(t)
-			a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 			f := &fetches{b: b}
 			id := ""
 			n := 0
@@ -310,7 +310,7 @@ func partial(w http.ResponseWriter, body []byte, contentRange ...string) {
 func TestA200ToARangedFetchStartsAfresh(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	f := &fetches{b: b}
 	id, ct := cutOnce(t, e, a, b, f)
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -330,16 +330,16 @@ func TestA200ToARangedFetchStartsAfresh(t *testing.T) {
 	noPartial(t, b)
 }
 
-// What a box kept of a message goes when the message leaves the list: a
-// drain that empties the box drops it, and a fetch answered no_such_message
+// What a mailbox kept of a message goes when the message leaves the list: a
+// drain that empties the mailbox drops it, and a fetch answered no_such_message
 // drops it too.
 func TestAPartialGoesWhenItsMessageLeavesTheList(t *testing.T) {
-	t.Run("a drain that empties the box", func(t *testing.T) {
+	t.Run("a drain that empties the mailbox", func(t *testing.T) {
 		e := newEnv(t)
-		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 		cutOnce(t, e, a, b, &fetches{b: b})
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-			if r.Method == http.MethodGet && r.URL.Path == boxPath(b)+"/messages" {
+			if r.Method == http.MethodGet && r.URL.Path == mailboxPath(b)+"/messages" {
 				fakeserver.WriteList(w, protocol.MessageList{Messages: []protocol.MessageInfo{}})
 				return
 			}
@@ -350,7 +350,7 @@ func TestAPartialGoesWhenItsMessageLeavesTheList(t *testing.T) {
 	})
 	t.Run("a fetch answered no_such_message", func(t *testing.T) {
 		e := newEnv(t)
-		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 		f := &fetches{b: b}
 		id, _ := cutOnce(t, e, a, b, f)
 		send(t, a, b, "behind it, where the drain stops")
@@ -369,7 +369,7 @@ func TestAPartialGoesWhenItsMessageLeavesTheList(t *testing.T) {
 	})
 	t.Run("a drain that stops at its limit keeps it", func(t *testing.T) {
 		e := newEnv(t)
-		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 		f := &fetches{b: b}
 		id, ct := cutOnce(t, e, a, b, f)
 		client.SetDrainLimits(t, 0, 64<<20, 100)
@@ -392,7 +392,7 @@ func TestAFetchIsCutWhenItStallsAndNotWhileItMoves(t *testing.T) {
 		const bound = 300 * time.Millisecond
 		client.SetRequestTimeout(t, bound)
 		e := newMemEnv(t)
-		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 		id := send(t, a, b, strings.Repeat("a message sent at the speed of a slow link. ", 1500)).ID
 		f := &fetches{b: b}
 		stalled := make(chan struct{})
@@ -443,13 +443,13 @@ func TestAFetchIsCutWhenItStallsAndNotWhileItMoves(t *testing.T) {
 	})
 }
 
-// The partial file is taken only as far as the box's state records it
+// The partial file is taken only as far as the mailbox's state records it
 // synced: bytes past that, which a crash can leave unsynced, are cut off,
 // and the next fetch asks from the recorded length.
 func TestAPartialIsTakenOnlyAsFarAsStateRecordsIt(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	f := &fetches{b: b}
 	id, ct := cutOnce(t, e, a, b, f)
 	file, err := os.OpenFile(filepath.Join(b.Dir(), "partial"), os.O_WRONLY|os.O_APPEND, 0o600)
@@ -476,10 +476,10 @@ func TestAPartialIsTakenOnlyAsFarAsStateRecordsIt(t *testing.T) {
 }
 
 // A partial goes once its message is judged, though the drain then stops at
-// its limit and never empties the box.
+// its limit and never empties the mailbox.
 func TestAPartialGoesOnceItsMessageIsJudged(t *testing.T) {
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	f := &fetches{b: b}
 	id, _ := cutOnce(t, e, a, b, f)
 	send(t, a, b, "behind it, where the drain stops")
@@ -498,12 +498,12 @@ func TestAPartialGoesOnceItsMessageIsJudged(t *testing.T) {
 func TestAFetchOfAnotherMessageDropsWhatWasKept(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	f := &fetches{b: b}
 	id, _ := cutOnce(t, e, a, b, f)
 	other := send(t, a, b, strings.Repeat("listed first by its server, fetched whole. ", 1500)).ID
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if r.Method == http.MethodGet && r.URL.Path == boxPath(b)+"/messages" {
+		if r.Method == http.MethodGet && r.URL.Path == mailboxPath(b)+"/messages" {
 			var list protocol.MessageList
 			if err := protocol.Unmarshal(honest(next, r).Body.Bytes(), &list); err != nil || len(list.Messages) != 2 {
 				t.Errorf("the list: %v", err)
@@ -527,11 +527,11 @@ func TestAFetchOfAnotherMessageDropsWhatWasKept(t *testing.T) {
 }
 
 // No size a server gives is taken past the protocol's largest ciphertext
-// (PROTOCOL.md §11.10, §11.11, §11.12), whether the box keeps part of the message
+// (PROTOCOL.md §11.10, §11.11, §11.12), whether the mailbox keeps part of the message
 // or none: a list that gives one is no answer, a good message listed ahead
 // of it too (#446), and a fetch's Content-Length or Content-Range that is not
 // the listed size breaks its answer's form. Either way the drain stops with
-// nothing judged or acked, the mail still on the server, nothing fetched on
+// nothing judged or acked, the messages still on the server, nothing fetched on
 // a list that is no answer, and nothing
 // made by the size: a resume makes no buffer from a listed size before a
 // bound holds it, so 2^53 − 1 cannot panic the drain (#404). 🛑 No
@@ -579,7 +579,7 @@ func TestNoSizeAServerGivesIsTakenPastTheLargestCiphertext(t *testing.T) {
 		for _, size := range c.sizes {
 			t.Run(c.name+"/"+strconv.FormatInt(size, 10), func(t *testing.T) {
 				e := newEnv(t)
-				a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+				a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 				f := &fetches{b: b}
 				var ids []string
 				if c.ahead {
@@ -597,7 +597,7 @@ func TestNoSizeAServerGivesIsTakenPastTheLargestCiphertext(t *testing.T) {
 					switch {
 					case f.is(r) && c.fetch != nil:
 						c.fetch(w, honest(next, r), size)
-					case r.Method == http.MethodGet && r.URL.Path == boxPath(b)+"/messages" && c.fetch == nil:
+					case r.Method == http.MethodGet && r.URL.Path == mailboxPath(b)+"/messages" && c.fetch == nil:
 						var list protocol.MessageList
 						if err := protocol.Unmarshal(honest(next, r).Body.Bytes(), &list); err != nil || len(list.Messages) != len(ids) || list.Messages[len(ids)-1].ID != id {
 							t.Errorf("the list: %v", err)

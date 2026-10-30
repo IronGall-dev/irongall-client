@@ -10,7 +10,7 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-// private makes a directory of the box its owner's alone, as mode 0700 does
+// private makes a directory of the mailbox its owner's alone, as mode 0700 does
 // on Unix, where Windows has no modes: a protected access list, so nothing is
 // inherited from the directory above, inherited in turn by every file and
 // directory made in it, that gives full control to the user running the
@@ -22,7 +22,7 @@ import (
 // A directory that already has that list is left as it is, so the files in
 // it are not walked again at every open. The list is read back once it is
 // set: a volume that keeps no access lists, as FAT does, takes the call and
-// keeps nothing, and a box is never made there.
+// keeps nothing, and a mailbox is never made there.
 func private(dir string) error {
 	user, err := windows.GetCurrentProcessToken().GetTokenUser()
 	if err != nil {

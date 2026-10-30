@@ -24,7 +24,7 @@ const (
 
 // The identity key types this package defines: the SSH name on line 2 of an
 // identity document. Every client verifies IdentityEd25519. Every other type
-// is optional: a box of one is reached only by clients that verify it
+// is optional: a mailbox of one is reached only by clients that verify it
 // (PROTOCOL.md §4.1).
 const (
 	IdentityEd25519 = ssh.KeyAlgoED25519
@@ -54,7 +54,7 @@ var (
 var identityForm = regexp.MustCompile(`\A` + IdentityTag + `\n([!-+\--~]{1,64}) ([A-Za-z0-9+/]+={0,2})\n\z`)
 
 // A defined type: the checks its key must pass beyond being a key of that
-// type in its one encoding, and the most bytes a signature by a box of that
+// type in its one encoding, and the most bytes a signature by a mailbox of that
 // type may be (SignatureBound). Its document's form is the one every type
 // shares (identityForm), with the key in its one encoding: the base64 of the
 // wire key as it is written back once parsed (PROTOCOL.md §4.1). Ed25519's is 91
@@ -80,7 +80,7 @@ var identityTypes = map[string]struct {
 	},
 }
 
-// Identity is a box's identity: its identity document, the key in it, and the
+// Identity is a mailbox's identity: its identity document, the key in it, and the
 // address that document hashes to.
 type Identity struct {
 	doc  []byte

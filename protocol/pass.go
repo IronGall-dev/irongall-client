@@ -13,8 +13,8 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// A box proves itself to a server with a pass: a short statement of who is
-// calling, which server, and until when, signed by the box's working key. It
+// A mailbox proves itself to a server with a pass: a short statement of who is
+// calling, which server, and until when, signed by the mailbox's working key. It
 // says nothing of what a call does, so the pass hands a server no proof of
 // any send (PROTOCOL.md §8).
 
@@ -30,7 +30,7 @@ const (
 	// clock runs fast is not refused.
 	MaxPassLifetime = time.Hour
 	// MaxSkew is how far apart two clocks can be with everything here still
-	// working: an hour. The pass sets it. A box is taken by a server while its
+	// working: an hour. The pass sets it. A mailbox is taken by a server while its
 	// clock is less than PassLifetime slow and no more than MaxPassLifetime
 	// less PassLifetime fast, by the server's, and any two such clocks are
 	// less than MaxPassLifetime apart. Every check is exact at the verifier's
@@ -42,15 +42,15 @@ const (
 	MaxSkew = MaxPassLifetime
 )
 
-// Every pass error wraps one of these. ErrPass: it is not a pass of this box
+// Every pass error wraps one of these. ErrPass: it is not a pass of this mailbox
 // for this server, or it breaks its format. ErrPassExpired: it has run out,
-// and the box signs another.
+// and the mailbox signs another.
 var (
 	ErrPass        = errors.New("bad pass")
 	ErrPassExpired = errors.New("the pass has expired")
 )
 
-// PassNamespace is the namespace of box a's passes.
+// PassNamespace is the namespace of mailbox a's passes.
 func PassNamespace(a Address) string { return PassTag + ":" + a.String() }
 
 // serverNameGrammar is a host as an HTTP client names it: a lowercase name or
@@ -67,8 +67,8 @@ func CheckServerName(s string) error {
 	return nil
 }
 
-// PassStatement is the text a pass signs: the tag, the box's address, the
-// server's name as the box calls it, and the moment the pass runs out, each
+// PassStatement is the text a pass signs: the tag, the mailbox's address, the
+// server's name as the mailbox calls it, and the moment the pass runs out, each
 // line ending in LF.
 func PassStatement(a Address, server string, notAfter time.Time) []byte {
 	return []byte(PassTag + "\n" + a.String() + "\n" + server + "\n" + notAfter.UTC().Format(TimeLayout) + "\n")
@@ -87,7 +87,7 @@ type Pass struct {
 // and the standard base64 of a signature of MaxSignature bytes. A pass is
 // signed by an Ed25519 working key, under the certificate its identity
 // signed, so its size is its identity's key type's; and ParsePass refuses a
-// longer value, in any form, before it reads it, so before it knows the box
+// longer value, in any form, before it reads it, so before it knows the mailbox
 // (PROTOCOL.md §8). So the bound is the most any identity key type allows,
 // and whitespace a sender adds counts toward it.
 const MaxPassAuthorization = len(PassScheme+` address="", not_after="", signature=""`) + 64 + len(TimeLayout) + (MaxSignature+2)/3*4
@@ -96,7 +96,7 @@ const MaxPassAuthorization = len(PassScheme+` address="", not_after="", signatur
 // padded, with nothing else in it (Go's decoder would skip a line break).
 var passSignature = regexp.MustCompile(`\A[A-Za-z0-9+/]+={0,2}\z`)
 
-// NewPass makes box a's pass for server, good for PassLifetime from now, and
+// NewPass makes mailbox a's pass for server, good for PassLifetime from now, and
 // returns it as the Authorization header's value. signer is the working key
 // under its certificate (Certificate.Signer).
 func NewPass(signer ssh.Signer, a Address, server string, now time.Time) (authorization string, notAfter time.Time, err error) {
@@ -301,15 +301,15 @@ func LowerASCII(s string) string {
 // trimOWS drops optional whitespace, spaces and tabs, from the start of s.
 func trimOWS(s string) string { return strings.TrimLeft(s, " \t") }
 
-// Verify checks the pass at now: that it is the pass of the box whose
+// Verify checks the pass at now: that it is the pass of the mailbox whose
 // identity is id, made for server, not run out, running out at most
 // MaxPassLifetime from now, and signed by a working key of that identity
 // under a certificate valid at now. It returns the certificate: a server
-// takes a pass only under the box's current one, and only for a name that
+// takes a pass only under the mailbox's current one, and only for a name that
 // is the server's own, which are the caller's to check.
 func (p *Pass) Verify(id *Identity, server string, now time.Time) (*Certificate, error) {
 	if p.Address != id.Address() {
-		return nil, fmt.Errorf("%w: it is another box's", ErrPass)
+		return nil, fmt.Errorf("%w: it is another mailbox's", ErrPass)
 	}
 	if err := CheckServerName(server); err != nil {
 		return nil, err
@@ -331,13 +331,13 @@ func (p *Pass) Verify(id *Identity, server string, now time.Time) (*Certificate,
 }
 
 // VerifyUnder checks the pass against a certificate known by the SHA-256 of
-// its bytes, sum: the one a caller has on record for the box. The pass must
+// its bytes, sum: the one a caller has on record for the mailbox. The pass must
 // be for server, not run out, signed under exactly that certificate, which
-// must name the box the pass names and must not have ended, and the working
+// must name the mailbox the pass names and must not have ended, and the working
 // key's signature must verify. It returns the certificate.
 //
 // It makes one signature check, and none for a pass under another
-// certificate (ErrCertificate), so a pass that is not the box's is cheap to
+// certificate (ErrCertificate), so a pass that is not the mailbox's is cheap to
 // refuse. It does NOT check the identity's signature on the certificate, nor
 // the certificate's other rules: that is CheckCertificate, which a caller
 // makes on what this returns, as Verify does in one step.
@@ -364,13 +364,13 @@ func (p *Pass) VerifyUnder(sum [sha256.Size]byte, server string, now time.Time) 
 		return nil, fmt.Errorf("%w: the pass is not signed under the certificate on record", ErrCertificate)
 	}
 	// The certificate on record names the identity that signed it, and so
-	// the bound its box's signatures are held to.
+	// the bound its mailbox's signatures are held to.
 	if cert.SignatureKey == nil || withinBound(p.signature, cert.SignatureKey.Type()) != nil {
 		return nil, fmt.Errorf("%w: its signature is longer than its identity's key type allows", ErrPass)
 	}
-	// The pass names a box, and the certificate names the one it is for.
+	// The pass names a mailbox, and the certificate names the one it is for.
 	if len(cert.ValidPrincipals) != 1 || cert.ValidPrincipals[0] != p.Address.String() {
-		return nil, fmt.Errorf("%w: it is another box's", ErrPass)
+		return nil, fmt.Errorf("%w: it is another mailbox's", ErrPass)
 	}
 	// Of a certificate's rules, the one that stops holding by itself: it ends.
 	switch unix := uint64(max(now.Unix(), 0)); {

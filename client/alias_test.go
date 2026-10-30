@@ -12,13 +12,13 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// An alias is the box's own name for a peer: Destination takes it where it
+// An alias is the mailbox's own name for a peer: Destination takes it where it
 // takes an address, and a send to it reaches that peer.
 func TestAliasNamesAPeer(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
-	for name, to := range map[string]*client.Box{"zed": c, "bob": b} {
+	a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
+	for name, to := range map[string]*client.Mailbox{"zed": c, "bob": b} {
 		if err := a.SetAlias(t.Context(), name, to.Address()); err != nil {
 			t.Fatal(err)
 		}
@@ -63,7 +63,7 @@ func TestAliasNamesAPeer(t *testing.T) {
 func TestAliasIsNeverMoved(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	if err := a.SetAlias(t.Context(), "bob", b.Address()); err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestAliasIsNeverMoved(t *testing.T) {
 func TestAliasGrammar(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	for _, name := range []string{"", "Bob", "-x", ".x", "a b", "a/b", "é", b.Address().String(), b.Link(), strings.Repeat("a", 33), "bob\n"} {
 		var refused *client.RefusedError
 		if err := a.SetAlias(t.Context(), name, b.Address()); !errors.As(err, &refused) || !strings.Contains(refused.Reason, "not an alias") {
@@ -97,7 +97,7 @@ func TestAliasGrammar(t *testing.T) {
 	if exists(filepath.Join(a.Dir(), "aliases")) {
 		t.Fatal("a refused name made the aliases file")
 	}
-	for _, name := range []string{"b", "b2", "box.example.org", "the_bot-2", strings.Repeat("a", 32)} {
+	for _, name := range []string{"b", "b2", "mailbox.example.org", "the_bot-2", strings.Repeat("a", 32)} {
 		if err := a.SetAlias(t.Context(), name, b.Address()); err != nil {
 			t.Errorf("%q: %v", name, err)
 		}
@@ -116,7 +116,7 @@ func TestAliasGrammar(t *testing.T) {
 func TestAliasFileEditedByHand(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b, c := e.box(protocol.Classic), e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b, c := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	file := filepath.Join(a.Dir(), "aliases")
 	hand := "# my peers\nbob " + b.Address().String() + "\nBad " + c.Address().String() + "\ncarol not-an-address\n"
 	if err := os.WriteFile(file, []byte(hand), 0o600); err != nil {

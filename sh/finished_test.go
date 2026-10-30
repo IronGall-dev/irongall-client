@@ -14,13 +14,13 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// init on a box that holds its own revocation and has published nothing, a
-// box restored from its identity alone beside its revocation: the script
+// init on a mailbox that holds its own revocation and has published nothing, a
+// mailbox restored from its identity alone beside its revocation: the script
 // signs nothing more, no certificate and no prekey statement, and nothing
 // reaches the server with a pass (PROTOCOL.md §12.5; #256). dr_prekey is the
 // one path to its certificates and statements, so prekey renew is held the
 // same way.
-func TestScriptInitOfABoxThatHoldsItsOwnRevocationSignsNothing(t *testing.T) {
+func TestScriptInitOfAMailboxThatHoldsItsOwnRevocationSignsNothing(t *testing.T) {
 	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
@@ -55,7 +55,7 @@ func TestScriptInitOfABoxThatHoldsItsOwnRevocationSignsNothing(t *testing.T) {
 		made, _ := filepath.Glob(filepath.Join(dir, "work", "*"))
 		stmts, _ := filepath.Glob(filepath.Join(dir, "prekeys", "*"))
 		if err == nil || passes.Load() != 0 || len(made) != 0 || len(stmts) != 0 {
-			t.Errorf("%s on a finished box: %q, %v; %d requests with a pass; it made %v and %v", cmd, out, err, passes.Load(), made, stmts)
+			t.Errorf("%s on a finished mailbox: %q, %v; %d requests with a pass; it made %v and %v", cmd, out, err, passes.Load(), made, stmts)
 		}
 	}
 }

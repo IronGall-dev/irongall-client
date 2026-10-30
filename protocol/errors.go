@@ -29,16 +29,16 @@ const (
 	CodeBadRevocation      Code = "bad_revocation"       // not a revocation of the address: the document does not hash to it, or the signature is not its identity's own
 
 	// 401, with WWW-Authenticate
-	CodeUnauthorized          Code = "unauthorized"            // no pass, or one that is not this box's, for this server
+	CodeUnauthorized          Code = "unauthorized"            // no pass, or one that is not this mailbox's, for this server
 	CodePassExpired           Code = "pass_expired"            // the pass, or the certificate it is under, is not valid at the server's clock: sign another, retry
-	CodeCertificateNotCurrent Code = "certificate_not_current" // the pass or statement is under a certificate that is neither the box's current one nor above it
-	CodeCertificateRevoked    Code = "certificate_revoked"     // a certificate the box's identity revoked: which calls, PROTOCOL.md §8 and §11.4
+	CodeCertificateNotCurrent Code = "certificate_not_current" // the pass or statement is under a certificate that is neither the mailbox's current one nor above it
+	CodeCertificateRevoked    Code = "certificate_revoked"     // a certificate the mailbox's identity revoked: which calls, PROTOCOL.md §8 and §11.4
 
 	// 403
 	CodeUnknownSender    Code = "unknown_sender"     // not registered
-	CodeSenderRevoked    Code = "sender_revoked"     // YOUR box is revoked
-	CodeSenderNotAllowed Code = "sender_not_allowed" // not on the box's allow list, or on its block list
-	CodeSenderKeyType    Code = "sender_key_type"    // the box's client does not verify identities of YOUR box's key type
+	CodeSenderRevoked    Code = "sender_revoked"     // YOUR mailbox is revoked
+	CodeSenderNotAllowed Code = "sender_not_allowed" // not on the mailbox's allow list, or on its block list
+	CodeSenderKeyType    Code = "sender_key_type"    // the mailbox's client does not verify identities of YOUR mailbox's key type
 	CodeAdoptKeyRefused  Code = "adopt_key_refused"  // an adopt key that is spent, expired, revoked or not this server's
 
 	// 404
@@ -47,16 +47,16 @@ const (
 	CodeNotRevoked    Code = "not_revoked"     // no revocation of this address is held here
 
 	// 409
-	CodeConflict      Code = "conflict"       // what is held is newer, or another: a replay that is not byte-identical
-	CodeBoxChanged    Code = "box_changed"    // the box changed while the request was handled: send it again as it is
-	CodeStalePrekey   Code = "stale_prekey"   // a newer prekey exists: re-fetch, re-encrypt the same envelope
-	CodePrekeyExpired Code = "prekey_expired" // the box's owner must publish a new prekey
+	CodeConflict       Code = "conflict"        // what is held is newer, or another: a replay that is not byte-identical
+	CodeMailboxChanged Code = "mailbox_changed" // the mailbox changed while the request was handled: send it again as it is
+	CodeStalePrekey    Code = "stale_prekey"    // a newer prekey exists: re-fetch, re-encrypt the same envelope
+	CodePrekeyExpired  Code = "prekey_expired"  // the mailbox's owner must publish a new prekey
 
 	// 408
 	CodeRequestTimeout Code = "request_timeout" // the body did not arrive in the time the server waits for it: send it again
 
 	// 410
-	CodeRevoked Code = "revoked" // the box you named is revoked, forever
+	CodeRevoked Code = "revoked" // the mailbox you named is revoked, forever
 
 	// 412
 	CodePreconditionFailed Code = "precondition_failed" // an If-Match the server evaluated false (RFC 9110 §13.1.1)
@@ -66,10 +66,10 @@ const (
 
 	// 429, all with Retry-After
 	CodeRateLimited  Code = "rate_limited"  // a limit takes no more for now: which one is quota_id, and whom it counted against subject
-	CodeFetchPaced   Code = "fetch_paced"   // the box has taken out as much new mail as it may for now: the rest waits
+	CodeFetchPaced   Code = "fetch_paced"   // the mailbox has taken out all the new messages it may for now: the rest wait
 	CodeRefetchSpent Code = "refetch_spent" // the message was fetched before, and fetching again is spent for now
 	CodeMailboxFull  Code = "mailbox_full"
-	CodeMailboxBusy  Code = "mailbox_busy" // the box has taken as much new mail as it takes for now
+	CodeMailboxBusy  Code = "mailbox_busy" // the mailbox has taken all the new messages it takes for now
 
 	// 503, with Retry-After
 	CodeUnavailable Code = "unavailable"
@@ -103,7 +103,7 @@ var codes = map[Code]struct {
 	CodeNoSuchMessage:         {http.StatusNotFound, "No such message"},
 	CodeNotRevoked:            {http.StatusNotFound, "Not revoked"},
 	CodeConflict:              {http.StatusConflict, "Conflict"},
-	CodeBoxChanged:            {http.StatusConflict, "Box changed"},
+	CodeMailboxChanged:        {http.StatusConflict, "Mailbox changed"},
 	CodeStalePrekey:           {http.StatusConflict, "Stale prekey"},
 	CodePrekeyExpired:         {http.StatusConflict, "Prekey expired"},
 	CodeRequestTimeout:        {http.StatusRequestTimeout, "Request timeout"},
@@ -172,7 +172,7 @@ type Problem struct {
 	// only once it knows the value.
 	QuotaID Quota   `json:"quota_id,omitempty"`
 	Subject Subject `json:"subject,omitempty"`
-	// Count is how many messages a full box holds, as its list counts them
+	// Count is how many messages a full mailbox holds, as its list counts them
 	// (mailbox_full).
 	Count *uint64 `json:"count,omitempty"`
 	// PrekeySerial and CertificateSerial are serials of a prekey and of a
@@ -183,7 +183,7 @@ type Problem struct {
 	// (conflict).
 	Through *uint64 `json:"through,omitempty"`
 	// KeyTypes are the identity key types a server registers
-	// (unsupported_key_type), and KeyType the one a box's client does not
+	// (unsupported_key_type), and KeyType the one a mailbox's client does not
 	// verify (sender_key_type).
 	KeyTypes []string `json:"key_types,omitempty"`
 	KeyType  string   `json:"key_type,omitempty"`
@@ -191,7 +191,7 @@ type Problem struct {
 	// unknown, given twice or not of its form (bad_request).
 	Member string `json:"member,omitempty"`
 	// Record is the revocation record of the address a 410 revoked names,
-	// which the read of a box always carries, and any other call's where its
+	// which the read of a mailbox always carries, and any other call's where its
 	// server answers from the record (PROTOCOL.md §11.3). A client checks it,
 	// and takes "revoked" on nothing less.
 	Record *Revocations `json:"record,omitempty"`
@@ -226,17 +226,17 @@ type Quota string
 
 // The quotas, by whom each is counted against.
 const (
-	QuotaPolls                  Quota = "polls"                   // a box's polls
-	QuotaPages                  Quota = "pages"                   // a box's list pages after the first
-	QuotaCalls                  Quota = "calls"                   // a box's calls with its pass that no other limit counts
-	QuotaSends                  Quota = "sends"                   // a box's sends, a number a day
-	QuotaRenewals               Quota = "renewals"                // a box's renewals under its current certificate, a number a day
+	QuotaPolls                  Quota = "polls"                   // a mailbox's polls
+	QuotaPages                  Quota = "pages"                   // a mailbox's list pages after the first
+	QuotaCalls                  Quota = "calls"                   // a mailbox's calls with its pass that no other limit counts
+	QuotaSends                  Quota = "sends"                   // a mailbox's sends, a number a day
+	QuotaRenewals               Quota = "renewals"                // a mailbox's renewals under its current certificate, a number a day
 	QuotaCertificates           Quota = "certificates"            // its identity's new certificates, a number a day
 	QuotaCertificateRevocations Quota = "certificate_revocations" // its identity's raises of its revocation of certificates, a number a day
 
 	QuotaRegistrations      Quota = "registrations"       // registrations from an IP address: an IPv4 address or an IPv6 /64
 	QuotaRegistrationsRange Quota = "registrations_range" // registrations from an IPv6 /48
-	QuotaMisses             Quota = "misses"              // calls from an IP address that named no box or carried nothing that verified
+	QuotaMisses             Quota = "misses"              // calls from an IP address that named no mailbox or carried nothing that verified
 	QuotaSendsBeforePass    Quota = "sends_before_pass"   // sends from an IP address, counted before their pass is read
 	QuotaRequests           Quota = "requests"            // calls from an IP address that carry no pass the server has checked, registrations and renewals among them, and requests no route matches
 )
@@ -246,18 +246,18 @@ type Subject string
 
 // The subjects.
 const (
-	SubjectBox Subject = "box" // the box the call proved itself to be, or whose identity signed it
-	SubjectIP  Subject = "ip"  // the IP address the call came from, as the quota keys it
+	SubjectMailbox Subject = "mailbox" // the mailbox the call proved itself to be, or whose identity signed it
+	SubjectIP      Subject = "ip"      // the IP address the call came from, as the quota keys it
 )
 
 var quotas = map[Quota]Subject{
-	QuotaPolls:                  SubjectBox,
-	QuotaPages:                  SubjectBox,
-	QuotaCalls:                  SubjectBox,
-	QuotaSends:                  SubjectBox,
-	QuotaRenewals:               SubjectBox,
-	QuotaCertificates:           SubjectBox,
-	QuotaCertificateRevocations: SubjectBox,
+	QuotaPolls:                  SubjectMailbox,
+	QuotaPages:                  SubjectMailbox,
+	QuotaCalls:                  SubjectMailbox,
+	QuotaSends:                  SubjectMailbox,
+	QuotaRenewals:               SubjectMailbox,
+	QuotaCertificates:           SubjectMailbox,
+	QuotaCertificateRevocations: SubjectMailbox,
 	QuotaRegistrations:          SubjectIP,
 	QuotaRegistrationsRange:     SubjectIP,
 	QuotaMisses:                 SubjectIP,
@@ -276,4 +276,4 @@ func (q Quota) Subject() Subject { return quotas[q] }
 func Quotas() []Quota { return slices.Sorted(maps.Keys(quotas)) }
 
 // Known reports whether s is a subject this version knows.
-func (s Subject) Known() bool { return s == SubjectBox || s == SubjectIP }
+func (s Subject) Known() bool { return s == SubjectMailbox || s == SubjectIP }

@@ -58,7 +58,7 @@ var ifNoneMatchCases = []struct {
 // If-None-Match is read as RFC 9110 §13.1.2 has a server evaluate it: "*" as
 // the whole value, or a list of entity-tags each read through its closing
 // quote; anything else names no page, the tags a hostile server could hand a
-// box among them (dromas-dev/dromas-client#149).
+// mailbox among them (dromas-dev/dromas-client#149).
 func TestIfNoneMatch(t *testing.T) {
 	for _, c := range ifNoneMatchCases {
 		if got := IfNoneMatch(strings.Split(c.field, "\n"), pageTag); got != c.names {

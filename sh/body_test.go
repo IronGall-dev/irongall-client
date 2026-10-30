@@ -14,9 +14,9 @@ import (
 // the Go client reads it (os.ReadFile), and refused in the script's own
 // words when it is not one it sends.
 
-// sendBox is a box directory holding vector a's identity, enough for
+// sendMailbox is a mailbox directory holding vector a's identity, enough for
 // dr_send told it holds the lock, and the addresses of vectors a and b.
-func sendBox(t *testing.T) (dir string, a, b protocol.Address) {
+func sendMailbox(t *testing.T) (dir string, a, b protocol.Address) {
 	t.Helper()
 	dir = t.TempDir()
 	for _, f := range []string{"identity.doc", "address"} {
@@ -25,10 +25,10 @@ func sendBox(t *testing.T) (dir string, a, b protocol.Address) {
 		}
 	}
 	for _, x := range []struct {
-		box  string
-		addr *protocol.Address
+		mailbox string
+		addr    *protocol.Address
 	}{{"a", &a}, {"b", &b}} {
-		ad, err := protocol.ParseAddress(strings.TrimSpace(string(mustRead(t, filepath.Join(vectors, x.box, "address")))))
+		ad, err := protocol.ParseAddress(strings.TrimSpace(string(mustRead(t, filepath.Join(vectors, x.mailbox, "address")))))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -47,7 +47,7 @@ const keepPost = "DR_HELD=$DR; dr_post(){ cp \"$2.P\" \"$OUT\"; mv \"$2.P\" \"$2
 func TestTheScriptReadsTheBodyOnce(t *testing.T) {
 	t.Parallel()
 	need(t, scriptTools...)
-	dir, a, b := sendBox(t)
+	dir, a, b := sendMailbox(t)
 	out := t.TempDir()
 	sent := func(name, o, want string, err error) {
 		t.Helper()
@@ -64,7 +64,7 @@ func TestTheScriptReadsTheBodyOnce(t *testing.T) {
 	for i, c := range []struct{ name, command, want string }{
 		{"a pipe", `dr_send "$B" <(printf hello)`, `"hello"`},
 		{"stdin", `printf hello | dr_send "$B"`, `"hello"`},
-		{"the box's own body.txt", `printf kept > "$DR/body.txt"; dr_send "$B" "$DR/body.txt"`, `"kept"`},
+		{"the mailbox's own body.txt", `printf kept > "$DR/body.txt"; dr_send "$B" "$DR/body.txt"`, `"kept"`},
 	} {
 		o := filepath.Join(out, fmt.Sprint(i))
 		_, err := bash(t, []string{"DR_HOME=" + dir, "OUT=" + o, "B=" + b.String()}, keepPost+c.command)
@@ -73,12 +73,12 @@ func TestTheScriptReadsTheBodyOnce(t *testing.T) {
 }
 
 // A body the script does not send is refused in its own words, one error
-// line on stderr, with nothing kept and nothing left in the box: a body that
+// line on stderr, with nothing kept and nothing left in the mailbox: a body that
 // is not UTF-8, and a body file it cannot read (#274).
 func TestARefusedBodyIsOneErrorLine(t *testing.T) {
 	t.Parallel()
 	need(t, scriptTools...)
-	dir, _, b := sendBox(t)
+	dir, _, b := sendMailbox(t)
 	body := filepath.Join(t.TempDir(), "body")
 	for _, c := range []struct{ name, body, args, words string }{
 		{"a body that is not UTF-8", "bad \xff byte", `"$B" "$F"`, "the body is not UTF-8 text"},
@@ -96,31 +96,31 @@ func TestARefusedBodyIsOneErrorLine(t *testing.T) {
 		}
 		var line struct {
 			Type    string `json:"type"`
-			Message string `json:"message"`
+			Message string `json:"detail"`
 		}
 		if err == nil || exists(o) || strings.Count(errs, "\n") != 0 || protocol.Unmarshal([]byte(errs), &line) != nil || line.Type != "error" || !strings.Contains(line.Message, c.words) {
 			t.Errorf("%s: %v", c.name, err)
 		}
 		for _, f := range []string{"send.P", "body.new"} {
 			if _, err := os.Stat(filepath.Join(dir, f)); err == nil {
-				t.Errorf("%s: $DR/%s is left in the box", c.name, f)
+				t.Errorf("%s: $DR/%s is left in the mailbox", c.name, f)
 			}
 		}
 	}
 }
 
 // A send whose envelope jq does not write, as a jq stopped midway leaves it,
-// is one error line, with nothing kept and no send.P left in the box.
+// is one error line, with nothing kept and no send.P left in the mailbox.
 func TestASendWhoseEnvelopeIsNotBuiltLeavesNothing(t *testing.T) {
 	t.Parallel()
 	need(t, scriptTools...)
-	dir, _, b := sendBox(t)
+	dir, _, b := sendMailbox(t)
 	o := filepath.Join(t.TempDir(), "sent")
 	_, err := bash(t, []string{"DR_HOME=" + dir, "OUT=" + o, "B=" + b.String(), "PATH=" + dyingJQ(t, "-cn", "--rawfile", "body") + ":" + os.Getenv("PATH")}, keepPost+`printf hi | dr_send "$B"`)
-	if err == nil || exists(o) || !strings.HasSuffix(err.Error(), `: {"type":"error","message":"the envelope could not be built: nothing is sent"}`) {
+	if err == nil || exists(o) || !strings.HasSuffix(err.Error(), `: {"type":"error","detail":"the envelope could not be built: nothing is sent"}`) {
 		t.Errorf("a send whose envelope jq died: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "send.P")); err == nil {
-		t.Error("$DR/send.P is left in the box")
+		t.Error("$DR/send.P is left in the mailbox")
 	}
 }

@@ -33,7 +33,7 @@ type Delivery struct {
 	Line []byte
 	// Plaintext is the envelope's line exactly as the sender signed it, and
 	// Signature the signature block that verified over it: together they
-	// show anyone that this sender wrote this to this box. The client keeps
+	// show anyone that this sender wrote this to this mailbox. The client keeps
 	// neither on disk.
 	Plaintext []byte
 	Signature []byte
@@ -53,7 +53,7 @@ type Refusal struct {
 	Code   string
 	Reason string
 	// Findings is what the checks established about it before it was
-	// refused (protocol.Findings): kept with it in refused/. Where the box
+	// refused (protocol.Findings): kept with it in refused/. Where the mailbox
 	// holds a revocation of the address that signed it, or of its
 	// certificate, it is the clock and the identity alone, with Signed false,
 	// as for a signature that does not verify (#265).
@@ -62,12 +62,12 @@ type Refusal struct {
 
 // Result is what one Receive did.
 type Result struct {
-	// Delivered is the mail that landed in inbox/: from a sender the box
+	// Delivered lists the messages that landed in inbox/: from a sender the mailbox
 	// allowed, or from any sender under "unknown inbox".
 	Delivered []Delivery
-	// Held is mail that passed every check from a sender the box has not
-	// allowed, kept in held/ under "unknown held" ([Box.Allow] moves it to
-	// inbox/). Blocked names mail from a sender the box blocked, dropped.
+	// Held lists the messages that passed every check from a sender the mailbox has not
+	// allowed, kept in held/ under "unknown held" ([Mailbox.Allow] moves them to
+	// inbox/). Blocked names the messages from a sender the mailbox blocked, dropped.
 	// Both were acked.
 	Held    []Delivery
 	Blocked []string
@@ -80,7 +80,7 @@ type Result struct {
 	// the server paced it: the rest is still on the server for the next
 	// Receive, which goes on from what a fetch the time cut kept.
 	More bool
-	// Paced is how long the server asked the box to wait before taking out
+	// Paced is how long the server asked the mailbox to wait before taking out
 	// more, when it paced the drain (a 429 fetch_paced or refetch_spent with
 	// Retry-After, on a fetch); zero otherwise.
 	Paced time.Duration
@@ -93,22 +93,22 @@ type Result struct {
 	// RenewErr is why a due renewal failed. The drain went ahead, and a
 	// later Receive tries again, at most hourly.
 	RenewErr error
-	// ACLErr is why the box's ACL was not sent where it differs from the one
-	// its server last took ([Box.SyncACL]), or from one another writer put
+	// ACLErr is why the mailbox's ACL was not sent where it differs from the one
+	// its server last took ([Mailbox.SyncACL]), or from one another writer put
 	// there, which the renewal's read then kept as taken (checkACL). The drain
 	// went ahead, and the next send or Receive sends it.
 	ACLErr error
-	// ACLReplaced reports that the read of the ACL the box's server holds,
+	// ACLReplaced reports that the read of the ACL the mailbox's server holds,
 	// owed since a renewal recv began was taken and made by this Receive
-	// (aclAt), found an ACL other than the one this box last sent it, which
-	// another machine of the box, whoever holds its pass or the server itself
-	// wrote, and that the box sent its own in its place (checkACL); or that a
+	// (aclAt), found an ACL other than the one this mailbox last sent it, which
+	// another machine of the mailbox, whoever holds its pass or the server itself
+	// wrote, and that the mailbox sent its own in its place (checkACL); or that a
 	// sync since the last Receive replaced an ACL a restore adopted that held
-	// what no file of the box says, or one another writer put that an owed
+	// what no file of the mailbox says, or one another writer put that an owed
 	// read kept and could not replace then (syncACL; #366, #377).
 	ACLReplaced bool
-	// NotMade is a statement the box's server served in its name, at the
-	// box's last read of itself, that the box did not make, or nil
+	// NotMade is a statement the mailbox's server served in its name, at the
+	// mailbox's last read of itself, that the mailbox did not make, or nil
 	// ([NotMade]).
 	NotMade *NotMade
 	// listedAt is the reading the server took for the drain's first list,
@@ -118,51 +118,51 @@ type Result struct {
 	listedAt taken
 }
 
-// Again is how long the box waits before its next Receive: the server's
+// Again is how long the mailbox waits before its next Receive: the server's
 // poll interval, or a paced drain's wait when that is the later, since the
 // next Receive begins with a list, which is a poll (PROTOCOL.md §11.11, §11.5).
-// Sooner would spend the box's polls, and be refused once they are spent,
-// where the poll interval lets the server's pace of new mail refill
+// Sooner would spend the mailbox's polls, and be refused once they are spent,
+// where the poll interval lets the server's pace of new messages refill
 // meanwhile (#117).
 func (r *Result) Again() time.Duration {
 	return max(r.Paced, time.Duration(r.PollAfter)*time.Second)
 }
 
-// Receive drains the box: every page, every message, up to the drain's
+// Receive drains the mailbox: every page, every message, up to the drain's
 // limits, its time among them (Options.DrainTime). Each message is judged
-// by one gate (see [Box.judge]); only one that passes every check lands,
-// where the box's say over its sender puts it: inbox/ for a sender it
-// allowed, held/ for one it has not (unless its policy lands that mail in
-// inbox/ too), and nowhere for one it blocked. Refused mail goes to
-// refused/. All of it is acked. A transient error stops the drain and leaves the rest for the
-// next one. It holds the box's lock throughout ([Box.hold]): a second
-// Receive, or any other command that writes the box, waits for it.
+// by one gate (see [Mailbox.judge]); only one that passes every check lands,
+// where the mailbox's say over its sender puts it: inbox/ for a sender it
+// allowed, held/ for one it has not (unless its policy lands such a message in
+// inbox/ too), and nowhere for one it blocked. Refused messages go to
+// refused/. All of them are acked. A transient error stops the drain and leaves the rest for the
+// next one. It holds the mailbox's lock throughout ([Mailbox.hold]): a second
+// Receive, or any other command that writes the mailbox, waits for it.
 //
 // First it renews the prekey if the current one is more than a day old, so
-// a box received at least monthly never lapses. Once that renewal is taken,
+// a mailbox received at least monthly never lapses. Once that renewal is taken,
 // a read of the ACL its server holds is owed, and the first Receive that can
-// make it makes it, renewing or not, and replaces one the box did not send
-// (aclAt, checkACL). A drain that empties the box
-// then deletes the retired prekeys no mail can still need (see
-// [Box.dropRetired]): all but the newest. And once the server has answered
+// make it makes it, renewing or not, and replaces one the mailbox did not send
+// (aclAt, checkACL). A drain that empties the mailbox
+// then deletes the retired prekeys no message can still need (see
+// [Mailbox.dropRetired]): all but the newest. And once the server has answered
 // the drain's list, so has taken a pass dated by this machine's clock, the
 // prekeys whose deletion time has come by that pass's date go too.
 //
-// A box that holds its own revocation receives nothing.
-func (b *Box) Receive(ctx context.Context) (*Result, error) {
+// A mailbox that holds its own revocation receives nothing.
+func (b *Mailbox) Receive(ctx context.Context) (*Result, error) {
 	return locked(ctx, b, func() (*Result, error) { return b.receive(ctx) })
 }
 
-func (b *Box) receive(ctx context.Context) (*Result, error) {
+func (b *Mailbox) receive(ctx context.Context) (*Result, error) {
 	// What this command has asked as it went: the renewal's ask for the
-	// box's own revocation, then the drain's about each sender.
+	// mailbox's own revocation, then the drain's about each sender.
 	asked := newLookups()
 	renewed, renewErr := b.renewIfDue(ctx)
 	// A renewal recv began owes, once it is taken, a read of the ACL the
 	// server holds, about once a day, which this Receive makes while it is
 	// owed, whether or not it renewed, so one that another writer put there
-	// lasts until the read after the box's next renewal at most; with none
-	// owed, only a change of the box's own is sent, with no read (aclAt).
+	// lasts until the read after the mailbox's next renewal at most; with none
+	// owed, only a change of the mailbox's own is sent, with no read (aclAt).
 	replaced, aclErr := b.aclAt(ctx)
 	// One Result for the command, which a second drain adds to: what the first
 	// landed and acked is said, whatever stopped it (#332). The two drains
@@ -172,10 +172,10 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 	defer stop()
 	err := b.drain(drainCtx, asked, res)
 	// A drain refused for what a renewal mends renews, and drains again, once:
-	// a server that holds no box at this address, having forgotten it, which
+	// a server that holds no mailbox at this address, having forgotten it, which
 	// the renewal's registration brings back (PROTOCOL.md §11.7, §12.4), or one
 	// that holds the certificate in use revoked, which the refusal had this
-	// box read and keep (proved).
+	// mailbox read and keep (proved).
 	if err != nil && renewed == nil && renewErr == nil && b.mendable(err) {
 		if renewed, renewErr = b.renewNow(ctx); renewed != nil {
 			var again bool
@@ -194,15 +194,15 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 			}
 		}
 	}
-	// A box shown its own revocation on the way, at its renewal, its ACL or
-	// its drain, takes no mail and signs nothing more, and says that alone,
+	// A mailbox shown its own revocation on the way, at its renewal, its ACL or
+	// its drain, takes no messages and signs nothing more, and says that alone,
 	// beside what it already did (#332, #335, #378): no renewal or ACL is left
 	// to try again.
 	if gone := ownRevoked(err, renewErr, aclErr); gone != nil {
 		res.Renewed, res.ACLReplaced = renewed, replaced
 		return res, gone
 	}
-	// A replacement of an ACL that held what no file of the box says, which
+	// A replacement of an ACL that held what no file of the mailbox says, which
 	// a sync made since the last Receive, is reported here (#366).
 	if noted, nerr := b.replacedNote(); nerr != nil && err == nil {
 		err = nerr
@@ -217,9 +217,9 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 	}
 	// Deleted by this clock only once the server has taken a pass dated by
 	// it, and by that pass's date: a clock far ahead is stopped at its pass,
-	// and the keys that mail waits for stay (PROTOCOL.md §12.4).
+	// and the keys that messages wait for stay (PROTOCOL.md §12.4).
 	if !res.listedAt.None() {
-		// Only a drain that emptied the box may delete retired prekeys
+		// Only a drain that emptied the mailbox may delete retired prekeys
 		// early; and it leaves no message a partial could be of.
 		if err == nil && !res.More {
 			if err = b.dropRetired(res.listedAt); err == nil {
@@ -233,17 +233,17 @@ func (b *Box) receive(ctx context.Context) (*Result, error) {
 	return res, err
 }
 
-// aclAt sends the box's ACL as a Receive does: checked against what the
+// aclAt sends the mailbox's ACL as a Receive does: checked against what the
 // server holds once a renewal a Receive began is taken, by whatever recorded
 // it, this Receive or another command after a process that ended (checkACL,
-// the read owed: oweACLRead), and otherwise sent only when the box's own
+// the read owed: oweACLRead), and otherwise sent only when the mailbox's own
 // changed (syncACL). The read owed goes once it is made, the server's ACL
 // answered and what it showed kept (checkACL): a list that cannot be read, a
-// read the server did not answer, or a fault of the box before what it
+// read the server did not answer, or a fault of the mailbox before what it
 // showed is kept leave it owed, and the next Receive reads again (#377). A
-// box shown its own revocation owes none: the keep drops it
+// mailbox shown its own revocation owes none: the keep drops it
 // (keepRevocation).
-func (b *Box) aclAt(ctx context.Context) (bool, error) {
+func (b *Mailbox) aclAt(ctx context.Context) (bool, error) {
 	owed, err := b.aclReadOwed()
 	if err != nil {
 		return false, err
@@ -263,15 +263,15 @@ func (b *Box) aclAt(ctx context.Context) (bool, error) {
 }
 
 // oweACLRead records, before a renewal a Receive makes, that a read of the
-// ACL the box's server holds is owed once a renewal above the prekey it
+// ACL the mailbox's server holds is owed once a renewal above the prekey it
 // published last is taken: under "acl-read", that prekey's serial, unless a
 // read is owed already, from a renewal not taken since.
-func (b *Box) oweACLRead() error {
+func (b *Mailbox) oweACLRead() error {
 	if err := b.update(func(s store) error {
 		if s.get(bucketIntent, "acl-read") != nil {
 			return nil
 		}
-		published, err := decimal(s.get(bucketBox, "serial"), "serial")
+		published, err := decimal(s.get(bucketMailbox, "serial"), "serial")
 		if err != nil {
 			return err
 		}
@@ -283,10 +283,10 @@ func (b *Box) oweACLRead() error {
 	return nil
 }
 
-// aclReadOwed reports whether a read of the ACL the box's server holds is
+// aclReadOwed reports whether a read of the ACL the mailbox's server holds is
 // owed: a renewal a Receive began, or a later one, has been taken and
 // recorded, and the read has not been made since.
-func (b *Box) aclReadOwed() (owed bool, err error) {
+func (b *Mailbox) aclReadOwed() (owed bool, err error) {
 	err = b.view(func(s store) error {
 		raw := s.get(bucketIntent, "acl-read")
 		if raw == nil {
@@ -296,7 +296,7 @@ func (b *Box) aclReadOwed() (owed bool, err error) {
 		if err != nil {
 			return err
 		}
-		published, err := decimal(s.get(bucketBox, "serial"), "serial")
+		published, err := decimal(s.get(bucketMailbox, "serial"), "serial")
 		owed = published > before
 		return err
 	})
@@ -304,10 +304,10 @@ func (b *Box) aclReadOwed() (owed bool, err error) {
 }
 
 // mendable reports whether a drain's error is one a renewal mends: the
-// server holds no box at this address, or this box holds a revocation of the
+// server holds no mailbox at this address, or this mailbox holds a revocation of the
 // certificate it uses.
-func (b *Box) mendable(err error) bool {
-	// The box's own revocation is mended by nothing: it signs nothing more
+func (b *Mailbox) mendable(err error) bool {
+	// The mailbox's own revocation is mended by nothing: it signs nothing more
 	// (#335).
 	if ownRevoked(err) != nil {
 		return false
@@ -319,7 +319,7 @@ func (b *Box) mendable(err error) bool {
 	return perr == nil && b.ownRevokes(n)
 }
 
-// A drain is bounded, so that a server which lists mail without end, or
+// A drain is bounded, so that a server which lists messages without end, or
 // serves answers as large as it may, or as slowly as it may, costs one
 // Receive a known amount of time and disk at most. A drain that reaches a
 // limit stops there: what is left stays on the server for the next Receive.
@@ -333,7 +333,7 @@ var (
 // Options.DrainTime (recv --drain-time) says otherwise: the drain's bound in
 // time, beside its others. At it a call under way is cut, and a fetch keeps
 // what it read for the next Receive to go on from (partial.go), so a drain
-// of large mail on a slow link completes over several (#2, #381).
+// of large messages on a slow link completes over several (#2, #381).
 const DefaultDrainTime = 15 * time.Minute
 
 // errDrainTime is the cause of a drain's context's end at its bound in
@@ -341,11 +341,11 @@ const DefaultDrainTime = 15 * time.Minute
 // call it cut the cause as its error, so it is a deadline's too.
 var errDrainTime = fmt.Errorf("the drain ran as long as one drain runs: %w", context.DeadlineExceeded)
 
-// drain drains the box until its list ends or a limit stops it. A call that
+// drain drains the mailbox until its list ends or a limit stops it. A call that
 // its bound in time cut (Options.DrainTime, the cause of ctx's end) stops
 // it as its other limits do, with Result.More and no error: what it
 // delivered stays delivered, and a fetch under way kept what it read.
-func (b *Box) drain(ctx context.Context, asked *lookups, res *Result) error {
+func (b *Mailbox) drain(ctx context.Context, asked *lookups, res *Result) error {
 	err := b.drainPages(ctx, asked, res)
 	if err != nil && errors.Is(context.Cause(ctx), errDrainTime) && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)) {
 		res.More = true
@@ -354,9 +354,9 @@ func (b *Box) drain(ctx context.Context, asked *lookups, res *Result) error {
 	return err
 }
 
-func (b *Box) drainPages(ctx context.Context, asked *lookups, res *Result) error {
-	// Where mail lands is read once, before anything is acked: a policy or
-	// a list that cannot be read stops the drain, and the mail stays on the
+func (b *Mailbox) drainPages(ctx context.Context, asked *lookups, res *Result) error {
+	// Where a message lands is read once, before anything is acked: a policy or
+	// a list that cannot be read stops the drain, and the messages stay on the
 	// server.
 	who, err := b.readSenders()
 	if err != nil {
@@ -366,7 +366,7 @@ func (b *Box) drainPages(ctx context.Context, asked *lookups, res *Result) error
 	messages, fetched := 0, 0
 	// What an error names: the list's path, never a cursor, which is the
 	// server's own text (PROTOCOL.md §11.3).
-	listed := b.boxPath("/messages")
+	listed := b.mailboxPath("/messages")
 	for page := 0; ; page++ {
 		if page == maxDrainPages {
 			res.More = true
@@ -380,7 +380,7 @@ func (b *Box) drainPages(ctx context.Context, asked *lookups, res *Result) error
 		}
 		var hdr http.Header
 		if page == 0 {
-			// The tag of the last poll that found the box empty: a 304 then
+			// The tag of the last poll that found the mailbox empty: a 304 then
 			// says it is empty still (PROTOCOL.md §12.3).
 			hdr, err = b.ifNoneMatch()
 			if err != nil {
@@ -390,7 +390,7 @@ func (b *Box) drainPages(ctx context.Context, asked *lookups, res *Result) error
 		var list protocol.MessageList
 		resp, at, err := b.ownerTaken(ctx, http.MethodGet, path, hdr, nil, &list)
 		if err != nil {
-			// A server that says this box is revoked, or its certificate, was
+			// A server that says this mailbox is revoked, or its certificate, was
 			// held to what it shows (proved, in call).
 			return err
 		}
@@ -416,7 +416,7 @@ func (b *Box) drainPages(ctx context.Context, asked *lookups, res *Result) error
 			// no answer, and the tag goes, so the next poll asks for the
 			// page in full.
 			if !sameTag(resp.Header.Get("ETag"), hdr.Get("If-None-Match")) {
-				if err := b.update(func(s store) error { return s.del(bucketBox, "etag") }); err != nil {
+				if err := b.update(func(s store) error { return s.del(bucketMailbox, "etag") }); err != nil {
 					return err
 				}
 				return fmt.Errorf("GET %s: a 304 about another tag than the one the poll sent", listed)
@@ -437,7 +437,7 @@ func (b *Box) drainPages(ctx context.Context, asked *lookups, res *Result) error
 				return nil
 			}
 			n, err := b.receiveOne(ctx, m, res, asked, who)
-			// A server that paces how much a box takes out stops the drain
+			// A server that paces how much a mailbox takes out stops the drain
 			// as a drain's own limits do: what is left waits on the server.
 			// Only the fetch's own answer is pacing (receiveOne): any other
 			// call's refusal in the drain is an error (#116).
@@ -476,15 +476,15 @@ func (e *pacedError) Unwrap() error { return e.err }
 // gives; when it came, on the server's word, is the list's. It goes on from
 // what an earlier fetch of the message kept, and keeps what it reads should
 // it be cut (partial.go). An error is transient, a fetch that
-// is not of that size, or a fault of this box (an unreadable key, a full
+// is not of that size, or a fault of this mailbox (an unreadable key, a full
 // disk): the message stays on the server for the next drain, never judged
-// by a box that cannot judge it.
+// by a mailbox that cannot judge it.
 //
 // Files are named by the SHA-256 of the ciphertext as computed here, never by
 // the server's id; a message whose id is not that hash is refused. The hash
 // is of the whole, what was kept and what this fetch read, so bytes a server
 // splices into a range are refused as any wrong ciphertext is.
-func (b *Box) receiveOne(ctx context.Context, m protocol.MessageInfo, res *Result, asked *lookups, who *senders) (fetched int, err error) {
+func (b *Mailbox) receiveOne(ctx context.Context, m protocol.MessageInfo, res *Result, asked *lookups, who *senders) (fetched int, err error) {
 	id := m.ID
 	handled, err := b.seenHash(id)
 	if err != nil {
@@ -496,9 +496,9 @@ func (b *Box) receiveOne(ctx context.Context, m protocol.MessageInfo, res *Resul
 			return 0, err
 		}
 		ct := &ciphertext{size: m.Size, keep: p}
-		_, err = b.ownerWith(ctx, http.MethodGet, b.boxPath("/messages/"+id), p.ask(), nil, ct)
+		_, err = b.ownerWith(ctx, http.MethodGet, b.mailboxPath("/messages/"+id), p.ask(), nil, ct)
 		fetched = p.got()
-		// A fault of this box at keeping what the fetch read is the error,
+		// A fault of this mailbox at keeping what the fetch read is the error,
 		// ahead of the fetch's own and never joined to it: a cut at the
 		// drain's time is the bound reached (drain), and a fault in its chain
 		// would be taken for one, with nothing kept.
@@ -542,7 +542,7 @@ func (b *Box) receiveOne(ctx context.Context, m protocol.MessageInfo, res *Resul
 		default:
 			// Stored before it is recorded as seen, and both, on disk,
 			// before the ack: a crash or power loss in between delivers it
-			// again, never loses it. Mail from a blocked sender is recorded
+			// again, never loses it. A message from a blocked sender is recorded
 			// as seen too, so that a retry of it is a duplicate.
 			d.ID = local
 			where := who.land(d.Envelope.From)
@@ -558,7 +558,7 @@ func (b *Box) receiveOne(ctx context.Context, m protocol.MessageInfo, res *Resul
 			step("delivery written")
 			// A message refused once, whose ack was lost, and delivered
 			// now, keeps nothing in refused/ (#211): its file goes first,
-			// then what the box's state keeps of it, with the line.
+			// then what the mailbox's state keeps of it, with the line.
 			if err := removeIfExists(b.path("refused", local+".json")); err != nil {
 				return fetched, err
 			}
@@ -585,7 +585,7 @@ func (b *Box) receiveOne(ctx context.Context, m protocol.MessageInfo, res *Resul
 			return fetched, err
 		}
 	}
-	_, err = b.owner(ctx, http.MethodDelete, b.boxPath("/messages/"+id), nil, nil)
+	_, err = b.owner(ctx, http.MethodDelete, b.mailboxPath("/messages/"+id), nil, nil)
 	if code(err) == protocol.CodeNoSuchMessage {
 		return fetched, nil
 	}
@@ -605,7 +605,7 @@ type verdict struct {
 // judge runs every check on one message, its ciphertext alone, in this
 // order, and returns the delivery only if all of them pass; otherwise why
 // says which failed, in a code and in this client's own words. An error is
-// this box's own fault, not the message's: no verdict.
+// this mailbox's own fault, not the message's: no verdict.
 //
 //  1. Decryption with every retained prekey, of a file with exactly one
 //     native recipient stanza, counted before anything is decrypted
@@ -614,34 +614,34 @@ type verdict struct {
 //  3. The envelope is one JSON object, as protocol.Unmarshal reads one.
 //  4. The line carries the sender's identity document, and its from is that
 //     document's hash.
-//  5. The signature over the line as decrypted, in this box's message
+//  5. The signature over the line as decrypted, in this mailbox's message
 //     namespace, by a working key that identity certified.
-//  6. The rest of the envelope: version 1, to is this box, msg_id in its
+//  6. The rest of the envelope: version 1, to is this mailbox, msg_id in its
 //     form, and sent_at no older than protocol.TTL (33 days), not before the
 //     floor the seen-set was pruned at (seenFloor), and at most
 //     protocol.MaxSkew ahead.
-//  7. Revocation: this box holds no revocation of the sender. The server is
+//  7. Revocation: this mailbox holds no revocation of the sender. The server is
 //     asked for one, once for each sender in a drain. A revocation that
 //     verifies refuses the message and every later one, whenever they were
 //     signed. A server that says it holds none has answered. No answer is an
 //     error: the message stays on the server for the next drain. The same
 //     answer carries the sender's revocation of its certificates, if it has
-//     one: mail signed under a revoked certificate is refused the same way,
+//     one: a message signed under a revoked certificate is refused the same way,
 //     and the address goes on.
 //  8. Replay: the locally computed ciphertext hash is not in the seen-set.
 //  9. Retry: (from, msg_id) is not in the seen-set. A match is a duplicate.
 //
 // The numbers are PROTOCOL.md §12.3's. protocol.Examine makes checks 2 to 6,
-// all but the floor, which is this box's own and judge's. Who the sender is,
+// all but the floor, which is this mailbox's own and judge's. Who the sender is,
 // is never asked of the server, nor read from its list: the message carries
 // what proves it. The one thing asked is whether a revocation of that sender
 // exists, and the answer proves itself. The sender's identity is pinned only
 // once all of that has passed.
-func (b *Box) judge(ctx context.Context, ct []byte, asked *lookups) (verdict, error) {
+func (b *Mailbox) judge(ctx context.Context, ct []byte, asked *lookups) (verdict, error) {
 	now := b.now()
 	found := &protocol.Findings{At: now}
 	refused := func(code, reason string) (verdict, error) {
-		// A refusal says who signed it only where this box holds no
+		// A refusal says who signed it only where this mailbox holds no
 		// revocation of that address or of that certificate, read from what
 		// it holds, with no ask: an identity that revoked the key disowned
 		// what it signs, and the record names it as the identity it claims,
@@ -649,7 +649,7 @@ func (b *Box) judge(ctx context.Context, ct []byte, asked *lookups) (verdict, er
 		if found.Signed && found.Identity != nil {
 			held, err := b.held(*found.Identity)
 			if err != nil {
-				return verdict{}, fmt.Errorf("a fault of this box, so the message stays on the server: %w", err)
+				return verdict{}, fmt.Errorf("a fault of this mailbox, so the message stays on the server: %w", err)
 			}
 			if held.Revoked || held.Certificates != nil && held.Certificates.Revokes(found.Serial) {
 				*found = protocol.Findings{At: found.At, Identity: found.Identity}
@@ -668,11 +668,11 @@ func (b *Box) judge(ctx context.Context, ct []byte, asked *lookups) (verdict, er
 	case errors.Is(err, errNotOneNative):
 		return refused(RefusedDecrypt, "it is not encrypted to exactly one recipient of a prekey's type, as every server takes a send: nothing was decrypted")
 	case err != nil:
-		return refused(RefusedDecrypt, "it does not decrypt with this box's prekeys")
+		return refused(RefusedDecrypt, "it does not decrypt with this mailbox's prekeys")
 	}
 	p, err := io.ReadAll(io.LimitReader(r, protocol.MaxCiphertext)) // less than its ciphertext, which is at most that
 	if err != nil {
-		return refused(RefusedDecrypt, "it does not decrypt with this box's prekeys")
+		return refused(RefusedDecrypt, "it does not decrypt with this mailbox's prekeys")
 	}
 	signed, found, err := protocol.Examine(p, b.id.Address(), now)
 	if err != nil {
@@ -693,11 +693,11 @@ func (b *Box) judge(ctx context.Context, ct []byte, asked *lookups) (verdict, er
 		return verdict{}, err
 	}
 	if floor > 0 && env.SentAt.Unix() < floor+int64(protocol.TTL/time.Second) {
-		return refused(protocol.RefusedStale, "sent_at is before this box's replay set reaches back to, since its clock once read later than it does now")
+		return refused(protocol.RefusedStale, "sent_at is before this mailbox's replay set reaches back to, since its clock once read later than it does now")
 	}
 	gone, err := b.revoked(from)
 	if err != nil {
-		return verdict{}, fmt.Errorf("a fault of this box, so the message stays on the server: %w", err)
+		return verdict{}, fmt.Errorf("a fault of this mailbox, so the message stays on the server: %w", err)
 	}
 	if !gone && !asked.answered[from] {
 		if gone, err = b.lookupRevocation(ctx, from, asked); err != nil {
@@ -753,7 +753,7 @@ func keptLineOf(env *protocol.Envelope) ([]byte, error) {
 	return escapeUnseen(line), nil
 }
 
-// escapeUnseen escapes, in a line a reader is shown or a box keeps, the
+// escapeUnseen escapes, in a line a reader is shown or a mailbox keeps, the
 // characters a reader cannot see or that some readers end a line at, with
 // the same value. A body can carry them raw inside a JSON string, the only
 // place JSON allows them. The line breaks other than LF are U+0085, U+2028
@@ -818,12 +818,12 @@ func seenTimeKey(sentAt int64, h string) string {
 	return string(binary.BigEndian.AppendUint64(nil, uint64(max(sentAt, 0)))) + h
 }
 
-func (b *Box) seenHash(h string) (seen bool, err error) {
+func (b *Mailbox) seenHash(h string) (seen bool, err error) {
 	err = b.view(func(s store) error { seen = s.get(bucketSeen, h) != nil; return nil })
 	return seen, err
 }
 
-func (b *Box) seenMsgID(from protocol.Address, msgID string) (seen bool, err error) {
+func (b *Mailbox) seenMsgID(from protocol.Address, msgID string) (seen bool, err error) {
 	err = b.view(func(s store) error { seen = s.get(bucketSeenSender, from.String()+" "+msgID) != nil; return nil })
 	return seen, err
 }
@@ -845,7 +845,7 @@ func recordSeen(s store, ciphertext []byte, env *protocol.Envelope) error {
 // server took. When it drops one, the floor rises to the cutoff in the same
 // transaction, so a clock that later reads further back than SeenFor allows
 // for still takes no message whose line went (seenFloor).
-func (b *Box) pruneSeen(at taken) error {
+func (b *Mailbox) pruneSeen(at taken) error {
 	cutoff := at.At().Add(-protocol.SeenFor).Unix()
 	return b.update(func(s store) error {
 		var old [][]byte
@@ -892,9 +892,9 @@ var errDone = errors.New("done")
 // reads, since its line, or its first copy's, may be gone. It is how a
 // Kerberos server that has lost its replay cache refuses until the window
 // has passed (RFC 4120 §3.2.3).
-func (b *Box) seenFloor() (floor int64, err error) {
+func (b *Mailbox) seenFloor() (floor int64, err error) {
 	err = b.view(func(s store) error {
-		n, err := decimal(s.get(bucketBox, "seen-floor"), "seen-floor")
+		n, err := decimal(s.get(bucketMailbox, "seen-floor"), "seen-floor")
 		floor = int64(min(n, uint64(math.MaxInt64))) //nolint:gosec // bounded above
 		return err
 	})
@@ -902,31 +902,31 @@ func (b *Box) seenFloor() (floor int64, err error) {
 }
 
 // raiseFloor sets the floor to t, unless it is already that high.
-func (b *Box) raiseFloor(s store, t int64) error {
+func (b *Mailbox) raiseFloor(s store, t int64) error {
 	floor, err := b.seenFloor()
 	if err != nil || floor >= t {
 		return err
 	}
-	return s.put(bucketBox, "seen-floor", strconv.AppendInt(nil, t, 10))
+	return s.put(bucketMailbox, "seen-floor", strconv.AppendInt(nil, t, 10))
 }
 
-// entityTag is an ETag as a box keeps one: an entity-tag of RFC 9110 §8.8.3,
+// entityTag is an ETag as a mailbox keeps one: an entity-tag of RFC 9110 §8.8.3,
 // weak or strong, in printable ASCII, and short. A server's tag of any other
 // form is not sent back.
 var entityTag = regexp.MustCompile(`\A(W/)?"[\x21\x23-\x7e]{0,128}"\z`)
 
-// sameTag reports whether two tags, each in the form a box keeps, are the
+// sameTag reports whether two tags, each in the form a mailbox keeps, are the
 // same by the weak comparison (RFC 9110 §8.8.3.2): a proxy on the way may
 // mark a tag weak.
 func sameTag(a, b string) bool {
 	return entityTag.MatchString(a) && entityTag.MatchString(b) && strings.TrimPrefix(a, "W/") == strings.TrimPrefix(b, "W/")
 }
 
-// ifNoneMatch is the header a poll sends: If-None-Match with the tag the box
+// ifNoneMatch is the header a poll sends: If-None-Match with the tag the mailbox
 // keeps, or none when it keeps none, or one of another form.
-func (b *Box) ifNoneMatch() (http.Header, error) {
+func (b *Mailbox) ifNoneMatch() (http.Header, error) {
 	var t []byte
-	if err := b.view(func(s store) error { t = s.get(bucketBox, "etag"); return nil }); err != nil {
+	if err := b.view(func(s store) error { t = s.get(bucketMailbox, "etag"); return nil }); err != nil {
 		return nil, err
 	}
 	if !entityTag.Match(t) {
@@ -935,15 +935,15 @@ func (b *Box) ifNoneMatch() (http.Header, error) {
 	return http.Header{"If-None-Match": {string(t)}}, nil
 }
 
-// keepETag keeps the tag of a first page that found the box empty, so the
-// next poll can be answered 304, and drops any once a page holds mail: a 304
-// then says only that the box is still empty, and never hides mail
+// keepETag keeps the tag of a first page that found the mailbox empty, so the
+// next poll can be answered 304, and drops any once a page holds messages: a 304
+// then says only that the mailbox is still empty, and never hides messages
 // (PROTOCOL.md §12.3).
-func (b *Box) keepETag(list *protocol.MessageList, tag string) error {
+func (b *Mailbox) keepETag(list *protocol.MessageList, tag string) error {
 	return b.update(func(s store) error {
 		if list.Count == 0 && len(list.Messages) == 0 && entityTag.MatchString(tag) {
-			return s.put(bucketBox, "etag", []byte(tag))
+			return s.put(bucketMailbox, "etag", []byte(tag))
 		}
-		return s.del(bucketBox, "etag")
+		return s.del(bucketMailbox, "etag")
 	})
 }

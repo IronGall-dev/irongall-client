@@ -16,7 +16,7 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// polls records each first-page list a box asks for: the If-None-Match it
+// polls records each first-page list a mailbox asks for: the If-None-Match it
 // sent and the status it was answered.
 type polls struct {
 	mu     sync.Mutex
@@ -50,19 +50,19 @@ func (s *statusWriter) WriteHeader(code int) {
 	s.ResponseWriter.WriteHeader(code)
 }
 
-// A poll that finds the box empty keeps its ETag, and the next sends it back:
+// A poll that finds the mailbox empty keeps its ETag, and the next sends it back:
 // a 304 is answered with nothing to do, and the interval is its Retry-After
 // (PROTOCOL.md §12.3).
-func TestAnEmptyBoxPollsWithItsETag(t *testing.T) {
+func TestAnEmptyMailboxPollsWithItsETag(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.box(protocol.Classic)
+	b := e.mailbox(protocol.Classic)
 	var p polls
 	p.watch(e, b)
 	receive(t, b)
 	tag, ok := stateOf(b, "etag")
 	if !ok || !strings.HasPrefix(string(tag), `"`) {
-		t.Fatalf("an empty box keeps %q, want its ETag", tag)
+		t.Fatalf("an empty mailbox keeps %q, want its ETag", tag)
 	}
 	res := receive(t, b)
 	if len(p.asked) != 2 || p.asked[0] != "" || p.asked[1] != string(tag) || p.status[1] != http.StatusNotModified {
@@ -73,15 +73,15 @@ func TestAnEmptyBoxPollsWithItsETag(t *testing.T) {
 	}
 }
 
-// A tag is kept only from an empty box: a page with mail drops it, so a 304
-// can never hide mail; the box's next empty poll keeps a new one.
-func TestMailDropsTheETag(t *testing.T) {
+// A tag is kept only from an empty mailbox: a page with messages drops it, so a 304
+// can never hide messages; the mailbox's next empty poll keeps a new one.
+func TestAPageWithMessagesDropsTheETag(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	receive(t, b)
 	if !has(b, "etag") {
-		t.Fatal("an empty box kept no ETag")
+		t.Fatal("an empty mailbox kept no ETag")
 	}
 	send(t, a, b, "after the empty poll")
 	var p polls
@@ -90,14 +90,14 @@ func TestMailDropsTheETag(t *testing.T) {
 		t.Fatalf("delivered %d, want the message the kept tag no longer matched", len(res.Delivered))
 	}
 	if p.status[0] != http.StatusOK {
-		t.Fatalf("the poll after mail came was answered %d, want 200", p.status[0])
+		t.Fatalf("the poll after a message came was answered %d, want 200", p.status[0])
 	}
 	if has(b, "etag") {
-		t.Error("a page with mail left the ETag kept")
+		t.Error("a page with messages left the ETag kept")
 	}
 	receive(t, b)
 	if p.asked[len(p.asked)-1] != "" || !has(b, "etag") {
-		t.Errorf("the next poll sent %q, and the box keeps a tag: %v; want none sent, and the empty box's tag kept", p.asked[len(p.asked)-1], has(b, "etag"))
+		t.Errorf("the next poll sent %q, and the mailbox keeps a tag: %v; want none sent, and the empty mailbox's tag kept", p.asked[len(p.asked)-1], has(b, "etag"))
 	}
 }
 
@@ -107,7 +107,7 @@ func TestMailDropsTheETag(t *testing.T) {
 func TestAListAnswerOutOfItsFormIsNoAnswer(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.box(protocol.Classic)
+	b := e.mailbox(protocol.Classic)
 	for name, answer := range map[string]func(w http.ResponseWriter){
 		"a 304 unasked": func(w http.ResponseWriter) {
 			w.Header().Set("Retry-After", "60")
@@ -139,11 +139,11 @@ func TestAListAnswerOutOfItsFormIsNoAnswer(t *testing.T) {
 
 // A server's tag is sent back only in the form of an entity-tag (RFC 9110
 // §8.8.3), printable ASCII and short: any other is not kept. A control byte
-// never reaches the box: Go's transport refuses the answer.
+// never reaches the mailbox: Go's transport refuses the answer.
 func TestAnETagOfAnotherFormIsNotKept(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	b := e.box(protocol.Classic)
+	b := e.mailbox(protocol.Classic)
 	for _, bad := range []string{`unquoted`, `"a b"`, `"a"b"`, `"` + strings.Repeat("x", 129) + `"`, `W/unquoted`, `"é"`} {
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/messages") {
@@ -160,14 +160,14 @@ func TestAnETagOfAnotherFormIsNotKept(t *testing.T) {
 	}
 }
 
-// A tag a hostile server hands an empty box once, which RFC 9110 §8.8.3
+// A tag a hostile server hands an empty mailbox once, which RFC 9110 §8.8.3
 // allows to hold a comma and a "*", is one tag to an honest server: its polls
-// are answered in full, and the mail sent after is delivered at the next.
-func TestAPlantedTagHidesNoMail(t *testing.T) {
+// are answered in full, and the message sent after is delivered at the next.
+func TestAPlantedTagHidesNoMessage(t *testing.T) {
 	t.Parallel()
 	for _, plant := range []string{`",*,"`, `"x,*,y"`, `W/"a,W/*,b"`} {
 		e := newEnv(t)
-		a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
 			if r.Method != http.MethodGet || !strings.HasSuffix(r.URL.Path, "/messages") || r.URL.RawQuery != "" {
 				next.ServeHTTP(w, r)
@@ -182,7 +182,7 @@ func TestAPlantedTagHidesNoMail(t *testing.T) {
 		})
 		receive(t, b)
 		if kept, _ := stateOf(b, "etag"); string(kept) != plant {
-			t.Fatalf("the box keeps %q, want the planted %s", kept, plant)
+			t.Fatalf("the mailbox keeps %q, want the planted %s", kept, plant)
 		}
 		var p polls
 		p.watch(e, b)
@@ -195,17 +195,17 @@ func TestAPlantedTagHidesNoMail(t *testing.T) {
 
 // A 304 is about the page its ETag names (RFC 9110 §15.4.5): one about
 // another tag than the poll sent is no answer (RFC 9111 §4.3.4). The drain
-// fails, so no prekey the mail may be sealed to is deleted, and the kept tag
+// fails, so no prekey a message may be sealed to is deleted, and the kept tag
 // goes, so the next poll asks for the page in full. One whose tag a proxy
 // marked weak is the answer.
 func TestA304AboutAnotherTagIsNoAnswer(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
-	a, b := e.box(protocol.Classic), e.box(protocol.Classic)
+	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 	receive(t, b)
 	kept, ok := stateOf(b, "etag")
 	if !ok {
-		t.Fatal("an empty box kept no ETag")
+		t.Fatal("an empty mailbox kept no ETag")
 	}
 	answer := func(tag string) {
 		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -229,7 +229,7 @@ func TestA304AboutAnotherTagIsNoAnswer(t *testing.T) {
 		t.Fatal("a 304 about another tag was taken as an answer")
 	}
 	if has(b, "etag") {
-		t.Error("a 304 about another tag left the box's tag kept")
+		t.Error("a 304 about another tag left the mailbox's tag kept")
 	}
 	e.srv.SetMiddle(nil)
 	if res := receive(t, b); len(res.Delivered) != 1 {

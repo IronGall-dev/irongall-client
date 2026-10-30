@@ -1,17 +1,17 @@
-// Command dromas-echo is the echo box: a client on a published address
+// Command dromas-echo is the echo mailbox: a client on a published address
 // that answers every message passing every check with a signed reply, saying
 // what it verified and carrying back the body it was sent, its in_reply_to
 // the message's msg_id. An agent proves its whole loop with it, end to end,
-// against a box it does not run.
+// against a mailbox it does not run.
 //
-// Mail to an echo box is readable by whoever runs it: that is what it is for.
+// A message to an echo mailbox is readable by whoever runs it: that is what it is for.
 //
 // Its state directory belongs in memory (a tmpfs). At every start it copies
 // in the identity key, the one thing kept, and publishes a new prekey, which
 // needs only the identity, so no prekey ever reaches a disk or a backup. A
 // message sealed to the previous prekey is refused after a restart, like any
-// mail a box can no longer decrypt. While it runs, each Receive renews the
-// prekey once it is a day old, as for any box.
+// message a mailbox can no longer decrypt. While it runs, each Receive renews the
+// prekey once it is a day old, as for any mailbox.
 package main
 
 import (
@@ -36,13 +36,13 @@ import (
 
 const usage = `usage: dromas-echo --identity <key file> [--dir <dir>] [--no-pq]
 
-Runs an echo box until interrupted: every message that passes every check
+Runs an echo mailbox until interrupted: every message that passes every check
 is answered, signed, with what was checked and the body it carried.
 
-  --identity  the echo box's identity, an OpenSSH key file; the box
+  --identity  the echo mailbox's identity, an OpenSSH key file; the mailbox
               is registered at its first start
-  --dir       the box's state directory, which belongs in memory (a tmpfs):
-              $DROMAS_HOME, or ${XDG_CONFIG_HOME:-~/.config}/dromas/${DROMAS_BOX:-default}
+  --dir       the mailbox's state directory, which belongs in memory (a tmpfs):
+              $DROMAS_HOME, or ${XDG_CONFIG_HOME:-~/.config}/dromas/${DROMAS_MAILBOX:-default}
   --no-pq     publish prekeys without post-quantum encryption (X25519 only)
 
 The server is $DROMAS_SERVER_URL, or https://dromas.dev.
@@ -50,7 +50,7 @@ The server is $DROMAS_SERVER_URL, or https://dromas.dev.
 
 // replyTTL is how long a reply that could not be posted is retried before it
 // is dropped: a late echo is worth little, and a recipient that refuses one
-// now (a full box, a lapsed prekey) would otherwise be retried for days.
+// now (a full mailbox, a lapsed prekey) would otherwise be retried for days.
 const replyTTL = time.Hour
 
 // defaultPause is the wait between polls when the server names none.
@@ -104,13 +104,13 @@ func run(ctx context.Context, args []string, logw io.Writer) error {
 }
 
 type echo struct {
-	b   *client.Box
+	b   *client.Mailbox
 	log *log.Logger
 	now func() time.Time
 }
 
 // start copies the identity into dir and publishes a new prekey, or at the
-// first start registers the box.
+// first start registers the mailbox.
 func start(ctx context.Context, dir, identity string, opt client.Options, kt protocol.KeyType, l *log.Logger) (*echo, error) {
 	key, err := os.ReadFile(identity) //nolint:gosec // the key file the operator named
 	if err != nil {
@@ -122,7 +122,7 @@ func start(ctx context.Context, dir, identity string, opt client.Options, kt pro
 	mine := filepath.Join(dir, "identity")
 	switch held, err := os.ReadFile(mine); { //nolint:gosec // a path inside the state directory
 	case err == nil && !bytes.Equal(held, key):
-		return nil, fmt.Errorf("%s holds another box's identity", dir)
+		return nil, fmt.Errorf("%s holds another mailbox's identity", dir)
 	case err != nil && !errors.Is(err, fs.ErrNotExist):
 		return nil, err
 	case err != nil:
@@ -134,13 +134,13 @@ func start(ctx context.Context, dir, identity string, opt client.Options, kt pro
 	if err != nil {
 		return nil, err
 	}
-	// A renewal reads the box at its server first, and goes as its
+	// A renewal reads the mailbox at its server first, and goes as its
 	// registration when the server holds none: so the first start too.
 	if _, err := b.Rekey(ctx, kt); err != nil {
 		return nil, err
 	}
-	// An echo box answers whoever writes: every sender's mail lands in
-	// inbox/, where a box would hold mail from one it has not allowed.
+	// An echo mailbox answers whoever writes: every sender's messages land in
+	// inbox/, where a mailbox would hold messages from one it has not allowed.
 	if err := b.SetPolicy(ctx, client.Policy{Unknown: client.LandInbox, Server: client.AdmitAll}); err != nil {
 		return nil, err
 	}
@@ -148,16 +148,16 @@ func start(ctx context.Context, dir, identity string, opt client.Options, kt pro
 	if now == nil {
 		now = time.Now
 	}
-	l.Printf("echo box %s: a new prekey is published", b.Address())
+	l.Printf("echo mailbox %s: a new prekey is published", b.Address())
 	return &echo{b: b, log: l, now: now}, nil
 }
 
-// run drains the box and answers, then holds its list until a message
-// arrives (client.Box.Await), so a reply goes within seconds of it. A box
+// run drains the mailbox and answers, then holds its list until a message
+// arrives (client.Mailbox.Await), so a reply goes within seconds of it. A mailbox
 // with replies not yet posted holds for at most the poll interval, then
 // retries them, and drains again only once its list has changed: one list
 // an interval, the hold's, as the poll budget allows. A drain that failed,
-// or left mail on the server, waits that interval with no hold.
+// or left messages on the server, waits that interval with no hold.
 func (e *echo) run(ctx context.Context) error {
 	pause, hold := e.once(ctx)
 	for {
@@ -179,7 +179,7 @@ func (e *echo) run(ctx context.Context) error {
 				return nil
 			case err == nil && len(pending) > 0 && !time.Now().Before(until):
 				// The interval passed with nothing new: the replies are
-				// retried, and the box's list is held again, not drained.
+				// retried, and the mailbox's list is held again, not drained.
 				e.retry(ctx)
 				continue
 			case err == nil:
@@ -197,10 +197,10 @@ func (e *echo) run(ctx context.Context) error {
 	}
 }
 
-// once retries replies not yet posted, drains the box (which renews its
+// once retries replies not yet posted, drains the mailbox (which renews its
 // prekey when due) and answers what it delivered. It returns how long to wait
 // before the next poll, and whether the server holds nothing more for the
-// box, so its list may be held instead.
+// mailbox, so its list may be held instead.
 func (e *echo) once(ctx context.Context) (time.Duration, bool) {
 	e.retry(ctx)
 	res, err := e.b.Receive(ctx)
@@ -226,11 +226,11 @@ func (e *echo) once(ctx context.Context) (time.Duration, bool) {
 		}
 		if len(refused) > 0 {
 			if _, err := e.b.RemoveRefused(ctx, refused); err != nil {
-				e.log.Printf("the refused mail was not deleted from refused/: %v", err)
+				e.log.Printf("the refused messages were not deleted from refused/: %v", err)
 			}
 		}
 	}
-	// An echo box keeps no record of its replies: its state is in memory.
+	// An echo mailbox keeps no record of its replies: its state is in memory.
 	sent, _ := filepath.Glob(filepath.Join(e.b.Dir(), "sent", "*"))
 	for _, f := range sent {
 		e.remove(f)
@@ -298,17 +298,17 @@ func (e *echo) remove(name string) {
 func report(d client.Delivery, now time.Time) string {
 	env := d.Envelope
 	var s strings.Builder
-	s.WriteString("dromas echo box: your message passed every check.\n")
+	s.WriteString("dromas echo mailbox: your message passed every check.\n")
 	fmt.Fprintf(&s, "from: %s (its signature verified, by a working key that the identity this address is the SHA-256 of has certified)\n", env.From)
 	fmt.Fprintf(&s, "to: %s\n", env.To)
 	fmt.Fprintf(&s, "msg_id: %s\n", env.MsgID)
 	fmt.Fprintf(&s, "sent_at: %s\n", env.SentAt.UTC().Format(protocol.TimeLayout))
 	fmt.Fprintf(&s, "received_at: %s\n", now.UTC().Format(protocol.TimeLayout))
 	fmt.Fprintf(&s, "ciphertext_sha256: %s\n", d.ID)
-	fmt.Fprintf(&s, "checked: decryption with this box's prekey; the sender's identity, which the message carries, against its address; "+
-		"that identity's certificate for the working key; the signature, made for this box only; "+
+	fmt.Fprintf(&s, "checked: decryption with this mailbox's prekey; the sender's identity, which the message carries, against its address; "+
+		"that identity's certificate for the working key; the signature, made for this mailbox only; "+
 		"the envelope's version, from and to; sent_at within %d days; not a replay\n", protocol.TTL/(24*time.Hour))
-	s.WriteString("Mail to an echo box is readable by whoever runs it.\n")
+	s.WriteString("A message to an echo mailbox is readable by whoever runs it.\n")
 	fmt.Fprintf(&s, "body, as JSON: %s\n", env.Body)
 	return s.String()
 }
