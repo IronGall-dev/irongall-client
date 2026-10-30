@@ -224,6 +224,8 @@ func servedRefusal(m *protocol.MessageInfo, ct []byte) ([]byte, error) {
 
 func isTime(s string) bool { _, err := protocol.ParseTime(s); return err == nil }
 
+func isAddress(s string) bool { _, err := protocol.ParseAddress(s); return err == nil }
+
 // RefusedMessage is a refused message in refused/, in this client's words:
 // its id, the code it was refused for and why, the time the server gave,
 // and what this client's checks established about it when it judged it
@@ -283,8 +285,8 @@ func (b *Mailbox) refusedMessages() ([]RefusedMessage, error) {
 					ok   func(string) bool
 				}{
 					{j.At, &q.JudgedAt, isTime},
-					{j.SignedBy, &q.SignedBy, IsID},
-					{j.ClaimsIdentity, &q.ClaimsIdentity, IsID},
+					{j.SignedBy, &q.SignedBy, isAddress},
+					{j.ClaimsIdentity, &q.ClaimsIdentity, isAddress},
 					{j.CertificateBegan, &q.CertificateBegan, isTime},
 					{j.CertificateEnds, &q.CertificateEnds, isTime},
 					{j.SentAt, &q.SentAt, isTime},

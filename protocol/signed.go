@@ -2,7 +2,6 @@ package protocol
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"time"
@@ -159,7 +158,7 @@ func Examine(plaintext []byte, me Address, now time.Time) (*Signed, *Findings, e
 	if len(doc) == 0 {
 		return nil, f, &EnvelopeError{RefusedIdentity, "the envelope carries no identity document"}
 	}
-	a := Address(sha256.Sum256(doc))
+	a := AddressOf(doc)
 	f.Identity = &a
 	id, err := ParseIdentity(doc)
 	notTheSenders := &EnvelopeError{RefusedAttribution, "the envelope's from is not the address of the identity it carries"}

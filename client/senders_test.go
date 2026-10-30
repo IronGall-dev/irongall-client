@@ -2,7 +2,7 @@ package client_test
 
 import (
 	"context"
-	"crypto/sha256"
+	"crypto/sha512"
 	"errors"
 	"fmt"
 	"net/http"
@@ -642,7 +642,7 @@ func TestARestoreAdoptsABoundedACL(t *testing.T) {
 			b := e.heldMailbox(protocol.Classic)
 			addrs := make([]protocol.Address, n-1) // and the allow list's *
 			for i := range addrs {
-				addrs[i] = protocol.Address(sha256.Sum256(fmt.Append(nil, i)))
+				addrs[i] = protocol.Address(sha512.Sum384(fmt.Append(nil, i)))
 			}
 			e.srv.PutACL(b.Address(), &protocol.ACL{Allow: protocol.ACLList{Any: true}, Deny: protocol.NewACLList(false, addrs)})
 			r := restore(t, e, b)
@@ -864,7 +864,7 @@ func TestAPolicyThatCannotBeReadStopsTheDrain(t *testing.T) {
 	e := newEnv(t)
 	a, b := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
 	send(t, a, b, "waits")
-	for name, text := range map[string]string{"policy": "unknown deliver\n", "allowed": "not an address\n", "blocked": strings.ToUpper(a.Address().String()) + "\n"} {
+	for name, text := range map[string]string{"policy": "unknown deliver\n", "allowed": "not an address\n", "blocked": "+" + a.Address().String()[1:] + "\n"} {
 		if err := os.WriteFile(filepath.Join(b.Dir(), name), []byte(text), 0o600); err != nil {
 			t.Fatal(err)
 		}

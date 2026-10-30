@@ -3,7 +3,7 @@ package protocol
 import (
 	"bytes"
 	"crypto/ed25519"
-	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/base64"
 	"encoding/json/jsontext"
 	"errors"
@@ -185,7 +185,7 @@ func FuzzParseIdentity(f *testing.F) {
 		switch {
 		case !bytes.Equal(id.Document(), doc):
 			t.Fatalf("the document is %q, given %q", id.Document(), doc)
-		case id.Address() != Address(sha256.Sum256(doc)):
+		case id.Address() != Address(sha512.Sum384(doc)):
 			t.Fatal("the address is not the document's SHA-256")
 		case !slices.Contains(IdentityTypes(), key.Type()):
 			t.Fatalf("took a key of the type %q", key.Type())
@@ -390,7 +390,7 @@ func fuzzSender(line []byte) []byte {
 func FuzzRevocationVerifiers(f *testing.F) {
 	docs := [][]byte{read(f, "a/identity.doc"), read(f, "c/identity.doc")}
 	for _, doc := range docs {
-		own := sha256.Sum256(doc)
+		own := Address(sha512.Sum384(doc))
 		for _, p := range []string{"revoke/*.sig", "c/revoke.sig"} {
 			m, _ := filepath.Glob(filepath.Join(vectors, p))
 			for _, name := range m {
@@ -406,7 +406,7 @@ func FuzzRevocationVerifiers(f *testing.F) {
 		}
 	}
 	signerA, _ := vectorKey(f, "a")
-	b := Address(sha256.Sum256(read(f, "b/identity.doc")))
+	b := Address(sha512.Sum384(read(f, "b/identity.doc")))
 	certsOfB, err := NewRevokedCertificates(b, 4)
 	if err != nil {
 		f.Fatal(err)
@@ -423,11 +423,11 @@ func FuzzRevocationVerifiers(f *testing.F) {
 		f.Add(b[:], read(f, "a/identity.doc"), c.statement, sig)
 	}
 	f.Fuzz(func(t *testing.T, addr, doc, statement, sig []byte) {
-		a := Address(sha256.Sum256(doc))
+		a := Address(sha512.Sum384(doc))
 		if len(addr) == len(a) {
 			a = Address(addr)
 		}
-		hashed := Address(sha256.Sum256(doc)) == a
+		hashed := Address(sha512.Sum384(doc)) == a
 		id, err := VerifyRevocation(a, doc, sig)
 		switch {
 		case err == nil && !hashed:

@@ -306,7 +306,7 @@ func TestParsePass(t *testing.T) {
 		"a line break in the base64": strings.Replace(good, sig, sig[:4]+"\n"+sig[4:], 1),
 		"an extra parameter":         good + `, extra="1"`,
 		"a trailing newline":         good + "\n",
-		"an address in capitals":     strings.Replace(good, a, strings.ToUpper(a), 1),
+		"an address in base64":       strings.Replace(good, a, "/"+a[1:], 1),
 		"a short address":            strings.Replace(good, a, a[:63], 1),
 		"a time with an offset":      strings.Replace(good, "21:40:15Z", "21:40:15+", 1),
 		"a time that is no time":     strings.Replace(good, "2026-10-12T21:40:15Z", "2026-13-12T21:40:15Z", 1),
@@ -458,7 +458,7 @@ func TestPassAgainstSSHKeygen(t *testing.T) {
 
 // senderForm is the one form a sender writes a pass in (PROTOCOL.md §8),
 // the only one a server took before it read passes as RFC 9110 lets it.
-var senderForm = regexp.MustCompile(`\A` + PassScheme + ` address="([0-9a-f]{64})", not_after="([0-9TZ:-]{20})", signature="([A-Za-z0-9+/]+={0,2})"\z`)
+var senderForm = regexp.MustCompile(`\A` + PassScheme + ` address="([A-Za-z0-9_-]{64})", not_after="([0-9TZ:-]{20})", signature="([A-Za-z0-9+/]+={0,2})"\z`)
 
 // Whatever ParsePass takes, in any form, it reads as the values of a pass in
 // the one form a sender writes: those values, written in that form, are

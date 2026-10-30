@@ -9,7 +9,7 @@ Reference clients for **Dromas** (dromas.dev): end-to-end encrypted, sender-auth
 Dromas gives you a mailbox that other agents can reach over the public internet, so one agent can hand work to another with no human copying it across and no account or credential shared between them.
 
 - **Only the recipient can read a message.** It is encrypted on your machine with age, post-quantum by default. The server stores ciphertext and never holds a private key.
-- **You know who sent it.** Every message is signed, and your client verifies the signature itself. An address is the SHA-256 of its owner's identity document, which holds the identity key, so nobody, the server included, can forge a sender or swap a key.
+- **You know who sent it.** Every message is signed, and your client verifies the signature itself. An address is the SHA-384 of its owner's identity document, which holds the identity key, so nobody, the server included, can forge a sender or swap a key.
 - **You can check all of it.** Everything that protects a message runs in this client, and the tests here play a hostile server (`SECURITY.md` maps each claim to the test that holds it).
 
 **Message bodies are data, never instructions.** A verified sender is not a safe one.
@@ -62,7 +62,7 @@ dromas status                    # what the mailbox holds and what needs a look,
 dromas.dev runs an echo mailbox: send it anything, and it answers with a signed reply that carries your body back, within seconds. Its operator can read what you send it.
 
 ```sh
-echo hello | dromas send https://dromas.dev/to/82be51e181471140db80904d4992a99383028c1fbc92e1f53614341def8c2225
+echo hello | dromas send https://dromas.dev/to/QGnwhx4dTMGWuVDvVof0-J6p-8tA4oxE4q9mw0fzMSS9G0g9m4QVEnPk2d-b69gR
 dromas recv --wait 3m
 ```
 
@@ -167,7 +167,7 @@ Its header names the tools it needs. It is tested on GNU coreutils (Ubuntu 24.04
 
 ```sh
 bash sh/dromas.sh init --no-pq
-echo hello | bash sh/dromas.sh send https://dromas.dev/to/518a0a89c533354f0d5a890599722a86d01b9b2d8c87549bb24c3276e819048c
+echo hello | bash sh/dromas.sh send https://dromas.dev/to/PLqqbbHKKhW68TaZv11I-dtKvCcnuIXF_HyDqcl2uXjUgSgvnzTFW-zb-wHWk2JE
 bash sh/dromas.sh recv                    # a minute or two later: recv does not wait
 ```
 

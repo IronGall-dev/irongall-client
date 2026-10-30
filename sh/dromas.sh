@@ -25,7 +25,7 @@
 # ship older, and go install filippo.io/age/cmd/...@v1.3.2 is current), OpenSSH >= 9.1 (the first to take a
 # certificate's validity and a time to verify at in UTC), curl >= 7.84 (--fail-with-body, and -w with %header),
 # jq >= 1.7.1 (1.7.0 can abort on a number a sender writes, CVE-2023-50246; Ubuntu 24.04's fixed jq prints jq-1.7),
-# iconv, and coreutils (sha256sum, base64, od, sync). Dates go through jq, never date -d, and base64 is never -w0.
+# iconv, and coreutils (sha256sum, sha384sum, base64, od, sync). Dates go through jq, never date -d, and base64 is never -w0.
 
 # recipe: setup
 set -o pipefail; umask 077
@@ -41,7 +41,9 @@ dr_senders(){ # → the identity key types dr_idcheck verifies on this build, as
 dr_out(){ jq -cn --arg type "$1" "${@:2}" '$ARGS.named'; }      # <type> [--arg <name> <text> | --argjson <name> <JSON>]… → one line of JSON on stdout, its type first and then each member in turn, as the Go client prints one: what a command did or met on the way
 dr_err(){ jq -cn --arg m "$*" '{type:"error", detail:$m}' >&2; }      # <words> → the line on stderr that says a command failed, in this script's own words
 dr_refuse(){ dr_err "REFUSED: $*"; return 1; }
-dr_hex(){ [[ $1 =~ ^[0-9a-f]{64}$ ]]; }
+dr_hex(){ [[ $1 =~ ^[0-9a-f]{64}$ ]]; }      # a message's id: the SHA-256 of its ciphertext, 64 lowercase hex
+dr_isaddr(){ [[ $1 =~ ^[A-Za-z0-9_-]{64}$ ]]; }      # an address: 64 characters of unpadded base64url, each string of them the one encoding of 48 bytes (RFC 4648 §5), compared exactly
+dr_address(){ local h; h=$(sha384sum < "$1" | cut -c1-96) && [[ $h =~ ^[0-9a-f]{96}$ ]] || return 1; printf "$(printf %s "$h" | sed 's/../\\x&/g')" | base64 | tr -d '\n' | tr '+/' '-_'; }      # <file> → its address: the SHA-384 of its bytes, in unpadded base64url. 48 bytes are 64 characters with no padding to strip
 dr_b64(){ base64 < "$1" | tr -d '\n'; }
 dr_now(){ date -u +%s; }   # the one clock every check reads
 dr_time(){ # <timestamp> → its Unix time, only for exactly YYYY-MM-DDTHH:MM:SSZ naming a real time
@@ -169,12 +171,12 @@ dr_lock(){ # <command> [args] → runs that dr_ command with $DR/lock, the mailb
 dr_ownmailbox(){ [ ! -e "$DR/state" ] || dr_refuse "$DR holds a state file: it is a mailbox of the Go client, which this script never runs, since the two keep their records apart and would undo each other's: set DR_HOME to a directory of this script's own"; }      # whether $DR is a mailbox of this script's, by the one file only the Go client makes
 dr_held(){ [ "${DR_HELD-}" = "$DR" ]; }      # whether this shell holds this mailbox's lock: a command another command runs works under its caller's
 dr_dirs(){ mkdir -p "$DR/work" "$DR/prekeys" "$DR/peers" "$DR/inbox" "$DR/refused" "$DR/sent"; }      # the mailbox's directories, made where they are missing, as the Go client's Open makes them: by init, and by every command that writes the mailbox (dr_lock)
-dr_identity(){ # → identity.pub, identity.doc and address, the identity as the mailbox's other files name it: identity.pub made again from the identity where it is missing or empty, then the document and its SHA-256, each written beside and moved into place only where its bytes differ (dr_put), as the Go client's Open writes them. So a mailbox restored from its identity alone gets all three, init run again rewrites nothing a command beside it reads, and a crash leaves no file empty
+dr_identity(){ # → identity.pub, identity.doc and address, the identity as the mailbox's other files name it: identity.pub made again from the identity where it is missing or empty, then the document and its address, its SHA-384, each written beside and moved into place only where its bytes differ (dr_put), as the Go client's Open writes them. So a mailbox restored from its identity alone gets all three, init run again rewrites nothing a command beside it reads, and a crash leaves no file empty
   local a
   [ -s "$DR/identity.pub" ] || { ssh-keygen -y -f "$DR/identity" < /dev/null > "$DR/id.pub" && dr_put "$DR/id.pub" "$DR/identity.pub"; } || dr_refuse "ssh-keygen cannot read this mailbox's identity, $DR/identity, to make identity.pub" || return 1
   printf 'dromas-v1\n%s\n' "$(cut -d' ' -f1,2 "$DR/identity.pub")" > "$DR/id.doc" || return 1
   cmp -s "$DR/id.doc" "$DR/identity.doc" || { { dr_idcheck "$DR/id.doc"; [ $? != 1 ]; } || dr_refuse "this mailbox's identity.pub is not a key an identity document holds: $DR/identity.pub" || return 1; dr_put "$DR/id.doc" "$DR/identity.doc" || return 1; }      # checked before it is written: a document out of form, from an identity.pub that is, would give the mailbox another address
-  a=$(sha256sum < "$DR/id.doc" | cut -c1-64) && rm -f "$DR/id.doc" "$DR/id.pub" || return 1
+  a=$(dr_address "$DR/id.doc") && rm -f "$DR/id.doc" "$DR/id.pub" || return 1
   printf '%s\n' "$a" | cmp -s - "$DR/address" || dr_putline "$DR/address" "$a"
 }
 
@@ -221,9 +223,9 @@ dr_init(){ # [--no-pq] → creates this mailbox, or finishes a half-done init, a
   h=$(dr_pass "$n") && { dr_api PUT "/v1/$A" "$DR/register.json" -H "Authorization: $h" > /dev/null || { dr_clock; dr_own; false; }; } && mv "$DR/pass.new" "$DR/pass" && dr_putline "$DR/serial" "$n" && dr_addr
 }
 dr_addr(){ local a; dr_held || { [ -s "$DR/identity" ] && [ -s "$DR/address" ]; } || { dr_lock dr_addr; return; }; a=$(cat "$DR/address") && dr_out mailbox --arg address "$a" --arg link "$DR_SERVER_URL/to/$a"; }      # the mailbox's address and its link: what to give whoever should write to it. Read with no lock; with no mailbox, dr_lock's refusal, and a mailbox restored from its identity alone has its files made under the lock first (dr_identity), as the Go client's Open makes them
-dr_dest(){ # <link or address> → the address: 64 hex, or taken from a link to this mailbox's server, $DR_SERVER_URL/to/<address>
+dr_dest(){ # <link or address> → the address: 64 characters of base64url, or taken from a link to this mailbox's server, $DR_SERVER_URL/to/<address>
   local a=${1#"$DR_SERVER_URL/to/"}
-  dr_hex "$a" && { echo "$a"; return 0; }
+  dr_isaddr "$a" && { echo "$a"; return 0; }
   [[ $1 != *://* || $1 = "$DR_SERVER_URL/"* ]] || { dr_refuse "a link to another server: this mailbox's server is $DR_SERVER_URL"; return 1; }
   dr_refuse "not an address or a link to one: $1"
 }
@@ -244,7 +246,7 @@ dr_idcheck(){ # <identity document> [address] → 0 only for a two-line document
   local f=$1 l t fp
   l=$(sed -n 2p "$f"); t=${l%% *}
   [ "$(printf 'dromas-v1\n%s\n' "$l" | sha256sum)" = "$(sha256sum < "$f")" ] || return 1      # exactly the tag line and one more, each ending in LF, and not a byte else: the file against itself rebuilt from its second line. A shell variable drops a NUL, so a test of the variable alone would pass a file that holds one
-  [ -z "${2-}" ] || [ "$(sha256sum < "$f" | cut -c1-64)" = "$2" ] || return 1
+  [ -z "${2-}" ] || [ "$(dr_address "$f")" = "$2" ] || return 1
   # the form every type shares: a key type's name (printable ASCII with no comma, at most 64 characters), one space, and the base64, in its one encoding, of a wire key that begins with that name
   grep -Eqx '[!-+.-~-]{1,64} [A-Za-z0-9+/]+={0,2}' <<< "$l" && [ "$(printf %s "${l#* }" | base64 -d 2> /dev/null | base64 | tr -d '\n')" = "${l#* }" ] &&
     [ "$(printf %s "${l#* }" | base64 -d | head -c $((4 + ${#t})) | od -An -v -tx1 | tr -d ' \n')" = "$(printf %08x "${#t}")$(dr_asc "$t")" ] || return 1
@@ -359,7 +361,7 @@ dr_prekeycheck(){ # <statement> <signature> <address> <identity document> [at] �
 }
 dr_resolve(){ # <address> [the mailbox dr_lookup read] → prints "<serial> <age recipient> <certificate serial>" only when EVERY check passes; otherwise there is nothing to encrypt to. The identity is the pinned one, or at first contact the served one, kept only once its prekey statement has verified. Without a mailbox read for it, it reads one, and keeps what verifies of the revocation of certificates it carries before the statement is checked against it
   local B=$1 d="$DR/peers/$1" f r s k na c sc
-  dr_hex "$B" || dr_refuse "not an address" || return 1
+  dr_isaddr "$B" || dr_refuse "not an address" || return 1
   dr_gone "$B"; case $? in      # a peer this mailbox holds a revocation of is refused before anything is asked, whatever the server now serves for it
     0) dr_err "REVOKED: $B is revoked, for good, and the revocation verifies: ask its owner for their new address"; return 1 ;;
     3) dr_refuse "the revocation kept for $B does not verify"; return 1 ;;
@@ -374,7 +376,7 @@ dr_resolve(){ # <address> [the mailbox dr_lookup read] → prints "<serial> <age
     dr_refuse "the server's answer for $B is not one this client reads: one JSON object, each byte field base64" || return 1
   f="$d/identity.doc"      # a pin always wins
   [ -e "$f" ] || { f="$DR/new.doc"; [ -s "$f" ] || dr_refuse "no identity for $B in the response" || return 1; }
-  [ "$(sha256sum < "$f" | cut -c1-64)" = "$B" ] || dr_refuse "the identity the server sent does not hash to $B" || return 1
+  [ "$(dr_address "$f")" = "$B" ] || dr_refuse "the identity the server sent does not hash to $B" || return 1
   dr_idcheck "$f"; case $? in 0) ;;
     2) dr_refuse "$B's identity is of a key type this script does not verify, so nothing it signs can be checked here and nothing is sent"; return 1 ;;
     *) dr_refuse "$B's identity is not a two-line identity document in the one form of its key type, with a valid key"; return 1 ;;
@@ -450,7 +452,7 @@ dr_keep(){ # <address> <its identity document> <signature> → the revocation, k
 dr_record(){ # <record> → the address it is a revocation of, only if it verifies; its parts are left in $DR/rev.doc and $DR/rev.sig. A record is one line of JSON, {type, identity, revocation_signature}: its type, revocation_record, which this script does not read, then the identity document and the signature, each base64
   local A
   dr_isrecord "$1" && dr_bytes "$1" identity "$DR/rev.doc" && dr_bytes "$1" revocation_signature "$DR/rev.sig" || return 1
-  A=$(sha256sum < "$DR/rev.doc" | cut -c1-64) && dr_revcheck "$A" "$DR/rev.doc" "$DR/rev.sig" && echo "$A"
+  A=$(dr_address "$DR/rev.doc") && dr_revcheck "$A" "$DR/rev.doc" "$DR/rev.sig" && echo "$A"
 }
 dr_isrecord(){ # <file> → 0 only for a record: an answer dr_shape takes as a record, and each of its four byte members base64, or left out. What it holds is checked by whoever uses it
   local m r=0
@@ -673,11 +675,11 @@ dr_open(){ # <me> <message stem> → the sender's address, only if what was decr
   jq -e 'has("identity")' "$m.P" > /dev/null 2>&1 || { echo "bad_identity: the envelope carries no identity document"; return 1; }
   dr_bytes "$m.P" identity "$m.doc" && [ -s "$m.doc" ] || { echo "bad_identity: the envelope's identity is not base64 of an identity document"; return 1; }      # its bytes, compared as bytes
   dr_idcheck "$m.doc"; case $? in 0) ;;      # a well-formed document of a key type this script does not verify has its own code, once it is known to be the sender's
-    2) jq -e --arg a "$(sha256sum < "$m.doc" | cut -c1-64)" '.from == $a' "$m.P" > /dev/null 2>&1 || { echo "reattributed: the envelope's from is not the address of the identity it carries"; return 1; }
+    2) jq -e --arg a "$(dr_address "$m.doc")" '.from == $a' "$m.P" > /dev/null 2>&1 || { echo "reattributed: the envelope's from is not the address of the identity it carries"; return 1; }
        echo "unsupported_key_type: the sender's identity is of a key type this client does not verify"; return 1 ;;
     *) echo "bad_identity: the envelope's identity document breaks its format or its key checks"; return 1 ;;
   esac
-  A=$(sha256sum < "$m.doc" | cut -c1-64)      # the sender: the hash of the identity document the envelope carries. The document proves itself, and the signature must now verify under it
+  A=$(dr_address "$m.doc")      # the sender: the hash of the identity document the envelope carries. The document proves itself, and the signature must now verify under it
   jq -e --arg a "$A" '.from == $a' "$m.P" > /dev/null 2>&1 || { echo "reattributed: the envelope's from is not the address of the identity it carries"; return 1; }
   dr_certified "$A" "$m.doc" "dromas-msg-v1:$B" "$m.sig" "$m.P" > /dev/null; case $? in      # over line 1 exactly as decrypted, never over anything rebuilt
     0) ;; 2) echo "bad_signature: the certificate of the key that signed it has ended"; return 1 ;;

@@ -66,7 +66,7 @@ var bashMajor = sync.OnceValue(func() int {
 	return v
 })
 
-var scriptTools = []string{"bash", "age", "age-keygen", "ssh-keygen", "jq", "iconv", "sha256sum", "base64", "od", "sync"}
+var scriptTools = []string{"bash", "age", "age-keygen", "ssh-keygen", "jq", "iconv", "sha256sum", "sha384sum", "base64", "od", "sync"}
 
 // TestMain puts an age that makes post-quantum mailboxes first in PATH for every
 // test and every shell they run: the local one when it can, else go.mod's.
@@ -479,8 +479,8 @@ func TestVectorsPrekey(t *testing.T) {
 // and the members' types, which the Go client holds (AGENTS.md § The shell
 // client).
 var envelopeFive = map[string]bool{
-	"refuse-from-not-signer": true, "refuse-from-null": true, "refuse-from-uppercase": true,
-	"refuse-to-another-mailbox": true, "refuse-to-uppercase": true,
+	"refuse-from-not-signer": true, "refuse-from-null": true, "refuse-from-in-base64": true,
+	"refuse-to-another-mailbox": true, "refuse-to-in-base64": true,
 	"refuse-duplicate-key": true, "refuse-key-twice-in-the-body": true, "refuse-not-json": true, "refuse-two-objects": true,
 	"refuse-no-msg-id": true, "refuse-msg-id-grouped-wrongly": true, "refuse-msg-id-newline": true, "refuse-msg-id-uppercase": true,
 	"refuse-sent-at-ending-in-a-line-feed": true, "refuse-sent-at-ending-in-a-nul": true, "refuse-sent-at-malformed": true, "refuse-sent-at-second-60": true,

@@ -304,7 +304,7 @@ func partwayProved(c partwayCall, v string, a protocol.Address) bool {
 	return v == partwayServed && partwayNames(c.path, a) && !partwayIsRead(c) || v == partwayCert && !partwayIsRead(c)
 }
 
-var partwayHex = regexp.MustCompile(`[0-9a-f]{64}`)
+var partwayHex = regexp.MustCompile(`[A-Za-z0-9_-]{64}`) // an address, or an id, whose 64 hex are base64url's characters too
 
 // partwayShort is a path with the mailbox's address written own and any other
 // address or id written as #.

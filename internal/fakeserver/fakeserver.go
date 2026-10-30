@@ -414,7 +414,7 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	if !ok || !decode(w, r, &req) {
 		return
 	}
-	if protocol.Address(sha256.Sum256(req.Identity)) != a {
+	if protocol.AddressOf(req.Identity) != a {
 		problem(w, protocol.CodeIdentityMismatch, "the identity does not hash to the address")
 		return
 	}

@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1282,7 +1281,7 @@ server, and the command fails unless the server took it: run it again.`,
 				if rec, err = readRecord(record); err != nil {
 					return err
 				}
-				if protocol.Address(sha256.Sum256(rec.Identity)) != a {
+				if protocol.AddressOf(rec.Identity) != a {
 					return errors.New("the record is a revocation of another address than the one named: nothing was published")
 				}
 			} else {

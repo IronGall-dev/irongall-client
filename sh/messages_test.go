@@ -2,6 +2,7 @@ package sh_test
 
 import (
 	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -177,7 +178,7 @@ func TestScriptInit(t *testing.T) {
 	if out != w.mailboxLine(a) {
 		t.Errorf("dr_init printed %q", out)
 	}
-	if sha256.Sum256([]byte(a.read("identity.doc"))) != a.addr {
+	if protocol.Address(sha512.Sum384([]byte(a.read("identity.doc")))) != a.addr {
 		t.Error("the address is not the identity document's hash")
 	}
 	n := a.num()
@@ -227,7 +228,7 @@ func TestScriptSendsAndReads(t *testing.T) {
 			t.Errorf("a link to another server, %s: %v", l, r)
 		}
 	}
-	for _, l := range []string{w.srv.URL + "/to/" + b.addr.String() + "/", w.srv.URL + "/v1/" + b.addr.String(), strings.ToUpper(b.addr.String())} {
+	for _, l := range []string{w.srv.URL + "/to/" + b.addr.String() + "/", w.srv.URL + "/v1/" + b.addr.String(), "+" + b.addr.String()[1:]} {
 		if r := a.send(l, "x"); r.rc == 0 || !strings.Contains(r.err, "not an address or a link to one") {
 			t.Errorf("neither an address nor a link, %s: %v", l, r)
 		}
@@ -543,7 +544,7 @@ func TestScriptChecksTheMailboxItIsServed(t *testing.T) {
 	// operator that serves it as a mailbox is refused it, so one key never gets a
 	// second address.
 	e := &shMailbox{w: w, dir: filepath.Join(w.work, "E")}
-	e.must(`mkdir -p "$DR"; cd "$DR"; ssh-keygen -q -t ed25519 -N '' -C '' -f identity; printf 'dromas-v1\n%s\n \n' "$(cut -d' ' -f1,2 identity.pub)" > identity.doc; sha256sum < identity.doc | cut -c1-64 > address
+	e.must(`mkdir -p "$DR"; cd "$DR"; ssh-keygen -q -t ed25519 -N '' -C '' -f identity; printf 'dromas-v1\n%s\n \n' "$(cut -d' ' -f1,2 identity.pub)" > identity.doc; { dr_address identity.doc; echo; } > address
 ssh-keygen -q -t ed25519 -N '' -C '' -f work; ssh-keygen -q -s identity -I dromas-cert-v1 -n "$(cat address)" -z 1 -V "$(date -u -d '1 hour ago' +%Y%m%d%H%M%SZ):$(date -u -d '64 days' +%Y%m%d%H%M%SZ)" -O clear work.pub
 age-keygen -o agekey 2> /dev/null`)
 	e.addr = mustAddress(t, e.dir)

@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -146,7 +145,7 @@ func (b *Mailbox) identityOf(peer protocol.Address, served []byte) (*protocol.Id
 	if len(doc) == 0 {
 		return nil, refuse("the server has no identity for %s", peer)
 	}
-	if protocol.Address(sha256.Sum256(doc)) != peer {
+	if protocol.AddressOf(doc) != peer {
 		return nil, refuse("the identity for %s does not hash to it", peer)
 	}
 	id, err := protocol.ParseIdentity(doc)
@@ -184,7 +183,7 @@ func (b *Mailbox) peerOf(s store, a protocol.Address) (*peerRecord, error) {
 		return nil, nil
 	}
 	var p peerRecord
-	if err := protocol.Unmarshal(raw, &p); err != nil || protocol.Address(sha256.Sum256(p.Identity)) != a {
+	if err := protocol.Unmarshal(raw, &p); err != nil || protocol.AddressOf(p.Identity) != a {
 		return nil, fmt.Errorf("what the mailbox's state file keeps of %s is not a peer's record", a)
 	}
 	return &p, nil
