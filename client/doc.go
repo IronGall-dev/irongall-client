@@ -31,8 +31,9 @@
 // each holds, the state file's records among them, kept in the state file
 // (format.go): every command refuses a mailbox of a newer format, a reading one
 // of an older, and a command that writes the mailbox brings an older one
-// forward. A change to what a file holds, or where it is, is a new format, with
-// its step and its line here; each format and what it changed:
+// forward. From the protocol freeze, a change to what a file holds, or where
+// it is, is a new format, with its step and its line here; before it, format
+// 1 changes in place; each format and what it changed:
 //
 //	1   the files above, and the state file's buckets as client/store.go lists them
 package client
