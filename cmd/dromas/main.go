@@ -62,8 +62,12 @@ renewed ("renewal_failed"), its server served a prekey the mailbox did not make
 ("acl_not_sent"), or its server held an ACL the mailbox had not sent, which it
 replaced ("acl_replaced"); from send and outbox flush, the post went ahead
 though the mailbox's ACL was not sent ("acl_not_sent"); from prekey renew, its
-server served a prekey the mailbox did not make ("prekey_not_made"); from status,
-its "attention" list is not empty. recv prints
+server served a prekey the mailbox did not make ("prekey_not_made"); from any
+command that called a server, the server stops taking this client's version
+from a date ("sunset"), or deems it deprecated from a date that has passed
+("deprecated"); from status, its "attention" list is not empty. Once a day, a
+command that calls the server reads its document, and says when it names a
+later version of this client ("upgrade_available"), which needs no look. recv prints
 a "refused" line for each message it refused, keeping it in refused/, a
 "held" line for each it held in held/, and a "dropped" line for each from a
 sender this mailbox blocked: none of them changes its exit status, since any
@@ -167,6 +171,9 @@ func runWith(ctx context.Context, opt client.Options, args []string, stdin io.Re
 		_, _ = fmt.Fprintf(stderr, "%s\n", line("waiting", "for", "lock", "detail",
 			"waiting for this mailbox's lock: another command of this mailbox is running, and a mailbox's commands write its files one at a time"))
 	}
+	if opt.Versions == nil {
+		opt.Versions = &client.Versions{}
+	}
 	e := &cli{opt: opt, stdin: stdin, stdout: stdout, stderr: stderr}
 	root := e.tree()
 	root.PersistentPreRunE = func(c *cobra.Command, _ []string) error {
@@ -183,7 +190,43 @@ func runWith(ctx context.Context, opt client.Options, args []string, stdin io.Re
 	// --help: stderr. Help and every command write to stdout themselves.
 	root.SetOut(stderr)
 	root.SetErr(stderr)
-	return root.ExecuteContext(ctx)
+	return e.versions(root.ExecuteContext(ctx))
+}
+
+// versions says, once a command is done, what its answers said of this
+// client's version (client.Versions): a "deprecated" line where one carried
+// a Deprecation, which needs a look once its date has passed at this
+// client's clock, and none before; a "sunset" line where one carried a
+// Sunset, the date its server stops taking this version, which needs a look
+// (exit status 3, where the command did its work), and an
+// "upgrade_available" line where its read of the server's document, at most
+// once a day, named a later version. A command that called no server says
+// neither.
+func (e *cli) versions(err error) error {
+	v := e.opt.Versions
+	own := v.Own()
+	look := false
+	if at, passed, ok := v.Deprecation(); ok {
+		look = look || passed
+		if werr := e.out(line("deprecated", "version", own, "at", at.UTC().Format(protocol.TimeLayout), "detail", client.DeprecationWords(own, at))); werr != nil && err == nil {
+			err = werr
+		}
+	}
+	if at, ok := v.Sunset(); ok {
+		look = true
+		if werr := e.out(line("sunset", "version", own, "at", at.UTC().Format(protocol.TimeLayout), "detail", client.SunsetWords(own, at))); werr != nil && err == nil {
+			err = werr
+		}
+	}
+	if latest, ok := v.Upgrade(); ok {
+		if werr := e.out(line("upgrade_available", "version", own, "latest", latest, "detail", client.UpgradeWords(own, latest))); werr != nil && err == nil {
+			err = werr
+		}
+	}
+	if look && err == nil {
+		return &needsALook{}
+	}
+	return err
 }
 
 // The commands are listed in the order they are added, everyday ones first.

@@ -64,6 +64,9 @@ type APIError struct {
 	// checks everything against its own clock, and a server may lie about
 	// the time as about anything else.
 	Dated, Read time.Time
+	// Version is the version the request named (Dromas-Version), for
+	// version_retired's words.
+	Version string
 }
 
 // Error is the status and the code, then what the code means, in this
@@ -166,6 +169,16 @@ func (e *APIError) words() string {
 		return "the server stopped waiting for the request's body, which arrived too slowly for it: send it again"
 	case protocol.CodeRevoked:
 		return "the server answers that that mailbox is revoked: this client takes that only from a revocation that verifies"
+	case protocol.CodeVersionRetired:
+		s := "this server no longer takes this client's version"
+		if e.Version != "" {
+			s += ", " + e.Version
+		}
+		s += ": upgrade this client"
+		if v, ok := MinVersion(p); ok {
+			s += "; the oldest it takes is " + v
+		}
+		return s
 	case protocol.CodePreconditionFailed:
 		return "what the server holds no longer has the tag the request's If-Match named"
 	case protocol.CodeTooLarge:
@@ -188,6 +201,19 @@ func (e *APIError) words() string {
 		return "the server is not ready to answer"
 	}
 	return "an answer this client does not know"
+}
+
+// MinVersion is the min_version a version_retired carries, only where it is
+// a policy's version (protocol.ParsePolicyVersion): a value of any other
+// form is none, and a client shows none of it.
+func MinVersion(p *protocol.Problem) (string, bool) {
+	if p.Code != protocol.CodeVersionRetired || p.MinVersion == "" {
+		return "", false
+	}
+	if _, err := protocol.ParsePolicyVersion(p.MinVersion); err != nil {
+		return "", false
+	}
+	return p.MinVersion, true
 }
 
 // quotaWords say what each limit a rate_limited names has counted.

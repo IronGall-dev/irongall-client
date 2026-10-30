@@ -27,7 +27,9 @@ func model(t *testing.T) *v3.Document {
 }
 
 // Each error status's codes are the ones protocol gives that status, no more
-// and no fewer, so a code added to protocol/errors.go and not here fails.
+// and no fewer, so a code added to protocol/errors.go and not here fails. A
+// code may be in more than one response of its status: 410's version_retired
+// is in Gone, beside revoked, and in VersionRetired, alone.
 func TestEachStatusHasProtocolsCodes(t *testing.T) {
 	m := model(t)
 	want := map[int][]string{}
@@ -73,6 +75,7 @@ func TestEachStatusHasProtocolsCodes(t *testing.T) {
 		slices.Sort(codes)
 		g := got[status]
 		slices.Sort(g)
+		g = slices.Compact(g)
 		if !slices.Equal(g, codes) {
 			t.Errorf("status %d: the description has %v, protocol has %v", status, g, codes)
 		}
@@ -102,6 +105,9 @@ func TestEachBodyHasItsTypesMembers(t *testing.T) {
 		"AdoptRequest":     protocol.AdoptRequest{},
 		"AccountResponse":  protocol.AccountResponse{},
 		"Problem":          protocol.Problem{},
+		"ServerDocument":   protocol.ServerDocument{},
+		"Scheduled":        protocol.Scheduled{},
+		"Capability":       protocol.Capability{},
 	} {
 		sp, ok := m.Components.Schemas.Get(name)
 		if !ok {

@@ -492,6 +492,11 @@ func runCell(t *testing.T, r stateRow, c stateCommand, m string) string {
 	}
 	var made []string
 	for _, q := range e.srv.Requests()[calls:] {
+		// Every call of every command, in every state, names this client's
+		// version (PROTOCOL.md §11.17).
+		if q.Version != client.Version() {
+			t.Errorf("%s %s names the version %q, not this client's %q", q.Method, q.Path, q.Version, client.Version())
+		}
 		s := q.Method + " " + q.Path
 		if q.Pass {
 			s += " +pass"

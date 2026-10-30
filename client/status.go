@@ -154,6 +154,7 @@ func (b *Mailbox) status() (*Status, error) {
 	if s.Held > 0 {
 		s.Attention = append(s.Attention, fmt.Sprintf("%d held in held/ from senders this mailbox has not allowed: dromas held list lists them by sender; dromas peer allow <address> delivers a sender's to inbox/, and dromas peer block <address> deletes them", s.Held))
 	}
+	s.Attention = append(s.Attention, b.versionsAttention()...)
 	if s.Outbox > 0 {
 		s.Attention = append(s.Attention, fmt.Sprintf("%d in outbox/ not delivered yet: dromas outbox flush sends them again", s.Outbox))
 	}

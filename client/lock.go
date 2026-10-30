@@ -211,7 +211,11 @@ func lockedFinished[T any](ctx context.Context, b *Mailbox, f func() (T, error))
 			err = e
 		}
 	}()
-	return f()
+	v, err = f()
+	// Under the lock, and after everything the command did: what its answers
+	// said of this client's version, which fails nothing.
+	b.recordVersions(ctx)
+	return v, err
 }
 
 // lockedDo is locked, for an f that returns only an error.

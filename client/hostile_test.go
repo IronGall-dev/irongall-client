@@ -125,7 +125,7 @@ func TestAnAPIErrorPrintsNoneOfTheServersWords(t *testing.T) {
 	for _, code := range protocol.Codes() {
 		got := answer(code.Status(), protocol.Problem{
 			Type: code.TypeURI(), Title: injected, Status: int64(code.Status()), Detail: injected, Code: code, Hint: injected,
-			KeyTypes: []string{injected, protocol.IdentityEd25519}, KeyType: injected, Member: injected,
+			KeyTypes: []string{injected, protocol.IdentityEd25519}, KeyType: injected, Member: injected, MinVersion: injected,
 			QuotaID: protocol.Quota(injected), Subject: protocol.Subject(injected),
 		})
 		if strings.Contains(got, "SYSTEM") || strings.Contains(got, "evil") || strings.ContainsAny(got, "\n\r\x1b") || strings.Contains(got, "an answer this client does not know") {
