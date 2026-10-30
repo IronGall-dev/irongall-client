@@ -225,7 +225,7 @@ dr_init(){ # [--no-pq] → creates this mailbox, or finishes a half-done init, a
 dr_addr(){ local a; dr_held || { [ -s "$DR/identity" ] && [ -s "$DR/address" ]; } || { dr_lock dr_addr; return; }; a=$(cat "$DR/address") && dr_out mailbox --arg address "$a" --arg link "$DR_SERVER_URL/to/$a"; }      # the mailbox's address and its link: what to give whoever should write to it. Read with no lock; with no mailbox, dr_lock's refusal, and a mailbox restored from its identity alone has its files made under the lock first (dr_identity), as the Go client's Open makes them
 dr_dest(){ # <link or address> → the address: 64 characters of base64url, or taken from a link to this mailbox's server, $DR_SERVER_URL/to/<address>
   local a=${1#"$DR_SERVER_URL/to/"}
-  dr_isaddr "$a" && { echo "$a"; return 0; }
+  dr_isaddr "$a" && { printf '%s\n' "$a"; return 0; }
   [[ $1 != *://* || $1 = "$DR_SERVER_URL/"* ]] || { dr_refuse "a link to another server: this mailbox's server is $DR_SERVER_URL"; return 1; }
   dr_refuse "not an address or a link to one: $1"
 }
@@ -452,7 +452,7 @@ dr_keep(){ # <address> <its identity document> <signature> → the revocation, k
 dr_record(){ # <record> → the address it is a revocation of, only if it verifies; its parts are left in $DR/rev.doc and $DR/rev.sig. A record is one line of JSON, {type, identity, revocation_signature}: its type, revocation_record, which this script does not read, then the identity document and the signature, each base64
   local A
   dr_isrecord "$1" && dr_bytes "$1" identity "$DR/rev.doc" && dr_bytes "$1" revocation_signature "$DR/rev.sig" || return 1
-  A=$(dr_address "$DR/rev.doc") && dr_revcheck "$A" "$DR/rev.doc" "$DR/rev.sig" && echo "$A"
+  A=$(dr_address "$DR/rev.doc") && dr_revcheck "$A" "$DR/rev.doc" "$DR/rev.sig" && printf '%s\n' "$A"
 }
 dr_isrecord(){ # <file> → 0 only for a record: an answer dr_shape takes as a record, and each of its four byte members base64, or left out. What it holds is checked by whoever uses it
   local m r=0
@@ -646,8 +646,8 @@ dr_judge(){ # <me> <message stem> → 0 only if EVERY check passes, in this orde
   A=$(dr_open "$B" "$m") || { echo "$A"; return 1; }      # the sender, proved by what was decrypted
   f=$(dr_floor 2> /dev/null) || { echo "$DR/seen-floor names no time"; return 3; }
   [ "$f" -eq 0 ] || [ "$(dr_time "$(jq -r .sent_at "$m.P")")" -ge $((f + 33*86400)) ] || { echo "stale: sent_at is before this mailbox's replay set reaches back to, since its clock once read later than it does now"; return 1; }      # freshness has a floor too: a sent_at before the highest cutoff the replay set was pruned at may be a message whose line went, and so may one up to 33 days above it, a retry of such a message, dated afresh up to 33 days after its first copy (check 9 knows a retry by that copy's line). dr_open checked sent_at's grammar
-  if ! grep -qx "$A" "$DR/asked" 2> /dev/null; then      # the server is asked once for each sender in a drain. That it holds none is an answer; no answer is not, and the message then stays where it is
-    dr_lookup "$A" >> "$DR/said"; case $? in 0) ;; 1) echo "$A" >> "$DR/asked" ;; 3) echo "what this mailbox keeps of its sender's revocations does not verify, or cannot be written"; return 3 ;; *) echo "whether its sender is revoked could not be asked"; return 4 ;; esac
+  if ! grep -qxF -e "$A" "$DR/asked" 2> /dev/null; then      # the server is asked once for each sender in a drain. That it holds none is an answer; no answer is not, and the message then stays where it is
+    dr_lookup "$A" >> "$DR/said"; case $? in 0) ;; 1) printf '%s\n' "$A" >> "$DR/asked" ;; 3) echo "what this mailbox keeps of its sender's revocations does not verify, or cannot be written"; return 3 ;; *) echo "whether its sender is revoked could not be asked"; return 4 ;; esac
   fi
   dr_gone "$A"; case $? in      # nobody can vouch for when a signature was made, so a revocation reaches back over everything that address signed
     0) echo "revoked: its sender's address is revoked, and the revocation verifies: nothing signed for that address is taken, whenever it was signed"; return 1 ;;
@@ -687,7 +687,7 @@ dr_open(){ # <me> <message stem> → the sender's address, only if what was decr
     *) echo "bad_signature: it is not signed for this mailbox by a working key the sender's identity certified"; return 1 ;;
   esac
   dr_envcheck "$m.P" "$A" "$B" || return 1
-  echo "$A"
+  printf '%s\n' "$A"
 }
 dr_envform(){ # <envelope> → 0 only for one JSON object with no member named twice in any object in it: a name given twice could be read as two values of one signed text. Otherwise the reason, and 1
   local n; n=$(jq -n --stream '[inputs | if length == 2 then .[0] else .[0][:-1] end | select(length > 0 and (.[-1] | type) == "string")] | length' "$1" 2> /dev/null) &&      # every member of every object, as written: one named twice is counted twice here, and once below
