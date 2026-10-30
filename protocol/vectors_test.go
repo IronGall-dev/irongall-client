@@ -605,10 +605,10 @@ func TestVectorSignatureForms(t *testing.T) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
-	if n := len(read(t, "sig/ok-4096-bytes.sig")); n != MaxSignature {
+	if n := len(read(t, "sig/ok-4096-bytes.sig")); n != SignatureBound(a.Type()) {
 		t.Errorf("sig/ok-4096-bytes.sig is %d bytes, not the bound", n)
 	}
-	if n := len(read(t, "sig/bad-4097-bytes.sig")); n != MaxSignature+1 {
+	if n := len(read(t, "sig/bad-4097-bytes.sig")); n != SignatureBound(a.Type())+1 {
 		t.Errorf("sig/bad-4097-bytes.sig is %d bytes, not one over the bound", n)
 	}
 }

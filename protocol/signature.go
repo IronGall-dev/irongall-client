@@ -25,7 +25,7 @@ const (
 // message it is the block from the BEGIN line through the END line. Dearmor
 // refuses a longer one before reading it, so every verifier here does, before
 // it knows whose signature it is.
-const MaxSignature = 4096
+const MaxSignature = 16384
 
 // SignatureBound returns the most bytes an armored signature may be for a mailbox
 // whose identity is of key type t (PROTOCOL.md §3.2): what the mailbox signs, by its

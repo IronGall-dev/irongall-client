@@ -512,6 +512,8 @@ func newKey(t string) (crypto.Signer, error) {
 		return priv, err
 	case protocol.IdentityP256:
 		return ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	case protocol.IdentityMLDSA44Ed25519:
+		return ssh.GenerateCompositeKey(t)
 	}
 	return nil, fmt.Errorf("this client makes no key of type %q: %s", t, strings.Join(protocol.IdentityTypes(), " or "))
 }
