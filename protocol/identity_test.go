@@ -202,3 +202,21 @@ func TestAP256IdentityCertifies(t *testing.T) {
 		}
 	}
 }
+
+// Every identity type names the type of the working keys it certifies, and
+// that type is one defined here, whose key checks a working key is held to
+// (PROTOCOL.md §4.1, §5). The list is the package's own.
+func TestEveryIdentityTypeNamesADefinedWorkingKeyType(t *testing.T) {
+	for _, ty := range IdentityTypes() {
+		work := WorkingKeyType(ty)
+		if _, defined := identityTypes[work]; !defined {
+			t.Errorf("%s names %q as its working key's type, which is not defined here", ty, work)
+		}
+	}
+	if len(IdentityTypes()) != len(identityTypes) {
+		t.Errorf("IdentityTypes lists %d types and identityTypes defines %d", len(IdentityTypes()), len(identityTypes))
+	}
+	if WorkingKeyType("no-such-key-type@dromas.invalid") != "" {
+		t.Error("a key type not defined here names a working key's type")
+	}
+}

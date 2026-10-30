@@ -60,7 +60,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 | Name | Role | Specification |
 |---|---|---|
 | age v1 | encryption to a prekey: `mlkem768x25519` (the hybrid ML-KEM-768 + X25519 recipient), or `X25519` | C2SP age |
-| Ed25519 | the working key; the identity key of type `ssh-ed25519` | RFC 8032 |
+| Ed25519 | the identity key of type `ssh-ed25519`; the working key of an identity of either type of Section 4.1 | RFC 8032 |
 | ECDSA P-256 | the identity key of the optional type `ecdsa-sha2-nistp256` | FIPS 186-5, RFC 5656 |
 | SSHSIG | every signature: the signer's signature over SHA-512 or SHA-256 of the message, in a namespace | OpenSSH `PROTOCOL.sshsig` |
 | SSH public key text | `<key type> <base64 of the wire key>` | RFC 4253 §6.6, RFC 8709, RFC 5656 |
@@ -122,12 +122,13 @@ ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI<43 characters>
 
 The key MUST be of a type this section defines, in its one encoding, and MUST pass that type's key checks. Its one encoding is the wire key as OpenSSH writes it back once read: the key, parsed as the type line 2 names and written again, gives the same bytes. So one key has one document, and one address.
 
-| Key type | Document | What fixes its one encoding | Key checks |
-|---|---|---|---|
-| `ssh-ed25519` | 91 bytes | the key's length, 32 (RFC 8709 §4) | a canonical point, not of small order |
-| `ecdsa-sha2-nistp256` | 171 bytes | the curve's name, `nistp256`, and an uncompressed point | the point on the curve, not the point at infinity, each coordinate below the field's size |
+| Key type | Document | What fixes its one encoding | Key checks | Working key |
+|---|---|---|---|---|
+| `ssh-ed25519` | 91 bytes | the key's length, 32 (RFC 8709 §4) | a canonical point, not of small order | `ssh-ed25519` |
+| `ecdsa-sha2-nistp256` | 171 bytes | the curve's name, `nistp256`, and an uncompressed point | the point on the curve, not the point at infinity, each coordinate below the field's size | `ssh-ed25519` |
 
 - **Every client MUST verify `ssh-ed25519`,** and a client MUST NOT make an identity of any other type unless its owner asks for one. Every other type is OPTIONAL: a client verifies it or not, and a server registers it or not (Section 11.7). A mailbox of an optional type can be written to, and heard from, only by mailboxes whose clients verify that type (Section 7).
+- **The working key column** is the type of every working key an identity of that type certifies (Section 5). A type defined later states its own, as it states its own signature bound (Section 3.2).
 - **The form is the same for every key type, defined here or not:** the tag line; a key type's name (RFC 4251 §6: printable ASCII with no comma, at most 64 characters); one space; the base64 of an SSH wire key that begins with that same name; LF. A reader MUST refuse a well-formed document of a type it does not verify as `unsupported_key_type`, never as malformed: a document that breaks the form, or does not hash to its address, is evidence of tampering, and one of a type the reader lacks is not.
 
 ### 4.2. The address
@@ -158,7 +159,7 @@ A certificate is an OpenSSH user certificate, and a verifier MUST check every ro
 | Field | Rule |
 |---|---|
 | Type | a user certificate |
-| Certified key | the working key: `ssh-ed25519`, held to that type's key checks (Section 4.1), and never the identity key |
+| Certified key | the working key: of the type Section 4.1's table gives for the identity's type, held to that type's key checks, and never the identity key |
 | Serial | a serial (Section 2.2), numbered as below |
 | Key id | exactly `dromas-cert-v1` |
 | Principals | exactly one: the mailbox's address |

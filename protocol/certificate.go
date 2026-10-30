@@ -2,7 +2,6 @@ package protocol
 
 import (
 	"bytes"
-	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
@@ -154,23 +153,20 @@ func certificateForm(id *Identity, key ssh.PublicKey) (*ssh.Certificate, error) 
 	return cert, nil
 }
 
-// checkWorkingKey holds a certified key to the identity's own key checks, and
+// checkWorkingKey holds a certified key to the type the identity's type
+// gives its working keys (WorkingKeyType) and to that type's key checks, and
 // refuses the identity key itself: the identity signs certificates and
 // revocations, never what a working key signs.
 func checkWorkingKey(id *Identity, key ssh.PublicKey) error {
-	if key == nil || key.Type() != ssh.KeyAlgoED25519 {
-		return errors.New("the working key is not an ssh-ed25519 key")
+	work := WorkingKeyType(id.Type())
+	if key == nil || work == "" || key.Type() != work {
+		return fmt.Errorf("the working key is not an %s key", work)
 	}
-	crypto, ok := key.(ssh.CryptoPublicKey)
-	if !ok {
-		return errors.New("the working key is not an ssh-ed25519 key")
+	if _, ok := key.(ssh.CryptoPublicKey); !ok {
+		return fmt.Errorf("the working key is not an %s key", work)
 	}
-	raw, ok := crypto.CryptoPublicKey().(ed25519.PublicKey)
-	if !ok {
-		return errors.New("the working key is not an ssh-ed25519 key")
-	}
-	if err := checkEd25519(raw); err != nil {
-		return errors.New("the working key is not a canonical Ed25519 point, or is of small order")
+	if err := identityTypes[work].check(key); err != nil {
+		return fmt.Errorf("the working key fails the %s key checks: %v", work, err)
 	}
 	if bytes.Equal(key.Marshal(), id.PublicKey().Marshal()) {
 		return errors.New("the working key is the identity key")
