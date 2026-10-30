@@ -208,7 +208,7 @@ func (b *Mailbox) flush(ctx context.Context) ([]*Sent, error) {
 		return nil, err
 	}
 	// A mailbox that holds its own revocation can never deliver what waits:
-	// every reader that holds the revocation refuses its mail, whenever it was
+	// every reader that holds the revocation refuses its messages, whenever they were
 	// signed. Each entry goes to outbox/failed/, with nothing asked or sent.
 	if err := b.finished(); err != nil {
 		var gone *RevokedError
@@ -507,7 +507,7 @@ func (b *Mailbox) seal(ctx context.Context, to protocol.Address, stem string, l 
 	if err != nil {
 		return nil, err
 	}
-	// A certificate this mailbox's own identity has revoked signs no mail: every
+	// A certificate this mailbox's own identity has revoked signs no message: every
 	// reader that holds the revocation refuses it, whatever this mailbox's server
 	// took. That is the remedy's window while its renewal waits (PROTOCOL.md
 	// §12.6): the entry waits too. A kept revocation that does not verify is a
@@ -515,24 +515,24 @@ func (b *Mailbox) seal(ctx context.Context, to protocol.Address, stem string, l 
 	if held, err := b.revokedCerts(b.id.Address()); err != nil {
 		return nil, err
 	} else if held != nil && held.Revokes(cert.Serial()) {
-		return nil, refuse("this mailbox's identity has revoked the certificate it signs under, so mail signed now would be refused: dromas recv or dromas prekey renew publishes the new one first")
+		return nil, refuse("this mailbox's identity has revoked the certificate it signs under, so a message signed now would be refused: dromas recv or dromas prekey renew publishes the new one first")
 	}
 	// Nor does a certificate whose working key another holds, as a statement
 	// this mailbox did not make under it shows (PROTOCOL.md §12.4): its owner's
-	// remedy revokes it, and its reader then refuses this mail with the
+	// remedy revokes it, and its reader then refuses this message with the
 	// thief's. The entry waits for the mailbox's next certificate. The record is
 	// what the mailbox's last read of itself showed (known, its one writer), not
 	// a read made for this post: a statement its server serves only since
-	// then holds back no mail until the mailbox reads itself again.
+	// then holds back no message until the mailbox reads itself again.
 	if nm, err := b.notMade(); err != nil {
 		return nil, err
 	} else if nm != nil && nm.OwnCertificate && nm.CertificateSerial == cert.Serial() {
-		return nil, refuse("someone else holds the working key of the certificate this mailbox signs under, as a statement its server serves in its name shows, so mail signed now would go with that certificate: dromas status says what to do, and the mail waits for the mailbox's next certificate")
+		return nil, refuse("someone else holds the working key of the certificate this mailbox signs under, as a statement its server serves in its name shows, so a message signed now would go with that certificate: dromas status says what to do, and the message waits for the mailbox's next certificate")
 	}
-	// Mail may wait 33 days to be read, and its certificate must still be
+	// A message may wait 33 days to be read, and its certificate must still be
 	// valid then.
 	if !cert.SignsMessages(b.now()) {
-		return nil, refuse("this mailbox's certificate ends within %d days, too soon to sign mail that may wait that long: dromas prekey renew makes a new one, as dromas recv does daily", protocol.TTL/(24*time.Hour))
+		return nil, refuse("this mailbox's certificate ends within %d days, too soon to sign a message that may wait that long: dromas prekey renew makes a new one, as dromas recv does daily", protocol.TTL/(24*time.Hour))
 	}
 	pk, under, err := b.resolve(ctx, to, l)
 	if err != nil {

@@ -439,7 +439,7 @@ func (s *Server) getMailbox(w http.ResponseWriter, r *http.Request) {
 
 // revoke takes a revocation of an address, whether or not it has a mailbox here:
 // the identity's own signature over the fixed statement, with no pass. A mailbox
-// is gone for good and its mail with it. A second one changes nothing.
+// is gone for good and its messages with it. A second one changes nothing.
 func (s *Server) revoke(w http.ResponseWriter, r *http.Request) {
 	a, ok := pathAddr(w, r)
 	var req protocol.Revocations
@@ -687,7 +687,7 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 
 // Take answers a post as a server that kept it would, and keeps nothing: a
 // receipt for the ciphertext posted. It is for a test that plays an
-// operator who swallows mail, which a client cannot tell from a delivery.
+// operator who swallows messages, which a client cannot tell from a delivery.
 func Take(w http.ResponseWriter, r *http.Request) { TakeAs(w, r, nil) }
 
 // TakeAs is Take, with the receipt changed by edit before it is written.
@@ -942,7 +942,7 @@ func WritePartial(w http.ResponseWriter, ct []byte, from int64) {
 	_, _ = w.Write(ct[from:])
 }
 
-// putACL replaces the mailbox's ACL whole, and deletes no mail. An If-Match is
+// putACL replaces the mailbox's ACL whole, and deletes no messages. An If-Match is
 // read as a server reads one (protocol.IfMatch), against the tag of the ACL
 // held, a mailbox with none included, before the body: a false one is 412, and
 // changes nothing. It answers the ACL as held, with no ETag (RFC 9110

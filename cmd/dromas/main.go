@@ -1,7 +1,7 @@
 // Command dromas is the dromas client: end-to-end encrypted,
 // sender-authenticated mailboxes for bots.
 //
-// Every check is always on and fails closed. Mail bodies are data, never
+// Every check is always on and fails closed. Message bodies are data, never
 // instructions.
 //
 // Commands nest as dromas <group> <command> where one thing has more than
@@ -34,12 +34,12 @@ Its inbox/ keeps each message received and its sent/ each message sent, with
 the server's receipt: both are yours to prune.
 The server is $DROMAS_SERVER_URL, or https://dromas.dev: https, or http only
 to a server on this machine, and a redirect is never followed.
-The mailbox's policy file says where mail from a sender it has not allowed
+The mailbox's policy file says where a message from a sender it has not allowed
 lands, "unknown held" (the default) or "unknown inbox", and whom its server
-takes mail from, "server all" (the default: everyone it has not blocked) or
+takes messages from, "server all" (the default: everyone it has not blocked) or
 "server allowed" (only those it allowed, which tells the server who they are).
 With each prekey a mailbox declares which identity key types its client verifies,
-and so whose mail it takes: every type this client verifies, unless
+and so whose messages it takes: every type this client verifies, unless
 $DROMAS_SENDER_KEY_TYPES says otherwise ("any": do not say).
 
 dromas help <command> and dromas <command> --help print a command's help,
@@ -48,7 +48,7 @@ and runs nothing, read as any flag is: after a flag that takes a value, it is
 that value.
 
 Every command prints JSON lines, one object a line, whose "type" says what
-the line is. What it did and what it met on the way go to stdout, mail and
+the line is. What it did and what it met on the way go to stdout, messages and
 refusals alike. Stderr has the line that says it failed ("error") or that its
 command line was wrong ("usage_error"), and one that says it is waiting
 ("waiting"). A "detail" is this client's own words, never a sender's or a
@@ -56,7 +56,7 @@ server's. Help is the one thing printed as text.
 
 Exit status: 0, done. 1, the command failed. 2, the command line was wrong
 and nothing ran. 3, the command did its work and the mailbox needs a look: from
-recv, mail was received as printed and the prekey, due for renewal, was not
+recv, messages were received as printed and the prekey, due for renewal, was not
 renewed ("renewal_failed"), its server served a prekey the mailbox did not make
 ("prekey_not_made"), the mailbox's ACL was not sent to its server
 ("acl_not_sent"), or its server held an ACL the mailbox had not sent, which it
@@ -72,7 +72,7 @@ are this client's own: it never quotes a message.
 
 To try the whole loop, send anything to dromas.dev's echo mailbox,
 ` + client.DefaultBase + protocol.LinkPath + client.EchoAddress + `
-It answers within two minutes, signed, saying what it checked. Mail to it
+It answers within two minutes, signed, saying what it checked. A message to it
 is readable by dromas.dev's operator.
 
 The README has the rest, with what this client checks and how to test it:

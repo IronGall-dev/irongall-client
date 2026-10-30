@@ -21,7 +21,7 @@ import (
 // A mailbox asks what the server holds about an address before it posts to it,
 // keeps what verifies, and checks the send against what it then holds. These
 // tests play a mailbox whose working key was taken, and an operator that serves
-// its senders the statement the thief can read mail under.
+// its senders the statement the thief can read messages under.
 
 // operator stands between the mailboxes and the server: it records every request
 // as "METHOD path", and answers one itself when its rule does.
@@ -124,7 +124,7 @@ func helpsTheThief(e *env, a *client.Mailbox, statement, signature []byte, hide 
 	})
 }
 
-// A sender that has never read a mailbox's mail holds nothing about it. Asked
+// A sender that has never read a mailbox's messages holds nothing about it. Asked
 // before the send, the server shows the mailbox's list, and the sender then
 // refuses the statement under the revoked certificate: nothing is posted.
 // What the sender learned stands when the server later hides it.
@@ -137,7 +137,7 @@ func TestASenderAsksBeforeItSends(t *testing.T) {
 	statement, signature := theft(t, e, a)
 
 	// The control: a sender shown no list takes the old statement, and its
-	// mail goes to the prekey the thief holds. This is what asking is for,
+	// message goes to the prekey the thief holds. This is what asking is for,
 	// and what a server that hides the list can still do to a sender that
 	// has never seen it.
 	blind := e.mailbox(protocol.Classic)
@@ -480,7 +480,7 @@ func TestAMessageThatWaitedThroughTheRemedyIsSignedUnderTheNewCertificate(t *tes
 
 // A message whose post was taken but whose answer was lost is posted again
 // at the flush, sealed afresh: a new ciphertext, which the server stores and
-// counts as new mail, and which its reader drops by its msg_id. Delivered
+// counts as a new message, and which its reader drops by its msg_id. Delivered
 // once; the cost of the lost answer is one more send.
 func TestALostAnswerCostsASendAndDeliversOnce(t *testing.T) {
 	t.Parallel()
@@ -724,9 +724,9 @@ func TestAskingAtAnyTimeAndARevocationHandedOver(t *testing.T) {
 	if err != nil || got != a.Address() || held.Revoked || held.Certificates == nil || held.Certificates.Through != firstThrough || !keptList(c, a.Address()) {
 		t.Fatalf("a revocation of certificates handed over: %+v, %v", held, err)
 	}
-	mailAs(t, e, a, c, stolen, "signed by the key that was taken")
+	messageAs(t, e, a, c, stolen, "signed by the key that was taken")
 	if res := receive(t, c); len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedCertificate {
-		t.Fatalf("a thief's mail, the revocation handed over and the server hiding it: %+v", res)
+		t.Fatalf("a thief's message, the revocation handed over and the server hiding it: %+v", res)
 	}
 	e.srv.SetMiddle(nil)
 

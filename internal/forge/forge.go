@@ -1,6 +1,6 @@
 // Package forge is how a test plays the hostile operator in front of
 // internal/fakeserver: a read of a mailbox served otherwise than the server holds
-// it, mail put in a mailbox as only the operator can, a call answered as a server
+// it, a message put in a mailbox as only the operator can, a call answered as a server
 // that is down. The Go client's tests and the script's share it, so each
 // forgery is written once, as an operator could make it.
 package forge

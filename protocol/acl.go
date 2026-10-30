@@ -26,7 +26,7 @@ type ACLDocument struct {
 
 // ACL is a sender ACL in its checked form: who may send to a mailbox. Deny is
 // read first and then allow, as Matrix reads a room's server ACL, and a
-// sender neither matches is refused. A mailbox with no ACL takes mail from
+// sender neither matches is refused. A mailbox with no ACL takes messages from
 // everyone: a nil *ACL is that.
 type ACL struct {
 	Allow ACLList
@@ -86,7 +86,7 @@ func NewACLList(all bool, addrs []Address) ACLList {
 
 func compareAddresses(x, y Address) int { return bytes.Compare(x[:], y[:]) }
 
-// Admits reports whether a mailbox whose ACL is a takes mail from a sender:
+// Admits reports whether a mailbox whose ACL is a takes messages from a sender:
 // with no ACL, everyone; with one, a sender its deny list does not match and
 // its allow list does.
 func (a *ACL) Admits(from Address) bool {

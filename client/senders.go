@@ -17,9 +17,9 @@ import (
 )
 
 // A mailbox says who may write to it (PROTOCOL.md §12.3, §11.14): the senders it
-// allows, whose mail lands in inbox/; the senders it blocks, whose mail it
-// drops; and, in its policy, where the rest's mail lands and whether its
-// server refuses them. Mail lands by a verified sender only, after every
+// allows, whose messages land in inbox/; the senders it blocks, whose messages it
+// drops; and, in its policy, where the rest's messages land and whether its
+// server refuses them. A message lands by a verified sender only, after every
 // check of judge: a sender the mailbox has not allowed is held, never refused,
 // since it proved who it is. Its server holds the mailbox's ACL, which the mailbox
 // makes from the same files and sends whenever they change, so that the
@@ -27,11 +27,11 @@ import (
 
 // The values of a mailbox's policy.
 const (
-	// LandHeld and LandInbox are where mail from a sender the mailbox has not
+	// LandHeld and LandInbox are where a message from a sender the mailbox has not
 	// allowed lands: held/ (the default), or inbox/ as any other.
 	LandHeld  = "held"
 	LandInbox = "inbox"
-	// AdmitAll and AdmitAllowed are whom the mailbox's server takes mail from:
+	// AdmitAll and AdmitAllowed are whom the mailbox's server takes messages from:
 	// every sender the mailbox has not blocked (the default), or only those it
 	// has allowed.
 	AdmitAll     = "all"
@@ -41,15 +41,15 @@ const (
 // Policy is what a mailbox's policy file says. A mailbox with none, or a line left
 // out, has the default.
 type Policy struct {
-	// Unknown is where mail from a sender the mailbox has not allowed lands:
+	// Unknown is where a message from a sender the mailbox has not allowed lands:
 	// LandHeld or LandInbox.
 	Unknown string `json:"unknown"`
-	// Server is whom the mailbox's server takes mail from: AdmitAll or
+	// Server is whom the mailbox's server takes messages from: AdmitAll or
 	// AdmitAllowed.
 	Server string `json:"server"`
 }
 
-// DefaultPolicy is the policy of a mailbox whose policy file says nothing: mail
+// DefaultPolicy is the policy of a mailbox whose policy file says nothing: a message
 // from a sender the mailbox has not allowed is held, and the server refuses
 // only senders the mailbox has blocked.
 func DefaultPolicy() Policy { return Policy{Unknown: LandHeld, Server: AdmitAll} }
@@ -181,7 +181,7 @@ func (b *Mailbox) addAll(name string, addrs []protocol.Address) (int, error) {
 	return n, writeFile(b.path(name), append(data, lines...))
 }
 
-// Allowed returns the senders whose mail lands in inbox/ whatever the
+// Allowed returns the senders whose messages land in inbox/ whatever the
 // policy says: those the allowed file lists and those an alias names.
 func (b *Mailbox) Allowed() ([]protocol.Address, error) {
 	allowed, err := b.addresses("allowed")
@@ -198,7 +198,7 @@ func (b *Mailbox) Allowed() ([]protocol.Address, error) {
 	return protocol.NewACLList(false, allowed).Addrs, nil
 }
 
-// Blocked returns the senders whose mail this mailbox drops, and its server
+// Blocked returns the senders whose messages this mailbox drops, and its server
 // refuses.
 func (b *Mailbox) Blocked() ([]protocol.Address, error) {
 	blocked, err := b.addresses("blocked")
@@ -208,7 +208,7 @@ func (b *Mailbox) Blocked() ([]protocol.Address, error) {
 	return protocol.NewACLList(false, blocked).Addrs, nil
 }
 
-// Where mail from a verified sender lands.
+// Where a message from a verified sender lands.
 const (
 	landInbox = iota
 	landHeld
@@ -237,7 +237,7 @@ func (b *Mailbox) readSenders() (*senders, error) {
 	return &senders{policy: p, allowed: protocol.ACLList{Addrs: allowed}, blocked: protocol.ACLList{Addrs: blocked}}, nil
 }
 
-// land says where mail from a verified sender lands: dropped if the mailbox
+// land says where a message from a verified sender lands: dropped if the mailbox
 // blocked it, which wins over allowing it; inbox/ if the mailbox allowed it or
 // its policy lands every sender's there; otherwise held/.
 func (s *senders) land(from protocol.Address) int {
@@ -250,7 +250,7 @@ func (s *senders) land(from protocol.Address) int {
 	return landHeld
 }
 
-// UnknownSender is the mail held/ keeps from one sender.
+// UnknownSender describes the messages held/ keeps from one sender.
 type UnknownSender struct {
 	From protocol.Address `json:"from"`
 	// IDs name its messages in held/, oldest first by sent_at: held/<id>.json
@@ -270,14 +270,14 @@ type keptMessage struct {
 	kept   time.Time // when the drain wrote it: the order it arrived in, among messages sent in one second, where the file system's clock tells them apart
 }
 
-// keptMail reads dir, inbox/ or held/: each message this client kept there,
+// keptMessages reads dir, inbox/ or held/: each message this client kept there,
 // oldest first by sent_at, then in the order they were kept, then by id. Two
 // files written within one tick of the file system's clock share a
 // modification time (Windows' ticks about every 15.6 ms), so the order
 // within a second is the order recv kept them only where their times
 // differ; the id makes it the same on every run. A file that is not one of
 // this client's lines ([Mailbox.keptLine]) is skipped.
-func (b *Mailbox) keptMail(dir string) ([]keptMessage, error) {
+func (b *Mailbox) keptMessages(dir string) ([]keptMessage, error) {
 	names, err := filepath.Glob(b.path(dir, "*.json"))
 	if err != nil {
 		return nil, err
@@ -314,10 +314,10 @@ func (b *Mailbox) keptMail(dir string) ([]keptMessage, error) {
 	return out, nil
 }
 
-// HeldMessages returns the mail held/ keeps, by sender, the sender with the oldest
+// HeldMessages returns the messages held/ keeps, by sender, the sender with the oldest
 // first. It reads only held/, and calls no server.
 func (b *Mailbox) HeldMessages() ([]UnknownSender, error) {
-	ms, err := b.keptMail("held")
+	ms, err := b.keptMessages("held")
 	if err != nil {
 		return nil, err
 	}
@@ -336,7 +336,7 @@ func (b *Mailbox) HeldMessages() ([]UnknownSender, error) {
 	return out, nil
 }
 
-// Allow allows a sender: its mail lands in inbox/ from now on, whatever the
+// Allow allows a sender: its messages land in inbox/ from now on, whatever the
 // policy says, and what held/ keeps from it moves there. A sender the mailbox
 // blocks is refused, with nothing done: blocking wins. The moved messages
 // are returned as Receive delivers them, oldest first, but for Plaintext and
@@ -354,8 +354,8 @@ func (b *Mailbox) Allow(ctx context.Context, a protocol.Address) ([]Delivery, er
 }
 
 func (b *Mailbox) allow(a protocol.Address) ([]Delivery, error) {
-	// Blocking wins: allowing a sender the mailbox blocks would move its mail to
-	// inbox/ while its later mail is dropped, so nothing is done (#179).
+	// Blocking wins: allowing a sender the mailbox blocks would move its messages to
+	// inbox/ while its later messages are dropped, so nothing is done (#179).
 	blocked, err := b.Blocked()
 	if err != nil {
 		return nil, err
@@ -366,7 +366,7 @@ func (b *Mailbox) allow(a protocol.Address) ([]Delivery, error) {
 	if _, err := b.addTo("allowed", a); err != nil {
 		return nil, err
 	}
-	ms, err := b.keptMail("held")
+	ms, err := b.keptMessages("held")
 	if err != nil {
 		return nil, err
 	}
@@ -389,7 +389,7 @@ func (b *Mailbox) allow(a protocol.Address) ([]Delivery, error) {
 	return moved, syncDir(b.path("held"))
 }
 
-// Block blocks a sender: its mail is dropped from now on, what its server
+// Block blocks a sender: its messages are dropped from now on, what its server
 // holds from it at the next drain among it, and its server refuses its later
 // sends; what held/ keeps from it is deleted. It returns how many held messages it deleted. Blocking
 // wins over allowing. An error sending the server the mailbox's ACL leaves the
@@ -408,7 +408,7 @@ func (b *Mailbox) block(a protocol.Address) (int, error) {
 	if _, err := b.addTo("blocked", a); err != nil {
 		return 0, err
 	}
-	ms, err := b.keptMail("held")
+	ms, err := b.keptMessages("held")
 	if err != nil {
 		return 0, err
 	}
@@ -429,7 +429,7 @@ func (b *Mailbox) block(a protocol.Address) (int, error) {
 }
 
 // RebuildAllowed adds back to the allowed file every address the mailbox has
-// an alias for or has sent mail to, as sent/ names them, and returns how
+// an alias for or has sent messages to, as sent/ names them, and returns how
 // many it added. What the file lists stays. It is for a mailbox whose allowed
 // file was lost: send, alias and allow keep it otherwise.
 func (b *Mailbox) RebuildAllowed(ctx context.Context) (int, error) {
@@ -754,9 +754,9 @@ func (b *Mailbox) keepHeld(acl *protocol.ACL) error {
 // back them up, adopts nothing: its files are its ACL, as ever.
 //
 // What a hostile server gains by lying there, once: an allow entry it adds
-// lands that sender's mail in inbox/ and not in held/, once its signature
+// lands that sender's messages in inbox/ and not in held/, once its signature
 // verifies; a deny entry it adds, or an allow list that puts the mailbox under
-// "server allowed", has mail dropped or refused that the server could drop
+// "server allowed", has messages dropped or refused that the server could drop
 // anyway. Each stays in the mailbox's files until its owner edits them. It
 // forges no sender.
 

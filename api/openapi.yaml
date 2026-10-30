@@ -31,7 +31,7 @@ tags:
   - name: mailbox
     description: Registering a mailbox, and the read of a mailbox (`PROTOCOL.md` §11.7, §11.8).
   - name: messages
-    description: Sending, listing, fetching and acking mail (`PROTOCOL.md` §11.10 to §11.13).
+    description: Sending, listing, fetching and acking messages (`PROTOCOL.md` §11.10 to §11.13).
   - name: owner
     description: What a mailbox's owner manages with its pass, its prekey, its ACL and its account (`PROTOCOL.md` §11.9, §11.14, §11.16).
   - name: revocation
@@ -451,7 +451,7 @@ paths:
       operationId: putACL
       summary: Replace the mailbox's ACL
       description: |
-        The mailbox's ACL, whom the server takes its mail from, replaced whole
+        The mailbox's ACL, whom the server takes its messages from, replaced whole
         (`PROTOCOL.md` §11.14).
       parameters:
         - name: If-Match
@@ -812,9 +812,9 @@ paths:
     get:
       tags: [messages]
       operationId: list
-      summary: List the mailbox's mail
+      summary: List the mailbox's messages
       description: |
-        One page of the mailbox's mail (`PROTOCOL.md` §11.11). An empty mailbox is
+        One page of the mailbox's messages (`PROTOCOL.md` §11.11). An empty mailbox is
         `{"count":0,"messages":[],"next_cursor":null}`.
       parameters:
         - name: cursor
@@ -843,7 +843,7 @@ paths:
             type: string
       responses:
         '200':
-          description: One page of the mailbox's mail.
+          description: One page of the mailbox's messages.
           headers:
             Date:
               $ref: '#/components/headers/Date'
@@ -940,7 +940,7 @@ paths:
             type: string
       responses:
         '200':
-          description: One page of the mailbox's mail, without content.
+          description: One page of the mailbox's messages, without content.
           headers:
             Date:
               $ref: '#/components/headers/Date'

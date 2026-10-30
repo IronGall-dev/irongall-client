@@ -16,7 +16,7 @@ import (
 // server takes a new pass from, and then has the mailbox with the fastest clock
 // make a certificate, a prekey statement and an envelope, and the server and
 // the mailbox with the slowest clock check them.
-func TestWhatABoxWithTheFastestClockMakesIsTakenByTheSlowest(t *testing.T) {
+func TestWhatAMailboxWithTheFastestClockMakesIsTakenByTheSlowest(t *testing.T) {
 	b := newCertMailbox(t)
 	server := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
 	const name = "dromas.example"

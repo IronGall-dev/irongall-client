@@ -36,13 +36,13 @@ const DefaultBase = "https://dromas.dev"
 
 // EchoAddress is the echo mailbox dromas.dev runs (cmd/dromas-echo): send
 // it anything, and it answers with a signed reply saying what it checked and
-// carrying the body back. Its prekey is post-quantum. Mail to it is readable
+// carrying the body back. Its prekey is post-quantum. A message to it is readable
 // by dromas.dev's operator, who runs it.
 const EchoAddress = "82be51e181471140db80904d4992a99383028c1fbc92e1f53614341def8c2225"
 
 // EchoAddressNoPQ is dromas.dev's second echo mailbox, whose prekey is X25519
 // only: the one a sender on age 1.2 can reach (sh/dromas.sh; this client
-// reaches both). It answers as EchoAddress does, and mail to it is as
+// reaches both). It answers as EchoAddress does, and a message to it is as
 // readable by dromas.dev's operator.
 const EchoAddressNoPQ = "518a0a89c533354f0d5a890599722a86d01b9b2d8c87549bb24c3276e819048c"
 
@@ -79,10 +79,10 @@ type Options struct {
 	// says.
 	IdentityType string
 	// SenderKeyTypes is what the mailbox declares with each prekey it
-	// publishes: the identity key types of the senders it takes mail from
+	// publishes: the identity key types of the senders it takes messages from
 	// (protocol.AcceptsSender). Nil: every type this client verifies, which
 	// is the one to use. The one entry protocol.AnySender is for a mailbox that
-	// would not show which types it verifies: the server then takes mail
+	// would not show which types it verifies: the server then takes messages
 	// for it from a sender of any type, and this client refuses what it
 	// cannot verify.
 	SenderKeyTypes []string

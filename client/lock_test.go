@@ -208,7 +208,7 @@ func TestAnEmptyStateFileIsRefusedAndLeftAsItIs(t *testing.T) {
 // One Mailbox shared by goroutines runs one command or reading at a time: a
 // reading of one goroutine waits for another's command, as a reading of
 // another process does, and never reads inside it (#329).
-func TestABoxSharedByGoroutinesRunsOneAtATime(t *testing.T) {
+func TestAMailboxSharedByGoroutinesRunsOneAtATime(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
@@ -297,7 +297,7 @@ func TestABoxSharedByGoroutinesRunsOneAtATime(t *testing.T) {
 func waits(b, c *client.Mailbox, rec *protocol.Revocations, opt client.Options) map[string]func(context.Context) error {
 	return map[string]func(context.Context) error{
 		"Status":             func(ctx context.Context) error { _, err := b.Status(ctx); return err },
-		"RefusedMail":        func(ctx context.Context) error { _, err := b.RefusedMessages(ctx); return err },
+		"RefusedMessages":    func(ctx context.Context) error { _, err := b.RefusedMessages(ctx); return err },
 		"NotMade":            func(ctx context.Context) error { _, err := b.NotMade(ctx); return err },
 		"Revocation":         func(ctx context.Context) error { _, err := b.Revocation(ctx); return err },
 		"CertificatesRecord": func(ctx context.Context) error { _, err := b.CertificatesRecord(ctx); return err },

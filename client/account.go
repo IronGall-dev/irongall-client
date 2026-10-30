@@ -11,7 +11,7 @@ import (
 // Adopt puts the mailbox in the account an adopt key names, and returns the
 // account's id as the server gives it. An account can lift the mailbox's
 // limits; the server can tell who pays for the mailbox, and nothing else about
-// its mail changes. Keep the key secret: anyone holding it can adopt a mailbox
+// its messages changes. Keep the key secret: anyone holding it can adopt a mailbox
 // into the account until it is spent or expires.
 func (b *Mailbox) Adopt(ctx context.Context, key string) (string, error) {
 	return locked(ctx, b, func() (string, error) {

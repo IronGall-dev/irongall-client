@@ -132,7 +132,7 @@ func TestNoLineCarriesAnEnvelopeMemberBesideTheEnvelope(t *testing.T) {
 		})
 	}
 	// Control: the reading found the lines, and the two that carry the
-	// envelope, mail and mail_headers.
+	// envelope, message and message_headers.
 	if lines < 30 || withEnvelope < 2 {
 		t.Errorf("read %d lines, %d carrying the envelope: the reading of the source missed them", lines, withEnvelope)
 	}

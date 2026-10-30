@@ -194,16 +194,16 @@ func (b *shMailbox) mustSend(to *shMailbox, body string) {
 	}
 }
 
-// drain is one dr_recv: each mail line, and every other line, from stdout
+// drain is one dr_recv: each message line, and every other line, from stdout
 // and stderr both, a refused line written "REFUSED <id>: <code>: <words>".
 type drain struct {
-	mail []string
-	said string
-	rc   int
+	messages []string
+	said     string
+	rc       int
 }
 
 func (d drain) String() string {
-	return fmt.Sprintf("exit %d, mail %q, said %q", d.rc, d.mail, d.said)
+	return fmt.Sprintf("exit %d, messages %q, said %q", d.rc, d.messages, d.said)
 }
 
 // recv runs dr_recv, as cmd if one is given (a clock set before it).
@@ -213,14 +213,14 @@ func (b *shMailbox) recv(prefix ...string) drain {
 	d := drain{rc: r.rc}
 	var said []string
 	for l := range strings.Lines(r.out) {
-		var j struct{ Type, ID, Code, Message string }
+		var j struct{ Type, ID, Code, Detail string }
 		switch {
 		case strings.HasPrefix(l, `{"type":"message",`):
-			d.mail = append(d.mail, l)
+			d.messages = append(d.messages, l)
 		case json.Unmarshal([]byte(l), &j) != nil:
 			said = append(said, "NOT A LINE OF JSON: "+l)
 		case j.Type == "refused":
-			said = append(said, fmt.Sprintf("REFUSED %s: %s: %s\n", j.ID, j.Code, j.Message))
+			said = append(said, fmt.Sprintf("REFUSED %s: %s: %s\n", j.ID, j.Code, j.Detail))
 		default:
 			said = append(said, l)
 		}
@@ -229,10 +229,10 @@ func (b *shMailbox) recv(prefix ...string) drain {
 	return d
 }
 
-// bodies are the bodies of the mail a drain delivered, in order.
+// bodies are the bodies of the messages a drain delivered, in order.
 func (d drain) bodies() []string {
 	var bs []string
-	for _, l := range d.mail {
+	for _, l := range d.messages {
 		var m struct{ Envelope struct{ Body string } }
 		_ = json.Unmarshal([]byte(l), &m)
 		bs = append(bs, m.Envelope.Body)

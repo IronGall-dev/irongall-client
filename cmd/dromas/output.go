@@ -19,7 +19,7 @@ import (
 // client has something to say, "detail", in its own words: never a
 // sender's, never a server's. Help is the one thing printed as text.
 //
-// What a command did and what it met on the way go to stdout, mail and
+// What a command did and what it met on the way go to stdout, messages and
 // refusals alike, so a reader of stdout alone misses nothing. Stderr carries
 // the line that says the command failed, or that its command line was
 // wrong, and the line that says it is waiting.
@@ -84,14 +84,14 @@ func typed(typ string, obj []byte) []byte {
 	return append(append(b[:len(b)-1], ','), obj[1:]...)
 }
 
-// mail is a message's line: its id, the SHA-256 of its ciphertext, and its
+// message is a message's line: its id, the SHA-256 of its ciphertext, and its
 // envelope, the line inbox/<id>.json keeps, as its bytes are, which this
 // client built from the checked fields of the envelope. The envelope's
 // members are only ever inside "envelope", so one it gains later (PROTOCOL.md
 // §14) never meets a member of the line's own (#356; PRECEDENTS.md, Part 2,
 // § 3e). Beside it, "alias" is the mailbox's own name for the sender, when it
 // has one (names).
-func mail(d client.Delivery, n names) []byte {
+func message(d client.Delivery, n names) []byte {
 	return line("message", "id", d.ID, "alias", n.of(d.Envelope.From), "envelope", raw(d.Line))
 }
 
@@ -126,14 +126,14 @@ func (n names) of(a protocol.Address) any {
 	return nil
 }
 
-// mailHeaders is a message's line without the text its sender chose: its id,
-// the mailbox's name for its sender (mail),
+// messageHeaders is a message's line without the text its sender chose: its id,
+// the mailbox's name for its sender (message),
 // its envelope with the checked fields but its body and subject, and the
 // size of its body in bytes, as the envelope carries it. in_reply_to and
 // supersedes are the sender's words, which a reader holds only to being
 // strings, so each is here only when it has a msg_id's form; dromas inbox
 // show prints them as sent.
-func mailHeaders(d client.Delivery, n names) []byte {
+func messageHeaders(d client.Delivery, n names) []byte {
 	env := d.Envelope
 	msgID := func(s string) any {
 		if !protocol.IsMsgID(s) {

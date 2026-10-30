@@ -20,7 +20,7 @@ import (
 
 // A mailbox's identity signs certificates and revocations, and nothing else.
 // What the mailbox says,
-// its prekey statements, its mail and its passes, is signed by a working key
+// its prekey statements, its messages and its passes, is signed by a working key
 // under a certificate the identity gave it (PROTOCOL.md §5). This client
 // keeps both keys in the mailbox and makes a new working key, with a new
 // certificate, each time it makes a new prekey: work/<n> is the working key
@@ -192,7 +192,7 @@ const passMargin = 30 * time.Second
 // signs one that long, so this machine's clock has gone back since it was
 // signed. The new pass is dated by the clock as it is now, and a server
 // refuses it if the clock is too far behind: a mailbox whose clock is wrong is
-// stopped at its pass, before it fetches mail it would judge by that clock.
+// stopped at its pass, before it fetches messages it would judge by that clock.
 //
 // A mailbox that holds its own revocation uses no pass, the kept one included:
 // this is the one place a call gets its pass, so the check is here, and a

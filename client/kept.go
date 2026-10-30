@@ -45,13 +45,13 @@ func (b *Mailbox) InboxMessage(id string) (Delivery, error) {
 	return Delivery{ID: id, Envelope: env, Line: l}, nil
 }
 
-// Inbox returns the mail inbox/ keeps, oldest first by sent_at (within a
-// second as [Mailbox.keptMail] orders it), each as
+// Inbox returns the messages inbox/ keeps, oldest first by sent_at (within a
+// second as [Mailbox.keptMessages] orders it), each as
 // [Mailbox.InboxMessage] returns it: what recv delivered and nobody has pruned
 // since. A file that is not the line recv keeps is left out, as
 // [Mailbox.InboxMessage] refuses it. It reads only inbox/, and calls no server.
 func (b *Mailbox) Inbox() ([]Delivery, error) {
-	ms, err := b.keptMail("inbox")
+	ms, err := b.keptMessages("inbox")
 	if err != nil {
 		return nil, err
 	}
@@ -240,7 +240,7 @@ func (b *Mailbox) RefusedMessages(ctx context.Context) ([]RefusedMessage, error)
 	return reading(ctx, b, b.refusedMessages)
 }
 
-// refusedMessages is RefusedMail inside a command or a reading.
+// refusedMessages is RefusedMessages inside a command or a reading.
 func (b *Mailbox) refusedMessages() ([]RefusedMessage, error) {
 	names, err := filepath.Glob(b.path("refused", "*.json"))
 	if err != nil {

@@ -29,10 +29,10 @@ func unknownDoc() ([]byte, protocol.Address) {
 	return doc, sha256.Sum256(doc)
 }
 
-// A mailbox whose identity is a P-256 key registers, and exchanges mail with a
+// A mailbox whose identity is a P-256 key registers, and exchanges messages with a
 // mailbox on an Ed25519 one: each verifies the other. Its key file is what
 // ssh-keygen writes, so Open loads it and Rekey certifies with it.
-func TestABoxOnAP256Identity(t *testing.T) {
+func TestAMailboxOnAP256Identity(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	o := e.opts()
@@ -85,11 +85,11 @@ func TestABoxOnAP256Identity(t *testing.T) {
 	}
 }
 
-// Mail whose sender's identity is of a key type this client does not verify
+// A message whose sender's identity is of a key type this client does not verify
 // is refused with its own code: nothing is wrong with the document, and
 // nothing it signed can be checked. If the document is not the sender's, that
 // is what the refusal says. Neither quotes the document.
-func TestMailFromAnIdentityOfAnUnknownType(t *testing.T) {
+func TestAMessageFromAnIdentityOfAnUnknownType(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
@@ -214,7 +214,7 @@ func TestSendToAPrekeyOfATypeThisClientLacks(t *testing.T) {
 // With each prekey a mailbox declares which sender key types its client verifies:
 // every type this client verifies, unless it is told otherwise. "any" is
 // never what it says by itself.
-func TestABoxDeclaresTheSenderKeyTypesItVerifies(t *testing.T) {
+func TestAMailboxDeclaresTheSenderKeyTypesItVerifies(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	body := forge.Capture(e.srv, http.MethodPut, "")
@@ -248,10 +248,10 @@ func TestABoxDeclaresTheSenderKeyTypesItVerifies(t *testing.T) {
 }
 
 // A mailbox on an identity of the optional type does not send to a mailbox whose
-// client does not verify that type: the recipient would refuse its mail, and
+// client does not verify that type: the recipient would refuse its messages, and
 // the sender would hold a receipt for it. A mailbox on an Ed25519 identity sends
 // to any mailbox, whatever it declared.
-func TestSendToABoxThatDoesNotVerifyThisBoxsKeyType(t *testing.T) {
+func TestSendToAMailboxThatDoesNotVerifyThisMailboxsKeyType(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	ctx := context.Background()

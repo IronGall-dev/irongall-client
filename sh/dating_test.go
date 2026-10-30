@@ -73,7 +73,7 @@ dr_api(){ orig_ig_api "$@"; local rc=$?; case "$1 $2" in "PUT /v1/"*/prekey) : >
 	out, err = bash(t, env, "dr_recv")
 	t.Logf("recv once the clock is right: %q, %v", out, err)
 	if len(goneKeys(keys)) != 0 || strings.Count(out, `"type":"refused"`) != 0 {
-		t.Errorf("a clock that jumped after the server took the renewal deleted %v, and the mail waiting for it is refused", goneKeys(keys))
+		t.Errorf("a clock that jumped after the server took the renewal deleted %v, and the messages waiting for it are refused", goneKeys(keys))
 	}
 }
 

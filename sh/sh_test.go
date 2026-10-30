@@ -1,7 +1,7 @@
 // Package sh_test runs dromas.sh, the stock-tools client, from go test:
 // against the fake server, which a test makes forge, a shell per command
 // (world_test.go); its verdicts on the test vectors against the Go client's;
-// and the two clients exchanging mail.
+// and the two clients exchanging messages.
 package sh_test
 
 import (
@@ -794,7 +794,7 @@ func TestPaddingIsTheGoClients(t *testing.T) {
 }
 
 // A mailbox whose identity is a P-256 key, the optional type, run by either
-// client, exchanges mail with a mailbox of the other client on an Ed25519 key:
+// client, exchanges messages with a mailbox of the other client on an Ed25519 key:
 // each verifies what the other's P-256 identity certified. The script takes
 // the identity key it finds, so its mailbox's key is made with ssh-keygen first.
 func TestAP256MailboxInBothClients(t *testing.T) {
@@ -898,7 +898,7 @@ func TestTheScriptDeclaresTheKeyTypesItsBuildVerifies(t *testing.T) {
 
 // A mailbox whose ACL does not admit the script's mailbox refuses its send, and the
 // script says so and keeps nothing: only the recipient can change that.
-func TestTheScriptsSendABoxDeniesFails(t *testing.T) {
+func TestTheScriptsSendAMailboxDeniesFails(t *testing.T) {
 	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
@@ -935,7 +935,7 @@ func TestTheScriptsSendABoxDeniesFails(t *testing.T) {
 	}
 }
 
-// The two clients exchange mail through the honest fake server, and each runs
+// The two clients exchange messages through the honest fake server, and each runs
 // a mailbox the other made: one on-disk format.
 func TestWithGoClient(t *testing.T) {
 	t.Parallel()
@@ -1092,7 +1092,7 @@ func TestWithGoClient(t *testing.T) {
 		t.Fatalf("dr_recv: %q %v", out, err)
 	}
 
-	// The script renews its mailbox, and both keep exchanging mail.
+	// The script renews its mailbox, and both keep exchanging messages.
 	if _, err := sh(shDir, "dr_rekey"); err != nil {
 		t.Fatalf("dr_rekey: %v", err)
 	}
@@ -1141,7 +1141,7 @@ func sameButReceipt(t *testing.T, record string, delivered []byte, id string) {
 	if err := json.Unmarshal(delivered, &want); err != nil {
 		t.Fatal(err)
 	}
-	// A mail line as recv prints it carries the line inbox/ keeps as its
+	// A message line as recv prints it carries the line inbox/ keeps as its
 	// envelope, behind its type and its id, which is the receipt's.
 	if _, printed := want["type"]; printed {
 		if want["type"] != "message" || want["id"] != id || len(want) != 3 {
@@ -1252,7 +1252,7 @@ func TestVectorsRevocation(t *testing.T) {
 }
 
 // A revocation checked by each client for itself, against one server: the
-// record of a script mailbox is one the Go client takes, and mail from a revoked
+// record of a script mailbox is one the Go client takes, and a message from a revoked
 // mailbox is refused by whichever reads it.
 func TestRevocationInBothClients(t *testing.T) {
 	t.Parallel()
@@ -1313,7 +1313,7 @@ func TestRevocationInBothClients(t *testing.T) {
 	}
 
 	// A script mailbox's address revoked at the server: the Go client is shown
-	// the proof, checks it, and refuses the mail that mailbox had sent it.
+	// the proof, checks it, and refuses the message that mailbox had sent it.
 	s2, s2Addr := scriptMailbox()
 	g2 := goMailbox()
 	if _, err := sh(s2, "printf 'sent before the revocation' | dr_send "+g2.Address().String()); err != nil {
@@ -1324,7 +1324,7 @@ func TestRevocationInBothClients(t *testing.T) {
 	}
 	res, err := g2.Receive(ctx)
 	if err != nil || len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedRevoked {
-		t.Fatalf("the Go client's drain of mail from a revoked script mailbox: %+v %v", res, err)
+		t.Fatalf("the Go client's drain of a message from a revoked script mailbox: %+v %v", res, err)
 	}
 	if _, err := g2.Send(ctx, s2Addr, "to a revoked script mailbox"); !errors.As(err, &gone) {
 		t.Fatalf("the Go client sent to it: %v", err)
@@ -1353,7 +1353,7 @@ func TestRevocationInBothClients(t *testing.T) {
 	}
 	out, err := sh(s3, "dr_recv 2>&1")
 	if err != nil || !strings.Contains(out, `"code":"revoked"`) || strings.Contains(out, `"body"`) {
-		t.Fatalf("the script's drain of mail from a mailbox the Go client revoked: %q %v", out, err)
+		t.Fatalf("the script's drain of a message from a mailbox the Go client revoked: %q %v", out, err)
 	}
 	if _, err := sh(s3, "printf x | dr_send "+g3.Address().String()); err == nil || !strings.Contains(err.Error(), "REVOKED") {
 		t.Fatalf("the script sent to it: %v", err)
@@ -1533,8 +1533,8 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 	gAddr := g.Address().String()
 	first := numberOf(t, g)
 
-	// Mail under the Go mailbox's first certificate, then a renewal and the
-	// revocation of every certificate before the new one, then mail under
+	// A message under the Go mailbox's first certificate, then a renewal and the
+	// revocation of every certificate before the new one, then one under
 	// the second: the script reads all of it in one drain.
 	if _, err := g.Send(ctx, script, "under the first certificate"); err != nil {
 		t.Fatal(err)
@@ -1551,7 +1551,7 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 	}
 	out, err = sh("dr_recv 2>&1")
 	if err != nil || strings.Count(out, `"code":"certificate_revoked"`) != 1 || !strings.Contains(out, `"body":"under the second certificate"`) || strings.Contains(out, "under the first certificate") {
-		t.Fatalf("the script's drain of mail from a mailbox that revoked its first certificate: %q %v", out, err)
+		t.Fatalf("the script's drain of messages from a mailbox that revoked its first certificate: %q %v", out, err)
 	}
 	// The script keeps it as the Go client does: one file, the record that
 	// carries it, which verifies with nothing else.
@@ -1581,7 +1581,7 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 	}
 	res, err := g.Receive(ctx)
 	if err != nil || len(res.Delivered) != 1 || len(res.Refused) != 0 || string(res.Delivered[0].Envelope.Body) != `"to the mailbox at its second certificate"` {
-		t.Fatalf("the Go client's drain of the script's mail: %+v %v", res, err)
+		t.Fatalf("the Go client's drain of the script's messages: %+v %v", res, err)
 	}
 
 	// The script's mailbox renews, and the Go client follows it.
@@ -1641,7 +1641,7 @@ func TestAJSONBodyFromTheGoClient(t *testing.T) {
 		}
 		return v
 	}
-	scriptGot := func() []any { // the bodies of the mail lines dr_recv prints
+	scriptGot := func() []any { // the bodies of the message lines dr_recv prints
 		t.Helper()
 		out, err := sh("dr_recv")
 		if err != nil {
@@ -1670,9 +1670,9 @@ func TestAJSONBodyFromTheGoClient(t *testing.T) {
 	}
 }
 
-// landAll gives a Go mailbox the policy that lands every sender's mail in
+// landAll gives a Go mailbox the policy that lands every sender's messages in
 // inbox/: these tests are of what the two clients send each other, and where
-// mail from a sender not allowed lands is the Go client's own (client/).
+// a message from a sender not allowed lands is the Go client's own (client/).
 func landAll(t *testing.T, b *client.Mailbox) {
 	t.Helper()
 	if err := b.SetPolicy(t.Context(), client.Policy{Unknown: client.LandInbox, Server: client.AdmitAll}); err != nil {
@@ -1740,14 +1740,14 @@ func TestTheCommandLine(t *testing.T) {
 		t.Errorf("a wrong number of arguments: %q", errs)
 	}
 	if res, err := g.Receive(ctx); err != nil || len(res.Delivered) != 0 {
-		t.Fatalf("a wrong command line sent mail: %v %v", res, err)
+		t.Fatalf("a wrong command line sent a message: %v %v", res, err)
 	}
 	// And the commands run.
 	if out, errs, code := run("from the command line", "send", g.Link()); code != 0 || !strings.HasPrefix(out, `{"type":"sent","id":"`) || strings.Count(out, "\n") != 1 {
 		t.Fatalf("send: %d %q %s", code, out, errs)
 	}
 	if res, err := g.Receive(ctx); err != nil || len(res.Delivered) != 1 {
-		t.Fatalf("the Go mailbox did not get the script's mail: %v %v", res, err)
+		t.Fatalf("the Go mailbox did not get the script's message: %v %v", res, err)
 	}
 	if out, errs, code := run("", "prekey", "renew", "--no-pq"); code != 0 || !strings.HasPrefix(out, `{"type":"prekey","serial":`) || strings.Count(out, "\n") != 1 {
 		t.Fatalf("prekey renew: %d %q %s", code, out, errs)
@@ -1760,7 +1760,7 @@ func TestTheCommandLine(t *testing.T) {
 // A send that starts while recv drains waits for the drain's lock, so it
 // cannot rewrite a file the drain has yet to read (#96, and #62's other
 // direction): the drain still sees the sender's revocation and refuses its
-// mail. The hook runs a whole send, in a shell of its own on the same mailbox,
+// message. The hook runs a whole send, in a shell of its own on the same mailbox,
 // after the drain has read the sender's revocation and before it takes it.
 func TestASendDuringADrainHidesNoRevocation(t *testing.T) {
 	t.Parallel()
@@ -1799,7 +1799,7 @@ func TestASendDuringADrainHidesNoRevocation(t *testing.T) {
 dr_take(){ bash -c '. ` + abs(t, "dromas.sh") + `; printf x | dr_send ` + c.Address().String() + `' > /dev/null 2>> ` + sendErr + `; orig_take "$@"; }
 dr_recv`
 	if out, _ := bash(t, env, hook); strings.Contains(out, g.Address().String()) {
-		t.Error("mail from a revoked sender delivered")
+		t.Error("a message from a revoked sender delivered")
 	}
 	if e, _ := os.ReadFile(sendErr); !strings.Contains(string(e), "waiting for this mailbox's lock") {
 		t.Errorf("the send beside the drain did not wait for the lock: %q", e)

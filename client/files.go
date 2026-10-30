@@ -33,7 +33,7 @@ func Dir() (string, error) {
 
 // writeFile writes a file with mode 0600 through a temporary file and a
 // rename, so a reader never sees half of it, and syncs the file and its
-// directory, so it survives a power loss once writeFile returns: mail is
+// directory, so it survives a power loss once writeFile returns: a message is
 // acked off the server only after it is on disk.
 func writeFile(name string, data []byte) error {
 	tmp, err := os.CreateTemp(filepath.Dir(name), ".tmp-*")

@@ -486,7 +486,7 @@ func TestAFirstCopyIsNeverDatedBeforeItWasWritten(t *testing.T) {
 			e.clock.Add(30 * day)
 			receive(t, r)
 			e.clock.Add(wrote.Add(protocol.TTL - time.Hour).Sub(e.clock.Now()))
-			receive(t, s)          // the sender renews, so its certificate signs mail that waits
+			receive(t, s)          // the sender renews, so its certificate signs a message that waits
 			e.clock.Add(time.Hour) // the sender's clock reads W + TTL: the outbox's last second
 			mode = "keep"
 			_, err = s.Flush(ctx)

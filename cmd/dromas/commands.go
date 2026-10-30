@@ -27,23 +27,23 @@ import (
 func (e *cli) tree() *cobra.Command {
 	root := e.group("dromas", "", "",
 		e.initCmd(), e.addrCmd(), e.sendCmd(), e.recvCmd(), e.statusCmd(), e.versionCmd(),
-		e.group("inbox", "mail recv delivered: list, show",
+		e.group("inbox", "messages recv delivered: list, show",
 			`recv keeps each message it delivers in inbox/, as the "message" line it
 printed, until its file is deleted: deleting it forgets the message. These
 commands print those lines again, and read no server.`,
 			e.inboxListCmd(), e.inboxShowCmd()),
-		e.group("held", "mail from unknown senders, waiting for allow or block: list",
-			`Mail that passed every check, from an unknown sender (one this mailbox has not
+		e.group("held", "messages from unknown senders, waiting for allow or block: list",
+			`A message that passed every check, from an unknown sender (one this mailbox has not
 written to, named or allowed), is kept in held/, and recv does not print it.
-dromas peer allow delivers a sender's held mail to inbox/, and dromas peer
-block deletes it. Mail that failed a check is refused/'s, never held.`,
+dromas peer allow delivers a sender's held messages to inbox/, and dromas peer
+block deletes them. A message that failed a check is refused/'s, never held.`,
 			e.heldListCmd()),
 		e.group("peer", "who may write to this mailbox: allow, block, list",
-			`Mail from a sender this mailbox has not allowed is held in held/ (dromas held
-list lists it), and mail from a sender it blocked is dropped. Sending to a mailbox, or
+			`A message from a sender this mailbox has not allowed is held in held/ (dromas held
+list lists it), and one from a sender it blocked is dropped. Sending to a mailbox, or
 naming it with dromas alias add, allows it too. The mailbox's policy file says
-where mail from a sender not allowed lands, and whom its server takes mail
-from: dromas help has it.`,
+where a message from a sender not allowed lands, and whom its server takes
+messages from: dromas help has it.`,
 			e.allowCmd(), e.blockCmd(), e.peerListCmd()),
 		e.group("alias", "names for peers, which send takes in place of a link: add, rm, list",
 			`An alias is this mailbox's own name for a peer, kept in its aliases file as
@@ -51,11 +51,11 @@ from: dromas help has it.`,
 allows its peer, as dromas peer allow does, and is never moved: to change
 one, remove it and add it again.`,
 			e.aliasAddCmd(), e.aliasRmCmd(), e.aliasListCmd()),
-		e.group("outbox", "mail not yet delivered: flush",
+		e.group("outbox", "messages not yet delivered: flush",
 			`A message is kept in outbox/ until a server takes it. One that can never be
 delivered moves to outbox/failed/: delete it there to drop it.`,
 			e.flushCmd()),
-		e.group("refused", "mail refused for a failed check: list, rm",
+		e.group("refused", "messages refused for a failed check: list, rm",
 			`A message that failed a check is never delivered: recv acks it and keeps it
 in refused/, as evidence of who sent what. Read it through these commands,
 which print this client's words only: the files keep what the server served,
@@ -289,16 +289,16 @@ the message it was fetching, which the next recv goes on from.`,
 	c.Flags().DurationVar(&wait, "wait", 0, "hold the list until a message arrives, for at most this long, however many held requests it takes")
 	c.Flags().DurationVar(&drain, "drain-time", client.DefaultDrainTime, "how long one drain runs before it stops for the next recv")
 	// As an IMAP client fetches a message's ENVELOPE apart from its body (RFC
-	// 9051 §6.4.5), as mail clients list headers before they open a message.
+	// 9051 §6.4.5), as email clients list headers before they open a message.
 	c.Flags().BoolVar(&headers, "headers", false, "print each message's checked fields and its body's size, without its body or subject")
 	return c
 }
 
 func (e *cli) inboxListCmd() *cobra.Command {
 	var headers bool
-	c := command("list [flags]", "list the mail inbox/ keeps, one line of JSON each",
+	c := command("list [flags]", "list the messages inbox/ keeps, one line of JSON each",
 		`Print a "message" line for each message inbox/ keeps, oldest first by sent_at,
-as recv printed it: the mail recv delivered and nobody has pruned since. A
+as recv printed it: the messages recv delivered and nobody has pruned since. A
 file there that is not the line recv keeps is left out, and dromas inbox
 show names it.`,
 		nargs(0, 0), func(*cobra.Command, []string) error {
@@ -310,7 +310,7 @@ show names it.`,
 			if err != nil {
 				return err
 			}
-			return e.mailLines(b, ds, headers)
+			return e.messageLines(b, ds, headers)
 		})
 	c.Flags().BoolVar(&headers, "headers", false, "print each message's checked fields and its body's size, without its body or subject, as recv --headers does")
 	return c
@@ -336,20 +336,20 @@ before any file is read.`,
 			if err != nil {
 				return err
 			}
-			return e.mailLines(b, []client.Delivery{d}, headers)
+			return e.messageLines(b, []client.Delivery{d}, headers)
 		})
 	c.Flags().BoolVar(&headers, "headers", false, "print the message's checked fields and its body's size, without its body or subject, as recv --headers does")
 	return c
 }
 
-// mailLines prints a "message" line for each of ds, or with headers a
+// messageLines prints a "message" line for each of ds, or with headers a
 // "message_headers" line, naming each sender as b names it.
-func (e *cli) mailLines(b *client.Mailbox, ds []client.Delivery, headers bool) error {
+func (e *cli) messageLines(b *client.Mailbox, ds []client.Delivery, headers bool) error {
 	n := namesOf(b)
 	for _, d := range ds {
-		l := mail(d, n)
+		l := message(d, n)
 		if headers {
-			l = mailHeaders(d, n)
+			l = messageHeaders(d, n)
 		}
 		if err := e.out(l); err != nil {
 			return err
@@ -359,8 +359,8 @@ func (e *cli) mailLines(b *client.Mailbox, ds []client.Delivery, headers bool) e
 }
 
 func (e *cli) refusedListCmd() *cobra.Command {
-	return command("list", "list the mail refused/ keeps, one line of JSON each",
-		`List the mail refused/ keeps: a "refused" line for each message, with
+	return command("list", "list the messages refused/ keeps, one line of JSON each",
+		`List the messages refused/ keeps: a "refused" line for each message, with
 its id, the code it was refused for (the README's table has each), and the
 time the server gave, only when it has its form.`,
 		nargs(0, 0), func(c *cobra.Command, _ []string) error {
@@ -384,7 +384,7 @@ time the server gave, only when it has its form.`,
 
 func (e *cli) refusedRmCmd() *cobra.Command {
 	var all bool
-	c := command("rm [flags] [<id>...]", "delete refused mail from refused/",
+	c := command("rm [flags] [<id>...]", "delete refused messages from refused/",
 		`Delete each message named, by the id dromas refused list prints, or with
 --all every one, and print a "removed" line for each. Nothing is deleted when
 an id is not one, or names no message refused/ keeps.`,
@@ -436,14 +436,14 @@ func (e *cli) recv(c *cobra.Command, b *client.Mailbox, wait time.Duration, head
 			if res.Renewed != nil {
 				renewErr = nil
 			}
-			// A mail line is this client's own, from the verified fields:
+			// A message line is this client's own, from the verified fields:
 			// never the sender's bytes.
 			var lines [][]byte
 			for _, d := range res.Delivered {
 				if headers {
-					lines = append(lines, mailHeaders(d, n))
+					lines = append(lines, messageHeaders(d, n))
 				} else {
-					lines = append(lines, mail(d, n))
+					lines = append(lines, message(d, n))
 				}
 			}
 			for _, id := range res.Duplicates {
@@ -462,7 +462,7 @@ func (e *cli) recv(c *cobra.Command, b *client.Mailbox, wait time.Duration, head
 			switch {
 			case res.Paced > 0:
 				lines = append(lines, line("paced", "retry_after", seconds(res.Again()), "detail",
-					fmt.Sprintf("the server paces how much mail this mailbox takes out: the rest is still on the server; run recv again in %d seconds or later", seconds(res.Again()))))
+					fmt.Sprintf("the server paces how many messages this mailbox takes out: the rest is still on the server; run recv again in %d seconds or later", seconds(res.Again()))))
 			case res.More:
 				lines = append(lines, line("more", "detail", "this run stopped at the most one drain takes: run recv again for the rest, which is still on the server"))
 			}
@@ -543,7 +543,7 @@ func (e *cli) statusCmd() *cobra.Command {
 	return command("status", "say what this mailbox holds and what needs a look, as one line of JSON",
 		`Say what this mailbox holds and what needs a look, as one "status" line, from its
 own files and with no call to the server: its prekey, a renewal that has not
-gone through, refused mail in refused/, held mail, mail not yet delivered.`,
+gone through, refused messages in refused/, held messages, messages not yet delivered.`,
 		nargs(0, 0), func(c *cobra.Command, _ []string) error {
 			b, err := e.mailbox()
 			if err != nil {
@@ -568,12 +568,12 @@ gone through, refused mail in refused/, held mail, mail not yet delivered.`,
 }
 
 func (e *cli) heldListCmd() *cobra.Command {
-	return command("list", "list the mail held/ keeps, one line of JSON for each sender",
-		`List the mail held/ keeps, from senders this mailbox has not allowed: a
+	return command("list", "list the messages held/ keeps, one line of JSON for each sender",
+		`List the messages held/ keeps, from senders this mailbox has not allowed: a
 "unknown_sender" line for each sender, with its address, the ids, and the first
 and last sent_at. held/<id>.json is the message recv's "message" line would have
-carried. dromas peer allow delivers a sender's held mail to inbox/, and
-dromas peer block deletes it.`,
+carried. dromas peer allow delivers a sender's held messages to inbox/, and
+dromas peer block deletes them.`,
 		nargs(0, 0), func(*cobra.Command, []string) error {
 			b, err := e.mailbox()
 			if err != nil {
@@ -595,8 +595,8 @@ dromas peer block deletes it.`,
 
 func (e *cli) allowCmd() *cobra.Command {
 	var rebuild bool
-	c := command("allow [flags] <link, address or alias>", "let a sender's mail land in inbox/, and deliver what held/ keeps from it",
-		`Let a sender's mail land in inbox/. It moves what held/ keeps from that sender
+	c := command("allow [flags] <link, address or alias>", "let a sender's messages land in inbox/, and deliver what held/ keeps from it",
+		`Let a sender's messages land in inbox/. It moves what held/ keeps from that sender
 to inbox/, printing it as recv does, then an "allowed" line. --rebuild, with
 no sender, adds back every address an alias names or sent/ shows, for an
 allowed file that was lost.`,
@@ -630,7 +630,7 @@ allowed file that was lost.`,
 			moved, err := b.Allow(c.Context(), a)
 			n := namesOf(b)
 			for _, d := range moved {
-				if werr := e.out(mail(d, n)); werr != nil && err == nil {
+				if werr := e.out(message(d, n)); werr != nil && err == nil {
 					err = werr
 				}
 			}
@@ -644,8 +644,8 @@ allowed file that was lost.`,
 }
 
 func (e *cli) blockCmd() *cobra.Command {
-	return command("block <link, address or alias>", "drop a sender's mail, here and at the server",
-		`Drop a sender's mail, here and at the server, and delete what held/ keeps
+	return command("block <link, address or alias>", "drop a sender's messages, here and at the server",
+		`Drop a sender's messages, here and at the server, and delete what held/ keeps
 from it, then print a "blocked" line. Blocking wins over allowing. The server
 then refuses that sender's next send as sender_not_allowed, which is final,
 so the sender learns that it is refused.`,
@@ -1014,9 +1014,9 @@ func (e *cli) revokeEarlierCmd() *cobra.Command {
 	c := command("revoke-earlier [flags]", "revoke every certificate before a new one, then publish a new prekey under it",
 		`For a mailbox whose working key may have been taken: make a new prekey, under a
 new working key and certificate, revoke every certificate before that one, and
-then publish the new prekey. The address goes on, and mail this mailbox sent that
+then publish the new prekey. The address goes on, and a message this mailbox sent that
 is still unread is refused with the rest, so send it again. Until the server
-takes the new prekey, the mailbox sends no mail, and once its server holds the
+takes the new prekey, the mailbox sends no messages, and once its server holds the
 revocation it takes none there either. A copy of the whole mailbox directory holds
 the identity too: revoke the address.`,
 		checked(nargs(0, 0), func(c *cobra.Command, _ []string) error {
@@ -1069,12 +1069,12 @@ func (e *cli) remedied(own protocol.Address, r *client.Remedy, err error) error 
 		}
 	}
 	if r.Revoked != nil {
-		const resend = "Mail this mailbox sent before now, and that its reader has not read yet, was signed under a certificate just revoked and will be refused: send it again."
+		const resend = "A message this mailbox sent before now, and that its reader has not read yet, was signed under a certificate just revoked and will be refused: send it again."
 		if err := e.out(line("certificates_revoked", "address", own, "through", r.Revoked.Through, "detail", resend)); err != nil {
 			return err
 		}
 	}
-	dark := fmt.Sprintf("Every certificate before %d is revoked, the one this mailbox was using among them, so it sends no mail, and its server takes none for it, until the new prekey is taken: dromas prekey renew sends it again, and so does dromas recv", r.Below)
+	dark := fmt.Sprintf("Every certificate before %d is revoked, the one this mailbox was using among them, so it sends no messages, and its server takes none for it, until the new prekey is taken: dromas prekey renew sends it again, and so does dromas recv", r.Below)
 	// What a line printed above has not said, the prekey's first.
 	var said error
 	switch {

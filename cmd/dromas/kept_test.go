@@ -104,7 +104,7 @@ func TestOnlyRecvsOwnLineIsShown(t *testing.T) {
 	lines := map[string][]byte{inbox: must(t, inbox), held: must(t, held)}
 	for name, edit := range map[string]func([]byte) []byte{
 		"its tag characters raw": bare,
-		"the mail line around it": func(kept []byte) []byte {
+		"the message line around it": func(kept []byte) []byte {
 			return slices.Concat([]byte(`{"type":"message","id":"`+strings.Repeat("0", 64)+`","envelope":`), kept, []byte("}"))
 		},
 		"a space after it":             func(kept []byte) []byte { return append(append([]byte{}, kept...), ' ') },
@@ -193,7 +193,7 @@ func TestShowHoldsTheFileToTheLineRecvKept(t *testing.T) {
 			t.Errorf("%s: exit %d, stdout %q, stderr %q", c.name, code, out.String(), errs.String())
 		}
 	}
-	// The line itself, in inbox/, is shown as it is: one mail line.
+	// The line itself, in inbox/, is shown as it is: one message line.
 	if err := os.WriteFile(inbox, line, 0o600); err != nil {
 		t.Fatal(err)
 	}

@@ -16,7 +16,7 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// A reader whose clock steps back meets mail it has already delivered as
+// A reader whose clock steps back meets a message it has already delivered as
 // fresh again. The server keeps what it was sent and lists it once more; the
 // reader must refuse it whatever its clock read when it last pruned
 // (PROTOCOL.md §12.3 check 8, §15.7).
@@ -134,8 +134,8 @@ func TestARefusedDrainPrunesNothing(t *testing.T) {
 }
 
 // The floor rises only when a prune drops a line, to the cutoff it dropped
-// it at; a mail sent before it is refused as stale, and one after is taken.
-// A floor that names no time stops the drain, with the mail left on the
+// it at; a message sent before it is refused as stale, and one after is taken.
+// A floor that names no time stops the drain, with the message left on the
 // server.
 func TestTheSeenFloor(t *testing.T) {
 	t.Parallel()
@@ -161,15 +161,15 @@ func TestTheSeenFloor(t *testing.T) {
 		t.Fatalf("delivered %d after the prune, want 1", len(res.Delivered))
 	}
 
-	// Mail sent before the floor is stale, whatever the clock reads.
+	// A message sent before the floor is stale, whatever the clock reads.
 	r.SetRecord(t, "seen-floor", []byte("9999999999"))
 	send(t, s, r, "third")
 	res := receive(t, r)
 	if len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != protocol.RefusedStale {
-		t.Errorf("mail sent before the floor: delivered %d, refused %v, want one stale", len(res.Delivered), res.Refused)
+		t.Errorf("a message sent before the floor: delivered %d, refused %v, want one stale", len(res.Delivered), res.Refused)
 	}
 
-	// A floor that names no time is an error, and the mail stays.
+	// A floor that names no time is an error, and the message stays.
 	r.SetRecord(t, "seen-floor", []byte("soon"))
 	send(t, s, r, "fourth")
 	if _, err := r.Receive(ctx); err == nil || !strings.Contains(err.Error(), "seen-floor") {
@@ -177,6 +177,6 @@ func TestTheSeenFloor(t *testing.T) {
 	}
 	r.SetRecord(t, "seen-floor", nil)
 	if res := receive(t, r); len(res.Delivered) != 1 {
-		t.Errorf("the mail left on the server: delivered %d once the floor was removed, want 1", len(res.Delivered))
+		t.Errorf("the message left on the server: delivered %d once the floor was removed, want 1", len(res.Delivered))
 	}
 }

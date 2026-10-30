@@ -89,7 +89,7 @@ func TestAPassUnderAnotherCertificateIsToldTheOneTheServerTakes(t *testing.T) {
 // clock has moved past the last number. Within one second, and with a clock
 // that reads behind the last number, a renewal takes one above it: a serial
 // never goes back, whatever the clock does.
-func TestABoxNumbersByItsClock(t *testing.T) {
+func TestAMailboxNumbersByItsClock(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
@@ -183,17 +183,17 @@ func TestARestoredMailboxRevokesWhatTheLostMachineNeverPublished(t *testing.T) {
 	// revocation is what refuses it. A reader shown none delivers what it signs.
 	control := e.mailbox(protocol.Classic)
 	forge.Hides(e.t, e.srv)
-	mailAs(t, e, r, control, taken, "signed with the key the lost machine never published")
+	messageAs(t, e, r, control, taken, "signed with the key the lost machine never published")
 	if res := receive(t, control); len(res.Delivered) != 1 {
-		t.Fatalf("the control: mail under the lost machine's certificate, no revocation shown: %+v", res)
+		t.Fatalf("the control: a message under the lost machine's certificate, no revocation shown: %+v", res)
 	}
 	e.srv.SetMiddle(nil)
 
-	mailAs(t, e, r, reader, taken, "signed with the key the lost machine never published")
+	messageAs(t, e, r, reader, taken, "signed with the key the lost machine never published")
 	send(t, r, reader, "from the restored mailbox")
 	res := receive(t, reader)
 	if len(res.Delivered) != 1 || bodyOf(t, res.Delivered[0]) != "from the restored mailbox" || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedCertificate {
-		t.Fatalf("a drain of the taker's mail and the restored mailbox's: %+v", res)
+		t.Fatalf("a drain of the taker's message and the restored mailbox's: %+v", res)
 	}
 }
 
@@ -230,11 +230,11 @@ func TestALostMachinesFastClockDoesNotDelayTheRemedy(t *testing.T) {
 	if err != nil || certs == nil || !certs.Revokes(ahead) || certs.Revokes(p.Serial) {
 		t.Fatalf("the owner's revocation of certificates: %+v, %v", certs, err)
 	}
-	mailAs(t, e, r, reader, taken, "signed with the lost machine's key")
+	messageAs(t, e, r, reader, taken, "signed with the lost machine's key")
 	send(t, r, reader, "from the owner, at once")
 	res := receive(t, reader)
 	if len(res.Delivered) != 1 || bodyOf(t, res.Delivered[0]) != "from the owner, at once" || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedCertificate {
-		t.Fatalf("a drain of the taker's mail and the owner's: %+v", res)
+		t.Fatalf("a drain of the taker's message and the owner's: %+v", res)
 	}
 }
 
@@ -294,7 +294,7 @@ func TestRevokeEarlierNamesEverySerialBelowTheOneInUse(t *testing.T) {
 	send(t, a, b, "under the certificate in use")
 	send(t, b, a, "to the mailbox that revoked everything before it")
 	if res := receive(t, b); len(res.Delivered) != 1 || len(res.Refused) != 0 {
-		t.Fatalf("mail under the certificate in use: %+v", res)
+		t.Fatalf("a message under the certificate in use: %+v", res)
 	}
 	if res := receive(t, a); len(res.Delivered) != 1 {
 		t.Fatalf("the mailbox no longer receives: %+v", res)
@@ -305,7 +305,7 @@ func TestRevokeEarlierNamesEverySerialBelowTheOneInUse(t *testing.T) {
 // through a serial far above its clock, a slip of a digit, passes its next
 // certificate above it, and the mailbox goes on; one through the highest serial
 // there is leaves no certificate to make, and the mailbox says so.
-func TestARenewalIsNumberedAboveTheBoxsOwnRevocation(t *testing.T) {
+func TestARenewalIsNumberedAboveTheMailboxsOwnRevocation(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)

@@ -29,7 +29,7 @@ import (
 // meet a 206 from an honest server; a middleware plays the link that cuts
 // and the server that lies.
 
-// fetches watches the fetches of mailbox b's mail: what Range each asked, and
+// fetches watches the fetches of mailbox b's messages: what Range each asked, and
 // how many bytes of body the server wrote to them.
 type fetches struct {
 	b      *client.Mailbox
@@ -38,7 +38,7 @@ type fetches struct {
 	served atomic.Int64
 }
 
-// is reports whether r is a fetch of b's mail, and keeps its Range.
+// is reports whether r is a fetch of b's messages, and keeps its Range.
 func (f *fetches) is(r *http.Request) bool {
 	if r.Method != http.MethodGet || !strings.HasPrefix(r.URL.Path, mailboxPath(f.b)+"/messages/") {
 		return false
@@ -531,7 +531,7 @@ func TestAFetchOfAnotherMessageDropsWhatWasKept(t *testing.T) {
 // or none: a list that gives one is no answer, a good message listed ahead
 // of it too (#446), and a fetch's Content-Length or Content-Range that is not
 // the listed size breaks its answer's form. Either way the drain stops with
-// nothing judged or acked, the mail still on the server, nothing fetched on
+// nothing judged or acked, the messages still on the server, nothing fetched on
 // a list that is no answer, and nothing
 // made by the size: a resume makes no buffer from a listed size before a
 // bound holds it, so 2^53 − 1 cannot panic the drain (#404). 🛑 No

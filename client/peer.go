@@ -114,7 +114,7 @@ func (b *Mailbox) resolve(ctx context.Context, peer protocol.Address, l *lookups
 	// nothing signs: the server says what the peer declared. A server that
 	// misstates it can only stop a message, as it can without it.
 	if !protocol.AcceptsSender(ir.SenderKeyTypes, b.id.Type()) {
-		return nil, nil, refuse("%s's client does not verify identities of this mailbox's key type, %s, so it would refuse this mailbox's mail: nothing is sent", peer, b.id.Type())
+		return nil, nil, refuse("%s's client does not verify identities of this mailbox's key type, %s, so it would refuse this mailbox's messages: nothing is sent", peer, b.id.Type())
 	}
 	// The pin, the pair of serials and the statement they came from, in one
 	// value, written together (#68).
@@ -201,7 +201,7 @@ func (b *Mailbox) keepPeer(s store, a protocol.Address, p *peerRecord) error {
 
 // pin keeps a peer's identity document, unless it is kept already. It is
 // called only for an identity that has signed something this mailbox verified: a
-// prekey statement it will encrypt to, mail it delivers, a revocation of its
+// prekey statement it will encrypt to, a message it delivers, a revocation of its
 // address or of its certificates. So the mailbox keeps a record only of a peer
 // that has signed something.
 func (b *Mailbox) pin(id *protocol.Identity) error {

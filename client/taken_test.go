@@ -33,7 +33,7 @@ func (j jumpAtRenewal) RoundTrip(r *http.Request) (*http.Response, error) {
 // The renewal's twin of TestAClockThatJumpsDuringADrainDeletesNoKey (#209):
 // a clock that jumps 70 days ahead after the server took the renewal deletes
 // no prekey, since keys are deleted by the reading the server took
-// (AGENTS.md, decided on #200; PROTOCOL.md §12.4). The mail waiting for the
+// (AGENTS.md, decided on #200; PROTOCOL.md §12.4). The message waiting for the
 // retired key is delivered once the clock is right.
 func TestAClockThatJumpsDuringARenewalDeletesNoKey(t *testing.T) {
 	t.Parallel()
@@ -67,7 +67,7 @@ func TestAClockThatJumpsDuringARenewalDeletesNoKey(t *testing.T) {
 		t.Logf("  refused: %s %s", r.Code, r.Reason)
 	}
 	if len(after) < len(keys)+1 || len(res.Delivered) != 2 {
-		t.Errorf("a clock that jumped after the server took the renewal deleted the key the waiting mail needs")
+		t.Errorf("a clock that jumped after the server took the renewal deleted the key the waiting message needs")
 	}
 }
 
@@ -103,7 +103,7 @@ func TestAClockThatJumpsDuringTheRemedyDeletesNoKey(t *testing.T) {
 	}
 	t.Logf("once the clock is right: delivered %d, refused %d, %v", len(res.Delivered), len(res.Refused), err)
 	if len(after) < len(keys)+1 || len(res.Delivered) != 2 {
-		t.Errorf("a clock that jumped after the server took the remedy's renewal deleted the key the waiting mail needs")
+		t.Errorf("a clock that jumped after the server took the remedy's renewal deleted the key the waiting message needs")
 	}
 }
 
@@ -119,7 +119,7 @@ func (j rightAtFirstCall) RoundTrip(r *http.Request) (*http.Response, error) {
 
 // A renewal whose mailbox's clock reads 70 days ahead when the command begins and
 // is right before its first request: every pass the server takes is dated by
-// the right clock, so no key mail waits for is deleted, and the mail sealed to
+// the right clock, so no key a message waits for is deleted, and the message sealed to
 // the retired prekey is delivered.
 func TestAClockSteppedBackBeforeARenewalDeletesNoKey(t *testing.T) {
 	t.Parallel()
@@ -153,7 +153,7 @@ func TestAClockSteppedBackBeforeARenewalDeletesNoKey(t *testing.T) {
 		t.Logf("  refused: %s %s", r.Code, r.Reason)
 	}
 	if rerr != nil || len(after) < len(keys)+1 || len(res.Delivered) != 2 {
-		t.Errorf("a clock stepped back before the renewal's first request deleted the key the waiting mail needs")
+		t.Errorf("a clock stepped back before the renewal's first request deleted the key the waiting message needs")
 	}
 }
 
@@ -259,7 +259,7 @@ func TestARenewalAtRecvWithinWhoseReadTakesSeconds(t *testing.T) {
 				next.ServeHTTP(w, q)
 			})
 			e.clock.Add(client.RecvWithin(client.MinPrekeyLifetime) - 3*time.Second)
-			if _, err := a.Receive(ctx); err != nil { // the sender renews, so its certificate signs mail
+			if _, err := a.Receive(ctx); err != nil { // the sender renews, so its certificate signs messages
 				t.Fatal(err)
 			}
 			for i := 0; i < 3; i++ {
@@ -297,8 +297,8 @@ func (j jumpAtList) RoundTrip(r *http.Request) (*http.Response, error) {
 
 // The replay set is pruned by the date of the pass the drain's list carried,
 // which the server took (PROTOCOL.md §12.4): a clock that jumps 70 days
-// once the list is answered drops no line and raises no floor, so the mail
-// it would have let go stays known.
+// once the list is answered drops no line and raises no floor, so the messages
+// it would have let go stay known.
 func TestAClockThatJumpsDuringADrainPrunesNoLine(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

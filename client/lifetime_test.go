@@ -37,7 +37,7 @@ func madeOf(t *testing.T, b *client.Mailbox, n uint64) string {
 
 // A prekey is made for the mailbox's lifetime, and its record says when: the
 // default, the shortest and one between.
-func TestAPrekeyIsMadeForTheBoxsLifetime(t *testing.T) {
+func TestAPrekeyIsMadeForTheMailboxsLifetime(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)

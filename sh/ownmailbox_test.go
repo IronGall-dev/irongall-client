@@ -25,7 +25,7 @@ import (
 // DROMAS_HOME names, and it refuses a directory holding the Go client's
 // state file, at init and at every command that writes the mailbox, writing
 // nothing there (#331).
-func TestTheScriptRunsABoxOfItsOwnOnly(t *testing.T) {
+func TestTheScriptRunsAMailboxOfItsOwnOnly(t *testing.T) {
 	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	home := t.TempDir()

@@ -30,7 +30,7 @@ func held(b *client.Mailbox, wait time.Duration) <-chan *client.HoldResult {
 	return c
 }
 
-func TestAHeldListIsAnsweredWhenMailArrives(t *testing.T) {
+func TestAHeldListIsAnsweredWhenAMessageArrives(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := newMemEnv(t)
 		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
@@ -54,7 +54,7 @@ func TestAHeldListIsAnsweredWhenMailArrives(t *testing.T) {
 	})
 }
 
-func TestAHeldListWithNothingNewEndsAtTheBoxsWait(t *testing.T) {
+func TestAHeldListWithNothingNewEndsAtTheMailboxsWait(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := newMemEnv(t)
 		b := e.mailbox(protocol.Classic)
@@ -70,7 +70,7 @@ func TestAHeldListWithNothingNewEndsAtTheBoxsWait(t *testing.T) {
 	})
 }
 
-func TestAHoldLetsTheBoxsOtherCommandsGoOn(t *testing.T) {
+func TestAHoldLetsTheMailboxsOtherCommandsGoOn(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		e := newMemEnv(t)
 		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
@@ -91,7 +91,7 @@ func TestAHoldLetsTheBoxsOtherCommandsGoOn(t *testing.T) {
 
 // A held list answered 410 with the mailbox's own revocation is proved as any
 // call's answer is: the mailbox keeps the revocation, and Hold returns it.
-func TestAHeldListShownTheBoxsOwnRevocationKeepsIt(t *testing.T) {
+func TestAHeldListShownTheMailboxsOwnRevocationKeepsIt(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ctx := context.Background()
 		e := newMemEnv(t)

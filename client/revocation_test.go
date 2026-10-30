@@ -245,12 +245,12 @@ func TestARevocationIsCheckedAndSticks(t *testing.T) {
 	}
 }
 
-// Mail from a mailbox that is then revoked is refused when it is read, whenever
+// A message from a mailbox that is then revoked is refused when it is read, whenever
 // it was signed: nobody can vouch for when a signature was made. The server
 // is asked once for each sender in a drain, and what it answered is kept, so
-// a server that later hides the revocation and delivers that sender's mail is
+// a server that later hides the revocation and delivers that sender's messages is
 // not believed.
-func TestMailFromARevokedSenderIsRefused(t *testing.T) {
+func TestAMessageFromARevokedSenderIsRefused(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
@@ -271,13 +271,13 @@ func TestMailFromARevokedSenderIsRefused(t *testing.T) {
 	})
 	res := receive(t, b)
 	if len(res.Delivered) != 0 || len(res.Refused) != 2 || res.Refused[0].Code != client.RefusedRevoked || res.Refused[1].Code != client.RefusedRevoked {
-		t.Fatalf("mail from a revoked sender: %+v", res)
+		t.Fatalf("a message from a revoked sender: %+v", res)
 	}
 	if lookups.Load() != 1 || !keptRevocation(b, a.Address()) || e.srv.Count(b.Address()) != 0 {
 		t.Fatalf("%d lookups for one sender; kept: %v; left on the server: %d", lookups.Load(), keptRevocation(b, a.Address()), e.srv.Count(b.Address()))
 	}
 
-	// The operator hides the revocation and delivers mail A's working key
+	// The operator hides the revocation and delivers a message A's working key
 	// signed, which its certificate still covers.
 	forge.Hides(e.t, e.srv)
 	line := e.line(a.Identity().Document(), a.Address(), b.Address(), "signed with a key that still verifies")
@@ -479,17 +479,17 @@ func TestARevocationHandedOver(t *testing.T) {
 	if _, err := a.Send(ctx, b.Address(), "to a mailbox revoked out of band"); !isRevoked(err, b.Address(), false) || asked.Load() != 0 {
 		t.Fatalf("send: %v, after %d requests", err, asked.Load())
 	}
-	// And mail B's key still signs is refused, though the server delivers it.
+	// And a message B's key still signs is refused, though the server delivers it.
 	e.srv.SetMiddle(nil)
 	send(t, b, a, "from a mailbox revoked out of band")
 	if res := receive(t, a); len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedRevoked {
-		t.Fatalf("mail from it: %+v", res)
+		t.Fatalf("a message from it: %+v", res)
 	}
 }
 
 // A mailbox that is revoked learns it the same way, by the proof: it then knows
 // it is finished, and says so. One whose server only says so knows better.
-func TestABoxLearnsItIsRevoked(t *testing.T) {
+func TestAMailboxLearnsItIsRevoked(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
@@ -690,7 +690,7 @@ func TestRevokeTakesOnlyARecordThatVerifies(t *testing.T) {
 		}
 	}
 	if e.srv.Count(a.Address()) != 0 {
-		t.Fatal("a revoked mailbox still holds mail")
+		t.Fatal("a revoked mailbox still holds messages")
 	}
 	if _, err := b.Send(ctx, a.Address(), "to the revoked mailbox"); !isRevoked(err, a.Address(), false) {
 		t.Fatalf("send to it: %v", err)

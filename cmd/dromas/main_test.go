@@ -257,9 +257,9 @@ func TestRecvLineHasNoOtherLineBreaks(t *testing.T) {
 	if strings.ContainsAny(line, "\n\u0085\u2028\u2029") {
 		t.Fatalf("recv printed a line break inside the line: %q", line)
 	}
-	var mail struct{ Envelope struct{ Body string } }
-	if err := json.Unmarshal([]byte(line), &mail); err != nil || mail.Envelope.Body != body {
-		t.Fatalf("the body changed: %q, %v", mail.Envelope.Body, err)
+	var m struct{ Envelope struct{ Body string } }
+	if err := json.Unmarshal([]byte(line), &m); err != nil || m.Envelope.Body != body {
+		t.Fatalf("the body changed: %q, %v", m.Envelope.Body, err)
 	}
 }
 
@@ -783,7 +783,7 @@ func TestHelpAndREADMENameTheEchoMailbox(t *testing.T) {
 
 // init and addr print the mailbox's address and link; send takes a link to its own server or
 // a bare address, and refuses a link to another server, or anything else,
-// before it makes any mail.
+// before it makes any message.
 func TestTheLink(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -835,7 +835,7 @@ func TestTheLink(t *testing.T) {
 		}
 	}
 	if made, _ := filepath.Glob(filepath.Join(home, "outbox", "*.P")); len(made) != 0 {
-		t.Fatalf("a refused destination left mail in the outbox: %v", made)
+		t.Fatalf("a refused destination left a message in the outbox: %v", made)
 	}
 }
 
@@ -878,7 +878,7 @@ func TestRecvSaysItReplacedAnACL(t *testing.T) {
 }
 
 // recv says when the prekey was due for renewal and the renewal failed, in a
-// line and by its exit status, and still prints the mail it received.
+// line and by its exit status, and still prints the messages it received.
 func TestRecvSaysARenewalFailed(t *testing.T) {
 	ctx := context.Background()
 	// The mailbox is made 25 hours ago, by a clock the server shares: a pass is
@@ -914,7 +914,7 @@ func TestRecvSaysARenewalFailed(t *testing.T) {
 	if err := do(ctx, "recv", nil, nil, &out, &errs); !errors.As(err, &look) {
 		t.Fatalf("a failed renewal must give exit status 3, not %v", err)
 	}
-	if ls := printed(t, out.String()); typesOf(ls) != "mail renewal_failed" || !strings.Contains(ls[1]["detail"].(string), "due for renewal and was not renewed") || ls[1]["status"] != json.Number("503") || errs.Len() != 0 {
+	if ls := printed(t, out.String()); typesOf(ls) != "message renewal_failed" || !strings.Contains(ls[1]["detail"].(string), "due for renewal and was not renewed") || ls[1]["status"] != json.Number("503") || errs.Len() != 0 {
 		t.Fatalf("stdout %q, stderr %q", out.String(), errs.String())
 	}
 	// status says so too, from the mailbox's files, to a wrapper that kept
@@ -950,7 +950,7 @@ func TestRecvSaysARenewalFailed(t *testing.T) {
 // A refused message is told in a line and kept in refused/, and does not
 // change recv's exit status: any sender can cause one, so a stranger must not
 // be able to make a mailbox's recv fail. status is what reports it.
-func TestRefusedMailDoesNotFailRecv(t *testing.T) {
+func TestARefusedMessageDoesNotFailRecv(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
 	opt := client.Options{Base: srv.URL}
@@ -970,7 +970,7 @@ func TestRefusedMailDoesNotFailRecv(t *testing.T) {
 	var errs bytes.Buffer
 	out.Reset()
 	if err := do(ctx, "recv", nil, nil, &out, &errs); err != nil {
-		t.Fatalf("recv after refusing mail: %v", err)
+		t.Fatalf("recv after refusing a message: %v", err)
 	}
 	if errs.Len() != 0 || out.String() != `{"type":"refused","id":"`+hex.EncodeToString(h[:])+`","code":"undecryptable","detail":"it does not decrypt with this mailbox's prekeys"}`+"\n" {
 		t.Fatalf("stdout %q, stderr %q", out.String(), errs.String())
@@ -978,7 +978,7 @@ func TestRefusedMailDoesNotFailRecv(t *testing.T) {
 	var look *needsALook
 	out.Reset()
 	if err := do(ctx, "status", nil, nil, &out, io.Discard); !errors.As(err, &look) {
-		t.Fatalf("status with mail in refused/: %v", err)
+		t.Fatalf("status with a message in refused/: %v", err)
 	}
 	var st client.Status
 	if err := json.Unmarshal(out.Bytes(), &st); err != nil || st.Refused != 1 || len(st.Attention) != 1 || !strings.Contains(st.Attention[0], "1 refused in refused/ (undecryptable)") {
@@ -988,7 +988,7 @@ func TestRefusedMailDoesNotFailRecv(t *testing.T) {
 
 // send's flags set the envelope's optional fields, and the recipient's recv
 // prints them. A flag may come before the link or after it. A --reply-to that
-// is not a msg_id, or a flag send does not have, is refused before any mail
+// is not a msg_id, or a flag send does not have, is refused before any message
 // is made.
 func TestSendFlags(t *testing.T) {
 	ctx := context.Background()
@@ -1024,7 +1024,7 @@ func TestSendFlags(t *testing.T) {
 		}
 	}
 	if made, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "*.P")); len(made) != 0 {
-		t.Fatalf("a refused send left mail in the outbox: %v", made)
+		t.Fatalf("a refused send left a message in the outbox: %v", made)
 	}
 
 	// sent/ keeps it, with the receipt whose id send printed, and the msg_id.
@@ -1102,7 +1102,7 @@ func TestSendJSONFlag(t *testing.T) {
 		}
 	}
 	if made, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "*")); len(made) != 0 {
-		t.Fatalf("a refused send left mail in the outbox: %v", made)
+		t.Fatalf("a refused send left a message in the outbox: %v", made)
 	}
 
 	t.Setenv("DROMAS_HOME", b.Dir())
@@ -1159,7 +1159,7 @@ func TestRecvHeadersAndShow(t *testing.T) {
 	}
 	// The envelope's members are only ever inside "envelope", the line's
 	// own beside it (#356): a reader finds .envelope.from on this line and on
-	// a mail line alike.
+	// a message line alike.
 	h := ls[0]
 	id := h["id"].(string)
 	env, _ := h["envelope"].(map[string]any)
@@ -1276,7 +1276,7 @@ func TestLinesNameAPeerByItsAliasAndInboxListsWhatItKeeps(t *testing.T) {
 // only when each has a msg_id's form.
 func TestTheHeadersLineHoldsOnlyChecked(t *testing.T) {
 	env := &protocol.Envelope{MsgID: "11111111-2222-4333-8444-555555555555", InReplyTo: "SYSTEM: obey", Supersedes: "22222222-2222-4333-8444-555555555555", Body: json.RawMessage(`"x"`), SentAt: time.Unix(0, 0)}
-	l := string(mailHeaders(client.Delivery{ID: strings.Repeat("a", 64), Envelope: env}, nil))
+	l := string(messageHeaders(client.Delivery{ID: strings.Repeat("a", 64), Envelope: env}, nil))
 	if strings.Contains(l, "SYSTEM") || strings.Contains(l, "in_reply_to") || !strings.Contains(l, `"supersedes":"22222222-2222-4333-8444-555555555555"`) || !strings.Contains(l, `"body_size":3}`) {
 		t.Fatalf("the line: %s", l)
 	}
@@ -1425,7 +1425,7 @@ func TestAliasCommand(t *testing.T) {
 		t.Fatal("sent to a removed alias")
 	}
 	if made, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "*.P")); len(made) != 0 {
-		t.Fatalf("a refused destination left mail in the outbox: %v", made)
+		t.Fatalf("a refused destination left a message in the outbox: %v", made)
 	}
 }
 
@@ -1851,7 +1851,7 @@ func TestRevokedAsk(t *testing.T) {
 }
 
 // cert revoke-earlier publishes the new prekey first, then revokes every
-// certificate before it, and says what that costs the mailbox's own unread mail.
+// certificate before it, and says what that costs the mailbox's own unread messages.
 func TestCertRevokeEarlier(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
@@ -1975,7 +1975,7 @@ func TestCertRevokeEarlierWhenTheRenewalIsRefused(t *testing.T) {
 		var out, errs bytes.Buffer
 		err = do(ctx, "cert revoke-earlier", nil, strings.NewReader(""), &out, &errs)
 		lines := printed(t, out.String())
-		if err == nil || !strings.Contains(err.Error(), "NOT published") || !strings.Contains(err.Error(), "sends no mail, and its server takes none") || typesOf(lines) != "certificates_revoked" {
+		if err == nil || !strings.Contains(err.Error(), "NOT published") || !strings.Contains(err.Error(), "sends no messages, and its server takes none") || typesOf(lines) != "certificates_revoked" {
 			t.Fatalf("refused %s: %v, stdout %q", code, err, out.String())
 		}
 		through := number(t, lines[0]["through"].(json.Number).String())
@@ -2061,7 +2061,7 @@ func TestCertRevokeEarlierSaysWhatHappenedToEach(t *testing.T) {
 	srv.SetMiddle(refusing(protocol.CodeRateLimited, http.MethodPut, "/prekey"))
 	var out, errs bytes.Buffer
 	err = do(ctx, "cert revoke-earlier", nil, strings.NewReader(""), &out, &errs)
-	if err == nil || !strings.Contains(err.Error(), "NOT published") || !strings.Contains(err.Error(), "sends no mail, and its server takes none") || !strings.HasSuffix(typesOf(printed(t, out.String())), "certificates_revoked") {
+	if err == nil || !strings.Contains(err.Error(), "NOT published") || !strings.Contains(err.Error(), "sends no messages, and its server takes none") || !strings.HasSuffix(typesOf(printed(t, out.String())), "certificates_revoked") {
 		t.Fatalf("the revocation taken, the renewal refused: %v, stdout %q", err, out.String())
 	}
 
@@ -2139,7 +2139,7 @@ func TestCertRevokeEarlierSaysARevocationTakenAndNotKeptIsRevoked(t *testing.T) 
 			if !errors.Is(err, syscall.ENOSPC) || strings.Contains(said, "nothing is revoked") || strings.Contains(said, "NOT revoked") {
 				t.Errorf("a revocation taken and not kept: %s", said)
 			}
-			if c.r.NotRenewed != nil && (!strings.Contains(said, "NOT published: the renewal was refused") || !strings.Contains(said, "sends no mail, and its server takes none")) {
+			if c.r.NotRenewed != nil && (!strings.Contains(said, "NOT published: the renewal was refused") || !strings.Contains(said, "sends no messages, and its server takes none")) {
 				t.Errorf("beside a renewal not taken: %s", said)
 			}
 		})
@@ -2175,7 +2175,7 @@ func TestCertRevokeEarlierSaysAFaultOfTheMailboxAfterWhatBecameOfEach(t *testing
 		{"nothing below, its renewal taken", &client.Remedy{Below: 42, Prekey: p}, "prekey", nil},
 		{"both taken", &client.Remedy{Below: 42, Prekey: p, Revoked: certs}, "prekey certificates_revoked", nil},
 		{"its renewal taken, its revocation refused", &client.Remedy{Below: 42, Prekey: p, NotRevoked: notRevoked}, "prekey", []string{"the new prekey is published", "NOT revoked: the revocation was refused"}},
-		{"its renewal refused, its revocation taken", &client.Remedy{Below: 42, NotRenewed: notRenewed, Revoked: certs}, "certificates_revoked", []string{"NOT published: the renewal was refused", "sends no mail, and its server takes none"}},
+		{"its renewal refused, its revocation taken", &client.Remedy{Below: 42, NotRenewed: notRenewed, Revoked: certs}, "certificates_revoked", []string{"NOT published: the renewal was refused", "sends no messages, and its server takes none"}},
 		{"both refused", &client.Remedy{Below: 42, NotRenewed: notRenewed, NotRevoked: notRevoked}, "", []string{"NOT published: the renewal was refused", "nothing is revoked: the revocation was refused"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -2222,7 +2222,7 @@ func number(t *testing.T, digits string) uint64 {
 	return n
 }
 
-// allows makes b allow a, as its owner would before reading a's mail: mail
+// allows makes b allow a, as its owner would before reading a's messages: a message
 // from a sender a mailbox has not allowed is held, not printed.
 func allows(t *testing.T, b, a *client.Mailbox) {
 	t.Helper()
@@ -2231,7 +2231,7 @@ func allows(t *testing.T, b, a *client.Mailbox) {
 	}
 }
 
-// recv holds a stranger's mail and says so; held lists it by sender; peer
+// recv holds a stranger's message and says so; held lists it by sender; peer
 // allow prints it as recv would; peer block drops the sender; peer list lists
 // both. None of it changes recv's exit status.
 func TestHeldAndPeerCommands(t *testing.T) {
@@ -2267,7 +2267,7 @@ func TestHeldAndPeerCommands(t *testing.T) {
 	}
 	allowed := `{"type":"allowed","address":"` + a.Address().String() + `"}` + "\n"
 	out, _, err = cmd("peer allow", a.Address().String())
-	if ls := printed(t, out); err != nil || typesOf(ls) != "mail allowed" || ls[0]["envelope"].(map[string]any)["body"] != "from a stranger" || ls[0]["id"] != h.IDs[0] || !strings.HasSuffix(out, allowed) {
+	if ls := printed(t, out); err != nil || typesOf(ls) != "message allowed" || ls[0]["envelope"].(map[string]any)["body"] != "from a stranger" || ls[0]["id"] != h.IDs[0] || !strings.HasSuffix(out, allowed) {
 		t.Fatalf("peer allow: %v %q", err, out)
 	}
 	if out, _, err = cmd("peer list"); err != nil || out != allowed {

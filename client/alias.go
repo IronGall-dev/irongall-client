@@ -52,7 +52,7 @@ func (b *Mailbox) Aliases() ([]Alias, error) {
 	return as, nil
 }
 
-// SetAlias names a peer's address, and allows it: its mail lands in inbox/
+// SetAlias names a peer's address, and allows it: its messages land in inbox/
 // ([Mailbox.Allow]). A name that already names another address is refused,
 // never moved: remove it first, so no send goes to a peer other than the
 // one the name meant when it was learned.
@@ -83,7 +83,7 @@ func (b *Mailbox) setAlias(name string, a protocol.Address) error {
 	return err
 }
 
-// RemoveAlias removes a name. The peer's pinned identity and mail stay, and
+// RemoveAlias removes a name. The peer's pinned identity and messages stay, and
 // it stays allowed: un-naming a peer is not blocking it.
 func (b *Mailbox) RemoveAlias(ctx context.Context, name string) error {
 	return b.lockedFinishedDo(ctx, func() error { return b.removeAlias(name) })

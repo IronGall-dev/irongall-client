@@ -71,7 +71,7 @@ func NewWork(key ssh.Signer, finished Finished) *Work {
 }
 
 // Signature signs message in namespace (protocol.Sign): a prekey statement,
-// or mail.
+// or a message.
 func (k *Work) Signature(message []byte, namespace string) ([]byte, error) {
 	if err := k.finished(); err != nil {
 		return nil, err

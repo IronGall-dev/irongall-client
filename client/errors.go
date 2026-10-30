@@ -161,7 +161,7 @@ func (e *APIError) words() string {
 	case protocol.CodeStalePrekey:
 		return "the mailbox has a newer prekey than the one the message was encrypted to"
 	case protocol.CodePrekeyExpired:
-		return "the mailbox's prekey has expired at the server, so it takes no mail until its owner renews it"
+		return "the mailbox's prekey has expired at the server, so it takes no messages until its owner renews it"
 	case protocol.CodeRequestTimeout:
 		return "the server stopped waiting for the request's body, which arrived too slowly for it: send it again"
 	case protocol.CodeRevoked:
@@ -173,7 +173,7 @@ func (e *APIError) words() string {
 	case protocol.CodeRateLimited:
 		return rateLimited(p)
 	case protocol.CodeFetchPaced:
-		return "the server paces how much new mail the mailbox takes out: the rest waits on the server"
+		return "the server paces the new messages the mailbox takes out: the rest wait on the server"
 	case protocol.CodeRefetchSpent:
 		return "the message was fetched before, and the server takes no more fetches of it for now: a client keeps each message when it fetches it"
 	case protocol.CodeMailboxFull:
@@ -183,7 +183,7 @@ func (e *APIError) words() string {
 		}
 		return s
 	case protocol.CodeMailboxBusy:
-		return "the recipient's mailbox has taken as much new mail as it takes for now: dromas outbox flush posts it again"
+		return "the recipient's mailbox has taken all the new messages it takes for now: dromas outbox flush posts it again"
 	case protocol.CodeUnavailable:
 		return "the server is not ready to answer"
 	}
@@ -257,7 +257,7 @@ func knownTypes(names []string) string {
 //
 // The date is the server's word and is given as that. A server may lie about
 // the time, and a clock set by a lie makes an ended certificate valid again
-// and stale mail fresh, so the sentence sends its reader to a time source of
+// and stale messages fresh, so the sentence sends its reader to a time source of
 // their own and never to the server's.
 func (e *APIError) clock() string {
 	c := e.Problem.Code

@@ -151,7 +151,7 @@ func TestADeliveryLeavesNothingOfAnEarlierRefusal(t *testing.T) {
 // of that address or that certificate (#265), whichever check refuses it:
 // each refusal a signature that verifies can meet, against each thing the
 // reading mailbox can hold of its signer. Where it holds a revocation that covers
-// the mail, the record and Refusal.Findings give the identity the mail claims
+// the message, the record and Refusal.Findings give the identity the message claims
 // and nothing more, as for a signature that does not verify (#336); where it
 // holds none that does, both name the signer and its certificate.
 func TestARefusalNamesNoSignerTheMailboxHoldsRevoked(t *testing.T) {
@@ -180,7 +180,7 @@ func TestARefusalNamesNoSignerTheMailboxHoldsRevoked(t *testing.T) {
 		return e.seal(b, line, forge.Sign(t, s, line, b.Address()))
 	}
 	// Each refusal, by the check that makes it where the mailbox holds nothing
-	// of a; "" is mail that passes every check before the revocations'.
+	// of a; "" is a message that passes every check before the revocations'.
 	refusals := []struct {
 		name, code string
 		send       func(t *testing.T, e *env, a, b, thief *client.Mailbox) sent
@@ -209,7 +209,7 @@ func TestARefusalNamesNoSignerTheMailboxHoldsRevoked(t *testing.T) {
 		}},
 		{"an envelope of another version", protocol.RefusedEnvelope, func(t *testing.T, e *env, a, b, _ *client.Mailbox) sent {
 			env := `{"v":2,"from":"` + a.Address().String() + `","to":"` + b.Address().String() + `","identity":"` + base64.StdEncoding.EncodeToString(a.Identity().Document()) + `","sent_at":"` + e.clock.Now().Format(protocol.TimeLayout) + `","msg_id":"77777777-2222-4333-8444-555555555555","body":"x"}`
-			return sent{mail(t, e, a, b, env), numberOf(t, a)}
+			return sent{message(t, e, a, b, env), numberOf(t, a)}
 		}},
 		{"sent_at below the replay set's floor", protocol.RefusedStale, func(t *testing.T, e *env, a, b, _ *client.Mailbox) sent {
 			b.SetRecord(t, "seen-floor", []byte(strconv.FormatInt(e.clock.Now().Unix(), 10)))
@@ -217,12 +217,12 @@ func TestARefusalNamesNoSignerTheMailboxHoldsRevoked(t *testing.T) {
 			return sent{signed(e, b, worker(t, a), line), numberOf(t, a)}
 		}},
 		{"good in every other way", "", func(t *testing.T, e *env, a, b, _ *client.Mailbox) sent {
-			line := e.line(a.Identity().Document(), a.Address(), b.Address(), "good mail")
+			line := e.line(a.Identity().Document(), a.Address(), b.Address(), "good message")
 			return sent{signed(e, b, worker(t, a), line), numberOf(t, a)}
 		}},
 	}
-	// What b holds of a when it judges: covers is whether it covers the mail,
-	// and late the refusal of mail that passes every check before the
+	// What b holds of a when it judges: covers is whether it covers the message,
+	// and late the refusal of a message that passes every check before the
 	// revocations'.
 	holdings := []struct {
 		name   string
@@ -240,12 +240,12 @@ func TestARefusalNamesNoSignerTheMailboxHoldsRevoked(t *testing.T) {
 				t.Fatal(err)
 			}
 		}},
-		{"its certificates revoked through the mail's", true, client.RefusedCertificate, func(t *testing.T, a, b *client.Mailbox, n uint64) {
+		{"its certificates revoked through the message's", true, client.RefusedCertificate, func(t *testing.T, a, b *client.Mailbox, n uint64) {
 			if _, _, err := b.KeepRevocation(t.Context(), certsRecord(t, a.Dir(), n)); err != nil {
 				t.Fatal(err)
 			}
 		}},
-		{"its certificates revoked through the one below the mail's", false, "", func(t *testing.T, a, b *client.Mailbox, n uint64) {
+		{"its certificates revoked through the one below the message's", false, "", func(t *testing.T, a, b *client.Mailbox, n uint64) {
 			if _, _, err := b.KeepRevocation(t.Context(), certsRecord(t, a.Dir(), n-1)); err != nil {
 				t.Fatal(err)
 			}

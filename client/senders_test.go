@@ -22,10 +22,10 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// Mail from a sender the mailbox has not allowed passes every check and is held:
+// A message from a sender the mailbox has not allowed passes every check and is held:
 // acked, kept in held/, never delivered. allow delivers what it held, and
-// the sender's next mail lands in inbox/.
-func TestMailFromASenderNotAllowedIsHeld(t *testing.T) {
+// the sender's next message lands in inbox/.
+func TestAMessageFromASenderNotAllowedIsHeld(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
@@ -34,7 +34,7 @@ func TestMailFromASenderNotAllowedIsHeld(t *testing.T) {
 	send(t, a, b, "second")
 	res := receive(t, b)
 	if len(res.Delivered) != 0 || len(res.Held) != 2 || len(res.Refused) != 0 || e.srv.Count(b.Address()) != 0 {
-		t.Fatalf("a stranger's mail: %+v, %d left on the server", res, e.srv.Count(b.Address()))
+		t.Fatalf("a stranger's message: %+v, %d left on the server", res, e.srv.Count(b.Address()))
 	}
 	if inbox, _ := filepath.Glob(filepath.Join(b.Dir(), "inbox", "*.json")); len(inbox) != 0 {
 		t.Fatalf("inbox/ holds %v", inbox)
@@ -59,7 +59,7 @@ func TestMailFromASenderNotAllowedIsHeld(t *testing.T) {
 	}
 	send(t, a, b, "third")
 	if res := receive(t, b); len(res.Delivered) != 1 || len(res.Held) != 0 || bodyOf(t, res.Delivered[0]) != "third" {
-		t.Fatalf("mail from a sender allowed: %+v", res)
+		t.Fatalf("a message from a sender allowed: %+v", res)
 	}
 	// Under the default policy the server was told nothing: the mailbox blocks
 	// nobody and lets every sender reach it, which is the server's own
@@ -88,7 +88,7 @@ func TestWritingOrNamingAPeerAllowsIt(t *testing.T) {
 	}
 	send(t, c, b, "from a mailbox once named")
 	if res := receive(t, b); len(res.Delivered) != 1 || len(res.Held) != 0 {
-		t.Fatalf("mail from a mailbox named, then un-named: %+v", res)
+		t.Fatalf("a message from a mailbox named, then un-named: %+v", res)
 	}
 	// An alias written by hand, which allowed never heard of, allows too.
 	d := e.heldMailbox(protocol.Classic)
@@ -102,7 +102,7 @@ func TestWritingOrNamingAPeerAllowsIt(t *testing.T) {
 	_ = f.Close()
 	send(t, d, b, "named by hand")
 	if res := receive(t, b); len(res.Delivered) != 1 {
-		t.Fatalf("mail from a mailbox an alias written by hand names: %+v", res)
+		t.Fatalf("a message from a mailbox an alias written by hand names: %+v", res)
 	}
 }
 
@@ -110,7 +110,7 @@ func TestWritingOrNamingAPeerAllowsIt(t *testing.T) {
 // refuses its later sends: final, so the sender's client moves the message
 // to outbox/failed/. What the server holds from it stays there (PROTOCOL.md
 // §11.14), and the next drain drops it. Blocking wins over allowing.
-func TestBlockDropsASendersMailHereAndAtTheServer(t *testing.T) {
+func TestBlockDropsASendersMessagesHereAndAtTheServer(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
@@ -155,9 +155,9 @@ func TestBlockDropsASendersMailHereAndAtTheServer(t *testing.T) {
 	}
 }
 
-// Mail from a blocked sender that the server still delivers, its ACL not
+// A message from a blocked sender that the server still delivers, its ACL not
 // yet taken, is dropped by the mailbox itself, and the drain says so.
-func TestABoxDropsMailFromASenderItBlockedWhateverItsServerDoes(t *testing.T) {
+func TestAMailboxDropsMessagesFromASenderItBlockedWhateverItsServerDoes(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	a, b := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
@@ -185,9 +185,9 @@ func TestABoxDropsMailFromASenderItBlockedWhateverItsServerDoes(t *testing.T) {
 	}
 }
 
-// "unknown inbox" lands every sender's mail in inbox/, as a mailbox did before
+// "unknown inbox" lands every sender's messages in inbox/, as a mailbox did before
 // it could hold any.
-func TestAPolicyCanLandEverySendersMailInInbox(t *testing.T) {
+func TestAPolicyCanLandEverySendersMessagesInInbox(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	a, b := e.heldMailbox(protocol.Classic), e.heldMailbox(protocol.Classic)
@@ -353,7 +353,7 @@ func TestARenewalReplacesAnACLAnotherWriterPut(t *testing.T) {
 // for a deny list of addresses, which the mailbox's files could say, and which
 // recv reports by the mark checkACL keeps beside it. Control: the PUT taken,
 // replaced and reported at the renewal.
-func TestARenewalWhosePUTIsNotTakenLeavesTheBoxsACLPending(t *testing.T) {
+func TestARenewalWhosePUTIsNotTakenLeavesTheMailboxsACLPending(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	for _, other := range []struct {
@@ -444,7 +444,7 @@ func TestARenewalWhosePUTIsNotTakenLeavesTheBoxsACLPending(t *testing.T) {
 // Where the ACL a mailbox's files say is not the one its server last took, the
 // error of the sync that did not send it and status say what changed, never
 // that the mailbox's ACL changed where its server's did: another writer's ACL a
-// renewal's read found (TestARenewalWhosePUTIsNotTakenLeavesTheBoxsACLPending),
+// renewal's read found (TestARenewalWhosePUTIsNotTakenLeavesTheMailboxsACLPending),
 // none taken from the mailbox, the mailbox's own lists changed, or an ACL a restore
 // adopted that holds what no file of the mailbox says.
 func TestWhatChangedInAnACLNotTakenIsSaid(t *testing.T) {
@@ -910,7 +910,7 @@ func TestRebuildAllowed(t *testing.T) {
 }
 
 // A sender the mailbox blocks is never allowed: allow is refused, naming the
-// block, and its held mail stays where it is (#179).
+// block, and its held messages stay where they are (#179).
 func TestAllowingABlockedSenderDoesNothing(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

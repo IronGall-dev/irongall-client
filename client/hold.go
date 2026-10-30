@@ -16,7 +16,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// A mailbox that waits for mail holds its list (PROTOCOL.md §11.11), one held
+// A mailbox that waits for messages holds its list (PROTOCOL.md §11.11), one held
 // request after another, down one TLS connection that it keeps. Two layers
 // fail and recover apart:
 //
@@ -255,7 +255,7 @@ func (h *holding) turn(ctx context.Context, wait time.Duration) (bool, error) {
 // of the mailbox's state: an answer about a revocation is proved under the lock
 // once it comes (provedLocked).
 //
-// A mailbox with no tag kept, one whose last list found mail, or whose pass the
+// A mailbox with no tag kept, one whose last list found messages, or whose pass the
 // server refused, is Changed at once, for a Receive to settle. An error is a
 // call that failed and that holding again may get past ([Transient]): a
 // refusal no wait mends (a revocation, an answer out of its form) is one
@@ -345,7 +345,7 @@ const ReceiveEvery = time.Hour
 
 // Await holds the mailbox's list, one held request after another (Hold), until
 // it changes, until passes or ReceiveEvery has, and returns for a Receive;
-// a zero until is no deadline, as for a mailbox that waits for mail for as long
+// a zero until is no deadline, as for a mailbox that waits for messages for as long
 // as it runs. A call that holding again may get past (no answer, a server
 // error, a rate limit) is held again, after its Retry-After where it gives
 // one; a refusal no wait mends ends it, as its error. say, when not nil, is

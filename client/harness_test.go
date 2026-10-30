@@ -73,7 +73,7 @@ func (e *env) opts() client.Options {
 	return client.Options{Base: e.srv.URL, Now: e.clock.Now, HTTPClient: e.http}
 }
 
-// mailbox makes and registers a mailbox, whose policy lands every sender's mail in
+// mailbox makes and registers a mailbox, whose policy lands every sender's messages in
 // inbox/: the tests that use it are of what comes before a message lands.
 // Where it lands, held/ by default, is senders_test.go's, which makes its
 // mailboxes with heldMailbox.
@@ -92,7 +92,7 @@ func landAll(t *testing.T, b *client.Mailbox) {
 	}
 }
 
-// heldMailbox makes and registers a mailbox with the default policy: mail from a
+// heldMailbox makes and registers a mailbox with the default policy: a message from a
 // sender it has not allowed is held.
 func (e *env) heldMailbox(kt protocol.KeyType) *client.Mailbox {
 	e.t.Helper()
@@ -192,7 +192,7 @@ func workFile(b *client.Mailbox, n uint64, ext string) string {
 }
 
 // worker loads the working key a mailbox has in use, under its certificate, from
-// the mailbox's state directory: what the mailbox signs its mail and its passes with.
+// the mailbox's state directory: what the mailbox signs its messages and its passes with.
 func worker(t *testing.T, b *client.Mailbox) ssh.Signer {
 	t.Helper()
 	return workerAt(t, b, numberOf(t, b))

@@ -31,15 +31,15 @@ func keptList(b *client.Mailbox, of protocol.Address) bool {
 	return ok
 }
 
-// mailAs injects mail that signer signed as mailbox from, to mailbox to, as an
+// messageAs injects a message that signer signed as mailbox from, to mailbox to, as an
 // operator delivering what a thief made.
-func mailAs(t *testing.T, e *env, from, to *client.Mailbox, signer ssh.Signer, body string) {
+func messageAs(t *testing.T, e *env, from, to *client.Mailbox, signer ssh.Signer, body string) {
 	t.Helper()
 	line := e.line(from.Identity().Document(), from.Address(), to.Address(), body)
 	e.seal(to, line, forge.Sign(t, signer, line, to.Address()))
 }
 
-// A mailbox renews under a new certificate and revokes every one before it. Mail
+// A mailbox renews under a new certificate and revokes every one before it. A message
 // under the old certificate is refused when it is read, the mailbox's own
 // included, and whatever a thief signs with the old key afterwards. The
 // address goes on: the mailbox writes and is written to.
@@ -63,7 +63,7 @@ func TestRevokeEarlierEndsWhatAnOldWorkingKeySigns(t *testing.T) {
 
 	res := receive(t, b)
 	if len(res.Delivered) != 1 || bodyOf(t, res.Delivered[0]) != "sent under the second certificate" || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedCertificate {
-		t.Fatalf("a drain of mail under a revoked certificate and under the current one: %+v", res)
+		t.Fatalf("a drain of messages under a revoked certificate and under the current one: %+v", res)
 	}
 	if !keptList(b, a.Address()) || keptRevocation(b, a.Address()) {
 		t.Fatal("the revocation of certificates was not kept, or the address was taken as revoked")
@@ -72,9 +72,9 @@ func TestRevokeEarlierEndsWhatAnOldWorkingKeySigns(t *testing.T) {
 	// The operator now hides the revocation and delivers what the thief
 	// signs.
 	forge.Hides(e.t, e.srv)
-	mailAs(t, e, a, b, stolen, "signed by the key that was taken")
+	messageAs(t, e, a, b, stolen, "signed by the key that was taken")
 	if res := receive(t, b); len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedCertificate {
-		t.Fatalf("a thief's mail under the revoked certificate, the revocation hidden: %+v", res)
+		t.Fatalf("a thief's message under the revoked certificate, the revocation hidden: %+v", res)
 	}
 	e.srv.SetMiddle(nil)
 
@@ -131,9 +131,9 @@ func TestRevokeEarlierAfterARenewalTakenUnseenRevokesTheCertificateBeforeIt(t *t
 			// What that working key signs after, as b, put in c's mailbox by
 			// whoever holds it and the server: c reads b's mailbox, with its
 			// revocation of certificates, before it judges.
-			mailAs(t, e, x, c, stolen, "signed with the working key b used before its renewal")
+			messageAs(t, e, x, c, stolen, "signed with the working key b used before its renewal")
 			if res := receive(t, c); len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedCertificate {
-				t.Errorf("mail under certificate %d after RevokeEarlier: delivered %d, refused %+v", before, len(res.Delivered), res.Refused)
+				t.Errorf("a message under certificate %d after RevokeEarlier: delivered %d, refused %+v", before, len(res.Delivered), res.Refused)
 			}
 		})
 	}
@@ -207,22 +207,22 @@ func TestOnlyTheIdentitysHighestRevocationCounts(t *testing.T) {
 	if _, err := a.RevokeEarlier(ctx); err != nil {
 		t.Fatal(err)
 	}
-	mailAs(t, e, a, b, second, "under certificate 2, which the second revocation covers")
+	messageAs(t, e, a, b, second, "under certificate 2, which the second revocation covers")
 	if res := receive(t, b); len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedCertificate {
-		t.Fatalf("mail under a revoked certificate: %+v", res)
+		t.Fatalf("a message under a revoked certificate: %+v", res)
 	}
 
 	// A server serves the first revocation again, which did not cover
 	// certificate 2. B holds the second, and a lower one never replaces a
 	// higher one: what was revoked stays revoked.
 	show(firstList)
-	mailAs(t, e, a, b, second, "under certificate 2, with the lower revocation shown again")
+	messageAs(t, e, a, b, second, "under certificate 2, with the lower revocation shown again")
 	if res := receive(t, b); len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedCertificate || shown.Load() == 0 {
 		t.Fatalf("a lower revocation replaced the higher one, or was never shown: %+v", res)
 	}
 	// And with nothing shown at all, the kept revocation still stands.
 	show(protocol.Revocations{Identity: doc})
-	mailAs(t, e, a, b, second, "under certificate 2, with no revocation shown")
+	messageAs(t, e, a, b, second, "under certificate 2, with no revocation shown")
 	if res := receive(t, b); len(res.Delivered) != 0 || len(res.Refused) != 1 || shown.Load() == 0 {
 		t.Fatalf("the kept revocation did not hold once the server stopped showing it: %+v", res)
 	}
@@ -271,10 +271,10 @@ func TestALaterCertificateOutranksAnyPrekeySerial(t *testing.T) {
 	if err != nil || got.Serial <= first || got.Serial >= protocol.MaxSerial {
 		t.Fatalf("a renewal after a prekey at the last serial: %+v, %v", got, err)
 	}
-	// B follows the mailbox to the later certificate, and mail reaches A again.
+	// B follows the mailbox to the later certificate, and messages reach A again.
 	send(t, b, a, "to the mailbox that took its address back")
 	if res := receive(t, a); len(res.Delivered) != 1 {
-		t.Fatalf("mail after the renewal: %+v", res)
+		t.Fatalf("a message after the renewal: %+v", res)
 	}
 	// And never back: the thief's statement, served again, is a rollback.
 	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
@@ -291,8 +291,8 @@ func TestALaterCertificateOutranksAnyPrekeySerial(t *testing.T) {
 
 // A revocation of certificates the mailbox keeps that no longer verifies, or is
 // no record, is an error at each use, never nothing revoked: the mailbox's own
-// stops a renewal, and a peer's a send to it and a drain of its mail, which
-// stays on the server (#69).
+// stops a renewal, and a peer's a send to it and a drain of its messages, which
+// stay on the server (#69).
 func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnError(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

@@ -18,7 +18,7 @@ import (
 // and one restored from its identity alone and opened. The set is read from
 // the mailboxes' own directories once each has sent and received, so a file
 // added later is held to it too.
-func TestEveryFileOfABoxIsItsOwnersAlone(t *testing.T) {
+func TestEveryFileOfAMailboxIsItsOwnersAlone(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 

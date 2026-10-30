@@ -23,9 +23,9 @@ const (
 	// CertificateKeyID is the key id of every v1 certificate.
 	CertificateKeyID = "dromas-cert-v1"
 	// CertificateLifetime is how long a client makes a certificate good for:
-	// the 31 days it signs mail for (SignsMail), the longest month, so a
-	// certificate made each month carries a mailbox's mail until the next, and
-	// then TTL, so that the last mail it signs still verifies when it is read.
+	// the 31 days it signs messages for (SignsMessages), the longest month, so a
+	// certificate made each month carries a mailbox's messages until the next, and
+	// then TTL, so that the last message it signs still verifies when it is read.
 	CertificateLifetime = 31*24*time.Hour + TTL
 	// MaxCertificateLifetime is the longest a certificate may still have to
 	// run when a verifier takes it: MaxSkew more than a client asks for, so
@@ -187,9 +187,9 @@ func (c *Certificate) NotAfter() time.Time {
 	return time.Unix(int64(c.cert.ValidBefore), 0).UTC() //nolint:gosec // certificateForm bounded it to 2^62
 }
 
-// SignsMessages reports whether mail may still be signed under the certificate at
-// now: it has more than TTL left, so it outlasts the mail, which may wait
-// that long to be read. One a client makes signs mail for its first 31 days.
+// SignsMessages reports whether a message may still be signed under the certificate at
+// now: it has more than TTL left, so it outlasts the message, which may wait
+// that long to be read. One a client makes signs messages for its first 31 days.
 func (c *Certificate) SignsMessages(now time.Time) bool { return c.NotAfter().Sub(now) > TTL }
 
 // PublicKey returns the certificate as the key its signatures verify under.

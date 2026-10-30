@@ -37,7 +37,7 @@ func (w *world) answering(method, suffix string, edit func(rw http.ResponseWrite
 // A refusal names its check by a code, in the script's own words, never with
 // what the sender wrote; senders a server makes up leave nothing; and a
 // server that lists without end, or answers a fetch or a list out of its
-// form, costs one drain that much, with the mail left on the server.
+// form, costs one drain that much, with the messages left on the server.
 func TestScriptRefusesInItsOwnWords(t *testing.T) {
 	w := newWorld(t)
 	a, b := w.mailbox(), w.mailbox()
@@ -56,7 +56,7 @@ func TestScriptRefusesInItsOwnWords(t *testing.T) {
 		}
 	}
 	d := b.recv()
-	if len(d.mail) != 0 || d.refused("bad_envelope") != 3 || d.refused("bad_identity") != 1 || strings.Contains(d.said, "IGNORE") || strings.Contains(d.said, "EVIL") || strings.Contains(d.said, "RUN THIS") || strings.Contains(d.said, "SYSTEM") {
+	if len(d.messages) != 0 || d.refused("bad_envelope") != 3 || d.refused("bad_identity") != 1 || strings.Contains(d.said, "IGNORE") || strings.Contains(d.said, "EVIL") || strings.Contains(d.said, "RUN THIS") || strings.Contains(d.said, "SYSTEM") {
 		t.Errorf("a refusal that prints what the sender wrote: %v", d)
 	}
 	_, said, _ := strings.Cut(d.said, "REFUSED "+evil1+": ")
@@ -64,7 +64,7 @@ func TestScriptRefusesInItsOwnWords(t *testing.T) {
 	if strings.TrimSpace(b.read("refused/"+evil1+".reason")) != said || len(b.files("refused")) != q0+8 {
 		t.Errorf("refused/<hash>.reason does not keep what was said: %q, %q; %d files", b.read("refused/"+evil1+".reason"), said, len(b.files("refused")))
 	}
-	// Senders the server makes up, whose mail does not verify or does not decrypt.
+	// Senders the server makes up, whose messages do not verify or do not decrypt.
 	op := w.operator()
 	n := len(w.srv.Requests())
 	for range 3 {
@@ -190,7 +190,7 @@ func onBlock(n int) bool {
 // Every message is a whole number of blocks on the wire, padded after the
 // signature, for the key it is encrypted to; what a sender seals is read
 // back as its reader will, and an age file of another size is not sent; a
-// certificate with 33 days or less left signs no mail.
+// certificate with 33 days or less left signs no message.
 func TestScriptPads(t *testing.T) {
 	w := newWorld(t)
 	p, q := w.mailbox(), w.mailbox()
@@ -260,7 +260,7 @@ func TestScriptPads(t *testing.T) {
 		t.Errorf("a re-encryption after stale_prekey, to an X25519 prekey, is %q bytes", size)
 	}
 	if d := q.recv(); !slices.Equal(d.bodies(), []string{"sealed twice"}) {
-		t.Errorf("the mail sealed again: %v", d)
+		t.Errorf("the message sealed again: %v", d)
 	}
 	// The sender reads its envelope as the recipient will, and checks the size of what age wrote.
 	n := w.posts(q.addr)
@@ -272,7 +272,7 @@ func TestScriptPads(t *testing.T) {
 		t.Errorf("an age file that is not the size the padding was made for: %v", r)
 	}
 	if r := p.sh(igNow(33*24*time.Hour) + "printf 'too late to sign' | dr_send " + q.addr.String()); r.rc == 0 || !strings.Contains(r.err, "ends within 33 days") || w.posts(q.addr) != n {
-		t.Errorf("mail signed under a certificate with 33 days or less left: %v", r)
+		t.Errorf("a message signed under a certificate with 33 days or less left: %v", r)
 	}
 }
 

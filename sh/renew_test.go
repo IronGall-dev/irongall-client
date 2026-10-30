@@ -122,16 +122,16 @@ func TestScriptRenews(t *testing.T) {
 		t.Errorf("a sender handed the first prekey: %v", r)
 	}
 	if d := b.recv(); !slices.Equal(d.bodies(), []string{"via a stale cache"}) {
-		t.Errorf("the mail sealed again after stale_prekey: %v", d)
+		t.Errorf("the message sealed again after stale_prekey: %v", d)
 	}
 }
 
 // A statement served in the mailbox's name under the certificate it signs
 // under, that it did not make, means another holds that working key: the mailbox
-// signs no mail under it (PROTOCOL.md §12.4; #442 item 4). A renewal that read
+// signs no message under it (PROTOCOL.md §12.4; #442 item 4). A renewal that read
 // it and then failed leaves the mailbox under that certificate; one that goes
 // through moves it to a new one, which signs again.
-func TestScriptSignsNoMailUnderAWorkingKeyAnotherHolds(t *testing.T) {
+func TestScriptSignsNoMessageUnderAWorkingKeyAnotherHolds(t *testing.T) {
 	w := newWorld(t)
 	a, b := w.mailbox(), w.mailbox()
 	b.mustSend(a, "before")
@@ -159,7 +159,7 @@ func TestScriptSignsNoMailUnderAWorkingKeyAnotherHolds(t *testing.T) {
 }
 
 // A retired prekey is deleted by the reading of the clock a server took, at
-// its not_after and 33 days; the newest never; then its mail is unrecoverable.
+// its not_after and 33 days; the newest never; then its messages are unrecoverable.
 func TestScriptDeletesARetiredPrekey(t *testing.T) {
 	w := newWorld(t)
 	a, b := w.mailbox(), w.mailbox()
@@ -176,7 +176,7 @@ func TestScriptDeletesARetiredPrekey(t *testing.T) {
 	b2 := b.num()
 	decrypts := func(key string) bool { return b.sh(fmt.Sprintf("age -d -i %s < %s > /dev/null", key, ct)).rc == 0 }
 	if !decrypts(key1) || !decrypts(b.file(fmt.Sprintf("prekeys/%d.agekey", b1))) {
-		t.Fatal("control: mail to the retired key does not decrypt while it is kept")
+		t.Fatal("control: a message to the retired key does not decrypt while it is kept")
 	}
 	b.dated(b1, time.Now().Add(-34*24*time.Hour))
 	b.must(fmt.Sprintf("dr_prune %d", time.Now().Add(-48*time.Hour).Unix()))
@@ -188,7 +188,7 @@ func TestScriptDeletesARetiredPrekey(t *testing.T) {
 		t.Errorf("dr_prune past not_after and 33 days: %q", b.files("prekeys"))
 	}
 	if decrypts(b.file(fmt.Sprintf("prekeys/%d.agekey", b2))) {
-		t.Error("mail to the deleted key still decrypts with the mailbox's keys")
+		t.Error("a message to the deleted key still decrypts with the mailbox's keys")
 	}
 	held := b.read(fmt.Sprintf("prekeys/%d.txt", b2))
 	b.dated(b2, time.Now().Add(-34*24*time.Hour))
@@ -383,7 +383,7 @@ func TestScriptRenewsAgainAsSigned(t *testing.T) {
 
 // A mailbox the server forgot, past its record's expiry (PROTOCOL.md §13), with
 // its own files kept: no mailbox is served to number above, so dr_rekey numbers
-// above what it published, registers anew, and prints no error; mail flows.
+// above what it published, registers anew, and prints no error; messages flow.
 func TestScriptRegistersAForgottenMailboxAnew(t *testing.T) {
 	w := newWorld(t)
 	a, b := w.mailbox(), w.mailbox()
@@ -397,6 +397,6 @@ func TestScriptRegistersAForgottenMailboxAnew(t *testing.T) {
 	}
 	a.mustSend(b, "after it was forgotten")
 	if d := b.recv(); !slices.Equal(d.bodies(), []string{"after it was forgotten"}) {
-		t.Errorf("mail to the mailbox registered anew: %v", d)
+		t.Errorf("a message to the mailbox registered anew: %v", d)
 	}
 }

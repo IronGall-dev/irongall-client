@@ -61,7 +61,7 @@ func (b *Bytes) UnmarshalJSON(data []byte) error {
 const AnySender = "any"
 
 // AcceptsSender reports whether a mailbox that declared the sender key types
-// declared takes mail from a mailbox whose identity is of type t, as far as the
+// declared takes messages from a mailbox whose identity is of type t, as far as the
 // declaration says: IdentityEd25519 always, whatever was declared; any type
 // if it declared AnySender; otherwise only a type it listed. A mailbox that
 // declared nothing takes IdentityEd25519 only (PROTOCOL.md §7).
@@ -77,7 +77,7 @@ type RegisterRequest struct {
 	Prekey          Bytes `json:"prekey"`
 	PrekeySignature Bytes `json:"prekey_signature"`
 	// SenderKeyTypes declares the identity key types the mailbox's client
-	// verifies: the senders the mailbox takes mail from (AcceptsSender). It is
+	// verifies: the senders the mailbox takes messages from (AcceptsSender). It is
 	// not signed, and it stands until the mailbox's next prekey replaces it.
 	SenderKeyTypes []string `json:"sender_key_types,omitempty"`
 }

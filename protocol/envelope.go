@@ -20,9 +20,9 @@ const (
 	EnvelopeVersion = 1
 	// TTL is how old a message may be, counted from its sent_at, which its
 	// sender dates afresh at every post: 33 days, a prekey's longest life, so
-	// a mailbox that checks in at least monthly loses neither new mail nor held
-	// mail. Every window of mail's age derives from it: the recipient's
-	// sent_at window, how long a server keeps mail (Retention), the replay
+	// a mailbox that checks in at least monthly loses neither new messages nor held
+	// messages. Every window of a message's age derives from it: the recipient's
+	// sent_at window, how long a server keeps a message (Retention), the replay
 	// set (SeenFor), how long the sender's outbox posts an entry, and the
 	// latest a retired prekey can still be needed.
 	TTL = 33 * 24 * time.Hour
@@ -234,7 +234,7 @@ func OpenEnvelope(plaintext []byte, signer, me Address, now time.Time) (*Envelop
 // OpenEnvelopeRecord checks an envelope as OpenEnvelope does, but for its
 // sent_at, which it only parses: no clock is read. It is how a mailbox reads back
 // an envelope it made itself, in its outbox or its sent/ record, whose age is
-// its own to judge. Nobody judging another mailbox's mail uses it.
+// its own to judge. Nobody judging another mailbox's messages uses it.
 func OpenEnvelopeRecord(plaintext []byte, signer, me Address) (*Envelope, error) {
 	if !utf8.Valid(plaintext) {
 		return nil, badEnvelope("the envelope is not UTF-8")

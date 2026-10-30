@@ -26,11 +26,11 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// mail puts in to's mailbox a message from a real mailbox: any envelope the test
+// message puts in to's mailbox a message from a real mailbox: any envelope the test
 // writes, as one line, signed by the mailbox's working key and encrypted to to's
 // prekey. It is what a sender who writes its own client can send. It returns
 // the message's id.
-func mail(t *testing.T, e *env, from, to *client.Mailbox, envelope string) string {
+func message(t *testing.T, e *env, from, to *client.Mailbox, envelope string) string {
 	t.Helper()
 	line := []byte(envelope + "\n")
 	return e.seal(to, line, forge.Sign(t, worker(t, from), line, to.Address()))
@@ -38,7 +38,7 @@ func mail(t *testing.T, e *env, from, to *client.Mailbox, envelope string) strin
 
 // A refusal says which check failed by a code from a closed set and in this
 // client's own words. It never prints text the sender chose: whoever reads a
-// refusal may be a model, and any mailbox can send mail that is refused.
+// refusal may be a model, and any mailbox can send a message that is refused.
 func TestARefusalNeverQuotesTheMessage(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
@@ -58,7 +58,7 @@ func TestARefusalNeverQuotesTheMessage(t *testing.T) {
 	}
 	want := map[string]string{}
 	for plaintext, code := range sent {
-		want[mail(t, e, a, b, plaintext)] = code
+		want[message(t, e, a, b, plaintext)] = code
 	}
 	res := receive(t, b)
 	if len(res.Delivered) != 0 || len(res.Refused) != len(sent) {
@@ -160,9 +160,9 @@ func TestAnAPIErrorPrintsNoneOfTheServersWords(t *testing.T) {
 	}
 }
 
-// A server can list mail from senders it made up. A mailbox never asks the
+// A server can list messages from senders it made up. A mailbox never asks the
 // server who a sender is, since a message carries what proves it, and keeps
-// nothing of one whose mail did not verify: peers/ holds only senders that
+// nothing of one whose message did not verify: peers/ holds only senders that
 // signed something this mailbox delivered. The one thing it asks about a sender
 // is whether a revocation of it exists, by one read of its mailbox, and only once
 // that sender's signature has verified: a sender a server made up costs no
@@ -229,7 +229,7 @@ func TestMadeUpSendersLeaveNothingInPeers(t *testing.T) {
 	}
 }
 
-// One drain handles a bounded amount of mail and of list pages, whatever the
+// One drain handles a bounded amount of messages and of list pages, whatever the
 // server lists, and says so: the rest stays on the server for the next one.
 // A drain that stopped at a limit did not empty the mailbox, so it deletes no
 // retired prekey.
@@ -307,7 +307,7 @@ func TestADrainIsBounded(t *testing.T) {
 // A refused message is kept whole in refused/, with none of the server's
 // strings in the clear but those of their form: an id or a time the server
 // chose is kept in base64, and one of its form plainly (the public #7), and
-// a from it lists is kept nowhere. RefusedMail, which dromas refused list prints, holds only this
+// a from it lists is kept nowhere. RefusedMessages, which dromas refused list prints, holds only this
 // client's words, status names the commands and not the files, and
 // RemoveRefused deletes nothing unless every id it is given is held.
 func TestRefusedKeepsNoServerTextInTheClear(t *testing.T) {
@@ -385,7 +385,7 @@ func TestRefusedKeepsNoServerTextInTheClear(t *testing.T) {
 	// nothing is known of either but when it was judged.
 	qs, err := b.RefusedMessages(t.Context())
 	if err != nil || len(qs) != 2 {
-		t.Fatalf("RefusedMail: %+v, %v", qs, err)
+		t.Fatalf("RefusedMessages: %+v, %v", qs, err)
 	}
 	byID := map[string]client.RefusedMessage{qs[0].ID: qs[0], qs[1].ID: qs[1]}
 	for id, received := range map[string]string{first.Refused[0].ID: "", second.Refused[0].ID: str(kept["received_at"])} {
@@ -404,7 +404,7 @@ func TestRefusedKeepsNoServerTextInTheClear(t *testing.T) {
 		t.Fatal(err)
 	}
 	if qs, err := b.RefusedMessages(t.Context()); err != nil || len(qs) != 3 || !slices.Contains(qs, client.RefusedMessage{ID: old, Code: "unknown"}) {
-		t.Fatalf("RefusedMail with a file of the old form: %+v, %v", qs, err)
+		t.Fatalf("RefusedMessages with a file of the old form: %+v, %v", qs, err)
 	}
 	// What the checks found is the mailbox's state's, which only this client
 	// writes: a file that carries findings of their form lists none of them
@@ -414,7 +414,7 @@ func TestRefusedKeepsNoServerTextInTheClear(t *testing.T) {
 		t.Fatal(err)
 	}
 	if qs, err := b.RefusedMessages(t.Context()); err != nil || len(qs) != 3 || !slices.Contains(qs, client.RefusedMessage{ID: old, Code: "unknown"}) {
-		t.Fatalf("RefusedMail with findings planted in a file: %+v, %v", qs, err)
+		t.Fatalf("RefusedMessages with findings planted in a file: %+v, %v", qs, err)
 	}
 	// A file is read as every JSON text is (PROTOCOL.md §3.3): a name in
 	// another case is not that member, and one given twice is no record, so
@@ -427,7 +427,7 @@ func TestRefusedKeepsNoServerTextInTheClear(t *testing.T) {
 			t.Fatal(err)
 		}
 		if qs, err := b.RefusedMessages(t.Context()); err != nil || len(qs) != 4 || !slices.Contains(qs, client.RefusedMessage{ID: other, Code: "unknown"}) {
-			t.Errorf("RefusedMail with %s: %+v, %v", rec, qs, err)
+			t.Errorf("RefusedMessages with %s: %+v, %v", rec, qs, err)
 		}
 		if err := os.Remove(f); err != nil {
 			t.Fatal(err)
@@ -435,7 +435,7 @@ func TestRefusedKeepsNoServerTextInTheClear(t *testing.T) {
 	}
 	b.SetRecord(t, "refused/"+old+".reason", []byte("bad_signature: \x1b[2J"+injected))
 	if qs, err := b.RefusedMessages(t.Context()); err != nil || len(qs) != 3 || !slices.Contains(qs, client.RefusedMessage{ID: old, Code: protocol.RefusedSignature}) {
-		t.Fatalf("RefusedMail with a reason of control bytes: %+v, %v", qs, err)
+		t.Fatalf("RefusedMessages with a reason of control bytes: %+v, %v", qs, err)
 	}
 	if gone, err := b.RemoveRefused(ctx, []string{old}); err != nil || len(gone) != 1 {
 		t.Fatalf("RemoveRefused of the old file: %v, %v", gone, err)
@@ -450,7 +450,7 @@ func TestRefusedKeepsNoServerTextInTheClear(t *testing.T) {
 		}
 	}
 	if qs, _ := b.RefusedMessages(t.Context()); len(qs) != 2 {
-		t.Fatalf("a refused RemoveRefused deleted mail: %+v", qs)
+		t.Fatalf("a refused RemoveRefused deleted messages: %+v", qs)
 	}
 	if gone, err := b.RemoveRefused(ctx, []string{first.Refused[0].ID}); err != nil || len(gone) != 1 {
 		t.Fatalf("RemoveRefused one: %v, %v", gone, err)
@@ -602,7 +602,7 @@ func TestAListsCursorIsURLSafe(t *testing.T) {
 					fakeserver.WriteList(w, protocol.MessageList{Count: 1, Messages: []protocol.MessageInfo{}, NextCursor: &c.cursor})
 					return
 				}
-				r.URL.RawQuery = "" // the operator answers its own cursor with the mailbox's mail
+				r.URL.RawQuery = "" // the operator answers its own cursor with the mailbox's messages
 			}
 			fetched = fetched || r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, mailboxPath(b)+"/messages/")
 			next.ServeHTTP(w, r)

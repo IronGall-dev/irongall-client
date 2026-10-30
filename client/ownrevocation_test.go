@@ -25,9 +25,9 @@ import (
 
 // What a mailbox does with its own revocations: a renewal asks for them every
 // time, a mailbox that holds its own revocation of its address signs nothing
-// more, a certificate it revoked signs no mail, the remedy reads once and
+// more, a certificate it revoked signs no message, the remedy reads once and
 // goes on past a server it cannot use, and a clock far ahead deletes no key
-// that mail waits for.
+// that a message waits for.
 
 // ownRevocation signs a revocation of a's certificates through serial T with
 // its identity.
@@ -289,7 +289,7 @@ type command struct {
 // lists by how a mailbox that holds its own revocation meets them: those that
 // would ask a server or carry a pass, which it refuses, and those that still
 // run. Each is tried on a finished mailbox
-// (TestABoxThatKeepsItsOwnRevocationSignsNothingMore) and while another
+// (TestAMailboxThatKeepsItsOwnRevocationSignsNothingMore) and while another
 // command holds the lock (TestEveryCommandWaitsForTheLock), and
 // TestEveryLockingCommandIsTriedFinished holds the two lists to the code.
 func lockingCommands(ctx context.Context, a, b *client.Mailbox, rec *protocol.Revocations, key string) (refused, run []command) {
@@ -360,7 +360,7 @@ func signed(t *testing.T, a *client.Mailbox) []string {
 // goes: asking about and keeping a revocation, the record (the one the mailbox
 // holds) published again, and a change to the mailbox's own files alone. No
 // call in all of it carries a pass.
-func TestABoxThatKeepsItsOwnRevocationSignsNothingMore(t *testing.T) {
+func TestAMailboxThatKeepsItsOwnRevocationSignsNothingMore(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
@@ -555,7 +555,7 @@ func TestARenewalThatMeetsItsOwnRevocationSignsNothing(t *testing.T) {
 // A mailbox restored from its identity alone, whose owner kept its revocation
 // record, runs init: it signs nothing, no certificate and no prekey
 // statement, and calls no server (#256).
-func TestInitOfABoxThatHoldsItsOwnRevocationSignsNothing(t *testing.T) {
+func TestInitOfAMailboxThatHoldsItsOwnRevocationSignsNothing(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
@@ -595,7 +595,7 @@ func TestInitOfABoxThatHoldsItsOwnRevocationSignsNothing(t *testing.T) {
 
 // A mailbox whose revocation its own server holds, opened against a server that
 // never saw it: it registers nothing there and sends nothing.
-func TestABoxRevokedAtItsServerSignsNothingAtAnother(t *testing.T) {
+func TestAMailboxRevokedAtItsServerSignsNothingAtAnother(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
@@ -631,11 +631,11 @@ func TestABoxRevokedAtItsServerSignsNothingAtAnother(t *testing.T) {
 }
 
 // After the remedy, while its renewal waits, the mailbox holds the certificate it
-// signs under revoked: it signs no mail under it, the entry waits, and goes
+// signs under revoked: it signs no message under it, the entry waits, and goes
 // once the renewal is taken, whatever its server took. Here the server
 // answered the revocation as taken and kept nothing, so it would take the
-// mailbox's pass and mail under that certificate still, and was down for the
-// renewal: only the mailbox's own hold keeps the mail back.
+// mailbox's pass and messages under that certificate still, and was down for the
+// renewal: only the mailbox's own hold keeps the message back.
 func TestASendInTheRemedysWindowWaitsForTheRenewal(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -675,10 +675,10 @@ func TestASendInTheRemedysWindowWaitsForTheRenewal(t *testing.T) {
 	}
 }
 
-// A clock far ahead is stopped at its pass, and deletes no key that mail
-// waits for: here the mail was sealed to a prekey retired since, and the
+// A clock far ahead is stopped at its pass, and deletes no key that a message
+// waits for: here the message was sealed to a prekey retired since, and the
 // drain at a clock 70 days ahead is refused before its list.
-func TestAFastClockDeletesNoKeyMailWaitsFor(t *testing.T) {
+func TestAFastClockDeletesNoKeyAMessageWaitsFor(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)

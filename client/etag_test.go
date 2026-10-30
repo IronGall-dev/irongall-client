@@ -73,9 +73,9 @@ func TestAnEmptyMailboxPollsWithItsETag(t *testing.T) {
 	}
 }
 
-// A tag is kept only from an empty mailbox: a page with mail drops it, so a 304
-// can never hide mail; the mailbox's next empty poll keeps a new one.
-func TestMailDropsTheETag(t *testing.T) {
+// A tag is kept only from an empty mailbox: a page with messages drops it, so a 304
+// can never hide messages; the mailbox's next empty poll keeps a new one.
+func TestAPageWithMessagesDropsTheETag(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
@@ -90,10 +90,10 @@ func TestMailDropsTheETag(t *testing.T) {
 		t.Fatalf("delivered %d, want the message the kept tag no longer matched", len(res.Delivered))
 	}
 	if p.status[0] != http.StatusOK {
-		t.Fatalf("the poll after mail came was answered %d, want 200", p.status[0])
+		t.Fatalf("the poll after a message came was answered %d, want 200", p.status[0])
 	}
 	if has(b, "etag") {
-		t.Error("a page with mail left the ETag kept")
+		t.Error("a page with messages left the ETag kept")
 	}
 	receive(t, b)
 	if p.asked[len(p.asked)-1] != "" || !has(b, "etag") {
@@ -162,8 +162,8 @@ func TestAnETagOfAnotherFormIsNotKept(t *testing.T) {
 
 // A tag a hostile server hands an empty mailbox once, which RFC 9110 §8.8.3
 // allows to hold a comma and a "*", is one tag to an honest server: its polls
-// are answered in full, and the mail sent after is delivered at the next.
-func TestAPlantedTagHidesNoMail(t *testing.T) {
+// are answered in full, and the message sent after is delivered at the next.
+func TestAPlantedTagHidesNoMessage(t *testing.T) {
 	t.Parallel()
 	for _, plant := range []string{`",*,"`, `"x,*,y"`, `W/"a,W/*,b"`} {
 		e := newEnv(t)
@@ -195,7 +195,7 @@ func TestAPlantedTagHidesNoMail(t *testing.T) {
 
 // A 304 is about the page its ETag names (RFC 9110 §15.4.5): one about
 // another tag than the poll sent is no answer (RFC 9111 §4.3.4). The drain
-// fails, so no prekey the mail may be sealed to is deleted, and the kept tag
+// fails, so no prekey a message may be sealed to is deleted, and the kept tag
 // goes, so the next poll asks for the page in full. One whose tag a proxy
 // marked weak is the answer.
 func TestA304AboutAnotherTagIsNoAnswer(t *testing.T) {

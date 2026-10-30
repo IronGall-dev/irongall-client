@@ -22,16 +22,16 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-// When things fail, mail is never lost and never delivered twice: a
+// When things fail, a message is never lost and never delivered twice: a
 // transient failure leaves it for next time, a retry is recognised, and a
-// fault in the mailbox itself stops the drain instead of judging mail it cannot
+// fault in the mailbox itself stops the drain instead of judging a message it cannot
 // judge.
 
 func TestRoundTrip(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	a, b := e.mailbox(protocol.PostQuantum), e.mailbox(protocol.Classic)
-	body := "hello <b>&é☃ — mail is data"
+	body := "hello <b>&é☃ — a message is data"
 	r := send(t, a, b, body)
 	res := receive(t, b)
 	if len(res.Delivered) != 1 || bodyOf(t, res.Delivered[0]) != body || res.Delivered[0].ID != r.ID {
@@ -49,7 +49,7 @@ func TestRoundTrip(t *testing.T) {
 	}
 }
 
-func TestTransientFailureLeavesMail(t *testing.T) {
+func TestTransientFailureLeavesTheMessage(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
 	a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
@@ -59,7 +59,7 @@ func TestTransientFailureLeavesMail(t *testing.T) {
 		t.Fatal("the failed fetch was not reported")
 	}
 	if res := receive(t, b); len(res.Delivered) != 1 {
-		t.Fatal("the mail left by a failed fetch was not delivered next time")
+		t.Fatal("the message left by a failed fetch was not delivered next time")
 	}
 }
 
@@ -387,7 +387,7 @@ func TestAKilledHolderLeavesNoLock(t *testing.T) {
 	receive(t, b)
 }
 
-// A retired prekey decrypts mail until its deletion time, not_after + 33
+// A retired prekey decrypts messages until its deletion time, not_after + 33
 // days, and is deleted then: the forward-secrecy bound. A renewal deletes by
 // the date of its own pass, which the server took, and it signs a new one.
 func TestPruneDeletesRetiredKeys(t *testing.T) {
@@ -400,7 +400,7 @@ func TestPruneDeletesRetiredKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	if res := receive(t, b); len(res.Delivered) != 1 {
-		t.Fatal("mail to the retired key was not delivered")
+		t.Fatal("a message to the retired key was not delivered")
 	}
 	e.clock.Add(protocol.PrekeyLifetime + protocol.TTL - time.Second)
 	if _, err := b.Rekey(context.Background(), ""); err != nil {
@@ -422,9 +422,9 @@ func TestPruneDeletesRetiredKeys(t *testing.T) {
 }
 
 // A fault in the mailbox itself is an error, never a verdict on the message:
-// the drain stops, nothing is kept in refused/ or acked, and the mail is
+// the drain stops, nothing is kept in refused/ or acked, and the message is
 // delivered once the mailbox is fixed.
-func TestLocalFaultLeavesMail(t *testing.T) {
+func TestLocalFaultLeavesTheMessage(t *testing.T) {
 	t.Parallel()
 	for _, c := range []struct {
 		name         string
@@ -454,7 +454,7 @@ func TestLocalFaultLeavesMail(t *testing.T) {
 				t.Fatalf("drain on a broken mailbox: %v, %+v", err, res)
 			}
 			if q, _ := os.ReadDir(filepath.Join(b.Dir(), "refused")); len(q) != 0 || e.srv.Count(b.Address()) != 1 {
-				t.Fatal("a broken mailbox kept in refused/ or acked mail it could not judge")
+				t.Fatal("a broken mailbox kept in refused/ or acked a message it could not judge")
 			}
 			fix()
 			if res := receive(t, b); len(res.Delivered) != 1 {

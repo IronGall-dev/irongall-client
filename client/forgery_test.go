@@ -131,23 +131,23 @@ func TestAFromTheServerListsDecidesNothing(t *testing.T) {
 
 // TestForgeries plays the operator, who controls every byte the server sends
 // and stores. Each forgery must be refused by the client: never delivered,
-// never encrypted to, never pinned. Refused mail is kept in refused/ and acked, so
+// never encrypted to, never pinned. A refused message is kept in refused/ and acked, so
 // it leaves the server, and the refusal never blocks the claimed sender.
 //
-//	mail made in another mailbox's name       O signs an envelope carrying A's identity → refused: not under a certificate of A's identity
-//	a second message after the signature  C's signed envelope in the padding   → A's is delivered, and nothing after its signature is read
-//	a forged identity on a send           C's identity served as B's           → the send refuses, nothing pinned
-//	swapped prekey                        C's valid prekey served as B's       → the send refuses to encrypt
-//	an expired prekey                     B's prekey past its not_after        → the send refuses to encrypt
-//	rollback of a peer's prekey           B's older prekey served again        → the send refuses (serial went down)
-//	a stolen working key, replaced since  a new prekey under B's old certificate → the send refuses (certificate serial went down)
-//	a lower serial, the same certificate  B's working key signs one below      → the send refuses (serial went down)
-//	rollback of the mailbox's own prekey      the mailbox's own older prekey served    → rekey refuses (it published a higher one)
-//	its own lower, the same certificate   its working key signs one below      → rekey refuses (it published a higher one)
-//	replay under a new id                 a delivered ciphertext, stored again → refused as a replay
-//	sent_at older than 33 days            an envelope dated 33 days and 1 s ago → refused as stale
-//	not encrypted to this mailbox             A's message to C, stored in B's mailbox  → refused: it does not decrypt
-//	an id that is not the hash            a message listed under another id    → refused; files are named by the hash
+//	a message made in another mailbox's name  O signs an envelope carrying A's identity → refused: not under a certificate of A's identity
+//	a second message after the signature      C's signed envelope in the padding        → A's is delivered, and nothing after its signature is read
+//	a forged identity on a send               C's identity served as B's                → the send refuses, nothing pinned
+//	swapped prekey                            C's valid prekey served as B's            → the send refuses to encrypt
+//	an expired prekey                         B's prekey past its not_after             → the send refuses to encrypt
+//	rollback of a peer's prekey               B's older prekey served again             → the send refuses (serial went down)
+//	a stolen working key, replaced since      a new prekey under B's old certificate    → the send refuses (certificate serial went down)
+//	a lower serial, the same certificate      B's working key signs one below           → the send refuses (serial went down)
+//	rollback of the mailbox's own prekey      the mailbox's own older prekey served     → rekey refuses (it published a higher one)
+//	its own lower, the same certificate       its working key signs one below           → rekey refuses (it published a higher one)
+//	replay under a new id                     a delivered ciphertext, stored again      → refused as a replay
+//	sent_at older than 33 days                an envelope dated 33 days and 1 s ago     → refused as stale
+//	not encrypted to this mailbox             A's message to C, stored in B's mailbox   → refused: it does not decrypt
+//	an id that is not the hash                a message listed under another id         → refused; files are named by the hash
 func TestForgeries(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {
@@ -160,7 +160,7 @@ func TestForgeries(t *testing.T) {
 			t.Fatalf("delivered %d, refused %v; want refused as %s for %q", len(res.Delivered), res.Refused, code, why)
 		}
 	}
-	t.Run("mail made in another mailbox's name", func(t *testing.T) {
+	t.Run("a message made in another mailbox's name", func(t *testing.T) {
 		e := newEnv(t)
 		a, b, o := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 		// The forger's own working key and certificate sign an envelope that
@@ -245,7 +245,7 @@ func TestForgeries(t *testing.T) {
 		e := newEnv(t)
 		a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
 		e.clock.Add(protocol.PrekeyLifetime)
-		if _, err := a.Rekey(ctx, ""); err != nil { // a certificate that still signs mail
+		if _, err := a.Rekey(ctx, ""); err != nil { // a certificate that still signs messages
 			t.Fatal(err)
 		}
 		if _, err := a.Send(ctx, b.Address(), "too late"); err == nil || !strings.Contains(err.Error(), "expired") {

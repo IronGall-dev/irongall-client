@@ -68,7 +68,7 @@ func TestSendWithFields(t *testing.T) {
 }
 
 // in_reply_to and supersedes name a message by its msg_id. Anything else is
-// refused before any mail is made: above all the 64-character id the server
+// refused before any message is made: above all the 64-character id the server
 // gives a message, which is what send prints.
 func TestSendRefusesFieldsThatAreNotMsgIDs(t *testing.T) {
 	t.Parallel()
@@ -97,7 +97,7 @@ func TestSendRefusesFieldsThatAreNotMsgIDs(t *testing.T) {
 		t.Errorf("the refusal does not name the field: %v", err)
 	}
 	if made, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "*")); len(made) != 0 || posts != 0 {
-		t.Fatalf("a refused field made mail: %v, %d posts", made, posts)
+		t.Fatalf("a refused field made a message: %v, %d posts", made, posts)
 	}
 }
 
@@ -161,7 +161,7 @@ func TestNothingIsWrittenForAMessageItsReaderRefuses(t *testing.T) {
 	made, _ := filepath.Glob(filepath.Join(a.Dir(), "outbox", "*"))
 	allowed, _ := os.ReadFile(filepath.Join(a.Dir(), "allowed")) //nolint:gosec // a test's own directory
 	if len(made) != 0 || op.count(http.MethodPost, postTo(b)) != 0 || strings.Contains(string(allowed), b.Address().String()) {
-		t.Fatalf("a refused message made mail: outbox %v, %d posts, allowed %q", made, op.count(http.MethodPost, postTo(b)), allowed)
+		t.Fatalf("a refused message made a message: outbox %v, %d posts, allowed %q", made, op.count(http.MethodPost, postTo(b)), allowed)
 	}
 }
 

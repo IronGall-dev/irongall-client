@@ -15,7 +15,7 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// A server that paces how much mail a mailbox takes out (a 429 with Retry-After
+// A server that paces the messages a mailbox takes out (a 429 with Retry-After
 // on a fetch, PROTOCOL.md §11.5) stops the drain as the drain's own limits do:
 // what was delivered stays delivered, the rest waits on the server, the
 // Result says how long, and nothing is an error. A pace past the poll
@@ -61,7 +61,7 @@ func TestAPacedDrainStopsAndResumes(t *testing.T) {
 
 // Only a paced fetch stops a drain quietly. Any other 429 met in a drain, a
 // sender's lookup the mailbox's call budget refused among them, is an error, and
-// the mail stays on the server: such a refusal says nothing of the mail, and
+// the messages stay on the server: such a refusal says nothing of them, and
 // a drain that ended quietly on it would hide that a sender went unchecked
 // (#116).
 func TestOnlyAPacedFetchEndsADrainQuietly(t *testing.T) {

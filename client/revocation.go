@@ -13,10 +13,10 @@ import (
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
-// RefusedRevoked is why mail from a revoked address is refused: this mailbox
+// RefusedRevoked is why a message from a revoked address is refused: this mailbox
 // holds a revocation of the sender that verifies. RefusedCertificate is why
-// mail under a revoked certificate is: its sender's address goes on, and the
-// identity has revoked the certificate the mail was signed under.
+// a message under a revoked certificate is: its sender's address goes on, and the
+// identity has revoked the certificate the message was signed under.
 const (
 	RefusedRevoked     = "revoked"
 	RefusedCertificate = "certificate_revoked"
@@ -89,7 +89,7 @@ func (b *Mailbox) Revoke(ctx context.Context, rec *protocol.Revocations) (protoc
 
 // Held is what a mailbox holds about an address: what that address's identity
 // signed about it, verified here, and kept. It is what a send to the address
-// and a read of its mail are checked against, with no call to anyone.
+// and a read of its messages are checked against, with no call to anyone.
 type Held struct {
 	// Revoked is true when the mailbox holds a revocation of the address: it is
 	// ended, for good.
@@ -231,7 +231,7 @@ func (b *Mailbox) keepRevocation(id *protocol.Identity, sig []byte) error {
 
 // finished is this mailbox's own revocation of its address, as an error. A mailbox
 // that holds one that verifies signs nothing more as that address, no pass,
-// no mail and no certificate, whatever any server answers: a server that
+// no message and no certificate, whatever any server answers: a server that
 // never saw the revocation would take it all (PROTOCOL.md §12.5). It still
 // asks, keeps and publishes the record, which carry no pass. A kept one that
 // no longer verifies is a fault, and stops the same.
@@ -477,7 +477,7 @@ func (b *Mailbox) keepRevokedCerts(a protocol.Address, doc, statement, sig []byt
 // 1, which nothing is below. A revocation with an error is one the server
 // took, and a fault of this mailbox after that: the mailbox keeps it at its next
 // read of itself (#383).
-// Mail this mailbox sent under those certificates, and that its reader has not
+// A message this mailbox sent under those certificates, and that its reader has not
 // read yet, is refused too: nobody can tell it from a thief's.
 func (b *Mailbox) RevokeEarlier(ctx context.Context) (*protocol.RevokedCertificates, error) {
 	return locked(ctx, b, func() (*protocol.RevokedCertificates, error) {
@@ -547,7 +547,7 @@ type Remedy struct {
 // mailbox's counts, the calls a taker spent before the revocation among them
 // (PROTOCOL.md §10.2, §11.9; dromas-dev/dromas-server#84). While the
 // mailbox's server holds the revocation and not the renewal, the mailbox takes no
-// mail there and signs none, and [Mailbox.Receive] and [Mailbox.Rekey] send the
+// messages there and signs none, and [Mailbox.Receive] and [Mailbox.Rekey] send the
 // renewal again.
 //
 // It returns no Remedy where it stopped before it published anything, a mailbox

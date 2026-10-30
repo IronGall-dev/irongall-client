@@ -25,7 +25,7 @@ import (
 // read of a mailbox, a problem. It is this client's own, which the protocol does
 // not fix, and only stops a server from filling memory. A fetch is bounded by
 // the protocol's largest ciphertext instead (protocol.MaxCiphertext), which
-// every reader takes, so that this bound moves without changing which mail a
+// every reader takes, so that this bound moves without changing which messages a
 // mailbox reads.
 const maxResponse = 16 << 20
 

@@ -233,7 +233,7 @@ func TestScriptSendsAndReads(t *testing.T) {
 		}
 	}
 	if w.srv.Count(b.addr) != 2 || !a.bare() {
-		t.Errorf("a refused destination made mail: %d held", w.srv.Count(b.addr))
+		t.Errorf("a refused destination made a message: %d held", w.srv.Count(b.addr))
 	}
 	if strings.Contains(string(*posted), "SSH SIGNATURE") || strings.Contains(string(*posted), `"from"`) {
 		t.Error("a post carries a signature or an envelope in the clear")
@@ -253,7 +253,7 @@ func TestScriptSendsAndReads(t *testing.T) {
 	if !slices.Equal(reads, []string{"GET /v1/" + a.addr.String()}) || b.read("peers/"+a.addr.String()+"/identity.doc") != a.read("identity.doc") {
 		t.Errorf("B asked about a sender it never met other than by one read of its mailbox, or pinned another identity: %q", reads)
 	}
-	if strings.Contains(strings.Join(d.mail, ""), `"identity"`) {
+	if strings.Contains(strings.Join(d.messages, ""), `"identity"`) {
 		t.Error("a delivered line carries the identity document")
 	}
 	inbox := b.files("inbox")
@@ -289,7 +289,7 @@ func TestScriptDeliversARetryOnce(t *testing.T) {
 	if w.srv.Count(b.addr) != 2 {
 		t.Fatalf("two seals of one envelope are %d ciphertexts", w.srv.Count(b.addr))
 	}
-	if d := b.recv(); len(d.mail) != 1 || !strings.Contains(d.said, "duplicate") {
+	if d := b.recv(); len(d.messages) != 1 || !strings.Contains(d.said, "duplicate") {
 		t.Errorf("a retry is not delivered once: %v", d)
 	}
 }
@@ -298,10 +298,10 @@ func TestScriptDeliversARetryOnce(t *testing.T) {
 // answers with edit (forge.Lists).
 func (w *world) listing(edit func(*forge.Listed)) { forge.Lists(w.t, w.srv, edit) }
 
-// Mail a server forges, a replay, and what is no message: each REFUSED,
+// A message a server forges, a replay, and what is no message: each REFUSED,
 // kept in refused/ with its reason, and acked; nothing pinned by it. A from the
 // server lists is never read.
-func TestScriptRefusesForgedMail(t *testing.T) {
+func TestScriptRefusesForgedMessages(t *testing.T) {
 	w := newWorld(t)
 	a, b, c, d := w.mailbox(), w.mailbox(), w.mailbox(), w.mailbox()
 	op := w.operator()
@@ -312,14 +312,14 @@ func TestScriptRefusesForgedMail(t *testing.T) {
 	a.mustSend(b, "genuine")
 	genuine := *posted
 	w.honest()
-	if dr := b.recv(); len(dr.mail) != 1 {
+	if dr := b.recv(); len(dr.messages) != 1 {
 		t.Fatalf("the genuine message: %v", dr)
 	}
 	refusals := 0
 	refused := func(what, want string, d drain) {
 		t.Helper()
 		refusals++
-		if len(d.mail) != 0 || !strings.Contains(d.said, want) {
+		if len(d.messages) != 0 || !strings.Contains(d.said, want) {
 			t.Errorf("%s: %v", what, d)
 		}
 	}
@@ -332,19 +332,19 @@ func TestScriptRefusesForgedMail(t *testing.T) {
 	r := b.sh("dr_recv")
 	refusals++
 	if !strings.Contains(r.out, `"code":"bad_signature","detail":"it is not signed for this mailbox by a working key the sender's identity certified"}`) || r.err != "" || w.srv.Count(b.addr) != 0 || pinned() != a.read("identity.doc") {
-		t.Errorf("mail in A's name under the operator's certificate: %v", r)
+		t.Errorf("a message in A's name under the operator's certificate: %v", r)
 	}
-	var l struct{ Type, ID, Code, Message string }
+	var l struct{ Type, ID, Code, Detail string }
 	if !strings.HasPrefix(r.out, `{"type":"refused","id":"`) || strings.Count(r.out, "\n") != 1 || jsonLine(r.out, &l) != nil || len(l.ID) != 64 {
 		t.Errorf("a refusal is not one line of JSON on stdout, its type first: %q", r.out)
 	}
 	w.inject(b, "", forged(d))
-	refused("first contact, mail in D's name under the operator's certificate", "bad_signature", b.recv())
+	refused("first contact, a message in D's name under the operator's certificate", "bad_signature", b.recv())
 	if b.has("peers/" + d.addr.String()) {
 		t.Error("the forgery pinned D")
 	}
 	// A from the server made up, with a line feed and a signer after it,
-	// beside the operator's own mail: the from is never read, so the mail is
+	// beside the operator's own message: the from is never read, so the message is
 	// the operator's, as its signature says, and nothing is built from it.
 	opDoc := []byte(mustReadString(t, filepath.Join(op.dir, "identity.doc")))
 	ol := envelope(t, op.addr, b.addr, opDoc, "00000000-0000-4000-8000-000000000001", "PAPAYA", 0)
@@ -355,8 +355,8 @@ func TestScriptRefusesForgedMail(t *testing.T) {
 			l.Messages[i].From = madeUp
 		}
 	})
-	if dr := b.recv(); len(dr.mail) != 1 || !strings.Contains(dr.mail[0], `"from":"`+op.addr.String()+`"`) || w.srv.Count(b.addr) != 0 {
-		t.Errorf("the operator's mail under a from it made up, with a newline: %v", dr)
+	if dr := b.recv(); len(dr.messages) != 1 || !strings.Contains(dr.messages[0], `"from":"`+op.addr.String()+`"`) || w.srv.Count(b.addr) != 0 {
+		t.Errorf("the operator's message under a from it made up, with a newline: %v", dr)
 	}
 	w.honest()
 	if out := b.must(`grep -rqs '^\*' "$DR/peers" "$DR/signers" && echo planted || true`); out != "" {
@@ -376,7 +376,7 @@ func TestScriptRefusesForgedMail(t *testing.T) {
 		t.Error("the message listed as C's pinned C")
 	}
 	w.put(b, "", genuine)
-	if dr := b.recv(); len(dr.mail) != 0 || dr.said != "" || w.srv.Count(b.addr) != 0 {
+	if dr := b.recv(); len(dr.messages) != 0 || dr.said != "" || w.srv.Count(b.addr) != 0 {
 		t.Errorf("a replay under an id already handled is more than acked again: %v", dr)
 	}
 	w.put(b, randomID(), genuine)
@@ -399,14 +399,14 @@ func TestScriptRefusesForgedMail(t *testing.T) {
 	fromASig := a.sign(b.addr, fromA)
 	hidden := c.line(b.addr, "66666666-2222-4333-8444-555555555552", "hidden, from C", 0)
 	w.inject(b, "", fromA, fromASig, hidden, c.sign(b.addr, hidden))
-	if dr := b.recv(); !slices.Equal(dr.bodies(), []string{"real, from A"}) || strings.Contains(dr.said+strings.Join(dr.mail, ""), c.addr.String()) || b.has("peers/"+c.addr.String()) {
+	if dr := b.recv(); !slices.Equal(dr.bodies(), []string{"real, from A"}) || strings.Contains(dr.said+strings.Join(dr.messages, ""), c.addr.String()) || b.has("peers/"+c.addr.String()) {
 		t.Errorf("a second signed envelope after the first one's signature: %v", dr)
 	}
 	for _, parts := range [][][]byte{{[]byte("\n"), fromA, fromASig}, {fromA, []byte("\n"), fromASig}, {fromA}} {
 		w.inject(b, "", parts...)
 	}
 	refusals += 3
-	if dr := b.recv(); len(dr.mail) != 0 || dr.refused("bad_message") != 3 || !strings.Contains(dr.said, "bad_message: what was decrypted is not an envelope line and then a signature block") {
+	if dr := b.recv(); len(dr.messages) != 0 || dr.refused("bad_message") != 3 || !strings.Contains(dr.said, "bad_message: what was decrypted is not an envelope line and then a signature block") {
 		t.Errorf("a line before the envelope, a blank line before the signature, or no signature: %v", dr)
 	}
 	// The two refusals of A's genuine ciphertext share its hash, so one file.
@@ -441,7 +441,7 @@ func TestScriptRefusesForgedMail(t *testing.T) {
 	lfid := a.line(b.addr, "77777777-2222-4333-8444-555555555552", "an id with a line feed", 0)
 	w.inject(b, "", lfid, a.sign(b.addr, lfid))
 	w.listing(func(l *forge.Listed) { l.Messages[0].ID += "\n" })
-	if dr := b.recv(); len(dr.mail) != 0 || w.srv.Count(b.addr) != 1 {
+	if dr := b.recv(); len(dr.messages) != 0 || w.srv.Count(b.addr) != 1 {
 		t.Errorf("a listed id with a line feed added was fetched as the id it was cut to: %v", dr)
 	}
 	w.honest()
@@ -450,7 +450,7 @@ func TestScriptRefusesForgedMail(t *testing.T) {
 	seps := "a\u0085b c d"
 	a.mustSend(b, seps)
 	dr := b.recv()
-	if len(dr.mail) != 1 || strings.Count(dr.mail[0], "\n") != 1 || strings.ContainsAny(dr.mail[0], "\u0085  ") || !slices.Equal(dr.bodies(), []string{seps}) {
+	if len(dr.messages) != 1 || strings.Count(dr.messages[0], "\n") != 1 || strings.ContainsAny(dr.messages[0], "\u0085  ") || !slices.Equal(dr.bodies(), []string{seps}) {
 		t.Errorf("U+0085, U+2028 and U+2029 in a body: %v", dr)
 	}
 }
@@ -657,7 +657,7 @@ func TestScriptAsksAboutTheSenderItsSignatureProves(t *testing.T) {
 			l.Messages[i].From = c.addr.String()
 		}
 	})
-	if d := b.recv(); len(d.mail) != 0 || d.refused("revoked") != 1 {
+	if d := b.recv(); len(d.messages) != 0 || d.refused("revoked") != 1 {
 		t.Errorf("a revoked sender's message listed as C's: %v", d)
 	}
 }

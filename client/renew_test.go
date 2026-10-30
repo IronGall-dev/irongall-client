@@ -68,7 +68,7 @@ func TestReceiveRenewsADayOldPrekey(t *testing.T) {
 // A mailbox its server forgot, once its record's expiry passed (PROTOCOL.md §13),
 // comes back at its next receive: with no mailbox served to number above, the
 // renewal is numbered above what the mailbox published, and goes as a
-// registration. Mail reaches it again.
+// registration. Messages reach it again.
 func TestAForgottenMailboxRegistersAnewAtItsRenewal(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
@@ -88,7 +88,7 @@ func TestAForgottenMailboxRegistersAnewAtItsRenewal(t *testing.T) {
 	}
 	send(t, a, b, "to a mailbox registered anew")
 	if got := receive(t, b); len(got.Delivered) != 1 {
-		t.Fatalf("mail to a mailbox registered anew: %+v", got)
+		t.Fatalf("a message to a mailbox registered anew: %+v", got)
 	}
 	// The server lost the mailbox's ACL with the mailbox, and the mailbox sends it again.
 	if acl := e.srv.ACL(b.Address()); acl == nil || !slices.Contains(acl.Deny.Addrs, c.Address()) {
@@ -104,7 +104,7 @@ func TestAForgottenMailboxRegistersAnewAtItsRenewal(t *testing.T) {
 // after any registration, and by the remedy's renewal, after its revocation
 // (#386). Control: a mailbox forgotten before the read, which the read's answer
 // alone sends as a registration.
-func TestARenewalWhoseUploadMeetsABoxForgottenSinceItsReadRegistersIt(t *testing.T) {
+func TestARenewalWhoseUploadMeetsAMailboxForgottenSinceItsReadRegistersIt(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	for _, c := range []struct {
@@ -192,7 +192,7 @@ func TestARenewalWhoseUploadMeetsABoxForgottenSinceItsReadRegistersIt(t *testing
 			}
 			send(t, a, b, "to the mailbox registered anew")
 			if got := receive(t, b); len(got.Delivered) != 1 {
-				t.Fatalf("mail to the mailbox registered anew: %+v", got)
+				t.Fatalf("a message to the mailbox registered anew: %+v", got)
 			}
 		})
 	}
@@ -576,7 +576,7 @@ func TestAFailureDatedAheadHoldsBackNoRenewal(t *testing.T) {
 // After a drain that emptied the mailbox and began more than an hour after the
 // newest retired prekey was made (so every older one had been retired for an
 // hour), every retired prekey but the newest is deleted, key and statement.
-// Mail encrypted to the newest retired one still decrypts.
+// A message encrypted to the newest retired one still decrypts.
 func TestReceiveKeepsOnePriorPrekey(t *testing.T) {
 	t.Parallel()
 	e := newEnv(t)
@@ -597,7 +597,7 @@ func TestReceiveKeepsOnePriorPrekey(t *testing.T) {
 	k3 := numberOf(t, b)
 	e.clock.Add(time.Hour)
 	if res := receive(t, b); len(res.Delivered) != 1 {
-		t.Fatal("mail to the newest retired prekey was not delivered")
+		t.Fatal("a message to the newest retired prekey was not delivered")
 	}
 	if !exists(key(k1) + ".agekey") {
 		t.Fatal("deleted an hour after the newest retired prekey was made, not more")
@@ -792,7 +792,7 @@ func TestAServerThatFailsEveryRenewalGetsEachKeyOnce(t *testing.T) {
 	}
 	for _, key := range order[1:] {
 		if !exists(stem(byKey[key]) + ".agekey") {
-			t.Errorf("serial %d's key is gone while mail to it may still wait", byKey[key].p.Serial)
+			t.Errorf("serial %d's key is gone while a message to it may still wait", byKey[key].p.Serial)
 		}
 	}
 }

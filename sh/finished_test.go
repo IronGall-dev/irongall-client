@@ -20,7 +20,7 @@ import (
 // reaches the server with a pass (PROTOCOL.md §12.5; #256). dr_prekey is the
 // one path to its certificates and statements, so prekey renew is held the
 // same way.
-func TestScriptInitOfABoxThatHoldsItsOwnRevocationSignsNothing(t *testing.T) {
+func TestScriptInitOfAMailboxThatHoldsItsOwnRevocationSignsNothing(t *testing.T) {
 	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()

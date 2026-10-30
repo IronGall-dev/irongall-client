@@ -17,9 +17,9 @@ import (
 // The mailbox's state file, the bbolt database "state", holds what this client
 // writes about the mailbox itself, each change made in one transaction: so no
 // two records that go together are ever left one new and one old, and no
-// file's existence stands for a step having finished. Keys, mail and the
+// file's existence stands for a step having finished. Keys, messages and the
 // owner's own files stay files (client/doc.go): a key deleted inside a
-// database stays in its free pages and in every copy of it, and mail and the
+// database stays in its free pages and in every copy of it, and messages and the
 // owner's files are for a person to read, move and delete. A command that
 // writes the mailbox holds the state file open from its start to its end, which
 // is the mailbox's lock ([Mailbox.hold]); a reading with no command under way opens

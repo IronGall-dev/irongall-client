@@ -40,7 +40,7 @@ type Status struct {
 	Outbox              int    `json:"outbox"`
 	OutboxFailed        int    `json:"outbox_failed"`
 	Refused             int    `json:"refused"`
-	// Held is the mail held/ keeps from senders this mailbox has not allowed.
+	// Held counts the messages held/ keeps from senders this mailbox has not allowed.
 	Held int `json:"held"`
 	// Policy is what the mailbox's policy file says, or the default.
 	Policy Policy `json:"policy"`
@@ -118,7 +118,7 @@ func (b *Mailbox) status() (*Status, error) {
 	} else {
 		s.CertificateSerial, s.CertificateNotAfter = cert.Serial(), cert.NotAfter().Format(protocol.TimeLayout)
 		if !cert.SignsMessages(b.now()) {
-			s.Attention = append(s.Attention, fmt.Sprintf("the certificate ends at %s, too soon to sign mail: sends are refused until dromas recv or dromas prekey renew renews it", s.CertificateNotAfter))
+			s.Attention = append(s.Attention, fmt.Sprintf("the certificate ends at %s, too soon to sign messages: sends are refused until dromas recv or dromas prekey renew renews it", s.CertificateNotAfter))
 		}
 	}
 	// A statement signed for a serial above the published one is a renewal
@@ -163,7 +163,7 @@ func (b *Mailbox) status() (*Status, error) {
 	return s, nil
 }
 
-// refusedCodes lists the distinct codes of the mail in refused/, from
+// refusedCodes lists the distinct codes of the messages in refused/, from
 // what the mailbox's state keeps of each: a message it keeps no code for counts
 // as "unknown".
 func (b *Mailbox) refusedCodes() string {

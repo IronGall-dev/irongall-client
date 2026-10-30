@@ -4,13 +4,13 @@
 // the message's msg_id. An agent proves its whole loop with it, end to end,
 // against a mailbox it does not run.
 //
-// Mail to an echo mailbox is readable by whoever runs it: that is what it is for.
+// A message to an echo mailbox is readable by whoever runs it: that is what it is for.
 //
 // Its state directory belongs in memory (a tmpfs). At every start it copies
 // in the identity key, the one thing kept, and publishes a new prekey, which
 // needs only the identity, so no prekey ever reaches a disk or a backup. A
 // message sealed to the previous prekey is refused after a restart, like any
-// mail a mailbox can no longer decrypt. While it runs, each Receive renews the
+// message a mailbox can no longer decrypt. While it runs, each Receive renews the
 // prekey once it is a day old, as for any mailbox.
 package main
 
@@ -139,8 +139,8 @@ func start(ctx context.Context, dir, identity string, opt client.Options, kt pro
 	if _, err := b.Rekey(ctx, kt); err != nil {
 		return nil, err
 	}
-	// An echo mailbox answers whoever writes: every sender's mail lands in
-	// inbox/, where a mailbox would hold mail from one it has not allowed.
+	// An echo mailbox answers whoever writes: every sender's messages land in
+	// inbox/, where a mailbox would hold messages from one it has not allowed.
 	if err := b.SetPolicy(ctx, client.Policy{Unknown: client.LandInbox, Server: client.AdmitAll}); err != nil {
 		return nil, err
 	}
@@ -157,7 +157,7 @@ func start(ctx context.Context, dir, identity string, opt client.Options, kt pro
 // with replies not yet posted holds for at most the poll interval, then
 // retries them, and drains again only once its list has changed: one list
 // an interval, the hold's, as the poll budget allows. A drain that failed,
-// or left mail on the server, waits that interval with no hold.
+// or left messages on the server, waits that interval with no hold.
 func (e *echo) run(ctx context.Context) error {
 	pause, hold := e.once(ctx)
 	for {
@@ -226,7 +226,7 @@ func (e *echo) once(ctx context.Context) (time.Duration, bool) {
 		}
 		if len(refused) > 0 {
 			if _, err := e.b.RemoveRefused(ctx, refused); err != nil {
-				e.log.Printf("the refused mail was not deleted from refused/: %v", err)
+				e.log.Printf("the refused messages were not deleted from refused/: %v", err)
 			}
 		}
 	}
@@ -308,7 +308,7 @@ func report(d client.Delivery, now time.Time) string {
 	fmt.Fprintf(&s, "checked: decryption with this mailbox's prekey; the sender's identity, which the message carries, against its address; "+
 		"that identity's certificate for the working key; the signature, made for this mailbox only; "+
 		"the envelope's version, from and to; sent_at within %d days; not a replay\n", protocol.TTL/(24*time.Hour))
-	s.WriteString("Mail to an echo mailbox is readable by whoever runs it.\n")
+	s.WriteString("A message to an echo mailbox is readable by whoever runs it.\n")
 	fmt.Fprintf(&s, "body, as JSON: %s\n", env.Body)
 	return s.String()
 }

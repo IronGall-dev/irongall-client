@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # dromas.sh: the dromas client in stock tools (bash, age, ssh-keygen, curl, jq, iconv and coreutils).
 #
-# The same protocol and checks as the Go client in this repo, on a mailbox of its own: the proof that a mailbox made of stock tools exchanges mail with a
+# The same protocol and checks as the Go client in this repo, on a mailbox of its own: the proof that a mailbox made of stock tools exchanges messages with a
 # Go mailbox (AGENTS.md § The shell client), not a client to run. It fails CLOSED:
 # a failed check prints an error line, "REFUSED: <reason>", and stops (recv refuses that one message with a refused line, its code and its words, and goes on), and every API error prints its status and its code, and none of the server's words.
 # It prints JSON lines, as the Go client does, each with its "type" first: what a command did and met on stdout, and on stderr the
@@ -12,7 +12,7 @@
 #   bash dromas.sh init [--no-pq]                  make and register this mailbox; prints its link, $DR_SERVER_URL/to/<address>
 #   bash dromas.sh addr                            print it again: give it to whoever should write to this mailbox
 #   bash dromas.sh send <link> [file]             one message (the body from stdin without a file); a link or an address. Posted now or not at all: nothing waits
-#   bash dromas.sh recv                            verified mail, a "message" line each; refused mail goes to refused/, with a "refused" line
+#   bash dromas.sh recv                            verified messages, a "message" line each; a refused one goes to refused/, with a "refused" line
 #   bash dromas.sh prekey renew [--no-pq]          a new prekey, working key and certificate: at least monthly, as a prekey is valid for 33 days, or within the lifetime a prekey-lifetime file sets
 #   bash dromas.sh help [<command>]                this, or a command's lines; --help after a command does the same, and runs nothing
 #   The README has the rest: https://github.com/dromas-dev/dromas-client#readme
@@ -20,7 +20,7 @@
 # Or source it at the top of every shell call and call the dr_* functions. Agent tools run each command in a fresh
 # shell, so all state lives in files in the mailbox's directory, never in variables.
 #
-# It gives up conveniences the Go client has: recv drains once and never waits for mail, and each step runs several
+# It gives up conveniences the Go client has: recv drains once and never waits for a message, and each step runs several
 # programs. Needs bash >= 4, age >= 1.3 (1.2 makes and reaches --no-pq mailboxes only; Ubuntu to 26.04 and Debian 13
 # ship older, and go install filippo.io/age/cmd/...@v1.3.2 is current), OpenSSH >= 9.1 (the first to take a
 # certificate's validity and a time to verify at in UTC), curl >= 7.84 (--fail-with-body, and -w with %header),
@@ -34,7 +34,7 @@ DR_SERVER_URL=${DR_SERVER_URL:-https://dromas.dev}
 DR=${DR_HOME:-${XDG_CONFIG_HOME:-$HOME/.config}/dromas-sh/${DR_MAILBOX:-default}}   # one mailbox per directory, of this script's own: never the Go client's (its DROMAS_HOME and ~/.config/dromas/, dr_ownmailbox), and never the working directory
 DR_LOCK_WAIT=${DR_LOCK_WAIT:-120}   # how many seconds a command waits for the mailbox's lock while another command of the mailbox holds it: what apt waits for its own lock when no one is at a terminal
 DR_P256='ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBGD+1LolWp0xyWHrdMY1bWjASbiSO2H6bOZpYi5g8p+2eQP+EAi4vJmkGunpVii8ZPLxsgwtfp9Rd6PClNRGIpk='   # a P-256 key, mailbox C's identity in this repo's testdata/vectors/ (RFC 6979 §A.2.5's published test key), for dr_senders to ask ssh-keygen to read
-dr_senders(){ # → the identity key types dr_idcheck verifies on this build, as a JSON list. A mailbox declares them with each prekey it publishes, and the server then refuses it mail from a mailbox whose identity is of any other type (PROTOCOL.md §7): ssh-ed25519, and ecdsa-sha2-nistp256 only where this build's ssh-keygen reads a P-256 key. One built without OpenSSL reads none, so dr_idcheck refuses every P-256 identity there (PROTOCOL.md Appendix A), and a mailbox that declared the type would be sent mail it then refuses
+dr_senders(){ # → the identity key types dr_idcheck verifies on this build, as a JSON list. A mailbox declares them with each prekey it publishes, and the server then refuses it messages from a mailbox whose identity is of any other type (PROTOCOL.md §7): ssh-ed25519, and ecdsa-sha2-nistp256 only where this build's ssh-keygen reads a P-256 key. One built without OpenSSL reads none, so dr_idcheck refuses every P-256 identity there (PROTOCOL.md Appendix A), and a mailbox that declared the type would be sent messages it then refuses
   if ssh-keygen -l -f - <<< "$DR_P256" > /dev/null 2>&1; then echo '["ssh-ed25519","ecdsa-sha2-nistp256"]'; else echo '["ssh-ed25519"]'; fi
 }
 dr_out(){ jq -cn --arg type "$1" "${@:2}" '$ARGS.named'; }      # <type> [--arg <name> <text> | --argjson <name> <JSON>]… → one line of JSON on stdout, its type first and then each member in turn, as the Go client prints one: what a command did or met on the way
@@ -161,7 +161,7 @@ dr_identity(){ # → identity.pub, identity.doc and address, the identity as the
 }
 
 # recipe: keys and registration
-dr_work(){ # <serial> → work/<serial>, .pub and -cert.pub: a NEW working key, and the certificate this mailbox's identity gives it, with that serial, good from an hour ago for 64 days: the 31 it signs mail for, the longest month, and the 33 the last of that mail may wait. The working key signs what the mailbox says; the identity signs certificates and nothing else
+dr_work(){ # <serial> → work/<serial>, .pub and -cert.pub: a NEW working key, and the certificate this mailbox's identity gives it, with that serial, good from an hour ago for 64 days: the 31 it signs messages for, the longest month, and the 33 the last of them may wait. The working key signs what the mailbox says; the identity signs certificates and nothing else
   local A w="$DR/work/$1" t; A=$(cat "$DR/address") || return 1; mkdir -p "$DR/work" || return 1
   [ -s "$w" ] && [ -s "$w-cert.pub" ] && return 0
   rm -f "$w" "$w.pub" "$w-cert.pub"; t=$(dr_now)
@@ -184,7 +184,7 @@ dr_prekey(){ # <serial> [--no-pq] → prekeys/<serial>.agekey and its statement,
   printf 'dromas-prekey-v1\n%s\n%s\n%s\n%s\n' "$A" "$1" "$k" "$(jq -nr --argjson t "$t" --argjson l "$l" '$t + $l | todate')" > "$p.txt" &&
   jq -nr --argjson t "$t" '$t | todate' > "$p.made" &&      # before the signature: a statement is signed once its record is there
   ssh-keygen -q -Y sign -n "dromas-prekey-v1:$A" -f "$DR/work/$1-cert.pub" < "$p.txt" > "$p.txt.sig" &&      # stdin to stdout: never a stale .sig
-  sync "$DR/work/$1" "$DR/work/$1.pub" "$DR/work/$1-cert.pub" "$DR/work" && sync "$p.agekey" "$p.txt" "$p.made" "$p.txt.sig" "$DR/prekeys"      # the working key first, each file in turn: a signed statement is never on disk without the key its pass needs      # on disk before any upload publishes the statement: a key lost to a crash after that is mail nobody can read
+  sync "$DR/work/$1" "$DR/work/$1.pub" "$DR/work/$1-cert.pub" "$DR/work" && sync "$p.agekey" "$p.txt" "$p.made" "$p.txt.sig" "$DR/prekeys"      # the working key first, each file in turn: a signed statement is never on disk without the key its pass needs      # on disk before any upload publishes the statement: a key lost to a crash after that is a message nobody can read
 }
 dr_init(){ # [--no-pq] → creates this mailbox, or finishes a half-done init, and registers it; prints its address and link. The registration carries a pass the new working key signs, so the mailbox is in use at once
   dr_opt "${1-}" || return 1
@@ -195,7 +195,7 @@ dr_init(){ # [--no-pq] → creates this mailbox, or finishes a half-done init, a
   [ ! -s "$DR/serial" ] || { dr_addr; return; }      # registered already
   local A n p h c; A=$(cat "$DR/address")
   n=$(ls "$DR/prekeys" | sed -n 's/\.agekey$//p; s/\.txt\.sig$//p' | sort -n | tail -n 1); [ -n "$n" ] || n=$(dr_now); [ "$n" -ge 1 ] || n=1; p="$DR/prekeys/$n"      # the mailbox's first prekey, working key and certificate take their number as every later one does, from this machine's clock in seconds (dr_renew): a second machine handed the same identity then makes no certificate of a serial this one used. An attempt that got as far as a key keeps the number it took, so a registration whose answer was lost is sent again as it was
-  if c=$(dr_cert "$p.txt.sig" "$DR/identity.doc" "$A" 2> /dev/null) && c=${c#* } && [ "${c% *}" -gt $(($(dr_now) - 3600)) ]; then      # a first statement an earlier attempt left, under a certificate that began less than an hour before this machine's clock: made while the clock read ahead of where it reads now, as a pass made then is not used either (PROTOCOL.md §12.4), so a reader whose clock a server takes may not have reached its start. The working key, its certificate and the statement are made again. The prekey's own key stays: a server may have taken a registration whose answer was lost, and then mail may be waiting that only this key opens
+  if c=$(dr_cert "$p.txt.sig" "$DR/identity.doc" "$A" 2> /dev/null) && c=${c#* } && [ "${c% *}" -gt $(($(dr_now) - 3600)) ]; then      # a first statement an earlier attempt left, under a certificate that began less than an hour before this machine's clock: made while the clock read ahead of where it reads now, as a pass made then is not used either (PROTOCOL.md §12.4), so a reader whose clock a server takes may not have reached its start. The working key, its certificate and the statement are made again. The prekey's own key stays: a server may have taken a registration whose answer was lost, and then messages may be waiting that only this key opens
     rm -f "$p.txt" "$p.made" "$p.txt.sig" "$DR/work/$n" "$DR/work/$n.pub" "$DR/work/$n-cert.pub" "$DR/pass.new"
   fi
   dr_prekey "$n" "${1-}" || return 1
@@ -470,7 +470,7 @@ dr_takerecord(){ # <address> → keeps what verifies of the record a 410 revoked
   jq -ce '.record | objects' "$DR/error.json" > "$DR/rev.json" 2> /dev/null && dr_isrecord "$DR/rev.json" || return 1
   dr_take "$1"
 }
-dr_finished(){ # → 0 while this mailbox may act as its address. 1: it holds its own revocation, which verifies, and signs nothing more as that address, no pass, no mail and no certificate, whatever any server answers: a server that never saw the revocation would take it all (PROTOCOL.md §12.5). It still asks, keeps and publishes the record, which carry no pass. 3: the one it keeps does not verify, a fault of this mailbox, which stops the same
+dr_finished(){ # → 0 while this mailbox may act as its address. 1: it holds its own revocation, which verifies, and signs nothing more as that address, no pass, no message and no certificate, whatever any server answers: a server that never saw the revocation would take it all (PROTOCOL.md §12.5). It still asks, keeps and publishes the record, which carry no pass. 3: the one it keeps does not verify, a fault of this mailbox, which stops the same
   dr_gone "$(cat "$DR/address" 2> /dev/null)"; case $? in 1) return 0 ;; 0) return 1 ;; *) return 3 ;; esac
 }
 dr_done(){ # <what dr_finished returned> → says on stderr why this mailbox acts as its address no more
@@ -497,7 +497,7 @@ dr_send(){ # <link or address> [body file] → one message, posted now or not at
   id=$(dr_uuid) || { dr_spent; return 1; }
   jq -cn --arg from "$A" --arg to "$B" --arg id "$id" --argjson t "$(dr_now)" --arg i "$(dr_b64 "$DR/identity.doc")" --rawfile body "$f" \
     '{v:1, from:$from, to:$to, sent_at:($t|todate), msg_id:$id, identity:$i, body:$body}' > "$DR/send.P" 2> /dev/null || { dr_spent; dr_err "the envelope could not be built: nothing is sent"; return 1; }      # ONE line, ending in a line feed: exactly the bytes that are signed. It carries this mailbox's identity document, so its reader need not ask the server who wrote it
-  why=$(dr_envcheck "$DR/send.P" "$A" "$B") || { dr_spent; dr_refuse "nothing is sent, since its reader would refuse this detail: ${why#*: }"; return 1; }      # read back as its reader will, and as dr_seal does
+  why=$(dr_envcheck "$DR/send.P" "$A" "$B") || { dr_spent; dr_refuse "nothing is sent, since its reader would refuse this message: ${why#*: }"; return 1; }      # read back as its reader will, and as dr_seal does
   dr_post "$B" "$DR/send"; local rc=$?; dr_spent; return $rc
 }
 dr_spent(){ rm -f "$DR/body.txt" "$DR/send.P" "$DR/seal.P" "$DR/seal.sig" "$DR/seal.age" "$DR/seal.query" "$DR/mailbox.json" "$DR/receipt.json"; }      # what a send wrote to post its message, gone once it is posted or refused: the body, the envelope, its seal, the mailbox it was sealed to and the server's receipt. sent/ is the record of what was sent
@@ -517,11 +517,11 @@ dr_seal(){ # <address> <envelope stem> [the mailbox dr_lookup read] → what to 
   why=$(dr_envcheck "$s.P" "$A" "$B") && [ "$(wc -l < "$s.P")" -eq 1 ] && jq -e --arg d "$d" --slurpfile w "$o.P" '.sent_at == $d and del(.sent_at) == ($w[0] | del(.sent_at))' "$s.P" > /dev/null 2>&1 ||
     dr_refuse "the envelope does not read back as itself once dated at this post${why:+: $why}" || return 1
   c=$(dr_cert "$DR/prekeys/$n.txt.sig" "$DR/identity.doc" "$A") && [ $((${c##* } - $(dr_now))) -gt $((33*86400)) ] ||      # the certificate in use: the one this mailbox's published prekey is signed under
-    dr_refuse "this mailbox's certificate ends within 33 days, too soon to sign mail that may wait that long (or it has no working key): rekey makes a new one" || return 1
+    dr_refuse "this mailbox's certificate ends within 33 days, too soon to sign a message that may wait that long (or it has no working key): rekey makes a new one" || return 1
   [ "$(cat "$DR/not-made" 2> /dev/null)" != "$n" ] ||      # a statement served in this mailbox's name under that certificate that it did not make (dr_renew)
-    dr_refuse "a prekey statement this mailbox did not make is served in its name under the certificate it signs under, so someone else holds that working key, from a copy of the mailbox's directory, which holds the identity too: no mail is signed under it. Revoke the address, unless you know the identity was not copied; prekey renew moves the mailbox to a new certificate" || return 1
-  dr_certrevoked "$A" "${c%% *}"; case $? in      # a certificate this mailbox's own identity has revoked signs no mail: every reader that holds the revocation refuses it, whatever this mailbox's server took. That is the remedy's window while its renewal waits (PROTOCOL.md §12.6): the entry waits too
-    0) dr_refuse "this mailbox's identity has revoked the certificate it signs under, so mail signed now would be refused: prekey renew publishes the new one first"; return 1 ;;
+    dr_refuse "a prekey statement this mailbox did not make is served in its name under the certificate it signs under, so someone else holds that working key, from a copy of the mailbox's directory, which holds the identity too: no message is signed under it. Revoke the address, unless you know the identity was not copied; prekey renew moves the mailbox to a new certificate" || return 1
+  dr_certrevoked "$A" "${c%% *}"; case $? in      # a certificate this mailbox's own identity has revoked signs no message: every reader that holds the revocation refuses it, whatever this mailbox's server took. That is the remedy's window while its renewal waits (PROTOCOL.md §12.6): the entry waits too
+    0) dr_refuse "this mailbox's identity has revoked the certificate it signs under, so a message signed now would be refused: prekey renew publishes the new one first"; return 1 ;;
     1) ;;
     *) dr_refuse "this mailbox's own revocation of its certificates does not verify"; return 1 ;;
   esac
@@ -535,9 +535,9 @@ dr_seal(){ # <address> <envelope stem> [the mailbox dr_lookup read] → what to 
 }
 dr_post(){ # <address> <envelope stem> → seals it and POSTs it; on 409 stale_prekey, seals the SAME envelope again, once, to the mailbox read again. Before each seal, the recipient's mailbox is read (dr_lookup), and the seal is made to what this mailbox then holds, dated after that read. A post that fails is told, and nothing is kept
   local B=$1 o=$2 c try
-  dr_finished; case $? in      # a mailbox that holds its own revocation can never deliver it: every reader that holds the revocation refuses its mail, whenever it was signed
+  dr_finished; case $? in      # a mailbox that holds its own revocation can never deliver it: every reader that holds the revocation refuses its messages, whenever they were signed
     0) ;;
-    1) dr_err "REVOKED: this mailbox's own address is revoked, for good, and the revocation verifies, so its mail can never be delivered: nothing is sent"; return 1 ;;
+    1) dr_err "REVOKED: this mailbox's own address is revoked, for good, and the revocation verifies, so its messages can never be delivered: nothing is sent"; return 1 ;;
     *) dr_done 3; return 1 ;;
   esac
   for try in first retry; do
@@ -572,22 +572,22 @@ dr_sent(){ # <address> → sent/<address>.<msg_id>.json, one line, {"envelope":�
 }
 
 # recipe: receive
-dr_recv(){ # drains the mailbox, every page up to a drain's limits. ACCEPT → inbox/ and a mail line on stdout. REFUSED → refused/, never delivered, and a refused line on stdout. Both are acked
+dr_recv(){ # drains the mailbox, every page up to a drain's limits. ACCEPT → inbox/ and a message line on stdout. REFUSED → refused/, never delivered, and a refused line on stdout. Both are acked
   dr_held || { dr_lock dr_recv "$@"; return; }
-  DR_LISTED=; dr_drain; local rc=$?; [ -z "$DR_LISTED" ] || dr_prune "$DR_LISTED"; return $rc      # keys deleted by this clock only once the server has answered the list, so has taken a pass dated by it, and by that pass's date: a clock far ahead is stopped at its pass, one that moves while the list is in flight deletes nothing by where it went, and the keys that mail waits for stay (PROTOCOL.md §12.4)
+  DR_LISTED=; dr_drain; local rc=$?; [ -z "$DR_LISTED" ] || dr_prune "$DR_LISTED"; return $rc      # keys deleted by this clock only once the server has answered the list, so has taken a pass dated by it, and by that pass's date: a clock far ahead is stopped at its pass, one that moves while the list is in flight deletes nothing by where it went, and the keys that messages wait for stay (PROTOCOL.md §12.4)
 }
-dr_drain(){ # stops at a transient error or a fault of this mailbox, leaving the rest on the server for the next drain. And at a number of messages and of pages (below): a server that lists mail without end costs one run that much
+dr_drain(){ # stops at a transient error or a fault of this mailbox, leaving the rest on the server for the next drain. And at a number of messages and of pages (below): a server that lists messages without end costs one run that much
   local B c="" n i id k=0 pages=0; B=$(cat "$DR/address") || return 1
   dr_finished || { dr_done $?; return 1; }
   rm -f "$DR/asked"      # the senders this drain has asked the server about: one lookup each
   while :; do
-    [ $((pages += 1)) -le 100 ] || { dr_out more --arg message "this run stopped at the most one drain takes: run recv again for the rest, which is still on the server"; return 0; }
+    [ $((pages += 1)) -le 100 ] || { dr_out more --arg detail "this run stopped at the most one drain takes: run recv again for the rest, which is still on the server"; return 0; }
     dr_owner GET "/v1/$B/messages${c:+?cursor=$c}" > "$DR/list.json" || { dr_own; return 1; }
     [ "$pages" -gt 1 ] || { DR_LISTED=$(dr_taken) && dr_forget "$DR_LISTED"; } || return 1      # the replay set pruned by this clock only once the server has taken a pass dated by it, and by that pass's date (dr_taken): a drain that a clock far off would prune is stopped at its pass first. DR_LISTED tells dr_recv the same reading for the keys
-    dr_shape "$DR/list.json" list && n=$(jq -r '.messages | length' "$DR/list.json") || { dr_err "the server's list of messages is not one this client reads: the mail stays on the server"; return 1; }
+    dr_shape "$DR/list.json" list && n=$(jq -r '.messages | length' "$DR/list.json") || { dr_err "the server's list of messages is not one this client reads: the messages stay on the server"; return 1; }
     for ((i = 0; i < n; i++)); do
       id=$(jq -r --argjson i "$i" '.messages[$i].id | strings | select(test("\\A[0-9a-f]{64}\\z"))' "$DR/list.json") && dr_hex "$id" || continue      # tested in jq: $(…) drops trailing LFs and every NUL
-      [ $((k += 1)) -le 1000 ] || { dr_out more --arg message "this run stopped at the most one drain takes: run recv again for the rest, which is still on the server"; return 0; }
+      [ $((k += 1)) -le 1000 ] || { dr_out more --arg detail "this run stopped at the most one drain takes: run recv again for the rest, which is still on the server"; return 0; }
       if ! grep -q "^$id " "$DR/seen" 2> /dev/null; then jq -c --argjson i "$i" '.messages[$i]' "$DR/list.json" > "$DR/entry.json" && dr_one "$B" "$id" "$DR/entry.json" || return 1; fi   # an id already handled is only acked again
       dr_owner DELETE "/v1/$B/messages/$id" > /dev/null || [ "$(dr_code)" = no_such_message ] || return 1
     done
@@ -608,11 +608,11 @@ dr_one(){ # <me> <id> <its list entry> → 0 once the message is judged and its 
   case $rc in
     0) A=$(jq -r .from "$m.P") && dr_putout "$DR/inbox/$h.json" dr_line "$m.P" && dr_seen "$A" "$m" "$h" || return 1      # stored, then seen, both on disk before the ack: a crash delivers again, never loses
        printf '{"type":"message","id":"%s","envelope":' "$h" && cat "$DR/inbox/$h.json" && echo '}' ;;      # the envelope the line inbox/ keeps, as its bytes are (jq would write the line breaks dr_line escaped), and only inside "envelope", so a member it gains later never meets the line's own (#356)
-    2) dr_out duplicate --arg id "$h" --arg message "a retry of a message already delivered: not delivered again" ;;
+    2) dr_out duplicate --arg id "$h" --arg detail "a retry of a message already delivered: not delivered again" ;;
     3) dr_err "$why: nothing is judged or acked until this mailbox is fixed"; return 1 ;;
     4) dr_err "$why: the message stays on the server, and the next recv asks again"; return 1 ;;
     *) dr_putout "$DR/refused/$h.json" dr_kept "$m" "$h" && dr_putline "$DR/refused/$h.reason" "$why" || return 1      # what dr_kept keeps of the message, the id this script hashed and the ciphertext in base64, and beside it why: "<code>: <words>", this script's own words, never the message's
-       dr_out refused --arg id "$h" --arg code "${why%%: *}" --arg message "${why#*: }" ;;
+       dr_out refused --arg id "$h" --arg code "${why%%: *}" --arg detail "${why#*: }" ;;
   esac
 }
 dr_kept(){ # <message stem> <id> → the message as refused/ keeps it: the id this script hashed, and the ciphertext its fetch answered, <stem>.age, in base64; none of the server's strings, so nothing the server chose is there to be read
@@ -729,7 +729,7 @@ dr_renew(){ # [--no-pq] → what dr_rekey does, the lock held. A serial is signe
     [ -s "$DR/self.txt" ] && [ -s "$DR/self.sig" ] || dr_refuse "the server sent no prekey for this mailbox" || return 1
     c=$(dr_cert "$DR/self.sig" "$DR/identity.doc" "$A") && c=${c#* } && r=$(dr_prekeycheck "$DR/self.txt" "$DR/self.sig" "$A" "$DR/identity.doc" "${c% *}") || dr_refuse "this mailbox's current prekey, as served: ${r:-it is not signed under a certificate of this identity}" || return 1      # its own record, judged where its certificate begins: whether this identity ever certified the key that signed it, even if that certificate has since ended
     s=${r%% *}; cs=${r##* }      # a mailbox's statements are ordered by certificate first, then by serial, and this mailbox gives a renewal's certificate and prekey one number: what it published is (p, p), and the server may serve nothing ordered before it
-    if [ "$cs" -eq "$p" ] && ! cmp -s "$DR/self.txt" "$DR/prekeys/$s.txt"; then dr_putline "$DR/not-made" "$cs" || return 1; fi      # served under the certificate this mailbox signs under, and not a statement it made: whoever made it holds that working key, from a copy of the mailbox's directory, so dr_seal signs no mail under it until this renewal has moved the mailbox to a new certificate (PROTOCOL.md §12.4). The Go client tells its own certificate by the key it certifies, this script by the serial, so it also holds under one the identity made for another key at that serial, which only refuses more
+    if [ "$cs" -eq "$p" ] && ! cmp -s "$DR/self.txt" "$DR/prekeys/$s.txt"; then dr_putline "$DR/not-made" "$cs" || return 1; fi      # served under the certificate this mailbox signs under, and not a statement it made: whoever made it holds that working key, from a copy of the mailbox's directory, so dr_seal signs no message under it until this renewal has moved the mailbox to a new certificate (PROTOCOL.md §12.4). The Go client tells its own certificate by the key it certifies, this script by the serial, so it also holds under one the identity made for another key at that serial, which only refuses more
     [ "$cs" -gt "$p" ] || { [ "$cs" -eq "$p" ] && [ "$s" -ge "$p" ]; } || dr_refuse "rollback: the server serves this mailbox's prekey serial $s under certificate $cs, before serial $p, which this mailbox published" || return 1
     s=$((cs > p ? cs : p))
   fi
@@ -756,7 +756,7 @@ dr_renew(){ # [--no-pq] → what dr_rekey does, the lock held. A serial is signe
   for f in "$DR"/work/*-cert.pub; do t=$(basename "$f" -cert.pub); [[ $t =~ ^[0-9]+$ ]] && [ "$t" -lt "$s" ] && rm -f "$DR/work/$t" "$DR/work/$t.pub" "$f"; done      # older working keys: what they signed is signed, and the server takes no pass under them
   at=$(dr_taken) && dr_prune "$at" && dr_out prekey --argjson serial "$s" --arg not_after "$(sed -n 5p "$DR/prekeys/$s.txt")"      # by the reading the server took the renewal at: the date of its pass, now $DR/pass
 }
-dr_prune(){ # <Unix time, one a server took (dr_taken)> → deletes every retired prekey past its deletion time by that reading of this machine's clock: its not_after + the 33 days mail is kept. dr_recv gives the date of the pass its list carried, dr_renew that of the renewal's: a clock a server took, never a later reading. After that, mail encrypted to it is unrecoverable. (The Go client also deletes them sooner.)
+dr_prune(){ # <Unix time, one a server took (dr_taken)> → deletes every retired prekey past its deletion time by that reading of this machine's clock: its not_after + the 33 days a message is kept. dr_recv gives the date of the pass its list carried, dr_renew that of the renewal's: a clock a server took, never a later reading. After that, a message encrypted to it is unrecoverable. (The Go client also deletes them sooner.)
   local f n top na; top=$(ls "$DR/prekeys" | sed -n 's/\.agekey$//p' | sort -n | tail -n 1); [ -n "$top" ] || return 0
   for f in "$DR"/prekeys/*.txt; do
     [ -e "$f" ] || continue

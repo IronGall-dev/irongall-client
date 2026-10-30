@@ -134,7 +134,7 @@ func inbox(t *testing.T, b *client.Mailbox) []string {
 // whole checks a mailbox after a crash by its next commands, opened anew from its
 // directory: a drain takes everything waiting on its server, refusing
 // nothing; a renewal goes through, and its server serves the prekey it
-// published; mail sealed to the new one is read; and the inbox holds every
+// published; messages sealed to the new one are read; and the inbox holds every
 // message sent to the mailbox, once: waiting, sent before the crash, and those
 // sent here.
 func whole(t *testing.T, e *env, b, from *client.Mailbox, waiting ...string) {
@@ -504,7 +504,7 @@ func TestADrainKilledAtEachStepOfARefusalKeepsItOnce(t *testing.T) {
 		t.Run(step, func(t *testing.T) {
 			e := newEnv(t)
 			a, b := e.mailbox(protocol.Classic), e.mailbox(protocol.Classic)
-			mailAs(t, e, a, b, worker(t, b), "signed by another mailbox's key")
+			messageAs(t, e, a, b, worker(t, b), "signed by another mailbox's key")
 			crash(t, e, b, "receive", step, protocol.Address{})
 			x, err := client.Open(b.Dir(), e.opts())
 			if err != nil {

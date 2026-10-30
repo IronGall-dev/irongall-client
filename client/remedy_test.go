@@ -28,7 +28,7 @@ import (
 // The server refuses the owner's renewal, here for the identity's
 // certificates of the day. The revocation went out first, the certificate in
 // use among those it revokes: what the taker signs with it is refused, the
-// mailbox takes no mail meanwhile, and its next drain sends the renewal that
+// mailbox takes no messages meanwhile, and its next drain sends the renewal that
 // waited, after which the mailbox receives again.
 func TestTheRemedyWhenTheRenewalIsRefused(t *testing.T) {
 	t.Parallel()
@@ -60,11 +60,11 @@ func TestTheRemedyWhenTheRenewalIsRefused(t *testing.T) {
 	}
 
 	// What the taker signs is refused by a reader that asks, and so is the
-	// owner's own unread mail under that certificate: nobody can tell them
+	// owner's own unread messages under that certificate: nobody can tell them
 	// apart.
-	mailAs(t, e, a, reader, taken, "signed with the taken working key")
+	messageAs(t, e, a, reader, taken, "signed with the taken working key")
 	if res := receive(t, reader); len(res.Delivered) != 0 || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedCertificate {
-		t.Fatalf("the taker's mail, after the revocation: %+v", res)
+		t.Fatalf("the taker's message, after the revocation: %+v", res)
 	}
 
 	// The mailbox is dark: its pass is under a revoked certificate, and its drain
@@ -73,7 +73,7 @@ func TestTheRemedyWhenTheRenewalIsRefused(t *testing.T) {
 		t.Fatalf("a drain while the renewal is refused: %+v, %v", res, err)
 	}
 
-	// Mail to it waits meanwhile: a sender refuses its prekey, which is
+	// A message to it waits meanwhile: a sender refuses its prekey, which is
 	// under a revoked certificate, and keeps the message in its outbox.
 	if _, err := reader.Send(ctx, a.Address(), "while the mailbox is dark"); err == nil || !strings.Contains(err.Error(), "revoked") {
 		t.Fatalf("a send to the mailbox while it is dark: %v", err)
@@ -191,11 +191,11 @@ func TestTheRemedySendsNoRenewalThatWaited(t *testing.T) {
 	if !r.Revoked.Revokes(first) || !r.Revoked.Revokes(waiting) || r.Revoked.Revokes(r.Below) {
 		t.Fatalf("its revocation: %+v", r.Revoked)
 	}
-	mailAs(t, e, a, reader, copied, "signed with the waiting renewal's working key")
+	messageAs(t, e, a, reader, copied, "signed with the waiting renewal's working key")
 	send(t, a, reader, "from the owner")
 	res := receive(t, reader)
 	if len(res.Delivered) != 1 || bodyOf(t, res.Delivered[0]) != "from the owner" || len(res.Refused) != 1 || res.Refused[0].Code != client.RefusedCertificate {
-		t.Fatalf("a drain of the copy's mail and the owner's: %+v", res)
+		t.Fatalf("a drain of the copy's message and the owner's: %+v", res)
 	}
 }
 

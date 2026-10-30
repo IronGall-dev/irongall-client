@@ -112,7 +112,7 @@ func TestARedirectIsNeverFollowed(t *testing.T) {
 // Every call a mailbox makes is held to it: the read of a recipient before a
 // send, and the send itself, for each status a redirect has. A send that
 // is redirected posts nothing anywhere, and waits in the outbox.
-func TestNoCallOfABoxFollowsARedirect(t *testing.T) {
+func TestNoCallOfAMailboxFollowsARedirect(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	for _, status := range redirects {

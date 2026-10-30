@@ -66,10 +66,10 @@ const (
 
 	// 429, all with Retry-After
 	CodeRateLimited  Code = "rate_limited"  // a limit takes no more for now: which one is quota_id, and whom it counted against subject
-	CodeFetchPaced   Code = "fetch_paced"   // the mailbox has taken out as much new mail as it may for now: the rest waits
+	CodeFetchPaced   Code = "fetch_paced"   // the mailbox has taken out all the new messages it may for now: the rest wait
 	CodeRefetchSpent Code = "refetch_spent" // the message was fetched before, and fetching again is spent for now
 	CodeMailboxFull  Code = "mailbox_full"
-	CodeMailboxBusy  Code = "mailbox_busy" // the mailbox has taken as much new mail as it takes for now
+	CodeMailboxBusy  Code = "mailbox_busy" // the mailbox has taken all the new messages it takes for now
 
 	// 503, with Retry-After
 	CodeUnavailable Code = "unavailable"

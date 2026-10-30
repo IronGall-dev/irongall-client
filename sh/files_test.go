@@ -62,9 +62,9 @@ func newestKey(t *testing.T, dir string) string {
 // A mailbox restored from its identity alone, in an empty directory, renews at a
 // server that still holds it and at one that forgot it, as the README
 // restores a mailbox: the script makes its directories, identity.pub,
-// identity.doc and the same address from the identity (#231, #243), mail
+// identity.doc and the same address from the identity (#231, #243), a message
 // sent to it is delivered, and init on it then rewrites none of them.
-func TestTheScriptRestoresABoxFromItsIdentityAlone(t *testing.T) {
+func TestTheScriptRestoresAMailboxFromItsIdentityAlone(t *testing.T) {
 	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
@@ -398,7 +398,7 @@ func TestGitignoreIsMovedIntoPlace(t *testing.T) {
 // a refusal that says so, as an answer for the mailbox's own read does (#230): the
 // script once exited 1 with no line. A record that holds nothing lets the
 // renewal go on.
-func TestAForgottenBoxsRenewalRefusesARevocationsAnswerThatIsNoRecord(t *testing.T) {
+func TestAForgottenMailboxsRenewalRefusesARevocationsAnswerThatIsNoRecord(t *testing.T) {
 	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)
@@ -536,7 +536,7 @@ func TestAKeptMessageFileIsWrittenBesideAndMoved(t *testing.T) {
 // exits 1, as every command of the script does (#274); addr
 // on a mailbox restored from its identity alone prints its address, the mailbox's
 // files made from the identity first, as the Go client's Open makes them.
-func TestAddrNeedsABox(t *testing.T) {
+func TestAddrNeedsAMailbox(t *testing.T) {
 	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	srv := fakeserver.New(t, time.Now)

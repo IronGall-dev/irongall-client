@@ -303,7 +303,7 @@ func (b *Mailbox) readOwn(ctx context.Context, kt protocol.KeyType, unused bool)
 // renewal and keeps what it was sent the same key for 33 more days at
 // each retry, without end. Once such a statement can no longer be sent
 // (it expired, or a key of another type is wanted), a new number is
-// taken, above it: its key stays, as a retired one, for mail it may yet
+// taken, above it: its key stays, as a retired one, for messages it may yet
 // decrypt. Nothing at or below the highest serial this mailbox signed is
 // signed anew, and that one's files are never pruned, so a serial is
 // never used twice.
@@ -688,7 +688,7 @@ func (b *Mailbox) holdRenewal(why error) error {
 // lifetime now allows, so a lifetime set lower holds from the next recv; when
 // that lifetime cannot be read, so that the renewal fails and says why; and
 // when this mailbox's own identity has revoked the certificate it is using: such
-// a mailbox takes no mail until it publishes under a new one, and
+// a mailbox takes no messages until it publishes under a new one, and
 // [Mailbox.RenewAndRevoke] leaves it so when the server refused its renewal.
 func (b *Mailbox) renewDue() bool {
 	n, err := b.current()
@@ -708,10 +708,10 @@ func (b *Mailbox) renewDue() bool {
 // that emptied the mailbox and whose list the server took at a reading more than
 // retiredGrace after the newest retired prekey was made: every older one was
 // retired by then. A send must
-// name the recipient's current prekey serial, so mail encrypted to a retired
+// name the recipient's current prekey serial, so a message encrypted to a retired
 // prekey reached the server before the renewal that retired it, or with a
 // send already in progress: such a drain collected all of it. The newest
-// retired prekey is kept regardless. After this, mail encrypted to a deleted
+// retired prekey is kept regardless. After this, a message encrypted to a deleted
 // prekey is unrecoverable from the mailbox's keys. dromas.sh does not do this;
 // it keeps every retired prekey until prune's deletion time.
 func (b *Mailbox) dropRetired(at taken) error {
@@ -762,8 +762,8 @@ func (b *Mailbox) removePrekey(n uint64) error {
 
 // prune deletes every prekey but the newest this mailbox holds whose deletion
 // time has come by the reading at, one a server took: its not_after plus
-// protocol.TTL. All mail encrypted to it arrived by its not_after and has
-// expired by then; after this, that mail is unrecoverable from the mailbox's
+// protocol.TTL. Every message encrypted to it arrived by its not_after and has
+// expired by then; after this, those messages are unrecoverable from the mailbox's
 // keys. A drain's list taken, and a renewal taken, each run it, by the date
 // of the pass that call carried: a clock far ahead is stopped at that pass,
 // and one that moves while the call is in flight deletes nothing by where it

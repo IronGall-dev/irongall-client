@@ -97,7 +97,7 @@ func TestRecvRenewsNothingAboveAStatementTheMailboxDidNotMake(t *testing.T) {
 				t.Fatalf("status: %+v, %v", st, err)
 			}
 			// Under its own certificate, whose working key another holds, it
-			// signs no mail: the entry waits for the mailbox's next certificate.
+			// signs no message: the entry waits for the mailbox's next certificate.
 			to := e.mailbox(protocol.PostQuantum)
 			_, err = b.Send(ctx, to.Address(), "while another holds its working key")
 			if (err != nil) != c.own {
@@ -128,7 +128,7 @@ func TestRecvRenewsNothingAboveAStatementTheMailboxDidNotMake(t *testing.T) {
 // statement signed with the mailbox's own working key, served since that read,
 // lets a send through, and once a read of itself has shown it (revocation
 // ask of its own address), the next send waits (#442 item 1).
-func TestASendIsHeldByTheBoxsLastReadOfItself(t *testing.T) {
+func TestASendIsHeldByTheMailboxsLastReadOfItself(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	e := newEnv(t)
