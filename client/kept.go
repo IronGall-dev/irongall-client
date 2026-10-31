@@ -141,9 +141,9 @@ type refusedRecord struct {
 // message (protocol.Findings), so that its owner can judge it once its key is
 // gone: when it was judged, by this machine's clock; who signed it, or only
 // the identity it carries when the signature does not verify or the mailbox
-// holds a revocation of that address or that certificate (#265); and, with
-// who signed it, the certificate's serial and dates and the envelope's
-// sent_at and msg_id. Each is a value this client checked the form of.
+// holds a revocation of that address or one that covers its signer (#265);
+// and, with who signed it, the certificate's serial and dates where a working
+// key signed it, and the envelope's sent_at and msg_id. Each is a value this client checked the form of.
 type keptFindings struct {
 	At                string `json:"at"`
 	SignedBy          string `json:"signed_by,omitempty"`
@@ -165,8 +165,12 @@ func newKeptFindings(f *protocol.Findings) *keptFindings {
 	switch {
 	case f.Identity != nil && f.Signed:
 		k.SignedBy = f.Identity.String()
-		k.CertificateSerial = f.Serial
-		k.CertificateBegan, k.CertificateEnds = stamp(f.Began), stamp(f.Ends)
+		// A certificate's serial and dates only where there is one: the
+		// identity's own signature has neither.
+		if f.Rank > 0 {
+			k.CertificateSerial = f.Rank
+			k.CertificateBegan, k.CertificateEnds = stamp(f.Began), stamp(f.Ends)
+		}
 		if !f.SentAt.IsZero() {
 			k.SentAt = stamp(f.SentAt)
 		}
