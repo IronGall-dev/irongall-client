@@ -477,6 +477,15 @@ func TestARestoredMailboxRegistersWhereItsServerForgotIt(t *testing.T) {
 	e := newWorkEnv(t)
 	a := e.mailbox()
 	r := restoreWith(t, e, a, e.clock.Now)
+	// Its owner hands it its trip, which tells it its mode where its server
+	// does not answer.
+	trip, err := a.CertificatesRecord(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.KeepRevocation(ctx, trip); err != nil {
+		t.Fatal(err)
+	}
 	e.clock.Add(time.Minute)
 	watch(e, func(w http.ResponseWriter, req *http.Request) bool {
 		if req.Method == http.MethodGet && req.URL.Path == mailboxPath(a) {

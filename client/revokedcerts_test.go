@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -183,9 +182,11 @@ func TestOnlyTheIdentitysHighestRevocationCounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	trip, _ := stateOf(b, "peers/"+a.Address().String()+"/revoked-certs.json")
 	show(protocol.Revocations{Identity: doc, RevokedCertificates: forged.Statement(), RevokedCertificatesSignature: byWorker})
 	send(t, a, b, "under certificate 1, which a working key cannot revoke")
-	if res := receive(t, b); len(res.Delivered) != 1 || keptList(b, a.Address()) || shown.Load() == 0 {
+	kept, _ := stateOf(b, "peers/"+a.Address().String()+"/revoked-certs.json")
+	if res := receive(t, b); len(res.Delivered) != 1 || !bytes.Equal(kept, trip) || shown.Load() == 0 {
 		t.Fatalf("a revocation a working key signed was applied or kept, or never shown: %+v", res)
 	}
 	e.srv.SetMiddle(nil)
@@ -292,7 +293,7 @@ func TestALaterCertificateOutranksAnyPrekeySerial(t *testing.T) {
 		}
 		next.ServeHTTP(w, r)
 	})
-	if _, err := b.Send(ctx, a.Address(), "to the thief's prekey"); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("under certificate %d, below %d", first, got.Serial)) {
+	if _, err := b.Send(ctx, a.Address(), "to the thief's prekey"); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("under certificate %d, below certificate %d", first, got.Serial)) {
 		t.Fatalf("the earlier certificate served again: %v", err)
 	}
 }

@@ -706,8 +706,9 @@ func TestAskingAtAnyTimeAndARevocationHandedOver(t *testing.T) {
 	e := newWorkEnv(t)
 	a, b, c := e.mailbox(), e.mailbox(), e.mailbox()
 
-	if held, err := b.Ask(ctx, a.Address()); err != nil || held.Revoked || held.Certificates != nil {
-		t.Fatalf("ask about a mailbox with nothing revoked: %+v, %v", held, err)
+	// A mailbox in working-key mode, whose trip revokes nothing it uses.
+	if held, err := b.Ask(ctx, a.Address()); err != nil || held.Revoked || held.Certificates == nil || held.Certificates.Revokes(numberOf(t, a)) {
+		t.Fatalf("ask about a mailbox with nothing revoked but before its trip: %+v, %v", held, err)
 	}
 	stolen := worker(t, a)
 	theft(t, e, a)

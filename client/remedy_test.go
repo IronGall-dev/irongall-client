@@ -351,6 +351,11 @@ func TestAFaultAfterTheRevocationWasTakenLeavesItTaken(t *testing.T) {
 			e := newWorkEnv(t)
 			b := e.mailbox()
 			e.clock.Add(2 * time.Second)
+			// A certificate after the first, which its trip revokes nothing of.
+			if _, err := b.Rekey(ctx); err != nil {
+				t.Fatal(err)
+			}
+			e.clock.Add(2 * time.Second)
 			var armed atomic.Bool
 			client.SetStep(func(name string) {
 				if name == "revocation published" {

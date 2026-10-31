@@ -30,7 +30,7 @@ func TestARefusedMessageKeepsWhatItsChecksFound(t *testing.T) {
 
 func refusedFindings(t *testing.T, kind string) {
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	o := e.opts()
 	o.IdentityType = kind
 	a, err := client.Init(ctx, t.TempDir(), o)
