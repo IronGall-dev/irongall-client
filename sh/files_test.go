@@ -88,7 +88,7 @@ func TestTheScriptRestoresAMailboxFromItsIdentityAlone(t *testing.T) {
 		// Served the lost machine's statement, which it did not make, it says
 		// so and renews above it: its first renewal takes the mailbox over
 		// (PROTOCOL.md §12.4).
-		out, err := bash(t, env, "dr_rekey 2> \"$DR/../rekey.err\"")
+		out, err = bash(t, env, "dr_rekey 2> \"$DR/../rekey.err\"")
 		lines, said := strings.Split(strings.TrimSpace(out), "\n"), 2
 		if forgotten {
 			said = 1 // nothing is served
