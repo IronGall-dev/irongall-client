@@ -25,9 +25,10 @@ import (
 
 // The script's mailbox made, sending and reading, against a server that forges.
 
-// served is the serial of mailbox a's prekey as the server serves it, and of the
-// certificate it is signed under.
-func (w *world) served(b *shMailbox) (prekey, cert uint64) {
+// served is the serial of mailbox b's prekey as the server serves it, and the
+// rank of its signer: 0 for the identity, which signs every statement of the
+// script's own mailbox (PROTOCOL.md §5).
+func (w *world) served(b *shMailbox) (prekey, rank uint64) {
 	w.t.Helper()
 	st, sig := w.srv.Prekey(b.addr)
 	id, err := protocol.ParseIdentity([]byte(b.read("identity.doc")))
@@ -38,7 +39,7 @@ func (w *world) served(b *shMailbox) (prekey, cert uint64) {
 	if err != nil {
 		w.t.Fatalf("the statement served for %s: %v", b.addr, err)
 	}
-	return p.Serial, c.Serial()
+	return p.Serial, c.Rank()
 }
 
 // envelope is an envelope's line from mailbox from to address to, carrying the
@@ -62,21 +63,33 @@ func (b *shMailbox) line(to protocol.Address, msgID, body string, ago time.Durat
 	return envelope(b.w.t, b.addr, to, []byte(b.read("identity.doc")), msgID, body, ago)
 }
 
-// signWith signs line for mailbox to with the working key whose certificate is
-// cert, as ssh-keygen signs one: its signature block.
-func (w *world) signWith(cert string, to protocol.Address, line []byte) []byte {
+// signWith signs line for mailbox to with the key file key, a private key or
+// a working key's certificate, as ssh-keygen signs one: its signature block.
+func (w *world) signWith(key string, to protocol.Address, line []byte) []byte {
 	w.t.Helper()
 	f := filepath.Join(w.t.TempDir(), "P")
 	if err := os.WriteFile(f, line, 0o600); err != nil {
 		w.t.Fatal(err)
 	}
 	b := &shMailbox{w: w, dir: w.work}
-	return []byte(b.must(fmt.Sprintf("ssh-keygen -q -Y sign -n dromas-msg-v1:%s -f %s < %s", to, cert, f)))
+	return []byte(b.must(fmt.Sprintf("ssh-keygen -q -Y sign -n dromas-msg-v1:%s -f %s < %s", to, key, f)))
 }
 
-// sign signs line for to with b's working key in use.
+// sign signs line for to as mailbox b does: with its identity, its signer in
+// identity mode.
 func (b *shMailbox) sign(to protocol.Address, line []byte) []byte {
-	return b.w.signWith(b.file(fmt.Sprintf("work/%d-cert.pub", b.num())), to, line)
+	return b.w.signWith(b.file("identity"), to, line)
+}
+
+// certify makes a new working key and a certificate of it, at serial, that
+// b's identity signs as a client makes one (PROTOCOL.md §5.2), from an hour
+// ago for 45 days, and returns the certificate's file, which ssh-keygen signs
+// with.
+func (w *world) certify(b *shMailbox, serial uint64) string {
+	w.t.Helper()
+	k := filepath.Join(w.t.TempDir(), "work")
+	(&shMailbox{w: w, dir: w.work}).must(fmt.Sprintf(`ssh-keygen -q -t ed25519 -N '' -C '' -f %[1]s < /dev/null && ssh-keygen -q -s %[2]s -I dromas-cert-v1 -n %[3]s -z %[4]d -V -1h:+45d -O clear %[1]s.pub`, k, b.file("identity"), b.addr, serial))
+	return k + "-cert.pub"
 }
 
 // inject puts the parts, encrypted to to's prekey as the server holds it, in
@@ -182,21 +195,28 @@ func TestScriptInit(t *testing.T) {
 		t.Error("the address is not the identity document's hash")
 	}
 	n := a.num()
-	if p, c := w.served(a); p != n || c != n || !slices.Equal(w.calls(0), []string{"PUT /v1/" + a.addr.String()}) {
-		t.Errorf("the mailbox is not in use at once, at its number %d, by one call: served %d under %d, calls %q", n, p, c, w.calls(0))
+	if p, c := w.served(a); p != n || c != 0 || !slices.Equal(w.calls(0), []string{"PUT /v1/" + a.addr.String()}) {
+		t.Errorf("the mailbox is not in use at once, at its number %d, signed by its identity, by one call: served %d by a signer of rank %d, calls %q", n, p, c, w.calls(0))
 	}
 	if int64(n) > t0 || t0-int64(n) >= 300 {
 		t.Errorf("the mailbox's first number %d is not this machine's clock, %d", n, t0)
 	}
-	for _, f := range []string{"identity", fmt.Sprintf("work/%d", n), "pass", fmt.Sprintf("prekeys/%d.agekey", n)} {
+	for _, f := range []string{"identity", "pass", fmt.Sprintf("prekeys/%d.agekey", n)} {
 		if fi, err := os.Stat(a.file(f)); err != nil || fi.Mode().Perm() != 0o600 {
 			t.Errorf("%s: %v %v, not 0600", f, fi.Mode(), err)
 		}
 	}
-	var serial, start, end int64
-	if _, err := fmt.Sscan(a.must(fmt.Sprintf(`dr_cert "$DR/prekeys/%d.txt.sig" "$DR/identity.doc" %s`, n, a.addr)), &serial, &start, &end); err != nil || serial != int64(n) ||
-		end-time.Now().Unix() <= 64*86400-60 || end-time.Now().Unix() > 64*86400 {
-		t.Errorf("the prekey statement is not under a certificate numbered %d that is good for 64 days: %d %d %d, %v", n, serial, start, end, err)
+	if a.has("work") || a.has("revoked-certs.json") {
+		t.Error("the mailbox keeps a working key, or a revocation of its certificates: it is not in identity mode")
+	}
+	id, err := protocol.ParseIdentity([]byte(a.read("identity.doc")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, err := protocol.ParsePass(strings.TrimSpace(a.read("pass"))); err != nil {
+		t.Errorf("the pass: %v", err)
+	} else if signer, err := p.Verify(id, strings.TrimPrefix(w.srv.URL, "http://"), time.Now()); err != nil || !signer.Identity() {
+		t.Errorf("the pass is not signed by the mailbox's identity: %v", err)
 	}
 	if a.has("token") || !strings.HasPrefix(a.read("pass"), `dromas-pass address="`+a.addr.String()+`", not_after="`) {
 		t.Errorf("the mailbox keeps a token, or no pass it signed: %q", a.read("pass"))
@@ -303,7 +323,7 @@ func TestScriptRefusesForgedMessages(t *testing.T) {
 	w := newWorld(t)
 	a, b, c, d := w.mailbox(), w.mailbox(), w.mailbox(), w.mailbox()
 	op := w.operator()
-	opCert := filepath.Join(op.dir, "work-cert.pub")
+	opCert, opID := filepath.Join(op.dir, "work-cert.pub"), filepath.Join(op.dir, "identity")
 	pinned := func() string { return b.read("peers/" + a.addr.String() + "/identity.doc") }
 	// A genuine message from A, to pin it, and kept to relabel and replay.
 	posted := forge.Capture(w.srv, http.MethodPost, "/messages")
@@ -329,7 +349,7 @@ func TestScriptRefusesForgedMessages(t *testing.T) {
 	w.inject(b, "", forged(a))
 	r := b.sh("dr_recv")
 	refusals++
-	if !strings.Contains(r.out, `"code":"bad_signature","detail":"it is not signed for this mailbox by a working key the sender's identity certified"}`) || r.err != "" || w.srv.Count(b.addr) != 0 || pinned() != a.read("identity.doc") {
+	if !strings.Contains(r.out, `"code":"bad_signature","detail":"it is not signed for this mailbox by the sender's identity, or by a working key the sender's identity certified"}`) || r.err != "" || w.srv.Count(b.addr) != 0 || pinned() != a.read("identity.doc") {
 		t.Errorf("a message in A's name under the operator's certificate: %v", r)
 	}
 	var l struct{ Type, ID, Code, Detail string }
@@ -342,11 +362,12 @@ func TestScriptRefusesForgedMessages(t *testing.T) {
 		t.Error("the forgery pinned D")
 	}
 	// A from the server made up, with a line feed and a signer after it,
-	// beside the operator's own message: the from is never read, so the message is
+	// beside the operator's own message, which its identity signs, as an
+	// address no trip is held for: the from is never read, so the message is
 	// the operator's, as its signature says, and nothing is built from it.
 	opDoc := []byte(mustReadString(t, filepath.Join(op.dir, "identity.doc")))
 	ol := envelope(t, op.addr, b.addr, opDoc, "00000000-0000-4000-8000-000000000001", "PAPAYA", 0)
-	w.inject(b, "", ol, w.signWith(opCert, b.addr, ol))
+	w.inject(b, "", ol, w.signWith(opID, b.addr, ol))
 	madeUp := a.addr.String() + "\n* " + strings.Split(string(opDoc), "\n")[1]
 	w.listing(func(l *forge.Listed) {
 		for i := range l.Messages {
@@ -521,7 +542,7 @@ func TestScriptChecksTheMailboxItIsServed(t *testing.T) {
 	}
 	st, _ := w.srv.Prekey(b.addr)
 	w.reading(b.addr, func(br *protocol.MailboxResponse) { br.Prekey = withLine(br.Prekey, 4, op.recipient()) })
-	refused("the operator swaps B's prekey", a, b.addr.String(), "not signed by a working key its identity certified")
+	refused("the operator swaps B's prekey", a, b.addr.String(), "not signed by its identity, or by a working key its identity certified")
 	w.honest()
 	if r := a.send(b.addr.String(), "bad \xff byte"); r.rc == 0 || !strings.Contains(r.err, "not UTF-8") || !a.bare() || w.posts(b.addr) != 1 {
 		t.Errorf("a body that is not UTF-8: %v", r)
@@ -558,13 +579,14 @@ age-keygen -pq -o agekey 2> /dev/null`)
 	if a.has("peers/" + e.addr.String()) {
 		t.Error("the padded identity was pinned")
 	}
-	// What a thief of B's working key in use could sign, with the server's help.
-	bw := b.file(fmt.Sprintf("work/%d-cert.pub", b1))
+	// What B's identity could sign, with the server's help, and a certificate
+	// it made, which B's mode refuses: B is in identity mode, as A holds it.
+	bi := b.file("identity")
 	key := keyOf(string(st))
 	for _, c := range []struct{ what, notAfter, signer, want string }{
-		{"an expired prekey, validly signed, at a higher serial", "2020-01-01T00:00:00Z", bw, "expired"},
-		{"a not_after of never", "never", bw, "no valid not_after"},
-		{"a statement the identity itself signed, with no certificate", notAfter(), b.file("identity"), "not signed by a working key its identity certified"},
+		{"an expired prekey, validly signed, at a higher serial", "2020-01-01T00:00:00Z", bi, "expired"},
+		{"a not_after of never", "never", bi, "no valid not_after"},
+		{"a statement under a certificate B's identity made, B in identity mode", notAfter(), w.certify(b, b1+9), "is signed under a certificate, and " + b.addr.String() + " is in identity mode"},
 	} {
 		w.serving(b, w.statement(b, b1+9, key, c.notAfter, c.signer))
 		refused(c.what, a, b.addr.String(), c.want)
@@ -576,7 +598,7 @@ age-keygen -pq -o agekey 2> /dev/null`)
 	// X25519 recipient, which is no prekey's type.
 	for _, v := range []string{"unsupported-type", "unsupported-type-x25519"} {
 		other := keyOf(mustReadString(t, filepath.Join(vectors, "prekey", v+".txt")))
-		w.serving(b, w.statement(b, b1+9, other, notAfter(), bw))
+		w.serving(b, w.statement(b, b1+9, other, notAfter(), bi))
 		want := fmt.Sprintf(`{"type":"error","code":"unsupported_prekey_type","detail":"REFUSED: %s's prekey is an age recipient of a type this script cannot encrypt to, so nothing is sent"}`+"\n", b.addr)
 		refused(v, a, b.addr.String(), want)
 		if a.read("peers/"+b.addr.String()+"/serial") != fmt.Sprintln(b1) {

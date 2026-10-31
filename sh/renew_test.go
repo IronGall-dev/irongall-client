@@ -67,9 +67,9 @@ func (w *world) once(b *shMailbox, s stmt) {
 	})
 }
 
-// A renewal is a new key under a new working key and certificate, at a later
-// number; senders move on, and refuse the statements before it; a sender
-// handed one by a stale cache seals the same envelope again to the next.
+// A renewal is a new key, signed by the identity, at a later number; senders
+// move on, and refuse the statements before it; a sender handed one by a
+// stale cache seals the same envelope again to the next.
 func TestScriptRenews(t *testing.T) {
 	w := newWorld(t)
 	a, b, c := w.mailbox(), w.mailbox(), w.mailbox()
@@ -77,27 +77,20 @@ func TestScriptRenews(t *testing.T) {
 	b.recv()
 	b1, pass := b.num(), b.read("pass")
 	first := w.prekey(b)
-	stolen := filepath.Join(w.work, "stolen")
-	writeFile(t, stolen, []byte(b.read(fmt.Sprintf("work/%d", b1))))
-	writeFile(t, stolen+"-cert.pub", []byte(b.read(fmt.Sprintf("work/%d-cert.pub", b1))))
-	work1 := b.read(fmt.Sprintf("work/%d.pub", b1))
 	key1 := strings.TrimSpace(b.must(fmt.Sprintf(`age-keygen -y "$DR/prekeys/%d.agekey"`, b1)))
 	b.must("dr_rekey")
 	b2 := b.num()
-	if p, c := w.served(b); b2 <= b1 || p != b2 || c != b2 || b.read("pass") == pass {
-		t.Errorf("dr_rekey: number %d after %d, served %d under %d, a new pass %v", b2, b1, p, c, b.read("pass") != pass)
+	if p, c := w.served(b); b2 <= b1 || p != b2 || c != 0 || b.read("pass") == pass {
+		t.Errorf("dr_rekey: number %d after %d, served %d by a signer of rank %d, a new pass %v", b2, b1, p, c, b.read("pass") != pass)
 	}
 	st2, _ := w.srv.Prekey(b.addr)
 	if keyOf(string(st2)) == key1 {
 		t.Error("the renewed prekey is the same key")
 	}
-	if b.has(fmt.Sprintf("work/%d", b1)) || b.has(fmt.Sprintf("work/%d-cert.pub", b1)) || !b.has(fmt.Sprintf("work/%d", b2)) || b.read(fmt.Sprintf("work/%d.pub", b2)) == work1 {
-		t.Errorf("the working key is not a new one, with the old one deleted: %q", b.files("work"))
-	}
 	a.mustSend(b, "after rotation")
 	peer := "peers/" + b.addr.String() + "/"
-	if a.read(peer+"serial") != fmt.Sprintln(b2) || a.read(peer+"cert-serial") != fmt.Sprintln(b2) {
-		t.Errorf("A recorded %q under %q, not %d", a.read(peer+"serial"), a.read(peer+"cert-serial"), b2)
+	if a.read(peer+"serial") != fmt.Sprintln(b2) || a.read(peer+"rank") != "0\n" {
+		t.Errorf("A recorded %q by a signer of rank %q, not %d by the identity", a.read(peer+"serial"), a.read(peer+"rank"), b2)
 	}
 	if d := b.recv(); !slices.Equal(d.bodies(), []string{"after rotation"}) {
 		t.Errorf("B's drain after its renewal: %v", d)
@@ -105,12 +98,6 @@ func TestScriptRenews(t *testing.T) {
 	w.serving(b, first)
 	if r := a.send(b.addr.String(), "secret"); r.rc == 0 || !strings.Contains(r.err, "rollback") {
 		t.Errorf("B's first statement once its second was seen: %v", r)
-	}
-	// The working key B replaced, stolen, with weeks left on its certificate,
-	// offers a prekey of the operator's at a serial above any A has seen.
-	w.serving(b, w.statement(b, b2+9, w.operator().recipient(), notAfter(), stolen+"-cert.pub"))
-	if r := a.send(b.addr.String(), "secret"); r.rc == 0 || !strings.Contains(r.err, fmt.Sprintf("signed under certificate %d, below one already seen", b1)) || a.read(peer+"serial") != fmt.Sprintln(b2) {
-		t.Errorf("a stolen working key replaced since: %v", r)
 	}
 	w.serving(b, first)
 	n := len(w.srv.Requests())
@@ -126,34 +113,36 @@ func TestScriptRenews(t *testing.T) {
 	}
 }
 
-// A statement served in the mailbox's name under the certificate it signs
-// under, that it did not make, means another holds that working key: the mailbox
-// signs no message under it (PROTOCOL.md §12.4; #442 item 4). A renewal that read
-// it and then failed leaves the mailbox under that certificate; one that goes
-// through moves it to a new one, which signs again.
-func TestScriptSignsNoMessageUnderAWorkingKeyAnotherHolds(t *testing.T) {
+// A statement served in the mailbox's name that its identity signed and it
+// did not make means its identity is in other hands: the renewal says so,
+// recommending that the address be revoked, and goes above it, and the
+// mailbox's sends are not held, since no certificate of its own is in doubt
+// (PROTOCOL.md §12.4).
+func TestScriptSaysAStatementItDidNotMake(t *testing.T) {
 	w := newWorld(t)
 	a, b := w.mailbox(), w.mailbox()
-	b.mustSend(a, "before")
 	n := b.num()
-	w.serving(b, w.statement(b, n+1, w.operator().recipient(), notAfter(), b.file(fmt.Sprintf("work/%d-cert.pub", n))))
-	writeFile(t, b.file("prekey-lifetime"), []byte("a month\n"))
-	if r := b.sh("dr_rekey"); r.rc == 0 || b.num() != n {
-		t.Fatalf("a renewal its lifetime file stops: %v, serial %d after %d", r, b.num(), n)
+	w.serving(b, w.statement(b, n+1, w.operator().recipient(), notAfter(), b.file("identity")))
+	b.mustSend(a, "while it is served")
+	out := b.must("dr_rekey")
+	var said struct {
+		Type   string
+		Serial uint64
+		Detail string
 	}
-	k := len(w.srv.Requests())
-	if r := b.send(a.addr.String(), "under a working key another holds"); r.rc == 0 || !strings.Contains(r.err, "did not make") || slices.Contains(w.calls(k), "POST /v1/"+a.addr.String()+"/messages") {
-		t.Errorf("a send under that certificate: %v, %q", r, w.calls(k))
+	l, _, _ := strings.Cut(out, "\n")
+	if jsonLine(l, &said) != nil || said.Type != "prekey_not_made" || said.Serial != n+1 || !strings.Contains(said.Detail, "only revoking the address ends that") || !strings.Contains(out, `{"type":"prekey",`) {
+		t.Errorf("the renewal that read it: %q", out)
 	}
-	if err := os.Remove(b.file("prekey-lifetime")); err != nil {
-		t.Fatal(err)
+	w.honest()
+	if p, c := w.served(b); b.num() <= n+1 || p != b.num() || c != 0 {
+		t.Fatalf("the renewal: serial %d after %d, served %d by a signer of rank %d", b.num(), n+1, p, c)
 	}
-	b.must("dr_rekey")
-	if b.num() <= n || b.has("not-made") {
-		t.Fatalf("the renewal: serial %d after %d, not-made kept %v", b.num(), n, b.has("not-made"))
+	if out := b.must("dr_rekey"); strings.Contains(out, "prekey_not_made") {
+		t.Errorf("a renewal that read the mailbox's own statement: %q", out)
 	}
-	b.mustSend(a, "under the new certificate")
-	if d := a.recv(); !slices.Equal(d.bodies(), []string{"before", "under the new certificate"}) {
+	b.mustSend(a, "after the renewal")
+	if d := a.recv(); !slices.Equal(d.bodies(), []string{"while it is served", "after the renewal"}) {
 		t.Errorf("A's drain: %v", d)
 	}
 }
@@ -213,12 +202,18 @@ func TestScriptDeletesARetiredPrekey(t *testing.T) {
 func TestScriptDrainsEveryPageAndHoldsTheLock(t *testing.T) {
 	w := newWorld(t)
 	a, b := w.mailbox(), w.mailbox()
-	old := b.read("pass")
-	b.must("dr_rekey") // the pass kept from before is under a certificate the server no longer takes
 	for i := 1; i <= 3; i++ {
 		a.mustSend(b, fmt.Sprintf("page %d", i))
 	}
-	writeFile(t, b.file("pass"), []byte(old))
+	old := b.read("pass")
+	var refusedOnce atomic.Bool // the pass kept is refused once, as a server whose clock ran it out sooner refuses it
+	w.srv.SetMiddle(func(rw http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/messages") && refusedOnce.CompareAndSwap(false, true) {
+			forge.Refuse(rw, protocol.CodePassExpired)
+			return
+		}
+		next.ServeHTTP(rw, r)
+	})
 	w.srv.SetPage(2)
 	n := len(w.srv.Requests())
 	d := b.recv()
@@ -228,7 +223,8 @@ func TestScriptDrainsEveryPageAndHoldsTheLock(t *testing.T) {
 			cursors++
 		}
 	}
-	if !slices.Equal(d.bodies(), []string{"page 1", "page 2", "page 3"}) || w.srv.Count(b.addr) != 0 || cursors != 1 || b.read("pass") == old {
+	w.honest()
+	if !slices.Equal(d.bodies(), []string{"page 1", "page 2", "page 3"}) || w.srv.Count(b.addr) != 0 || cursors != 1 || b.read("pass") == old || !refusedOnce.Load() {
 		t.Errorf("pages of 2: %v, %d held, %d pages after the first, the refused pass replaced %v", d, w.srv.Count(b.addr), cursors, b.read("pass") != old)
 	}
 	w.srv.SetPage(50)
@@ -321,10 +317,9 @@ func TestScriptKeepsWhatWasSent(t *testing.T) {
 }
 
 // A renewal the server does not take is sent again as it was signed, while
-// the mailbox holds both working keys and still polls; once that statement has
-// expired, a new key is signed at a later number; when one is taken, it is
-// the first signed after the passed-over one, and the working keys before it
-// go.
+// the mailbox still polls; once that statement has expired, a new key is
+// signed at a later number; when one is taken, it is the first signed after
+// the passed-over one.
 func TestScriptRenewsAgainAsSigned(t *testing.T) {
 	w := newWorld(t)
 	a, b := w.mailbox(), w.mailbox()
@@ -346,8 +341,8 @@ func TestScriptRenewsAgainAsSigned(t *testing.T) {
 	if r := b.sh("dr_rekey"); r.rc == 0 || !b.has(fmt.Sprintf("prekeys/%d.txt.sig", n)) || b.read("rekey.json") != first {
 		t.Errorf("the renewal sent again is not the one signed: %v", r)
 	}
-	if !b.has(fmt.Sprintf("work/%d", s0)) || !b.has(fmt.Sprintf("work/%d", n)) || b.num() != s0 {
-		t.Errorf("while it waits, the mailbox does not hold both working keys: %q, serial %d", b.files("work"), b.num())
+	if b.num() != s0 {
+		t.Errorf("while it waits, the mailbox's serial is %d, not %d", b.num(), s0)
 	}
 	a.mustSend(b, "while B waits")
 	if d := b.recv(); !slices.Equal(d.bodies(), []string{"while B waits"}) {
@@ -369,15 +364,6 @@ func TestScriptRenewsAgainAsSigned(t *testing.T) {
 	b.must("dr_rekey")
 	if st, _ := w.srv.Prekey(b.addr); !bytes.Equal(st, []byte(signed)) || b.num() != m {
 		t.Errorf("the renewal taken is not the one signed first after the passed-over one: serial %d, %d", b.num(), m)
-	}
-	var certs []string
-	for _, f := range b.files("work") {
-		if s, ok := strings.CutSuffix(f, "-cert.pub"); ok {
-			certs = append(certs, s)
-		}
-	}
-	if !slices.Equal(certs, []string{fmt.Sprint(m)}) {
-		t.Errorf("the working keys before it are not gone: %q", b.files("work"))
 	}
 }
 
