@@ -399,7 +399,7 @@ func (s *Server) verifyPrekey(identity, statement, signature []byte, current []b
 		s.mu.Lock()
 		most := s.policy.MaxCertificateLifetime
 		s.mu.Unlock()
-		if uint64(c.Lifetime()/time.Second) > most {
+		if life := c.Lifetime(); life < 0 || uint64(life/time.Second) > most { //nolint:gosec // not negative
 			return nil, nil, protocol.CodeCertificateTooLong, errors.New("the certificate runs longer than this server takes")
 		}
 	}

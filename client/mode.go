@@ -160,8 +160,8 @@ func (b *Mailbox) usesRevoked() bool {
 
 // noRoom is the refusal of working-key mode at a server whose maximum leaves
 // a certificate no time to sign messages in.
-func noRoom(max time.Duration) error {
-	return refuse("this mailbox's server takes no certificate longer than %d seconds, which leaves none to sign messages under: a message is signed only under a certificate with more than %d days left, and one begins an hour before it is made, so working-key mode is refused here; identity mode, the default, needs no certificate", int64(max/time.Second), protocol.TTL/(24*time.Hour))
+func noRoom(most time.Duration) error {
+	return refuse("this mailbox's server takes no certificate longer than %d seconds, which leaves none to sign messages under: a message is signed only under a certificate with more than %d days left, and one begins an hour before it is made, so working-key mode is refused here; identity mode, the default, needs no certificate", int64(most/time.Second), protocol.TTL/(24*time.Hour))
 }
 
 // certificateLifetime is how long a certificate this mailbox makes runs: the
