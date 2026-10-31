@@ -254,7 +254,7 @@ func TestARefusalNamesNoSignerTheMailboxHoldsRevoked(t *testing.T) {
 	for _, r := range refusals {
 		for _, h := range holdings {
 			t.Run(r.name+", "+h.name, func(t *testing.T) {
-				e := newEnv(t)
+				e := newWorkEnv(t)
 				a, b, thief := e.mailbox(), e.mailbox(), e.mailbox()
 				m := r.send(t, e, a, b, thief)
 				h.hold(t, a, b, m.serial)

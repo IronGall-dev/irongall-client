@@ -52,6 +52,9 @@ func TestEveryCommandWaitsForTheLock(t *testing.T) {
 	for i, c := range append(refused, run...) {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv(t)
+			// The remedy is a working-key mailbox's; a switch, an
+			// identity-mode one's.
+			e.working = c.name == "RevokeEarlier" || c.name == "RenewAndRevoke"
 			a, peer := e.mailbox(), e.mailbox()
 			rec, err := peer.Revocation(t.Context())
 			if err != nil {
