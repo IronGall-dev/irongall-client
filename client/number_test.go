@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/dromas-dev/dromas-client/client"
-	"github.com/dromas-dev/dromas-client/internal/fakeserver"
 	"github.com/dromas-dev/dromas-client/internal/forge"
 	"github.com/dromas-dev/dromas-client/protocol"
 	"golang.org/x/crypto/ssh"
@@ -80,7 +79,7 @@ func TestAPassUnderAnotherCertificateIsToldTheOneTheServerTakes(t *testing.T) {
 	}
 	took := servedCertificate(t, e, b)
 	_, err := b.Receive(context.Background())
-	if client.Code(err) != protocol.CodeCertificateNotCurrent || !strings.Contains(err.Error(), fmt.Sprintf("another certificate than the one it signs under, serial %d", took)) || numberOf(t, b) == took {
+	if client.Code(err) != protocol.CodeCertificateNotCurrent || !strings.Contains(err.Error(), fmt.Sprintf("another signer than the one it signs with, certificate %d", took)) || numberOf(t, b) == took {
 		t.Fatalf("recv after a renewal on another machine, which the server took at %d: %v", took, err)
 	}
 }
@@ -154,6 +153,10 @@ func TestARestoredMailboxRevokesWhatTheLostMachineNeverPublished(t *testing.T) {
 	e := newWorkEnv(t)
 	lost, reader := e.mailbox(), e.mailbox()
 	first := numberOf(t, lost)
+	trip, err := lost.CertificatesRecord(ctx) // its trip to working-key mode
+	if err != nil || trip == nil {
+		t.Fatalf("the trip: %v", err)
+	}
 	kept := uploads(e, lost)
 	if _, err := lost.Rekey(ctx); err == nil {
 		t.Fatal("the lost machine's renewal was meant to fail")
@@ -180,9 +183,18 @@ func TestARestoredMailboxRevokesWhatTheLostMachineNeverPublished(t *testing.T) {
 	}
 
 	// The control: the taken key is good under its certificate, so the
-	// revocation is what refuses it. A reader shown none delivers what it signs.
+	// revocation is what refuses it. A reader shown the trip and none since
+	// delivers what it signs.
 	control := e.mailbox()
-	forge.Hides(e.t, e.srv)
+	e.srv.SetMiddle(func(w http.ResponseWriter, req *http.Request, next http.Handler) {
+		if x, ok := forge.ReadOf(req); ok && x == r.Address() {
+			e.serve(w, req, next, func(br *protocol.MailboxResponse) {
+				br.RevokedCertificates, br.RevokedCertificatesSignature = trip.RevokedCertificates, trip.RevokedCertificatesSignature
+			})
+			return
+		}
+		next.ServeHTTP(w, req)
+	})
 	messageAs(t, e, r, control, taken, "signed with the key the lost machine never published")
 	if res := receive(t, control); len(res.Delivered) != 1 {
 		t.Fatalf("the control: a message under the lost machine's certificate, no revocation shown: %+v", res)
@@ -259,9 +271,9 @@ func TestARestoredMailboxShownAnOlderRecordNumbersAboveItAll(t *testing.T) {
 
 	e.clock.Add(time.Hour)
 	r := restore(t, e, b)
-	op := watch(e, func(w http.ResponseWriter, req *http.Request) bool {
+	op := watchWith(e, func(w http.ResponseWriter, req *http.Request, next http.Handler) bool {
 		if req.Method == http.MethodGet && req.URL.Path == mailboxPath(b) {
-			fakeserver.WriteJSON(w, http.StatusOK, protocol.MailboxResponse{Identity: b.Identity().Document(), Prekey: st, PrekeySignature: sig})
+			e.serve(w, req, next, func(br *protocol.MailboxResponse) { br.Prekey, br.PrekeySignature = st, sig })
 			return true
 		}
 		return false

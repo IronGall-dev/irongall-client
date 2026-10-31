@@ -165,6 +165,14 @@ func TestOnlyTheIdentitysHighestRevocationCounts(t *testing.T) {
 		})
 	}
 
+	// B meets A first through an honest read, and keeps its trip, without
+	// which it takes no certificate of A's: a server that withholds it costs
+	// A its messages, and forges nothing (PROTOCOL.md §15.6).
+	send(t, a, b, "before anything is forged")
+	if res := receive(t, b); len(res.Delivered) != 1 {
+		t.Fatalf("the first message: %+v", res)
+	}
+
 	// What a working key can sign: a revocation of the mailbox's own
 	// certificate.
 	forged, err := protocol.NewRevokedCertificates(a.Address(), numberOf(t, a))

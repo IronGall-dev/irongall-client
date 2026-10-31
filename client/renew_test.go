@@ -458,7 +458,7 @@ func TestARestoredMailboxRegistersWhereItsServerForgotIt(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	for _, forgotten := range []bool{false, true} {
-		e := newEnv(t)
+		e := newWorkEnv(t)
 		a := e.mailbox()
 		if forgotten {
 			e.srv.Forget(a.Address())

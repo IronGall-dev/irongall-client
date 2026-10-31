@@ -165,7 +165,7 @@ func TestAServersWordAtAPostEndsNoMessage(t *testing.T) {
 func TestWhatIsNotARevocationRevokesNothing(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a, b, c := e.mailbox(), e.mailbox(), e.mailbox()
 	ofC, err := c.Revocation(t.Context())
 	if err != nil {
@@ -654,7 +654,7 @@ func TestA410CarriesTheRecord(t *testing.T) {
 func TestRevokeTakesOnlyARecordThatVerifies(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a, b := e.mailbox(), e.mailbox()
 	rec, err := a.Revocation(t.Context())
 	if err != nil {
