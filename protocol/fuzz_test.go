@@ -227,7 +227,7 @@ func FuzzDearmor(f *testing.F) {
 // CheckCertificate takes only a user certificate its identity signed for a
 // working key, under the key id the protocol names, with one principal, the
 // mailbox's address, a serial from 1 to MaxSerial, no critical option, and valid
-// at now, for at most MaxCertificateLifetime: its signature is the identity
+// at now, naming no date after LastDate: its signature is the identity
 // key's over the certificate's bytes (signedBytes, read apart from the
 // library's check), and its working key an Ed25519 key that is a canonical
 // point not of small order and not the identity key. A refusal is
@@ -299,7 +299,7 @@ func FuzzCheckCertificate(f *testing.F) {
 				t.Fatal("took a certificate of the identity key itself")
 			case cert.Key.Type() != ssh.KeyAlgoED25519 || edwardsKeyFault(cert.Key) != "":
 				t.Fatalf("took a working key of type %s that is %s", cert.Key.Type(), edwardsKeyFault(cert.Key))
-			case unix < cert.ValidAfter || unix >= cert.ValidBefore || cert.ValidBefore > unix+uint64(MaxCertificateLifetime/time.Second):
+			case unix < cert.ValidAfter || unix >= cert.ValidBefore || cert.ValidBefore > uint64(LastDate.Unix()):
 				t.Fatalf("took a certificate from %d to %d at %d", cert.ValidAfter, cert.ValidBefore, unix)
 			}
 		}
@@ -309,9 +309,10 @@ func FuzzCheckCertificate(f *testing.F) {
 // Examine, and OpenSigned with it, refuses with one of the closed set of
 // codes and no message beside it, and always gives Findings. It gives a
 // message only with a signature that verifies over the line as it arrived,
-// by a working key the identity the envelope carries certified, for this mailbox
-// at now, from that identity's address to this mailbox. Findings say who signed
-// only when that signature verifies at its certificate's own start.
+// by the identity the envelope carries or a working key it certified, for this
+// mailbox at now, from that identity's address to this mailbox. Findings say
+// who signed only when that signature verifies: the identity's own at any
+// time, a certificate's at its own start.
 func FuzzExamine(f *testing.F) {
 	now := fuzzNow(f)
 	me := fuzzIdentity(f, "b").Address()
@@ -335,9 +336,16 @@ func FuzzExamine(f *testing.F) {
 			if perr != nil || id.Address() != *found.Identity {
 				t.Fatalf("Findings say signed by %s, which the envelope carries no document of", found.Identity)
 			}
-			began, berr := CertificateBegan(sig)
-			if _, verr := VerifyCertified(id, line, sig, MessageNamespace(me), began); berr != nil || verr != nil {
-				t.Fatalf("Findings say signed, and the signature does not verify at its certificate's start: %v %v", berr, verr)
+			at := now
+			if found.Rank != 0 {
+				var berr error
+				if at, berr = CertificateBegan(sig); berr != nil {
+					t.Fatalf("Findings say signed by rank %d, and the signature carries no certificate: %v", found.Rank, berr)
+				}
+			}
+			s, verr := VerifySigned(id, line, sig, MessageNamespace(me), at)
+			if verr != nil || s.Rank() != found.Rank || s.Identity() != found.Began.IsZero() || s.Identity() != found.Ends.IsZero() {
+				t.Fatalf("Findings say signed by rank %d, and the signature does not verify as that signer at its start: %v", found.Rank, verr)
 			}
 		}
 		if err != nil {
@@ -356,11 +364,14 @@ func FuzzExamine(f *testing.F) {
 		case !found.Signed || *found.Identity != m.Sender.Address():
 			t.Fatal("a message whose Findings do not say who signed it")
 		}
-		if _, err := VerifyCertified(m.Sender, line, sig, MessageNamespace(me), now); err != nil {
-			t.Fatalf("a message whose signature does not verify: %v", err)
+		s, err := VerifySigned(m.Sender, line, sig, MessageNamespace(me), now)
+		if err != nil || s.Rank() != m.Signer.Rank() || s.Identity() != m.Signer.Identity() || found.Rank != m.Signer.Rank() {
+			t.Fatalf("a message whose signature does not verify as its signer: %v", err)
 		}
-		if cert, err := CheckCertificate(m.Sender, m.Certificate.PublicKey(), now); err != nil || cert.Serial() != m.Certificate.Serial() {
-			t.Fatalf("a message under a certificate that does not hold now: %v", err)
+		if c := m.Signer.Certificate(); c != nil {
+			if cert, err := CheckCertificate(m.Sender, c.PublicKey(), now); err != nil || cert.Serial() != c.Serial() {
+				t.Fatalf("a message under a certificate that does not hold now: %v", err)
+			}
 		}
 	})
 }

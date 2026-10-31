@@ -107,40 +107,34 @@ func TestUnmarshalRequest(t *testing.T) {
 func acl() any    { return new(ACLDocument) }
 func prekey() any { return new(PrekeyRequest) }
 
-// A send's query is read as a statement writes a serial: each of the two
-// once, digits with no leading zero, from 1 to MaxSerial, and no other
-// parameter. A refusal names the parameter at fault, which a server answers
-// in member.
+// A send's query names its statement by its hash, 64 lowercase hex digits,
+// once, and no other parameter. A refusal names the parameter at fault, which
+// a server answers in member.
 func TestParseSendQuery(t *testing.T) {
-	for raw, want := range map[string]SendQuery{
-		"prekey_serial=1&certificate_serial=2":                {1, 2},
-		"certificate_serial=2&prekey_serial=1":                {1, 2},
-		"prekey_serial=9007199254740991&certificate_serial=1": {MaxSerial, 1},
-	} {
-		if q, err := ParseSendQuery(raw); err != nil || q != want {
-			t.Errorf("%s: %+v, %v", raw, q, err)
-		}
+	h := strings.Repeat("0123456789abcdef", 4)
+	if q, err := ParseSendQuery("statement=" + h); err != nil || q.Statement != h {
+		t.Errorf("%s: %+v, %v", h, q, err)
 	}
-	if q := (SendQuery{3, 1792000000}); q.Encode() != "prekey_serial=3&certificate_serial=1792000000" {
+	if q := (SendQuery{Statement: h}); q.Encode() != "statement="+h {
 		t.Errorf("Encode: %s", q.Encode())
 	} else if back, err := ParseSendQuery(q.Encode()); err != nil || back != q {
 		t.Errorf("Encode does not read back: %+v, %v", back, err)
 	}
 	for raw, param := range map[string]string{
-		"":                                                          PrekeySerialParam,
-		"prekey_serial=1":                                           CertificateSerialParam,
-		"certificate_serial=1":                                      PrekeySerialParam,
-		"prekey_serial=0&certificate_serial=1":                      PrekeySerialParam,
-		"prekey_serial=01&certificate_serial=1":                     PrekeySerialParam,
-		"prekey_serial=+1&certificate_serial=1":                     PrekeySerialParam,
-		"prekey_serial=-1&certificate_serial=1":                     PrekeySerialParam,
-		"prekey_serial=1.0&certificate_serial=1":                    PrekeySerialParam,
-		"prekey_serial=&certificate_serial=1":                       PrekeySerialParam,
-		"prekey_serial=1&certificate_serial=9007199254740992":       CertificateSerialParam,
-		"prekey_serial=1&certificate_serial=1&prekey_serial=1":      PrekeySerialParam,
-		"prekey_serial=1&certificate_serial=1&cursor=abc":           "cursor",
-		"prekey_serial=1&certificate_serial=1&Prekey_serial=1":      "Prekey_serial",
-		"prekey_serial=1&certificate_serial=1&certificate_serial=1": CertificateSerialParam,
+		"":                                         StatementParam,
+		"statement=":                               StatementParam,
+		"statement=" + h[:63]:                      StatementParam,
+		"statement=" + h + "0":                     StatementParam,
+		"statement=" + strings.ToUpper(h):          StatementParam,
+		"statement=" + h[:63] + "g":                StatementParam,
+		"statement=" + h[:63] + "%0a":              StatementParam, // a line feed, once the query is decoded
+		"statement=" + h + "%0a":                   StatementParam,
+		"statement=+" + h[1:]:                      StatementParam, // a space, once decoded
+		"statement=" + h + "&statement=" + h:       StatementParam,
+		"statement=" + h + "&prekey_serial=1":      "prekey_serial",
+		"statement=" + h + "&certificate_serial=1": "certificate_serial",
+		"statement=" + h + "&Statement=" + h:       "Statement",
+		"Statement=" + h:                           "Statement",
 	} {
 		_, err := ParseSendQuery(raw)
 		var qe *QueryError
@@ -149,7 +143,7 @@ func TestParseSendQuery(t *testing.T) {
 		}
 	}
 	// A query that is not one names no parameter.
-	for _, raw := range []string{"%zz", "prekey_serial=1;certificate_serial=1"} {
+	for _, raw := range []string{"%zz", "statement=" + h + ";x=1"} {
 		var qe *QueryError
 		if _, err := ParseSendQuery(raw); !errors.As(err, &qe) || qe.Param != "" {
 			t.Errorf("%q: %v", raw, err)

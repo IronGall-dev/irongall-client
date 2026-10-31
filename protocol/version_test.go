@@ -126,7 +126,8 @@ func TestAPolicyCoversItsVersions(t *testing.T) {
 			{Version: "1.5.2", At: day(10)},
 			{Below: "1.3", At: day(15)},
 		},
-		Deprecations: []Scheduled{{Below: "1.4", At: day(1)}, {Version: "1.6", At: day(5)}},
+		Deprecations:           []Scheduled{{Below: "1.4", At: day(1)}, {Version: "1.6", At: day(5)}},
+		MaxCertificateLifetime: 45*86400 + 3600,
 	}
 	if err := d.Check(); err != nil {
 		t.Fatal(err)
@@ -184,19 +185,23 @@ func TestAPolicyCoversItsVersions(t *testing.T) {
 
 // A document is held to its form as it is read: each version a policy's,
 // exactly one of below and version, each date a time, each name of its form,
-// no more than 64 of each list, and no sunset earlier than a deprecation of
-// the same versions (RFC 9745 §4).
+// no more than 64 of each list, no sunset earlier than a deprecation of the
+// same versions (RFC 9745 §4), and the server's maximum certificate lifetime,
+// which every document carries, from 1 to MaxInteger seconds.
 func TestTheServersDocumentBreaksItsFormAsItSays(t *testing.T) {
-	good := `{"min_version":"0.1","latest_version":"0.1.8","deprecations":[{"below":"0.1.5","at":"2027-01-01T00:00:00Z"}],"sunsets":[{"below":"0.1.5","at":"2027-01-01T00:00:00Z"},{"version":"0.1.6","at":"2027-02-01T00:00:00Z"}],"capabilities":[{"name":"long_poll2"}],"later":1}`
+	good := `{"min_version":"0.1","latest_version":"0.1.8","deprecations":[{"below":"0.1.5","at":"2027-01-01T00:00:00Z"}],"sunsets":[{"below":"0.1.5","at":"2027-01-01T00:00:00Z"},{"version":"0.1.6","at":"2027-02-01T00:00:00Z"}],"capabilities":[{"name":"long_poll2"}],"max_certificate_lifetime":3891600,"later":1}`
 	var d ServerDocument
-	if err := Unmarshal([]byte(good), &d); err != nil || d.LatestVersion != "0.1.8" || len(d.Sunsets) != 2 || d.Capabilities[0].Name != "long_poll2" {
+	if err := Unmarshal([]byte(good), &d); err != nil || d.LatestVersion != "0.1.8" || len(d.Sunsets) != 2 || d.Capabilities[0].Name != "long_poll2" || d.MaxCertificateLifetime != 3891600 {
 		t.Fatalf("%+v %v", d, err)
 	}
+	// withMax is a document's text with a maximum it takes, so that the
+	// member a case breaks is the one it names.
+	withMax := func(text string) string { return `{"max_certificate_lifetime":1,` + strings.TrimPrefix(text, "{") }
 	many := func(list string, n int, item string) string {
 		return `{"` + list + `":[` + strings.TrimSuffix(strings.Repeat(item+",", n), ",") + `]}`
 	}
 	sunset := `{"below":"1.0","at":"2027-01-01T00:00:00Z"}`
-	if err := Unmarshal([]byte(many("sunsets", MaxSunsets, sunset)), &d); err != nil {
+	if err := Unmarshal([]byte(withMax(many("sunsets", MaxSunsets, sunset))), &d); err != nil {
 		t.Errorf("%d sunsets: %v", MaxSunsets, err)
 	}
 	for text, member := range map[string]string{
@@ -216,7 +221,7 @@ func TestTheServersDocumentBreaksItsFormAsItSays(t *testing.T) {
 		`{"deprecations":[{"version":"1.0","at":"2027-02-01T00:00:00Z"}],"sunsets":[{"version":"1.0","at":"2027-01-31T23:59:59Z"}]}`: "sunsets",
 	} {
 		var d ServerDocument
-		err := Unmarshal([]byte(text), &d)
+		err := Unmarshal([]byte(withMax(text)), &d)
 		if !errors.Is(err, ErrMemberValue) || Member(err) != member {
 			t.Errorf("%s: %v, naming %q, want %q", text, err, Member(err), member)
 		}
@@ -228,9 +233,36 @@ func TestTheServersDocumentBreaksItsFormAsItSays(t *testing.T) {
 		`{"deprecations":[{"version":"1.0","at":"2027-02-01T00:00:00Z"}],"sunsets":[{"below":"1.0","at":"2027-01-01T00:00:00Z"},{"version":"1.0.1","at":"2027-01-01T00:00:00Z"}]}`,
 	} {
 		var d ServerDocument
-		if err := Unmarshal([]byte(text), &d); err != nil {
+		if err := Unmarshal([]byte(withMax(text)), &d); err != nil {
 			t.Errorf("%s: %v", text, err)
 		}
+	}
+	// The maximum: from 1 to MaxInteger, and never left out.
+	for text, want := range map[string]uint64{
+		`{"max_certificate_lifetime":1}`:                1,
+		`{"max_certificate_lifetime":9007199254740991}`: MaxInteger,
+	} {
+		var d ServerDocument
+		if err := Unmarshal([]byte(text), &d); err != nil || d.MaxCertificateLifetime != want {
+			t.Errorf("%s: %d, %v", text, d.MaxCertificateLifetime, err)
+		}
+	}
+	for _, text := range []string{
+		`{}`,
+		`{"max_certificate_lifetime":null}`,
+		`{"max_certificate_lifetime":0}`,
+		`{"max_certificate_lifetime":9007199254740992}`,
+		`{"max_certificate_lifetime":-1}`,
+		`{"max_certificate_lifetime":1.5}`,
+		`{"max_certificate_lifetime":"3891600"}`,
+	} {
+		var d ServerDocument
+		if err := Unmarshal([]byte(text), &d); !errors.Is(err, ErrMemberValue) || Member(err) != "max_certificate_lifetime" {
+			t.Errorf("%s: %v, naming %q", text, err, Member(err))
+		}
+	}
+	if err := (&ServerDocument{MaxCertificateLifetime: MaxInteger + 1}).Check(); Member(err) != "max_certificate_lifetime" {
+		t.Errorf("Check of a maximum above MaxInteger: %v", err)
 	}
 }
 

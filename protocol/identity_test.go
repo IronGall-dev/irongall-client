@@ -126,7 +126,7 @@ func TestAnIdentityOfATypeThisClientLacks(t *testing.T) {
 func TestAP256IdentityCertifies(t *testing.T) {
 	b, other := p256Mailbox(t), p256Mailbox(t)
 	now := time.Date(2026, 10, 13, 12, 0, 0, 0, time.UTC)
-	cert, err := NewCertificate(b.id, b.identity, b.work.PublicKey(), 3, now)
+	cert, err := NewCertificate(b.id, b.identity, b.work.PublicKey(), 3, now, testLifetime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,17 +139,17 @@ func TestAP256IdentityCertifies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, err := VerifyCertified(b.id, msg, sig, ns, now); err != nil || got.Serial() != 3 {
+	if got, err := VerifySigned(b.id, msg, sig, ns, now); err != nil || got.Rank() != 3 {
 		t.Fatalf("a signature under a P-256 identity's certificate: %v", err)
 	}
-	if _, err := VerifyCertified(other.id, msg, sig, ns, now); !errors.Is(err, ErrCertificate) {
+	if _, err := VerifySigned(other.id, msg, sig, ns, now); !errors.Is(err, ErrCertificate) {
 		t.Errorf("it verified for another P-256 identity: %v", err)
 	}
-	if _, err := NewCertificate(b.id, other.identity, b.work.PublicKey(), 3, now); err == nil {
+	if _, err := NewCertificate(b.id, other.identity, b.work.PublicKey(), 3, now, testLifetime); err == nil {
 		t.Error("a certificate was made with a signer that is not the identity")
 	}
 	// A working key is an Ed25519 key, whatever its identity's type.
-	if _, err := NewCertificate(b.id, b.identity, other.identity.PublicKey(), 4, now); err == nil {
+	if _, err := NewCertificate(b.id, b.identity, other.identity.PublicKey(), 4, now, testLifetime); err == nil {
 		t.Error("a P-256 key was certified as a working key")
 	}
 

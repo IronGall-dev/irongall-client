@@ -46,6 +46,11 @@ func newCertMailbox(t *testing.T) certMailbox {
 	return certMailbox{id: id, identity: identity, work: work}
 }
 
+// testLifetime is how long a test's certificates run: the reference server's
+// default maximum, 45 days and the hour, which a client asks for. A verifier
+// sets no ceiling, so any lifetime would do.
+const testLifetime = 45*24*time.Hour + MaxSkew
+
 // rawCert is the certificate NewCertificate would make at now, unsigned, for
 // a test to change before it signs.
 func (b certMailbox) rawCert(now time.Time) *ssh.Certificate {
@@ -57,19 +62,21 @@ func (b certMailbox) rawCert(now time.Time) *ssh.Certificate {
 		KeyId:           CertificateKeyID,
 		ValidPrincipals: []string{b.id.Address().String()},
 		ValidAfter:      unix - 60,
-		ValidBefore:     unix + uint64(MaxCertificateLifetime/time.Second),
+		ValidBefore:     unix - 60 + uint64(testLifetime/time.Second),
 	}
 }
 
 func TestCertificateRoundTrip(t *testing.T) {
 	b := newCertMailbox(t)
 	now := time.Date(2026, 10, 12, 19, 19, 1, 0, time.UTC)
-	cert, err := NewCertificate(b.id, b.identity, b.work.PublicKey(), 7, now)
+	cert, err := NewCertificate(b.id, b.identity, b.work.PublicKey(), 7, now, testLifetime)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cert.Serial() != 7 || !cert.NotAfter().Equal(now.Add(CertificateLifetime)) {
-		t.Errorf("serial %d, ends %v", cert.Serial(), cert.NotAfter())
+	// It begins MaxSkew before it is made, and runs for the lifetime asked.
+	if cert.Serial() != 7 || !cert.NotBefore().Equal(now.Add(-MaxSkew).Truncate(time.Second)) || cert.Lifetime() != testLifetime ||
+		!cert.NotAfter().Equal(now.Add(-MaxSkew).Truncate(time.Second).Add(testLifetime)) {
+		t.Errorf("serial %d, from %v to %v, %v", cert.Serial(), cert.NotBefore(), cert.NotAfter(), cert.Lifetime())
 	}
 	if got := cert.PublicKey().(*ssh.Certificate).ValidAfter; got != uint64(now.Add(-MaxSkew).Unix()) {
 		t.Errorf("begins at %d, not MaxSkew before it was made", got)
@@ -86,43 +93,36 @@ func TestCertificateRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := VerifyCertified(b.id, msg, sig, ns, now)
+	got, err := VerifySigned(b.id, msg, sig, ns, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(got.Marshal(), cert.Marshal()) {
+	if got.Identity() || got.Rank() != 7 || !bytes.Equal(got.Certificate().Marshal(), cert.Marshal()) {
 		t.Error("the certificate taken from the signature is not the one that signed")
 	}
 
 	// The signature holds for that message, that namespace and that identity only.
 	other := newCertMailbox(t)
-	if _, err := VerifyCertified(b.id, []byte("hello droma5\n"), sig, ns, now); err == nil {
+	if _, err := VerifySigned(b.id, []byte("hello droma5\n"), sig, ns, now); err == nil {
 		t.Error("verified an altered message")
 	}
-	if _, err := VerifyCertified(b.id, msg, sig, PrekeyNamespace(b.id.Address()), now); err == nil {
+	if _, err := VerifySigned(b.id, msg, sig, PrekeyNamespace(b.id.Address()), now); err == nil {
 		t.Error("verified in another namespace")
 	}
-	if _, err := VerifyCertified(other.id, msg, sig, ns, now); !errors.Is(err, ErrCertificate) {
+	if _, err := VerifySigned(other.id, msg, sig, ns, now); !errors.Is(err, ErrCertificate) {
 		t.Errorf("another identity: %v", err)
 	}
-	// A signature by the working key alone carries no certificate.
+	// A signature by the working key alone is neither form: no certificate, and
+	// not the identity's key.
 	bare, err := Sign(b.work, msg, ns)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := VerifyCertified(b.id, msg, bare, ns, now); !errors.Is(err, ErrCertificate) {
+	if _, err := VerifySigned(b.id, msg, bare, ns, now); !errors.Is(err, ErrCertificate) {
 		t.Errorf("a signature by the bare working key: %v", err)
 	}
-	// So does one by the identity itself: the identity signs certificates only.
-	direct, err := Sign(b.identity, msg, ns)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := VerifyCertified(b.id, msg, direct, ns, now); !errors.Is(err, ErrCertificate) {
-		t.Errorf("a signature by the identity key: %v", err)
-	}
 	for _, junk := range [][]byte{nil, []byte("SSHSIG"), Armor([]byte("SSHSIG\x00\x00\x00\x01\x00\x00\xff\xff")), Armor([]byte("SSHSIG\x00\x00\x00\x02\x00\x00\x00\x00"))} {
-		if _, err := VerifyCertified(b.id, msg, junk, ns, now); err == nil {
+		if _, err := VerifySigned(b.id, msg, junk, ns, now); err == nil {
 			t.Errorf("verified %q", junk)
 		}
 	}
@@ -133,7 +133,7 @@ func TestCertificateRules(t *testing.T) {
 	other := newCertMailbox(t)
 	now := time.Date(2026, 10, 12, 19, 19, 1, 0, time.UTC)
 	unix := uint64(now.Unix())
-	lifetime := uint64(MaxCertificateLifetime / time.Second)
+	last := uint64(LastDate.Unix())
 	p256, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -157,7 +157,10 @@ func TestCertificateRules(t *testing.T) {
 		{name: "as ssh-keygen writes it"},
 		{name: "begins this second", change: func(c *ssh.Certificate) { c.ValidAfter = unix }},
 		{name: "ends next second", change: func(c *ssh.Certificate) { c.ValidBefore = unix + 1 }},
-		{name: "ends in exactly 64 days and an hour", change: func(c *ssh.Certificate) { c.ValidBefore = unix + lifetime }},
+		// A verifier sets no ceiling: a server holds a certificate to its maximum.
+		{name: "runs a century", change: func(c *ssh.Certificate) { c.ValidBefore = unix + 100*365*86400 }},
+		{name: "ends at the last date", change: func(c *ssh.Certificate) { c.ValidBefore = last }},
+		{name: "valid from 1970", change: func(c *ssh.Certificate) { c.ValidAfter = 0 }},
 
 		{name: "a host certificate", change: func(c *ssh.Certificate) { c.CertType = ssh.HostCert }, want: ErrCertificate},
 		{name: "another key id", change: func(c *ssh.Certificate) { c.KeyId = "work" }, want: ErrCertificate},
@@ -179,13 +182,17 @@ func TestCertificateRules(t *testing.T) {
 		{name: "the identity key as the working key", change: func(c *ssh.Certificate) { c.Key = b.identity.PublicKey() }, want: ErrCertificate},
 		{name: "a P-256 working key", change: func(c *ssh.Certificate) { c.Key = p256Key }, want: ErrCertificate},
 		{name: "a small-order working key", change: func(c *ssh.Certificate) { c.Key = smallOrder }, want: ErrCertificate},
-		{name: "ends in 64 days, an hour and a second", change: func(c *ssh.Certificate) { c.ValidBefore = unix + lifetime + 1 }, want: ErrCertificate},
+		// Both dates are at or before 9999-12-31T23:59:59Z, so ssh-keygen's
+		// "forever" is no certificate of this protocol; and its form is refused
+		// before its dates are read: never "not begun" (#435).
+		{name: "ends a second after the last date", change: func(c *ssh.Certificate) { c.ValidBefore = last + 1 }, want: ErrCertificate},
 		{name: "never ends", change: func(c *ssh.Certificate) { c.ValidBefore = ssh.CertTimeInfinity }, want: ErrCertificate},
-		// Its form is refused before its dates are read: never "not begun" (#435).
 		{name: "not begun and never ends", change: func(c *ssh.Certificate) { c.ValidAfter, c.ValidBefore = unix+3600, ssh.CertTimeInfinity }, want: ErrCertificate},
+		{name: "begins a second after the last date", change: func(c *ssh.Certificate) { c.ValidAfter, c.ValidBefore = last+1, last+2 }, want: ErrCertificate},
 		{name: "altered after it was signed", after: func(c *ssh.Certificate) { c.Serial++ }, want: ErrCertificate},
 
 		{name: "begins next second", change: func(c *ssh.Certificate) { c.ValidAfter = unix + 1 }, want: ErrCertificateTime},
+		{name: "begins at the last date's last second", change: func(c *ssh.Certificate) { c.ValidAfter, c.ValidBefore = last-1, last }, want: ErrCertificateTime},
 		{name: "ended this second", change: func(c *ssh.Certificate) { c.ValidBefore = unix }, want: ErrCertificateTime},
 		{name: "ended long ago", change: func(c *ssh.Certificate) { c.ValidAfter, c.ValidBefore = 1, 2 }, want: ErrCertificateTime},
 	} {
@@ -224,10 +231,10 @@ func TestCertificateRules(t *testing.T) {
 		t.Errorf("a bare key: %v", err)
 	}
 	// NewCertificate signs only with the identity it is given.
-	if _, err := NewCertificate(b.id, other.identity, b.work.PublicKey(), 1, now); err == nil {
+	if _, err := NewCertificate(b.id, other.identity, b.work.PublicKey(), 1, now, testLifetime); err == nil {
 		t.Error("NewCertificate signed with a key that is not the identity")
 	}
-	if _, err := NewCertificate(b.id, b.identity, b.identity.PublicKey(), 1, now); !errors.Is(err, ErrCertificate) {
+	if _, err := NewCertificate(b.id, b.identity, b.identity.PublicKey(), 1, now, testLifetime); !errors.Is(err, ErrCertificate) {
 		t.Errorf("NewCertificate certified the identity key: %v", err)
 	}
 }
@@ -286,12 +293,16 @@ func TestCertificateAgainstSSHKeygen(t *testing.T) {
 	// ssh-keygen's certificate and signature, checked here.
 	must(nil, "-q", "-s", "identity", "-I", CertificateKeyID, "-n", a, "-z", "7", "-V", "+64d", "-O", "clear", "work.pub")
 	sig := must(msg, "-Y", "sign", "-n", ns, "-f", "work-cert.pub")
-	cert, err := VerifyCertified(id, msg, sig, ns, now)
+	signer, err := VerifySigned(id, msg, sig, ns, now)
 	if err != nil {
 		t.Fatalf("ssh-keygen's certificate and signature: %v", err)
 	}
-	if cert.Serial() != 7 {
-		t.Errorf("serial %d", cert.Serial())
+	if signer.Identity() || signer.Rank() != 7 {
+		t.Errorf("rank %d", signer.Rank())
+	}
+	// And the identity's own signature, as ssh-keygen makes it: the bare key, rank 0.
+	if s, err := VerifySigned(id, msg, must(msg, "-Y", "sign", "-n", ns, "-f", "identity"), ns, now); err != nil || !s.Identity() || s.Rank() != 0 {
+		t.Errorf("ssh-keygen's signature by the identity: %v", err)
 	}
 	// Without "-O clear" ssh-keygen adds five extensions. None means
 	// anything here, and an extension a verifier does not know is ignored
@@ -301,12 +312,12 @@ func TestCertificateAgainstSSHKeygen(t *testing.T) {
 	}
 	must(nil, "-q", "-s", "identity", "-I", CertificateKeyID, "-n", a, "-z", "8", "-V", "+64d", "work.pub")
 	sig = must(msg, "-Y", "sign", "-n", ns, "-f", "work-cert.pub")
-	if _, err := VerifyCertified(id, msg, sig, ns, now); err != nil {
+	if _, err := VerifySigned(id, msg, sig, ns, now); err != nil {
 		t.Errorf("a certificate with ssh-keygen's default extensions: %v", err)
 	}
 	must(nil, "-q", "-s", "identity", "-I", CertificateKeyID, "-n", a, "-z", "9", "-V", "+64d", "-O", "clear", "-O", "force-command=true", "work.pub")
 	sig = must(msg, "-Y", "sign", "-n", ns, "-f", "work-cert.pub")
-	if _, err := VerifyCertified(id, msg, sig, ns, now); !errors.Is(err, ErrCertificate) {
+	if _, err := VerifySigned(id, msg, sig, ns, now); !errors.Is(err, ErrCertificate) {
 		t.Errorf("a certificate with a critical option: %v", err)
 	}
 
@@ -319,15 +330,15 @@ func TestCertificateAgainstSSHKeygen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ours, err := NewCertificate(id, identity, work.PublicKey(), 9, now)
+	ours, err := NewCertificate(id, identity, work.PublicKey(), 9, now, testLifetime)
 	if err != nil {
 		t.Fatal(err)
 	}
-	signer, err := ours.Signer(work)
+	certified, err := ours.Signer(work)
 	if err != nil {
 		t.Fatal(err)
 	}
-	sig, err = Sign(signer, msg, ns)
+	sig, err = Sign(certified, msg, ns)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,12 +397,11 @@ func TestARecordIsJudgedByEveryRuleButItsDates(t *testing.T) {
 		signer ssh.Signer
 		record bool // whether a record is taken
 	}{
-		{name: "made for 65 days", change: func(c *ssh.Certificate) { c.ValidBefore = unix + 65*86400 }, record: true},
-		{name: "begun two hours back", change: func(c *ssh.Certificate) { c.ValidAfter = unix - 7200 }, record: true},
-		{name: "valid from 1970", change: func(c *ssh.Certificate) { c.ValidAfter = 0 }, record: true},
 		{name: "ended long ago", change: func(c *ssh.Certificate) { c.ValidAfter, c.ValidBefore = 1, 2 }, record: true},
 		{name: "not begun", change: func(c *ssh.Certificate) { c.ValidAfter = unix + 60 }, record: true},
+		{name: "not begun, ending at the last date", change: func(c *ssh.Certificate) { c.ValidAfter, c.ValidBefore = unix+60, uint64(LastDate.Unix()) }, record: true},
 		{name: "never ends", change: func(c *ssh.Certificate) { c.ValidBefore = ssh.CertTimeInfinity }},
+		{name: "ends a second after the last date", change: func(c *ssh.Certificate) { c.ValidBefore = uint64(LastDate.Unix()) + 1 }},
 		{name: "ends before it begins", change: func(c *ssh.Certificate) { c.ValidBefore = c.ValidAfter }},
 		{name: "another key id", change: func(c *ssh.Certificate) { c.KeyId = "work" }},
 		{name: "signed by another key", signer: other.identity},
