@@ -687,17 +687,21 @@ dr_judge(){ # <me> <message stem> → 0 only if EVERY check passes, in this orde
     esac
     dr_mode "$A" "$c"; r=$?
   fi
-  case $r in
-    1) if [ "$c" = 0 ]; then echo "certificate_revoked: it is signed by its sender's identity, and its sender's address is in working-key mode, where its identity's own signature is revoked: nothing it signs is taken, whenever it was signed"
-       else echo "certificate_revoked: it is signed under a certificate its sender's identity has revoked: nothing signed under it is taken, whenever it was signed"; fi; return 1 ;;
-    2) echo "bad_signature: it is signed under a certificate, and its sender's address is in identity mode, where its identity signs and no certificate is taken"; return 1 ;;
-    3) echo "the revocation of certificates kept for $A does not verify"; return 3 ;;
-  esac
+  dr_admitted "$A" "$c" $r || return
   [ ! -e "$DR/seen" ] || [ -r "$DR/seen" ] || { echo "cannot read $DR/seen"; return 3; }
   h=$(sha256sum < "$m.age" | cut -c1-64)
   ! grep -q "^$h " "$DR/seen" 2> /dev/null || { echo "replay: this ciphertext was already received"; return 1; }
   dr_meet "$A" "$m.doc" || { echo "cannot write under $DR/peers"; return 3; }
   ! grep -q " $A $(jq -r .msg_id "$m.P")\$" "$DR/seen" 2> /dev/null || return 2
+}
+dr_admitted(){ # <sender> <its signer's rank> <what dr_mode returned> → check 7's verdict on the mode (PROTOCOL.md §12.3): 0 for a signer the sender's mode takes; 1, with "<code>: <words>", for one it refuses: certificate_revoked for a rank at or below the sender's revocation of its certificates, the identity's own among them, and bad_signature for a certificate from a sender in identity mode; 3, with words, for what is kept that does not verify
+  case $3 in
+    0) return 0 ;;
+    1) if [ "$2" = 0 ]; then echo "certificate_revoked: it is signed by its sender's identity, and its sender's address is in working-key mode, where its identity's own signature is revoked: nothing it signs is taken, whenever it was signed"
+       else echo "certificate_revoked: it is signed under a certificate its sender's identity has revoked: nothing signed under it is taken, whenever it was signed"; fi; return 1 ;;
+    2) echo "bad_signature: it is signed under a certificate, and its sender's address is in identity mode, where its identity signs and no certificate is taken"; return 1 ;;
+    *) echo "the revocation of certificates kept for $1 does not verify"; return 3 ;;
+  esac
 }
 dr_open(){ # <me> <message stem> → the sender's address, only if what was decrypted, <stem>.T, is a message for this mailbox that its sender signed; otherwise "<code>: <words>", and 1. It leaves the envelope in <stem>.P, its signature in <stem>.sig and the sender's identity document in <stem>.doc
   local B=$1 m=$2 A
