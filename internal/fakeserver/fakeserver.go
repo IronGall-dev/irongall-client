@@ -3,7 +3,11 @@
 // prekey, send, list page by page, fetch and ack, each call carrying its
 // mailbox's pass. It is NOT the dromas.dev server, and checks little of what
 // that server checks. Like every server it keeps and serves a revocation of
-// any address, with a mailbox here or none (PROTOCOL.md §11.15).
+// any address, with a mailbox here or none (PROTOCOL.md §11.15), and holds an
+// address to its mode by the revocation of its certificates it keeps
+// (PROTOCOL.md §5): in identity mode it takes the identity's statements and
+// passes and no certificate (409 identity_mode), and in working-key mode a
+// certificate above the revocation alone (401 certificate_revoked).
 //
 // A test plays the hostile operator two ways: with SetMiddle, a function that
 // sees every request and can rewrite it, answer it or forge the reply; and
@@ -65,7 +69,9 @@ type mailbox struct {
 	statement []byte
 	signature []byte
 	prekey    *protocol.Prekey
-	cert      *protocol.Certificate // the one the current statement is signed under: passes are taken under it only
+	signer    *protocol.Signer // the current statement's signer: passes are taken by it only
+	key       []byte           // that signer's key's wire bytes: the identity's key, or the certificate
+	keep      time.Time        // the latest it is kept until (PROTOCOL.md §13): raised, never lowered
 	account   string                // the account it is in, or ""
 	senders   []string              // the sender key types it declared with its current prekey
 	revocations
@@ -127,7 +133,7 @@ func (s *Server) Client() *http.Client { return s.srv.Client() }
 // newServer is a server on the clock now, and the handler that serves it.
 func newServer(t testing.TB, now func() time.Time) (*Server, http.Handler) {
 	s := &Server{now: now, mailboxes: map[protocol.Address]*mailbox{}, held: map[protocol.Address]*held{}, keys: map[string]string{}, page: MaxPage, hold: MaxHold,
-		policy: protocol.ServerDocument{Deprecations: []protocol.Scheduled{}, Sunsets: []protocol.Scheduled{}, Capabilities: []protocol.Capability{}}}
+		policy: protocol.ServerDocument{Deprecations: []protocol.Scheduled{}, Sunsets: []protocol.Scheduled{}, Capabilities: []protocol.Capability{}, MaxCertificateLifetime: MaxCertificateLifetime}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+protocol.DocumentPath+"{$}", s.document)
 	mux.HandleFunc("GET /v1/{addr}", s.getMailbox)
@@ -173,8 +179,12 @@ func newServer(t testing.TB, now func() time.Time) (*Server, http.Handler) {
 // request whose version a deprecation or a sunset covers, and a request whose version is retired is answered 410
 // version_retired before anything else (PROTOCOL.md §11.17, §11.4 rule 0),
 // as a server does. Until a test sets one, the policy is empty: no floor, no
-// sunset, no latest version.
+// sunset, no latest version, and a certificate taken for up to
+// MaxCertificateLifetime; a d that names no maximum keeps that one.
 func (s *Server) SetPolicy(d protocol.ServerDocument) {
+	if d.MaxCertificateLifetime == 0 {
+		d.MaxCertificateLifetime = MaxCertificateLifetime
+	}
 	if d.Deprecations == nil {
 		d.Deprecations = []protocol.Scheduled{}
 	}
@@ -220,6 +230,23 @@ func (s *Server) document(w http.ResponseWriter, _ *http.Request) {
 	d := s.policy
 	s.mu.Unlock()
 	WriteJSON(w, http.StatusOK, d)
+}
+
+// MaxCertificateLifetime is the longest certificate the server takes until a
+// test sets another (SetPolicy), in seconds: 45 days and an hour, a
+// server's default.
+const MaxCertificateLifetime = uint64((45*24*time.Hour + time.Hour) / time.Second)
+
+// KeptUntil is the date the server keeps mailbox a until (PROTOCOL.md §13):
+// the latest of its prekey's not_after plus the TTL and the end of any
+// certificate it took, raised and never lowered; zero for none here.
+func (s *Server) KeptUntil(a protocol.Address) time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if b := s.mailboxes[a]; b != nil {
+		return b.keep
+	}
+	return time.Time{}
 }
 
 // Close stops the server for good, as one that is gone: whoever calls it
@@ -345,22 +372,20 @@ func pathAddr(w http.ResponseWriter, r *http.Request) (protocol.Address, bool) {
 }
 
 // verifyPrekey checks a statement against the mailbox's identity, and returns
-// the certificate it is signed under, or the code its refusal is answered
-// with, as dromas-server answers it (#426 item 6): prekey_time where the
-// refusal is for a time (a certificate that has not begun
-// protocol.PassLifetime before this clock, or has ended, or a statement
-// that has, or ends too far ahead), and bad_key where it is not.
-func (s *Server) verifyPrekey(identity, statement, signature []byte) (*protocol.Prekey, *protocol.Certificate, protocol.Code, error) {
+// its signer, or the code its refusal is answered with, as dromas-server
+// answers it (PROTOCOL.md §11.7, step 6): prekey_time where the refusal is
+// for a time (a certificate that has not begun or has ended, at this clock,
+// or a statement that has ended or ends too far ahead), and bad_key where it
+// is not. A certificate that runs longer than the server's maximum is
+// certificate_too_long, unless it is current's, the certificate of the
+// mailbox's current statement: the maximum binds a certificate when it is
+// first taken.
+func (s *Server) verifyPrekey(identity, statement, signature []byte, current []byte) (*protocol.Prekey, *protocol.Signer, protocol.Code, error) {
 	id, err := protocol.ParseIdentity(identity)
 	if err != nil {
 		return nil, nil, protocol.CodeBadKey, err
 	}
-	p, cert, err := protocol.VerifyPrekey(id, statement, signature, s.now())
-	if err == nil {
-		if began, berr := protocol.CertificateBegan(signature); berr != nil || began.After(s.now().Add(-protocol.PassLifetime)) {
-			err = protocol.ErrCertificateNotBegun
-		}
-	}
+	p, by, err := protocol.VerifyPrekey(id, statement, signature, s.now())
 	switch {
 	case errors.Is(err, protocol.ErrCertificateTime):
 		return nil, nil, protocol.CodePrekeyTime, err
@@ -370,13 +395,68 @@ func (s *Server) verifyPrekey(identity, statement, signature []byte) (*protocol.
 	if err := p.CheckLifetime(s.now()); err != nil {
 		return nil, nil, protocol.CodePrekeyTime, err
 	}
-	return p, cert, "", nil
+	if c := by.Certificate(); c != nil && !bytes.Equal(c.Marshal(), current) {
+		s.mu.Lock()
+		most := s.policy.MaxCertificateLifetime
+		s.mu.Unlock()
+		if uint64(c.Lifetime()/time.Second) > most {
+			return nil, nil, protocol.CodeCertificateTooLong, errors.New("the certificate runs longer than this server takes")
+		}
+	}
+	return p, by, "", nil
+}
+
+// refuseStatement writes a statement's refusal, carrying the server's
+// maximum on certificate_too_long.
+func (s *Server) refuseStatement(w http.ResponseWriter, c protocol.Code, err error) {
+	s.mu.Lock()
+	most := s.policy.MaxCertificateLifetime
+	s.mu.Unlock()
+	problem(w, c, err.Error(), func(p *protocol.Problem) {
+		if c == protocol.CodeCertificateTooLong {
+			p.MaxCertificateLifetime = &most
+		}
+	})
+}
+
+// keyOf is the wire bytes of the key a signer of the identity signs with:
+// the identity's key, or the certificate.
+func keyOf(identity []byte, by *protocol.Signer) []byte {
+	if c := by.Certificate(); c != nil {
+		return c.Marshal()
+	}
+	id, err := protocol.ParseIdentity(identity)
+	if err != nil {
+		return nil
+	}
+	return id.PublicKey().Marshal()
+}
+
+// moded holds a statement's signer to the address's mode, by the revocation
+// of its certificates listed, nil for none (PROTOCOL.md §5, §11.7 step 6):
+// a certificate in identity mode is 409 identity_mode, and a signer at or
+// below the revocation, the identity among them, 401 certificate_revoked.
+// It writes the refusal and reports true if refused.
+func moded(w http.ResponseWriter, listed *protocol.RevokedCertificates, by *protocol.Signer) bool {
+	switch err := protocol.Admits(listed, by); {
+	case errors.Is(err, protocol.ErrIdentityMode):
+		problem(w, protocol.CodeIdentityMode, "this address is in identity mode: publish a revocation of certificates first")
+		return true
+	case err != nil:
+		problem(w, protocol.CodeCertificateRevoked, "the statement's signer is one this address's identity revoked")
+		return true
+	}
+	return false
 }
 
 // pass checks a call's pass: it is the pass of the mailbox whose identity
 // document is given, made for this server as the caller named it, and signed
-// under the certificate under. It writes the refusal and reports false if not.
-func (s *Server) pass(w http.ResponseWriter, r *http.Request, identity []byte, under *protocol.Certificate) bool {
+// by the key whose wire bytes are under, by the signer under is (PROTOCOL.md
+// §8). It writes the refusal and reports false if not: an identity pass where
+// the server holds a revocation of the address's certificates is
+// certificate_revoked, and any other signer certificate_not_current, naming
+// the certificate under where it is one.
+func (s *Server) pass(w http.ResponseWriter, r *http.Request, identity []byte, under *protocol.Signer, listed *protocol.RevokedCertificates) bool {
 	p, err := protocol.ParsePass(r.Header.Get("Authorization"))
 	if err != nil {
 		problem(w, protocol.CodeUnauthorized, "no pass, or not a pass")
@@ -392,20 +472,40 @@ func (s *Server) pass(w http.ResponseWriter, r *http.Request, identity []byte, u
 		problem(w, protocol.CodePassExpired, "the pass runs out too far ahead")
 		return false
 	}
-	cert, err := p.Verify(id, r.Host, s.now())
+	by, err := p.Verify(id, r.Host, s.now())
 	switch {
-	case errors.Is(err, protocol.ErrPassExpired):
-		problem(w, protocol.CodePassExpired, "the pass has run out")
+	case errors.Is(err, protocol.ErrPassExpired), errors.Is(err, protocol.ErrCertificateTime):
+		problem(w, protocol.CodePassExpired, "the pass has run out, or its certificate is not valid now")
 		return false
 	case err != nil:
 		problem(w, protocol.CodeUnauthorized, "not this mailbox's pass for this server")
 		return false
-	case !bytes.Equal(cert.Marshal(), under.Marshal()):
-		n := under.Serial()
-		problem(w, protocol.CodeCertificateNotCurrent, "the pass is not under the certificate this call takes a pass under", func(p *protocol.Problem) { p.CertificateSerial = &n })
+	case bytes.Equal(keyOf(identity, by), keyOf(identity, under)):
+		return true
+	case by.Identity() && listed != nil:
+		problem(w, protocol.CodeCertificateRevoked, "the pass is the identity's, and this address is in working-key mode")
 		return false
 	}
-	return true
+	problem(w, protocol.CodeCertificateNotCurrent, "the pass is not by the signer this call takes a pass by", func(p *protocol.Problem) {
+		if c := under.Certificate(); c != nil {
+			n := c.Serial()
+			p.CertificateSerial = &n
+		}
+	})
+	return false
+}
+
+// kept raises the date b is kept until (PROTOCOL.md §13) to its prekey's
+// not_after plus the TTL, and to the end of the certificate its statement is
+// under, where either is later: never lowered.
+func (b *mailbox) kept() {
+	until := b.prekey.NotAfter.Add(protocol.TTL)
+	if c := b.signer.Certificate(); c != nil && c.NotAfter().After(until) {
+		until = c.NotAfter()
+	}
+	if until.After(b.keep) {
+		b.keep = until
+	}
 }
 
 func (s *Server) register(w http.ResponseWriter, r *http.Request) {
@@ -418,14 +518,15 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 		problem(w, protocol.CodeIdentityMismatch, "the identity does not hash to the address")
 		return
 	}
-	p, cert, refusal, err := s.verifyPrekey(req.Identity, req.Prekey, req.PrekeySignature)
-	if err != nil {
-		problem(w, refusal, err.Error())
-		return
+	s.mu.Lock()
+	var current []byte
+	if b := s.mailboxes[a]; b != nil {
+		current = b.key
 	}
-	// A registration carries a pass under the certificate of the statement
-	// it brings: that is what shows a live holder of the working key.
-	if !s.pass(w, r, req.Identity, cert) {
+	s.mu.Unlock()
+	p, by, refusal, err := s.verifyPrekey(req.Identity, req.Prekey, req.PrekeySignature, current)
+	if err != nil {
+		s.refuseStatement(w, refusal, err)
 		return
 	}
 	s.mu.Lock()
@@ -436,34 +537,42 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if bytes.Equal(b.statement, req.Prekey) && bytes.Equal(b.signature, req.PrekeySignature) {
-			if !b.current() { // nothing under a revoked certificate is taken, an identical retry included
-				problem(w, protocol.CodeCertificateRevoked, "the statement is signed under a certificate this mailbox's identity revoked")
+			if !b.current() { // nothing by a revoked signer is taken, an identical retry included
+				problem(w, protocol.CodeCertificateRevoked, "the statement's signer is one this mailbox's identity revoked")
 				return
 			}
-			WriteJSON(w, http.StatusOK, struct{}{})
+			if s.pass(w, r, req.Identity, b.signer, b.listed) {
+				WriteJSON(w, http.StatusOK, struct{}{})
+			}
 			return
 		}
 		problem(w, protocol.CodeConflict, "registered with another prekey")
 		return
 	}
 	// What the identity signed about the address before it had a mailbox here
-	// holds the registration to it: none of a revoked address, and none
-	// under a certificate it revoked.
+	// holds the registration to it: none of a revoked address, and its mode,
+	// which comes before the pass (PROTOCOL.md §11.4 rule 4).
 	var kept revocations
 	if h := s.held[a]; h != nil {
 		if h.revoked != nil {
 			revoked(w, h.identity, &h.revocations, "this address is revoked")
 			return
 		}
-		if h.listed != nil && h.listed.Revokes(cert.Serial()) {
-			problem(w, protocol.CodeCertificateRevoked, "the statement is signed under a certificate this address's identity revoked")
-			return
-		}
 		kept = h.revocations
-		delete(s.held, a)
 	}
-	s.mailboxes[a] = &mailbox{identity: req.Identity, statement: req.Prekey, signature: req.PrekeySignature, prekey: p, cert: cert,
+	if moded(w, kept.listed, by) {
+		return
+	}
+	// A registration carries a pass by the signer of the statement it brings:
+	// that is what shows a live holder of the key.
+	if !s.pass(w, r, req.Identity, by, kept.listed) {
+		return
+	}
+	delete(s.held, a)
+	b := &mailbox{identity: req.Identity, statement: req.Prekey, signature: req.PrekeySignature, prekey: p, signer: by, key: keyOf(req.Identity, by),
 		senders: req.SenderKeyTypes, revocations: kept, messages: map[string]*message{}}
+	b.kept()
+	s.mailboxes[a] = b
 	WriteJSON(w, http.StatusCreated, struct{}{})
 }
 
@@ -588,10 +697,12 @@ func (s *Server) getRevocations(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, &protocol.Revocations{Identity: identity, Revocation: kept.revoked, RevokedCertificates: kept.certList, RevokedCertificatesSignature: kept.certListSig})
 }
 
-// current reports whether the mailbox's current certificate is one its identity
-// has not revoked: a mailbox whose certificate is revoked has no pass the server
-// takes and no prekey a sender may use, until it publishes under a new one.
-func (b *mailbox) current() bool { return b.listed == nil || !b.listed.Revokes(b.cert.Serial()) }
+// current reports whether the mailbox's current signer is one its identity
+// has not revoked: a certificate above its revocation of certificates, or the
+// identity while there is none. A mailbox whose signer is revoked has no pass
+// the server takes and no prekey a sender may use, until it publishes by a
+// new one.
+func (b *mailbox) current() bool { return protocol.Admits(b.listed, b.signer) == nil }
 
 func (s *Server) newPrekey(w http.ResponseWriter, r *http.Request) {
 	a, ok := pathAddr(w, r)
@@ -600,47 +711,66 @@ func (s *Server) newPrekey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	b := s.mailboxes[a]
-	if b != nil && b.revoked != nil {
-		revoked(w, b.identity, &b.revocations, "this mailbox is revoked")
-		return
-	}
+	s.mu.Unlock()
 	if b == nil {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if h := s.held[a]; h != nil && h.revoked != nil {
+			revoked(w, h.identity, &h.revocations, "this address is revoked")
+			return
+		}
 		problem(w, protocol.CodeNoSuchMailbox, "no mailbox has this address")
 		return
 	}
-	p, cert, refusal, err := s.verifyPrekey(b.identity, req.Prekey, req.PrekeySignature)
+	s.mu.Lock()
+	identity, current := b.identity, b.key
+	s.mu.Unlock()
+	p, by, refusal, err := s.verifyPrekey(identity, req.Prekey, req.PrekeySignature, current)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.mailboxes[a] != b {
+		problem(w, protocol.CodeMailboxChanged, "the mailbox changed while the request was handled")
+		return
+	}
+	if b.revoked != nil {
+		revoked(w, b.identity, &b.revocations, "this mailbox is revoked")
+		return
+	}
 	if err != nil {
-		problem(w, refusal, err.Error())
+		s.refuseStatement(w, refusal, err)
 		return
 	}
-	if refused := order(w, b, p, cert); refused {
+	// The mode comes before the pass (PROTOCOL.md §11.4 rule 4).
+	if moded(w, b.listed, by) || order(w, b, p, by) {
 		return
 	}
-	// A prekey upload carries a pass under the certificate of the statement
-	// it brings: that is how a mailbox moves to a new certificate.
-	if !s.pass(w, r, b.identity, cert) {
+	// A prekey upload carries a pass by the signer of the statement it
+	// brings: that is how a mailbox moves to a new signer.
+	if !s.pass(w, r, b.identity, by, b.listed) {
 		return
 	}
-	b.statement, b.signature, b.prekey, b.cert, b.senders = req.Prekey, req.PrekeySignature, p, cert, req.SenderKeyTypes
+	b.statement, b.signature, b.prekey, b.signer, b.key, b.senders = req.Prekey, req.PrekeySignature, p, by, keyOf(b.identity, by), req.SenderKeyTypes
+	b.kept()
 	WriteJSON(w, http.StatusOK, struct{}{})
 }
 
-// order holds a statement to mailbox b's record, as a renewal is held: ordered by
-// certificate first, a later one at any serial or the current one at a higher
-// serial, and under no certificate the identity revoked. It writes the
-// refusal and reports true if not.
-func order(w http.ResponseWriter, b *mailbox, p *protocol.Prekey, cert *protocol.Certificate) bool {
+// order holds a statement to mailbox b's record, as a renewal is held: later
+// by (c, p), by a signer of a higher rank at any serial, or by the current
+// signer at a higher serial (PROTOCOL.md §5.3, §11.9). It writes the refusal
+// and reports true if not.
+func order(w http.ResponseWriter, b *mailbox, p *protocol.Prekey, by *protocol.Signer) bool {
 	switch {
-	case cert.Serial() < b.cert.Serial(), cert.Serial() == b.cert.Serial() && !bytes.Equal(cert.Marshal(), b.cert.Marshal()):
-		problem(w, protocol.CodeCertificateNotCurrent, "the certificate is older than the mailbox's current one")
+	case by.Rank() < b.signer.Rank(), by.Rank() == b.signer.Rank() && !bytes.Equal(keyOf(b.identity, by), b.key):
+		problem(w, protocol.CodeCertificateNotCurrent, "the signer is older than the mailbox's current one", func(pr *protocol.Problem) {
+			if c := b.signer.Certificate(); c != nil {
+				n := c.Serial()
+				pr.CertificateSerial = &n
+			}
+		})
 		return true
-	case cert.Serial() == b.cert.Serial() && p.Serial <= b.prekey.Serial:
+	case by.Rank() == b.signer.Rank() && p.Serial <= b.prekey.Serial:
 		problem(w, protocol.CodeConflict, "the serial must be higher")
-		return true
-	case b.listed != nil && b.listed.Revokes(cert.Serial()):
-		problem(w, protocol.CodeCertificateRevoked, "the certificate is one the identity revoked")
 		return true
 	}
 	return false
@@ -651,7 +781,7 @@ func order(w http.ResponseWriter, b *mailbox, p *protocol.Prekey, cert *protocol
 // sends comes near it.
 const maxCiphertext = protocol.MaxCiphertext
 
-// sendQuery reads a send's query: both serials, once each, and nothing else.
+// sendQuery reads a send's query: its statement, once, and nothing else.
 // It writes the refusal, naming the parameter, and reports false if not.
 func sendQuery(w http.ResponseWriter, r *http.Request) (protocol.SendQuery, bool) {
 	q, err := protocol.ParseSendQuery(r.URL.RawQuery)
@@ -702,10 +832,10 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !sender.current() {
-		problem(w, protocol.CodeCertificateRevoked, "the pass is under a certificate the mailbox's identity revoked")
+		problem(w, protocol.CodeCertificateRevoked, "the sender's signer is one its identity revoked")
 		return
 	}
-	if !s.pass(w, r, sender.identity, sender.cert) {
+	if !s.pass(w, r, sender.identity, sender.signer, sender.listed) {
 		return
 	}
 	switch {
@@ -718,11 +848,8 @@ func (s *Server) send(w http.ResponseWriter, r *http.Request) {
 	case !rcpt.current():
 		problem(w, protocol.CodePrekeyExpired, "the mailbox must publish a new prekey: its current one is under a revoked certificate")
 		return
-	case q.PrekeySerial != rcpt.prekey.Serial, q.CertificateSerial != rcpt.cert.Serial():
-		prekey, cert := rcpt.prekey.Serial, rcpt.cert.Serial()
-		problem(w, protocol.CodeStalePrekey, "a newer prekey exists", func(p *protocol.Problem) {
-			p.PrekeySerial, p.CertificateSerial = &prekey, &cert
-		})
+	case q.Statement != protocol.StatementHash(rcpt.statement):
+		problem(w, protocol.CodeStalePrekey, "the send names another statement than the mailbox's current one")
 		return
 	}
 	// Dedupe while the message is live, from any sender: an ack leaves
@@ -794,7 +921,7 @@ func (s *Server) owner(h func(http.ResponseWriter, *http.Request, *mailbox)) htt
 			problem(w, protocol.CodeCertificateRevoked, "the pass is under a certificate the mailbox's identity revoked")
 			return
 		}
-		if s.pass(w, r, b.identity, b.cert) {
+		if s.pass(w, r, b.identity, b.signer, b.listed) {
 			h(w, r, b)
 		}
 	}
