@@ -72,8 +72,8 @@ type mailbox struct {
 	signer    *protocol.Signer // the current statement's signer: passes are taken by it only
 	key       []byte           // that signer's key's wire bytes: the identity's key, or the certificate
 	keep      time.Time        // the latest it is kept until (PROTOCOL.md §13): raised, never lowered
-	account   string                // the account it is in, or ""
-	senders   []string              // the sender key types it declared with its current prekey
+	account   string           // the account it is in, or ""
+	senders   []string         // the sender key types it declared with its current prekey
 	revocations
 	acl      *protocol.ACL // its sender ACL; nil: none, which admits everyone
 	messages map[string]*message
