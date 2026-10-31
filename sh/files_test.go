@@ -85,18 +85,26 @@ func TestTheScriptRestoresAMailboxFromItsIdentityAlone(t *testing.T) {
 		}
 		env := []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}
 		n0 := len(srv.Requests())
-		if out, err := bash(t, env, "dr_rekey 2> \"$DR/../rekey.err\""); err != nil || !strings.HasPrefix(out, `{"type":"prekey",`) || exists(filepath.Join(dir, "..", "rekey.err")) {
+		// Served the lost machine's statement, which it did not make, it says
+		// so and renews above it: its first renewal takes the mailbox over
+		// (PROTOCOL.md §12.4).
+		out, err = bash(t, env, "dr_rekey 2> \"$DR/../rekey.err\"")
+		lines, said := strings.Split(strings.TrimSpace(out), "\n"), 2
+		if forgotten {
+			said = 1 // nothing is served
+		}
+		if err != nil || len(lines) != said || !strings.HasPrefix(lines[len(lines)-1], `{"type":"prekey",`) || exists(filepath.Join(dir, "..", "rekey.err")) ||
+			!forgotten && !strings.HasPrefix(lines[0], `{"type":"prekey_not_made",`) {
 			t.Fatalf("forgotten %v: a renewal of the mailbox restored from its identity alone: %v %q", forgotten, err, out)
 		}
 		// It needs no record of the numbers it used: its own is above the lost
 		// machine's where the server serves that mailbox, and is the clock's where
 		// it serves none, so the two share one only in the same second
-		// (PROTOCOL.md §5). It has a working key and a pass.
+		// (PROTOCOL.md §5.2). It has a pass.
 		n, _ := strconv.ParseUint(strings.TrimSpace(string(mustRead(t, filepath.Join(dir, "serial")))), 10, 64)
 		was, _ := strconv.ParseUint(strings.TrimSpace(string(mustRead(t, filepath.Join(lost, "serial")))), 10, 64)
 		st, _ := srv.Prekey(a)
-		if n < was || !forgotten && n == was || strings.Split(string(st), "\n")[2] != strconv.FormatUint(n, 10) ||
-			!exists(filepath.Join(dir, "work", strconv.FormatUint(n, 10))) || !exists(filepath.Join(dir, "pass")) {
+		if n < was || !forgotten && n == was || strings.Split(string(st), "\n")[2] != strconv.FormatUint(n, 10) || !exists(filepath.Join(dir, "pass")) {
 			t.Errorf("forgotten %v: the restored mailbox published %d after the lost machine's %d, served %q", forgotten, n, was, st)
 		}
 		if _, err := bash(t, env, `dr_idcheck "$DR/identity.doc" `+a.String()); err != nil {
@@ -248,6 +256,10 @@ func TestAnIdentityPubOutOfFormIsRefused(t *testing.T) {
 	}
 }
 
+// unsigned is the shell that cuts dr_prekey short once its key is made: an
+// ssh-keygen that signs no prekey statement, and verifies one as ever.
+const unsigned = `ssh-keygen(){ case "$*" in *"-Y sign "*dromas-prekey-v1*) return 1 ;; esac; command ssh-keygen "$@"; }` + "\n"
+
 // A prekey's key file that a crash left empty, before the sync after
 // age-keygen, is no key: init and a renewal make it again, as the Go client
 // does, where the script once signed a statement with no key in it, which
@@ -259,7 +271,7 @@ func TestAPrekeyKeyACrashLeftEmptyIsMadeAgain(t *testing.T) {
 	srv := fakeserver.New(t, time.Now)
 	dir := t.TempDir()
 	env := []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}
-	if _, err := bash(t, env, "dr_work(){ return 1; }; dr_init"); err == nil { // cut short once the key is made
+	if _, err := bash(t, env, unsigned+"dr_init"); err == nil { // cut short once the key is made
 		t.Fatal("init went through")
 	}
 	if err := os.Truncate(newestKey(t, dir), 0); err != nil {
@@ -268,7 +280,7 @@ func TestAPrekeyKeyACrashLeftEmptyIsMadeAgain(t *testing.T) {
 	if _, err := bash(t, env, "dr_init"); err != nil {
 		t.Fatalf("init after a crash that emptied the first prekey's key: %v", err)
 	}
-	if _, err := bash(t, env, "sleep 1; dr_work(){ return 1; }; dr_rekey"); err == nil {
+	if _, err := bash(t, env, "sleep 1; "+unsigned+"dr_rekey"); err == nil {
 		t.Fatal("the renewal went through")
 	}
 	if err := os.Truncate(newestKey(t, dir), 0); err != nil {
@@ -279,7 +291,7 @@ func TestAPrekeyKeyACrashLeftEmptyIsMadeAgain(t *testing.T) {
 			t.Errorf("a renewal after a crash that emptied the new prekey's key, %s try: %v", try, err)
 		}
 	}
-	if _, err := bash(t, env, "sleep 1; dr_work(){ return 1; }; dr_rekey"); err == nil {
+	if _, err := bash(t, env, "sleep 1; "+unsigned+"dr_rekey"); err == nil {
 		t.Fatal("the renewal went through")
 	}
 	key := newestKey(t, dir)
@@ -289,7 +301,7 @@ func TestAPrekeyKeyACrashLeftEmptyIsMadeAgain(t *testing.T) {
 	if _, err := bash(t, env, "dr_rekey"); err == nil || !strings.Contains(err.Error(), "age-keygen cannot read") {
 		t.Errorf("a renewal with a key file age cannot read: %v", err)
 	}
-	if _, err := os.Stat(strings.TrimSuffix(key, ".agekey") + ".txt.sig"); err == nil {
+	if fi, err := os.Stat(strings.TrimSuffix(key, ".agekey") + ".txt.sig"); err == nil && fi.Size() > 0 { // a signature the cut left empty is none
 		t.Error("a statement was signed for a key file age cannot read")
 	}
 }
@@ -317,10 +329,9 @@ func TestAnInitCrashedBeforeItsIdentityIsSyncedRegisters(t *testing.T) {
 }
 
 // The script syncs in the order its crash safety rests on, as a sync and an
-// mv that log each call read it (#444 item 2): dr_prekey puts the working
-// key, its certificate and their directory on disk before the prekey, its
-// statement and its signature, so a signed statement is never on disk
-// without the key its pass needs (#291); dr_forget puts a raised floor on
+// mv that log each call read it (#444 item 2): dr_prekey puts the prekey, its
+// statement, when it was made and its signature on disk in one call, before
+// any upload publishes the statement; dr_forget puts a raised floor on
 // disk and in place before it syncs the new replay set and moves it into
 // place, so a crash leaves the old set or the new one, never an empty one,
 // under a floor at least as high (#240).
@@ -352,7 +363,6 @@ mv(){ printf '%s mv %s\n' "${FUNCNAME[1]}" "$*" >> "$LOG"; command mv "$@"; }
 	got := calls("dr_prekey", "dr_rekey")
 	n := strconv.FormatUint(b.num(), 10)
 	if want := []string{
-		"sync work/" + n + " work/" + n + ".pub work/" + n + "-cert.pub work",
 		"sync prekeys/" + n + ".agekey prekeys/" + n + ".txt prekeys/" + n + ".made prekeys/" + n + ".txt.sig prekeys",
 	}; !slices.Equal(got, want) {
 		t.Errorf("dr_prekey's syncs:\n%q\nwant\n%q", got, want)

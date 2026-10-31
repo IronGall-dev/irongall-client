@@ -106,7 +106,7 @@ func TestVectorsByToolsNotOurs(t *testing.T) {
 		if _, err := run(t, nil, "age-keygen", "-pq", "-o", other); err != nil {
 			t.Fatal(err)
 		}
-		for _, m := range []struct{ msg, key string }{{"a-to-b", "b-1.pq"}, {"a-to-c", "b-1.pq"}} {
+		for _, m := range []struct{ msg, key string }{{"a-to-b", "b-1.pq"}, {"a-to-c", "b-1.pq"}, {"b-to-c", "b-1.pq"}} {
 			if _, err := run(t, nil, "age", "-d", "-i", other, "message/"+m.msg+".age"); err == nil {
 				t.Errorf("%s: age decrypts it with another key", m.msg)
 			}
@@ -124,7 +124,7 @@ func TestVectorsByToolsNotOurs(t *testing.T) {
 	t.Run("split", func(t *testing.T) {
 		tool(t, "head")
 		tool(t, "sed")
-		for _, m := range []string{"a-to-b", "a-to-c"} {
+		for _, m := range []string{"a-to-b", "a-to-c", "b-to-c"} {
 			line, err := run(t, nil, "head", "-n", "1", "message/"+m+".plain")
 			if err != nil {
 				t.Fatal(err)
@@ -195,22 +195,21 @@ func TestVectorsByToolsNotOurs(t *testing.T) {
 				t.Errorf("%s does not carry the certificate in %s", sig, pub)
 			}
 		}
-		// Every signature in a mailbox's directory that carries a certificate carries
-		// that mailbox's work-cert.pub; message/ holds A's. The rest carry the bare
-		// identity, verified below.
-		for mailbox, sigs := range map[string]string{"a": "a/*.sig", "b": "b/*.sig", "c": "c/*.sig", "message": "message/*.sig"} {
-			owner, certified := mailbox, 0
-			if mailbox == "message" {
-				owner = "a"
-			}
+		// A is in working-key mode: every signature in its directory, and every
+		// one of its messages, that carries a certificate carries a/work-cert.pub,
+		// and the rest carry the bare identity, verified below. B and C are in
+		// identity mode: no signature in their directories, nor B's message,
+		// carries one.
+		for sigs, want := range map[string]bool{"a/*.sig": true, "message/a-to-*.sig": true, "b/*.sig": false, "c/*.sig": false, "message/b-to-*.sig": false} {
+			certified := 0
 			for _, s := range globIn(t, dir, sigs) {
 				if strings.HasSuffix(keyType(carried(t, s)), "-cert-v01@openssh.com") {
-					carries(t, owner+"/work-cert.pub", s)
+					carries(t, "a/work-cert.pub", s)
 					certified++
 				}
 			}
-			if certified == 0 {
-				t.Errorf("%s: no signature carries a certificate", sigs)
+			if (certified > 0) != want {
+				t.Errorf("%s: %d signatures carry a certificate", sigs, certified)
 			}
 		}
 		for _, c := range []string{"a/work-cert.pub", "b/work-cert.pub", "c/work-cert.pub"} {
@@ -222,11 +221,8 @@ func TestVectorsByToolsNotOurs(t *testing.T) {
 			carries(t, c, strings.TrimSuffix(c, ".pub")+".sig")
 		}
 		ns := func(tag, mailbox string) string { return tag + ":" + address(t, mailbox) }
-		for _, mailbox := range []string{"a", "b", "c"} {
-			under := signers(mailbox+"-ca", mailbox, true)
-			verify(t, under, mailbox, ns("dromas-prekey-v1", mailbox), mailbox+"/prekey-1.txt", mailbox+"/prekey-1.txt.sig")
-		}
 		underA := signers("a-ca", "a", true)
+		verify(t, underA, "a", ns("dromas-prekey-v1", "a"), "a/prekey-1.txt", "a/prekey-1.txt.sig")
 		verify(t, underA, "a", ns("dromas-prekey-v1", "a"), "a/prekey-2.txt", "a/prekey-2.txt.sig")
 		verify(t, underA, "a", ns("dromas-prekey-v1", "a"), "a/prekey-1.txt", "a/prekey-1.txt.sha256.sig")
 		verify(t, underA, "a", ns("dromas-pass-v1", "a"), "a/pass.txt", "a/pass.sig")
@@ -238,13 +234,21 @@ func TestVectorsByToolsNotOurs(t *testing.T) {
 			}
 			verify(t, underA, "a", ns("dromas-prekey-v1", "a"), "a/prekey-1.txt", strings.TrimSuffix(c, ".pub")+".sig")
 		}
-		// What the identity signs itself is verified under its bare key.
+		// What an identity signs itself is verified under its bare key: B's and
+		// C's statements, passes and B's message, and every revocation.
+		for _, mailbox := range []string{"b", "c"} {
+			bare := signers(mailbox+"-bare", mailbox, false)
+			verify(t, bare, mailbox, ns("dromas-prekey-v1", mailbox), mailbox+"/prekey-1.txt", mailbox+"/prekey-1.txt.sig")
+			verify(t, bare, mailbox, ns("dromas-pass-v1", mailbox), mailbox+"/pass.txt", mailbox+"/pass.sig")
+		}
+		verify(t, signers("b-bare", "b", false), "b", ns("dromas-msg-v1", "c"), "message/b-to-c.line", "message/b-to-c.sig")
 		for _, mailbox := range []string{"a", "c"} {
 			bare := signers(mailbox+"-bare", mailbox, false)
 			verify(t, bare, mailbox, ns("dromas-revoke-v1", mailbox), mailbox+"/revoke.txt", mailbox+"/revoke.sig")
 		}
 		bareA := signers("a-bare", "a", false)
 		verify(t, bareA, "a", ns("dromas-revoke-v1", "a"), "a/revoke.txt", "a/revoke.sha256.sig")
+		verify(t, bareA, "a", ns("dromas-revoke-certs-v1", "a"), "a/trip.txt", "a/trip.sig")
 		for _, s := range globIn(t, dir, "revoked/ok-*.sig") {
 			verify(t, bareA, "a", ns("dromas-revoke-certs-v1", "a"), strings.TrimSuffix(strings.TrimSuffix(s, ".sig"), ".sha256")+".txt", s)
 		}

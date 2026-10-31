@@ -68,7 +68,7 @@ func publishAt(t *testing.T, base string, rec *protocol.Revocations) {
 func TestARenewalNumbersAboveARevocationItDidNotHold(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a := e.mailbox()
 	x := numberOf(t, a) + 10*365*86400
 	publishAt(t, e.srv.URL, ownRevocation(t, a, x))
@@ -87,7 +87,7 @@ func TestARenewalNumbersAboveARevocationItDidNotHold(t *testing.T) {
 func TestARestoredMailboxRenewsAboveAFastRemedy(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a := e.mailbox()
 	o := e.opts()
 	o.Now = func() time.Time { return e.clock.Now().Add(3 * time.Hour) }
@@ -114,7 +114,7 @@ func TestARestoredMailboxRenewsAboveAFastRemedy(t *testing.T) {
 func TestTheRemedyGoesOnWhenItsServerDoesNotAnswerTheRead(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a := e.mailbox()
 	inUse := numberOf(t, a)
 	reads := 0
@@ -140,7 +140,7 @@ func TestTheRemedyGoesOnWhenItsServerDoesNotAnswerTheRead(t *testing.T) {
 func TestTheRemedyGoesOnPastARollback(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a := e.mailbox()
 	first := numberOf(t, a)
 	old, oldSig := statement(t, a, first, ".txt"), statement(t, a, first, ".txt.sig")
@@ -173,7 +173,7 @@ func TestTheRemedyGoesOnPastARollback(t *testing.T) {
 func TestTheRemedyAsksAgainAfterItsServerAnswersConflict(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a := e.mailbox()
 	T := numberOf(t, a) + 7200
 	publishAt(t, e.srv.URL, ownRevocation(t, a, T))
@@ -201,7 +201,7 @@ func TestTheRemedyAsksAgainAfterItsServerAnswersConflict(t *testing.T) {
 func TestTheRemedyStopsAtAConflictThatShowsNothing(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a := e.mailbox()
 	publishAt(t, e.srv.URL, ownRevocation(t, a, numberOf(t, a)+7200))
 	var puts, renewals atomic.Int32
@@ -230,7 +230,7 @@ func TestTheRemedyStopsAtAConflictThatShowsNothing(t *testing.T) {
 func TestTheRemedyStopsAtAConflictThatShowsALowerRecord(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a := e.mailbox()
 	lower := ownRevocation(t, a, numberOf(t, a)-1)
 	var renewals atomic.Int32
@@ -260,7 +260,7 @@ func TestTheRemedyStopsAtAConflictThatShowsALowerRecord(t *testing.T) {
 func TestTheRemedyReadsItsMailboxOnce(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a := e.mailbox()
 	var reads atomic.Int32
 	watch(e, func(w http.ResponseWriter, r *http.Request) bool {
@@ -303,6 +303,7 @@ func lockingCommands(ctx context.Context, a, b *client.Mailbox, rec *protocol.Re
 		{"Rekey", func() error { _, err := a.Rekey(ctx); return err }},
 		{"RevokeEarlier", func() error { _, err := a.RevokeEarlier(ctx); return err }},
 		{"RenewAndRevoke", func() error { _, err := a.RenewAndRevoke(ctx); return err }},
+		{"Switch", func() error { _, err := a.Switch(ctx); return err }},
 		{"SendWith", func() error {
 			_, err := a.SendWith(ctx, b.Address(), "from a finished mailbox", client.Fields{})
 			return err
@@ -639,7 +640,7 @@ func TestAMailboxRevokedAtItsServerSignsNothingAtAnother(t *testing.T) {
 func TestASendInTheRemedysWindowWaitsForTheRenewal(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a, reader := e.mailbox(), e.mailbox()
 	inUse := numberOf(t, a)
 	watch(e, func(w http.ResponseWriter, r *http.Request) bool {
@@ -681,7 +682,7 @@ func TestASendInTheRemedysWindowWaitsForTheRenewal(t *testing.T) {
 func TestAFastClockDeletesNoKeyAMessageWaitsFor(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a, b := e.mailbox(), e.mailbox()
 	send(t, a, b, "sealed to the prekey about to retire")
 	e.clock.Add(2 * time.Second)

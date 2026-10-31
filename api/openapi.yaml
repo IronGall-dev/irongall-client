@@ -131,7 +131,7 @@ paths:
         - $ref: '#/components/parameters/IfNoneMatch'
       responses:
         '200':
-          description: The mailbox, as its identity and working key signed it, and what the server says of its key types.
+          description: The mailbox, as its identity, or a working key it certified, signed it, and what the server says of its key types.
           headers:
             Date:
               $ref: '#/components/headers/Date'
@@ -308,8 +308,8 @@ paths:
       summary: Register a mailbox
       description: |
         Registers a mailbox (`PROTOCOL.md` §11.7): `201` for a new mailbox, `200` for
-        an identical retry. The pass is under the certificate of the prekey
-        statement the body brings.
+        an identical retry. The pass is by the signer of the prekey statement
+        the body brings.
       requestBody:
         required: true
         content:
@@ -353,7 +353,7 @@ paths:
       summary: Publish a new prekey
       description: |
         Publishes a new prekey statement (`PROTOCOL.md` §11.9). The pass is
-        under the certificate the new statement is signed under.
+        by the signer of the new statement.
       requestBody:
         required: true
         content:
@@ -864,18 +864,12 @@ paths:
         Sends a message (`PROTOCOL.md` §11.10): `addr` is the recipient, and
         the sender is the mailbox whose pass the call carries.
       parameters:
-        - name: prekey_serial
+        - name: statement
           in: query
           required: true
-          description: The serial of the prekey statement the file is sealed to (`PROTOCOL.md` §11.10).
+          description: The prekey statement the file is sealed to, by the SHA-256 of its bytes as the read of the mailbox served them, never of its signature (`PROTOCOL.md` §11.10).
           schema:
-            $ref: '#/components/schemas/SerialText'
-        - name: certificate_serial
-          in: query
-          required: true
-          description: The serial of the certificate that prekey statement is signed under; the two name the prekey (`PROTOCOL.md` §11.10).
-          schema:
-            $ref: '#/components/schemas/SerialText'
+            $ref: '#/components/schemas/StatementHash'
         - $ref: '#/components/parameters/IfMatch'
         - $ref: '#/components/parameters/IfNoneMatch'
       requestBody:
@@ -1556,8 +1550,8 @@ components:
       type: http
       scheme: dromas-pass
       description: |
-        A pass the mailbox signs for itself with its working key (`PROTOCOL.md`
-        §8). A client writes it in exactly this form:
+        A pass the mailbox signs for itself with its signer, its identity or
+        a working key it certified (`PROTOCOL.md` §5, §8). A client writes it in exactly this form:
         `Authorization: dromas-pass address="<address>", not_after="<RFC 3339 UTC>", signature="<base64 of the SSHSIG>"`.
         A server reads it as RFC 9110 §11 lets a recipient: the scheme and
         the names in any case, the three parameters in any order, whitespace
@@ -1798,8 +1792,10 @@ components:
         Not a request this call takes: `bad_request` (naming what is wrong in
         `member`) · `bad_address` · `bad_encoding` · `identity_mismatch` ·
         `unsupported_key_type` (with the server's `key_types`) · `bad_key` ·
-        `prekey_not_new` · `prekey_time` · `not_age` · `wrong_recipient_type` ·
-        `bad_revocation`. `PROTOCOL.md` §11.3 has what each means.
+        `prekey_not_new` · `prekey_time` · `certificate_too_long` (with the
+        server's `max_certificate_lifetime`) · `not_age` ·
+        `wrong_recipient_type` · `bad_revocation`. `PROTOCOL.md` §11.3 has what
+        each means.
       headers:
         Date:
           $ref: '#/components/headers/Date'
@@ -1828,11 +1824,12 @@ components:
                   status:
                     const: 400
                   code:
-                    enum: [bad_request, bad_address, bad_encoding, identity_mismatch, unsupported_key_type, bad_key, prekey_not_new, prekey_time, not_age, wrong_recipient_type, bad_revocation]
+                    enum: [bad_request, bad_address, bad_encoding, identity_mismatch, unsupported_key_type, bad_key, prekey_not_new, prekey_time, certificate_too_long, not_age, wrong_recipient_type, bad_revocation]
     Unauthorized:
       description: |
         The pass is refused: `unauthorized` · `pass_expired` ·
-        `certificate_not_current` (with `certificate_serial`) ·
+        `certificate_not_current` (with `certificate_serial` where the signer
+        it names is a certificate) ·
         `certificate_revoked`. `PROTOCOL.md` §8 has what each means.
       headers:
         Date:
@@ -1935,10 +1932,10 @@ components:
                     enum: [no_such_mailbox, no_such_message, not_revoked]
     Conflict:
       description: |
-        `conflict` (with `prekey_serial` and `certificate_serial`, or
-        `through`, as the call has one) · `mailbox_changed` · `stale_prekey`
-        (with the current `prekey_serial` and `certificate_serial`) ·
-        `prekey_expired`. `PROTOCOL.md` §11.3 has what each means.
+        `conflict` (with `prekey_serial`, and `certificate_serial` where the
+        current signer is a certificate, or `through`, as the call has one) ·
+        `mailbox_changed` · `stale_prekey` · `prekey_expired` ·
+        `identity_mode`. `PROTOCOL.md` §11.3 has what each means.
       headers:
         Date:
           $ref: '#/components/headers/Date'
@@ -1967,7 +1964,7 @@ components:
                   status:
                     const: 409
                   code:
-                    enum: [conflict, mailbox_changed, stale_prekey, prekey_expired]
+                    enum: [conflict, mailbox_changed, stale_prekey, prekey_expired, identity_mode]
     Gone:
       description: |
         `revoked`. Every `410 revoked` a server answers from the record it
@@ -2322,8 +2319,13 @@ components:
     ServerDocument:
       description: The server's version policy and the capabilities it serves (`PROTOCOL.md` §11.18).
       type: object
-      required: [deprecations, sunsets, capabilities]
+      required: [deprecations, sunsets, capabilities, max_certificate_lifetime]
       properties:
+        max_certificate_lifetime:
+          description: The longest a certificate this server takes may run, `valid before` less `valid after`, in seconds (`PROTOCOL.md` §11.7, §11.18).
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
         min_version:
           $ref: '#/components/schemas/PolicyVersion'
         latest_version:
@@ -2391,7 +2393,7 @@ components:
           description: The first prekey statement (`PROTOCOL.md` §6).
           $ref: '#/components/schemas/Bytes'
         prekey_signature:
-          description: The statement's SSHSIG, armored, by a working key under a certificate of the identity (`PROTOCOL.md` §3.2, §5).
+          description: The statement's SSHSIG, armored, by the identity or by a working key under a certificate of it (`PROTOCOL.md` §3.2, §5).
           $ref: '#/components/schemas/Bytes'
         sender_key_types:
           $ref: '#/components/schemas/KeyTypes'
@@ -2404,7 +2406,7 @@ components:
           description: The new prekey statement (`PROTOCOL.md` §6).
           $ref: '#/components/schemas/Bytes'
         prekey_signature:
-          description: Its SSHSIG, armored, by a working key under a certificate of the identity.
+          description: Its SSHSIG, armored, by the identity or by a working key under a certificate of it (`PROTOCOL.md` §5).
           $ref: '#/components/schemas/Bytes'
         sender_key_types:
           $ref: '#/components/schemas/KeyTypes'
@@ -2424,7 +2426,7 @@ components:
           description: The current prekey statement.
           $ref: '#/components/schemas/Bytes'
         prekey_signature:
-          description: Its SSHSIG, armored, carrying the certificate it is under.
+          description: Its SSHSIG, armored, carrying its signer, the identity key or a certificate (`PROTOCOL.md` §5).
           $ref: '#/components/schemas/Bytes'
         sender_key_types:
           $ref: '#/components/schemas/KeyTypes'
@@ -2438,10 +2440,10 @@ components:
           anyOf:
             - $ref: '#/components/schemas/Bytes'
             - type: 'null'
-    SerialText:
-      description: 'A serial in a query, as a statement writes one (`PROTOCOL.md` §2.2): digits, no leading zero, from 1 to 2^53 − 1.'
+    StatementHash:
+      description: The lowercase hex SHA-256 of a prekey statement's bytes (`PROTOCOL.md` §11.10).
       type: string
-      pattern: '^[1-9][0-9]{0,15}$'
+      pattern: '^[0-9a-f]{64}$'
     Cursor:
       description: A list's cursor, opaque and URL-safe (`PROTOCOL.md` §11.11).
       type: string
@@ -2660,12 +2662,17 @@ components:
             - $ref: '#/components/schemas/Integer'
             - type: 'null'
         prekey_serial:
-          description: '`stale_prekey`: the mailbox''s current prekey; `conflict` on a prekey: the serial a new one must be above.'
+          description: '`conflict` on a prekey: the serial a new one must be above.'
           anyOf:
             - $ref: '#/components/schemas/Integer'
             - type: 'null'
         certificate_serial:
-          description: '`stale_prekey`, `conflict` on a prekey: the current certificate''s serial; `certificate_not_current`: the serial of the certificate the call takes a pass under, or of the one a new statement must be above.'
+          description: '`conflict` on a prekey: the current certificate''s serial, where the current signer is a certificate; `certificate_not_current`: the serial of the certificate the call takes a pass by, or of the one a new statement must be above, where that is a certificate (`PROTOCOL.md` §8).'
+          anyOf:
+            - $ref: '#/components/schemas/Integer'
+            - type: 'null'
+        max_certificate_lifetime:
+          description: '`certificate_too_long`: the longest a certificate the server takes may run, in seconds, as its document gives it (`PROTOCOL.md` §11.18).'
           anyOf:
             - $ref: '#/components/schemas/Integer'
             - type: 'null'
@@ -2726,9 +2733,9 @@ components:
             required: [code]
             properties:
               code:
-                const: stale_prekey
+                const: certificate_too_long
           then:
-            required: [prekey_serial, certificate_serial]
+            required: [max_certificate_lifetime]
         - if:
             required: [code]
             properties:
@@ -2743,13 +2750,6 @@ components:
                 const: sender_key_type
           then:
             required: [key_type]
-        - if:
-            required: [code]
-            properties:
-              code:
-                const: certificate_not_current
-          then:
-            required: [certificate_serial]
         - if:
             required: [quota_id]
             properties:

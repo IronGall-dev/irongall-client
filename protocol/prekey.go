@@ -51,10 +51,10 @@ const PostQuantum KeyType = "mlkem768x25519"
 var serialGrammar = regexp.MustCompile(`\A[1-9][0-9]{0,15}\z`)
 
 // Prekey is a prekey statement: the mailbox's current age encryption key, signed
-// by a working key its identity certified.
+// by its identity or, in working-key mode, by a working key it certified.
 type Prekey struct {
 	Address  Address   // the mailbox the key belongs to
-	Serial   uint64    // strictly increasing under one certificate; a client gives it its certificate's serial
+	Serial   uint64    // strictly increasing under one signer: its maker's clock, or one above the highest it knows
 	Key      string    // the age recipient: "age1pq1…"
 	NotAfter time.Time // the last moment the key may be encrypted to
 }
@@ -231,21 +231,20 @@ func bech32HRP(s string) (string, bool) {
 }
 
 // VerifyPrekey verifies a prekey statement of the mailbox whose identity is id,
-// at now, and parses it. The signature must be by a working key that identity
-// certified, under a certificate valid at now, in id's prekey namespace; the
-// statement must name id's own address; and it must not outlive the
-// certificate it is signed under. It returns the certificate too: whoever
-// keeps the highest serial it has seen for the mailbox compares. The key's type
-// is checked last, so ErrPrekeyType is a statement good in every other way,
-// and comes with the statement and its certificate, for a caller to hold to
-// its own rules first (#167).
-func VerifyPrekey(id *Identity, statement, signature []byte, now time.Time) (*Prekey, *Certificate, error) {
+// at now, and parses it. The signature must be by that identity or a working
+// key it certified, under a certificate valid at now, in id's prekey
+// namespace, and the statement must name id's own address. It returns the
+// signer too: holding it to the mailbox's mode, and to the highest it has seen,
+// is the caller's. The key's type is checked last, so ErrPrekeyType is a
+// statement good in every other way, and comes with the statement and its
+// signer, for a caller to hold to its own rules first.
+func VerifyPrekey(id *Identity, statement, signature []byte, now time.Time) (*Prekey, *Signer, error) {
 	return verifyPrekey(id, statement, signature, func(key ssh.PublicKey) (*Certificate, error) { return CheckCertificate(id, key, now) })
 }
 
 // verifyPrekey is VerifyPrekey with the certificate held to check.
-func verifyPrekey(id *Identity, statement, signature []byte, check func(ssh.PublicKey) (*Certificate, error)) (*Prekey, *Certificate, error) {
-	cert, err := verifyCertified(id, statement, signature, PrekeyNamespace(id.Address()), check)
+func verifyPrekey(id *Identity, statement, signature []byte, check func(ssh.PublicKey) (*Certificate, error)) (*Prekey, *Signer, error) {
+	signer, err := verifySigned(id, statement, signature, PrekeyNamespace(id.Address()), check)
 	switch {
 	case errors.Is(err, ErrCertificateTime):
 		// Its own words, and still the error it was to errors.Is: a caller
@@ -255,7 +254,7 @@ func verifyPrekey(id *Identity, statement, signature []byte, check func(ssh.Publ
 		}
 		return nil, nil, &worded{"the certificate the prekey is signed under has ended", ErrCertificateEnded}
 	case err != nil:
-		return nil, nil, errors.New("the prekey is not signed by a working key its identity certified")
+		return nil, nil, errors.New("the prekey is not signed by its identity or a working key its identity certified")
 	}
 	p, err := parsePrekey(statement)
 	if err != nil {
@@ -264,43 +263,47 @@ func verifyPrekey(id *Identity, statement, signature []byte, check func(ssh.Publ
 	if p.Address != id.Address() {
 		return nil, nil, errors.New("the prekey statement names another mailbox")
 	}
-	if p.NotAfter.After(cert.NotAfter()) {
-		return nil, nil, errors.New("the prekey statement outlives the certificate it is signed under")
-	}
 	if err := checkRecipient(p); errors.Is(err, ErrPrekeyType) {
-		return p, cert, err
+		return p, signer, err
 	} else if err != nil {
 		return nil, nil, err
 	}
-	return p, cert, nil
+	return p, signer, nil
 }
 
 // VerifyPrekeyRecord verifies a prekey statement as VerifyPrekey does, by
 // every rule but its certificate's dates (CheckCertificateRecord). It answers
-// whether the identity certified the key that signed the statement, and at
-// which serials it stands, which is what a mailbox asks of its own record
+// whether the identity made or certified the key that signed the statement,
+// and where it stands, which is what a mailbox asks of its own record
 // (PROTOCOL.md §12.4): a mailbox that was away for longer than a certificate
 // lasts, or whose record its server took under a rule since changed, still
 // has to read its serial to publish the next one. Nobody judging another
 // mailbox's prekey uses it.
-func VerifyPrekeyRecord(id *Identity, statement, signature []byte) (*Prekey, *Certificate, error) {
+func VerifyPrekeyRecord(id *Identity, statement, signature []byte) (*Prekey, *Signer, error) {
 	return verifyPrekey(id, statement, signature, func(key ssh.PublicKey) (*Certificate, error) { return CheckCertificateRecord(id, key) })
 }
 
 // Order is where a prekey statement would stand in its mailbox's order
-// (PROTOCOL.md §5): its own serial, and the serial and the SHA-256 of the
-// certificate its signature carries.
+// (PROTOCOL.md §5): its signer's rank, 0 for the identity and a certificate's
+// serial for a working key, then its own serial; and the SHA-256 of its
+// signing key's wire bytes, the identity's key or the certificate.
 type Order struct {
-	Serial     uint64
-	CertSerial uint64
-	Cert       [32]byte
+	Rank   uint64
+	Serial uint64
+	Signer [32]byte
+}
+
+// Less reports whether o stands below p: by rank, then by serial.
+func (o Order) Less(p Order) bool {
+	return o.Rank < p.Rank || o.Rank == p.Rank && o.Serial < p.Serial
 }
 
 // PrekeyOrder reads a statement's Order and verifies nothing: not the
 // signature, not the certificate, not the key. A server reads it to refuse,
 // before any signature check, a statement it could not take even if it
 // verified, and trusts it for nothing more: a statement that passes is
-// verified in full after.
+// verified in full after. A signing key that is no certificate reads as rank
+// 0: verifying it as the identity's is VerifyPrekey's.
 func PrekeyOrder(statement, signature []byte) (Order, error) {
 	notOrdered := errors.New("the prekey statement or its signature does not parse")
 	lines := strings.SplitN(string(statement), "\n", 4)
@@ -319,11 +322,11 @@ func PrekeyOrder(statement, signature []byte) (Order, error) {
 	if err != nil {
 		return Order{}, notOrdered
 	}
-	cert, ok := key.(*ssh.Certificate)
-	if !ok {
-		return Order{}, notOrdered
+	o := Order{Serial: serial, Signer: sha256.Sum256(key.Marshal())}
+	if cert, ok := key.(*ssh.Certificate); ok {
+		o.Rank = cert.Serial
 	}
-	return Order{Serial: serial, CertSerial: cert.Serial, Cert: sha256.Sum256(cert.Marshal())}, nil
+	return o, nil
 }
 
 // worded is an error that reads as its own words and is still is to

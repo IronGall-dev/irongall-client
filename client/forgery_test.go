@@ -277,7 +277,7 @@ func TestForgeries(t *testing.T) {
 	})
 
 	t.Run("a stolen working key, replaced since", func(t *testing.T) {
-		e := newEnv(t)
+		e := newWorkEnv(t)
 		a, b := e.mailbox(), e.mailbox()
 		stolen := worker(t, b) // read before the renewal deletes it
 		first := numberOf(t, b)
@@ -305,13 +305,13 @@ func TestForgeries(t *testing.T) {
 			}
 			next.ServeHTTP(w, r)
 		})
-		if _, err := a.Send(ctx, b.Address(), "secret"); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("under certificate %d, below %d", first, numberOf(t, b))) {
+		if _, err := a.Send(ctx, b.Address(), "secret"); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("under certificate %d, below certificate %d", first, numberOf(t, b))) {
 			t.Fatalf("send: %v, want a refusal of the older certificate", err)
 		}
 	})
 
 	t.Run("rollback of the mailbox's own prekey", func(t *testing.T) {
-		e := newEnv(t)
+		e := newWorkEnv(t)
 		b := e.mailbox()
 		st, sig := e.srv.Prekey(b.Address())
 		if _, err := b.Rekey(ctx); err != nil {
@@ -372,7 +372,7 @@ func TestForgeries(t *testing.T) {
 	})
 
 	t.Run("its own lower, the same certificate", func(t *testing.T) {
-		e := newEnv(t)
+		e := newWorkEnv(t)
 		b := e.mailbox()
 		published, _ := e.srv.Prekey(b.Address())
 		below(t, e, b)

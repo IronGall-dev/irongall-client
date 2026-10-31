@@ -53,7 +53,7 @@ func TestVectorRevokedCertificates(t *testing.T) {
 	// Controls: the working key's signature is good under A's certificate,
 	// and each malformed one carries a good signature of A's identity, so it
 	// is the rule and the form that refuse them.
-	if _, err := VerifyCertified(a, read(t, "revoked/bad-by-a-working-key.txt"), read(t, "revoked/bad-by-a-working-key.sig"), RevokedCertsNamespace(a.Address()), vectorNow(t)); err != nil {
+	if s, err := VerifySigned(a, read(t, "revoked/bad-by-a-working-key.txt"), read(t, "revoked/bad-by-a-working-key.sig"), RevokedCertsNamespace(a.Address()), vectorNow(t)); err != nil || s.Identity() {
 		t.Errorf("revoked/bad-by-a-working-key.sig is not a good signature under A's certificate, so it tests nothing: %v", err)
 	}
 	for _, name := range []string{"bad-a-list", "bad-a-second-serial", "bad-crlf", "bad-no-serial", "bad-another-address", "bad-serial-zero", "bad-no-final-newline", "bad-nul"} {

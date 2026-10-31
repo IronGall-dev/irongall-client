@@ -69,8 +69,9 @@ func (b *Mailbox) Send(ctx context.Context, to protocol.Address, body string) (*
 
 // SendWith sends one logical message: its envelope is built once and kept in
 // the outbox, then sealed for the post: dated at the post, signed for that
-// peer only by this mailbox's working key, and encrypted with that signature to
-// the peer's verified prekey. On 409 stale_prekey it seals the SAME envelope
+// peer only by this mailbox's signer (its identity, or in working-key mode its
+// working key), and encrypted with that signature to the peer's verified
+// prekey. On 409 stale_prekey it seals the SAME envelope
 // to the newer prekey, once. If the post fails, the envelope stays in the outbox:
 // retry with [Mailbox.Flush], never by sending again, or the peer gets it twice.
 // Once the server has it, the envelope and the server's receipt are kept in
@@ -445,7 +446,8 @@ func (b *Mailbox) moveToFailed(stem string) error {
 }
 
 // sealed is a seal made for one post: the ciphertext, the whole body of the
-// send, the query that names the prekey it is encrypted to, and the
+// send, the query that names the statement of the prekey it is encrypted
+// to, and the
 // envelope's line as it signed it, dated at the post.
 type sealed struct {
 	query      protocol.SendQuery
@@ -474,7 +476,8 @@ func (b *Mailbox) postSealed(ctx context.Context, to protocol.Address, s *sealed
 }
 
 // seal dates the entry's envelope at this post, signs it for the peer only,
-// with the working key in use, and encrypts the envelope, the signature and
+// with the signer in use, the identity or a working key by the mailbox's mode,
+// and encrypts the envelope, the signature and
 // the padding to the peer's VERIFIED current prekey, and returns what to
 // post. Nothing of it is written: the outbox keeps the envelope as written,
 // and a seal is made again for every post.
@@ -503,41 +506,48 @@ func (b *Mailbox) seal(ctx context.Context, to protocol.Address, stem string, l 
 	if err != nil || !bytes.Equal(env.Identity, b.id.Document()) || !bytes.HasSuffix(written, []byte("\n")) {
 		return nil, refuse("the outbox entry is not an envelope this mailbox made for that address")
 	}
-	worker, cert, err := b.currentWorker()
+	by, cert, err := b.currentSigner()
 	if err != nil {
 		return nil, err
 	}
-	// A certificate this mailbox's own identity has revoked signs no message: every
-	// reader that holds the revocation refuses it, whatever this mailbox's server
-	// took. That is the remedy's window while its renewal waits (PROTOCOL.md
-	// §12.6): the entry waits too. A kept revocation that does not verify is a
-	// fault, never "nothing revoked".
+	// A signer this mailbox's own identity has revoked signs no message: every
+	// reader that holds the revocation refuses it, whatever this mailbox's
+	// server took. That is the remedy's window while its renewal waits
+	// (PROTOCOL.md §12.6), and a switch's before its first statement under a
+	// certificate is taken (sign refuses the identity's signature then): the
+	// entry waits too. A kept revocation that does not verify is a fault,
+	// never "nothing revoked".
 	if held, err := b.revokedCerts(b.id.Address()); err != nil {
 		return nil, err
-	} else if held != nil && held.Revokes(cert.Serial()) {
+	} else if cert != nil && held != nil && held.Revokes(cert.Serial()) {
 		return nil, refuse("this mailbox's identity has revoked the certificate it signs under, so a message signed now would be refused: dromas recv or dromas prekey renew publishes the new one first")
 	}
-	// Nor does a certificate whose working key another holds, as a statement
-	// this mailbox did not make under it shows (PROTOCOL.md §12.4): its owner's
-	// remedy revokes it, and its reader then refuses this message with the
-	// thief's. The entry waits for the mailbox's next certificate. The record is
-	// what the mailbox's last read of itself showed (known, its one writer), not
-	// a read made for this post: a statement its server serves only since
-	// then holds back no message until the mailbox reads itself again.
-	if nm, err := b.notMade(); err != nil {
-		return nil, err
-	} else if nm != nil && nm.OwnCertificate && nm.CertificateSerial == cert.Serial() {
-		return nil, refuse("someone else holds the working key of the certificate this mailbox signs under, as a statement its server serves in its name shows, so a message signed now would go with that certificate: dromas status says what to do, and the message waits for the mailbox's next certificate")
+	// In working-key mode, nor does a certificate whose working key another
+	// holds, as a statement this mailbox did not make under it shows
+	// (PROTOCOL.md §12.4): its owner's remedy revokes it, and its reader then
+	// refuses this message with the thief's. The entry waits for the
+	// mailbox's next certificate. The record is what the mailbox's last read
+	// of itself showed (known, its one writer), not a read made for this post:
+	// a statement its server serves only since then holds back no message
+	// until the mailbox reads itself again. In identity mode no certificate of
+	// its own is in doubt, and nothing waits.
+	if cert != nil {
+		if nm, err := b.notMade(); err != nil {
+			return nil, err
+		} else if nm != nil && nm.OwnCertificate && nm.CertificateSerial == cert.Serial() {
+			return nil, refuse("someone else holds the working key of the certificate this mailbox signs under, as a statement its server serves in its name shows, so a message signed now would go with that certificate: dromas status says what to do, and the message waits for the mailbox's next certificate")
+		}
+		// A message may wait 33 days to be read, and its certificate must
+		// still be valid then.
+		if !cert.SignsMessages(b.now()) {
+			return nil, refuse("this mailbox's certificate ends within %d days, too soon to sign a message that may wait that long: dromas prekey renew makes a new one, as dromas recv does daily", protocol.TTL/(24*time.Hour))
+		}
 	}
-	// A message may wait 33 days to be read, and its certificate must still be
-	// valid then.
-	if !cert.SignsMessages(b.now()) {
-		return nil, refuse("this mailbox's certificate ends within %d days, too soon to sign a message that may wait that long: dromas prekey renew makes a new one, as dromas recv does daily", protocol.TTL/(24*time.Hour))
-	}
-	pk, under, err := b.resolve(ctx, to, l)
+	rs, err := b.resolve(ctx, to, l)
 	if err != nil {
 		return nil, err
 	}
+	pk := rs.prekey
 	// Dated last, once the recipient's mailbox is read: the sent_at a server
 	// meets is this clock at the post, less only what the seal and the
 	// second the dating truncates take (protocol.PostTime). And dated within
@@ -568,7 +578,7 @@ func (b *Mailbox) seal(ctx context.Context, to protocol.Address, stem string, l 
 	if err != nil {
 		return nil, err
 	}
-	sig, err := worker.Signature(line, protocol.MessageNamespace(to))
+	sig, err := by.Message(line, to)
 	if err != nil {
 		return nil, err
 	}
@@ -587,11 +597,11 @@ func (b *Mailbox) seal(ctx context.Context, to protocol.Address, stem string, l 
 	if ct.Len() != size {
 		return nil, refuse("the encrypted message is %d bytes, where its padding was made for %d: it is not sent at a size that tells its length", ct.Len(), size)
 	}
-	// The prekey is named by both serials: its own, and that of the
-	// certificate resolve verified it under. Never read back from what the
+	// The prekey is named by its statement's hash, of the bytes resolve
+	// verified as served (PROTOCOL.md §11.10). Never read back from what the
 	// mailbox recorded: that is the highest seen, which another statement may
 	// have raised.
-	return &sealed{query: protocol.SendQuery{PrekeySerial: pk.Serial, CertificateSerial: under.Serial()}, ciphertext: ct.Bytes(), line: line}, nil
+	return &sealed{query: protocol.SendQuery{Statement: protocol.StatementHash(rs.statement)}, ciphertext: ct.Bytes(), line: line}, nil
 }
 
 // sameEnvelope reports whether two envelopes are one message, dated alike.

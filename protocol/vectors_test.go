@@ -90,6 +90,36 @@ func vectorIdentity(t *testing.T, mailbox string) *Identity {
 	return id
 }
 
+// vectorTrip is A's trip: the revocation of its certificates A's identity
+// signed, which puts A in working-key mode (PROTOCOL.md §5).
+func vectorTrip(t *testing.T) *RevokedCertificates {
+	t.Helper()
+	a := vectorIdentity(t, "a")
+	r, err := VerifyRevokedCertificates(a.Address(), a.Document(), read(t, "a/trip.txt"), read(t, "a/trip.sig"))
+	if err != nil {
+		t.Fatalf("a/trip: %v", err)
+	}
+	return r
+}
+
+// vectorHeld is the revocation of its certificates a reader holds for a
+// vector mailbox, which gives its mode: A's trip for A, which is in
+// working-key mode, and none for B and C, which are in identity mode.
+func vectorHeld(t *testing.T, id *Identity) *RevokedCertificates {
+	t.Helper()
+	if id.Address() == vectorIdentity(t, "a").Address() {
+		return vectorTrip(t)
+	}
+	return nil
+}
+
+// vectorRank is the serial of A's certificates: its clock at ./now, one above
+// its trip.
+func vectorRank(t *testing.T) uint64 {
+	t.Helper()
+	return vectorTrip(t).Through + 1
+}
+
 func TestVectorIdentities(t *testing.T) {
 	for _, mailbox := range []string{"a", "b"} {
 		id := vectorIdentity(t, mailbox)
@@ -122,16 +152,16 @@ func TestVectorP256Identity(t *testing.T) {
 	if err != nil || !bytes.Equal(built.Document(), read(t, "c/identity.doc")) {
 		t.Errorf("c: IdentityOf built a different document: %v", err)
 	}
-	p, cert, err := VerifyPrekey(c, read(t, "c/prekey-1.txt"), read(t, "c/prekey-1.txt.sig"), now)
-	if err != nil || p.Serial != 1 || cert.Serial() != 1 {
-		t.Fatalf("c/prekey-1.txt: %v", err)
+	p, signer, err := VerifyPrekey(c, read(t, "c/prekey-1.txt"), read(t, "c/prekey-1.txt.sig"), now)
+	if err != nil || p.Serial != 1 || !signer.Identity() || Admits(nil, signer) != nil {
+		t.Fatalf("c/prekey-1.txt, signed by C's identity: %v", err)
 	}
-	// A statement under C's certificate is not A's, and A's is not C's.
+	// C's statement is not A's, and A's is not C's.
 	a := vectorIdentity(t, "a")
 	if _, _, err := VerifyPrekey(a, read(t, "c/prekey-1.txt"), read(t, "c/prekey-1.txt.sig"), now); err == nil {
 		t.Error("C's statement verified for A")
 	}
-	if _, err := VerifyCertified(c, read(t, "a/prekey-1.txt"), read(t, "a/prekey-1.txt.sig"), PrekeyNamespace(a.Address()), now); !errors.Is(err, ErrCertificate) {
+	if _, err := VerifySigned(c, read(t, "a/prekey-1.txt"), read(t, "a/prekey-1.txt.sig"), PrekeyNamespace(a.Address()), now); !errors.Is(err, ErrCertificate) {
 		t.Errorf("a signature under A's certificate, checked against C's identity: %v", err)
 	}
 }
@@ -247,33 +277,56 @@ func vectorWorker(t *testing.T, mailbox string) ssh.Signer {
 	return s
 }
 
+// A's certificates are numbered above its trip and run as a client makes them
+// for a server whose maximum is 45 days and the hour; B's and C's are
+// certificates their identities made, good by every rule of their own, which
+// no reader takes while their mailboxes are in identity mode.
 func TestVectorCertificates(t *testing.T) {
 	now := vectorNow(t)
-	a, b := vectorIdentity(t, "a"), vectorIdentity(t, "b")
-	for _, c := range []struct {
+	a, b, c := vectorIdentity(t, "a"), vectorIdentity(t, "b"), vectorIdentity(t, "c")
+	for _, v := range []struct {
 		id   *Identity
 		file string
-	}{{a, "a/work-cert.pub"}, {b, "b/work-cert.pub"}} {
-		cert, err := CheckCertificate(c.id, vectorCertificate(t, c.file), now)
+		mode error
+	}{{a, "a/work-cert.pub", nil}, {b, "b/work-cert.pub", ErrIdentityMode}, {c, "c/work-cert.pub", ErrIdentityMode}} {
+		cert, err := CheckCertificate(v.id, vectorCertificate(t, v.file), now)
 		if err != nil {
-			t.Errorf("%s: %v", c.file, err)
+			t.Errorf("%s: %v", v.file, err)
 			continue
 		}
-		if cert.Serial() != 1 || !cert.NotAfter().Equal(now.Add(CertificateLifetime)) || !cert.SignsMessages(now) {
-			t.Errorf("%s: serial %d, ends %s", c.file, cert.Serial(), cert.NotAfter())
+		if cert.Serial() != vectorRank(t) || !cert.NotBefore().Equal(now.Add(-MaxSkew)) || cert.Lifetime() != testLifetime || !cert.SignsMessages(now) {
+			t.Errorf("%s: serial %d, from %s for %s", v.file, cert.Serial(), cert.NotBefore(), cert.Lifetime())
+		}
+		if err := Admits(vectorHeld(t, v.id), &Signer{cert: cert}); !errors.Is(err, v.mode) || (v.mode == nil && err != nil) {
+			t.Errorf("%s, in its mailbox's mode: %v, want %v", v.file, err, v.mode)
 		}
 	}
 	if _, err := CheckCertificate(b, vectorCertificate(t, "a/work-cert.pub"), now); !errors.Is(err, ErrCertificate) {
 		t.Errorf("B took A's certificate: %v", err)
 	}
+	trip := vectorTrip(t)
 	st := read(t, "a/prekey-1.txt")
 	for _, f := range glob(t, "cert/ok-*.pub") {
 		name := strings.TrimSuffix(filepath.Base(f), ".pub")
-		if _, err := CheckCertificate(a, vectorCertificate(t, "cert/"+name+".pub"), now); err != nil {
+		cert, err := CheckCertificate(a, vectorCertificate(t, "cert/"+name+".pub"), now)
+		if err != nil {
 			t.Errorf("%s: CheckCertificate: %v", name, err)
+			continue
 		}
-		if _, err := VerifyCertified(a, st, read(t, "cert/"+name+".sig"), PrekeyNamespace(a.Address()), now); err != nil {
-			t.Errorf("%s: VerifyCertified: %v", name, err)
+		signer, err := VerifySigned(a, st, read(t, "cert/"+name+".sig"), PrekeyNamespace(a.Address()), now)
+		if err != nil || Admits(trip, signer) != nil {
+			t.Errorf("%s: VerifySigned: %v, with A's trip held: %v", name, err, Admits(trip, signer))
+		}
+		// The edges each is at: no ceiling at a reader, and the last date.
+		switch name {
+		case "ok-longer-than-a-server-takes":
+			if cert.Lifetime() != testLifetime+time.Second {
+				t.Errorf("%s runs %s", name, cert.Lifetime())
+			}
+		case "ok-ends-at-the-last-date":
+			if !cert.NotAfter().Equal(LastDate) {
+				t.Errorf("%s ends at %s", name, cert.NotAfter())
+			}
 		}
 	}
 	// Two certificates whose extensions are not in their one encoding: a
@@ -285,8 +338,8 @@ func TestVectorCertificates(t *testing.T) {
 	for _, f := range glob(t, "cert/bad-*.pub") {
 		name := strings.TrimSuffix(filepath.Base(f), ".pub")
 		if unread[name] {
-			if _, err := VerifyCertified(a, st, read(t, "cert/"+name+".sig"), PrekeyNamespace(a.Address()), now); err == nil {
-				t.Errorf("%s: VerifyCertified took it", name)
+			if _, err := VerifySigned(a, st, read(t, "cert/"+name+".sig"), PrekeyNamespace(a.Address()), now); err == nil {
+				t.Errorf("%s: VerifySigned took it", name)
 			}
 			delete(unread, name)
 			continue
@@ -299,12 +352,19 @@ func TestVectorCertificates(t *testing.T) {
 			want = ErrCertificateEnded
 		case "bad-not-begun":
 			want = ErrCertificateNotBegun
+		case "bad-at-the-trip":
+			// Good by every rule of a certificate: A's trip covers it.
+			signer, err := VerifySigned(a, st, sig, PrekeyNamespace(a.Address()), now)
+			if err != nil || signer.Rank() != trip.Through || !errors.Is(Admits(trip, signer), ErrRevokedSigner) {
+				t.Errorf("%s: %v, with A's trip held: %v", name, err, Admits(trip, signer))
+			}
+			continue
 		}
 		if _, err := CheckCertificate(a, key, now); !errors.Is(err, want) {
 			t.Errorf("%s: CheckCertificate: %v, want %v", name, err, want)
 		}
-		if _, err := VerifyCertified(a, st, sig, PrekeyNamespace(a.Address()), now); !errors.Is(err, want) {
-			t.Errorf("%s: VerifyCertified: %v, want %v", name, err, want)
+		if _, err := VerifySigned(a, st, sig, PrekeyNamespace(a.Address()), now); !errors.Is(err, want) {
+			t.Errorf("%s: VerifySigned: %v, want %v", name, err, want)
 		}
 		// Control: the signature is good under the certificate it carries,
 		// so the certificate is what was refused.
@@ -318,6 +378,50 @@ func TestVectorCertificates(t *testing.T) {
 	}
 	for name := range unread {
 		t.Errorf("cert/%s is missing", name)
+	}
+	// The re-wrap: cert/bad-certifies-the-identity carries A's identity's own
+	// signature, rank 0, which A's trip covers, with a certificate of the
+	// identity's key above the trip in its key's place.
+	own, err := Dearmor(read(t, "prekey/bad-signed-by-the-identity.txt.sig"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	re := vectorCertificate(t, "cert/bad-certifies-the-identity.pub").(*ssh.Certificate)
+	if !bytes.Equal(Armor(rewrap(t, own, re.Marshal())), read(t, "cert/bad-certifies-the-identity.sig")) || re.Serial <= trip.Through {
+		t.Error("cert/bad-certifies-the-identity.sig is not the identity's own signature re-wrapped above A's trip")
+	}
+}
+
+// A's trip is a revocation of its certificates through its clock at ./now
+// less one, the identity's own signature, as this code makes it; what the
+// identity signs itself is never ranked, so A's revocation and every
+// revocation of its certificates verify with the trip held, which refuses the
+// identity's signature on a statement, a pass or a message.
+func TestVectorTrip(t *testing.T) {
+	now := vectorNow(t)
+	a := vectorIdentity(t, "a")
+	trip := vectorTrip(t)
+	if trip.Through != uint64(now.Unix())-1 {
+		t.Errorf("a/trip runs through %d, not A's clock at ./now less one", trip.Through)
+	}
+	signer, _ := vectorKey(t, "a")
+	built, err := NewRevokedCertificates(a.Address(), trip.Through)
+	if err != nil || !bytes.Equal(built.Statement(), read(t, "a/trip.txt")) {
+		t.Fatalf("NewRevokedCertificates differs from a/trip.txt: %v", err)
+	}
+	if sig, err := SignRevokedCertificates(signer, built); err != nil || !bytes.Equal(sig, read(t, "a/trip.sig")) {
+		t.Errorf("SignRevokedCertificates differs from a/trip.sig: %v", err)
+	}
+	if !errors.Is(Admits(trip, IdentitySigner()), ErrRevokedSigner) {
+		t.Error("A's trip does not refuse its identity's rank")
+	}
+	if _, err := VerifyRevocation(a.Address(), a.Document(), read(t, "a/revoke.sig")); err != nil {
+		t.Errorf("a/revoke.sig, with A's trip held: %v", err)
+	}
+	for _, name := range []string{"ok-through-4", "ok-through-the-highest"} {
+		if _, err := VerifyRevokedCertificates(a.Address(), a.Document(), read(t, "revoked/"+name+".txt"), read(t, "revoked/"+name+".sig")); err != nil {
+			t.Errorf("revoked/%s, with A's trip held: %v", name, err)
+		}
 	}
 }
 
@@ -339,11 +443,11 @@ func TestVectorsReservedField(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	after, _ := time.Parse(time.RFC3339, "2026-10-09T23:59:00Z") // as generate.sh's V_OK
-	before, _ := time.Parse(time.RFC3339, "2026-12-13T00:00:00Z")
+	after, _ := time.Parse(time.RFC3339, "2026-10-09T23:00:00Z") // as generate.sh's V_OK
+	before, _ := time.Parse(time.RFC3339, "2026-11-24T00:00:00Z")
 	cert := &ssh.Certificate{
 		Key:             work.PublicKey(),
-		Serial:          1,
+		Serial:          vectorRank(t),
 		CertType:        ssh.UserCert,
 		KeyId:           CertificateKeyID,
 		ValidPrincipals: []string{a.Address().String()},
@@ -375,67 +479,112 @@ func TestVectorsReservedField(t *testing.T) {
 	}
 }
 
+// Each mailbox's statements verify, by the signer its mode takes: A's under
+// its certificate, above its trip, and B's and C's by the identity; and each
+// stands in its mailbox's order by (c, p).
 func TestVectorPrekeys(t *testing.T) {
 	now := vectorNow(t)
-	a, b := vectorIdentity(t, "a"), vectorIdentity(t, "b")
-	for _, c := range []struct {
+	a, b, c := vectorIdentity(t, "a"), vectorIdentity(t, "b"), vectorIdentity(t, "c")
+	for _, v := range []struct {
 		id     *Identity
 		file   string
 		sig    string
 		serial uint64
-		typ    KeyType
+		rank   uint64
 	}{
-		{a, "a/prekey-1.txt", "a/prekey-1.txt.sig", 1, PostQuantum},
-		{a, "a/prekey-1.txt", "a/prekey-1.txt.sha256.sig", 1, PostQuantum},
-		{a, "a/prekey-2.txt", "a/prekey-2.txt.sig", 2, PostQuantum},
-		{b, "b/prekey-1.txt", "b/prekey-1.txt.sig", 1, PostQuantum},
+		{a, "a/prekey-1.txt", "a/prekey-1.txt.sig", 1, vectorRank(t)},
+		{a, "a/prekey-1.txt", "a/prekey-1.txt.sha256.sig", 1, vectorRank(t)},
+		{a, "a/prekey-2.txt", "a/prekey-2.txt.sig", 2, vectorRank(t)},
+		{a, "prekey/outlives-its-certificate.txt", "prekey/outlives-its-certificate.txt.sig", 1, vectorRank(t) + 1},
+		{b, "b/prekey-1.txt", "b/prekey-1.txt.sig", 1, 0},
+		{c, "c/prekey-1.txt", "c/prekey-1.txt.sig", 1, 0},
 	} {
-		p, cert, err := VerifyPrekey(c.id, read(t, c.file), read(t, c.sig), now)
+		p, signer, err := VerifyPrekey(v.id, read(t, v.file), read(t, v.sig), now)
 		if err != nil {
-			t.Errorf("%s: %v", c.sig, err)
+			t.Errorf("%s: %v", v.sig, err)
 			continue
 		}
-		if p.Serial != c.serial || p.Type() != c.typ || p.Expired(now) || p.CheckLifetime(now) != nil || cert.Serial() != 1 {
-			t.Errorf("%s: serial %d type %s expired %v lifetime %v", c.file, p.Serial, p.Type(), p.Expired(now), p.CheckLifetime(now))
+		if p.Serial != v.serial || p.Type() != PostQuantum || p.Expired(now) || p.CheckLifetime(now) != nil || signer.Rank() != v.rank || signer.Identity() != (v.rank == 0) {
+			t.Errorf("%s: serial %d type %s expired %v lifetime %v rank %d", v.sig, p.Serial, p.Type(), p.Expired(now), p.CheckLifetime(now), signer.Rank())
 		}
-		if !bytes.Equal(p.Statement(), read(t, c.file)) {
-			t.Errorf("%s: Statement does not reproduce the file", c.file)
+		if err := Admits(vectorHeld(t, v.id), signer); err != nil {
+			t.Errorf("%s, in its mailbox's mode: %v", v.sig, err)
+		}
+		if !bytes.Equal(p.Statement(), read(t, v.file)) {
+			t.Errorf("%s: Statement does not reproduce the file", v.file)
 		}
 		if _, err := p.Recipient(); err != nil {
-			t.Errorf("%s: %v", c.file, err)
+			t.Errorf("%s: %v", v.file, err)
+		}
+		o, err := PrekeyOrder(read(t, v.file), read(t, v.sig))
+		if err != nil || o.Rank != v.rank || o.Serial != v.serial {
+			t.Errorf("%s: PrekeyOrder %+v, %v", v.sig, o, err)
+		}
+		// A certificate's statement is checked at the verifier's clock: once its
+		// certificate has ended, it no longer verifies.
+		if cert := signer.Certificate(); cert != nil {
+			if _, _, err := VerifyPrekey(v.id, read(t, v.file), read(t, v.sig), cert.NotAfter()); !errors.Is(err, ErrCertificateEnded) {
+				t.Errorf("%s: verified after its certificate ended: %v", v.sig, err)
+			}
 		}
 	}
 	if _, _, err := VerifyPrekey(b, read(t, "a/prekey-1.txt"), read(t, "a/prekey-1.txt.sig"), now); err == nil {
 		t.Error("B accepted A's prekey")
 	}
-	// A statement is checked at the verifier's clock: once its certificate
-	// has ended, it no longer verifies.
-	if _, _, err := VerifyPrekey(a, read(t, "a/prekey-1.txt"), read(t, "a/prekey-1.txt.sig"), now.Add(CertificateLifetime)); err == nil {
-		t.Error("a prekey statement verified after its certificate ended")
+	// (c, p): a statement under A's later certificate passes A's prekey-2,
+	// whose serial is higher under an earlier certificate.
+	later, _ := PrekeyOrder(read(t, "prekey/outlives-its-certificate.txt"), read(t, "prekey/outlives-its-certificate.txt.sig"))
+	two, _ := PrekeyOrder(read(t, "a/prekey-2.txt"), read(t, "a/prekey-2.txt.sig"))
+	if !two.Less(later) || later.Less(two) {
+		t.Errorf("(%d, %d) does not pass (%d, %d)", later.Rank, later.Serial, two.Rank, two.Serial)
+	}
+	// A statement may outlive the certificate it is signed under.
+	_, signer, _ := VerifyPrekey(a, read(t, "prekey/outlives-its-certificate.txt"), read(t, "prekey/outlives-its-certificate.txt.sig"), now)
+	if p, _ := ParsePrekey(read(t, "prekey/outlives-its-certificate.txt")); signer == nil || p == nil || !p.NotAfter.After(signer.Certificate().NotAfter()) {
+		t.Error("control: prekey/outlives-its-certificate does not outlive its certificate")
 	}
 }
 
+// Every prekey/ vector gets its verdict for the mailbox it names, A unless
+// the name says otherwise, in that mailbox's mode.
 func TestVectorBadPrekeys(t *testing.T) {
 	now := vectorNow(t)
 	a := vectorIdentity(t, "a")
 	// These fail at the signature or its certificate; every other bad-* is
-	// well signed, so its format is what refuses it.
-	signature := map[string]bool{
-		"bad-wrong-namespace": true, "bad-signed-by-b": true, "bad-signed-by-the-identity": true,
-		"bad-signed-by-a-bare-working-key": true,
+	// well signed, so its format, or its signer in the mode, is what refuses it.
+	signature := map[string]bool{"bad-wrong-namespace": true, "bad-signed-by-b": true, "bad-signed-by-a-bare-working-key": true}
+	// These verify, and their mailbox's mode refuses their signer: A's
+	// identity, rank 0, which A's trip covers, and B's and C's certificates,
+	// which a mailbox in identity mode does not take.
+	mode := map[string]struct {
+		mailbox string
+		want    error
+	}{
+		"bad-signed-by-the-identity":         {"a", ErrRevokedSigner},
+		"bad-b-signed-under-its-certificate": {"b", ErrIdentityMode},
+		"bad-c-signed-under-its-certificate": {"c", ErrIdentityMode},
 	}
 	for _, f := range glob(t, "prekey/*.txt") {
 		name := strings.TrimSuffix(filepath.Base(f), ".txt")
 		st, _ := os.ReadFile(f)
 		sig, _ := os.ReadFile(f + ".sig")
-		p, _, err := VerifyPrekey(a, st, sig, now)
+		if m, ok := mode[name]; ok {
+			id := vectorIdentity(t, m.mailbox)
+			_, signer, err := VerifyPrekey(id, st, sig, now)
+			if err != nil || !errors.Is(Admits(vectorHeld(t, id), signer), m.want) {
+				t.Errorf("%s: %v, in %s's mode: %v, want %v", name, err, m.mailbox, Admits(vectorHeld(t, id), signer), m.want)
+			}
+			delete(mode, name)
+			continue
+		}
+		p, signer, err := VerifyPrekey(a, st, sig, now)
 		switch {
 		case strings.HasPrefix(name, "bad-"):
 			if err == nil {
-				t.Errorf("%s: accepted", name)
+				t.Errorf("%s: accepted, signed by rank %d", name, signer.Rank())
 			}
 			if !signature[name] {
-				if _, err := VerifyCertified(a, st, sig, PrekeyNamespace(a.Address()), now); err != nil {
+				if _, err := VerifySigned(a, st, sig, PrekeyNamespace(a.Address()), now); err != nil {
 					t.Errorf("%s: control: the signature itself fails: %v", name, err)
 				}
 			}
@@ -451,6 +600,10 @@ func TestVectorBadPrekeys(t *testing.T) {
 			if err != nil || p.Expired(now) || p.CheckLifetime(now) == nil || !p.NotAfter.Equal(now.Add(MaxPrekeyLifetime+time.Second)) {
 				t.Errorf("%s: want valid, not expired, and refused for publishing: %v", name, err)
 			}
+		case name == "outlives-its-certificate": // TestVectorPrekeys
+			if err != nil {
+				t.Errorf("%s: %v", name, err)
+			}
 		case strings.HasPrefix(name, "unsupported-type"): // good in every other way: refused with its own error, never as one that does not verify
 			if _, perr := ParsePrekey(st); !errors.Is(err, ErrPrekeyType) || !errors.Is(perr, ErrPrekeyType) {
 				t.Errorf("%s: %v, and parsed %v, want ErrPrekeyType", name, err, perr)
@@ -458,6 +611,12 @@ func TestVectorBadPrekeys(t *testing.T) {
 		default:
 			t.Errorf("%s: unknown vector", name)
 		}
+		if signer != nil && Admits(vectorTrip(t), signer) != nil {
+			t.Errorf("%s: its signer is refused in A's mode: %v", name, Admits(vectorTrip(t), signer))
+		}
+	}
+	for name := range mode {
+		t.Errorf("prekey/%s is missing", name)
 	}
 }
 
@@ -512,14 +671,13 @@ func TestAPrekeyOfATypeThisClientLacks(t *testing.T) {
 	}
 
 	// The type is asked last: the same key in a statement that names another
-	// mailbox, or that outlives its certificate, is a statement that does not
-	// verify.
+	// mailbox, or that breaks its form, is a statement that does not verify.
 	now := vectorNow(t)
 	a, b := vectorIdentity(t, "a"), vectorIdentity(t, "b")
 	w := vectorWorker(t, "a")
 	for _, st := range []string{
 		PrekeyTag + "\n" + b.Address().String() + "\n1\n" + unknown + "\n2026-11-12T00:00:00Z\n",
-		PrekeyTag + "\n" + a.Address().String() + "\n1\n" + unknown + "\n2026-12-15T00:00:00Z\n",
+		PrekeyTag + "\n" + a.Address().String() + "\n1\n" + unknown + "\n2026-11-12T00:00:00z\n",
 		PrekeyTag + "\n" + a.Address().String() + "\n01\n" + unknown + "\n2026-11-12T00:00:00Z\n",
 	} {
 		sig, err := Sign(w, []byte(st), PrekeyNamespace(a.Address()))
@@ -556,12 +714,15 @@ func bech32Of(hrp, data string) string {
 
 // TestVectorSignatures checks Go's signatures are byte-identical to the
 // ssh-keygen ones in the vectors: Ed25519 is deterministic, and a signature
-// under a kept certificate carries that certificate's bytes.
+// under a kept certificate carries that certificate's bytes. A signs in
+// working-key mode, B in identity mode, and each identity signs its own
+// revocations.
 func TestVectorSignatures(t *testing.T) {
-	a, b := vectorIdentity(t, "a"), vectorIdentity(t, "b")
+	a, b, c := vectorIdentity(t, "a"), vectorIdentity(t, "b"), vectorIdentity(t, "c")
 	ia, _ := vectorKey(t, "a")
-	wa, wb := vectorWorker(t, "a"), vectorWorker(t, "b")
-	for _, c := range []struct {
+	ib, _ := vectorKey(t, "b")
+	wa := vectorWorker(t, "a")
+	for _, v := range []struct {
 		signer ssh.Signer
 		msg    string
 		sig    string
@@ -569,21 +730,23 @@ func TestVectorSignatures(t *testing.T) {
 	}{
 		{wa, "a/prekey-1.txt", "a/prekey-1.txt.sig", PrekeyNamespace(a.Address())},
 		{wa, "a/prekey-2.txt", "a/prekey-2.txt.sig", PrekeyNamespace(a.Address())},
-		{wb, "b/prekey-1.txt", "b/prekey-1.txt.sig", PrekeyNamespace(b.Address())},
 		{wa, "a/pass.txt", "a/pass.sig", PassNamespace(a.Address())},
 		{wa, "message/a-to-b.line", "message/a-to-b.sig", MessageNamespace(b.Address())},
+		{wa, "message/a-to-c.line", "message/a-to-c.sig", MessageNamespace(c.Address())},
 		{ia, "a/revoke.txt", "a/revoke.sig", RevokeNamespace(a.Address())},
+		{ia, "a/trip.txt", "a/trip.sig", RevokedCertsNamespace(a.Address())},
+		{ib, "b/prekey-1.txt", "b/prekey-1.txt.sig", PrekeyNamespace(b.Address())},
+		{ib, "b/pass.txt", "b/pass.sig", PassNamespace(b.Address())},
+		{ib, "message/b-to-c.line", "message/b-to-c.sig", MessageNamespace(c.Address())},
 	} {
-		got, err := Sign(c.signer, read(t, c.msg), c.ns)
+		got, err := Sign(v.signer, read(t, v.msg), v.ns)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.Equal(got, read(t, c.sig)) {
-			t.Errorf("%s: Go's signature differs from ssh-keygen's:\n%s", c.sig, got)
+		if !bytes.Equal(got, read(t, v.sig)) {
+			t.Errorf("%s: Go's signature differs from ssh-keygen's:\n%s", v.sig, got)
 		}
 	}
-	// The revocation is the identity's own signature, the one thing it signs
-	// beside certificates.
 	if err := Verify(a, read(t, "a/revoke.txt"), read(t, "a/revoke.sig"), RevokeNamespace(a.Address())); err != nil {
 		t.Errorf("a/revoke.sig: %v", err)
 	}
@@ -602,7 +765,7 @@ func TestVectorSignatureForms(t *testing.T) {
 	stmt := read(t, "a/prekey-1.txt")
 	for _, f := range glob(t, "sig/*.sig") {
 		name := "sig/" + filepath.Base(f)
-		_, err := VerifyCertified(a, stmt, read(t, name), PrekeyNamespace(a.Address()), now)
+		_, err := VerifySigned(a, stmt, read(t, name), PrekeyNamespace(a.Address()), now)
 		if ok := strings.HasPrefix(filepath.Base(f), "ok-"); ok != (err == nil) {
 			t.Errorf("%s: %v", name, err)
 		}
@@ -636,19 +799,29 @@ func TestASignatureIsHeldToItsIdentitysBound(t *testing.T) {
 	}
 
 	now := vectorNow(t)
-	a, c := vectorIdentity(t, "a"), vectorIdentity(t, "c")
-	pass, err := ParsePass(strings.TrimSuffix(string(read(t, "a/pass.authorization")), "\n"))
-	if err != nil {
-		t.Fatal(err)
+	a, b, c := vectorIdentity(t, "a"), vectorIdentity(t, "b"), vectorIdentity(t, "c")
+	pass := func(mailbox string) *Pass {
+		p, err := ParsePass(strings.TrimSuffix(string(read(t, mailbox+"/pass.authorization")), "\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
 	}
+	pa, pb, pc := pass("a"), pass("b"), pass("c")
 	onRecord := sha256.Sum256(vectorCertificate(t, "a/work-cert.pub").Marshal())
+	bOnRecord, cOnRecord := sha256.Sum256(b.PublicKey().Marshal()), sha256.Sum256(c.PublicKey().Marshal())
+	// Ed25519's: A's under its certificate, B's by its identity. Then C's, a
+	// P-256 identity's.
 	verdicts := func() []error {
-		_, e1 := VerifyCertified(a, read(t, "a/prekey-1.txt"), read(t, "a/prekey-1.txt.sig"), PrekeyNamespace(a.Address()), now)
+		_, e1 := VerifySigned(a, read(t, "a/prekey-1.txt"), read(t, "a/prekey-1.txt.sig"), PrekeyNamespace(a.Address()), now)
 		e2 := Verify(a, read(t, "a/revoke.txt"), read(t, "a/revoke.sig"), RevokeNamespace(a.Address()))
-		_, e3 := pass.Verify(a, "dromas.example", now)
-		_, e4 := pass.VerifyUnder(onRecord, "dromas.example", now)
-		_, e5 := VerifyCertified(c, read(t, "c/prekey-1.txt"), read(t, "c/prekey-1.txt.sig"), PrekeyNamespace(c.Address()), now)
-		return []error{e1, e2, e3, e4, e5}
+		_, e3 := pa.Verify(a, "dromas.example", now)
+		_, e4 := pa.VerifyUnder(onRecord, "dromas.example", now)
+		_, e5 := VerifySigned(b, read(t, "b/prekey-1.txt"), read(t, "b/prekey-1.txt.sig"), PrekeyNamespace(b.Address()), now)
+		_, e6 := pb.VerifyUnder(bOnRecord, "dromas.example", now)
+		_, e7 := VerifySigned(c, read(t, "c/prekey-1.txt"), read(t, "c/prekey-1.txt.sig"), PrekeyNamespace(c.Address()), now)
+		_, e8 := pc.VerifyUnder(cOnRecord, "dromas.example", now)
+		return []error{e1, e2, e3, e4, e5, e6, e7, e8}
 	}
 	for i, err := range verdicts() {
 		if err != nil {
@@ -658,52 +831,64 @@ func TestASignatureIsHeldToItsIdentitysBound(t *testing.T) {
 	ed := identityTypes[IdentityEd25519]
 	defer func() { identityTypes[IdentityEd25519] = ed }()
 	lowered := ed
-	lowered.bound = 396 // below every signature here: A's revocation, the smallest, is 399 bytes
+	lowered.bound = 396 // below every signature here
 	identityTypes[IdentityEd25519] = lowered
 	got := verdicts()
-	for i, err := range got[:4] {
+	for i, err := range got[:6] {
 		if err == nil {
-			t.Errorf("A's signature %d was taken over its identity's bound", i)
+			t.Errorf("Ed25519 identity's signature %d was taken over its identity's bound", i)
 		}
 	}
-	if !errors.Is(got[3], ErrPass) {
-		t.Errorf("a pass over its identity's bound, checked under the certificate on record: %v", got[3])
+	if !errors.Is(got[3], ErrPass) || !errors.Is(got[5], ErrPass) {
+		t.Errorf("a pass over its identity's bound, checked under the key on record: %v, %v", got[3], got[5])
 	}
-	if got[4] != nil {
-		t.Errorf("C's signature, a P-256 identity's, was held to Ed25519's bound: %v", got[4])
+	if got[6] != nil || got[7] != nil {
+		t.Errorf("C's signatures, a P-256 identity's, were held to Ed25519's bound: %v, %v", got[6], got[7])
 	}
 }
 
+// Each mailbox's pass is signed by the signer of its statements: A's under its
+// certificate, B's and C's by the identity, each taken in its mailbox's mode.
 func TestVectorPass(t *testing.T) {
 	now := vectorNow(t)
-	a, b := vectorIdentity(t, "a"), vectorIdentity(t, "b")
+	a, b, c := vectorIdentity(t, "a"), vectorIdentity(t, "b"), vectorIdentity(t, "c")
 	const server = "dromas.example"
-	header := strings.TrimSuffix(string(read(t, "a/pass.authorization")), "\n")
-	got, notAfter, err := NewPass(vectorWorker(t, "a"), a.Address(), server, now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != header || !notAfter.Equal(now.Add(PassLifetime)) {
-		t.Errorf("NewPass differs from a/pass.authorization:\n%s", got)
-	}
-	if !bytes.Equal(PassStatement(a.Address(), server, notAfter), read(t, "a/pass.txt")) {
-		t.Error("PassStatement differs from a/pass.txt")
-	}
-	p, err := ParsePass(header)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if cert, err := p.Verify(a, server, now); err != nil || cert.Serial() != 1 {
-		t.Errorf("a/pass.authorization: %v", err)
-	}
-	if _, err := p.Verify(a, "another.example", now); !errors.Is(err, ErrPass) {
-		t.Errorf("a pass for one server was taken by another: %v", err)
-	}
-	if _, err := p.Verify(b, server, now); !errors.Is(err, ErrPass) {
-		t.Errorf("A's pass was taken as B's: %v", err)
-	}
-	if _, err := p.Verify(a, server, now.Add(PassLifetime)); !errors.Is(err, ErrPassExpired) {
-		t.Errorf("a pass was taken at the moment it runs out: %v", err)
+	ib, _ := vectorKey(t, "b")
+	for _, v := range []struct {
+		id, other *Identity
+		mailbox   string
+		signer    ssh.Signer // nil: an ECDSA signature, which differs each time it is made
+		rank      uint64
+	}{{a, b, "a", vectorWorker(t, "a"), vectorRank(t)}, {b, c, "b", ib, 0}, {c, a, "c", nil, 0}} {
+		header := strings.TrimSuffix(string(read(t, v.mailbox+"/pass.authorization")), "\n")
+		if v.signer != nil {
+			got, notAfter, err := NewPass(v.signer, v.id.Address(), server, now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != header || !notAfter.Equal(now.Add(PassLifetime)) {
+				t.Errorf("NewPass differs from %s/pass.authorization:\n%s", v.mailbox, got)
+			}
+		}
+		if !bytes.Equal(PassStatement(v.id.Address(), server, now.Add(PassLifetime)), read(t, v.mailbox+"/pass.txt")) {
+			t.Errorf("PassStatement differs from %s/pass.txt", v.mailbox)
+		}
+		p, err := ParsePass(header)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if signer, err := p.Verify(v.id, server, now); err != nil || signer.Rank() != v.rank || Admits(vectorHeld(t, v.id), signer) != nil {
+			t.Errorf("%s/pass.authorization: %v", v.mailbox, err)
+		}
+		if _, err := p.Verify(v.id, "another.example", now); !errors.Is(err, ErrPass) {
+			t.Errorf("%s: a pass for one server was taken by another: %v", v.mailbox, err)
+		}
+		if _, err := p.Verify(v.other, server, now); !errors.Is(err, ErrPass) {
+			t.Errorf("%s's pass was taken as another mailbox's: %v", v.mailbox, err)
+		}
+		if _, err := p.Verify(v.id, server, now.Add(PassLifetime)); !errors.Is(err, ErrPassExpired) {
+			t.Errorf("%s: a pass was taken at the moment it runs out: %v", v.mailbox, err)
+		}
 	}
 }
 
@@ -748,8 +933,14 @@ func TestVectorPassForms(t *testing.T) {
 	}
 }
 
-// plainVerdicts is what B makes of each plain/ vector at ./now: "" for a
-// message that is delivered, or the code it is refused with.
+// refusedCertificateRevoked is a reader's code at check 7 for a signer the
+// sender's revocation of its certificates covers (PROTOCOL.md §12.3), the
+// identity's rank 0 among them: the client's own, beside this package's codes.
+const refusedCertificateRevoked = "certificate_revoked"
+
+// plainVerdicts is what B makes of each plain/ vector at ./now, checks 1 to 6
+// and then check 7's mode, with A's trip held: "" for a message that is
+// delivered, or the code it is refused with.
 var plainVerdicts = map[string]string{
 	"accept-no-padding":                                  "",
 	"accept-padded":                                      "",
@@ -757,7 +948,9 @@ var plainVerdicts = map[string]string{
 	"accept-every-field":                                 "",
 	"accept-body-more-precise-than-binary64":             "",
 	"refuse-signed-for-another-mailbox":                  RefusedSignature,
-	"refuse-signed-by-the-identity":                      RefusedSignature,
+	"refuse-signed-by-the-identity":                      refusedCertificateRevoked,
+	"refuse-certificate-at-the-trip":                     refusedCertificateRevoked,
+	"refuse-identity-s-signature-re-wrapped":             RefusedSignature,
 	"refuse-signed-by-a-bare-working-key":                RefusedSignature,
 	"refuse-certificate-ended":                           RefusedSignature,
 	"refuse-line-changed-after-signing":                  RefusedSignature,
@@ -765,6 +958,7 @@ var plainVerdicts = map[string]string{
 	"refuse-from-is-not-the-identity":                    RefusedAttribution,
 	"refuse-from-null":                                   RefusedAttribution,
 	"accept-p256-sender":                                 "",
+	"refuse-p256-sender-under-a-certificate":             RefusedSignature,
 	"refuse-unsupported-key-type":                        RefusedKeyType,
 	"refuse-from-is-not-the-identity-of-an-unknown-type": RefusedAttribution,
 	"refuse-to-another-mailbox":                          RefusedAttribution,
@@ -792,15 +986,41 @@ var plainVerdicts = map[string]string{
 	"refuse-signature-over-4096-bytes":                   RefusedSignature,
 }
 
+// verdictOf is what B makes of plaintext pt at now: OpenSigned's checks, then
+// check 7's mode, the sender's held revocation of its certificates applied to
+// its signer, which a reader makes with the read of the sender it already
+// makes (PROTOCOL.md §12.3). A certificate from a sender in identity mode is
+// bad_signature; a signer the revocation covers is certificate_revoked.
+func verdictOf(t *testing.T, pt []byte, b *Identity, now time.Time) (*Signed, string) {
+	t.Helper()
+	m, err := OpenSigned(pt, b.Address(), now)
+	if err != nil {
+		var refused *EnvelopeError
+		if !errors.As(err, &refused) {
+			t.Fatalf("refused as %v, with no code", err)
+		}
+		return nil, refused.Code
+	}
+	switch err := Admits(vectorHeld(t, m.Sender), m.Signer); {
+	case errors.Is(err, ErrIdentityMode):
+		return m, RefusedSignature
+	case errors.Is(err, ErrRevokedSigner):
+		return m, refusedCertificateRevoked
+	case err != nil:
+		t.Fatal(err)
+	}
+	return m, ""
+}
+
 func TestVectorPlaintexts(t *testing.T) {
 	now := vectorNow(t)
-	a, b := vectorIdentity(t, "a"), vectorIdentity(t, "b")
+	a, b, c := vectorIdentity(t, "a"), vectorIdentity(t, "b"), vectorIdentity(t, "c")
 	seen := 0
 	for _, f := range glob(t, "plain/*.txt") {
 		name := strings.TrimSuffix(filepath.Base(f), ".txt")
-		a := a
-		if name == "accept-p256-sender" {
-			a = vectorIdentity(t, "c")
+		from, rank := a, vectorRank(t)
+		if strings.Contains(name, "p256-sender") {
+			from, rank = c, 0
 		}
 		want, known := plainVerdicts[name]
 		if !known {
@@ -809,21 +1029,16 @@ func TestVectorPlaintexts(t *testing.T) {
 		}
 		seen++
 		pt, _ := os.ReadFile(f)
-		m, err := OpenSigned(pt, b.Address(), now)
-		var refused *EnvelopeError
+		m, got := verdictOf(t, pt, b, now)
 		switch {
-		case want == "" && err != nil:
-			t.Errorf("%s: %v", name, err)
-		case want == "" && (m.Sender.Address() != a.Address() || m.Envelope.From != a.Address() || m.Certificate.Serial() != 1):
-			t.Errorf("%s: delivered as from %s", name, m.Sender.Address())
-		case want != "" && err == nil:
-			t.Errorf("%s: accepted", name)
-		case want != "" && (!errors.As(err, &refused) || refused.Code != want):
-			t.Errorf("%s: refused as %v, want %s", name, err, want)
+		case got != want:
+			t.Errorf("%s: %q, want %q", name, got, want)
+		case want == "" && (m.Sender.Address() != from.Address() || m.Envelope.From != from.Address() || m.Signer.Rank() != rank):
+			t.Errorf("%s: delivered as from %s, signed by rank %d", name, m.Sender.Address(), m.Signer.Rank())
 		}
 		// The line that was checked is the first line as it arrived, byte
 		// for byte: nothing is verified or read from a rebuilt copy.
-		if err == nil && !bytes.HasPrefix(pt, m.Line) {
+		if m != nil && !bytes.HasPrefix(pt, m.Line) {
 			t.Errorf("%s: the line that was verified is not the bytes that arrived", name)
 		}
 	}
@@ -835,68 +1050,92 @@ func TestVectorPlaintexts(t *testing.T) {
 	if m, err := OpenSigned(read(t, "plain/accept-anything-after-the-signature.txt"), b.Address(), now); err != nil || !bytes.Equal(m.Signature, read(t, "message/a-to-b.sig")) {
 		t.Errorf("the signature taken is not the first block: %v", err)
 	}
+	// Each refusal by the mode passes checks 1 to 6, so check 7 is what
+	// refuses it, and only in its sender's mode: in the other, each is taken.
+	for name, held := range map[string]*RevokedCertificates{
+		"refuse-signed-by-the-identity":          nil,
+		"refuse-p256-sender-under-a-certificate": {Address: c.Address(), Through: 1},
+	} {
+		m, err := OpenSigned(read(t, "plain/"+name+".txt"), b.Address(), now)
+		if err != nil {
+			t.Errorf("%s: control: refused before check 7: %v", name, err)
+			continue
+		}
+		if err := Admits(held, m.Signer); err != nil {
+			t.Errorf("%s: control: refused in the other mode too: %v", name, err)
+		}
+	}
 }
 
+// Each message/ vector is what a client makes from the same keys, sealed to its
+// recipient's prekey: A's under its certificate, B's by its identity; and each
+// is delivered to its recipient in its sender's mode.
 func TestVectorMessage(t *testing.T) {
 	now := vectorNow(t)
-	a := vectorIdentity(t, "a")
-	for _, c := range []struct {
-		to, name, key, stanza string
-		t                     KeyType
+	ib, _ := vectorKey(t, "b")
+	for _, v := range []struct {
+		from, to, name, key, stanza string
+		signer                      ssh.Signer
+		t                           KeyType
 	}{
-		{"b", "a-to-b", "b-1.pq", "mlkem768x25519", PostQuantum},
-		{"c", "a-to-c", "b-1.pq", "mlkem768x25519", PostQuantum},
+		{"a", "b", "a-to-b", "b-1.pq", "mlkem768x25519", vectorWorker(t, "a"), PostQuantum},
+		{"a", "c", "a-to-c", "b-1.pq", "mlkem768x25519", vectorWorker(t, "a"), PostQuantum},
+		{"b", "c", "b-to-c", "b-1.pq", "mlkem768x25519", ib, PostQuantum},
 	} {
-		to := vectorIdentity(t, c.to)
+		from, to := vectorIdentity(t, v.from), vectorIdentity(t, v.to)
 		// Go builds the same plaintext as the stock tools did: the line, the
-		// signature under the kept certificate, and the padding for the
+		// signature by the sender's signer, and the padding for the
 		// recipient's prekey.
-		env := &Envelope{From: a.Address(), To: to.Address(), SentAt: now, MsgID: "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b", Identity: a.Document(), Body: []byte(`"hello"`)}
-		line, sig, err := SignEnvelope(env, vectorWorker(t, "a"))
+		env := &Envelope{From: from.Address(), To: to.Address(), SentAt: now, MsgID: "6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b", Identity: from.Document(), Body: []byte(`"hello"`)}
+		line, sig, err := SignEnvelope(env, v.signer)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.Equal(line, read(t, "message/"+c.name+".line")) || !bytes.Equal(sig, read(t, "message/"+c.name+".sig")) {
-			t.Errorf("%s: SignEnvelope differs from its .line and .sig:\n%s%s", c.name, line, sig)
+		if !bytes.Equal(line, read(t, "message/"+v.name+".line")) || !bytes.Equal(sig, read(t, "message/"+v.name+".sig")) {
+			t.Errorf("%s: SignEnvelope differs from its .line and .sig:\n%s%s", v.name, line, sig)
 		}
-		pt, sealed := Plaintext(line, sig, c.t)
-		m := read(t, "message/"+c.name+".age")
-		if !bytes.Equal(pt, read(t, "message/"+c.name+".plain")) || sealed != len(m) {
-			t.Errorf("%s: Plaintext differs from its .plain: %d bytes for a file of %d, want %d", c.name, len(pt), sealed, len(m))
+		pt, sealed := Plaintext(line, sig, v.t)
+		m := read(t, "message/"+v.name+".age")
+		if !bytes.Equal(pt, read(t, "message/"+v.name+".plain")) || sealed != len(m) {
+			t.Errorf("%s: Plaintext differs from its .plain: %d bytes for a file of %d, want %d", v.name, len(pt), sealed, len(m))
 		}
-		if !bytes.HasPrefix(m, []byte("age-encryption.org/v1\n-> "+c.stanza+" ")) {
-			t.Errorf("%s: the message is not an age file to one %s recipient", c.name, c.stanza)
+		if !bytes.HasPrefix(m, []byte("age-encryption.org/v1\n-> "+v.stanza+" ")) {
+			t.Errorf("%s: the message is not an age file to one %s recipient", v.name, v.stanza)
 		}
 		if len(m) != PaddedSize(len(m)) {
-			t.Errorf("%s: the message is %d bytes, not a whole number of blocks", c.name, len(m))
+			t.Errorf("%s: the message is %d bytes, not a whole number of blocks", v.name, len(m))
+		}
+		// Its recipient takes it, in its sender's mode.
+		if opened, err := OpenSigned(pt, to.Address(), now); err != nil || opened.Sender.Address() != from.Address() || Admits(vectorHeld(t, from), opened.Signer) != nil {
+			t.Errorf("%s: not delivered to %s: %v", v.name, v.to, err)
 		}
 		// And it decrypts, with the published test identity of its prekey
 		// (C2SP's age testkit), to exactly that plaintext.
-		ids, err := age.ParseIdentities(bytes.NewReader(read(t, "input/"+c.key+".key")))
+		ids, err := age.ParseIdentities(bytes.NewReader(read(t, "input/"+v.key+".key")))
 		if err != nil {
 			t.Fatal(err)
 		}
 		r, err := age.Decrypt(bytes.NewReader(m), ids...)
 		if err != nil {
-			t.Errorf("%s: %v", c.name, err)
+			t.Errorf("%s: %v", v.name, err)
 			continue
 		}
 		if got, err := io.ReadAll(r); err != nil || !bytes.Equal(got, pt) {
-			t.Errorf("%s: decrypts to other bytes than its .plain (%v)", c.name, err)
+			t.Errorf("%s: decrypts to other bytes than its .plain (%v)", v.name, err)
 		}
 	}
 }
 
-// The two ciphertexts are the files typage, a second age implementation,
+// The three ciphertexts are the files typage, a second age implementation,
 // read: testdata/vectors/README.md names each by its SHA-256, and a file
 // made again fails this until typage reads it and the README names it
 // (#454 item 3).
 func TestTheCiphertextsAreTheOnesTypageRead(t *testing.T) {
 	t.Parallel()
 	readme := string(read(t, "README.md"))
-	named := regexp.MustCompile("`message/(a-to-[bc])\\.age` \\(sha256 `([0-9a-f]{64})`\\)").FindAllStringSubmatch(readme, -1)
-	if len(named) != 2 {
-		t.Fatalf("the README names %d ciphertexts by their hash, want both", len(named))
+	named := regexp.MustCompile("`message/([ab]-to-[bc])\\.age` \\(sha256 `([0-9a-f]{64})`\\)").FindAllStringSubmatch(readme, -1)
+	if files := glob(t, "message/*.age"); len(named) != len(files) || len(files) != 3 {
+		t.Fatalf("the README names %d ciphertexts by their hash, and there are %d: want all three", len(named), len(files))
 	}
 	for _, m := range named {
 		sum := sha256.Sum256(read(t, "message/"+m[1]+".age"))

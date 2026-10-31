@@ -264,58 +264,141 @@ func TestVectorsIdentity(t *testing.T) {
 	}
 }
 
+// held is the shell that keeps, in the scratch mailbox, what a reader of the
+// vectors holds of a vector mailbox's mode: A's trip, a/trip.txt, for A, which
+// is in working-key mode, and nothing for B and C, which are in identity mode
+// (testdata/vectors/README.md). It exits 9 unless the trip is then held.
+func held(t *testing.T, mailbox string) string {
+	t.Helper()
+	if mailbox != "a" {
+		return `mkdir -p "$DR"` + "\n"
+	}
+	a, aDoc := identity(t, "a")
+	return fmt.Sprintf(`mkdir -p "$DR" && dr_keepcerts %[1]s %[2]s %[3]s %[4]s && dr_certskept %[1]s > /dev/null || exit 9`+"\n",
+		a, aDoc, abs(t, filepath.Join(vectors, "a/trip.txt")), abs(t, filepath.Join(vectors, "a/trip.sig")))
+}
+
+// vectorHeld is what the Go client holds of a vector mailbox's mode, as held
+// keeps it for the script: A's trip for A, and nothing for B and C.
+func vectorHeld(t *testing.T, mailbox string) *protocol.RevokedCertificates {
+	t.Helper()
+	if mailbox != "a" {
+		return nil
+	}
+	a, aDoc := identity(t, "a")
+	A, err := protocol.ParseAddress(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	trip, err := protocol.VerifyRevokedCertificates(A, mustRead(t, aDoc), mustRead(t, filepath.Join(vectors, "a/trip.txt")), mustRead(t, filepath.Join(vectors, "a/trip.sig")))
+	if err != nil {
+		t.Fatalf("a/trip: %v", err)
+	}
+	return trip
+}
+
+// The script's mode refusals as exit statuses, past those of the check that
+// ran before it: 11 for a signer the mode revokes, a rank at or below the
+// trip, and 12 for a certificate at an address in identity mode (dr_mode).
+const (
+	exitRevokedSigner = 11
+	exitIdentityMode  = 12
+)
+
+// modeExit is the Go client's verdict on a signer that verified, in the
+// mailbox's mode, as the script's exit status gives it: 0 when the mode takes
+// it.
+func modeExit(t *testing.T, mailbox string, s *protocol.Signer) int {
+	t.Helper()
+	switch err := protocol.Admits(vectorHeld(t, mailbox), s); {
+	case err == nil:
+		return 0
+	case errors.Is(err, protocol.ErrRevokedSigner):
+		return exitRevokedSigner
+	case errors.Is(err, protocol.ErrIdentityMode):
+		return exitIdentityMode
+	default:
+		t.Fatalf("Admits: %v", err)
+		return -1
+	}
+}
+
+// moded is the shell that applies the mode to the rank in $c, as dr_resolve and
+// dr_judge do, exiting with modeExit's status where it refuses the signer.
+const moded = `dr_mode "$A" "$c"; m=$?; [ $m = 0 ] || exit $((10 + m)); echo "$c"`
+
 // A signature under each certificate of cert/ is refused, as the Go client
-// refuses it, and one under a mailbox's own certificate verifies. The signatures
-// themselves are good: it is the certificate's form, its signer or its dates
-// that fail, which ssh-keygen -Y verify alone does not all check.
+// refuses it, with A's trip held, and one under a mailbox's own certificate
+// verifies. The signatures themselves are good: it is the certificate's form,
+// its signer, its dates or A's mode that fail, which ssh-keygen -Y verify
+// alone does not all check.
 func TestVectorsCertificate(t *testing.T) {
 	t.Parallel()
 	need(t, scriptTools...)
-	_, setNow := vectorNow(t)
+	now, setNow := vectorNow(t)
 	a, aDoc := identity(t, "a")
 	b, bDoc := identity(t, "b")
+	A, _ := protocol.ParseAddress(a)
+	id, err := protocol.ParseIdentity(mustRead(t, aDoc))
+	if err != nil {
+		t.Fatal(err)
+	}
 	stmt := abs(t, filepath.Join(vectors, "a/prekey-1.txt"))
-	certified := func(addr, doc, sig string) (string, error) {
-		return bash(t, scratch(t), setNow+fmt.Sprintf("dr_certified %s %s dromas-prekey-v1:%s %s %s", addr, doc, a, abs(t, sig), stmt))
-	}
-	if out, err := certified(a, aDoc, filepath.Join(vectors, "a/prekey-1.txt.sig")); err != nil || !strings.HasPrefix(out, "1 ") {
-		t.Fatalf("a/prekey-1.txt.sig under A's certificate: %q %v", out, err)
-	}
-	if _, err := certified(b, bDoc, filepath.Join(vectors, "a/prekey-1.txt.sig")); err == nil {
-		t.Error("A's certificate was taken for B's identity")
-	}
-	sigs, _ := filepath.Glob(filepath.Join(vectors, "cert", "bad-*.sig"))
-	if len(sigs) == 0 {
-		t.Fatal("no certificate vectors")
+	signed := func(addr, doc, sig string) (string, error) {
+		return bash(t, scratch(t), setNow+held(t, "a")+fmt.Sprintf("A=%s; c=$(dr_signed %s %s dromas-prekey-v1:%s %s %s) || exit\n", addr, addr, doc, a, abs(t, sig), stmt)+moded)
 	}
 	// The script's status says which way it failed, as the Go client's error
 	// does: 2 for a certificate that has ended, 3 for one that has not begun,
-	// 1 for every other.
+	// 1 for every other, and the mode's past those (modeExit).
 	status := map[string]int{"bad-ended.sig": 2, "bad-not-begun.sig": 3}
+	verdict := func(sig string) (string, int) {
+		t.Helper()
+		signer, err := protocol.VerifySigned(id, mustRead(t, stmt), mustRead(t, sig), protocol.PrekeyNamespace(A), now)
+		if err != nil {
+			if s, ok := status[filepath.Base(sig)]; ok {
+				return "", s
+			}
+			return "", 1
+		}
+		if m := modeExit(t, "a", signer); m != 0 {
+			return "", m
+		}
+		return fmt.Sprintln(signer.Rank()), 0
+	}
+	if out, err := signed(a, aDoc, filepath.Join(vectors, "a/prekey-1.txt.sig")); err != nil || out != fmt.Sprintln(vectorHeld(t, "a").Through+1) {
+		t.Fatalf("a/prekey-1.txt.sig under A's certificate, one above its trip: %q %v", out, err)
+	}
+	if _, err := signed(b, bDoc, filepath.Join(vectors, "a/prekey-1.txt.sig")); err == nil {
+		t.Error("A's certificate was taken for B's identity")
+	}
+	sigs, _ := filepath.Glob(filepath.Join(vectors, "cert", "*.sig"))
+	if len(sigs) < 20 {
+		t.Fatalf("%d certificate vectors", len(sigs))
+	}
+	kinds := map[int]int{}
 	for _, sig := range sigs {
-		out, err := certified(a, aDoc, sig)
-		want := 1
-		if s, ok := status[filepath.Base(sig)]; ok {
-			want = s
+		name := filepath.Base(sig)
+		want, wantExit := verdict(sig)
+		if strings.HasPrefix(name, "ok-") != (wantExit == 0) {
+			t.Errorf("%s: the Go client's verdict is exit %d", name, wantExit)
 		}
+		out, err := signed(a, aDoc, sig)
 		var exit *exec.ExitError
-		if err == nil || !errors.As(err, &exit) || exit.ExitCode() != want {
-			t.Errorf("%s: %q, %v; want status %d", filepath.Base(sig), out, err, want)
+		switch {
+		case wantExit == 0 && (err != nil || out != want):
+			t.Errorf("%s: the Go client takes it, ranked %q; the script says %q, %v", name, want, out, err)
+		case wantExit != 0 && (err == nil || !errors.As(err, &exit) || exit.ExitCode() != wantExit):
+			t.Errorf("%s: %q, %v; want status %d, as the Go client's verdict", name, out, err, wantExit)
 		}
+		kinds[wantExit]++
 	}
-	oks, _ := filepath.Glob(filepath.Join(vectors, "cert", "ok-*.sig"))
-	if len(oks) == 0 {
-		t.Fatal("no certificate vector that is taken")
-	}
-	for _, sig := range oks {
-		if out, err := certified(a, aDoc, sig); err != nil {
-			t.Errorf("%s: refused: %s %v", filepath.Base(sig), out, err)
-		}
+	if kinds[0] == 0 || kinds[1] == 0 || kinds[2] == 0 || kinds[3] == 0 || kinds[exitRevokedSigner] == 0 {
+		t.Errorf("the certificate vectors do not hold every verdict: %v", kinds)
 	}
 	// Control: ssh-keygen alone takes the certificates whose fault is in
 	// their form, so the script's own reading of the fields is what refuses
 	// them.
-	for _, name := range []string{"bad-extension-twice", "bad-extension-value-an-empty-string", "bad-key-id", "bad-serial-zero"} {
+	for _, name := range []string{"bad-extension-twice", "bad-extension-value-an-empty-string", "bad-key-id", "bad-serial-zero", "bad-certifies-the-identity"} {
 		verify := fmt.Sprintf(`printf '%%s cert-authority %%s\n' %s "$(sed -n 2p %s)" > "$DR/s" && ssh-keygen -Y verify -f "$DR/s" -I %s -n dromas-prekey-v1:%s -s %s -O verify-time=20261010000000Z < %s`,
 			a, aDoc, a, a, abs(t, filepath.Join(vectors, "cert", name+".sig")), stmt)
 		if _, err := bash(t, scratch(t), "mkdir -p \"$DR\"; "+verify); err != nil {
@@ -353,7 +436,7 @@ func TestVectorsSignatureForm(t *testing.T) {
 	for _, sig := range sigs {
 		name := filepath.Base(sig)
 		ok := strings.HasPrefix(name, "ok-")
-		_, err := bash(t, scratch(t), setNow+fmt.Sprintf(`mkdir -p "$DR"; dr_certified %s %s dromas-prekey-v1:%s %s %s`, a, aDoc, a, abs(t, sig), stmt))
+		_, err := bash(t, scratch(t), setNow+fmt.Sprintf(`mkdir -p "$DR"; dr_signed %s %s dromas-prekey-v1:%s %s %s`, a, aDoc, a, abs(t, sig), stmt))
 		verify := fmt.Sprintf(`mkdir -p "$DR"; printf '%%s cert-authority %%s\n' %s "$(sed -n 2p %s)" > "$DR/s" && ssh-keygen -Y verify -f "$DR/s" -I %s -n dromas-prekey-v1:%s -s %s -O verify-time=20261010000000Z < %s`,
 			a, aDoc, a, a, abs(t, sig), stmt)
 		_, kerr := bash(t, scratch(t), verify)
@@ -409,66 +492,114 @@ func TestTheScriptReadsASignatureInItsOneEncoding(t *testing.T) {
 	}
 }
 
+// Every prekey statement of the vectors, as the Go client judges it in its
+// mailbox's mode: A's with A's trip held, B's and C's with nothing held. A
+// sender checks a statement (dr_prekeycheck), then its signer against the
+// mode (dr_mode), as dr_resolve does.
 func TestVectorsPrekey(t *testing.T) {
 	t.Parallel()
 	need(t, scriptTools...)
 	now, setNow := vectorNow(t)
-	a, aDoc := identity(t, "a")
-	b, bDoc := identity(t, "b")
-	check := func(stmt, sig, addr, doc string) (serial string, notAfter int64, err error) {
-		out, err := bash(t, scratch(t), setNow+fmt.Sprintf("dr_prekeycheck %s %s %s %s", abs(t, stmt), abs(t, sig), addr, doc))
+	type judged struct {
+		serial, rank uint64
+		notAfter     int64
+	}
+	// check is the script's verdict on the statement for the mailbox: the
+	// serial, its not_after and its signer's rank, or its exit status.
+	check := func(stmt, sig, mailbox string) (judged, int, string) {
+		t.Helper()
+		a, doc := identity(t, mailbox)
+		out, err := bash(t, scratch(t), setNow+held(t, mailbox)+fmt.Sprintf("A=%s; r=$(dr_prekeycheck %s %s %s %s) || { rc=$?; echo \"$r\"; exit $rc; }; c=${r##* }; echo \"$r\"\n", a, abs(t, stmt), abs(t, sig), a, doc)+moded)
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			return judged{}, exit.ExitCode(), out
+		}
 		if err != nil {
-			return "", 0, fmt.Errorf("%w %s", err, out)
+			t.Fatal(err)
 		}
-		f := strings.Fields(out)
-		if len(f) != 4 {
-			return "", 0, fmt.Errorf("output %q", out)
+		var j judged
+		var key string
+		var rank uint64
+		if _, err := fmt.Sscan(out, &j.serial, &key, &j.notAfter, &j.rank, &rank); err != nil || rank != j.rank {
+			t.Fatalf("%s: output %q: %v", filepath.Base(stmt), out, err)
 		}
-		_, err = fmt.Sscan(f[2], &notAfter)
-		return f[0], notAfter, err
+		return j, 0, out
 	}
-	for _, c := range []struct{ stmt, sig, addr, doc, serial string }{
-		{"a/prekey-1.txt", "a/prekey-1.txt.sig", a, aDoc, "1"},
-		{"a/prekey-1.txt", "a/prekey-1.txt.sha256.sig", a, aDoc, "1"},
-		{"a/prekey-2.txt", "a/prekey-2.txt.sig", a, aDoc, "2"},
-		{"b/prekey-1.txt", "b/prekey-1.txt.sig", b, bDoc, "1"},
-	} {
-		s, na, err := check(filepath.Join(vectors, c.stmt), filepath.Join(vectors, c.sig), c.addr, c.doc)
-		if err != nil || s != c.serial || na <= now.Unix() {
-			t.Errorf("%s with %s: serial %q, not_after %d, %v", c.stmt, c.sig, s, na, err)
+	// verdict is the Go client's: VerifyPrekey, then the mode.
+	verdict := func(stmt, sig, mailbox string) (judged, int) {
+		t.Helper()
+		_, doc := identity(t, mailbox)
+		id, err := protocol.ParseIdentity(mustRead(t, doc))
+		if err != nil {
+			t.Fatal(err)
 		}
+		p, signer, err := protocol.VerifyPrekey(id, mustRead(t, stmt), mustRead(t, sig), now)
+		switch {
+		case errors.Is(err, protocol.ErrPrekeyType):
+			return judged{}, 2
+		case err != nil:
+			return judged{}, 1
+		}
+		if m := modeExit(t, mailbox, signer); m != 0 {
+			return judged{}, m
+		}
+		return judged{p.Serial, signer.Rank(), p.NotAfter.Unix()}, 0
 	}
-	if _, _, err := check(filepath.Join(vectors, "a/prekey-1.txt"), filepath.Join(vectors, "a/prekey-1.txt.sig"), b, bDoc); err == nil {
-		t.Error("A's prekey accepted as B's")
+	type vector struct{ stmt, sig, mailbox string }
+	cases := []vector{
+		{"a/prekey-1.txt", "a/prekey-1.txt.sig", "a"},
+		{"a/prekey-1.txt", "a/prekey-1.txt.sha256.sig", "a"},
+		{"a/prekey-2.txt", "a/prekey-2.txt.sig", "a"},
+		{"b/prekey-1.txt", "b/prekey-1.txt.sig", "b"},
+		{"c/prekey-1.txt", "c/prekey-1.txt.sig", "c"},
+		{"a/prekey-1.txt", "a/prekey-1.txt.sig", "b"}, // A's prekey as B's
+		{"b/prekey-1.txt", "b/prekey-1.txt.sig", "a"}, // B's as A's
 	}
 	stmts, _ := filepath.Glob(filepath.Join(vectors, "prekey", "*.txt"))
-	if len(stmts) == 0 {
-		t.Fatal("no prekey vectors")
+	if len(stmts) < 30 {
+		t.Fatalf("%d prekey vectors", len(stmts))
 	}
 	for _, st := range stmts {
 		name := strings.TrimSuffix(filepath.Base(st), ".txt")
-		_, na, err := check(st, st+".sig", a, aDoc)
-		switch {
-		case strings.HasPrefix(name, "bad-"):
-			if err == nil {
-				t.Errorf("%s: accepted", name)
-			}
-		case name == "expired": // valid, but no sender encrypts to it (dr_resolve)
-			if err != nil || na > now.Unix() {
-				t.Errorf("%s: want valid and expired: %d %v", name, na, err)
-			}
-		case name == "longest", name == "too-long": // valid and current: only a server judges how far ahead one may end
-			if err != nil || na <= now.Unix() {
-				t.Errorf("%s: want valid and not expired: %d %v", name, na, err)
-			}
-		case strings.HasPrefix(name, "unsupported-type"): // good in every way but its key's type: a verdict of its own, as the Go client's ErrPrekeyType
-			var exit *exec.ExitError
-			if !errors.As(err, &exit) || exit.ExitCode() != 2 || !strings.Contains(err.Error(), "a type this script cannot encrypt to") {
-				t.Errorf("%s: %v, want 2, a key of a type this script lacks", name, err)
-			}
-		default:
-			t.Errorf("%s: unknown vector", name)
+		mailbox := "a"
+		if m, ok := strings.CutPrefix(name, "bad-"); ok && strings.HasSuffix(m, "-signed-under-its-certificate") {
+			mailbox = m[:1] // B's and C's own, each in its own namespace
 		}
+		cases = append(cases, vector{"prekey/" + name + ".txt", "prekey/" + name + ".txt.sig", mailbox})
+	}
+	kinds := map[int]int{}
+	for _, c := range cases {
+		stmt, sig := filepath.Join(vectors, c.stmt), filepath.Join(vectors, c.sig)
+		if c.mailbox == "c" && !p256() {
+			t.Logf("%s for %s: %s reads no P-256 key, so the script refuses every statement of mailbox C: a known variance (PROTOCOL.md Appendix A)", c.sig, c.mailbox, sshBuild())
+			continue
+		}
+		want, wantExit := verdict(stmt, sig, c.mailbox)
+		got, gotExit, out := check(stmt, sig, c.mailbox)
+		name := strings.TrimSuffix(filepath.Base(c.stmt), ".txt")
+		if strings.HasPrefix(name, "bad-") && wantExit == 0 {
+			t.Errorf("%s: the Go client takes it", name)
+		}
+		if got != want || gotExit != wantExit {
+			t.Errorf("%s with %s for %s: the script says %+v, exit %d (%q); the Go client %+v, exit %d", c.stmt, filepath.Base(c.sig), c.mailbox, got, gotExit, strings.TrimSpace(out), want, wantExit)
+		}
+		if wantExit == 2 && !strings.Contains(out, "a type this script cannot encrypt to") {
+			t.Errorf("%s: %q, not the words for a key of a type this script lacks", name, out)
+		}
+		kinds[wantExit]++
+		switch name {
+		case "expired": // valid, but no sender encrypts to it (dr_resolve)
+			if wantExit != 0 || want.notAfter > now.Unix() {
+				t.Errorf("%s: want valid and expired", name)
+			}
+		case "longest", "too-long", "outlives-its-certificate": // valid and current: only a server judges how far ahead one may end, and a reader how long a certificate runs
+			if wantExit != 0 || want.notAfter <= now.Unix() {
+				t.Errorf("%s: want valid and not expired", name)
+			}
+		}
+	}
+	if kinds[0] == 0 || kinds[1] == 0 || kinds[2] == 0 || kinds[exitRevokedSigner] == 0 || kinds[exitIdentityMode] == 0 {
+		t.Errorf("the prekey vectors do not hold every verdict: %v", kinds)
 	}
 }
 
@@ -683,16 +814,20 @@ func TestVectorsAnswer(t *testing.T) {
 }
 
 // What a mailbox decrypts gets the Go client's verdict from the script, code for
-// code, for every plain/ vector. The script need not give a code it cannot;
-// none differs today, and one that comes to is named here as a known variance: the layout, the identity the envelope
-// carries, the signature under its certificate, and the envelope. An accepted
-// one gives the same sender and the same delivered line.
+// code, for every plain/ vector: checks 2 to 6 (dr_open), then check 7's mode
+// (dr_mode, dr_admitted), with A's trip held, which a reader makes with the
+// read of the sender it already makes (PROTOCOL.md §12.3). The script need not
+// give a code it cannot; none differs today, and one that comes to is named
+// here as a known variance: the layout, the identity the envelope carries,
+// the signature by either form of signer, the envelope, and the mode. An
+// accepted one gives the same sender and the same delivered line.
 func TestVectorsPlain(t *testing.T) {
 	t.Parallel()
 	need(t, scriptTools...)
 	now, setNow := vectorNow(t)
 	b, _ := identity(t, "b")
 	B, _ := protocol.ParseAddress(b)
+	a, _ := identity(t, "a")
 	files, _ := filepath.Glob(filepath.Join(vectors, "plain", "*.txt"))
 	if len(files) == 0 {
 		t.Fatal("no plain vectors")
@@ -702,17 +837,40 @@ func TestVectorsPlain(t *testing.T) {
 		name := strings.TrimSuffix(filepath.Base(f), ".txt")
 		pt, _ := os.ReadFile(f) //nolint:gosec // a test vector
 		signed, gerr := protocol.OpenSigned(pt, B, now)
-		out, err := bash(t, scratch(t), setNow+fmt.Sprintf(`mkdir -p "$DR" && cp %s "$DR/msg.T" && dr_open %s "$DR/msg" && dr_line "$DR/msg.P"`, abs(t, f), b))
-		if gerr != nil {
+		var refusal string
+		if gerr == nil {
+			sender := "b" // B and C are in identity mode alike
+			if signed.Sender.Address().String() == a {
+				sender = "a"
+			}
+			switch modeExit(t, sender, signed.Signer) {
+			case exitRevokedSigner:
+				refusal = "certificate_revoked"
+			case exitIdentityMode:
+				refusal = protocol.RefusedSignature
+			}
+		}
+		out, err := bash(t, scratch(t), setNow+held(t, "a")+fmt.Sprintf(`cp %s "$DR/msg.T" && A=$(dr_open %s "$DR/msg") || { echo "$A"; exit 1; }
+c=$(dr_rank "$DR/msg.sig" "$DR/msg.doc" "$A") || exit 3; dr_mode "$A" "$c"; dr_admitted "$A" "$c" $? || exit
+echo "$A"; dr_line "$DR/msg.P"`, abs(t, f), b))
+		if gerr == nil && err != nil && signed.Sender.Type() == protocol.IdentityP256 && !p256() {
+			t.Logf("%s: %s reads no P-256 key, so the script refuses a P-256 sender: a known variance (PROTOCOL.md Appendix A)", name, sshBuild())
+			codes["delivered"]++
+			continue
+		}
+		if gerr != nil || refusal != "" {
 			var refused *protocol.EnvelopeError
-			if !errors.As(gerr, &refused) {
+			switch {
+			case errors.As(gerr, &refused):
+				refusal = refused.Code
+			case gerr != nil:
 				t.Fatalf("%s: the Go client: %v", name, gerr)
 			}
 			code, _, _ := strings.Cut(out, ":")
-			if err == nil || code != refused.Code {
-				t.Errorf("%s: the Go client refuses it as %s, the script says %q (%v)", name, refused.Code, strings.TrimSpace(out), err)
+			if err == nil || code != refusal {
+				t.Errorf("%s: the Go client refuses it as %s, the script says %q (%v)", name, refusal, strings.TrimSpace(out), err)
 			}
-			codes[refused.Code]++
+			codes[refusal]++
 			continue
 		}
 		if err != nil && signed.Sender.Type() == protocol.IdentityP256 && !p256() {
@@ -738,12 +896,39 @@ func TestVectorsPlain(t *testing.T) {
 	}
 	// Every kind of verdict was met, so a script that refused everything, or
 	// nothing, would not pass.
-	for _, c := range []string{"delivered", protocol.RefusedMessage, protocol.RefusedIdentity, protocol.RefusedKeyType, protocol.RefusedSignature, protocol.RefusedAttribution} {
+	for _, c := range []string{"delivered", protocol.RefusedMessage, protocol.RefusedIdentity, protocol.RefusedKeyType, protocol.RefusedSignature, protocol.RefusedAttribution, "certificate_revoked"} {
 		if codes[c] == 0 {
 			t.Errorf("no plain/ vector was judged %s", c)
 		}
 	}
 	t.Logf("%d plain/ vectors: %v", len(files), codes)
+}
+
+// Each ciphertext of message/ is read by the script as its recipient reads
+// it: decrypted with its prekey's published identity to exactly its .plain,
+// then checks 2 to 6 and check 7's mode in its sender's (dr_open, dr_mode,
+// dr_admitted): A's under A's certificate with A's trip held, and B's,
+// signed by B's identity, with nothing held. Each is delivered from its
+// sender.
+func TestVectorsMessage(t *testing.T) {
+	t.Parallel()
+	need(t, scriptTools...)
+	_, setNow := vectorNow(t)
+	key := abs(t, filepath.Join(vectors, "input", "b-1.pq.key"))
+	for _, v := range []struct{ name, from, to string }{{"a-to-b", "a", "b"}, {"a-to-c", "a", "c"}, {"b-to-c", "b", "c"}} {
+		from, _ := identity(t, v.from)
+		to, _ := identity(t, v.to)
+		m := filepath.Join(vectors, "message", v.name)
+		out, err := bash(t, scratch(t), setNow+held(t, v.from)+fmt.Sprintf(`age -d -i %s < %s > "$DR/msg.T" && cmp -s "$DR/msg.T" %s || exit 5
+A=$(dr_open %s "$DR/msg") || { echo "$A"; exit 1; }
+c=$(dr_rank "$DR/msg.sig" "$DR/msg.doc" "$A") || exit 3; dr_mode "$A" "$c"; dr_admitted "$A" "$c" $? || exit
+echo "$A $c"`, key, abs(t, m+".age"), abs(t, m+".plain"), to))
+		var sender string
+		var rank uint64
+		if _, serr := fmt.Sscan(out, &sender, &rank); err != nil || serr != nil || sender != from || (rank == 0) != (v.from != "a") {
+			t.Errorf("%s: the script says %q, %v; want delivered from %s, by its identity only where it is in identity mode", v.name, strings.TrimSpace(out), err, from)
+		}
+	}
 }
 
 // The script pads as the Go client does: for a message of any size and a key
@@ -1427,7 +1612,8 @@ func TestVectorsRevokedCertificates(t *testing.T) {
 		t.Fatalf("%d vectors taken as revocations of certificates, want the three that are", taken)
 	}
 
-	// A kept one revokes the same serials for both, at 2^53 - 1 too.
+	// A kept one revokes the same ranks for both, the identity's 0 and 2^53 - 1
+	// too: the address's mode, which dr_mode applies.
 	mailbox := t.TempDir()
 	kept := filepath.Join(mailbox, "peers", a)
 	if err := os.MkdirAll(kept, 0o700); err != nil {
@@ -1461,31 +1647,31 @@ func TestVectorsRevokedCertificates(t *testing.T) {
 		certs *protocol.RevokedCertificates
 	}{{"ok-through-4", four}, {"ok-through-the-highest", &protocol.RevokedCertificates{Through: protocol.MaxSerial}}} {
 		keep(read(filepath.Join(vectors, "revoked", c.name+".txt")), read(filepath.Join(vectors, "revoked", c.name+".sig")))
-		for _, serial := range []uint64{1, 3, 4, 5, protocol.MaxSerial - 1, protocol.MaxSerial} {
-			out, err := bash(t, env, fmt.Sprintf(`dr_certrevoked %s %d; echo $?`, a, serial))
+		for _, serial := range []uint64{0, 1, 3, 4, 5, protocol.MaxSerial - 1, protocol.MaxSerial} {
+			out, err := bash(t, env, fmt.Sprintf(`dr_mode %s %d; echo $?`, a, serial))
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := "1"
+			want := "0"
 			if c.certs.Revokes(serial) {
-				want = "0"
+				want = "1"
 			}
 			if strings.TrimSpace(out) != want {
-				t.Errorf("%s, serial %d: the Go client says revoked is %v, and the script's dr_certrevoked returned %s", c.name, serial, c.certs.Revokes(serial), strings.TrimSpace(out))
+				t.Errorf("%s, rank %d: the Go client says revoked is %v, and the script's dr_mode returned %s", c.name, serial, c.certs.Revokes(serial), strings.TrimSpace(out))
 			}
 		}
 	}
 	// A kept one that no longer verifies is a fault, never "not revoked":
 	// one under another's signature, and a file that holds none.
 	keep(read(filepath.Join(vectors, "revoked", "ok-through-4.txt")), read(filepath.Join(vectors, "revoked", "ok-through-the-highest.sig")))
-	if out, err := bash(t, env, fmt.Sprintf(`dr_certrevoked %s 3; echo $?`, a)); err != nil || strings.TrimSpace(out) != "3" {
-		t.Errorf("a kept revocation under another's signature: dr_certrevoked returned %q %v, want 3", out, err)
+	if out, err := bash(t, env, fmt.Sprintf(`dr_mode %s 3; echo $?`, a)); err != nil || strings.TrimSpace(out) != "3" {
+		t.Errorf("a kept revocation under another's signature: dr_mode returned %q %v, want 3", out, err)
 	}
 	if err := os.WriteFile(filepath.Join(kept, "revoked-certs.json"), []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := bash(t, env, fmt.Sprintf(`dr_certrevoked %s 3; echo $?`, a)); err != nil || strings.TrimSpace(out) != "3" {
-		t.Errorf("a kept file that holds no revocation of certificates: dr_certrevoked returned %q %v, want 3", out, err)
+	if out, err := bash(t, env, fmt.Sprintf(`dr_mode %s 3; echo $?`, a)); err != nil || strings.TrimSpace(out) != "3" {
+		t.Errorf("a kept file that holds no revocation of certificates: dr_mode returned %q %v, want 3", out, err)
 	}
 
 	// Control: the working key's signature is one ssh-keygen takes once the
@@ -1498,16 +1684,15 @@ func TestVectorsRevokedCertificates(t *testing.T) {
 	}
 }
 
-// Certificates revoked, across the two clients and one server: the Go
-// client's revocation is one the script checks for itself, keeps and applies, and
-// each follows the other to a later certificate, naming a prekey by both
-// serials.
+// Certificates revoked, across the two clients and one server: a Go mailbox in
+// working-key mode, made by init --offline, revokes its first certificate,
+// which the script checks for itself, keeps and applies, and each follows the
+// other to a later statement, naming it by its hash.
 func TestRevokedCertificatesInBothClients(t *testing.T) {
 	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
-	opt := client.Options{Base: srv.URL}
 	dir := t.TempDir()
 	sh := func(commands string) (string, error) {
 		return bash(t, []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}, commands)
@@ -1520,7 +1705,7 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g, err := client.Init(ctx, t.TempDir(), opt)
+	g, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, WorkingKey: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1566,12 +1751,12 @@ func TestRevokedCertificatesInBothClients(t *testing.T) {
 	}
 
 	// The script writes to the Go mailbox under its second certificate, and the
-	// Go mailbox reads it: the send named both serials, or the server would
+	// Go mailbox reads it: the send named its statement, or the server would
 	// have called the prekey stale without end.
 	if _, err := sh("printf 'to the mailbox at its second certificate' | dr_send " + gAddr); err != nil {
 		t.Fatalf("the script's send to a mailbox that moved to a later certificate: %v", err)
 	}
-	if out, err := sh(fmt.Sprintf(`cat "$DR/peers/%s/serial" "$DR/peers/%s/cert-serial"`, gAddr, gAddr)); err != nil || out != fmt.Sprintf("%d\n%d\n", numberOf(t, g), numberOf(t, g)) {
+	if out, err := sh(fmt.Sprintf(`cat "$DR/peers/%s/serial" "$DR/peers/%s/rank"`, gAddr, gAddr)); err != nil || out != fmt.Sprintf("%d\n%d\n", numberOf(t, g), numberOf(t, g)) {
 		t.Fatalf("what the script recorded of the mailbox's statement: %q %v", out, err)
 	}
 	res, err := g.Receive(ctx)

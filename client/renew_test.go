@@ -109,11 +109,12 @@ func TestARenewalWhoseUploadMeetsAMailboxForgottenSinceItsReadRegistersIt(t *tes
 		{"control: prekey renew of a mailbox forgotten before its read", "prekey renew", true, "GET /v1/own, GET /v1/own/revocations, PUT /v1/own +pass"},
 		{"prekey renew", "prekey renew", false, "GET /v1/own, PUT /v1/own/prekey +pass, GET /v1/own, GET /v1/own/revocations, PUT /v1/own +pass"},
 		{"recv", "recv", false, "GET /v1/own, PUT /v1/own/prekey +pass, GET /v1/own, GET /v1/own/revocations, PUT /v1/own +pass, GET /v1/own/acl +pass, PUT /v1/own/acl +pass, GET /v1/own/messages +pass"},
-		{"control: cert revoke-earlier of a mailbox forgotten before its read", "cert revoke-earlier", true, "GET /v1/own, GET /v1/own/revocations, PUT /v1/own/revocations, PUT /v1/own +pass"},
-		{"cert revoke-earlier", "cert revoke-earlier", false, "GET /v1/own, PUT /v1/own/revocations, PUT /v1/own/prekey +pass, GET /v1/own, GET /v1/own/revocations, PUT /v1/own +pass"},
+		{"control: cert revoke-earlier of a mailbox forgotten before its read", "cert revoke-earlier", true, "GET /v1/own, GET /v1/own/revocations, PUT /v1/own/revocations, GET /v1/, PUT /v1/own +pass"},
+		{"cert revoke-earlier", "cert revoke-earlier", false, "GET /v1/own, PUT /v1/own/revocations, GET /v1/, PUT /v1/own/prekey +pass, GET /v1/own, GET /v1/own/revocations, PUT /v1/own +pass"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv(t)
+			e.working = c.how == "cert revoke-earlier"
 			a, b, d := e.mailbox(), e.mailbox(), e.mailbox()
 			if _, err := b.Block(ctx, d.Address()); err != nil {
 				t.Fatal(err)
@@ -259,6 +260,7 @@ func TestAnUploadAnswered404WhoseReadAgainServesItIsTaken(t *testing.T) {
 	for _, how := range []string{"prekey renew", "recv", "cert revoke-earlier"} {
 		t.Run(how, func(t *testing.T) {
 			e := newEnv(t)
+			e.working = how == "cert revoke-earlier"
 			b := e.mailbox()
 			first := numberOf(t, b)
 			if how == "recv" {
@@ -363,7 +365,7 @@ func TestARenewalWhoseReadAgainEndsSendsNoRegistration(t *testing.T) {
 	full := &os.PathError{Op: "write", Path: "state", Err: syscall.ENOSPC}
 	for _, c := range []string{"a fault of the mailbox", "its own revocation"} {
 		t.Run(c, func(t *testing.T) {
-			e := newEnv(t)
+			e := newWorkEnv(t)
 			b, d := e.mailbox(), e.mailbox()
 			if _, err := b.Block(ctx, d.Address()); err != nil || !has(b, "acl.json") {
 				t.Fatalf("the block: %v", err)
@@ -417,7 +419,9 @@ func TestARenewalWhoseReadAgainEndsSendsNoRegistration(t *testing.T) {
 				}
 				calls = append(calls, s)
 			}
-			if want := "GET /v1/own, PUT /v1/own/prekey +pass, GET /v1/own, GET /v1/own/revocations"; strings.Join(calls, ", ") != want {
+			// In working-key mode a new certificate runs for the longest its
+			// server takes, which its document names (GET /v1/).
+			if want := "GET /v1/own, GET /v1/, PUT /v1/own/prekey +pass, GET /v1/own, GET /v1/own/revocations"; strings.Join(calls, ", ") != want {
 				t.Fatalf("calls %q, want %q", calls, want)
 			}
 			if got := keysOf(b.Dir()); !slices.Equal(got, keys) {
@@ -454,7 +458,7 @@ func TestARestoredMailboxRegistersWhereItsServerForgotIt(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	for _, forgotten := range []bool{false, true} {
-		e := newEnv(t)
+		e := newWorkEnv(t)
 		a := e.mailbox()
 		if forgotten {
 			e.srv.Forget(a.Address())
@@ -470,9 +474,18 @@ func TestARestoredMailboxRegistersWhereItsServerForgotIt(t *testing.T) {
 			t.Errorf("forgotten %v: the restored mailbox published a prekey at %d, and its server serves %d", forgotten, p.Serial, servedSerial(t, e, r))
 		}
 	}
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a := e.mailbox()
 	r := restoreWith(t, e, a, e.clock.Now)
+	// Its owner hands it its trip, which tells it its mode where its server
+	// does not answer.
+	trip, err := a.CertificatesRecord(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.KeepRevocation(ctx, trip); err != nil {
+		t.Fatal(err)
+	}
 	e.clock.Add(time.Minute)
 	watch(e, func(w http.ResponseWriter, req *http.Request) bool {
 		if req.Method == http.MethodGet && req.URL.Path == mailboxPath(a) {
@@ -698,7 +711,7 @@ func TestAFailedRenewalIsSentAgainUnchanged(t *testing.T) {
 // 33 days after its not_after, as it does any retired one.
 func TestAServerThatFailsEveryRenewalGetsEachKeyOnce(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a, b := e.mailbox(), e.mailbox()
 	kept := uploads(e, b)
 	type lease struct {
@@ -711,11 +724,12 @@ func TestAServerThatFailsEveryRenewalGetsEachKeyOnce(t *testing.T) {
 	seen := 0
 	for day := 1; day <= 75; day++ {
 		e.clock.Add(24 * time.Hour)
-		// The certificate the server holds this mailbox to was made on day 0
-		// and lasts protocol.CertificateLifetime, 64 days. Once it has ended the mailbox can sign no pass the
-		// server takes, so it cannot poll: it still offers a new prekey,
-		// under a new certificate, each day.
-		if _, err := b.Receive(context.Background()); (err != nil) != (day >= int(protocol.CertificateLifetime/(24*time.Hour))) {
+		// The certificate the server holds this mailbox to was made on day 0,
+		// an hour back, and lasts the longest the server takes, 45 days and an
+		// hour. Once it has ended the mailbox can sign no pass the server
+		// takes, so it cannot poll: it still offers a new prekey, under a new
+		// certificate, each day.
+		if _, err := b.Receive(context.Background()); (err != nil) != (day >= int(testCertLife/(24*time.Hour))) {
 			t.Fatalf("day %d: receive: %v", day, err)
 		}
 		for ; seen < len(*kept); seen++ {
@@ -795,7 +809,7 @@ func TestAServerThatFailsEveryRenewalGetsEachKeyOnce(t *testing.T) {
 // the attempt's, whose certificate began when it ran (#197).
 func TestAKeyNeverSignedIsUsed(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	b := e.mailbox()
 	forge.FailOnce(e.srv, http.MethodPut, "/prekey")
 	if _, err := b.Rekey(context.Background()); err == nil {

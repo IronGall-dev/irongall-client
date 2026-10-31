@@ -80,7 +80,7 @@ func TestVectorBadRevocations(t *testing.T) {
 	}
 	// The working key's signature is good under its certificate, which is why
 	// it has to be refused by rule and not by luck.
-	if _, err := VerifyCertified(a, read(t, "a/revoke.txt"), read(t, "revoke/bad-by-a-working-key.sig"), RevokeNamespace(a.Address()), vectorNow(t)); err != nil {
+	if s, err := VerifySigned(a, read(t, "a/revoke.txt"), read(t, "revoke/bad-by-a-working-key.sig"), RevokeNamespace(a.Address()), vectorNow(t)); err != nil || s.Identity() {
 		t.Errorf("revoke/bad-by-a-working-key.sig is not a good signature under A's certificate, so it tests nothing: %v", err)
 	}
 

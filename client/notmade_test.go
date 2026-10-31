@@ -39,7 +39,7 @@ func TestRecvRenewsNothingAboveAStatementTheMailboxDidNotMake(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
-			e := newEnv(t)
+			e := newWorkEnv(t)
 			b := e.mailbox()
 			n := numberOf(t, b)
 			signer, certSerial := worker(t, b), n
@@ -53,7 +53,7 @@ func TestRecvRenewsNothingAboveAStatementTheMailboxDidNotMake(t *testing.T) {
 					t.Fatal(err)
 				}
 				certSerial = n + c.above
-				cert, err := protocol.NewCertificate(b.Identity(), identityKey(t, b), stranger.PublicKey(), certSerial, e.clock.Now())
+				cert, err := protocol.NewCertificate(b.Identity(), identityKey(t, b), stranger.PublicKey(), certSerial, e.clock.Now(), testCertLife)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -131,7 +131,7 @@ func TestRecvRenewsNothingAboveAStatementTheMailboxDidNotMake(t *testing.T) {
 func TestASendIsHeldByTheMailboxsLastReadOfItself(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	b, to := e.mailbox(), e.mailbox()
 	n := numberOf(t, b)
 	st, _ := e.srv.Prekey(b.Address())
@@ -172,7 +172,7 @@ func TestASendIsHeldByTheMailboxsLastReadOfItself(t *testing.T) {
 func TestAFaultAfterARenewalWasTakenLeavesItTaken(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	for _, c := range []struct {
 		name  string
 		renew func(*client.Mailbox) (*protocol.Prekey, error)
@@ -253,7 +253,7 @@ func TestARenewalGoesPastItsOwnRecordWhateverItsDates(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			e := newEnv(t)
+			e := newWorkEnv(t)
 			b := e.mailbox()
 			n := numberOf(t, b)
 			unix := uint64(e.clock.Now().Unix())
@@ -290,7 +290,7 @@ func TestARenewalGoesPastItsOwnRecordWhateverItsDates(t *testing.T) {
 	t.Run("a record that does not verify", func(t *testing.T) {
 		t.Parallel()
 		ctx := context.Background()
-		e := newEnv(t)
+		e := newWorkEnv(t)
 		b, other := e.mailbox(), e.mailbox()
 		st, _ := e.srv.Prekey(b.Address())
 		forged, err := protocol.Sign(worker(t, other), st, protocol.PrekeyNamespace(b.Address()))
@@ -321,31 +321,42 @@ func TestARenewalGoesPastItsOwnRecordWhateverItsDates(t *testing.T) {
 
 // A statement the mailbox signed and has since pruned is its own: a server that
 // serves it again shows a rollback, never a statement the mailbox did not make,
-// and the mailbox recommends no revocation of its address (#590).
+// and the mailbox recommends no revocation of its address (#590). In
+// working-key mode its renewal stops there, and the remedy goes past it; in
+// identity mode, where no certificate of its own is in doubt, its owner's
+// renewal goes past it, and recv's stops.
 func TestAPrunedStatementOfItsOwnIsNotOneItDidNotMake(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
-	b := e.mailbox()
-	first := numberOf(t, b)
-	st, sig := e.srv.Prekey(b.Address())
-	if _, err := b.Rekey(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if err := b.RemovePrekey(ctx, first); err != nil {
-		t.Fatal(err)
-	}
-	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if r.Method == http.MethodGet && r.URL.Path == "/v1/"+b.Address().String() {
-			fakeserver.WriteJSON(w, http.StatusOK, protocol.MailboxResponse{Identity: b.Identity().Document(), Prekey: st, PrekeySignature: sig})
-			return
+	for _, working := range []bool{false, true} {
+		e := newEnv(t)
+		e.working = working
+		b := e.mailbox()
+		first := numberOf(t, b)
+		st, sig := e.srv.Prekey(b.Address())
+		if _, err := b.Rekey(ctx); err != nil {
+			t.Fatal(err)
 		}
-		next.ServeHTTP(w, r)
-	})
-	if _, err := b.Rekey(ctx); err == nil || !strings.Contains(err.Error(), "rollback") {
-		t.Fatalf("rekey: %v, want a rollback refusal", err)
-	}
-	if nm, err := b.NotMade(ctx); err != nil || nm != nil {
-		t.Fatalf("NotMade: %+v, %v, want none: the mailbox signed it", nm, err)
+		if err := b.RemovePrekey(ctx, first); err != nil {
+			t.Fatal(err)
+		}
+		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if r.Method == http.MethodGet && r.URL.Path == "/v1/"+b.Address().String() {
+				e.serve(w, r, next, func(br *protocol.MailboxResponse) { br.Prekey, br.PrekeySignature = st, sig })
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+		e.clock.Add(25 * time.Hour)
+		if res, err := b.Receive(ctx); err != nil || res.RenewErr == nil || !strings.Contains(res.RenewErr.Error(), "rollback") {
+			t.Fatalf("working-key mode %v: recv: %+v, %v, want its renewal refused as a rollback", working, res, err)
+		}
+		_, err := b.Rekey(ctx)
+		if working && (err == nil || !strings.Contains(err.Error(), "rollback")) || !working && err != nil {
+			t.Fatalf("working-key mode %v: rekey: %v", working, err)
+		}
+		if nm, err := b.NotMade(ctx); err != nil || nm != nil {
+			t.Fatalf("working-key mode %v: NotMade: %+v, %v, want none: the mailbox signed it", working, nm, err)
+		}
 	}
 }

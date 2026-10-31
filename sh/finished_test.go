@@ -15,10 +15,9 @@ import (
 
 // init on a mailbox that holds its own revocation and has published nothing, a
 // mailbox restored from its identity alone beside its revocation: the script
-// signs nothing more, no certificate and no prekey statement, and nothing
-// reaches the server with a pass (PROTOCOL.md §12.5; #256). dr_prekey is the
-// one path to its certificates and statements, so prekey renew is held the
-// same way.
+// signs nothing more, no prekey statement, and nothing reaches the server
+// with a pass (PROTOCOL.md §12.5; #256). dr_prekey is the one path to its
+// statements, so prekey renew is held the same way.
 func TestScriptInitOfAMailboxThatHoldsItsOwnRevocationSignsNothing(t *testing.T) {
 	t.Parallel()
 	need(t, append(scriptTools, "curl")...)
@@ -51,10 +50,9 @@ func TestScriptInitOfAMailboxThatHoldsItsOwnRevocationSignsNothing(t *testing.T)
 	env := []string{"DR_HOME=" + dir, "DR_SERVER_URL=" + srv.URL}
 	for _, cmd := range []string{"dr_init", "dr_renew"} {
 		out, err := bash(t, env, cmd)
-		made, _ := filepath.Glob(filepath.Join(dir, "work", "*"))
 		stmts, _ := filepath.Glob(filepath.Join(dir, "prekeys", "*"))
-		if err == nil || passes.Load() != 0 || len(made) != 0 || len(stmts) != 0 {
-			t.Errorf("%s on a finished mailbox: %q, %v; %d requests with a pass; it made %v and %v", cmd, out, err, passes.Load(), made, stmts)
+		if err == nil || passes.Load() != 0 || len(stmts) != 0 {
+			t.Errorf("%s on a finished mailbox: %q, %v; %d requests with a pass; it made %v", cmd, out, err, passes.Load(), stmts)
 		}
 	}
 }

@@ -33,7 +33,7 @@ import (
 func TestTheRemedyWhenTheRenewalIsRefused(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a, reader := e.mailbox(), e.mailbox()
 	inUse := numberOf(t, a)
 	taken := worker(t, a)
@@ -101,7 +101,7 @@ func TestTheRemedyWhenTheRenewalIsRefused(t *testing.T) {
 func TestTheRemedyRevokesWhateverTheRenewalMeets(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a := e.mailbox()
 	inUse := numberOf(t, a)
 	for _, code := range []protocol.Code{protocol.CodeUnavailable, protocol.CodePassExpired, protocol.CodeBadKey, protocol.CodeRateLimited} {
@@ -129,7 +129,7 @@ func TestTheRemedyRevokesWhateverTheRenewalMeets(t *testing.T) {
 func TestTheRemedySendsItsRenewalOnce(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a := e.mailbox()
 	var order []string
 	refused := 0
@@ -167,7 +167,7 @@ func TestTheRemedySendsItsRenewalOnce(t *testing.T) {
 func TestTheRemedySendsNoRenewalThatWaited(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a, reader := e.mailbox(), e.mailbox()
 	first := numberOf(t, a)
 	kept := uploads(e, a)
@@ -207,7 +207,7 @@ func TestTheRemedySendsNoRenewalThatWaited(t *testing.T) {
 func TestTheRemedyAsksForItsOwnRevocationFirst(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a := e.mailbox()
 	first := numberOf(t, a)
 
@@ -283,7 +283,7 @@ func heldCertsOf(t *testing.T, e *env, a *client.Mailbox) *protocol.RevokedCerti
 // it (PROTOCOL.md §12.6).
 func TestTheRemedyOfAForgottenMailboxAsksItsRevocationsAgainAfterItsConflict(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a := e.mailbox()
 	T := numberOf(t, a) + 7200
 	publish(t, e, certsRecord(t, a.Dir(), T))
@@ -348,8 +348,13 @@ func TestAFaultAfterTheRevocationWasTakenLeavesItTaken(t *testing.T) {
 		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			e := newEnv(t)
+			e := newWorkEnv(t)
 			b := e.mailbox()
+			e.clock.Add(2 * time.Second)
+			// A certificate after the first, which its trip revokes nothing of.
+			if _, err := b.Rekey(ctx); err != nil {
+				t.Fatal(err)
+			}
 			e.clock.Add(2 * time.Second)
 			var armed atomic.Bool
 			client.SetStep(func(name string) {
@@ -366,8 +371,8 @@ func TestAFaultAfterTheRevocationWasTakenLeavesItTaken(t *testing.T) {
 			})
 			certs, err := c.run(t, b)
 			armed.Store(false)
-			if certs == nil || !errors.Is(err, syscall.ENOSPC) || heldCertsOf(t, e, b).Through != certs.Through || has(b, "revoked-certs.json") {
-				t.Fatalf("a revocation taken and not kept: %+v, %v; kept %v", certs, err, has(b, "revoked-certs.json"))
+			if certs == nil || !errors.Is(err, syscall.ENOSPC) || heldCertsOf(t, e, b).Through != certs.Through || keptThrough(t, b) >= certs.Through {
+				t.Fatalf("a revocation taken and not kept: %+v, %v; kept through %d", certs, err, keptThrough(t, b))
 			}
 			if held, err := b.Ask(ctx, b.Address()); err != nil || held.Certificates == nil || held.Certificates.Through != certs.Through {
 				t.Errorf("the mailbox's next read of itself: %+v, %v", held, err)
@@ -388,7 +393,7 @@ func TestAFaultKeepingTheRevocationShownAfterAConflictLeavesItTaken(t *testing.T
 	full := &os.PathError{Op: "write", Path: "state", Err: syscall.ENOSPC}
 	for _, name := range []string{"RevokeEarlier", "RenewAndRevoke"} {
 		t.Run(name, func(t *testing.T) {
-			e := newEnv(t)
+			e := newWorkEnv(t)
 			a := e.mailbox()
 			T := numberOf(t, a) + 7200
 			publish(t, e, certsRecord(t, a.Dir(), T)) // a higher revocation, the identity's own

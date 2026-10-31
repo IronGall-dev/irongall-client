@@ -9,29 +9,26 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dromas-dev/dromas-client/sshsig"
 	"golang.org/x/crypto/ssh"
 )
 
-// A mailbox's identity signs certificates and revocations, of its address and of
-// its certificates: nothing else.
-// A certificate names a working key, and the working key signs what the mailbox
-// says (PROTOCOL.md §5).
+// A mailbox in working-key mode has its identity certify a working key, and the
+// working key signs what the mailbox says (PROTOCOL.md §5). A certificate's
+// lifetime is its maker's, up to the maximum its server takes; a verifier holds
+// it to its window alone.
 
 const (
 	// CertificateKeyID is the key id of every v1 certificate.
 	CertificateKeyID = "dromas-cert-v1"
-	// CertificateLifetime is how long a client makes a certificate good for:
-	// the 31 days it signs messages for (SignsMessages), the longest month, so a
-	// certificate made each month carries a mailbox's messages until the next, and
-	// then TTL, so that the last message it signs still verifies when it is read.
-	CertificateLifetime = 31*24*time.Hour + TTL
-	// MaxCertificateLifetime is the longest a certificate may still have to
-	// run when a verifier takes it: MaxSkew more than a client asks for, so
-	// that one made by a clock ahead of the verifier's is not refused. It is
-	// the prekey's rule (PrekeyLifetime, MaxPrekeyLifetime).
-	MaxCertificateLifetime = CertificateLifetime + MaxSkew
 )
+
+// LastDate is the latest moment a certificate may name, at either end:
+// 9999-12-31T23:59:59Z (PROTOCOL.md §5). One that names a later one, OpenSSH's
+// "forever" among them, is no certificate of this protocol.
+var LastDate = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
+
+// lastUnix is LastDate in seconds since 1970, as a certificate names a date.
+const lastUnix uint64 = 253402300799
 
 // Every certificate error wraps one of these. ErrCertificate: it is not a
 // certificate of this identity, or it breaks a rule of the format, the limit
@@ -57,9 +54,11 @@ type Certificate struct {
 //
 // The rules: a user certificate with the key id CertificateKeyID, a serial of
 // at least 1, exactly one principal, the mailbox's address, and no critical
-// option; for an Ed25519 working key that passes the identity's own key
-// checks and is not the identity key; signed by the identity key, byte for
-// byte; begun, not ended, and ending at most MaxCertificateLifetime from now.
+// option; for a working key of the type its identity's type gives, that passes
+// that type's key checks and is not the identity key; signed by the identity
+// key, byte for byte; both dates at or before LastDate; begun, and not ended.
+// A verifier sets no ceiling on how long one runs: that is a server's, when it
+// takes a statement (PROTOCOL.md §11.7).
 // As the format says (draft-ietf-sshm-cert-01 §2.1.1): a critical option a
 // verifier does not know is refused, and none is known here; an extension it
 // does not know is ignored, and none is known here either; and what the
@@ -76,9 +75,6 @@ func CheckCertificate(id *Identity, key ssh.PublicKey, now time.Time) (*Certific
 	}
 	if unix >= cert.ValidBefore {
 		return nil, ErrCertificateEnded
-	}
-	if cert.ValidBefore > unix+uint64(MaxCertificateLifetime/time.Second) {
-		return nil, fmt.Errorf("%w: it ends more than 64 days and an hour from now", ErrCertificate)
 	}
 	return &Certificate{cert: cert}, nil
 }
@@ -137,14 +133,8 @@ func certificateForm(id *Identity, key ssh.PublicKey) (*ssh.Certificate, error) 
 	// begun" is said only of a certificate the identity signed, never of
 	// bytes anyone could write. The library checks the dates with the
 	// signature, so it is asked at the moment the certificate begins.
-	if cert.ValidAfter > 1<<62 {
-		return nil, fmt.Errorf("%w: it begins at no time", ErrCertificate)
-	}
-	// One that never ends (ssh.CertTimeInfinity) is no certificate of this
-	// protocol, whose verifier takes none that ends past a bound (§5): read as
-	// a record, it would end at no time a mailbox can name.
-	if cert.ValidBefore > 1<<62 {
-		return nil, fmt.Errorf("%w: it ends at no time", ErrCertificate)
+	if cert.ValidAfter > lastUnix || cert.ValidBefore > lastUnix {
+		return nil, fmt.Errorf("%w: it names a date after 9999-12-31", ErrCertificate)
 	}
 	checker := ssh.CertChecker{Clock: func() time.Time { return time.Unix(int64(cert.ValidAfter), 0) }} //nolint:gosec // bounded above
 	if err := checker.CheckCert(id.Address().String(), cert); err != nil {
@@ -155,8 +145,10 @@ func certificateForm(id *Identity, key ssh.PublicKey) (*ssh.Certificate, error) 
 
 // checkWorkingKey holds a certified key to the type the identity's type
 // gives its working keys (WorkingKeyType) and to that type's key checks, and
-// refuses the identity key itself: the identity signs certificates and
-// revocations, never what a working key signs.
+// refuses the identity key itself: SSHSIG does not sign its signing-key field,
+// so the identity's own signature, rank 0, could otherwise be wrapped in a
+// certificate of the identity's key at a rank above a revocation (PROTOCOL.md
+// §5).
 func checkWorkingKey(id *Identity, key ssh.PublicKey) error {
 	work := WorkingKeyType(id.Type())
 	if key == nil || work == "" || key.Type() != work {
@@ -180,12 +172,21 @@ func (c *Certificate) Serial() uint64 { return c.cert.Serial }
 
 // NotAfter returns the first moment the certificate is no longer valid.
 func (c *Certificate) NotAfter() time.Time {
-	return time.Unix(int64(c.cert.ValidBefore), 0).UTC() //nolint:gosec // certificateForm bounded it to 2^62
+	return time.Unix(int64(c.cert.ValidBefore), 0).UTC() //nolint:gosec // certificateForm bounded it to LastDate
 }
+
+// NotBefore returns the moment the certificate begins.
+func (c *Certificate) NotBefore() time.Time {
+	return time.Unix(int64(c.cert.ValidAfter), 0).UTC() //nolint:gosec // certificateForm bounded it to LastDate
+}
+
+// Lifetime is how long the certificate runs: its valid-before less its
+// valid-after, which a server holds to its maximum (PROTOCOL.md §11.7).
+func (c *Certificate) Lifetime() time.Duration { return c.NotAfter().Sub(c.NotBefore()) }
 
 // SignsMessages reports whether a message may still be signed under the certificate at
 // now: it has more than TTL left, so it outlasts the message, which may wait
-// that long to be read. One a client makes signs messages for its first 31 days.
+// that long to be read.
 func (c *Certificate) SignsMessages(now time.Time) bool { return c.NotAfter().Sub(now) > TTL }
 
 // PublicKey returns the certificate as the key its signatures verify under.
@@ -199,25 +200,26 @@ func (c *Certificate) WorkingKey() ssh.PublicKey { return c.cert.Key }
 func (c *Certificate) Marshal() []byte { return c.cert.Marshal() }
 
 // NewCertificate makes the certificate of serial for the working key work,
-// signed by identity, the signer for id's key. It is what
-// "ssh-keygen -s identity -I dromas-cert-v1 -n <address> -z <serial> -V -1h:+64d -O clear work.pub"
-// writes: valid from MaxSkew before now to CertificateLifetime after now. It
-// starts in the past so that a verifier whose clock is behind this one takes
-// it at once; ssh-keygen's own default, a minute or two back, is not enough
-// between machines that do not share a clock.
-func NewCertificate(id *Identity, identity ssh.Signer, work ssh.PublicKey, serial uint64, now time.Time) (*Certificate, error) {
+// signed by identity, the signer for id's key, running for lifetime from
+// MaxSkew before now: what
+// "ssh-keygen -s identity -I dromas-cert-v1 -n <address> -z <serial> -V -1h:+<lifetime less the hour> -O clear work.pub"
+// writes. It starts in the past so that a verifier whose clock is behind this
+// one takes it at once; ssh-keygen's own default, a minute or two back, is not
+// enough between machines that do not share a clock.
+func NewCertificate(id *Identity, identity ssh.Signer, work ssh.PublicKey, serial uint64, now time.Time, lifetime time.Duration) (*Certificate, error) {
 	if !bytes.Equal(identity.PublicKey().Marshal(), id.PublicKey().Marshal()) {
 		return nil, errors.New("the signer is not the mailbox's identity key")
 	}
 	unix := uint64(max(now.Unix(), 0))
+	after := unix - min(unix, uint64(MaxSkew/time.Second))
 	cert := &ssh.Certificate{
 		Key:             work,
 		Serial:          serial,
 		CertType:        ssh.UserCert,
 		KeyId:           CertificateKeyID,
 		ValidPrincipals: []string{id.Address().String()},
-		ValidAfter:      unix - min(unix, uint64(MaxSkew/time.Second)),
-		ValidBefore:     unix + uint64(CertificateLifetime/time.Second),
+		ValidAfter:      after,
+		ValidBefore:     after + uint64(max(lifetime, 0)/time.Second),
 	}
 	if err := cert.SignCert(rand.Reader, identity); err != nil {
 		return nil, err
@@ -249,38 +251,6 @@ func SerialAt(now time.Time, above uint64) uint64 {
 // working key's own signer, under c.
 func (c *Certificate) Signer(work ssh.Signer) (ssh.Signer, error) {
 	return ssh.NewCertSigner(c.cert, work)
-}
-
-// VerifyCertified verifies an armored signature over message, in namespace,
-// made by a working key of the identity id. The signature carries the
-// certificate: it is taken from there, checked at now (CheckCertificate), and
-// the signature is verified under it. It returns the certificate, so a caller
-// that keeps the highest serial it has seen can compare.
-func VerifyCertified(id *Identity, message, signature []byte, namespace string, now time.Time) (*Certificate, error) {
-	return verifyCertified(id, message, signature, namespace, func(key ssh.PublicKey) (*Certificate, error) { return CheckCertificate(id, key, now) })
-}
-
-// verifyCertified is VerifyCertified with the certificate held to check.
-func verifyCertified(id *Identity, message, signature []byte, namespace string, check func(ssh.PublicKey) (*Certificate, error)) (*Certificate, error) {
-	if err := withinBound(signature, id.Type()); err != nil {
-		return nil, err
-	}
-	blob, err := Dearmor(signature)
-	if err != nil {
-		return nil, err
-	}
-	key, err := signingKey(blob)
-	if err != nil {
-		return nil, err
-	}
-	cert, err := check(key)
-	if err != nil {
-		return nil, err
-	}
-	if err := sshsig.Verify(cert.PublicKey(), message, blob, namespace); err != nil {
-		return nil, err
-	}
-	return cert, nil
 }
 
 // CertificateBegan returns when the certificate an armored signature carries

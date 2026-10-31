@@ -38,19 +38,15 @@ func (b at) recv() drain {
 func (b at) now() int64 { return time.Now().Add(b.off).Unix() }
 
 // A mailbox whose clock is 9 minutes slow, or 49 fast, registers, renews, and
-// exchanges messages with a mailbox made that moment: its certificate starts an hour
-// back. One 11 minutes slow is refused at its pass and told what its clock
-// reads beside the server's word.
+// exchanges messages with a mailbox made that moment. One 11 minutes slow is
+// refused at its pass and told what its clock reads beside the server's
+// word.
 func TestScriptAtTheEdgesOfAClock(t *testing.T) {
 	w := newWorld(t)
 	for _, off := range []time.Duration{-9 * time.Minute, 49 * time.Minute} {
 		s := at{w.empty(), off}
 		s.must("dr_init")
 		s.addr = mustAddress(t, s.dir)
-		var serial, start, end int64
-		if _, err := fmt.Sscan(s.must(fmt.Sprintf(`dr_cert "$DR/prekeys/%d.txt.sig" "$DR/identity.doc" %s`, s.num(), s.addr)), &serial, &start, &end); err != nil || s.now()-start < 3600 || s.now()-start > 3660 {
-			t.Errorf("%v: the certificate does not start an hour before it was made: %d, %v", off, start, err)
-		}
 		f := w.mailbox()
 		f.mustSend(s.shMailbox, "to the mailbox whose clock is off")
 		if d := s.recv(); d.rc != 0 || !slices.Equal(d.bodies(), []string{"to the mailbox whose clock is off"}) {
@@ -75,26 +71,26 @@ func TestScriptAtTheEdgesOfAClock(t *testing.T) {
 }
 
 // A mailbox first made, or renewed, while its clock read over an hour ahead, or
-// 55 minutes: refused, and with the clock right it registers again under a
-// new certificate, for the same prekey, and a renewal it left is spent; a
-// serial never goes back.
+// 55 minutes: refused, its statement for ending too far ahead or its pass, and
+// with the clock right it registers again with its statement made again, for
+// the same prekey, and a renewal it left is spent; a serial never goes back.
 func TestScriptAfterAClockAhead(t *testing.T) {
 	w := newWorld(t)
 	for _, c := range []struct {
 		ahead time.Duration
 		code  string
-	}{{61 * time.Minute, "prekey_time"}, {55 * time.Minute, "prekey_time"}} { // its certificate not begun protocol.PassLifetime before the server's clock, which it reads before the pass
+	}{{61 * time.Minute, "prekey_time"}, {55 * time.Minute, "pass_expired"}} { // a statement ending more than 33 days and an hour after the server's clock, which it reads before the pass; then a pass ending more than an hour after it
 		b := at{w.empty(), c.ahead}
 		if r := b.sh("dr_init"); r.rc == 0 || !strings.Contains(r.err, c.code) {
 			t.Fatalf("a mailbox %v fast registered: %v", c.ahead, r)
 		}
 		f1 := b.newest()
-		k1, a1 := b.read(fmt.Sprintf("work/%d.pub", f1)), b.read(fmt.Sprintf("prekeys/%d.agekey", f1))
+		s1, a1 := b.read(fmt.Sprintf("prekeys/%d.txt", f1)), b.read(fmt.Sprintf("prekeys/%d.agekey", f1))
 		right := at{b.shMailbox, 0}
 		right.must("dr_init")
 		b.addr = mustAddress(t, b.dir)
-		if b.read(fmt.Sprintf("work/%d.pub", f1)) == k1 || b.read(fmt.Sprintf("prekeys/%d.agekey", f1)) != a1 || b.num() != f1 {
-			t.Errorf("%v: with the clock right, not a new first certificate for the same prekey at %d: serial %d", c.ahead, f1, b.num())
+		if b.read(fmt.Sprintf("prekeys/%d.txt", f1)) == s1 || b.read(fmt.Sprintf("prekeys/%d.agekey", f1)) != a1 || b.num() != f1 {
+			t.Errorf("%v: with the clock right, not a new first statement for the same prekey at %d: serial %d", c.ahead, f1, b.num())
 		}
 		ahead := at{b.shMailbox, c.ahead}
 		if c.ahead > time.Hour {
@@ -124,12 +120,12 @@ func TestScriptNumbersByTheClock(t *testing.T) {
 	fast := at{b, 90 * time.Second}
 	fast.must("dr_rekey")
 	n2 := b.num()
-	if _, c := w.served(b); int64(n2) > fast.now() || int64(n2) < fast.now()-30 || n2 <= n1+60 || c != n2 {
-		t.Errorf("a renewal 90 seconds on: %d after %d, the certificate served %d", n2, n1, c)
+	if _, c := w.served(b); int64(n2) > fast.now() || int64(n2) < fast.now()-30 || n2 <= n1+60 || c != 0 {
+		t.Errorf("a renewal 90 seconds on: %d after %d, served by a signer of rank %d", n2, n1, c)
 	}
 	at{b, -90 * time.Second}.must("dr_rekey")
-	if p, c := w.served(b); b.num() != n2+1 || p != n2+1 || c != n2+1 {
-		t.Errorf("a renewal with the clock behind its last number: %d after %d, served %d under %d", b.num(), n2, p, c)
+	if p, c := w.served(b); b.num() != n2+1 || p != n2+1 || c != 0 {
+		t.Errorf("a renewal with the clock behind its last number: %d after %d, served %d by a signer of rank %d", b.num(), n2, p, c)
 	}
 }
 

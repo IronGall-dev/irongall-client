@@ -35,11 +35,12 @@ const (
 // own is what this mailbox's server holds of it, from one read (known).
 type own struct {
 	at ownAt
-	// statement and cert are the served prekey statement and the certificate
-	// it is signed under, verified as this identity's own record, when at is
-	// atServed; bad is why the statement served does not verify.
+	// statement and signer are the served prekey statement and its signer,
+	// the identity or a working key under a certificate, verified as this
+	// identity's own record, when at is atServed; bad is why the statement
+	// served does not verify.
 	statement *protocol.Prekey
-	cert      *protocol.Certificate
+	signer    *protocol.Signer
 	bad       error
 	// certs is the revocation of this mailbox's certificates the read showed,
 	// verified, or nil: there beside a fault in keeping it too, since what
@@ -113,10 +114,10 @@ func (b *Mailbox) known(ctx context.Context) (*own, error) {
 		}
 	}
 	if o.at == atServed {
-		// Its own record, so judged as one: whether this identity certified
-		// the key that signed it, by every rule but its certificate's dates
-		// (CheckCertificateRecord).
-		o.statement, o.cert, o.bad = protocol.VerifyPrekeyRecord(b.id, br.Prekey, br.PrekeySignature)
+		// Its own record, so judged as one: whether this identity signed it
+		// or certified the key that did, by every rule but a certificate's
+		// dates (CheckCertificateRecord).
+		o.statement, o.signer, o.bad = protocol.VerifyPrekeyRecord(b.id, br.Prekey, br.PrekeySignature)
 		if o.bad == nil {
 			if err := b.noteServed(o, br.Prekey); err != nil {
 				return o, err
@@ -128,16 +129,20 @@ func (b *Mailbox) known(ctx context.Context) (*own, error) {
 
 // NotMade is a prekey statement the mailbox's server served in its name at the
 // mailbox's last read of itself, verified under its identity, that the mailbox did
-// not make: none it keeps. Under a certificate this mailbox made, whoever made it
+// not make: none it keeps. Signed by the identity itself, whoever made it holds
+// the identity. Under a certificate this mailbox made, whoever made it
 // holds that certificate's working key, from a copy of the mailbox's directory,
 // which holds the identity too; under one it did not, the identity certified
 // someone else's working key, as on the lost machine a mailbox restored from its
-// identity alone meets. Either way the mailbox recommends revoking the address
+// identity alone meets. Each way the mailbox recommends revoking the address
 // (PROTOCOL.md §12.4), and recv renews nothing above it: Rekey, which its
-// owner runs, does (#74).
+// owner runs, does (#74). In identity mode the outbox waits for nothing: no
+// certificate of the mailbox's own is in doubt (seal).
 type NotMade struct {
-	Serial            uint64 `json:"serial"`
-	CertificateSerial uint64 `json:"certificate_serial"`
+	Serial uint64 `json:"serial"`
+	// CertificateSerial is the serial of the certificate it is signed under,
+	// and zero, and not written, for one the identity signed.
+	CertificateSerial uint64 `json:"certificate_serial,omitempty"`
 	// OwnCertificate is set when the statement is under a certificate this
 	// mailbox made: one that certifies a working key it holds.
 	OwnCertificate bool `json:"own_certificate"`
@@ -161,8 +166,10 @@ func (b *Mailbox) noteServed(o *own, served []byte) error {
 		if err := b.update(func(s store) error { return s.del(bucketMailbox, "not-made") }); err != nil {
 			return err
 		}
+		// Signed by this mailbox's identity, or under the certificate it made
+		// with that number (work.go).
 		published, err := b.publishedSerial()
-		if err != nil || o.statement.Serial <= published || o.cert.Serial() != o.statement.Serial {
+		if r := o.signer.Rank(); err != nil || o.statement.Serial <= published || r != 0 && r != o.statement.Serial {
 			return err
 		}
 		return b.recordTaken(o.statement.Serial, "")
@@ -177,11 +184,15 @@ func (b *Mailbox) noteServed(o *own, served []byte) error {
 		return nil
 	}
 	o.notMade = true
-	nm, err := json.Marshal(NotMade{Serial: o.statement.Serial, CertificateSerial: o.cert.Serial(), OwnCertificate: b.certifiedHere(o.cert), At: b.now().UTC().Format(protocol.TimeLayout)})
+	nm := NotMade{Serial: o.statement.Serial, At: b.now().UTC().Format(protocol.TimeLayout)}
+	if c := o.signer.Certificate(); c != nil {
+		nm.CertificateSerial, nm.OwnCertificate = c.Serial(), b.certifiedHere(c)
+	}
+	raw, err := json.Marshal(nm)
 	if err != nil {
 		return err
 	}
-	return b.update(func(s store) error { return s.put(bucketMailbox, "not-made", nm) })
+	return b.update(func(s store) error { return s.put(bucketMailbox, "not-made", raw) })
 }
 
 // certifiedHere reports whether c certifies a working key this mailbox made: the
@@ -218,10 +229,13 @@ func (b *Mailbox) notMade() (nm *NotMade, err error) {
 }
 
 // Words says what nm is, to the mailbox's owner, and recommends what to do: in
-// either case, revoking the address (PROTOCOL.md §12.4).
+// every case, revoking the address (PROTOCOL.md §12.4).
 func (nm *NotMade) Words() string {
-	head := fmt.Sprintf("at its read of itself at %s, this mailbox's server served a prekey statement in its name, serial %d under certificate %d, that this mailbox did not make", nm.At, nm.Serial, nm.CertificateSerial)
 	tail := "recv renews nothing above it. dromas revocation publish, with the address in full, ends the address for good, and its correspondents need a new one; dromas prekey renew renews above the statement instead, for an owner who knows whose it is. The mailbox's next read of itself that serves its own clears this"
+	if nm.CertificateSerial == 0 {
+		return fmt.Sprintf("at its read of itself at %s, this mailbox's server served a prekey statement in its name, serial %d, that this mailbox's identity signed and this mailbox did not make: unless it is the owner's own, from the machine this mailbox was restored from, the identity is in other hands, and only revoking the address ends that. ", nm.At, nm.Serial) + tail
+	}
+	head := fmt.Sprintf("at its read of itself at %s, this mailbox's server served a prekey statement in its name, serial %d under certificate %d, that this mailbox did not make", nm.At, nm.Serial, nm.CertificateSerial)
 	if nm.OwnCertificate {
 		return head + ", under this mailbox's own certificate: whoever made it holds this mailbox's working key, so they copied this mailbox's directory, which holds its identity too. Revoke the address, unless you know the identity was not copied, when dromas cert revoke-earlier ends every certificate before a new one instead. " + tail
 	}

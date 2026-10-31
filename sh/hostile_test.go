@@ -189,8 +189,7 @@ func onBlock(n int) bool {
 
 // Every message is a whole number of blocks on the wire, padded after the
 // signature, for the key it is encrypted to; what a sender seals is read
-// back as its reader will, and an age file of another size is not sent; a
-// certificate with 33 days or less left signs no message.
+// back as its reader will, and an age file of another size is not sent.
 func TestScriptPads(t *testing.T) {
 	w := newWorld(t)
 	p, q := w.mailbox(), w.mailbox()
@@ -267,9 +266,6 @@ func TestScriptPads(t *testing.T) {
 	}
 	if r := p.sh(`age(){ command age "$@" && printf x; }; printf 'a size that tells' | dr_send ` + q.addr.String()); r.rc == 0 || !strings.Contains(r.err, "is not the 3072 bytes its padding was made for") || w.posts(q.addr) != n {
 		t.Errorf("an age file that is not the size the padding was made for: %v", r)
-	}
-	if r := p.sh(igNow(33*24*time.Hour) + "printf 'too late to sign' | dr_send " + q.addr.String()); r.rc == 0 || !strings.Contains(r.err, "ends within 33 days") || w.posts(q.addr) != n {
-		t.Errorf("a message signed under a certificate with 33 days or less left: %v", r)
 	}
 }
 

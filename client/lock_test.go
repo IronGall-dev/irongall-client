@@ -52,6 +52,9 @@ func TestEveryCommandWaitsForTheLock(t *testing.T) {
 	for i, c := range append(refused, run...) {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv(t)
+			// The remedy is a working-key mailbox's; a switch, an
+			// identity-mode one's.
+			e.working = c.name == "RevokeEarlier" || c.name == "RenewAndRevoke"
 			a, peer := e.mailbox(), e.mailbox()
 			rec, err := peer.Revocation(t.Context())
 			if err != nil {
@@ -299,6 +302,7 @@ func waits(b, c *client.Mailbox, rec *protocol.Revocations, opt client.Options) 
 		"Status":             func(ctx context.Context) error { _, err := b.Status(ctx); return err },
 		"RefusedMessages":    func(ctx context.Context) error { _, err := b.RefusedMessages(ctx); return err },
 		"NotMade":            func(ctx context.Context) error { _, err := b.NotMade(ctx); return err },
+		"Mode":               func(ctx context.Context) error { _, err := b.Mode(ctx); return err },
 		"Revocation":         func(ctx context.Context) error { _, err := b.Revocation(ctx); return err },
 		"CertificatesRecord": func(ctx context.Context) error { _, err := b.CertificatesRecord(ctx); return err },
 		"ACLPending":         func(ctx context.Context) error { _, err := b.ACLPending(ctx); return err },
@@ -328,6 +332,7 @@ func waits(b, c *client.Mailbox, rec *protocol.Revocations, opt client.Options) 
 		"Rekey":             func(ctx context.Context) error { _, err := b.Rekey(ctx); return err },
 		"RevokeEarlier":     func(ctx context.Context) error { _, err := b.RevokeEarlier(ctx); return err },
 		"RenewAndRevoke":    func(ctx context.Context) error { _, err := b.RenewAndRevoke(ctx); return err },
+		"Switch":            func(ctx context.Context) error { _, err := b.Switch(ctx); return err },
 		"Send":              func(ctx context.Context) error { _, err := b.Send(ctx, c.Address(), "waits"); return err },
 		"SendWith": func(ctx context.Context) error {
 			_, err := b.SendWith(ctx, c.Address(), "waits", client.Fields{})

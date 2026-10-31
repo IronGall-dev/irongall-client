@@ -573,6 +573,7 @@ func partwayCases() []partwayCase {
 			return recv(e, a)
 		}},
 		{"recv, mended after certificate_revoked", func(t *testing.T, e *env) partwaySet {
+			e.working = true // a revocation of its certificates through the one in use
 			a, b := e.mailbox(), e.mailbox()
 			send(t, b, a, "waits")
 			publish(t, e, certsRecord(t, a.Dir(), numberOf(t, a)))
@@ -602,6 +603,7 @@ func partwayCases() []partwayCase {
 			return partwaySet{dir: a.Dir(), a: a, run: func(ctx context.Context) (any, error) { return a.Rekey(ctx) }, inner: forgetsAtUpload(e, a)}
 		}},
 		{"cert revoke-earlier, its server forgets it between its read and its upload", func(t *testing.T, e *env) partwaySet {
+			e.working = true // a remedy is a working-key mailbox's
 			a := e.mailbox()
 			e.clock.Add(2 * time.Second)
 			s := remedy(a)
@@ -609,11 +611,13 @@ func partwayCases() []partwayCase {
 			return s
 		}},
 		{"cert revoke-earlier", func(t *testing.T, e *env) partwaySet {
+			e.working = true // a remedy is a working-key mailbox's
 			a := e.mailbox()
 			e.clock.Add(2 * time.Second)
 			return remedy(a)
 		}},
 		{"cert revoke-earlier after a conflict", func(t *testing.T, e *env) partwaySet {
+			e.working = true // a remedy is a working-key mailbox's
 			a := e.mailbox()
 			publishAt(t, e.srv.URL, ownRevocation(t, a, numberOf(t, a)+7200))
 			e.clock.Add(2 * time.Second)
@@ -622,11 +626,13 @@ func partwayCases() []partwayCase {
 			return s
 		}},
 		{"RevokeEarlier", func(t *testing.T, e *env) partwaySet {
+			e.working = true // a remedy is a working-key mailbox's
 			a := e.mailbox()
 			e.clock.Add(2 * time.Second)
 			return earlier(a)
 		}},
 		{"RevokeEarlier after a conflict", func(t *testing.T, e *env) partwaySet {
+			e.working = true // a remedy is a working-key mailbox's
 			a := e.mailbox()
 			publishAt(t, e.srv.URL, ownRevocation(t, a, numberOf(t, a)+7200))
 			e.clock.Add(2 * time.Second)

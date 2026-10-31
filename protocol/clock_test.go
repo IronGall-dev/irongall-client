@@ -22,7 +22,7 @@ func TestWhatAMailboxWithTheFastestClockMakesIsTakenByTheSlowest(t *testing.T) {
 	const name = "dromas.example"
 	taken := func(off time.Duration) bool { // is a mailbox whose clock is off by this much taken by the server?
 		at := server.Add(off)
-		cert, err := NewCertificate(b.id, b.identity, b.work.PublicKey(), 1, at)
+		cert, err := NewCertificate(b.id, b.identity, b.work.PublicKey(), 1, at, testLifetime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -53,7 +53,7 @@ func TestWhatAMailboxWithTheFastestClockMakesIsTakenByTheSlowest(t *testing.T) {
 
 	fast, slow := server.Add(fastest), server.Add(slowest)
 	// A certificate the fastest makes has begun for the slowest, and for the server.
-	cert, err := NewCertificate(b.id, b.identity, b.work.PublicKey(), 1, fast)
+	cert, err := NewCertificate(b.id, b.identity, b.work.PublicKey(), 1, fast, testLifetime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestWhatAMailboxWithTheFastestClockMakesIsTakenByTheSlowest(t *testing.T) {
 	}
 	// And what the slowest makes is taken by the fastest: nothing it makes
 	// has ended for a clock under an hour ahead.
-	cert, err = NewCertificate(b.id, b.identity, b.work.PublicKey(), 2, slow)
+	cert, err = NewCertificate(b.id, b.identity, b.work.PublicKey(), 2, slow, testLifetime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,11 +123,12 @@ func TestOnlyACertificateTheIdentitySignedIsJudgedByItsDates(t *testing.T) {
 
 // A certificate starts MaxSkew before it is made, so a verifier whose clock
 // is that far behind its maker's takes it at once, and one a second further
-// behind does not.
+// behind does not; and it runs for the lifetime its maker asked from there,
+// to the second, at the clock of each verifier.
 func TestACertificateStartsMaxSkewBeforeItIsMade(t *testing.T) {
 	b := newCertMailbox(t)
 	made := time.Date(2026, 10, 13, 12, 0, 30, 0, time.UTC)
-	cert, err := NewCertificate(b.id, b.identity, b.work.PublicKey(), 1, made)
+	cert, err := NewCertificate(b.id, b.identity, b.work.PublicKey(), 1, made, testLifetime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,8 +139,8 @@ func TestACertificateStartsMaxSkewBeforeItIsMade(t *testing.T) {
 		{made, nil},
 		{made.Add(-MaxSkew), nil},
 		{made.Add(-MaxSkew - time.Second), ErrCertificateNotBegun},
-		{made.Add(CertificateLifetime - time.Second), nil},
-		{made.Add(CertificateLifetime), ErrCertificateEnded},
+		{made.Add(-MaxSkew + testLifetime - time.Second), nil},
+		{made.Add(-MaxSkew + testLifetime), ErrCertificateEnded},
 	} {
 		if _, err := CheckCertificate(b.id, cert.PublicKey(), c.at); !errors.Is(err, c.want) || (c.want == nil && err != nil) {
 			t.Errorf("checked %v after it was made: %v, want %v", c.at.Sub(made), err, c.want)

@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -46,7 +45,7 @@ func messageAs(t *testing.T, e *env, from, to *client.Mailbox, signer ssh.Signer
 func TestRevokeEarlierEndsWhatAnOldWorkingKeySigns(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a, b := e.mailbox(), e.mailbox()
 	stolen := worker(t, a) // read before the renewal deletes it
 	first := numberOf(t, a)
@@ -109,7 +108,7 @@ func TestRevokeEarlierAfterARenewalTakenUnseenRevokesTheCertificateBeforeIt(t *t
 		}
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
-			e := newEnv(t)
+			e := newWorkEnv(t)
 			b, c := e.mailbox(), e.mailbox()
 			before := numberOf(t, b)
 			stolen := worker(t, b) // in use before the renewal: whoever copied the mailbox holds it
@@ -145,7 +144,7 @@ func TestRevokeEarlierAfterARenewalTakenUnseenRevokesTheCertificateBeforeIt(t *t
 func TestOnlyTheIdentitysHighestRevocationCounts(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a, b := e.mailbox(), e.mailbox()
 	doc := a.Identity().Document()
 	// show serves A's mailbox with rec's revocation of certificates in place of
@@ -165,6 +164,14 @@ func TestOnlyTheIdentitysHighestRevocationCounts(t *testing.T) {
 		})
 	}
 
+	// B meets A first through an honest read, and keeps its trip, without
+	// which it takes no certificate of A's: a server that withholds it costs
+	// A its messages, and forges nothing (PROTOCOL.md §15.6).
+	send(t, a, b, "before anything is forged")
+	if res := receive(t, b); len(res.Delivered) != 1 {
+		t.Fatalf("the first message: %+v", res)
+	}
+
 	// What a working key can sign: a revocation of the mailbox's own
 	// certificate.
 	forged, err := protocol.NewRevokedCertificates(a.Address(), numberOf(t, a))
@@ -175,9 +182,11 @@ func TestOnlyTheIdentitysHighestRevocationCounts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	trip, _ := stateOf(b, "peers/"+a.Address().String()+"/revoked-certs.json")
 	show(protocol.Revocations{Identity: doc, RevokedCertificates: forged.Statement(), RevokedCertificatesSignature: byWorker})
 	send(t, a, b, "under certificate 1, which a working key cannot revoke")
-	if res := receive(t, b); len(res.Delivered) != 1 || keptList(b, a.Address()) || shown.Load() == 0 {
+	kept, _ := stateOf(b, "peers/"+a.Address().String()+"/revoked-certs.json")
+	if res := receive(t, b); len(res.Delivered) != 1 || !bytes.Equal(kept, trip) || shown.Load() == 0 {
 		t.Fatalf("a revocation a working key signed was applied or kept, or never shown: %+v", res)
 	}
 	e.srv.SetMiddle(nil)
@@ -235,7 +244,7 @@ func TestOnlyTheIdentitysHighestRevocationCounts(t *testing.T) {
 func TestALaterCertificateOutranksAnyPrekeySerial(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a, b := e.mailbox(), e.mailbox()
 	stolen := worker(t, a)
 	first := numberOf(t, a)
@@ -284,7 +293,7 @@ func TestALaterCertificateOutranksAnyPrekeySerial(t *testing.T) {
 		}
 		next.ServeHTTP(w, r)
 	})
-	if _, err := b.Send(ctx, a.Address(), "to the thief's prekey"); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("under certificate %d, below %d", first, got.Serial)) {
+	if _, err := b.Send(ctx, a.Address(), "to the thief's prekey"); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("under certificate %d, below certificate %d", first, got.Serial)) {
 		t.Fatalf("the earlier certificate served again: %v", err)
 	}
 }
@@ -296,7 +305,7 @@ func TestALaterCertificateOutranksAnyPrekeySerial(t *testing.T) {
 func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnError(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a, b := e.mailbox(), e.mailbox()
 	if _, err := a.Rekey(ctx); err != nil {
 		t.Fatal(err)
@@ -349,7 +358,7 @@ func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnError(t *testing.T) {
 func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnErrorWhereTheServerShowsNone(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a, b := e.mailbox(), e.mailbox()
 	if _, err := a.Rekey(ctx); err != nil {
 		t.Fatal(err)
@@ -402,59 +411,64 @@ func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnErrorWhereTheServerSh
 	}
 }
 
-// A send names its prekey by both serials, its own and its certificate's, in
-// its query, and its body is the age file itself, as an octet stream.
-func TestASendNamesBothSerials(t *testing.T) {
+// A send names its prekey's statement by the SHA-256 of its bytes as served
+// (protocol.StatementHash), in its query, in either mode, and its body is the
+// age file itself, as an octet stream. Another statement by the same signer
+// is named apart.
+func TestASendNamesItsStatement(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t)
-	a, b := e.mailbox(), e.mailbox()
-	if _, err := b.Rekey(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	var query, contentType string
-	var body []byte
-	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if r.Method == http.MethodPost && r.URL.Path == "/v1/"+b.Address().String()+"/messages" {
-			query, contentType = r.URL.RawQuery, r.Header.Get("Content-Type")
-			body, _ = io.ReadAll(r.Body)
-			r.Body = io.NopCloser(bytes.NewReader(body))
+	for _, working := range []bool{false, true} {
+		e := newEnv(t)
+		e.working = working
+		a, b := e.mailbox(), e.mailbox()
+		if _, err := b.Rekey(context.Background()); err != nil {
+			t.Fatal(err)
 		}
-		next.ServeHTTP(w, r)
-	})
-	id := send(t, a, b, "names the prekey it was sealed to").ID
-	n := strconv.FormatUint(numberOf(t, b), 10)
-	if query != "prekey_serial="+n+"&certificate_serial="+n {
-		t.Errorf("a send's query: %q", query)
-	}
-	h := sha256.Sum256(body)
-	if contentType != protocol.CiphertextContentType || !bytes.HasPrefix(body, []byte("age-encryption.org/v1\n")) || hex.EncodeToString(h[:]) != id {
-		t.Errorf("a send's body, %s: %q…, not the ciphertext the receipt names", contentType, body[:min(len(body), 40)])
-	}
-	// A statement whose serial is not its certificate's: a mailbox makes none, so
-	// here its working key signs one five above, and the two serials differ.
-	st, _ := e.srv.Prekey(b.Address())
-	p, err := protocol.ParsePrekey(st)
-	if err != nil {
-		t.Fatal(err)
-	}
-	p.Serial += 5
-	sig, err := protocol.Sign(worker(t, b), p.Statement(), protocol.PrekeyNamespace(b.Address()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	query = ""
-	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == mailboxPath(b):
-			fakeserver.WriteJSON(w, http.StatusOK, protocol.MailboxResponse{Identity: b.Identity().Document(), Prekey: p.Statement(), PrekeySignature: sig})
-			return
-		case r.Method == http.MethodPost && r.URL.Path == mailboxPath(b)+"/messages" && query == "":
-			query = r.URL.RawQuery
+		var query, contentType string
+		var body []byte
+		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if r.Method == http.MethodPost && r.URL.Path == "/v1/"+b.Address().String()+"/messages" {
+				query, contentType = r.URL.RawQuery, r.Header.Get("Content-Type")
+				body, _ = io.ReadAll(r.Body)
+				r.Body = io.NopCloser(bytes.NewReader(body))
+			}
+			next.ServeHTTP(w, r)
+		})
+		id := send(t, a, b, "names the prekey it was sealed to").ID
+		st, _ := e.srv.Prekey(b.Address())
+		if want := "statement=" + protocol.StatementHash(st); query != want {
+			t.Errorf("working-key mode %v: a send's query: %q, want %q", working, query, want)
 		}
-		next.ServeHTTP(w, r)
-	})
-	_, _ = a.Send(context.Background(), b.Address(), "sealed to a statement five above its certificate")
-	if want := "prekey_serial=" + strconv.FormatUint(p.Serial, 10) + "&certificate_serial=" + n; query != want {
-		t.Errorf("a send to a statement five above its certificate: %q, want %q", query, want)
+		h := sha256.Sum256(body)
+		if contentType != protocol.CiphertextContentType || !bytes.HasPrefix(body, []byte("age-encryption.org/v1\n")) || hex.EncodeToString(h[:]) != id {
+			t.Errorf("a send's body, %s: %q…, not the ciphertext the receipt names", contentType, body[:min(len(body), 40)])
+		}
+		// Another statement, five above, by the same signer: the send names it
+		// as served, and the server, which holds the other, answers
+		// stale_prekey.
+		p, err := protocol.ParsePrekey(st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p.Serial += 5
+		sig, err := protocol.Sign(worker(t, b), p.Statement(), protocol.PrekeyNamespace(b.Address()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		query = ""
+		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == mailboxPath(b):
+				fakeserver.WriteJSON(w, http.StatusOK, protocol.MailboxResponse{Identity: b.Identity().Document(), Prekey: p.Statement(), PrekeySignature: sig})
+				return
+			case r.Method == http.MethodPost && r.URL.Path == mailboxPath(b)+"/messages" && query == "":
+				query = r.URL.RawQuery
+			}
+			next.ServeHTTP(w, r)
+		})
+		_, err = a.Send(context.Background(), b.Address(), "sealed to a statement five above")
+		if want := "statement=" + protocol.StatementHash(p.Statement()); query != want || client.Code(err) != protocol.CodeStalePrekey {
+			t.Errorf("working-key mode %v: a send to a statement five above: %q, %v; want %q and stale_prekey", working, query, err, want)
+		}
 	}
 }

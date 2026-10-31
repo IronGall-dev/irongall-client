@@ -126,27 +126,27 @@ func helpsTheThief(e *env, a *client.Mailbox, statement, signature []byte, hide 
 
 // A sender that has never read a mailbox's messages holds nothing about it. Asked
 // before the send, the server shows the mailbox's list, and the sender then
-// refuses the statement under the revoked certificate: nothing is posted.
+// refuses the statement under the revoked certificate: nothing is posted;
+// shown none, it refuses every certificate.
 // What the sender learned stands when the server later hides it.
 func TestASenderAsksBeforeItSends(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a := e.mailbox()
 	taken := numberOf(t, a)
 	statement, signature := theft(t, e, a)
 
-	// The control: a sender shown no list takes the old statement, and its
-	// message goes to the prekey the thief holds. This is what asking is for,
-	// and what a server that hides the list can still do to a sender that
-	// has never seen it.
+	// A sender shown no list holds A in identity mode, and takes no statement
+	// under a certificate: a server that hides the list costs A its messages
+	// from a sender that has never seen it, and sends none to the thief.
 	blind := e.mailbox()
 	op := helpsTheThief(e, a, statement, signature, true)
-	if _, err := blind.Send(ctx, a.Address(), "to whoever holds the old prekey"); err != nil {
+	if _, err := blind.Send(ctx, a.Address(), "to whoever holds the old prekey"); err == nil || !strings.Contains(err.Error(), "its address is in identity mode") {
 		t.Fatalf("a sender shown no list: %v", err)
 	}
-	if op.count(http.MethodGet, mailboxPath(a)) != 1 || op.count(http.MethodPost, postTo(a)) != 1 {
-		t.Fatalf("a sender shown no list read the mailbox once and posted once: %q", op.seen)
+	if op.count(http.MethodGet, mailboxPath(a)) != 1 || op.count(http.MethodPost, postTo(a)) != 0 {
+		t.Fatalf("a sender shown no list read the mailbox once and posted nothing: %q", op.seen)
 	}
 
 	// The same operator, with the list not hidden: the sender asks first.
@@ -339,7 +339,7 @@ func postFails(e *env, a *client.Mailbox) {
 func TestAMessageThatWaitedIsSealedAtThePost(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a, b := e.mailbox(), e.mailbox()
 
 	postFails(e, a)
@@ -378,7 +378,7 @@ func TestAMessageThatWaitedIsSealedAtThePost(t *testing.T) {
 	if got, err := b.Flush(ctx); err != nil || len(got) != 1 {
 		t.Fatalf("flush: %v, %v", got, err)
 	}
-	if len(posted) != 1 || posted[0].CertificateSerial != numberOf(t, a) {
+	if st, _ := e.srv.Prekey(a.Address()); len(posted) != 1 || posted[0].Statement != protocol.StatementHash(st) {
 		t.Fatalf("%d posts: %+v", len(posted), posted)
 	}
 	if res := receive(t, a); len(res.Delivered) != 1 || bodyOf(t, res.Delivered[0]) != "written under the first certificate" {
@@ -429,13 +429,13 @@ func TestAMessageThatWaitedGoesUnderTheRenewalTheMailboxRecorded(t *testing.T) {
 	if _, err := b.Send(ctx, a.Address(), "the mailbox records the renewal"); err != nil {
 		t.Fatal(err)
 	}
-	var posted []uint64
+	var posted []string
 	watch(e, func(w http.ResponseWriter, r *http.Request) bool { // takes every post to a
 		if r.Method != http.MethodPost || r.URL.Path != postTo(a) {
 			return false
 		}
 		if q, err := protocol.ParseSendQuery(r.URL.RawQuery); err == nil {
-			posted = append(posted, q.CertificateSerial)
+			posted = append(posted, q.Statement)
 		}
 		fakeserver.Take(w, r)
 		return true
@@ -443,8 +443,8 @@ func TestAMessageThatWaitedGoesUnderTheRenewalTheMailboxRecorded(t *testing.T) {
 	if got, err := b.Flush(ctx); err != nil || len(got) != 1 {
 		t.Fatalf("flush: %v, %v", got, err)
 	}
-	if len(posted) != 1 || posted[0] != numberOf(t, a) {
-		t.Fatalf("posted under certificates %v after recording %d", posted, numberOf(t, a))
+	if st, _ := e.srv.Prekey(a.Address()); len(posted) != 1 || posted[0] != protocol.StatementHash(st) {
+		t.Fatalf("posted to statements %v after recording %d", posted, numberOf(t, a))
 	}
 }
 
@@ -456,7 +456,7 @@ func TestAMessageThatWaitedGoesUnderTheRenewalTheMailboxRecorded(t *testing.T) {
 func TestAMessageThatWaitedThroughTheRemedyIsSignedUnderTheNewCertificate(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a, b := e.mailbox(), e.mailbox()
 	first := numberOf(t, b)
 	postFails(e, a)
@@ -703,11 +703,12 @@ func record(t *testing.T, e *env, a *client.Mailbox) *protocol.Revocations {
 func TestAskingAtAnyTimeAndARevocationHandedOver(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a, b, c := e.mailbox(), e.mailbox(), e.mailbox()
 
-	if held, err := b.Ask(ctx, a.Address()); err != nil || held.Revoked || held.Certificates != nil {
-		t.Fatalf("ask about a mailbox with nothing revoked: %+v, %v", held, err)
+	// A mailbox in working-key mode, whose trip revokes nothing it uses.
+	if held, err := b.Ask(ctx, a.Address()); err != nil || held.Revoked || held.Certificates == nil || held.Certificates.Revokes(numberOf(t, a)) {
+		t.Fatalf("ask about a mailbox with nothing revoked but before its trip: %+v, %v", held, err)
 	}
 	stolen := worker(t, a)
 	theft(t, e, a)

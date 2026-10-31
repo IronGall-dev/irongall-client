@@ -34,20 +34,24 @@ var update = flag.Bool("update", false, "write testdata/statetable.golden from t
 // command does in some state is a change to it, read line by line before it
 // is committed. go test ./client -run TestStateTable -update writes it anew.
 //
-// A row is the mailbox's directory (all of it, or the identity alone, as a
+// A row is the mailbox's mode (identity mode, or working-key mode, made with
+// init --offline), its directory (all of it, or the identity alone, as a
 // restore from its backup), what its server holds (never registered, an
 // active mailbox, one the server forgot), and what the
 // server holds of a revocation of its certificates (none, through the one
 // in use, or through a serial a day ahead of the clock), each revocation
-// published by another holder of the identity and not kept by the mailbox; then
-// three rows more: the address revoked at the server, the mailbox finished (it
-// holds its own revocation), and no mailbox at all.
+// published by another holder of the identity and not kept by the mailbox: in
+// identity mode, a trip it did not make; then three rows more of each mode:
+// the address revoked at the server, the mailbox finished (it holds its own
+// revocation); and no mailbox at all. init and init --offline restore the
+// identity alone each in its own mode, so each meets its mailbox's mode and
+// the other.
 //
 // Two kinds of cell are not run, since each is the same as another (#426
 // item 3): a server that is silent leaves the mailbox as one that refuses does
-// in all 220 pairs of row and command, and only its words differ, which
+// in every pair of row and command, and only its words differ, which
 // TestACallWithNoAnswerSaysWhatKind holds; and the identity alone at a
-// server that forgot the mailbox does in all 90 cells what it does at one that
+// server that forgot the mailbox does in every cell what it does at one that
 // never registered it, which holds nothing of it either.
 func TestStateTable(t *testing.T) {
 	t.Parallel()
@@ -116,13 +120,28 @@ func TestStateTable(t *testing.T) {
 }
 
 // A stateRow puts a mailbox in its state: in dir, against e, with peer an active
-// mailbox of the same server.
+// mailbox of the same server. Its mailbox, and the env's, are in working-key
+// mode where working is set.
 type stateRow struct {
-	name string
-	make func(t *testing.T, e *env, dir string, peer *client.Mailbox)
+	name    string
+	working bool
+	make    func(t *testing.T, e *env, dir string, peer *client.Mailbox)
 }
 
 func stateRows() []stateRow {
+	var rows []stateRow
+	for _, working := range []bool{false, true} {
+		mode := map[bool]string{false: "identity mode, ", true: "working-key mode, "}[working]
+		for _, r := range modeRows() {
+			r.name, r.working = mode+r.name, working
+			rows = append(rows, r)
+		}
+	}
+	return append(rows, stateRow{"no mailbox", false, func(*testing.T, *env, string, *client.Mailbox) {}})
+}
+
+// modeRows are the rows of one mode, whose env makes its mailboxes in it.
+func modeRows() []stateRow {
 	var rows []stateRow
 	for _, view := range []string{"full", "identity alone"} {
 		for _, server := range []string{"never registered", "active", "forgotten"} {
@@ -130,7 +149,7 @@ func stateRows() []stateRow {
 				if view == "identity alone" && server == "forgotten" {
 					continue // the same in every cell as never registered (TestStateTable)
 				}
-				rows = append(rows, stateRow{view + ", " + server + ", " + rev, func(t *testing.T, e *env, dir string, peer *client.Mailbox) {
+				rows = append(rows, stateRow{view + ", " + server + ", " + rev, false, func(t *testing.T, e *env, dir string, peer *client.Mailbox) {
 					makeMailbox(t, e, dir, peer, server == "never registered")
 					a := openMailbox(t, e, dir)
 					if server == "forgotten" {
@@ -150,7 +169,7 @@ func stateRows() []stateRow {
 		}
 	}
 	return append(rows,
-		stateRow{"full, address revoked at the server", func(t *testing.T, e *env, dir string, peer *client.Mailbox) {
+		stateRow{"full, address revoked at the server", false, func(t *testing.T, e *env, dir string, peer *client.Mailbox) {
 			makeMailbox(t, e, dir, peer, false)
 			rec, err := openMailbox(t, e, dir).Revocation(t.Context())
 			if err != nil {
@@ -158,7 +177,7 @@ func stateRows() []stateRow {
 			}
 			publish(t, e, rec)
 		}},
-		stateRow{"identity alone, address revoked at the server", func(t *testing.T, e *env, dir string, peer *client.Mailbox) {
+		stateRow{"identity alone, address revoked at the server", false, func(t *testing.T, e *env, dir string, peer *client.Mailbox) {
 			makeMailbox(t, e, dir, peer, false)
 			rec, err := openMailbox(t, e, dir).Revocation(t.Context())
 			if err != nil {
@@ -167,7 +186,7 @@ func stateRows() []stateRow {
 			publish(t, e, rec)
 			identityAlone(t, dir)
 		}},
-		stateRow{"full, finished: it holds its own revocation", func(t *testing.T, e *env, dir string, peer *client.Mailbox) {
+		stateRow{"full, finished: it holds its own revocation", false, func(t *testing.T, e *env, dir string, peer *client.Mailbox) {
 			makeMailbox(t, e, dir, peer, false)
 			a := openMailbox(t, e, dir)
 			rec, err := a.Revocation(t.Context())
@@ -179,7 +198,6 @@ func stateRows() []stateRow {
 				t.Fatal(err)
 			}
 		}},
-		stateRow{"no mailbox", func(*testing.T, *env, string, *client.Mailbox) {}},
 	)
 }
 
@@ -292,8 +310,34 @@ func stateCommands() []stateCommand {
 	open := func(e *env, dir string) (*client.Mailbox, error) { return client.Open(dir, e.opts()) }
 	return []stateCommand{
 		{"init", func(ctx context.Context, e *env, dir string, _ *client.Mailbox) (string, error) {
-			_, err := client.Init(ctx, dir, e.opts())
+			opt := e.opts()
+			opt.WorkingKey = false
+			_, err := client.Init(ctx, dir, opt)
 			return "", err
+		}},
+		{"init --offline", func(ctx context.Context, e *env, dir string, _ *client.Mailbox) (string, error) {
+			opt := e.opts()
+			opt.WorkingKey = true
+			_, err := client.Init(ctx, dir, opt)
+			return "", err
+		}},
+		{"cert switch", func(ctx context.Context, e *env, dir string, _ *client.Mailbox) (string, error) {
+			b, err := open(e, dir)
+			if err != nil {
+				return "", err
+			}
+			r, err := b.Switch(ctx)
+			if r == nil {
+				return "", err
+			}
+			s := fmt.Sprintf("retried %d", len(r.Retried))
+			if r.Prekey != nil {
+				s = fmt.Sprintf("prekey %d, ", r.Prekey.Serial) + s
+			}
+			if r.NotRetried != nil {
+				s += ", not retried: " + r.NotRetried.Error()
+			}
+			return s, err
 		}},
 		{"recv", func(ctx context.Context, e *env, dir string, _ *client.Mailbox) (string, error) {
 			b, err := open(e, dir)
@@ -464,6 +508,7 @@ func heldWords(h *client.Held) string {
 // written as a role and an offset from the clock.
 func runCell(t *testing.T, r stateRow, c stateCommand, m string) string {
 	e := newEnv(t)
+	e.working = r.working
 	peer := e.mailbox()
 	dir := filepath.Join(t.TempDir(), "mailbox")
 	r.make(t, e, dir, peer)

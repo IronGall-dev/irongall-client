@@ -72,6 +72,12 @@ type Options struct {
 	// that type. An existing identity key is used as it is, whatever this
 	// says.
 	IdentityType string
+	// WorkingKey is Init's mode for the mailbox it makes or restores: working-key
+	// mode (dromas init --offline), where the identity certifies a working key
+	// that signs, and not identity mode, the default (PROTOCOL.md §5). A mailbox
+	// that keeps a revocation of its certificates is in working-key mode
+	// whatever this says.
+	WorkingKey bool
 	// SenderKeyTypes is what the mailbox declares with each prekey it
 	// publishes: the identity key types of the senders it takes messages from
 	// (protocol.AcceptsSender). Nil: every type this client verifies, which
@@ -111,10 +117,18 @@ type Mailbox struct {
 	// bounded by requestTimeout (stall); one given is used as it is.
 	stall bool
 	now   func() time.Time
-	// identity is the identity key, which signs certificates and revocations
-	// and nothing else, and none once the mailbox is finished (sign).
-	identity *sign.Identity
-	id       *protocol.Identity
+	// certifier is the identity key, which signs only through sign: what
+	// the mailbox says in identity mode, certificates and revocations in both
+	// modes, and nothing but the address's revocation once the mailbox holds a
+	// trip it did not make (mode.go).
+	certifier *sign.Certifier
+	id        *protocol.Identity
+	// workingKey is Init's mode for a mailbox it makes or restores
+	// (Options.WorkingKey).
+	workingKey bool
+	// lifetime is how long a certificate this mailbox makes runs, read from its
+	// server's document once a command (certificateLifetime); zero until then.
+	lifetime time.Duration
 	// identityType is the type of key Init makes when the mailbox has none.
 	identityType string
 	// senderKeyTypes is what the mailbox declares with each prekey it publishes.
@@ -179,7 +193,7 @@ func Open(dir string, opt Options) (*Mailbox, error) {
 // HTTP client takes every request through one transport (newTransport) and
 // follows no redirect (followNone).
 func newMailbox(dir string, opt Options) (*Mailbox, error) {
-	b := &Mailbox{dir: dir, base: strings.TrimRight(opt.Base, "/"), http: opt.HTTPClient, now: opt.Now, identityType: opt.IdentityType, senderKeyTypes: opt.SenderKeyTypes, waiting: opt.Waiting, slot: make(chan struct{}, 1)}
+	b := &Mailbox{dir: dir, base: strings.TrimRight(opt.Base, "/"), http: opt.HTTPClient, now: opt.Now, identityType: opt.IdentityType, workingKey: opt.WorkingKey, senderKeyTypes: opt.SenderKeyTypes, waiting: opt.Waiting, slot: make(chan struct{}, 1)}
 	if b.senderKeyTypes == nil {
 		b.senderKeyTypes = protocol.IdentityTypes()
 	}
@@ -322,11 +336,22 @@ func (b *Mailbox) path(elem ...string) string {
 	return filepath.Join(append([]string{b.dir}, elem...)...)
 }
 
-// Init creates a mailbox in dir, or finishes an init that stopped half way:
-// it makes the identity, the first working key with its certificate, and the
-// first prekey if they are missing, and registers the mailbox. The
-// registration carries a pass the working key signs, so the mailbox is in use at
-// once. Run again on a finished mailbox, it changes nothing.
+// Init creates a mailbox in dir, or finishes an init that stopped half way, or
+// restores a mailbox from its identity alone: it makes the identity if it is
+// missing, and the first prekey, and registers the mailbox. The registration
+// carries a pass by the statement's signer, so the mailbox is in use at once.
+// Run again on a mailbox that has published a prekey, it changes nothing.
+//
+// The mailbox is in identity mode, unless Options.WorkingKey (dromas init
+// --offline) puts it in working-key mode, where it first makes the trip
+// (PROTOCOL.md §10.2) and then certifies a working key above it, for the
+// longest its server takes (certificateLifetime): a server whose maximum
+// leaves a certificate no room to sign messages refuses that mode before
+// anything is published. A restore is told its mode the same way, or by a
+// revocation of its certificates handed over first ([Mailbox.KeepRevocation]),
+// and never guesses: it reads its mailbox and its revocations at its server
+// and stops where they show the other mode, and at a server that holds
+// neither it publishes the trip before its first statement.
 func Init(ctx context.Context, dir string, opt Options) (*Mailbox, error) {
 	b, err := newMailbox(dir, opt)
 	if err != nil {
@@ -363,12 +388,27 @@ func (b *Mailbox) init(ctx context.Context) (*Mailbox, error) {
 	if err := b.finished(); err != nil {
 		return nil, err
 	}
+	kept, err := b.inWorkingKeyMode()
+	if err != nil {
+		return nil, err
+	}
+	working := b.workingKey || kept
 	published, err := b.publishedSerial()
 	if err != nil {
 		return nil, err
 	}
 	if published > 0 {
+		if working && !kept {
+			return nil, refuse("this mailbox is registered in identity mode: dromas cert switch, with its address in full, moves it to working-key mode, at the cost it states")
+		}
 		return b, nil
+	}
+	// A certificate runs for the longest the server takes, which may leave
+	// none to sign messages under: refused before anything is published.
+	if working {
+		if _, err := b.certificateLifetime(ctx); err != nil {
+			return nil, err
+		}
 	}
 	// The mailbox's first prekey is a renewal as every later one is (Rekey): read
 	// from what its server holds of the mailbox (known), numbered by this
@@ -378,13 +418,19 @@ func (b *Mailbox) init(ctx context.Context) (*Mailbox, error) {
 	// an earlier attempt signed is sent again only while it can be
 	// (PROTOCOL.md §12.4; #87). An identity made by this call has no history
 	// a server could hold, and nobody else holds its key to have revoked
-	// anything under it: its renewal goes as a registration with no read,
-	// which a server would count as a miss of its address.
+	// anything under it: its trip and its renewal go with no read, which a
+	// server would count as a miss of its address.
 	if !fresh {
-		_, err := b.rekeyAdopting(ctx)
-		return b, err
+		return b, b.restore(ctx, working)
 	}
-	if _, at, err := b.renewFrom(ctx, &ownRead{forgotten: true}); err != nil {
+	st := &ownRead{forgotten: true}
+	if working {
+		if _, err := b.trip(ctx, 0); err != nil {
+			return nil, err
+		}
+		st.trip = true
+	}
+	if _, at, err := b.renewFrom(ctx, st); err != nil {
 		return nil, err
 	} else if err := b.prune(at); err != nil {
 		return nil, err
@@ -392,20 +438,63 @@ func (b *Mailbox) init(ctx context.Context) (*Mailbox, error) {
 	return b, nil
 }
 
-// publish sends a registration or a new prekey, whose statement working key
-// n signed, with a pass that key signs: the server takes a pass under the
-// certificate of the statement a call brings, which is how a mailbox gets a
-// certificate on record. Once the server has taken it, n is the prekey this
-// mailbox published last, its working key is the one in use, and older working
-// keys go. It returns the reading the server took, the pass's date, once the
-// server has answered: an error beside it is a fault of this mailbox after the
-// server took the call (#110).
+// restore is Init's renewal of a mailbox that has published nothing, from its
+// identity alone or with its state lost, told its mode by working. It reads
+// itself at its server first (readOwn), keeping what verifies of its
+// revocations, and stops where what its server holds is of the other mode: a
+// revocation of its certificates, for a mailbox told identity mode, or a
+// statement its identity signed, with none, for one told working-key mode.
+// One told working-key mode makes the trip, or publishes the one it keeps
+// where its server holds none (sendRenewal), before its first statement.
+// Once its renewal is taken it adopts the ACL its server holds (adoptPending).
+func (b *Mailbox) restore(ctx context.Context, working bool) error {
+	st, err := b.readOwn(ctx, false, false)
+	if err != nil {
+		return err
+	}
+	kept, err := b.inWorkingKeyMode()
+	if err != nil {
+		return err
+	}
+	switch {
+	case !working && kept:
+		return refuse("this address is in working-key mode: its identity signed a revocation of its certificates, which its server holds and this mailbox now keeps. dromas init --offline restores it in that mode")
+	case working && !kept && st.served != nil && st.served.Identity():
+		return refuse("this mailbox's server holds this address in identity mode, under a statement its identity signed: dromas init restores it in that mode, and dromas cert switch, with its address in full, then moves it to working-key mode, at the cost it states")
+	case working:
+		made, err := b.trip(ctx, st.known)
+		if err != nil {
+			return err
+		}
+		st.trip = st.trip || made
+	}
+	p, at, err := b.renewFrom(ctx, st)
+	if err != nil {
+		return err
+	}
+	if err := b.prune(at); err != nil {
+		return err
+	}
+	if p != nil {
+		_, err = b.adoptPending(ctx)
+	}
+	return err
+}
+
+// publish sends a registration or a new prekey, statement n, with a pass by
+// its signer: the server takes a pass by the signer of the statement a call
+// brings, which is how a mailbox gets a certificate on record (PROTOCOL.md
+// §8). Once the server has taken it, n is the prekey this mailbox published
+// last, its signer is the one in use, and older working keys go. It returns
+// the reading the server took, the pass's date, once the server has
+// answered: an error beside it is a fault of this mailbox after the server
+// took the call (#110).
 func (b *Mailbox) publish(ctx context.Context, path string, req any, n uint64) (taken, error) {
-	work, _, err := b.worker(n)
+	by, _, err := b.signerOf(n)
 	if err != nil {
 		return taken{}, err
 	}
-	pass, err := b.signPass(work)
+	pass, err := b.signPass(by)
 	if err != nil {
 		return taken{}, err
 	}
@@ -559,7 +648,7 @@ func (b *Mailbox) loadIdentity() error {
 	if err != nil {
 		return err
 	}
-	b.identity, b.id = sign.NewIdentity(signer, b.finished), id
+	b.certifier, b.id = sign.NewCertifier(signer, b.checks()), id
 	if doc, err := os.ReadFile(b.path("identity.doc")); err != nil || !bytes.Equal(doc, id.Document()) {
 		if err := writeFile(b.path("identity.doc"), id.Document()); err != nil {
 			return err
@@ -612,15 +701,17 @@ func (b *Mailbox) prekeys() (ns []uint64, err error) {
 }
 
 // makePrekey makes prekey serial, a NEW key valid for the mailbox's
-// prekey lifetime ([Mailbox.PrekeyLifetime]), and its statement, signed by a NEW
-// working key under a new certificate, unless its statement is already
-// signed. The number is recorded as the renewal under way before anything is
-// made, and the statement, with when it was signed, once it is: so a key or a
-// working key that no statement names was never sent, and a key an earlier
-// attempt made and never signed is used, but never a working key, whose
-// certificate began when that attempt ran (#197). A statement never outlives
-// the certificate it is signed under.
-func (b *Mailbox) makePrekey(serial uint64) (*protocol.Prekey, error) {
+// prekey lifetime ([Mailbox.PrekeyLifetime]), and its statement, unless its
+// statement is already signed: signed by the identity in identity mode, or in
+// working-key mode by a NEW working key under a new certificate, which runs
+// for the longest the server takes (certificateLifetime). The number is
+// recorded as the renewal under way before anything is made, and the
+// statement, with when it was signed, once it is: so a key or a working key
+// that no statement names was never sent, and a key an earlier attempt made
+// and never signed is used, but never a working key, whose certificate began
+// when that attempt ran (#197). A statement never outlives the certificate
+// it is signed under.
+func (b *Mailbox) makePrekey(ctx context.Context, serial uint64) (*protocol.Prekey, error) {
 	if rec, err := b.prekeyOf(serial); err != nil || rec != nil {
 		if err != nil {
 			return nil, err
@@ -631,16 +722,31 @@ func (b *Mailbox) makePrekey(serial uint64) (*protocol.Prekey, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := b.begin(serial); err != nil {
-		return nil, err
-	}
-	// The working key and its certificate first: a mailbox that may sign nothing
-	// more is stopped at the certificate, before any key is written.
-	worker, cert, err := b.makeWork(serial)
+	m, err := b.mode()
 	if err != nil {
 		return nil, err
 	}
-	step("working key made")
+	var certLife time.Duration
+	if m == sign.WorkingKeyMode {
+		if certLife, err = b.certificateLifetime(ctx); err != nil {
+			return nil, err
+		}
+	}
+	if err := b.begin(serial); err != nil {
+		return nil, err
+	}
+	// The signer first: a mailbox that may sign nothing more is stopped there,
+	// at the certificate in working-key mode, before any key is written.
+	var by signer
+	var cert *protocol.Certificate
+	if m == sign.WorkingKeyMode {
+		if by, cert, err = b.makeWork(serial, certLife); err != nil {
+			return nil, err
+		}
+		step("working key made")
+	} else if by, err = b.certifier.Identity(); err != nil {
+		return nil, err
+	}
 	stem := b.path("prekeys", fmt.Sprint(serial))
 	if !exists(stem+".agekey") || keyType(stem+".agekey") != protocol.PostQuantum {
 		if err := newAgeKey(stem+".agekey", b.now()); err != nil {
@@ -654,11 +760,11 @@ func (b *Mailbox) makePrekey(serial uint64) (*protocol.Prekey, error) {
 	}
 	made := b.now().UTC().Truncate(time.Second)
 	notAfter := made.Add(lifetime)
-	if cert.NotAfter().Before(notAfter) {
+	if cert != nil && cert.NotAfter().Before(notAfter) {
 		notAfter = cert.NotAfter()
 	}
 	p := &protocol.Prekey{Address: b.id.Address(), Serial: serial, Key: recipient, NotAfter: notAfter}
-	sig, err := worker.Signature(p.Statement(), protocol.PrekeyNamespace(b.id.Address()))
+	sig, err := by.Statement(p)
 	if err != nil {
 		return nil, err
 	}

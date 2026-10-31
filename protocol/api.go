@@ -139,27 +139,21 @@ const MaxCiphertext = 16 << 20
 // pass the call carries. The message's signature is inside the file, so the
 // server is handed none.
 type SendQuery struct {
-	// PrekeySerial is the serial of the prekey encrypted to. When the mailbox
-	// has a newer one the server answers stale_prekey, and the sender
-	// encrypts the same signed envelope again.
-	PrekeySerial uint64
-	// CertificateSerial is the serial of the certificate that prekey's
-	// statement is signed under. A prekey is named by the two together: a
-	// mailbox's statements are ordered by certificate first, so a prekey serial
-	// can come again under a later certificate.
-	CertificateSerial uint64
+	// Statement names the prekey statement the file was sealed to, by its
+	// StatementHash. When the mailbox has another the server answers
+	// stale_prekey, and the sender seals the same envelope again.
+	Statement string
 }
 
-// The names of a send's query parameters.
-const (
-	PrekeySerialParam      = "prekey_serial"
-	CertificateSerialParam = "certificate_serial"
-)
+// StatementParam is the name of a send's one query parameter.
+const StatementParam = "statement"
+
+// statementGrammar is a statement's hash as a send names it: 64 lowercase hex
+// digits.
+var statementGrammar = regexp.MustCompile(`\A[0-9a-f]{64}\z`)
 
 // Encode writes q as a query, without its "?".
-func (q SendQuery) Encode() string {
-	return PrekeySerialParam + "=" + strconv.FormatUint(q.PrekeySerial, 10) + "&" + CertificateSerialParam + "=" + strconv.FormatUint(q.CertificateSerial, 10)
-}
+func (q SendQuery) Encode() string { return StatementParam + "=" + q.Statement }
 
 // ErrQuery is returned for a query a server refuses: a parameter it does not
 // know, one given twice, or a value not of its form.
@@ -174,27 +168,18 @@ func (e *QueryError) Error() string { return fmt.Sprintf("%v: %s", ErrQuery, e.P
 // Unwrap returns ErrQuery.
 func (e *QueryError) Unwrap() error { return ErrQuery }
 
-// ParseSendQuery reads a send's query as a server reads it: each serial
-// once, written as a statement writes one (a decimal integer from 1 to
-// MaxSerial, with no leading zero), and no other parameter.
+// ParseSendQuery reads a send's query as a server reads it: statement once,
+// 64 lowercase hex digits, and no other parameter.
 func ParseSendQuery(raw string) (SendQuery, error) {
-	v, err := ParseQuery(raw, PrekeySerialParam, CertificateSerialParam)
+	v, err := ParseQuery(raw, StatementParam)
 	if err != nil {
 		return SendQuery{}, err
 	}
-	var q SendQuery
-	for _, p := range []struct {
-		name string
-		into *uint64
-	}{{PrekeySerialParam, &q.PrekeySerial}, {CertificateSerialParam, &q.CertificateSerial}} {
-		s, ok := v[p.name]
-		n, isSerial := parseSerial([]byte(s))
-		if !ok || !isSerial {
-			return SendQuery{}, &QueryError{p.name}
-		}
-		*p.into = n
+	h, ok := v[StatementParam]
+	if !ok || !statementGrammar.MatchString(h) {
+		return SendQuery{}, &QueryError{StatementParam}
 	}
-	return q, nil
+	return SendQuery{Statement: h}, nil
 }
 
 // ParseQuery reads a query of the given parameters: each at most once, and

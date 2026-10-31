@@ -66,12 +66,14 @@ under a working key and a certificate made with it. dromas recv renews it
 once it is a day old, so run recv at least monthly, and the mailbox never lapses;
 dromas prekey lifetime --help says how often for a shorter lifetime.`,
 			e.renewCmd(), e.lifetimeCmd()),
-		e.group("cert", "this mailbox's certificates: revoke-earlier, publish-revoked",
-			`This mailbox's identity certifies a working key with each prekey, and the working
-key signs what the mailbox says. A mailbox whose working key may have been taken
-revokes every certificate before a new one: the address goes on. A copy of the
-whole mailbox directory holds the identity too: revoke the address.`,
-			e.revokeEarlierCmd(), e.publishRevokedCmd()),
+		e.group("cert", "this mailbox's certificates: switch, revoke-earlier, publish-revoked",
+			`A mailbox is in identity mode, where its identity signs what it says, unless it
+was made with dromas init --offline or switched: in working-key mode its identity
+certifies a working key with each prekey, and the working key signs. A mailbox
+whose working key may have been taken revokes every certificate before a new
+one: the address goes on. A copy of the whole mailbox directory holds the
+identity too: revoke the address.`,
+			e.switchCmd(), e.revokeEarlierCmd(), e.publishRevokedCmd()),
 		e.group("account", "the account that can lift this mailbox's limits: adopt, leave",
 			`An account can lift the limits of the mailboxes in it. An adopt key, from the
 account's holder, puts a mailbox in it.`,
@@ -154,9 +156,15 @@ func orNil(s string) any {
 
 func (e *cli) initCmd() *cobra.Command {
 	var idType string
+	var offline bool
 	c := command("init [flags]", "create this mailbox and register it; prints its link",
 		`Create this mailbox and register it, and print its address and its link,
-<server>/to/<address>, as addr does.`,
+<server>/to/<address>, as addr does. Its identity signs what it says (identity
+mode). With --offline, it first revokes certificates through its clock, which
+moves the address to working-key mode for good, and its identity then certifies
+a working key with each prekey, for as long as its server takes one. Run in a
+directory holding only an identity, init restores that mailbox, in the mode
+--offline names, and stops where its server holds it in the other.`,
 		checked(nargs(0, 0), func(c *cobra.Command, _ []string) error {
 			if idType != "" && !slices.Contains(protocol.IdentityTypes(), idType) {
 				return wrong(c, "%s makes an identity of the key type %s, and %q is not one", c.CommandPath(), strings.Join(protocol.IdentityTypes(), " or "), idType)
@@ -164,6 +172,7 @@ func (e *cli) initCmd() *cobra.Command {
 			return nil
 		}), func(c *cobra.Command, _ []string) error {
 			opt := e.opt
+			opt.WorkingKey = offline
 			var warning any
 			if opt.IdentityType = idType; idType != "" && idType != protocol.IdentityEd25519 {
 				warning = fmt.Sprintf("WARNING: a mailbox whose identity is of the key type %s can neither write to nor hear from a mailbox whose client does not verify that type. Every client verifies ssh-ed25519, which init makes without --identity-type.", idType)
@@ -172,8 +181,13 @@ func (e *cli) initCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return e.out(line("mailbox", "address", b.Address(), "link", b.Link(), "detail", warning))
+			mode, err := b.Mode(c.Context())
+			if err != nil {
+				return err
+			}
+			return e.out(line("mailbox", "address", b.Address(), "link", b.Link(), "mode", mode, "detail", warning))
 		})
+	c.Flags().BoolVar(&offline, "offline", false, "make or restore the mailbox in working-key mode, where a working key its identity certifies signs: for good")
 	c.Flags().StringVar(&idType, "identity-type", "", "make the identity a key of this `type`, not ssh-ed25519: "+protocol.IdentityP256+". Every client verifies ssh-ed25519; a mailbox of another type is reached only by mailboxes whose client verifies it")
 	return c
 }
@@ -181,13 +195,17 @@ func (e *cli) initCmd() *cobra.Command {
 func (e *cli) addrCmd() *cobra.Command {
 	return command("addr", "print this mailbox's link, for whoever should write to it",
 		`Print this mailbox's address and its link, <server>/to/<address>: give the link
-to whoever should write to this mailbox.`,
-		nargs(0, 0), func(*cobra.Command, []string) error {
+to whoever should write to this mailbox. Its mode is said beside them.`,
+		nargs(0, 0), func(c *cobra.Command, _ []string) error {
 			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
-			return e.out(line("mailbox", "address", b.Address(), "link", b.Link()))
+			mode, err := b.Mode(c.Context())
+			if err != nil {
+				return err
+			}
+			return e.out(line("mailbox", "address", b.Address(), "link", b.Link(), "mode", mode))
 		})
 }
 
@@ -806,7 +824,8 @@ func (e *cli) aclNotSent(err error) error {
 
 func (e *cli) renewCmd() *cobra.Command {
 	return command("renew", "publish a new prekey now",
-		`Publish a new prekey now, under a new working key and certificate.`,
+		`Publish a new prekey now: signed by the identity in identity mode, or under a
+new working key and certificate in working-key mode.`,
 		nargs(0, 0), func(c *cobra.Command, _ []string) error {
 			b, err := e.mailbox()
 			if err != nil {
@@ -979,10 +998,58 @@ func formatTime(d time.Duration) string {
 	return b.String()
 }
 
+func (e *cli) switchCmd() *cobra.Command {
+	return command("switch <address>", "move this mailbox to working-key mode, for good; the address in full confirms it",
+		`Move this mailbox from identity mode to working-key mode, for good: its
+identity revokes certificates through its clock, then certifies a working key,
+and the mailbox publishes its first prekey under it and posts again, as
+retries, the messages sent/ keeps from the last 33 days. Its cost is printed
+first. The mailbox's address, written in full, is the confirmation; run again,
+it finishes a switch that stopped part way.`,
+		checked(nargs(1, 1), func(c *cobra.Command, args []string) error {
+			if _, err := protocol.ParseAddress(args[0]); err != nil {
+				return wrong(c, "%s takes this mailbox's address, written in full", c.CommandPath())
+			}
+			return nil
+		}), func(c *cobra.Command, args []string) error {
+			b, err := e.mailbox()
+			if err != nil {
+				return err
+			}
+			if a, _ := protocol.ParseAddress(args[0]); a != b.Address() {
+				return errors.New("that is not this mailbox's address: nothing was done. The switch takes this mailbox's own address, in full, as its confirmation")
+			}
+			if err := e.out(line("switch_cost", "address", b.Address(), "detail", client.SwitchCost)); err != nil {
+				return err
+			}
+			r, err := b.Switch(c.Context())
+			if r != nil && r.Prekey != nil {
+				if werr := e.out(prekey(r.Prekey)); werr != nil {
+					return werr
+				}
+			}
+			if err != nil {
+				return err
+			}
+			if err := e.out(line("mode", "address", b.Address(), "mode", "working_key")); err != nil {
+				return err
+			}
+			for _, s := range r.Retried {
+				if err := e.out(sent(s, names{})); err != nil {
+					return err
+				}
+			}
+			if r.NotRetried != nil {
+				return fmt.Errorf("what was not posted again waits in the outbox, and dromas outbox flush posts it: %w", r.NotRetried)
+			}
+			return nil
+		})
+}
+
 func (e *cli) revokeEarlierCmd() *cobra.Command {
 	return command("revoke-earlier", "revoke every certificate before a new one, then publish a new prekey under it",
-		`For a mailbox whose working key may have been taken: make a new prekey, under a
-new working key and certificate, revoke every certificate before that one, and
+		`For a mailbox in working-key mode whose working key may have been taken: make a
+new prekey, under a new working key and certificate, revoke every certificate before that one, and
 then publish the new prekey. The address goes on, and a message this mailbox sent that
 is still unread is refused with the rest, so send it again. Until the server
 takes the new prekey, the mailbox sends no messages, and once its server holds the
@@ -1095,6 +1162,9 @@ that one, with the address in full.`,
 			}
 			certs, err := protocol.ParseRevokedCertificates(rec.RevokedCertificates)
 			if err != nil {
+				return err
+			}
+			if err := foreignTrip(c, b, a); err != nil {
 				return err
 			}
 			if _, err := b.Publish(c.Context(), rec); err != nil {
@@ -1281,7 +1351,10 @@ func (e *cli) keepCmd() *cobra.Command {
 		`Take a revocation of another mailbox that someone handed you (a record as
 dromas revocation make prints), check it, and keep it: this mailbox then sends
 that address nothing and takes nothing from it. A record may carry a
-revocation of the mailbox's certificates, which is kept the same way.`,
+revocation of the mailbox's certificates, which is kept the same way. This
+mailbox's own, where it has published a statement in identity mode and made no
+such revocation, shows its identity in other hands: it is said, and the
+mailbox signs nothing more but its address's revocation.`,
 		nargs(1, 1), func(c *cobra.Command, args []string) error {
 			b, err := e.mailbox()
 			if err != nil {
@@ -1295,8 +1368,26 @@ revocation of the mailbox's certificates, which is kept the same way.`,
 			if err != nil {
 				return err
 			}
-			return e.sayHeld(a, held)
+			if err := e.sayHeld(a, held); err != nil {
+				return err
+			}
+			return foreignTrip(c, b, a)
 		})
+}
+
+// foreignTrip is what a command that kept a record about the address a
+// returns of mailbox b's own: the trip to working-key mode it did not make,
+// which the mailbox says, and after which it signs nothing but its address's
+// revocation (PROTOCOL.md §12.5), or nil.
+func foreignTrip(c *cobra.Command, b *client.Mailbox, a protocol.Address) error {
+	if a != b.Address() {
+		return nil
+	}
+	var foreign *client.ForeignTripError
+	if _, err := b.Mode(c.Context()); errors.As(err, &foreign) {
+		return err
+	}
+	return nil
 }
 
 func (e *cli) askCmd() *cobra.Command {
@@ -1349,8 +1440,13 @@ const maxRecord = 64 << 10
 
 // notMadeLine is the line that says the mailbox's server served a statement in
 // its name that it did not make.
+// A statement the identity signed has no certificate, and none is named.
 func notMadeLine(nm *client.NotMade) []byte {
-	return line("prekey_not_made", "serial", nm.Serial, "certificate_serial", nm.CertificateSerial, "own_certificate", nm.OwnCertificate, "at", nm.At, "detail", nm.Words())
+	var serial, own any
+	if nm.CertificateSerial != 0 {
+		serial, own = nm.CertificateSerial, nm.OwnCertificate
+	}
+	return line("prekey_not_made", "serial", nm.Serial, "certificate_serial", serial, "own_certificate", own, "at", nm.At, "detail", nm.Words())
 }
 
 // readRecord reads a revocation record: the JSON dromas revocation make

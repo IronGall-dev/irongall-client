@@ -3,6 +3,8 @@ package client_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -49,12 +51,25 @@ type env struct {
 	clock *clock
 	srv   *fakeserver.Server
 	http  *http.Client // the in-memory server's, or nil for the default client
+	// working is set where the env's mailboxes are made in working-key mode
+	// (newWorkEnv): identity mode, the default, otherwise.
+	working bool
 }
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	e := &env{t: t, clock: &clock{t: time.Now().UTC().Truncate(time.Second)}}
 	e.srv = fakeserver.New(t, e.clock.Now)
+	return e
+}
+
+// newWorkEnv is newEnv whose mailboxes are made in working-key mode
+// (client.Options.WorkingKey): for a test of what a working key and its
+// certificates do.
+func newWorkEnv(t *testing.T) *env {
+	t.Helper()
+	e := newEnv(t)
+	e.working = true
 	return e
 }
 
@@ -70,7 +85,7 @@ func newMemEnv(t *testing.T) *env {
 }
 
 func (e *env) opts() client.Options {
-	return client.Options{Base: e.srv.URL, Now: e.clock.Now, HTTPClient: e.http}
+	return client.Options{Base: e.srv.URL, Now: e.clock.Now, HTTPClient: e.http, WorkingKey: e.working}
 }
 
 // mailbox makes and registers a mailbox, whose policy lands every sender's messages in
@@ -133,8 +148,13 @@ func bodyOf(t *testing.T, d client.Delivery) string {
 	return s
 }
 
+// testCertLife is how long a certificate a test makes runs: the longest the
+// fake server takes.
+const testCertLife = time.Duration(fakeserver.MaxCertificateLifetime) * time.Second
+
 // numberOf is the number of the prekey a mailbox published last, which is its
-// working key's and its certificate's too: its serial record. A mailbox takes each
+// working key's and its certificate's too in working-key mode: its serial
+// record. A mailbox takes each
 // number from its clock (protocol.SerialAt), so a test reads the number and
 // never assumes one.
 func numberOf(t *testing.T, b *client.Mailbox) uint64 {
@@ -191,10 +211,14 @@ func workFile(b *client.Mailbox, n uint64, ext string) string {
 	return filepath.Join(b.Dir(), "work", strconv.FormatUint(n, 10)+ext)
 }
 
-// worker loads the working key a mailbox has in use, under its certificate, from
-// the mailbox's state directory: what the mailbox signs its messages and its passes with.
+// worker loads the signer a mailbox has in use from the mailbox's state
+// directory: what the mailbox signs its messages and its passes with, its
+// identity in identity mode, or its working key under its certificate.
 func worker(t *testing.T, b *client.Mailbox) ssh.Signer {
 	t.Helper()
+	if _, err := os.Stat(workFile(b, numberOf(t, b), "")); errors.Is(err, fs.ErrNotExist) {
+		return identityKey(t, b)
+	}
 	return workerAt(t, b, numberOf(t, b))
 }
 
@@ -275,4 +299,24 @@ func has(b *client.Mailbox, name string) bool { _, ok := stateOf(b, name); retur
 func exists(name string) bool {
 	_, err := os.Stat(name)
 	return err == nil
+}
+
+// keptThrough is the serial the revocation of its own certificates a mailbox
+// keeps runs through, or 0 where it keeps none: in working-key mode, its
+// trip or a later one.
+func keptThrough(t *testing.T, b *client.Mailbox) uint64 {
+	t.Helper()
+	raw, ok := stateOf(b, "revoked-certs.json")
+	if !ok {
+		return 0
+	}
+	var rec protocol.Revocations
+	if err := protocol.Unmarshal(raw, &rec); err != nil {
+		t.Fatal(err)
+	}
+	c, err := protocol.ParseRevokedCertificates(rec.RevokedCertificates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c.Through
 }

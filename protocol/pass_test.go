@@ -2,10 +2,12 @@ package protocol
 
 import (
 	"bytes"
+	"crypto/elliptic"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"math/big"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,7 +26,7 @@ import (
 func passMailbox(t *testing.T, now time.Time) (certMailbox, *Certificate, ssh.Signer) {
 	t.Helper()
 	b := newCertMailbox(t)
-	cert, err := NewCertificate(b.id, b.identity, b.work.PublicKey(), 3, now.Add(-2*time.Hour))
+	cert, err := NewCertificate(b.id, b.identity, b.work.PublicKey(), 3, now.Add(-2*time.Hour), testLifetime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,8 +59,8 @@ func TestPassRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(got.Marshal(), cert.Marshal()) {
-		t.Error("the certificate returned is not the one the pass was signed under")
+	if got.Identity() || !bytes.Equal(got.Certificate().Marshal(), cert.Marshal()) {
+		t.Error("the signer returned is not the certificate the pass was signed under")
 	}
 	// Good to the last second, for a server whose clock is up to
 	// MaxPassLifetime less PassLifetime behind the mailbox's.
@@ -103,7 +105,9 @@ func TestPassRoundTrip(t *testing.T) {
 			t.Errorf("a signature in the namespace of %s: %v", name, err)
 		}
 	}
-	// Nor is one by the working key without its certificate, or by the identity.
+	// Nor is one by the working key without its certificate. One by the
+	// identity itself verifies, as the identity: which signer a server takes is
+	// its mailbox's mode, the caller's to hold.
 	for name, s := range map[string]ssh.Signer{"the bare working key": b.work, "the identity": b.identity} {
 		h, _, err := NewPass(s, a, "dromas.dev", now)
 		if err != nil {
@@ -113,7 +117,11 @@ func TestPassRoundTrip(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := p.Verify(b.id, "dromas.dev", now); !errors.Is(err, ErrCertificate) {
+		signer, err := p.Verify(b.id, "dromas.dev", now)
+		switch {
+		case s == b.work && !errors.Is(err, ErrCertificate):
+			t.Errorf("a pass signed by %s: %v", name, err)
+		case s == b.identity && (err != nil || !signer.Identity()):
 			t.Errorf("a pass signed by %s: %v", name, err)
 		}
 	}
@@ -123,8 +131,10 @@ func TestPassRoundTrip(t *testing.T) {
 	if _, err := later.Verify(b.id, "dromas.dev", now); !errors.Is(err, ErrPass) {
 		t.Errorf("a not_after that was not signed: %v", err)
 	}
-	// A pass that is good, under a certificate that has ended, is refused for the certificate.
-	b2, _, signer2 := passMailbox(t, now.Add(-CertificateLifetime+2*time.Hour+5*time.Minute))
+	// A pass that is good, under a certificate that has ended, is refused for
+	// the certificate: passMailbox's begins three hours before the time it is
+	// given, so this one ends five minutes after now.
+	b2, _, signer2 := passMailbox(t, now.Add(-testLifetime+3*time.Hour+5*time.Minute))
 	h2, _, err := NewPass(signer2, b2.id.Address(), "dromas.dev", now)
 	if err != nil {
 		t.Fatal(err)
@@ -150,7 +160,7 @@ func TestPassVerifyUnder(t *testing.T) {
 	now := time.Date(2026, 10, 12, 21, 30, 15, 0, time.UTC)
 	ed, edCert, edSigner := passMailbox(t, now)
 	p256 := p256Mailbox(t)
-	pCert, err := NewCertificate(p256.id, p256.identity, p256.work.PublicKey(), 3, now.Add(-2*time.Hour))
+	pCert, err := NewCertificate(p256.id, p256.identity, p256.work.PublicKey(), 3, now.Add(-2*time.Hour), testLifetime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,11 +193,11 @@ func TestPassVerifyUnder(t *testing.T) {
 			t.Fatalf("%s: the certificate VerifyUnder returned: %v", name, err)
 		}
 		// What Verify takes, VerifyUnder takes, and the certificate is the same one.
-		if got, err := pass.Verify(b.mailbox.id, "dromas.dev", now); err != nil || sha256.Sum256(got.Marshal()) != sum {
+		if got, err := pass.Verify(b.mailbox.id, "dromas.dev", now); err != nil || sha256.Sum256(got.Certificate().Marshal()) != sum {
 			t.Fatalf("%s: Verify: %v", name, err)
 		}
 		// A later certificate of the same identity for the same key: the pass is not under it.
-		later, err := NewCertificate(b.mailbox.id, b.mailbox.identity, b.mailbox.work.PublicKey(), 4, now)
+		later, err := NewCertificate(b.mailbox.id, b.mailbox.identity, b.mailbox.work.PublicKey(), 4, now, testLifetime)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -256,6 +266,41 @@ func TestPassVerifyUnder(t *testing.T) {
 		}
 		if _, err := lp.VerifyUnder(sum, "dromas.dev", end); !errors.Is(err, ErrCertificateTime) {
 			t.Errorf("%s: after the certificate ended: %v", name, err)
+		}
+		// With the identity's key on record, the address in identity mode: a
+		// pass the identity signed is taken, and returns that key; one under a
+		// certificate is not, nor is the identity's pass against the
+		// certificate on record.
+		idSum := sha256.Sum256(b.mailbox.id.PublicKey().Marshal())
+		own, _, err := NewPass(b.mailbox.identity, a, "dromas.dev", now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		op, err := ParsePass(own)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if key, err := op.VerifyUnder(idSum, "dromas.dev", now); err != nil || !bytes.Equal(key.Marshal(), b.mailbox.id.PublicKey().Marshal()) {
+			t.Errorf("%s: the identity's pass, its key on record: %v", name, err)
+		}
+		if _, err := pass.VerifyUnder(idSum, "dromas.dev", now); !errors.Is(err, ErrCertificate) {
+			t.Errorf("%s: a pass under a certificate, the identity's key on record: %v", name, err)
+		}
+		if _, err := op.VerifyUnder(sum, "dromas.dev", now); !errors.Is(err, ErrCertificate) {
+			t.Errorf("%s: the identity's pass, a certificate on record: %v", name, err)
+		}
+		// Its other checks hold for the identity's key too: another server, a
+		// pass run out, and another mailbox's pass by this identity.
+		if _, err := op.VerifyUnder(idSum, "example.org", now); !errors.Is(err, ErrPass) {
+			t.Errorf("%s: the identity's pass for another server: %v", name, err)
+		}
+		if _, err := op.VerifyUnder(idSum, "dromas.dev", now.Add(PassLifetime)); !errors.Is(err, ErrPassExpired) {
+			t.Errorf("%s: the identity's pass, run out: %v", name, err)
+		}
+		forged := *op
+		forged.Address = newCertMailbox(t).id.Address()
+		if _, err := forged.VerifyUnder(idSum, "dromas.dev", now); !errors.Is(err, ErrPass) {
+			t.Errorf("%s: the identity's signature, as another mailbox's pass: %v", name, err)
 		}
 	}
 }
@@ -396,10 +441,9 @@ func TestPassAgainstSSHKeygen(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := id.Address()
-	must(nil, "-q", "-s", "identity", "-I", CertificateKeyID, "-n", a.String(), "-z", "1", "-V", "+64d1h", "-O", "clear", "work.pub")
-	// Read after ssh-keygen dates the certificate from its own clock: read
-	// before, a run slowed past a second gave a certificate that ends more
-	// than 64 days and an hour from now.
+	must(nil, "-q", "-s", "identity", "-I", CertificateKeyID, "-n", a.String(), "-z", "1", "-V", "+45d1h", "-O", "clear", "work.pub")
+	// Read after ssh-keygen dates the certificate from its own clock, which
+	// it begins at.
 	now := time.Now()
 	notAfter := now.UTC().Truncate(time.Second).Add(PassLifetime)
 
@@ -414,6 +458,15 @@ func TestPassAgainstSSHKeygen(t *testing.T) {
 	if _, err := pass.Verify(id, "dromas.dev", now); err != nil {
 		t.Fatalf("a pass made with printf and ssh-keygen: %v", err)
 	}
+	// And one the identity signs itself, as a mailbox in identity mode does.
+	sig = must([]byte(stmt), "-Y", "sign", "-n", "dromas-pass-v1:"+a.String(), "-f", "identity")
+	pass, err = ParsePass(`dromas-pass address="` + a.String() + `", not_after="` + notAfter.Format(TimeLayout) + `", signature="` + base64.StdEncoding.EncodeToString(sig) + `"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s, err := pass.Verify(id, "dromas.dev", now); err != nil || !s.Identity() {
+		t.Fatalf("a pass the identity signed with ssh-keygen: %v", err)
+	}
 
 	// A pass made here verifies with ssh-keygen, against the statement printf rebuilds.
 	identity, err := ssh.ParsePrivateKey(read("identity"))
@@ -424,7 +477,7 @@ func TestPassAgainstSSHKeygen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cert, err := NewCertificate(id, identity, work.PublicKey(), 2, now)
+	cert, err := NewCertificate(id, identity, work.PublicKey(), 2, now, testLifetime)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -508,7 +561,8 @@ func FuzzParsePass(f *testing.F) {
 // Authorization, so each costs it one check (dromas-dev/dromas-server#69).
 // A signature that differs in a byte the verifier reads is another pass: a
 // bit of the signature itself, the hash it names, a byte after its five
-// fields (#445).
+// fields (#445), and a P-256 identity's own signature written another way,
+// as (r, n − s), which verifies as well (PROTOCOL.md §5).
 func TestAPassWrittenAnotherWayIsOnePass(t *testing.T) {
 	header := strings.TrimSuffix(string(read(t, "a/pass.authorization")), "\n")
 	p, err := ParsePass(header)
@@ -587,6 +641,55 @@ func TestAPassWrittenAnotherWayIsOnePass(t *testing.T) {
 		if q.Authorization() == header {
 			t.Errorf("%s: written back as the same pass", name)
 		}
+	}
+
+	// C's pass, by its P-256 identity, with s as n − s: it verifies, and is
+	// another pass to a server that remembers passes it has verified.
+	cHeader := strings.TrimSuffix(string(read(t, "c/pass.authorization")), "\n")
+	cp, err := ParsePass(cHeader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cBlob, err := Dearmor(cp.signature)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := wireReader(cBlob[10:])
+	var fields [][]byte
+	for range 5 {
+		f, ok := r.string()
+		if !ok {
+			t.Fatal("c/pass.sig has not five fields")
+		}
+		fields = append(fields, f)
+	}
+	var sig struct {
+		Format string
+		Blob   []byte
+	}
+	var rs struct{ R, S *big.Int }
+	if err := ssh.Unmarshal(fields[4], &sig); err != nil {
+		t.Fatal(err)
+	}
+	if err := ssh.Unmarshal(sig.Blob, &rs); err != nil {
+		t.Fatal(err)
+	}
+	rs.S.Sub(elliptic.P256().Params().N, rs.S)
+	sig.Blob = ssh.Marshal(rs)
+	fields[4] = ssh.Marshal(sig)
+	twin := binary.BigEndian.AppendUint32([]byte("SSHSIG"), 1)
+	for _, f := range fields {
+		twin = appendWireString(twin, f)
+	}
+	tp, err := ParsePass(strings.Replace(cHeader, base64.StdEncoding.EncodeToString(cp.signature), base64.StdEncoding.EncodeToString(Armor(twin)), 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s, err := tp.Verify(vectorIdentity(t, "c"), "dromas.example", vectorNow(t)); err != nil || !s.Identity() {
+		t.Fatalf("C's pass, its s as n − s: %v", err)
+	}
+	if tp.Authorization() == cHeader {
+		t.Error("C's pass, its s as n − s, is written back as the same pass")
 	}
 }
 

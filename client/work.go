@@ -16,13 +16,12 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-// A mailbox's identity signs certificates and revocations, and nothing else.
-// What the mailbox says,
-// its prekey statements, its messages and its passes, is signed by a working key
-// under a certificate the identity gave it (PROTOCOL.md §5). This client
-// keeps both keys in the mailbox and makes a new working key, with a new
-// certificate, each time it makes a new prekey: work/<n> is the working key
-// made with prekey n, in the files ssh-keygen keeps for one,
+// In working-key mode (mode.go) a mailbox's identity certifies a working key,
+// and the working key signs what the mailbox says: its prekey statements,
+// its messages and its passes (PROTOCOL.md §5). This client makes a new
+// working key, with a new certificate, each time it makes a new prekey in
+// that mode: work/<n> is the working key made with prekey n, in the files
+// ssh-keygen keeps for one,
 //
 //	work/<n>            the working key, OpenSSH format
 //	work/<n>.pub        its public key
@@ -31,15 +30,16 @@ import (
 // so "ssh-keygen -Y sign -f work/<n>-cert.pub" signs with it. The one in use
 // is the one made with the prekey this mailbox published last. Older ones are
 // deleted once a newer prekey is published: the server then takes no pass
-// under them, and what they signed is already signed.
+// under them, and what they signed is already signed. A mailbox in identity
+// mode keeps none.
 
 func (b *Mailbox) workStem(n uint64) string { return b.path("work", strconv.FormatUint(n, 10)) }
 
-// makeWork makes working key n and its certificate, new whatever the mailbox
-// holds of them, and returns the key's signer under the certificate: it is
-// called for a statement not yet signed, which nothing the mailbox holds of n has
-// signed either.
-func (b *Mailbox) makeWork(n uint64) (*sign.Work, *protocol.Certificate, error) {
+// makeWork makes working key n and its certificate, running for lifetime,
+// new whatever the mailbox holds of them, and returns the key's signer under
+// the certificate: it is called for a statement not yet signed, which nothing
+// the mailbox holds of n has signed either.
+func (b *Mailbox) makeWork(n uint64, lifetime time.Duration) (*sign.Work, *protocol.Certificate, error) {
 	stem := b.workStem(n)
 	if err := os.MkdirAll(b.path("work"), 0o700); err != nil {
 		return nil, nil, err
@@ -56,7 +56,7 @@ func (b *Mailbox) makeWork(n uint64) (*sign.Work, *protocol.Certificate, error) 
 	if err != nil {
 		return nil, nil, err
 	}
-	cert, err := b.identity.Certify(b.id, sshPub, n, b.now())
+	cert, err := b.certifier.Certify(b.id, sshPub, n, b.now(), lifetime)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -76,7 +76,8 @@ func (b *Mailbox) makeWork(n uint64) (*sign.Work, *protocol.Certificate, error) 
 
 // worker returns working key n's signer under its certificate, checked
 // against the mailbox's identity at the mailbox's clock: a certificate that has
-// ended signs nothing.
+// ended signs nothing, and nor does a working key of a mailbox not in
+// working-key mode (sign).
 func (b *Mailbox) worker(n uint64) (*sign.Work, *protocol.Certificate, error) {
 	stem := b.workStem(n)
 	pemBytes, err := os.ReadFile(stem) //nolint:gosec // a path inside the mailbox's own directory
@@ -113,20 +114,11 @@ func (b *Mailbox) worker(n uint64) (*sign.Work, *protocol.Certificate, error) {
 	if err != nil {
 		return nil, nil, fmt.Errorf("working key %d does not match its certificate: %w", n, err)
 	}
-	return sign.NewWork(signer, b.finished), cert, nil
-}
-
-// currentWorker returns the working key in use: the one made with the prekey
-// this mailbox published last.
-func (b *Mailbox) currentWorker() (*sign.Work, *protocol.Certificate, error) {
-	n, err := b.publishedSerial()
+	w, err := sign.NewWork(signer, b.checks())
 	if err != nil {
 		return nil, nil, err
 	}
-	if n == 0 {
-		return nil, nil, errors.New("this mailbox has published no prekey: dromas init registers it, and dromas prekey renew recovers one restored from its identity")
-	}
-	return b.worker(n)
+	return w, cert, nil
 }
 
 // dropWork deletes every working key older than n.
@@ -183,7 +175,7 @@ const passMargin = 30 * time.Second
 
 // pass returns the Authorization value for a call as this mailbox: the pass kept
 // in the mailbox while it has more than passMargin left, and otherwise a new one,
-// signed by the working key in use and kept. One pass serves every call for
+// signed by the signer of the statement it published last, and kept. One pass serves every call for
 // its ten minutes, so a server checks its signature once.
 //
 // A kept pass with more than PassLifetime left is not used: this mailbox never
@@ -194,7 +186,7 @@ const passMargin = 30 * time.Second
 //
 // A mailbox that holds its own revocation uses no pass, the kept one included:
 // this is the one place a call gets its pass, so the check is here, and a
-// new pass is the working key's signature, which sign refuses too.
+// new pass is a signature, which sign refuses too.
 func (b *Mailbox) pass() (string, error) {
 	if err := b.finished(); err != nil {
 		return "", err
@@ -208,24 +200,25 @@ func (b *Mailbox) pass() (string, error) {
 			return string(kept), nil
 		}
 	}
-	work, _, err := b.currentWorker()
+	by, _, err := b.currentSigner()
 	if err != nil {
 		return "", err
 	}
-	h, err := b.signPass(work)
+	h, err := b.signPass(by)
 	if err != nil {
 		return "", err
 	}
 	return h, b.keepPass(h)
 }
 
-// signPass signs a pass with work, a working key under its certificate.
-func (b *Mailbox) signPass(work *sign.Work) (string, error) {
+// signPass signs a pass with by: the identity, or a working key under its
+// certificate.
+func (b *Mailbox) signPass(by signer) (string, error) {
 	server, err := b.serverName()
 	if err != nil {
 		return "", err
 	}
-	h, _, err := work.Pass(b.id.Address(), server, b.now())
+	h, _, err := by.Pass(b.id.Address(), server, b.now())
 	return h, err
 }
 
