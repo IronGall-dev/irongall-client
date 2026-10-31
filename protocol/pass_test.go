@@ -2,10 +2,12 @@ package protocol
 
 import (
 	"bytes"
+	"crypto/elliptic"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"errors"
+	"math/big"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -559,7 +561,8 @@ func FuzzParsePass(f *testing.F) {
 // Authorization, so each costs it one check (dromas-dev/dromas-server#69).
 // A signature that differs in a byte the verifier reads is another pass: a
 // bit of the signature itself, the hash it names, a byte after its five
-// fields (#445).
+// fields (#445), and a P-256 identity's own signature written another way,
+// as (r, n − s), which verifies as well (PROTOCOL.md §5).
 func TestAPassWrittenAnotherWayIsOnePass(t *testing.T) {
 	header := strings.TrimSuffix(string(read(t, "a/pass.authorization")), "\n")
 	p, err := ParsePass(header)
@@ -638,6 +641,55 @@ func TestAPassWrittenAnotherWayIsOnePass(t *testing.T) {
 		if q.Authorization() == header {
 			t.Errorf("%s: written back as the same pass", name)
 		}
+	}
+
+	// C's pass, by its P-256 identity, with s as n − s: it verifies, and is
+	// another pass to a server that remembers passes it has verified.
+	cHeader := strings.TrimSuffix(string(read(t, "c/pass.authorization")), "\n")
+	cp, err := ParsePass(cHeader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cBlob, err := Dearmor(cp.signature)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := wireReader(cBlob[10:])
+	var fields [][]byte
+	for range 5 {
+		f, ok := r.string()
+		if !ok {
+			t.Fatal("c/pass.sig has not five fields")
+		}
+		fields = append(fields, f)
+	}
+	var sig struct {
+		Format string
+		Blob   []byte
+	}
+	var rs struct{ R, S *big.Int }
+	if err := ssh.Unmarshal(fields[4], &sig); err != nil {
+		t.Fatal(err)
+	}
+	if err := ssh.Unmarshal(sig.Blob, &rs); err != nil {
+		t.Fatal(err)
+	}
+	rs.S.Sub(elliptic.P256().Params().N, rs.S)
+	sig.Blob = ssh.Marshal(rs)
+	fields[4] = ssh.Marshal(sig)
+	twin := binary.BigEndian.AppendUint32([]byte("SSHSIG"), 1)
+	for _, f := range fields {
+		twin = appendWireString(twin, f)
+	}
+	tp, err := ParsePass(strings.Replace(cHeader, base64.StdEncoding.EncodeToString(cp.signature), base64.StdEncoding.EncodeToString(Armor(twin)), 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s, err := tp.Verify(vectorIdentity(t, "c"), "dromas.example", vectorNow(t)); err != nil || !s.Identity() {
+		t.Fatalf("C's pass, its s as n − s: %v", err)
+	}
+	if tp.Authorization() == cHeader {
+		t.Error("C's pass, its s as n − s, is written back as the same pass")
 	}
 }
 
