@@ -168,7 +168,8 @@ func PutRevocations(ctx context.Context, opt Options, a protocol.Address, rec *p
 // each a record's bytes as that file held them; and the records no file held,
 // "renewal" (the number of the renewal under way), "acl-read" (the read of
 // the server's ACL a renewal recv began owes), "adopt-acl" (a restore's
-// adoption of its server's ACL, begun), "renew-failed", "not-made",
+// adoption of its server's ACL, begun), "trip" (the trip to working-key mode
+// the mailbox made or took), "switch" (a switch under way), "renew-failed", "not-made",
 // "acl-another-writer", "acl-replaced", "partial" (the message the
 // partial file is of, and how many of its bytes are synced) and "format"
 // (the mailbox's format, as it is recorded). So a test
@@ -245,7 +246,7 @@ func (b *Mailbox) Records() (map[string][]byte, error) {
 		if v := s.get(bucketMeta, keyFormat); v != nil {
 			out["format"] = v
 		}
-		for _, k := range []string{"renewal", "acl-read", "adopt-acl"} {
+		for _, k := range []string{"renewal", "acl-read", "adopt-acl", "trip", "switch"} {
 			if v := s.get(bucketIntent, k); v != nil {
 				out[k] = v
 			}
@@ -369,7 +370,7 @@ func (b *Mailbox) SetRecord(t *testing.T, name string, v []byte) {
 				}
 				return s.put(bucketPrekeys, serialKey(n), raw)
 			}
-			if name == "renewal" || name == "acl-read" || name == "adopt-acl" {
+			if name == "renewal" || name == "acl-read" || name == "adopt-acl" || name == "trip" || name == "switch" {
 				return put(bucketIntent, name, v)
 			}
 			if rest, ok := strings.CutPrefix(name, "refused/"); ok {
