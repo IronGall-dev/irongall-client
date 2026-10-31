@@ -29,6 +29,7 @@ import (
 //
 //	mailbox          the mailbox's own records, each by its name: serial, pass, etag, seen-floor, acl, acl-another-writer, acl-replaced, revoked, revoked-certs, renew-failed, not-made, partial, deprecation, sunset, document-read, latest (version.go)
 //	prekeys      each prekey statement this mailbox signed, by its serial: the statement, its signature and when it was signed, in one value
+//	made         the SHA-256 of every prekey statement this mailbox signed, in hex, never pruned: its serial
 //	intent       the renewal under way, under "renewal": the number it took; under "adopt-acl", a restore's adoption of its server's ACL, until it is done; and under "acl-read", the read of its server's ACL a renewal recv began owes, with the serial the mailbox had published then, until it is made
 //	peers        what this mailbox pinned of each peer, by its address, in one value
 //	seen         the replay set, by ciphertext hash; seen-sender by sender and msg_id, and seen-time by sent_at, its two indexes
@@ -37,6 +38,7 @@ import (
 const (
 	bucketMailbox    = "box" // the name stored in every state file, kept as it was
 	bucketPrekeys    = "prekeys"
+	bucketMade       = "made"
 	bucketIntent     = "intent"
 	bucketPeers      = "peers"
 	bucketSeen       = "seen"

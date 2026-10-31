@@ -318,3 +318,34 @@ func TestARenewalGoesPastItsOwnRecordWhateverItsDates(t *testing.T) {
 		}
 	})
 }
+
+// A statement the mailbox signed and has since pruned is its own: a server that
+// serves it again shows a rollback, never a statement the mailbox did not make,
+// and the mailbox recommends no revocation of its address (#590).
+func TestAPrunedStatementOfItsOwnIsNotOneItDidNotMake(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	e := newEnv(t)
+	b := e.mailbox()
+	first := numberOf(t, b)
+	st, sig := e.srv.Prekey(b.Address())
+	if _, err := b.Rekey(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := b.RemovePrekey(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/"+b.Address().String() {
+			fakeserver.WriteJSON(w, http.StatusOK, protocol.MailboxResponse{Identity: b.Identity().Document(), Prekey: st, PrekeySignature: sig})
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+	if _, err := b.Rekey(ctx); err == nil || !strings.Contains(err.Error(), "rollback") {
+		t.Fatalf("rekey: %v, want a rollback refusal", err)
+	}
+	if nm, err := b.NotMade(ctx); err != nil || nm != nil {
+		t.Fatalf("NotMade: %+v, %v, want none: the mailbox signed it", nm, err)
+	}
+}

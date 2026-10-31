@@ -666,7 +666,12 @@ func (b *Mailbox) makePrekey(serial uint64) (*protocol.Prekey, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := b.update(func(s store) error { return s.put(bucketPrekeys, serialKey(serial), rec) }); err != nil {
+	if err := b.update(func(s store) error {
+		if err := s.put(bucketMade, madeKey(p.Statement()), []byte(serialKey(serial))); err != nil {
+			return err
+		}
+		return s.put(bucketPrekeys, serialKey(serial), rec)
+	}); err != nil {
 		return nil, err
 	}
 	step("statement kept")

@@ -3,6 +3,8 @@ package client
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -144,7 +146,8 @@ type NotMade struct {
 }
 
 // noteServed keeps what a read served of the mailbox's own statement. One the mailbox
-// did not make is kept as [NotMade], and dropped once a read serves one it
+// did not make, by the statements it keeps and the hash of every one it ever
+// signed (madeKey), is kept as [NotMade], and dropped once a read serves one it
 // made. One it made, under the certificate it made with it, and above the one
 // it published last, the server took, whether or not the mailbox saw the answer:
 // its process may have ended in between (steps.go). It is recorded as publish
@@ -163,6 +166,15 @@ func (b *Mailbox) noteServed(o *own, served []byte) error {
 			return err
 		}
 		return b.recordTaken(o.statement.Serial, "")
+	}
+	var ours bool
+	if err := b.view(func(s store) error { ours = s.get(bucketMade, madeKey(served)) != nil; return nil }); err != nil {
+		return err
+	}
+	if ours {
+		// One the mailbox signed and has since pruned: its own, whatever the
+		// order makes of it (readOwn).
+		return nil
 	}
 	o.notMade = true
 	nm, err := json.Marshal(NotMade{Serial: o.statement.Serial, CertificateSerial: o.cert.Serial(), OwnCertificate: b.certifiedHere(o.cert), At: b.now().UTC().Format(protocol.TimeLayout)})
@@ -214,4 +226,11 @@ func (nm *NotMade) Words() string {
 		return head + ", under this mailbox's own certificate: whoever made it holds this mailbox's working key, so they copied this mailbox's directory, which holds its identity too. Revoke the address, unless you know the identity was not copied, when dromas cert revoke-earlier ends every certificate before a new one instead. " + tail
 	}
 	return head + ", under a certificate this mailbox did not make either: this mailbox's identity certified someone else's working key. Unless it is the owner's own, from the machine this mailbox was restored from, the identity is in other hands, and only revoking the address ends that: whoever holds the identity makes a later certificate as easily as this mailbox. " + tail
+}
+
+// madeKey is the key a prekey statement this mailbox signed is kept under in
+// its record of every statement it made: its SHA-256, in hex.
+func madeKey(statement []byte) string {
+	sum := sha256.Sum256(statement)
+	return hex.EncodeToString(sum[:])
 }
