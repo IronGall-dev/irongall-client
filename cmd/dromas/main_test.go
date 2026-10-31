@@ -1920,7 +1920,7 @@ func TestCertRevokeEarlier(t *testing.T) {
 func TestCertPublishRevokedKeepsTheRevocationItMeets(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
-	opt := client.Options{Base: srv.URL}
+	opt := client.Options{Base: srv.URL, WorkingKey: true}
 	b, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
@@ -2428,7 +2428,7 @@ func TestParseTimeReadsAsOpenSSH(t *testing.T) {
 func TestCertPublishRevokedBelowTheServersSaysTheHigherOne(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
-	opt := client.Options{Base: srv.URL}
+	opt := client.Options{Base: srv.URL, WorkingKey: true}
 	b, err := client.Init(ctx, t.TempDir(), opt)
 	if err != nil {
 		t.Fatal(err)
