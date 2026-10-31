@@ -31,6 +31,13 @@ func ProvedCodes() []protocol.Code { return slices.Clone(provedCodes) }
 // Undeliverable are the answers that end a message for good (undeliverable).
 func Undeliverable() []protocol.Code { return slices.Clone(undeliverable) }
 
+// RemovePrekey deletes prekey n as a prune does (removePrekey), under the
+// mailbox's lock, for a test.
+func (b *Mailbox) RemovePrekey(ctx context.Context, n uint64) error {
+	_, err := locked(ctx, b, func() (struct{}, error) { return struct{}{}, b.removePrekey(n) })
+	return err
+}
+
 // SetLockPatience shortens how long a command waits for the mailbox's lock, for
 // one test.
 func SetLockPatience(t *testing.T, d time.Duration) {
