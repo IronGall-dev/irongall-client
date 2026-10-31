@@ -162,7 +162,7 @@ func PutRevocations(ctx context.Context, opt Options, a protocol.Address, rec *p
 // that held it before the state file did: "serial", "pass", "etag",
 // "seen-floor", "acl.json", "revoked.sig", "revoked-certs.json", "seen" (the
 // replay set's lines, "<hash> <sent_at> <from> <msg_id>", by sent_at),
-// "peers/<address>/<part>" (identity.doc, serial, cert-serial, prekey.txt,
+// "peers/<address>/<part>" (identity.doc, serial, rank, prekey.txt,
 // prekey.sig, revoke.sig, revoked-certs.json), "prekeys/<serial>.<part>"
 // (txt, txt.sig, made) and "refused/<id>.reason" ("<code>: <reason>"),
 // each a record's bytes as that file held them; and the records no file held,
@@ -203,7 +203,7 @@ func (b *Mailbox) Records() (map[string][]byte, error) {
 			}
 			if p.Serial != 0 {
 				out[d+"serial"] = strconv.AppendUint(nil, p.Serial, 10)
-				out[d+"cert-serial"] = strconv.AppendUint(nil, p.CertificateSerial, 10)
+				out[d+"rank"] = strconv.AppendUint(nil, p.Rank, 10)
 			}
 			if p.RevokedCertificates != nil {
 				line, err := json.Marshal(protocol.Revocations{Identity: p.Identity, RevokedCertificates: p.RevokedCertificates, RevokedCertificatesSignature: p.RevokedCertificatesSignature})
