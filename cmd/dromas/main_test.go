@@ -2508,3 +2508,65 @@ func TestVersionPrintsWhatTheBinaryIs(t *testing.T) {
 		t.Error("status ran with no mailbox directory to be found, so this test shows nothing about what version reads")
 	}
 }
+
+// init --offline makes the mailbox in working-key mode, and init and addr say
+// the mode; cert switch moves an identity-mode mailbox there, its cost said
+// first, its address in full the confirmation; a wrong address does nothing;
+// status shows the mode, and no certificate in identity mode.
+func TestTheModesOnTheCommandLine(t *testing.T) {
+	ctx := context.Background()
+	srv := fakeserver.New(t, time.Now)
+	t.Setenv("DROMAS_SERVER_URL", srv.URL)
+	line := func(command string, args ...string) (map[string]any, error) {
+		t.Helper()
+		var out bytes.Buffer
+		err := do(ctx, command, args, strings.NewReader(""), &out, io.Discard)
+		ls := printed(t, out.String())
+		if len(ls) == 0 {
+			return nil, err
+		}
+		return ls[len(ls)-1], err
+	}
+	t.Setenv("DROMAS_HOME", t.TempDir())
+	if l, err := line("init", "--offline"); err != nil || l["mode"] != "working_key" {
+		t.Fatalf("init --offline: %v, %v", l, err)
+	}
+	if l, err := line("status"); err != nil || l["mode"] != "working_key" || l["certificate_serial"] == nil {
+		t.Fatalf("status in working-key mode: %v, %v", l, err)
+	}
+
+	home := t.TempDir()
+	t.Setenv("DROMAS_HOME", home)
+	if l, err := line("init"); err != nil || l["mode"] != "identity" {
+		t.Fatalf("init: %v, %v", l, err)
+	}
+	if l, err := line("status"); err != nil || l["mode"] != "identity" || l["certificate_serial"] != nil || l["certificate_not_after"] != nil {
+		t.Fatalf("status in identity mode: %v, %v", l, err)
+	}
+	b, err := client.Open(home, client.Options{Base: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := do(ctx, "cert switch", []string{other.Address().String()}, nil, &out, io.Discard); err == nil || out.Len() != 0 {
+		t.Fatalf("a switch confirmed by another address: %v, %q", err, out.String())
+	}
+	if l, err := line("addr"); err != nil || l["mode"] != "identity" {
+		t.Fatalf("after a wrong confirmation: %v, %v", l, err)
+	}
+	out.Reset()
+	if err := do(ctx, "cert switch", []string{b.Address().String()}, nil, &out, io.Discard); err != nil {
+		t.Fatalf("cert switch: %v", err)
+	}
+	ls := printed(t, out.String())
+	if typesOf(ls) != "switch_cost prekey mode" || !strings.Contains(ls[0]["detail"].(string), "is for good") || ls[2]["mode"] != "working_key" {
+		t.Fatalf("cert switch printed %q", out.String())
+	}
+	if l, err := line("addr"); err != nil || l["mode"] != "working_key" {
+		t.Fatalf("addr after the switch: %v, %v", l, err)
+	}
+}

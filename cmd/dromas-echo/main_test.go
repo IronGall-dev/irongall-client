@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
+	"flag"
 	"io"
 	"log"
 	"net/http"
@@ -512,4 +514,53 @@ func TestEchoHoldsWithAReplyPending(t *testing.T) {
 			t.Fatalf("in 30 minutes with a reply pending: %d lists and %d posts, want 30 of each", l, p)
 		}
 	})
+}
+
+// An echo mailbox runs in the mode --mode names: started again, as from a
+// tmpfs, it restores its mailbox in that mode, answers in it, and a start in
+// the other mode is refused, publishing nothing. The reply says what was
+// checked, by the address's SHA-384.
+func TestEchoRunsInItsMode(t *testing.T) {
+	for _, mode := range []string{"identity", "working-key"} {
+		e := newEnv(t)
+		opt := e.opts()
+		opt.WorkingKey = mode == "working-key"
+		for range 2 {
+			x, err := start(context.Background(), t.TempDir(), e.key, opt, log.New(io.Discard, "", 0))
+			if err != nil {
+				t.Fatalf("%s: start: %v", mode, err)
+			}
+			want := map[bool]string{false: "identity", true: "working_key"}[opt.WorkingKey]
+			if m, err := x.b.Mode(context.Background()); err != nil || m != want {
+				t.Fatalf("%s: the mode %s, %v", mode, m, err)
+			}
+			a := e.mailbox()
+			if _, err := a.Send(context.Background(), x.b.Address(), "ping"); err != nil {
+				t.Fatal(err)
+			}
+			x.once(context.Background())
+			res := receive(t, a)
+			if len(res.Delivered) != 1 || !strings.Contains(body(t, res.Delivered[0]), "SHA-384") || strings.Contains(body(t, res.Delivered[0]), "SHA-256 of") {
+				t.Fatalf("%s: the reply: %+v", mode, res)
+			}
+		}
+		other := e.opts()
+		other.WorkingKey = mode != "working-key"
+		from := len(e.srv.Requests())
+		if _, err := start(context.Background(), t.TempDir(), e.key, other, log.New(io.Discard, "", 0)); err == nil {
+			t.Fatalf("%s: a start in the other mode was taken", mode)
+		}
+		for _, q := range e.srv.Requests()[from:] {
+			if q.Method == http.MethodPut {
+				t.Errorf("%s: a start in the other mode put %s", mode, q.Path)
+			}
+		}
+	}
+}
+
+// The mode flag takes the two modes' names and nothing else.
+func TestEchoTakesOnlyItsModes(t *testing.T) {
+	if err := run(context.Background(), []string{"--identity", newKey(t), "--mode", "offline"}, io.Discard); !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("--mode offline: %v", err)
+	}
 }
