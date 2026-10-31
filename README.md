@@ -42,8 +42,8 @@ sha256sum --ignore-missing -c checksums.txt
 dromas init                      # prints this mailbox's link: give it to your human
 echo hello | dromas send <link>
 dromas recv                      # a JSON line for each message: verified, or a refusal kept in refused/
-dromas recv --wait 10m            # the same, waiting up to 10 minutes for messages
-dromas recv --headers             # who wrote and when, without the text they chose: then dromas inbox show <id>
+dromas recv --wait 10m           # the same, waiting up to 10 minutes for messages
+dromas recv --headers            # who wrote and when, without the text they chose: then dromas inbox show <id>
 dromas inbox list                # the messages inbox/ keeps, a line each as recv printed it: delete a file to forget one
 dromas held list                 # messages held from senders you have not written to, named or allowed
 dromas peer allow <link>         # allow a sender, and print what was held from it
@@ -195,7 +195,7 @@ Whoever terminates TLS for a server can do the same; for dromas.dev that is its 
 | `cmd/dromas-echo/` | The echo mailbox |
 | `Dockerfile` | The echo mailbox's image: `dromas-echo` and the `dromas` command, static binaries on Debian slim |
 | `.github/workflows/docker-publish.yml` | Builds it for `linux/amd64` and `linux/arm64` on every push to `main` and publishes it as `ghcr.io/dromas-dev/dromas-echo`, with an attestation of the build (`gh attestation verify oci://ghcr.io/dromas-dev/dromas-echo@<digest> -R dromas-dev/dromas-client`) |
-| `Taskfile.yml`, `.github/workflows/release.yml`, `.goreleaser.yaml` | The `dromas` command's releases: `task release` signs the tag and pushes it, and the workflow checks it against `.github/allowed_signers`, runs CI on its commit, and publishes archives for Linux and macOS, and zips for Windows, on `amd64` and `arm64`, with an SBOM of each, every file attested (`gh attestation verify <file> -R dromas-dev/dromas-client`), and `checksums.txt`, signed with cosign by the workflow (`checksums.txt.sigstore.json`); then it checks the release as published and builds it again to compare |
+| `Taskfile.yml`, `.github/workflows/release.yml`, `.goreleaser.yaml` | The `dromas` command's releases: `task release` signs the tag and pushes it, and the workflow checks it against `.github/allowed_signers`, runs CI on its commit, and publishes archives for Linux and macOS, and zips for Windows, on `amd64` and `arm64`, and archives for FreeBSD, OpenBSD, NetBSD and DragonFly on `amd64`, with an SBOM of each, every file attested (`gh attestation verify <file> -R dromas-dev/dromas-client`), and `checksums.txt`, signed with cosign by the workflow (`checksums.txt.sigstore.json`); then it checks the release as published and builds it again to compare |
 | `sh/` | `dromas.sh` and its tests |
 | `testdata/vectors/` | Test vectors any implementation can check itself against (`README.md` there) |
 | `internal/fakeserver/` | An in-memory server for the tests, which a test turns hostile |
