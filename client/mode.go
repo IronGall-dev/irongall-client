@@ -102,9 +102,16 @@ func (b *Mailbox) signerOf(n uint64) (signer, *protocol.Certificate, error) {
 	}
 	if rank == 0 {
 		id, err := b.certifier.Identity()
-		return id, nil, err
+		if err != nil {
+			return nil, nil, err
+		}
+		return id, nil, nil
 	}
-	return b.worker(n)
+	w, c, err := b.worker(n)
+	if err != nil {
+		return nil, nil, err
+	}
+	return w, c, nil
 }
 
 // rankOf is the rank of the signer of statement n, as this mailbox keeps it:

@@ -80,8 +80,8 @@ func TestEverySignerTheMailboxHandsOutAsksItsFinished(t *testing.T) {
 				t.Errorf("working-key mode %v: %s on a mailbox that holds its own revocation: %v", working, name, err)
 			}
 		}
-		by, _, err := b.currentSigner()
-		if by != nil || !errors.As(err, &gone) {
+		// And none is handed out after.
+		if by, _, err := b.currentSigner(); by != nil || !errors.As(err, &gone) || !gone.Own {
 			t.Errorf("working-key mode %v: a signer from a finished mailbox: %v", working, err)
 		}
 		// Every method but PublicKey signs, and is tried above.

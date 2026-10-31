@@ -402,59 +402,64 @@ func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnErrorWhereTheServerSh
 	}
 }
 
-// A send names its prekey by both serials, its own and its certificate's, in
-// its query, and its body is the age file itself, as an octet stream.
-func TestASendNamesBothSerials(t *testing.T) {
+// A send names its prekey's statement by the SHA-256 of its bytes as served
+// (protocol.StatementHash), in its query, in either mode, and its body is the
+// age file itself, as an octet stream. Another statement by the same signer
+// is named apart.
+func TestASendNamesItsStatement(t *testing.T) {
 	t.Parallel()
-	e := newWorkEnv(t)
-	a, b := e.mailbox(), e.mailbox()
-	if _, err := b.Rekey(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	var query, contentType string
-	var body []byte
-	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		if r.Method == http.MethodPost && r.URL.Path == "/v1/"+b.Address().String()+"/messages" {
-			query, contentType = r.URL.RawQuery, r.Header.Get("Content-Type")
-			body, _ = io.ReadAll(r.Body)
-			r.Body = io.NopCloser(bytes.NewReader(body))
+	for _, working := range []bool{false, true} {
+		e := newEnv(t)
+		e.working = working
+		a, b := e.mailbox(), e.mailbox()
+		if _, err := b.Rekey(context.Background()); err != nil {
+			t.Fatal(err)
 		}
-		next.ServeHTTP(w, r)
-	})
-	id := send(t, a, b, "names the prekey it was sealed to").ID
-	n := strconv.FormatUint(numberOf(t, b), 10)
-	if query != "prekey_serial="+n+"&certificate_serial="+n {
-		t.Errorf("a send's query: %q", query)
-	}
-	h := sha256.Sum256(body)
-	if contentType != protocol.CiphertextContentType || !bytes.HasPrefix(body, []byte("age-encryption.org/v1\n")) || hex.EncodeToString(h[:]) != id {
-		t.Errorf("a send's body, %s: %q…, not the ciphertext the receipt names", contentType, body[:min(len(body), 40)])
-	}
-	// A statement whose serial is not its certificate's: a mailbox makes none, so
-	// here its working key signs one five above, and the two serials differ.
-	st, _ := e.srv.Prekey(b.Address())
-	p, err := protocol.ParsePrekey(st)
-	if err != nil {
-		t.Fatal(err)
-	}
-	p.Serial += 5
-	sig, err := protocol.Sign(worker(t, b), p.Statement(), protocol.PrekeyNamespace(b.Address()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	query = ""
-	e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == mailboxPath(b):
-			fakeserver.WriteJSON(w, http.StatusOK, protocol.MailboxResponse{Identity: b.Identity().Document(), Prekey: p.Statement(), PrekeySignature: sig})
-			return
-		case r.Method == http.MethodPost && r.URL.Path == mailboxPath(b)+"/messages" && query == "":
-			query = r.URL.RawQuery
+		var query, contentType string
+		var body []byte
+		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			if r.Method == http.MethodPost && r.URL.Path == "/v1/"+b.Address().String()+"/messages" {
+				query, contentType = r.URL.RawQuery, r.Header.Get("Content-Type")
+				body, _ = io.ReadAll(r.Body)
+				r.Body = io.NopCloser(bytes.NewReader(body))
+			}
+			next.ServeHTTP(w, r)
+		})
+		id := send(t, a, b, "names the prekey it was sealed to").ID
+		st, _ := e.srv.Prekey(b.Address())
+		if want := "statement=" + protocol.StatementHash(st); query != want {
+			t.Errorf("working-key mode %v: a send's query: %q, want %q", working, query, want)
 		}
-		next.ServeHTTP(w, r)
-	})
-	_, _ = a.Send(context.Background(), b.Address(), "sealed to a statement five above its certificate")
-	if want := "prekey_serial=" + strconv.FormatUint(p.Serial, 10) + "&certificate_serial=" + n; query != want {
-		t.Errorf("a send to a statement five above its certificate: %q, want %q", query, want)
+		h := sha256.Sum256(body)
+		if contentType != protocol.CiphertextContentType || !bytes.HasPrefix(body, []byte("age-encryption.org/v1\n")) || hex.EncodeToString(h[:]) != id {
+			t.Errorf("a send's body, %s: %q…, not the ciphertext the receipt names", contentType, body[:min(len(body), 40)])
+		}
+		// Another statement, five above, by the same signer: the send names it
+		// as served, and the server, which holds the other, answers
+		// stale_prekey.
+		p, err := protocol.ParsePrekey(st)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p.Serial += 5
+		sig, err := protocol.Sign(worker(t, b), p.Statement(), protocol.PrekeyNamespace(b.Address()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		query = ""
+		e.srv.SetMiddle(func(w http.ResponseWriter, r *http.Request, next http.Handler) {
+			switch {
+			case r.Method == http.MethodGet && r.URL.Path == mailboxPath(b):
+				fakeserver.WriteJSON(w, http.StatusOK, protocol.MailboxResponse{Identity: b.Identity().Document(), Prekey: p.Statement(), PrekeySignature: sig})
+				return
+			case r.Method == http.MethodPost && r.URL.Path == mailboxPath(b)+"/messages" && query == "":
+				query = r.URL.RawQuery
+			}
+			next.ServeHTTP(w, r)
+		})
+		_, err = a.Send(context.Background(), b.Address(), "sealed to a statement five above")
+		if want := "statement=" + protocol.StatementHash(p.Statement()); query != want || client.Code(err) != protocol.CodeStalePrekey {
+			t.Errorf("working-key mode %v: a send to a statement five above: %q, %v; want %q and stale_prekey", working, query, err, want)
+		}
 	}
 }

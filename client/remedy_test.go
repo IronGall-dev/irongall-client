@@ -366,8 +366,8 @@ func TestAFaultAfterTheRevocationWasTakenLeavesItTaken(t *testing.T) {
 			})
 			certs, err := c.run(t, b)
 			armed.Store(false)
-			if certs == nil || !errors.Is(err, syscall.ENOSPC) || heldCertsOf(t, e, b).Through != certs.Through || has(b, "revoked-certs.json") {
-				t.Fatalf("a revocation taken and not kept: %+v, %v; kept %v", certs, err, has(b, "revoked-certs.json"))
+			if certs == nil || !errors.Is(err, syscall.ENOSPC) || heldCertsOf(t, e, b).Through != certs.Through || keptThrough(t, b) >= certs.Through {
+				t.Fatalf("a revocation taken and not kept: %+v, %v; kept through %d", certs, err, keptThrough(t, b))
 			}
 			if held, err := b.Ask(ctx, b.Address()); err != nil || held.Certificates == nil || held.Certificates.Through != certs.Through {
 				t.Errorf("the mailbox's next read of itself: %+v, %v", held, err)

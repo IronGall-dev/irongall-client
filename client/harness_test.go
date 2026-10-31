@@ -300,3 +300,23 @@ func exists(name string) bool {
 	_, err := os.Stat(name)
 	return err == nil
 }
+
+// keptThrough is the serial the revocation of its own certificates a mailbox
+// keeps runs through, or 0 where it keeps none: in working-key mode, its
+// trip or a later one.
+func keptThrough(t *testing.T, b *client.Mailbox) uint64 {
+	t.Helper()
+	raw, ok := stateOf(b, "revoked-certs.json")
+	if !ok {
+		return 0
+	}
+	var rec protocol.Revocations
+	if err := protocol.Unmarshal(raw, &rec); err != nil {
+		t.Fatal(err)
+	}
+	c, err := protocol.ParseRevokedCertificates(rec.RevokedCertificates)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c.Through
+}
