@@ -72,7 +72,7 @@ func servedCertificate(t *testing.T, e *env, b *client.Mailbox) uint64 {
 // dromas-dev/dromas-server#66).
 func TestAPassUnderAnotherCertificateIsToldTheOneTheServerTakes(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	b := e.mailbox()
 	e.clock.Add(2 * time.Second)
 	if _, err := restore(t, e, b).Rekey(context.Background()); err != nil {
@@ -92,7 +92,7 @@ func TestAPassUnderAnotherCertificateIsToldTheOneTheServerTakes(t *testing.T) {
 func TestAMailboxNumbersByItsClock(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	var off time.Duration
 	b, err := client.Init(ctx, t.TempDir(), e.skewed(&off))
 	if err != nil {
@@ -151,7 +151,7 @@ func TestAMailboxNumbersByItsClock(t *testing.T) {
 func TestARestoredMailboxRevokesWhatTheLostMachineNeverPublished(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	lost, reader := e.mailbox(), e.mailbox()
 	first := numberOf(t, lost)
 	kept := uploads(e, lost)
@@ -208,7 +208,7 @@ func TestARestoredMailboxRevokesWhatTheLostMachineNeverPublished(t *testing.T) {
 func TestALostMachinesFastClockDoesNotDelayTheRemedy(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	fast := 40 * time.Minute
 	lost, err := client.Init(ctx, t.TempDir(), e.skewed(&fast))
 	if err != nil {
@@ -246,7 +246,7 @@ func TestALostMachinesFastClockDoesNotDelayTheRemedy(t *testing.T) {
 func TestARestoredMailboxShownAnOlderRecordNumbersAboveItAll(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	b := e.mailbox()
 	first := numberOf(t, b)
 	st, sig := e.srv.Prekey(b.Address())
@@ -284,7 +284,7 @@ func TestARestoredMailboxShownAnOlderRecordNumbersAboveItAll(t *testing.T) {
 func TestRevokeEarlierNamesEverySerialBelowTheOneInUse(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a, b := e.mailbox(), e.mailbox()
 	n := numberOf(t, a)
 	certs, err := a.RevokeEarlier(ctx)
@@ -308,7 +308,7 @@ func TestRevokeEarlierNamesEverySerialBelowTheOneInUse(t *testing.T) {
 func TestARenewalIsNumberedAboveTheMailboxsOwnRevocation(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a, b := e.mailbox(), e.mailbox()
 	key, err := os.ReadFile(filepath.Join(a.Dir(), "identity"))
 	if err != nil {

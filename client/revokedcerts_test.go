@@ -46,7 +46,7 @@ func messageAs(t *testing.T, e *env, from, to *client.Mailbox, signer ssh.Signer
 func TestRevokeEarlierEndsWhatAnOldWorkingKeySigns(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a, b := e.mailbox(), e.mailbox()
 	stolen := worker(t, a) // read before the renewal deletes it
 	first := numberOf(t, a)
@@ -109,7 +109,7 @@ func TestRevokeEarlierAfterARenewalTakenUnseenRevokesTheCertificateBeforeIt(t *t
 		}
 		t.Run(name, func(t *testing.T) {
 			ctx := context.Background()
-			e := newEnv(t)
+			e := newWorkEnv(t)
 			b, c := e.mailbox(), e.mailbox()
 			before := numberOf(t, b)
 			stolen := worker(t, b) // in use before the renewal: whoever copied the mailbox holds it
@@ -145,7 +145,7 @@ func TestRevokeEarlierAfterARenewalTakenUnseenRevokesTheCertificateBeforeIt(t *t
 func TestOnlyTheIdentitysHighestRevocationCounts(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a, b := e.mailbox(), e.mailbox()
 	doc := a.Identity().Document()
 	// show serves A's mailbox with rec's revocation of certificates in place of
@@ -235,7 +235,7 @@ func TestOnlyTheIdentitysHighestRevocationCounts(t *testing.T) {
 func TestALaterCertificateOutranksAnyPrekeySerial(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a, b := e.mailbox(), e.mailbox()
 	stolen := worker(t, a)
 	first := numberOf(t, a)
@@ -296,7 +296,7 @@ func TestALaterCertificateOutranksAnyPrekeySerial(t *testing.T) {
 func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnError(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a, b := e.mailbox(), e.mailbox()
 	if _, err := a.Rekey(ctx); err != nil {
 		t.Fatal(err)
@@ -349,7 +349,7 @@ func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnError(t *testing.T) {
 func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnErrorWhereTheServerShowsNone(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a, b := e.mailbox(), e.mailbox()
 	if _, err := a.Rekey(ctx); err != nil {
 		t.Fatal(err)
@@ -406,7 +406,7 @@ func TestAKeptRevocationOfCertificatesThatDoesNotVerifyIsAnErrorWhereTheServerSh
 // its query, and its body is the age file itself, as an octet stream.
 func TestASendNamesBothSerials(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a, b := e.mailbox(), e.mailbox()
 	if _, err := b.Rekey(context.Background()); err != nil {
 		t.Fatal(err)
