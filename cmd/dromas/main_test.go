@@ -197,15 +197,8 @@ func TestRecvPrintsTheCheckedLine(t *testing.T) {
 	signed := func(from *client.Mailbox, msgID, body string) []byte {
 		env := &protocol.Envelope{From: from.Address(), To: b.Address(), SentAt: time.Now().UTC().Truncate(time.Second), MsgID: msgID,
 			Identity: from.Identity().Document(), Body: []byte(`"` + body + `"`)}
-		work, err := ssh.ParsePrivateKey(must(t, filepath.Join(from.Dir(), "work", inUse(t, from))))
-		if err != nil {
-			t.Fatal(err)
-		}
-		key, _, _, _, err := ssh.ParseAuthorizedKey(must(t, filepath.Join(from.Dir(), "work", inUse(t, from)+"-cert.pub")))
-		if err != nil {
-			t.Fatal(err)
-		}
-		signer, err := ssh.NewCertSigner(key.(*ssh.Certificate), work)
+		// In identity mode, the default, the identity signs.
+		signer, err := ssh.ParsePrivateKey(must(t, filepath.Join(from.Dir(), "identity")))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -805,7 +798,7 @@ func TestTheLink(t *testing.T) {
 		t.Fatal(err)
 	}
 	link := srv.URL + "/to/" + a.Address().String()
-	mailbox := `{"type":"mailbox","address":"` + a.Address().String() + `","link":"` + link + `"}` + "\n"
+	mailbox := `{"type":"mailbox","address":"` + a.Address().String() + `","link":"` + link + `","mode":"identity"}` + "\n"
 	if out.String() != mailbox {
 		t.Fatalf("init printed %q, not %q", out.String(), mailbox)
 	}
@@ -1797,10 +1790,15 @@ func TestRevokedAsk(t *testing.T) {
 	if ls := printed(t, out); err != nil || typesOf(ls) != "not_revoked" || ls[0]["address"] != addr || !strings.Contains(ls[0]["detail"].(string), "the server's word") || warn != "" {
 		t.Fatalf("ask about a mailbox with nothing revoked: %v %q %q", err, out, warn)
 	}
-	if _, err := a.Rekey(ctx); err != nil {
+	// A moves to working-key mode: its trip is a revocation of certificates.
+	if _, err := a.Switch(ctx); err != nil {
 		t.Fatal(err)
 	}
-	certs, err := a.RevokeEarlier(ctx)
+	trip, err := a.CertificatesRecord(ctx)
+	if err != nil || trip == nil {
+		t.Fatalf("the trip: %v", err)
+	}
+	certs, err := protocol.ParseRevokedCertificates(trip.RevokedCertificates)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1872,7 +1870,7 @@ func TestRevokedAsk(t *testing.T) {
 func TestCertRevokeEarlier(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
-	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL})
+	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, WorkingKey: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1980,7 +1978,7 @@ func TestCertPublishRevokedKeepsTheRevocationItMeets(t *testing.T) {
 func TestCertRevokeEarlierWhenTheRenewalIsRefused(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
-	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL})
+	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, WorkingKey: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2012,7 +2010,7 @@ func TestCertRevokeEarlierShownItsOwnRevocationSaysThatAlone(t *testing.T) {
 	for _, at := range []string{"its publish", "its renewal"} {
 		t.Run(at, func(t *testing.T) {
 			srv := fakeserver.New(t, time.Now)
-			b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL})
+			b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, WorkingKey: true})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -2067,7 +2065,7 @@ func refusing(code protocol.Code, method, suffix string) func(http.ResponseWrite
 func TestCertRevokeEarlierSaysWhatHappenedToEach(t *testing.T) {
 	ctx := context.Background()
 	srv := fakeserver.New(t, time.Now)
-	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL})
+	b, err := client.Init(ctx, t.TempDir(), client.Options{Base: srv.URL, WorkingKey: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2104,7 +2102,7 @@ func TestCertRevokeEarlierSaysWhatHappenedToEach(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.Revoke(ctx, client.Options{Base: srv.URL}, rec); err != nil {
+	if _, err := client.Revoke(ctx, client.Options{Base: srv.URL, WorkingKey: true}, rec); err != nil {
 		t.Fatal(err)
 	}
 	out.Reset()

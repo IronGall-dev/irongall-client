@@ -195,13 +195,17 @@ directory holding only an identity, init restores that mailbox, in the mode
 func (e *cli) addrCmd() *cobra.Command {
 	return command("addr", "print this mailbox's link, for whoever should write to it",
 		`Print this mailbox's address and its link, <server>/to/<address>: give the link
-to whoever should write to this mailbox.`,
-		nargs(0, 0), func(*cobra.Command, []string) error {
+to whoever should write to this mailbox. Its mode is said beside them.`,
+		nargs(0, 0), func(c *cobra.Command, _ []string) error {
 			b, err := e.mailbox()
 			if err != nil {
 				return err
 			}
-			return e.out(line("mailbox", "address", b.Address(), "link", b.Link()))
+			mode, err := b.Mode(c.Context())
+			if err != nil {
+				return err
+			}
+			return e.out(line("mailbox", "address", b.Address(), "link", b.Link(), "mode", mode))
 		})
 }
 
