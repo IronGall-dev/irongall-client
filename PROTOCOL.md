@@ -43,7 +43,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 - **Renewal:** the publication of a new prekey statement (Section 11.9).
 - **Pass:** a statement a mailbox signs to prove itself to its server on a call (Section 8).
 - **Envelope:** the signed JSON line that carries a message's metadata and body (Section 9.1).
-- **Server:** the mailbox server a mailbox is registered at and calls. A mailbox's **own server** is the one it registered at.
+- **Server:** the mailbox server a mailbox is registered at and calls: the whole system its operator runs to answer at the server's name, whatever terminates TLS for it included (Section 15.8). A mailbox's **own server** is the one it registered at.
 - **TTL:** 33 days: the longest a server keeps a message (Section 13) and a reader takes it as fresh (Section 12.3, check 6).
 - **Active, revoked, unknown:** the states of a mailbox at a server (Section 11.6).
 - **Served:** as a server answers it when a mailbox is read (Section 11.8): the server's word until a client has verified it.
@@ -347,6 +347,7 @@ The shapes of every operation below are `api/openapi.yaml`'s. This section says 
 ### 11.1. Transport
 
 - **A client MUST call its server over `https`,** except a server on its own machine named by an address in `127.0.0.0/8` or by `[::1]`, which it MAY call over `http`. The name `localhost` is not such an address. A client MUST refuse a URL of any other form before sending anything, and MUST send a call to a loopback address, or to `localhost`, through no proxy.
+- **A server SHOULD terminate its own TLS,** on hosts its operator runs, with no third party between a client and it: a pass is a bearer credential for its server (Section 8), so whatever terminates TLS is part of the server (Section 15.8).
 - **A client MUST NOT follow a redirect.** The API redirects nowhere, so a `3xx` other than `304` is no answer. A pass and a read of a mailbox name an address, and neither is sent anywhere a server points.
 - **Every API path is under `/v1/`.**
 
@@ -785,7 +786,7 @@ What version 1 fixes, and where each can grow inside it:
 
 Dromas protects a message's content from everyone but its recipient, and its sender's identity from forgery by anyone, the server included. It does not hide from the server who writes to whom.
 
-- **The adversaries:** the server's operator, and whoever terminates TLS for it, who see everything stored and in transit; a network attacker, who sees TLS; a registered sender; many cheap identities; and a compromised or prompt-injected mailbox.
+- **The adversaries:** the server and its operator, whatever terminates TLS for it included (Section 15.8), who see everything stored and in transit; a network attacker, who sees TLS; a registered sender; many cheap identities; and a compromised or prompt-injected mailbox.
 - **The assets, in order:** a message's content; its sender's authenticity; the authenticity of a mailbox's keys; availability; metadata.
 - **The trust root is the address.** It is exchanged out of band, so whoever delivers it to a sender is trusted to deliver the right one, as with any key fingerprint.
 - **Every defence below holds for a client that verifies and gates:** one that runs every check of Section 12 and acts on none that failed. Code or commands a server serves are no such client.
@@ -819,7 +820,7 @@ Dromas protects a message's content from everyone but its recipient, and its sen
 - **A stolen identity key is the worst case.** Its thief can certify a working key of its own, publish prekeys and read new messages until the owner revokes the address (Section 10.1), which ends the address for good: recovery is a new address, announced out of band. A thief that holds the identity can also revoke, which gains it nothing.
 - **A lost identity key can be revoked only by a record made in advance** (Section 12.5). Without one, the address stops taking messages once its prekey ends, and its correspondents are told the new address out of band.
 - **A stolen working key** signs as the mailbox until its certificate ends, at most 64 days and an hour after the certificate was made, if a server delivers the messages. A renewal under a new certificate takes it from the server at once, and from every sender that has seen the newer certificate. A revocation of its certificate ends it everywhere the revocation is seen (Section 12.6). A certificate cannot be much shorter: it signs messages for 31 days, the longest month, so that a certificate made each month by an identity held elsewhere carries the mailbox's messages until the next, and it must outlast the last of those messages by the 33 days it may wait, since it is checked at the reader's clock and nothing vouches for when a signature was made. Messages the owner sent under a revoked certificate and not yet read are refused with the thief's.
-- **A stolen pass,** for the minutes it has left and at that server only, gives the mailbox's metadata and its ciphertext; control of its availability (irrecoverable deletion of unacked messages, leaving its account, its ACL, with which it can pause the mailbox until its owner writes the next); and posting in its name, which verifies at no recipient. It never gives plaintext, signs no message and no prekey, and cannot end the address. Hence a pass of ten minutes, kept in a directory only the owner reads.
+- **A stolen pass,** for the minutes it has left and at that server only, gives the mailbox's metadata and its ciphertext; control of its availability (irrecoverable deletion of unacked messages, leaving its account, its ACL, with which it can pause the mailbox until its owner writes the next); and posting in its name, which verifies at no recipient. It never gives plaintext, signs no message and no prekey, and cannot end the address. All of it is within what a hostile server can do (Section 15.2), at the one server the pass names. Hence a pass of ten minutes, kept in a directory only the owner reads.
 - **A stolen prekey** reads all messages encrypted to it, until the mailbox renews. A sender that has seen no newer serial can still be served the old statement until its `not_after`, so a mailbox that renews often MAY set a shorter lifetime (Section 12.4).
 
 ### 15.6. Revocation's limits
@@ -841,7 +842,7 @@ Dromas protects a message's content from everyone but its recipient, and its sen
 - **The server keeps no sender beside its recipient once a message is stored** (Section 13). It sees the sender at the send, with its IP address and the time, and the message while it is live, and a server that turns hostile can record all of it from then on.
 - **The read before a post** tells the server that the mailbox is about to be written to, which the post tells it a moment later.
 - **A read of a mailbox in gzip** has a length that turns on the mailbox's own bytes, so it can narrow, to a network observer, whom a sender is about to write to.
-- **Whoever terminates TLS for a server** sees what its operator sees, passes in transit among it.
+- **Whatever terminates TLS for a server is part of it:** it sees what the server sees, and each pass in transit, which for its minutes does at that server what Section 15.5 lists. A third party there would hold the server's place for every mailbox whose pass it sees, which is why Section 11.1 keeps TLS inside the server.
 - **An address in a URL** is seen wherever URLs are logged: by whoever terminates TLS, in a chat that unfurls links, in a transcript. The remedy for a leaked address is a new mailbox, and the old one's revocation.
 
 ### 15.9. Addresses, messages and availability
