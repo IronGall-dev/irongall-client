@@ -305,7 +305,7 @@ func (b *Mailbox) aclReadOwed() (owed bool, err error) {
 
 // mendable reports whether a drain's error is one a renewal mends: the
 // server holds no mailbox at this address, or this mailbox holds a revocation of the
-// certificate it uses.
+// signer it uses (usesRevoked).
 func (b *Mailbox) mendable(err error) bool {
 	// The mailbox's own revocation is mended by nothing: it signs nothing more
 	// (#335).
@@ -315,8 +315,7 @@ func (b *Mailbox) mendable(err error) bool {
 	if code(err) == protocol.CodeNoSuchMailbox {
 		return true
 	}
-	n, perr := b.publishedSerial()
-	return perr == nil && b.ownRevokes(n)
+	return b.usesRevoked()
 }
 
 // A drain is bounded, so that a server which lists messages without end, or
@@ -615,7 +614,8 @@ type verdict struct {
 //  4. The line carries the sender's identity document, and its from is that
 //     document's hash.
 //  5. The signature over the line as decrypted, in this mailbox's message
-//     namespace, by a working key that identity certified.
+//     namespace, by that identity or a working key it certified: either
+//     form, whatever the sender's mode.
 //  6. The rest of the envelope: version 1, to is this mailbox, msg_id in its
 //     form, and sent_at no older than protocol.TTL (33 days), not before the
 //     floor the seen-set was pruned at (seenFloor), and at most
@@ -624,10 +624,17 @@ type verdict struct {
 //     asked for one, once for each sender in a drain. A revocation that
 //     verifies refuses the message and every later one, whenever they were
 //     signed. A server that says it holds none has answered. No answer is an
-//     error: the message stays on the server for the next drain. The same
-//     answer carries the sender's revocation of its certificates, if it has
-//     one: a message signed under a revoked certificate is refused the same way,
-//     and the address goes on.
+//     error: the message stays on the server for the next drain. Where the
+//     server holds no mailbox for the sender, its revocations are read
+//     (GET …/revocations). The same answer carries the sender's revocation of
+//     its certificates, if it has one, which is its mode (PROTOCOL.md §5):
+//     a message signed under a certificate by a sender in identity mode is
+//     bad_signature, and one by a signer the revocation covers, a
+//     certificate at or below it or the identity itself, is
+//     certificate_revoked; the address goes on. Before a certificate from a
+//     sender with no revocation held is refused, the sender is read once
+//     more, once in a drain, since a sender's trip may reach its server's
+//     store later than its first message under a certificate.
 //  8. Replay: the locally computed ciphertext hash is not in the seen-set.
 //  9. Retry: (from, msg_id) is not in the seen-set. A match is a duplicate.
 //
@@ -651,7 +658,7 @@ func (b *Mailbox) judge(ctx context.Context, ct []byte, asked *lookups) (verdict
 			if err != nil {
 				return verdict{}, fmt.Errorf("a fault of this mailbox, so the message stays on the server: %w", err)
 			}
-			if held.Revoked || held.Certificates != nil && held.Certificates.Revokes(found.Serial) {
+			if held.Revoked || held.Certificates != nil && held.Certificates.Revokes(found.Rank) {
 				*found = protocol.Findings{At: found.At, Identity: found.Identity}
 			}
 		}
@@ -711,7 +718,26 @@ func (b *Mailbox) judge(ctx context.Context, ct []byte, asked *lookups) (verdict
 	if err != nil {
 		return verdict{}, err
 	}
-	if certs != nil && certs.Revokes(signed.Certificate.Serial()) {
+	admit := protocol.Admits(certs, signed.Signer)
+	if errors.Is(admit, protocol.ErrIdentityMode) && !asked.reread[from] {
+		asked.reread[from] = true
+		if gone, err = b.lookupRevocation(ctx, from, asked); err != nil {
+			return verdict{}, fmt.Errorf("whether its sender's mode takes its signer could not be asked, so the message stays on the server: %w", err)
+		}
+		if gone {
+			return refused(RefusedRevoked, "its sender's address is revoked, and the revocation verifies: nothing signed for that address is taken, whenever it was signed")
+		}
+		if certs, err = b.revokedCerts(from); err != nil {
+			return verdict{}, err
+		}
+		admit = protocol.Admits(certs, signed.Signer)
+	}
+	switch {
+	case errors.Is(admit, protocol.ErrIdentityMode):
+		return refused(protocol.RefusedSignature, "it is signed under a certificate, and its sender's address is in identity mode, where its identity signs and no certificate is taken")
+	case admit != nil && signed.Signer.Identity():
+		return refused(RefusedCertificate, "it is signed by its sender's identity, and its sender's address is in working-key mode, where its identity's own signature is revoked: nothing it signs is taken, whenever it was signed")
+	case admit != nil:
 		return refused(RefusedCertificate, "it is signed under a certificate its sender's identity has revoked: nothing signed under it is taken, whenever it was signed")
 	}
 	h := sha256.Sum256(ct)

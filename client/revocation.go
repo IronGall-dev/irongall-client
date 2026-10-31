@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/dromas-dev/dromas-client/client/internal/sign"
 	"github.com/dromas-dev/dromas-client/protocol"
 )
 
@@ -57,7 +58,7 @@ func (b *Mailbox) revocation() (*protocol.Revocations, error) {
 		}
 		return &protocol.Revocations{Identity: b.id.Document(), Revocation: sig}, nil
 	}
-	sig, err := b.identity.Revocation(b.id.Address())
+	sig, err := b.certifier.Revocation(b.id.Address())
 	if err != nil {
 		return nil, err
 	}
@@ -381,10 +382,35 @@ func (b *Mailbox) lookupRevocation(ctx context.Context, a protocol.Address, l *l
 	}
 	_, gone, err := b.readMailbox(ctx, a, l)
 	switch code(err) {
-	case protocol.CodeRevoked, protocol.CodeNoSuchMailbox:
+	case protocol.CodeRevoked:
 		err = nil
+	case protocol.CodeNoSuchMailbox:
+		// Every server keeps an address's revocations, with a mailbox there or
+		// none (PROTOCOL.md §11.15): a sender forgotten here may have
+		// revoked its address, or made its trip.
+		gone, err = b.readRevocations(ctx, a)
 	}
 	return gone, err
+}
+
+// readRevocations reads what this mailbox's server keeps of a's
+// revocations, GET …/revocations, where it holds no mailbox for a, and keeps
+// what verifies. It reports whether this mailbox now holds a revocation of a.
+// not_revoked is the answer of none held; anything else not answered is an
+// error.
+func (b *Mailbox) readRevocations(ctx context.Context, a protocol.Address) (bool, error) {
+	var held protocol.Revocations
+	_, err := b.call(ctx, http.MethodGet, "/v1/"+a.String()+"/revocations", nil, nil, &held)
+	var gone *RevokedError
+	switch {
+	case errors.As(err, &gone) && gone.Address == a:
+		return true, nil
+	case err == nil:
+		return b.take(a, &held)
+	case code(err) == protocol.CodeNotRevoked, code(err) == protocol.CodeRevoked:
+		return false, nil
+	}
+	return false, err
 }
 
 // revokedCerts returns the revocation of a's certificates this mailbox holds, or
@@ -441,7 +467,23 @@ func (b *Mailbox) keepRevokedCerts(a protocol.Address, doc, statement, sig []byt
 		if err != nil {
 			return err
 		}
-		return b.update(func(s store) error { return s.put(bucketMailbox, "revoked-certs", line) })
+		// The first is the trip (mode.go). A mailbox that has published
+		// nothing, a restore or an init, takes one a server served or its
+		// owner handed over as its mode, and records it as its own trip with
+		// it; one that has published a statement of its own and recorded no
+		// trip did not make it.
+		published, err := b.publishedSerial()
+		if err != nil {
+			return err
+		}
+		return b.update(func(s store) error {
+			if held == nil && published == 0 && s.get(bucketIntent, "trip") == nil {
+				if err := s.put(bucketIntent, "trip", fmt.Appendf(nil, "%d", certs.Through)); err != nil {
+					return err
+				}
+			}
+			return s.put(bucketMailbox, "revoked-certs", line)
+		})
 	}
 	id, err := protocol.ParseIdentity(doc)
 	if err != nil {
@@ -480,6 +522,9 @@ func (b *Mailbox) keepRevokedCerts(a protocol.Address, doc, statement, sig []byt
 // read yet, is refused too: nobody can tell it from a thief's.
 func (b *Mailbox) RevokeEarlier(ctx context.Context) (*protocol.RevokedCertificates, error) {
 	return locked(ctx, b, func() (*protocol.RevokedCertificates, error) {
+		if err := b.certificatesOwn(); err != nil {
+			return nil, err
+		}
 		// What its server holds of the mailbox's own revocations, kept where it
 		// verifies, and of its renewals (noteServed): an answer it cannot use
 		// stops nothing.
@@ -554,13 +599,36 @@ type Remedy struct {
 // alone; otherwise the Remedy says what each publish met, and an error beside
 // it is a fault of this mailbox after a server took the revocation or the
 // renewal, or the mailbox's own revocation, shown at the renewal.
+//
+// A mailbox in identity mode has no certificates to revoke, and is refused
+// before anything is asked (certificatesOwn).
 func (b *Mailbox) RenewAndRevoke(ctx context.Context) (*Remedy, error) {
-	return locked(ctx, b, func() (*Remedy, error) { return b.renewAndRevoke(ctx) })
+	return locked(ctx, b, func() (*Remedy, error) {
+		if err := b.certificatesOwn(); err != nil {
+			return nil, err
+		}
+		return b.renewAndRevoke(ctx)
+	})
+}
+
+// certificatesOwn is the refusal of a revocation of a mailbox's earlier
+// certificates in identity mode, where it has none: its identity signs, and
+// only revoking the address answers a copy of it (PROTOCOL.md §12.6). A trip
+// it did not make is its own error.
+func (b *Mailbox) certificatesOwn() error {
+	m, err := b.mode()
+	if err != nil {
+		return err
+	}
+	if m == sign.IdentityMode {
+		return refuse("this mailbox is in identity mode, where its identity signs and it has no certificates to revoke: a copy of its directory holds the identity, so revoke the address (dromas revocation publish, with the address in full)")
+	}
+	return nil
 }
 
 func (b *Mailbox) renewAndRevoke(ctx context.Context) (*Remedy, error) {
 	own := b.id.Address()
-	st, err := b.readOwn(ctx, true)
+	st, err := b.readOwn(ctx, true, true)
 	if err != nil {
 		return nil, err
 	}
@@ -611,7 +679,7 @@ func (b *Mailbox) renewAndRevoke(ctx context.Context) (*Remedy, error) {
 		}
 		r.Below = held.Through + 1
 	}
-	p, req, err := b.makeRenewal(st, r.Below, nil)
+	p, req, err := b.makeRenewal(ctx, st, r.Below, nil)
 	if err != nil {
 		r.NotRenewed = err
 		return done(nil)
@@ -633,7 +701,8 @@ func (b *Mailbox) renewAndRevoke(ctx context.Context) (*Remedy, error) {
 }
 
 // ownRevokes reports whether this mailbox holds a revocation of its own
-// certificates that covers certificate n. One it cannot read covers nothing
+// certificates that covers a signer of rank n: a certificate at or below it,
+// or the identity, rank 0, once it holds one at all. One it cannot read covers nothing
 // here: whoever reads it to apply it says so.
 func (b *Mailbox) ownRevokes(n uint64) bool {
 	certs, err := b.revokedCerts(b.id.Address())
@@ -669,7 +738,7 @@ func (b *Mailbox) revokeBelow(ctx context.Context, serial uint64) (*protocol.Rev
 	if err != nil {
 		return nil, err
 	}
-	sig, err := b.identity.RevokedCertificates(certs)
+	sig, err := b.certifier.RevokedCertificates(certs)
 	if err != nil {
 		return nil, err
 	}
@@ -726,11 +795,12 @@ var provedCodes = []protocol.Code{protocol.CodeRevoked, protocol.CodeSenderRevok
 //     read for one (lookupRevocation), unless the call was itself a read of
 //     it or of its revocations, whose answer is that read (#353).
 //   - 403 sender_revoked names this mailbox, which reads itself.
-//   - 401 certificate_revoked names the certificate this mailbox signs under: it
+//   - 401 certificate_revoked names the signer this mailbox signs with: it
 //     reads itself (known), which keeps a revocation of its certificates once
-//     it verifies. One that covers the certificate in use is a refusal in
-//     this client's words. The renewal that mends it stays the drain's and
-//     the send's to make (mendable, seal), since it signs.
+//     it verifies. One that covers the signer in use is a refusal in this
+//     client's words, and in identity mode a trip it did not make, its
+//     [ForeignTripError] (PROTOCOL.md §12.5). The renewal that mends it stays
+//     the drain's and the send's to make (mendable, seal), since it signs.
 //
 // A revocation that verifies is a [RevokedError], which is final; of this
 // mailbox's own address it is kept, the event that ends its command
@@ -790,10 +860,13 @@ func (b *Mailbox) proved(ctx context.Context, method, path string, err error) er
 		if kerr != nil {
 			return fmt.Errorf("%w; reading this mailbox's revocations failed: %v", err, kerr)
 		}
-		if n, perr := b.publishedSerial(); perr != nil || !b.ownRevokes(n) {
-			return fmt.Errorf("%w; it showed no revocation of this mailbox's certificates that verifies and covers the one it uses", err)
+		if _, merr := b.mode(); merr != nil {
+			return merr
 		}
-		return refuse("this mailbox's identity has revoked the certificate it signs under, as its server shows, so it is taken nowhere it is held: dromas recv or dromas prekey renew publishes a new one")
+		if !b.usesRevoked() {
+			return fmt.Errorf("%w; it showed no revocation of this mailbox's certificates that verifies and covers the signer it uses", err)
+		}
+		return refuse("this mailbox's identity has revoked the signer it signs with, as its server shows, so it is taken nowhere that holds the revocation: dromas recv or dromas prekey renew publishes a statement under a new certificate")
 	}
 	held, lerr := b.lookupRevocation(ctx, who, nil)
 	if lerr != nil {
@@ -841,10 +914,14 @@ type lookups struct {
 	// judge reads the marks, and a drain asks nothing more about them; a
 	// send's resolve reads the mailbox at each post whatever is marked.
 	answered map[protocol.Address]bool
+	// reread are the senders judge has read once more, before refusing a
+	// certificate's signature from one with no revocation of its
+	// certificates held: once each in a drain.
+	reread map[protocol.Address]bool
 }
 
 func newLookups() *lookups {
-	return &lookups{answered: map[protocol.Address]bool{}}
+	return &lookups{answered: map[protocol.Address]bool{}, reread: map[protocol.Address]bool{}}
 }
 
 // take keeps what verifies of a record a server showed for a: a revocation of
