@@ -114,6 +114,7 @@ func TestARenewalWhoseUploadMeetsAMailboxForgottenSinceItsReadRegistersIt(t *tes
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			e := newEnv(t)
+			e.working = c.how == "cert revoke-earlier"
 			a, b, d := e.mailbox(), e.mailbox(), e.mailbox()
 			if _, err := b.Block(ctx, d.Address()); err != nil {
 				t.Fatal(err)
@@ -259,6 +260,7 @@ func TestAnUploadAnswered404WhoseReadAgainServesItIsTaken(t *testing.T) {
 	for _, how := range []string{"prekey renew", "recv", "cert revoke-earlier"} {
 		t.Run(how, func(t *testing.T) {
 			e := newEnv(t)
+			e.working = how == "cert revoke-earlier"
 			b := e.mailbox()
 			first := numberOf(t, b)
 			if how == "recv" {
@@ -470,7 +472,7 @@ func TestARestoredMailboxRegistersWhereItsServerForgotIt(t *testing.T) {
 			t.Errorf("forgotten %v: the restored mailbox published a prekey at %d, and its server serves %d", forgotten, p.Serial, servedSerial(t, e, r))
 		}
 	}
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a := e.mailbox()
 	r := restoreWith(t, e, a, e.clock.Now)
 	e.clock.Add(time.Minute)
@@ -698,7 +700,7 @@ func TestAFailedRenewalIsSentAgainUnchanged(t *testing.T) {
 // 33 days after its not_after, as it does any retired one.
 func TestAServerThatFailsEveryRenewalGetsEachKeyOnce(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a, b := e.mailbox(), e.mailbox()
 	kept := uploads(e, b)
 	type lease struct {
@@ -796,7 +798,7 @@ func TestAServerThatFailsEveryRenewalGetsEachKeyOnce(t *testing.T) {
 // the attempt's, whose certificate began when it ran (#197).
 func TestAKeyNeverSignedIsUsed(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	b := e.mailbox()
 	forge.FailOnce(e.srv, http.MethodPut, "/prekey")
 	if _, err := b.Rekey(context.Background()); err == nil {

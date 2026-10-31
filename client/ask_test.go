@@ -131,7 +131,7 @@ func helpsTheThief(e *env, a *client.Mailbox, statement, signature []byte, hide 
 func TestASenderAsksBeforeItSends(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a := e.mailbox()
 	taken := numberOf(t, a)
 	statement, signature := theft(t, e, a)
@@ -456,7 +456,7 @@ func TestAMessageThatWaitedGoesUnderTheRenewalTheMailboxRecorded(t *testing.T) {
 func TestAMessageThatWaitedThroughTheRemedyIsSignedUnderTheNewCertificate(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a, b := e.mailbox(), e.mailbox()
 	first := numberOf(t, b)
 	postFails(e, a)

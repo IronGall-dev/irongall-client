@@ -77,7 +77,7 @@ func TestAClockThatJumpsDuringARenewalDeletesNoKey(t *testing.T) {
 func TestAClockThatJumpsDuringTheRemedyDeletesNoKey(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a, b := e.mailbox(), e.mailbox()
 	send(t, a, b, "first, sealed to the prekey about to retire")
 	send(t, a, b, "second, sealed to it too")

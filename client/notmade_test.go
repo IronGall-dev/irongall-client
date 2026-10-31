@@ -131,7 +131,7 @@ func TestRecvRenewsNothingAboveAStatementTheMailboxDidNotMake(t *testing.T) {
 func TestASendIsHeldByTheMailboxsLastReadOfItself(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	b, to := e.mailbox(), e.mailbox()
 	n := numberOf(t, b)
 	st, _ := e.srv.Prekey(b.Address())
@@ -172,7 +172,7 @@ func TestASendIsHeldByTheMailboxsLastReadOfItself(t *testing.T) {
 func TestAFaultAfterARenewalWasTakenLeavesItTaken(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	for _, c := range []struct {
 		name  string
 		renew func(*client.Mailbox) (*protocol.Prekey, error)

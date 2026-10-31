@@ -239,7 +239,7 @@ func TestAPassIsUsedUntilItRunsOut(t *testing.T) {
 // signs another under the certificate in use, and carries on.
 func TestAPassUnderAnOlderCertificateIsReplaced(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	a, b := e.mailbox(), e.mailbox()
 	receive(t, b)
 	old, ok := stateOf(b, "pass")

@@ -423,7 +423,7 @@ func TestARecvKilledAtEachStepOfItsRenewalReadsItsServersACL(t *testing.T) {
 // files go (begin; #337).
 func TestARemedyPassingOverAKilledRenewalDropsWhatItLeft(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	b := e.mailbox()
 	e.clock.Add(2 * time.Second)
 	crash(t, e, b, "rekey", "prekey made", protocol.Address{})
@@ -459,7 +459,7 @@ func TestARemedyPassingOverAKilledRenewalDropsWhatItLeft(t *testing.T) {
 // number.
 func TestARenewalTakenUnseenIsRecordedAndALaterOneKeepsItsNumber(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	b := e.mailbox()
 	e.clock.Add(2 * time.Second)
 	crash(t, e, b, "rekey", "renewal taken", protocol.Address{})
@@ -482,7 +482,7 @@ func TestARenewalTakenUnseenIsRecordedAndALaterOneKeepsItsNumber(t *testing.T) {
 // under the certificate the mailbox made with it.
 func TestItsOwnStatementUnderAnotherCertificateIsNoRenewalTaken(t *testing.T) {
 	t.Parallel()
-	e := newEnv(t)
+	e := newWorkEnv(t)
 	b := e.mailbox()
 	stolen, first := worker(t, b), numberOf(t, b)
 	e.clock.Add(2 * time.Second)

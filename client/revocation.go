@@ -522,9 +522,6 @@ func (b *Mailbox) keepRevokedCerts(a protocol.Address, doc, statement, sig []byt
 // read yet, is refused too: nobody can tell it from a thief's.
 func (b *Mailbox) RevokeEarlier(ctx context.Context) (*protocol.RevokedCertificates, error) {
 	return locked(ctx, b, func() (*protocol.RevokedCertificates, error) {
-		if err := b.certificatesOwn(); err != nil {
-			return nil, err
-		}
 		// What its server holds of the mailbox's own revocations, kept where it
 		// verifies, and of its renewals (noteServed): an answer it cannot use
 		// stops nothing.
@@ -532,6 +529,9 @@ func (b *Mailbox) RevokeEarlier(ctx context.Context) (*protocol.RevokedCertifica
 			return nil, err
 		}
 		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if err := b.certificatesOwn(); err != nil {
 			return nil, err
 		}
 		current, err := b.publishedSerial()
@@ -600,15 +600,11 @@ type Remedy struct {
 // it is a fault of this mailbox after a server took the revocation or the
 // renewal, or the mailbox's own revocation, shown at the renewal.
 //
-// A mailbox in identity mode has no certificates to revoke, and is refused
-// before anything is asked (certificatesOwn).
+// A mailbox in identity mode, by what it keeps once it has read itself, has
+// no certificates to revoke, and is refused before anything is signed
+// (certificatesOwn).
 func (b *Mailbox) RenewAndRevoke(ctx context.Context) (*Remedy, error) {
-	return locked(ctx, b, func() (*Remedy, error) {
-		if err := b.certificatesOwn(); err != nil {
-			return nil, err
-		}
-		return b.renewAndRevoke(ctx)
-	})
+	return locked(ctx, b, func() (*Remedy, error) { return b.renewAndRevoke(ctx) })
 }
 
 // certificatesOwn is the refusal of a revocation of a mailbox's earlier
@@ -630,6 +626,9 @@ func (b *Mailbox) renewAndRevoke(ctx context.Context) (*Remedy, error) {
 	own := b.id.Address()
 	st, err := b.readOwn(ctx, true, true)
 	if err != nil {
+		return nil, err
+	}
+	if err := b.certificatesOwn(); err != nil {
 		return nil, err
 	}
 	below, _, err := b.nextNumber(st, true)

@@ -3,6 +3,8 @@ package client_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -209,10 +211,14 @@ func workFile(b *client.Mailbox, n uint64, ext string) string {
 	return filepath.Join(b.Dir(), "work", strconv.FormatUint(n, 10)+ext)
 }
 
-// worker loads the working key a mailbox has in use, under its certificate, from
-// the mailbox's state directory: what the mailbox signs its messages and its passes with.
+// worker loads the signer a mailbox has in use from the mailbox's state
+// directory: what the mailbox signs its messages and its passes with, its
+// identity in identity mode, or its working key under its certificate.
 func worker(t *testing.T, b *client.Mailbox) ssh.Signer {
 	t.Helper()
+	if _, err := os.Stat(workFile(b, numberOf(t, b), "")); errors.Is(err, fs.ErrNotExist) {
+		return identityKey(t, b)
+	}
 	return workerAt(t, b, numberOf(t, b))
 }
 
