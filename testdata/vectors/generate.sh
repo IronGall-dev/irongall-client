@@ -1,30 +1,42 @@
 #!/usr/bin/env bash
 # Regenerates the dromas v1 test vectors with stock tools only: bash, od, base64, fold,
-# sha256sum, ssh-keygen, openssl (dgst -sha384) and base32, plus age >= 1.3 for the two ciphertexts.
+# sha256sum, ssh-keygen, openssl (dgst -sha384) and base32, plus age >= 1.3 for the three ciphertexts.
 # Everything is deterministic (Ed25519 signatures are), except what is made once and kept:
-# each certificate (ssh-keygen puts a random nonce in one, and an ECDSA signature differs each
-# time it is made) and each message/*.age.
+# each certificate (ssh-keygen puts a random nonce in one), each signature by C's P-256 identity (an
+# ECDSA signature differs each time it is made) and each message/*.age.
 # Inputs are in input/: every Ed25519 key is a PUBLISHED test key of RFC 8032 (§7.1: the
 # identities of A and B are TEST 1 and TEST 2, their working keys TEST 3, TEST 1024 and
 # TEST SHA(abc); §7.2: C's working key is the first Ed25519ctx test's key), C's P-256 identity
 # is the PUBLISHED test key of RFC 6979 §A.2.5. B's and C's prekey is the PUBLISHED test identity of the
 # C2SP age testkit (CCTV age/internal/testkit: TestHybridIdentity), in input/b-1.pq.key, so the two messages
 # decrypt with any age; the other age recipients' secret keys were discarded. Every vector is judged at the
-# time in ./now.
+# time in ./now. A is in working-key mode: it holds its trip, a revocation of its certificates through
+# TRIP, and its certificates are numbered above it. B and C are in identity mode: each identity signs
+# its own statements, passes and messages.
 set -euo pipefail
 umask 077
 cd "$(dirname "$0")"
 NOW=2026-10-10T00:00:00Z
 NOT_AFTER=2026-11-12T00:00:00Z # NOW + 33 days exactly: what a client asks for. A server takes one that ends up to an hour later
 MSG_ID=6f1d2c3b-4a5e-4f60-8a7b-9c0d1e2f3a4b
-# A certificate's validity, as ssh-keygen -V takes it. These begin a minute before NOW, where a client
-# dates its own from an hour back (PROTOCOL.md §5): a verifier asks only that one has begun.
-V_OK=20261009235900Z:20261213000000Z # ends 64 days after NOW: what a client asks for
-V_BEGINS_NOW=20261010000000Z:20261213000000Z # begins at NOW: begun
-V_SHORT=20261009235900Z:20261020000000Z    # ends 10 days after NOW: a 33-day prekey statement outlives it
+# A's trip, as a mailbox made in working-key mode makes it: a revocation of its certificates through its clock
+# less one, at NOW (1791590400). Its certificates are numbered above it: SA is its clock at NOW, the serial
+# SerialAt gives above the trip.
+TRIP=1791590399
+SA=1791590400
+# A certificate's validity, as ssh-keygen -V takes it: from an hour before it is made (PROTOCOL.md §5) for
+# the server's maximum, which a client asks for, the reference server's default being 45 days and the hour.
+V_OK=20261009230000Z:20261124000000Z # made at NOW: from an hour back to 45 days after NOW
+V_BEGINS_NOW=20261010000000Z:20261124000000Z # begins at NOW: begun
+V_SHORT=20261009230000Z:20261020000000Z    # ends 10 days after NOW: a 33-day prekey statement outlives it
 V_ENDED=20260801000000Z:20261010000000Z    # ends at NOW
-V_NOT_BEGUN=20261010000001Z:20261213000000Z
-V_TOO_LONG=20261009235900Z:20261213010001Z # ends 64 days, an hour and a second after NOW: a second past what a verifier takes
+V_NOT_BEGUN=20261010000001Z:20261124000000Z
+V_LONG=20261009230000Z:20261124000001Z     # a second longer than 45 days and the hour: a reader sets no ceiling
+# The last moment a certificate may name, at either end, is 9999-12-31T23:59:59Z (0x3afff4417f seconds).
+V_LAST=20261009230000Z:0x3afff4417f
+V_PAST_LAST=20261009230000Z:0x3afff44180
+V_BEGINS_PAST_LAST=0x3afff44180:0x3afff44181
+V_FOREVER=20261009230000Z:forever
 
 # Hex helpers. Binary goes through hex strings, never through shell variables.
 asc() { printf '%s' "$1" | od -An -tx1 | tr -d ' \n'; }
@@ -110,26 +122,32 @@ cert() { # <kept file> <signing key> <certified key> <ssh-keygen options…>
   local keep=$1 ca=$2 key=$3; shift 3
   [ -e "$keep" ] || { ssh-keygen -q -s "$KEYS/$ca" "$@" "$KEYS/$key.pub" && cut -d' ' -f1,2 "$KEYS/$key-cert.pub" > "$keep"; }
 }
-good() { echo -I dromas-cert-v1 -n "$1" -z "${2:-1}" -V "${3:-$V_OK}" -O clear; } # <address> [serial] [validity] → the options of a certificate every check passes
+good() { echo -I dromas-cert-v1 -n "$1" -z "${2:-$SA}" -V "${3:-$V_OK}" -O clear; } # <address> [serial] [validity] → the options of a certificate every check passes
 sign() { ssh-keygen -q -Y sign -n "$2" -f "$KEYS/$1" "${@:3}"; } # <key> <namespace> [-O …] < message > signature, by a bare key: an identity's, for a revocation
 under() { cp "$2" "$KEYS/$1-cert.pub"; ssh-keygen -q -Y sign -n "$3" -f "$KEYS/$1-cert.pub" "${@:4}"; } # <working key> <certificate> <namespace> [-O …] < message > signature under that certificate
 statement() { printf 'dromas-prekey-v1\n%s\n%s\n%s\n%s\n' "$@"; } # <address> <serial> <recipient> <not_after>
 
-# Each mailbox's working key, certified by its identity.
+# Each mailbox's working key, certified by its identity. B's and C's are certificates no reader takes while
+# its mailbox is in identity mode, for the vectors that refuse one.
 cert a/work-cert.pub a a-work $(good "$A")
 cert b/work-cert.pub b b-work $(good "$B")
 cert c/work-cert.pub c c-work $(good "$C")
 
-# The two mailboxes, their prekeys and A's revocation.
+# A's trip: its identity's revocation of its certificates through TRIP, which puts A in working-key mode.
+printf 'dromas-revoke-certs-v1\n%s\n%s\n' "$A" "$TRIP" > a/trip.txt
+sign a "dromas-revoke-certs-v1:$A" < a/trip.txt > a/trip.sig
+
+# The three mailboxes, their prekeys and A's revocation. A's statements are signed by its working key under its
+# certificate, B's and C's by the identity itself; C's, an ECDSA signature, is made once and kept.
 [ "$(age-keygen -y input/b-1.pq.key)" = "$(cat input/b-1.pq)" ] || { echo "input/b-1.pq is not the recipient of input/b-1.pq.key" >&2; exit 1; }
 statement "$A" 1 "$(cat input/a-1.pq)" "$NOT_AFTER" > a/prekey-1.txt
 statement "$A" 2 "$(cat input/a-2.pq)" "$NOT_AFTER" > a/prekey-2.txt
 statement "$B" 1 "$(cat input/b-1.pq)" "$NOT_AFTER" > b/prekey-1.txt
 for f in a/prekey-1 a/prekey-2; do under a-work a/work-cert.pub "dromas-prekey-v1:$A" < "$f.txt" > "$f.txt.sig"; done
 under a-work a/work-cert.pub "dromas-prekey-v1:$A" -O hashalg=sha256 < a/prekey-1.txt > a/prekey-1.txt.sha256.sig
-under b-work b/work-cert.pub "dromas-prekey-v1:$B" < b/prekey-1.txt > b/prekey-1.txt.sig
+sign b "dromas-prekey-v1:$B" < b/prekey-1.txt > b/prekey-1.txt.sig
 statement "$C" 1 "$(cat input/b-1.pq)" "$NOT_AFTER" > c/prekey-1.txt
-under c-work c/work-cert.pub "dromas-prekey-v1:$C" < c/prekey-1.txt > c/prekey-1.txt.sig
+[ -e c/prekey-1.txt.sig ] || sign c "dromas-prekey-v1:$C" < c/prekey-1.txt > c/prekey-1.txt.sig
 printf 'dromas-revoke-v1\n%s\n' "$A" > a/revoke.txt
 sign a "dromas-revoke-v1:$A" < a/revoke.txt > a/revoke.sig
 
@@ -178,10 +196,13 @@ printf 'dromas-revoke-certs-v2\n%s\n4\n' "$A" > revoked/bad-another-tag.txt; ths
 through bad-address-in-uppercase "$(tr a-z A-Z <<< "$A")" 4; thsig bad-address-in-uppercase
 printf 'dromas-revoke-certs-v1\n%s\n4\0\n' "$A" > revoked/bad-nul.txt; thsig bad-nul      # a NUL, which a shell variable drops: a reader that tests the variable alone takes it
 
-# A pass of mailbox A for a server it calls dromas.example, good for ten minutes from NOW, and the header it travels in.
-printf 'dromas-pass-v1\n%s\ndromas.example\n2026-10-10T00:10:00Z\n' "$A" > a/pass.txt
+# A pass of each mailbox for a server it calls dromas.example, good for ten minutes from NOW, and the header it
+# travels in: A's under its certificate, B's and C's by the identity (C's made once and kept).
+for m in a b c; do printf 'dromas-pass-v1\n%s\ndromas.example\n2026-10-10T00:10:00Z\n' "$(cat $m/address)" > $m/pass.txt; done
 under a-work a/work-cert.pub "dromas-pass-v1:$A" < a/pass.txt > a/pass.sig
-printf 'dromas-pass address="%s", not_after="2026-10-10T00:10:00Z", signature="%s"\n' "$A" "$(b64 < a/pass.sig)" > a/pass.authorization
+sign b "dromas-pass-v1:$B" < b/pass.txt > b/pass.sig
+[ -e c/pass.sig ] || sign c "dromas-pass-v1:$C" < c/pass.txt > c/pass.sig
+for m in a b c; do printf 'dromas-pass address="%s", not_after="2026-10-10T00:10:00Z", signature="%s"\n' "$(cat $m/address)" "$(b64 < $m/pass.sig)" > $m/pass.authorization; done
 
 # That pass in the forms a server reads (PROTOCOL.md §8, as RFC 9110 §11 lets a recipient): each file is an
 # Authorization value with no line feed after it. ok-* is read as the same three values as a/pass.authorization;
@@ -243,26 +264,36 @@ badcert bad-critical-option a a-work $(good "$A") -O force-command=true
 # is not empty, as Go's x/crypto/ssh reads them. ssh-keygen writes a name twice when told to, and a value of one empty string.
 badcert bad-extension-twice a a-work $(good "$A") -O extension:nobody-defines@dromas.invalid -O extension:nobody-defines@dromas.invalid
 badcert bad-extension-value-an-empty-string a a-work $(good "$A") -O extension:nobody-defines@dromas.invalid=
-badcert bad-key-id a a-work -I dromas-cert-v2 -n "$A" -z 1 -V "$V_OK" -O clear
-badcert bad-two-principals a a-work -I dromas-cert-v1 -n "$A,$B" -z 1 -V "$V_OK" -O clear
+badcert bad-key-id a a-work -I dromas-cert-v2 -n "$A" -z "$SA" -V "$V_OK" -O clear
+badcert bad-two-principals a a-work -I dromas-cert-v1 -n "$A,$B" -z "$SA" -V "$V_OK" -O clear
 badcert bad-principal-another-mailbox a a-work $(good "$B")
 badcert bad-serial-zero a a-work $(good "$A" 0)
 badcert bad-serial-above-2-53 a a-work $(good "$A" 9007199254740992)
 badcert bad-host-certificate a a-work $(good "$A") -h
 badcert bad-signed-by-b b a-work $(good "$A")
+# The re-wrap: SSHSIG does not sign its signing-key field, so the identity's own signature, rank 0, which A's trip
+# covers, verifies under a certificate of the identity's own key above the trip. Its signature is A's identity's
+# over a/prekey-1.txt with that certificate put in its key's place, which is what ssh-keygen signs under it (checked
+# below, once the helpers that take a blob apart are defined).
 badcert bad-certifies-the-identity a a $(good "$A")
-badcert bad-ended a a-work $(good "$A" 1 "$V_ENDED")
-badcert bad-not-begun a a-work $(good "$A" 1 "$V_NOT_BEGUN")
-badcert bad-too-long a a-work $(good "$A" 1 "$V_TOO_LONG")
-# And one every implementation must take, at the edge of the rule bad-not-begun is past.
+badcert bad-at-the-trip a a-work $(good "$A" "$TRIP")      # good in every way, and at or below A's trip
+badcert bad-ended a a-work $(good "$A" "$SA" "$V_ENDED")
+badcert bad-not-begun a a-work $(good "$A" "$SA" "$V_NOT_BEGUN")
+badcert bad-ends-after-the-last-date a a-work $(good "$A" "$SA" "$V_PAST_LAST")
+badcert bad-begins-after-the-last-date a a-work $(good "$A" "$SA" "$V_BEGINS_PAST_LAST")
+badcert bad-forever a a-work $(good "$A" "$SA" "$V_FOREVER")
+# And ones every implementation must take, at the edge of the rule bad-not-begun and bad-ends-after-the-last-date are
+# past, and for longer than a server takes, since a reader sets no ceiling.
 okcert() { badcert "$@"; }
-okcert ok-begins-now a a-work $(good "$A" 1 "$V_BEGINS_NOW")
-okcert ok-valid-from-0 a a-work $(good "$A" 1 "always:${V_OK#*:}")      # begins at 0, as -V always: writes it
+okcert ok-begins-now a a-work $(good "$A" "$SA" "$V_BEGINS_NOW")
+okcert ok-valid-from-0 a a-work $(good "$A" "$SA" "always:${V_OK#*:}")      # begins at 0, as -V always: writes it
+okcert ok-ends-at-the-last-date a a-work $(good "$A" "$SA" "$V_LAST")
+okcert ok-longer-than-a-server-takes a a-work $(good "$A" "$SA" "$V_LONG")
 # Extensions a verifier does not know, and it knows none, are ignored (draft-ietf-sshm-cert-01 §2.1.1): ssh-keygen's five,
 # without -O clear, and one nobody defines, with a value, so the slot stays in use (RFC 9170). And one more, made by
 # protocol's TestVectorsReservedField, since ssh-keygen writes the reserved field empty: cert/ok-reserved-field, whose
 # reserved field holds bytes, which a verifier ignores as well.
-okcert ok-extensions a a-work -I dromas-cert-v1 -n "$A" -z 1 -V "$V_OK"
+okcert ok-extensions a a-work -I dromas-cert-v1 -n "$A" -z "$SA" -V "$V_OK"
 okcert ok-unknown-extension a a-work $(good "$A") -O extension:nobody-defines@dromas.invalid=not-read
 
 # One signature, a/prekey-1.txt.sig, in forms a verifier reads as ssh-keygen -Y verify reads them (OpenSSH's
@@ -308,6 +339,8 @@ armor "${X}00" > sig/bad-trailing-byte-in-the-blob.sig
 # sshbuf_get_cstring and builds the signed data without. Two NULs, or version 2, are refused.
 content() { printf %s "${1:$2+8:2*16#${1:$2:8}}"; } # <hex> <hex offset of a string> → what the string holds
 restr() { printf %s "${1:0:$2}$(str "$3")${1:$(skip "$1" "$2")}"; } # <hex> <hex offset of a string> <what it now holds, hex> → the hex with that string replaced
+W=$(blob cert/bad-certifies-the-identity.sig); V=$(blob <(sign a "dromas-prekey-v1:$A" < a/prekey-1.txt))
+[ "$(restr "$V" 20 "$(content "$W" 20)")" = "$W" ] || { echo "cert/bad-certifies-the-identity.sig is not the identity's own signature re-wrapped" >&2; exit 1; }
 nuls() { local z; printf -v z '%*s' "${3:-1}" ''; restr "$1" "$2" "$(content "$1" "$2")${z// /00}"; } # <hex> <hex offset of a string> [how many] → that string ending in one NUL more, or as many as given
 { sed '$d' "$S" | head -c -1; printf '\0\n'; tail -n 1 "$S"; } > sig/ok-nul-before-end.sig
 { sed '$d' "$S" | head -c -1; printf '\0\0\n'; tail -n 1 "$S"; } > sig/bad-two-nuls-before-end.sig
@@ -401,16 +434,22 @@ printf 'dromas-v1\n%s\0' "$(sed -n 2p identity/unsupported-type.doc)" > identity
 # expired at ./now, so a sender must not encrypt to it. longest: valid, and the longest a server
 # takes, an hour past the 33 days a client asks for. too-long: a second past that, so valid and not
 # expired, but a server must refuse to publish it. Each is signed by A in A's prekey namespace
-# unless its name says otherwise.
+# unless its name says otherwise; bad-signed-by-the-identity is A's identity's own, rank 0, which A's
+# trip covers.
 PQ=$(cat input/a-1.pq)
 bad() { local name=$1; shift; printf "$@" > "prekey/$name.txt"; under a-work a/work-cert.pub "dromas-prekey-v1:$A" < "prekey/$name.txt" > "prekey/$name.txt.sig"; }
 cp a/prekey-1.txt prekey/bad-wrong-namespace.txt; under a-work a/work-cert.pub "dromas-msg-v1:$A" < a/prekey-1.txt > prekey/bad-wrong-namespace.txt.sig
 cp a/prekey-1.txt prekey/bad-signed-by-b.txt; under b-work b/work-cert.pub "dromas-prekey-v1:$A" < a/prekey-1.txt > prekey/bad-signed-by-b.txt.sig
 cp a/prekey-1.txt prekey/bad-signed-by-the-identity.txt; sign a "dromas-prekey-v1:$A" < a/prekey-1.txt > prekey/bad-signed-by-the-identity.txt.sig
 cp a/prekey-1.txt prekey/bad-signed-by-a-bare-working-key.txt; sign a-work "dromas-prekey-v1:$A" < a/prekey-1.txt > prekey/bad-signed-by-a-bare-working-key.txt.sig
-# A statement may not outlive the certificate it is signed under: this one's certificate ends in 10 days.
-cert prekey/bad-outlives-its-certificate.cert.pub a a-work-2 $(good "$A" 2 "$V_SHORT")
-cp a/prekey-1.txt prekey/bad-outlives-its-certificate.txt; under a-work-2 prekey/bad-outlives-its-certificate.cert.pub "dromas-prekey-v1:$A" < a/prekey-1.txt > prekey/bad-outlives-its-certificate.txt.sig
+# A statement may outlive the certificate it is signed under, whose end a sender reads apart: this one's certificate,
+# a later one of A's second working key, ends in 10 days.
+cert prekey/outlives-its-certificate.cert.pub a a-work-2 $(good "$A" $((SA + 1)) "$V_SHORT")
+cp a/prekey-1.txt prekey/outlives-its-certificate.txt; under a-work-2 prekey/outlives-its-certificate.cert.pub "dromas-prekey-v1:$A" < a/prekey-1.txt > prekey/outlives-its-certificate.txt.sig
+# B's and C's own statements, each signed under its own mailbox's certificate in its own namespace: refused for each,
+# since each is in identity mode and takes its identity's signature alone.
+cp b/prekey-1.txt prekey/bad-b-signed-under-its-certificate.txt; under b-work b/work-cert.pub "dromas-prekey-v1:$B" < b/prekey-1.txt > prekey/bad-b-signed-under-its-certificate.txt.sig
+cp c/prekey-1.txt prekey/bad-c-signed-under-its-certificate.txt; under c-work c/work-cert.pub "dromas-prekey-v1:$C" < c/prekey-1.txt > prekey/bad-c-signed-under-its-certificate.txt.sig
 bad bad-names-another-mailbox 'dromas-prekey-v1\n%s\n1\n%s\n%s\n' "$B" "$PQ" "$NOT_AFTER"
 bad bad-serial-zero 'dromas-prekey-v1\n%s\n0\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
 bad bad-serial-leading-zero 'dromas-prekey-v1\n%s\n01\n%s\n%s\n' "$A" "$PQ" "$NOT_AFTER"
@@ -530,8 +569,16 @@ SEALED_C=$(( (1659 + n + 1023) / 1024 * 1024 ))
 { cat message/a-to-c.line message/a-to-c.sig; head -c $((SEALED_C - 1659 - n)) /dev/zero | tr '\0' .; } > message/a-to-c.plain
 [ -e message/a-to-c.age ] || age -r "$(cat input/b-1.pq)" -o message/a-to-c.age < message/a-to-c.plain
 [ "$(wc -c < message/a-to-c.age)" -eq "$SEALED_C" ] || { echo "message/a-to-c.age is not the $SEALED_C bytes its padding was made for" >&2; exit 1; }
+# And one from B to C, signed by B's identity, as a mailbox in identity mode signs, to C's prekey.
+line "$B" "$C" "$ID_B" > message/b-to-c.line
+sign b "dromas-msg-v1:$C" < message/b-to-c.line > message/b-to-c.sig
+n=$(( $(wc -c < message/b-to-c.line) + $(wc -c < message/b-to-c.sig) ))
+SEALED_BC=$(( (1659 + n + 1023) / 1024 * 1024 ))
+{ cat message/b-to-c.line message/b-to-c.sig; head -c $((SEALED_BC - 1659 - n)) /dev/zero | tr '\0' .; } > message/b-to-c.plain
+[ -e message/b-to-c.age ] || age -r "$(cat input/b-1.pq)" -o message/b-to-c.age < message/b-to-c.plain
+[ "$(wc -c < message/b-to-c.age)" -eq "$SEALED_BC" ] || { echo "message/b-to-c.age is not the $SEALED_BC bytes its padding was made for" >&2; exit 1; }
 # Each decrypts with the published identity of its prekey to exactly what was encrypted.
-for m in a-to-b:b-1.pq a-to-c:b-1.pq; do
+for m in a-to-b:b-1.pq a-to-c:b-1.pq b-to-c:b-1.pq; do
   age -d -i "input/${m#*:}.key" "message/${m%:*}.age" | cmp -s - "message/${m%:*}.plain" || { echo "message/${m%:*}.age does not decrypt to its .plain with input/${m#*:}.key" >&2; exit 1; }
 done
 
@@ -553,17 +600,23 @@ refuse() { # <name> <line file> <signature command…>: the line, then the signa
 L=$(mktemp)
 # The signature.
 refuse refuse-signed-for-another-mailbox message/a-to-b.line under a-work a/work-cert.pub "dromas-msg-v1:$A"
-refuse refuse-signed-by-the-identity message/a-to-b.line sign a "dromas-msg-v1:$B"
+refuse refuse-signed-by-the-identity message/a-to-b.line sign a "dromas-msg-v1:$B"      # rank 0, which A's trip covers
+refuse refuse-certificate-at-the-trip message/a-to-b.line under a-work cert/bad-at-the-trip.pub "dromas-msg-v1:$B"
+# The re-wrap: that signature of A's identity, its key replaced by a certificate of the identity's own key above A's trip.
+{ cat message/a-to-b.line; armor "$(restr "$(blob <(sign a "dromas-msg-v1:$B" < message/a-to-b.line))" 20 "$(content "$(blob cert/bad-certifies-the-identity.sig)" 20)")"; } > plain/refuse-identity-s-signature-re-wrapped.txt
 refuse refuse-signed-by-a-bare-working-key message/a-to-b.line sign a-work "dromas-msg-v1:$B"
 refuse refuse-certificate-ended message/a-to-b.line under a-work cert/bad-ended.pub "dromas-msg-v1:$B"
 sed 's/"body":"hello"/"body":"hellp"/' message/a-to-b.line > "$L"; cat "$L" "$GOOD_SIG" > plain/refuse-line-changed-after-signing.txt
 # The signature block is read as ssh-keygen reads a signature (sig/), and is at most 4096 bytes from its BEGIN line through its END line.
 { cat message/a-to-b.line; sed "2s/\$/ \r/; 3s/^/"$'\t'"/" "$GOOD_SIG"; } > plain/accept-whitespace-in-the-signature.txt
 { cat message/a-to-b.line; sed "2s/\$/$(printf "%$((4097 - $(wc -c < "$GOOD_SIG")))s" '')/" "$GOOD_SIG"; } > plain/refuse-signature-over-4096-bytes.txt
-# A sender whose identity is of the optional type: delivered by a client that verifies ecdsa-sha2-nistp256, and refused
-# with unsupported_key_type by one that does not. Then one of a type nobody verifies: refused so if the document is
+# A sender whose identity is of the optional type, signed by that identity, made once and kept: delivered by a client
+# that verifies ecdsa-sha2-nistp256, and refused with unsupported_key_type by one that does not. The same under C's
+# certificate is refused, since C is in identity mode. Then one of a type nobody verifies: refused so if the document is
 # the sender's, and as reattributed if it is not.
-line "$C" "$B" "$(b64 < c/identity.doc)" > "$L"; refuse accept-p256-sender "$L" under c-work c/work-cert.pub "dromas-msg-v1:$B"
+line "$C" "$B" "$(b64 < c/identity.doc)" > "$L"; [ -e plain/accept-p256-sender.txt ] || refuse accept-p256-sender "$L" sign c "dromas-msg-v1:$B"
+head -n 1 plain/accept-p256-sender.txt | cmp -s - "$L" || { echo "plain/accept-p256-sender.txt is not C's line" >&2; exit 1; }
+refuse refuse-p256-sender-under-a-certificate "$L" under c-work c/work-cert.pub "dromas-msg-v1:$B"
 line "$(address < identity/unsupported-type.doc)" "$B" "$(b64 < identity/unsupported-type.doc)" > "$L"; refuse refuse-unsupported-key-type "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
 line "$A" "$B" "$(b64 < identity/unsupported-type.doc)" > "$L"; refuse refuse-from-is-not-the-identity-of-an-unknown-type "$L" under a-work a/work-cert.pub "dromas-msg-v1:$B"
 # Who it is from. The first is the forgery an identity member invites: A's document beside a
