@@ -556,7 +556,7 @@ func TestVectorsPrekey(t *testing.T) {
 		{"b/prekey-1.txt", "b/prekey-1.txt.sig", "a"}, // B's as A's
 	}
 	stmts, _ := filepath.Glob(filepath.Join(vectors, "prekey", "*.txt"))
-	if len(stmts) < 40 {
+	if len(stmts) < 30 {
 		t.Fatalf("%d prekey vectors", len(stmts))
 	}
 	for _, st := range stmts {

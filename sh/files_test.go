@@ -257,8 +257,8 @@ func TestAnIdentityPubOutOfFormIsRefused(t *testing.T) {
 }
 
 // unsigned is the shell that cuts dr_prekey short once its key is made: an
-// ssh-keygen that signs no prekey statement.
-const unsigned = `ssh-keygen(){ case "$*" in *dromas-prekey-v1*) return 1 ;; esac; command ssh-keygen "$@"; }` + "\n"
+// ssh-keygen that signs no prekey statement, and verifies one as ever.
+const unsigned = `ssh-keygen(){ case "$*" in *"-Y sign "*dromas-prekey-v1*) return 1 ;; esac; command ssh-keygen "$@"; }` + "\n"
 
 // A prekey's key file that a crash left empty, before the sync after
 // age-keygen, is no key: init and a renewal make it again, as the Go client
@@ -301,7 +301,7 @@ func TestAPrekeyKeyACrashLeftEmptyIsMadeAgain(t *testing.T) {
 	if _, err := bash(t, env, "dr_rekey"); err == nil || !strings.Contains(err.Error(), "age-keygen cannot read") {
 		t.Errorf("a renewal with a key file age cannot read: %v", err)
 	}
-	if _, err := os.Stat(strings.TrimSuffix(key, ".agekey") + ".txt.sig"); err == nil {
+	if fi, err := os.Stat(strings.TrimSuffix(key, ".agekey") + ".txt.sig"); err == nil && fi.Size() > 0 { // a signature the cut left empty is none
 		t.Error("a statement was signed for a key file age cannot read")
 	}
 }
