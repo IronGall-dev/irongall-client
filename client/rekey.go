@@ -272,8 +272,8 @@ type ownRead struct {
 	// certificates, verified.
 	trip bool
 	// known is the highest number this mailbox knows it has used: what it
-	// published, and the served statement's serial and its signer's rank when
-	// the read could be used.
+	// published, and the served statement's signer's rank, or its serial
+	// where the identity signed it, when the read could be used.
 	known uint64
 	// served is the signer of the statement served, when the read could be
 	// used, or nil.
@@ -353,7 +353,16 @@ func (b *Mailbox) readOwn(ctx context.Context, unused, past bool) (*ownRead, err
 		case before(o.signer.Rank(), o.statement.Serial, pubRank, published):
 			err = refuse("rollback: the server serves this mailbox's prekey serial %d %s, before serial %d, which this mailbox published. %s", o.statement.Serial, signedBy(o.signer.Rank()), published, remedy)
 		default:
-			out.known = max(o.signer.Rank(), o.statement.Serial, published)
+			// Above the served statement in the order (c, p): above its
+			// certificate, whose rank passes any prekey serial under it, so
+			// a statement a taken working key signed at the highest serial
+			// there is holds nothing (#48); or, by the identity, rank 0,
+			// above its serial.
+			above := o.signer.Rank()
+			if above == 0 {
+				above = o.statement.Serial
+			}
+			out.known = max(above, published)
 			out.served = o.signer
 			// A mailbox that has published nothing, restored from its identity
 			// alone or its state lost, has no statement of its own to judge
@@ -499,7 +508,8 @@ func (b *Mailbox) makeRenewal(ctx context.Context, st *ownRead, next uint64, p *
 // certificate that is valid now, no longer than its server takes, began at
 // least protocol.MaxSkew before now (so was not made while the clock read
 // ahead of where it reads now: a reader whose clock a server takes may not
-// have reached its start), and whose working key the mailbox holds. If it signed one that cannot be, the serial is spent. If it
+// have reached its start), and whose working key the mailbox holds; and in
+// either mode, not made after the clock reads now. If it signed one that cannot be, the serial is spent. If it
 // signed nothing, neither: a key it made and never signed is free to use.
 func (b *Mailbox) signedPrekey(serial uint64) (p *protocol.Prekey, spent bool, err error) {
 	rec, err := b.prekeyOf(serial)
@@ -541,6 +551,11 @@ func (b *Mailbox) signedPrekey(serial uint64) (p *protocol.Prekey, spent bool, e
 	}
 	if made, err := b.made(serial); err != nil || p.NotAfter.Sub(made) > lifetime {
 		return nil, true, nil //nolint:nilerr // a statement made for longer than this mailbox now signs one for
+	} else if made.After(b.now()) {
+		// Made while the clock read ahead of where it reads now, as a
+		// certificate that began less than an hour before it was (above): a
+		// server may take neither until the clock catches up.
+		return nil, true, nil
 	}
 	return p, false, nil
 }

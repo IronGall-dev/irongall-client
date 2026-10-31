@@ -108,7 +108,7 @@ func TestAMailboxWhoseClockIsTooFarOffIsToldSo(t *testing.T) {
 	}{
 		{-11 * time.Minute, protocol.CodePassExpired, "11m0s behind that"},
 		{-50 * time.Minute, protocol.CodePassExpired, "50m0s behind that"},
-		{51 * time.Minute, protocol.CodePrekeyTime, "51m0s ahead of that"},
+		{51 * time.Minute, protocol.CodePassExpired, "51m0s ahead of that"},
 		{61 * time.Minute, protocol.CodePrekeyTime, "1h1m0s ahead of that"},
 	} {
 		e := newEnv(t)
@@ -355,7 +355,7 @@ func TestACertificateKeptFromARefusedAttemptLeavesTheHour(t *testing.T) {
 	ctx := context.Background()
 	e := newWorkEnv(t)
 	off, dir := 55*time.Minute, t.TempDir()
-	if _, err := client.Init(ctx, dir, e.skewed(&off)); client.Code(err) != protocol.CodePrekeyTime {
+	if _, err := client.Init(ctx, dir, e.skewed(&off)); client.Code(err) != protocol.CodePassExpired {
 		t.Fatalf("init, 55 minutes ahead: %v", err)
 	}
 	off = 0 // the clock is set right
@@ -389,7 +389,7 @@ func TestARenewalKeptFromARefusedAttemptLeavesTheHour(t *testing.T) {
 	}
 	e.clock.Add(2 * time.Second)
 	off = 55 * time.Minute
-	if _, err := b.Rekey(ctx); client.Code(err) != protocol.CodePrekeyTime {
+	if _, err := b.Rekey(ctx); client.Code(err) != protocol.CodePassExpired {
 		t.Fatalf("a renewal 55 minutes ahead: %v", err)
 	}
 	off = 0
