@@ -407,11 +407,8 @@ func (s *Server) verifyPrekey(identity, statement, signature []byte, current []b
 }
 
 // refuseStatement writes a statement's refusal, carrying the server's
-// maximum on certificate_too_long.
-func (s *Server) refuseStatement(w http.ResponseWriter, c protocol.Code, err error) {
-	s.mu.Lock()
-	most := s.policy.MaxCertificateLifetime
-	s.mu.Unlock()
+// maximum, most, on certificate_too_long.
+func refuseStatement(w http.ResponseWriter, c protocol.Code, err error, most uint64) {
 	problem(w, c, err.Error(), func(p *protocol.Problem) {
 		if c == protocol.CodeCertificateTooLong {
 			p.MaxCertificateLifetime = &most
@@ -523,10 +520,11 @@ func (s *Server) register(w http.ResponseWriter, r *http.Request) {
 	if b := s.mailboxes[a]; b != nil {
 		current = b.key
 	}
+	most := s.policy.MaxCertificateLifetime
 	s.mu.Unlock()
 	p, by, refusal, err := s.verifyPrekey(req.Identity, req.Prekey, req.PrekeySignature, current)
 	if err != nil {
-		s.refuseStatement(w, refusal, err)
+		refuseStatement(w, refusal, err, most)
 		return
 	}
 	s.mu.Lock()
@@ -738,7 +736,7 @@ func (s *Server) newPrekey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.refuseStatement(w, refusal, err)
+		refuseStatement(w, refusal, err, s.policy.MaxCertificateLifetime)
 		return
 	}
 	// The mode comes before the pass (PROTOCOL.md §11.4 rule 4).

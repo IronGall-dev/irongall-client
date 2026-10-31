@@ -39,7 +39,7 @@ func TestRecvRenewsNothingAboveAStatementTheMailboxDidNotMake(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
-			e := newEnv(t)
+			e := newWorkEnv(t)
 			b := e.mailbox()
 			n := numberOf(t, b)
 			signer, certSerial := worker(t, b), n
@@ -253,7 +253,7 @@ func TestARenewalGoesPastItsOwnRecordWhateverItsDates(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			e := newEnv(t)
+			e := newWorkEnv(t)
 			b := e.mailbox()
 			n := numberOf(t, b)
 			unix := uint64(e.clock.Now().Unix())
@@ -290,7 +290,7 @@ func TestARenewalGoesPastItsOwnRecordWhateverItsDates(t *testing.T) {
 	t.Run("a record that does not verify", func(t *testing.T) {
 		t.Parallel()
 		ctx := context.Background()
-		e := newEnv(t)
+		e := newWorkEnv(t)
 		b, other := e.mailbox(), e.mailbox()
 		st, _ := e.srv.Prekey(b.Address())
 		forged, err := protocol.Sign(worker(t, other), st, protocol.PrekeyNamespace(b.Address()))
