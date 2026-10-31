@@ -363,7 +363,7 @@ func TestARenewalWhoseReadAgainEndsSendsNoRegistration(t *testing.T) {
 	full := &os.PathError{Op: "write", Path: "state", Err: syscall.ENOSPC}
 	for _, c := range []string{"a fault of the mailbox", "its own revocation"} {
 		t.Run(c, func(t *testing.T) {
-			e := newEnv(t)
+			e := newWorkEnv(t)
 			b, d := e.mailbox(), e.mailbox()
 			if _, err := b.Block(ctx, d.Address()); err != nil || !has(b, "acl.json") {
 				t.Fatalf("the block: %v", err)
