@@ -372,7 +372,7 @@ func TestForgeries(t *testing.T) {
 	})
 
 	t.Run("its own lower, the same certificate", func(t *testing.T) {
-		e := newEnv(t)
+		e := newWorkEnv(t)
 		b := e.mailbox()
 		published, _ := e.srv.Prekey(b.Address())
 		below(t, e, b)

@@ -573,6 +573,7 @@ func partwayCases() []partwayCase {
 			return recv(e, a)
 		}},
 		{"recv, mended after certificate_revoked", func(t *testing.T, e *env) partwaySet {
+			e.working = true // a revocation of its certificates through the one in use
 			a, b := e.mailbox(), e.mailbox()
 			send(t, b, a, "waits")
 			publish(t, e, certsRecord(t, a.Dir(), numberOf(t, a)))
