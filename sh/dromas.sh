@@ -13,7 +13,7 @@
 #   bash dromas.sh addr                            print it again: give it to whoever should write to this mailbox
 #   bash dromas.sh send <link> [file]             one message (the body from stdin without a file); a link or an address. Posted now or not at all: nothing waits
 #   bash dromas.sh recv                            verified messages, a "message" line each; a refused one goes to refused/, with a "refused" line
-#   bash dromas.sh prekey renew                    a new prekey, working key and certificate: at least monthly, as a prekey is valid for 33 days, or within the lifetime a prekey-lifetime file sets
+#   bash dromas.sh prekey renew                    a new prekey, which the identity signs: at least monthly, as a prekey is valid for 33 days, or within the lifetime a prekey-lifetime file sets
 #   bash dromas.sh help [<command>]                this, or a command's lines; --help after a command does the same, and runs nothing
 #   The README has the rest: https://github.com/dromas-dev/dromas-client#readme
 #
@@ -21,7 +21,9 @@
 # shell, so all state lives in files in the mailbox's directory, never in variables.
 #
 # It gives up conveniences the Go client has: recv drains once and never waits for a message, and each step runs several
-# programs. Needs bash >= 4, age >= 1.3 (the first with post-quantum keys, the one prekey type; Ubuntu to 26.04 and Debian 13
+# programs. And working-key mode: its own mailbox is in identity mode, where its identity signs its prekey statements, passes
+# and messages (PROTOCOL.md §5), and one shown its address in working-key mode signs nothing more (dr_finished). It reads and
+# writes to mailboxes of either mode. Needs bash >= 4, age >= 1.3 (the first with post-quantum keys, the one prekey type; Ubuntu to 26.04 and Debian 13
 # ship older, and go install filippo.io/age/cmd/...@v1.3.2 is current), OpenSSH >= 9.1 (the first to take a
 # certificate's validity and a time to verify at in UTC), curl >= 7.84 (--fail-with-body, and -w with %header),
 # jq >= 1.7.1 (1.7.0 can abort on a number a sender writes, CVE-2023-50246; Ubuntu 24.04's fixed jq prints jq-1.7),
@@ -68,7 +70,7 @@ dr_api(){ # <METHOD> <PATH> [body file] [curl args…] → the body on stdout, a
     {detail:("ERROR \($s)" + (if $c != "" then " \($c)" elif $s >= 300 and $s <= 399 then ": a redirect, which this client never follows: the API answers where it is called" else ": an answer this client does not know" end) + (if $c == "version_retired" then ": this server no longer takes this client'"'"'s version, \($own): upgrade this client" + (if $v != "" then "; the oldest it takes is \($v)" else "" end) else "" end) + (if $q != "" then ": the limit \($q)" else "" end) + (if $u == "mailbox" then ", counted against this mailbox" elif $u == "ip" then ", counted against this machine'"'"'s IP address" else "" end) + (if $w != "" then "; the server asks to wait \($w) seconds" else "" end))}' >&2; return 1
 }
 DR_TYPE='tag:dromas.dev,2026-10-26:errors/'      # an error's type is this and its code, which names the problem and resolves to nothing (PROTOCOL.md §11.3): a code counts only beside its own
-DR_CODES='{"bad_request":400,"bad_address":400,"bad_encoding":400,"identity_mismatch":400,"bad_key":400,"prekey_not_new":400,"prekey_time":400,"unsupported_key_type":400,"not_age":400,"wrong_recipient_type":400,"bad_revocation":400,"unauthorized":401,"pass_expired":401,"certificate_not_current":401,"certificate_revoked":401,"unknown_sender":403,"sender_revoked":403,"sender_not_allowed":403,"sender_key_type":403,"adopt_key_refused":403,"no_such_mailbox":404,"no_such_message":404,"not_revoked":404,"conflict":409,"mailbox_changed":409,"stale_prekey":409,"prekey_expired":409,"request_timeout":408,"revoked":410,"version_retired":410,"precondition_failed":412,"too_large":413,"rate_limited":429,"fetch_paced":429,"refetch_spent":429,"mailbox_full":429,"mailbox_busy":429,"unavailable":503}'      # every code, and its status (PROTOCOL.md §11.3)
+DR_CODES='{"bad_request":400,"bad_address":400,"bad_encoding":400,"identity_mismatch":400,"bad_key":400,"prekey_not_new":400,"prekey_time":400,"certificate_too_long":400,"unsupported_key_type":400,"not_age":400,"wrong_recipient_type":400,"bad_revocation":400,"unauthorized":401,"pass_expired":401,"certificate_not_current":401,"certificate_revoked":401,"unknown_sender":403,"sender_revoked":403,"sender_not_allowed":403,"sender_key_type":403,"adopt_key_refused":403,"no_such_mailbox":404,"no_such_message":404,"not_revoked":404,"conflict":409,"mailbox_changed":409,"stale_prekey":409,"identity_mode":409,"prekey_expired":409,"request_timeout":408,"revoked":410,"version_retired":410,"precondition_failed":412,"too_large":413,"rate_limited":429,"fetch_paced":429,"refetch_spent":429,"mailbox_full":429,"mailbox_busy":429,"unavailable":503}'      # every code, and its status (PROTOCOL.md §11.3)
 DR_QUOTAS='["polls","pages","calls","sends","renewals","certificates","certificate_revocations","registrations","registrations_range","misses","sends_before_pass","requests"]'      # every limit a rate_limited may name in quota_id (PROTOCOL.md §11.5)
 dr_met(){ # <curl meta> → keeps the earliest Deprecation and Sunset an answer of this command carried, as Unix times, in $DR/met.deprecation and $DR/met.sunset, which the command line prints at its end (dr_said): a Deprecation only as a Structured Field Date, @ and an integer of up to 15 digits with an optional - (RFC 9745 §2.1, RFC 9651 §3.3.7), and a Sunset only as an HTTP-date in its preferred form (RFC 8594, RFC 9110 §5.6.7). Any other value is none, and neither is ever printed as it came (PROTOCOL.md §11.17, §11.3)
   local d n t
@@ -106,10 +108,10 @@ dr_bytes(){ # <answer> <member> <file> → the member's bytes into the file, onl
 }
 dr_stamp(){ jq -nr --argjson t "$1" '$t | strftime("%Y%m%d%H%M%SZ")'; }      # <Unix time> → the time as ssh-keygen takes one, in UTC
 dr_asc(){ printf %s "$1" | od -An -v -tx1 | tr -d ' \n'; }      # <text> → its bytes in hex
-dr_owner(){ # <METHOD> <PATH> [body file] [curl args…] → dr_api as this mailbox: adds its pass. If the server refuses the pass (it ran out sooner by the server's clock, or is under a certificate the server no longer takes), signs another and tries once more. A pass refused twice for its time is the clock: it says what this one reads, beside the server's words
+dr_owner(){ # <METHOD> <PATH> [body file] [curl args…] → dr_api as this mailbox: adds its pass. If the server refuses the pass (it ran out sooner by the server's clock, or the server holds its signer revoked), signs another and tries once more. On certificate_revoked it reads its own mailbox first (dr_own), and a revocation there that verifies stops it (PROTOCOL.md §12.5). A pass refused twice for its time is the clock: it says what this one reads, beside the server's words
   local p; p=$(dr_pass) || return 1
   dr_api "$1" "$2" "${3-}" -H "Authorization: $p" "${@:4}" && return 0
-  case $(dr_code) in unauthorized | pass_expired | certificate_not_current | certificate_revoked) ;; *) return 1 ;; esac
+  case $(dr_code) in unauthorized | pass_expired | certificate_not_current) ;; certificate_revoked) dr_own; dr_finished || { rm -f "$DR/error.json"; return 1; } ;; *) return 1 ;; esac      # what dr_own read is said: the caller's own dr_own has nothing more to say
   rm -f "$DR/pass"; p=$(dr_pass) && dr_api "$1" "$2" "${3-}" -H "Authorization: $p" "${@:4}" && return 0
   dr_clock; return 1
 }
@@ -122,7 +124,7 @@ dr_look(){ # <address> → dr_api GET of a mailbox from this mailbox's server (G
 dr_clock(){ # after a call the server refused: if it refused the pass, or a prekey statement, for its time, says what the server dates its answer and what this machine's clock reads. A new pass does not cure that, so it is nearly always a clock. The date is the server's word: a clock set by a server's lie makes an ended certificate valid again, so this sends its reader to a time source of their own
   local d; case $(dr_code) in pass_expired | prekey_time) ;; *) return 0 ;; esac
   d=$(dr_dated) && d="the server dates its answer $d, and "
-  dr_err "${d}this machine's clock reads $(jq -nr --argjson t "$(dr_now)" '$t | todate'). A server refuses a pass from a clock 10 minutes or more behind its own, or more than 50 ahead, a certificate made by a clock more than 50 ahead, and a prekey statement dated more than an hour ahead of it. Check this machine's clock against a time source you trust, not against the server"
+  dr_err "${d}this machine's clock reads $(jq -nr --argjson t "$(dr_now)" '$t | todate'). A server refuses a pass from a clock 10 minutes or more behind its own, or more than 50 ahead, and a prekey statement dated more than an hour ahead of it. Check this machine's clock against a time source you trust, not against the server"
 }
 dr_server(){ # <URL> → the server's name, as a pass names it: the URL's host, lowercase, and its port only when that is not the scheme's default, as an origin is written (PROTOCOL.md §8): the port as a number, and none for https on 443 or http on 80. A user and an @ before the host are no part of it, as Go's url.Parse has it
   local s=${1%%://*} h=${1#*://} p=
@@ -140,16 +142,16 @@ dr_tls(){ # <URL> → 0 when it is a server this mailbox may call: https, or htt
   [[ ${1,,} = https://?* ]] || { [[ ${1,,} = http://?* ]] && dr_here "$1"; } ||
     dr_refuse "$(printf '%.80s' "$1") is not a server this client calls: one is https, or http only to this machine, by its address (127.0.0.0/8, ::1)"
 }
-dr_pass(){ # [serial] → the Authorization value of a call as this mailbox, unless it holds its own revocation (dr_finished). Without a serial: the pass kept in $DR/pass while it has more than 30 seconds left and no more than the ten minutes it was signed for, otherwise a new one, signed by the working key in use and kept. With one: a pass signed by that working key, for the call that publishes its prekey, left in $DR/pass.new until the server has taken it
-  local A n=${1-} na h; A=$(cat "$DR/address") || return 1
+dr_pass(){ # [new] → the Authorization value of a call as this mailbox, signed by its identity, its signer in identity mode (PROTOCOL.md §8), unless it may act as its address no more (dr_finished). Without new: the pass kept in $DR/pass while it has more than 30 seconds left and no more than the ten minutes it was signed for, otherwise a new one, kept. With new: a new pass, for the call that publishes a prekey, left in $DR/pass.new until the server has taken it
+  local A na h; A=$(cat "$DR/address") || return 1
   dr_finished || { dr_done $?; return 1; }
-  if [ -z "$n" ]; then
+  if [ -z "${1-}" ]; then
     na=$(dr_time "$(sed -n 's/.* not_after="\([^"]*\)".*/\1/p' "$DR/pass" 2> /dev/null)") && [ $((na - $(dr_now))) -gt 30 ] && [ $((na - $(dr_now))) -le 600 ] && { cat "$DR/pass"; return; }      # more than ten minutes left: this machine's clock has gone back since it was signed, so a new one, dated by the clock as it is
-    n=$(cat "$DR/serial" 2> /dev/null) || dr_refuse "this mailbox has published no prekey: run init, or rekey for a mailbox restored from its identity" || return 1
+    [ -s "$DR/serial" ] || dr_refuse "this mailbox has published no prekey: run init, or prekey renew for a mailbox restored from its identity" || return 1
   fi
   h=$(dr_server "$DR_SERVER_URL"); na=$(jq -nr --argjson t "$(dr_now)" '$t + 600 | todate')      # who is calling, which server, and until when: ten minutes
-  printf 'dromas-pass-v1\n%s\n%s\n%s\n' "$A" "$h" "$na" | ssh-keygen -q -Y sign -n "dromas-pass-v1:$A" -f "$DR/work/$n-cert.pub" > "$DR/pass.sig" 2> /dev/null ||
-    dr_refuse "this mailbox cannot sign a pass with working key $n: rekey makes a new working key, certificate and prekey" || return 1
+  printf 'dromas-pass-v1\n%s\n%s\n%s\n' "$A" "$h" "$na" | ssh-keygen -q -Y sign -n "dromas-pass-v1:$A" -f "$DR/identity" > "$DR/pass.sig" 2> /dev/null ||
+    dr_refuse "this mailbox's identity did not sign a pass" || return 1
   printf 'dromas-pass address="%s", not_after="%s", signature="%s"\n' "$A" "$na" "$(dr_b64 "$DR/pass.sig")" > "$DR/pass.new" || return 1
   [ -n "${1-}" ] || mv "$DR/pass.new" "$DR/pass" || return 1
   cat "$DR/pass${1:+.new}"
@@ -169,7 +171,7 @@ dr_lock(){ # <command> [args] → runs that dr_ command with $DR/lock, the mailb
 }
 dr_ownmailbox(){ [ ! -e "$DR/state" ] || dr_refuse "$DR holds a state file: it is a mailbox of the Go client, which this script never runs, since the two keep their records apart and would undo each other's: set DR_HOME to a directory of this script's own"; }      # whether $DR is a mailbox of this script's, by the one file only the Go client makes
 dr_held(){ [ "${DR_HELD-}" = "$DR" ]; }      # whether this shell holds this mailbox's lock: a command another command runs works under its caller's
-dr_dirs(){ mkdir -p "$DR/work" "$DR/prekeys" "$DR/peers" "$DR/inbox" "$DR/refused" "$DR/sent"; }      # the mailbox's directories, made where they are missing, as the Go client's Open makes them: by init, and by every command that writes the mailbox (dr_lock)
+dr_dirs(){ mkdir -p "$DR/prekeys" "$DR/peers" "$DR/inbox" "$DR/refused" "$DR/sent"; }      # the mailbox's directories, made where they are missing, as the Go client's Open makes them: by init, and by every command that writes the mailbox (dr_lock)
 dr_identity(){ # → identity.pub, identity.doc and address, the identity as the mailbox's other files name it: identity.pub made again from the identity where it is missing or empty, then the document and its address, its SHA-384, each written beside and moved into place only where its bytes differ (dr_put), as the Go client's Open writes them. So a mailbox restored from its identity alone gets all three, init run again rewrites nothing a command beside it reads, and a crash leaves no file empty
   local a
   [ -s "$DR/identity.pub" ] || { ssh-keygen -y -f "$DR/identity" < /dev/null > "$DR/id.pub" && dr_put "$DR/id.pub" "$DR/identity.pub"; } || dr_refuse "ssh-keygen cannot read this mailbox's identity, $DR/identity, to make identity.pub" || return 1
@@ -180,45 +182,35 @@ dr_identity(){ # → identity.pub, identity.doc and address, the identity as the
 }
 
 # recipe: keys and registration
-dr_work(){ # <serial> → work/<serial>, .pub and -cert.pub: a NEW working key, and the certificate this mailbox's identity gives it, with that serial, good from an hour ago for 64 days: the 31 it signs messages for, the longest month, and the 33 the last of them may wait. The working key signs what the mailbox says; the identity signs certificates and nothing else
-  local A w="$DR/work/$1" t; A=$(cat "$DR/address") || return 1; mkdir -p "$DR/work" || return 1
-  [ -s "$w" ] && [ -s "$w-cert.pub" ] && return 0
-  rm -f "$w" "$w.pub" "$w-cert.pub"; t=$(dr_now)
-  ssh-keygen -q -t ed25519 -N '' -C '' -f "$w" < /dev/null &&
-  ssh-keygen -q -s "$DR/identity" -I dromas-cert-v1 -n "$A" -z "$1" -V "$(dr_stamp $((t - 3600))):$(dr_stamp $((t + 64*86400)))" -O clear "$w.pub"      # one principal, the address; no option and no extension. It starts an hour back, as -V -1h:+64d dates one, so that a verifier whose clock is behind this one takes it at once
-}
 dr_lifetime(){ # → the seconds each new prekey of this mailbox is valid for: what its prekey-lifetime file names, a number of seconds alone on its line from 97200 (a day and three hours) to 2851200 (33 days), or 2851200 when it has none. A file that names anything else is a refusal, never the default: no prekey is signed until it is put right (PROTOCOL.md §12.4)
   local l; [ -e "$DR/prekey-lifetime" ] || { echo 2851200; return 0; }
   l=$(cat "$DR/prekey-lifetime" 2> /dev/null) && [[ $l =~ ^[1-9][0-9]{0,9}$ ]] && { printf '%s\n' "$l" | cmp -s - "$DR/prekey-lifetime" || printf '%s' "$l" | cmp -s - "$DR/prekey-lifetime"; } && [ "$l" -ge 97200 ] && [ "$l" -le 2851200 ] && echo "$l" ||      # compared with itself rebuilt: $(…) drops line feeds and NULs
     dr_refuse "this mailbox's prekey-lifetime file names no lifetime: one is a number of seconds, alone on its line, from 97200 (a day and three hours) to 2851200 (33 days)"
 }
-dr_prekey(){ # <serial> → prekeys/<serial>.agekey and its statement, signed by a NEW working key (dr_work): a NEW key, valid for the mailbox's prekey lifetime (dr_lifetime), and prekeys/<serial>.made, when it was signed: a statement an earlier attempt left is sent again only while it was made for no longer than the mailbox's lifetime (dr_renew). A re-run reuses the key a failed attempt left, unless it is empty
+dr_prekey(){ # <serial> → prekeys/<serial>.agekey and its statement, signed by this mailbox's identity: a NEW key, valid for the mailbox's prekey lifetime (dr_lifetime), and prekeys/<serial>.made, when it was signed: a statement an earlier attempt left is sent again only while it was made for no longer than the mailbox's lifetime (dr_renew). A re-run reuses the key a failed attempt left, unless it is empty
   local A p="$DR/prekeys/$1" l t k; A=$(cat "$DR/address") || return 1
   [ -s "$p.txt.sig" ] && return 0
-  dr_finished || { dr_done $?; return 1; }      # the one path to this mailbox's certificates and statements: a mailbox that holds its own revocation makes neither, init and prekey renew alike
+  dr_finished || { dr_done $?; return 1; }      # the one path to this mailbox's statements: a mailbox that may act as its address no more makes none, init and prekey renew alike
   l=$(dr_lifetime) || return 1
   [ -s "$p.agekey" ] || { rm -f "$p.agekey"; age-keygen -pq -o "$p.agekey" 2> /dev/null; } || dr_refuse "age-keygen failed: a post-quantum key needs age >= 1.3" || return 1      # an empty key file, as a crash before the sync below leaves one, is no key, and no statement names it, so it is made again, as the Go client does
   k=$(age-keygen -y "$p.agekey" 2> /dev/null) || dr_refuse "age-keygen cannot read $p.agekey, the key this mailbox began prekey $1 with (a post-quantum one needs age >= 1.3)" || return 1      # never a statement with no key in it, which a server refuses at every try
-  dr_work "$1" && t=$(dr_now) || return 1
+  t=$(dr_now)
   printf 'dromas-prekey-v1\n%s\n%s\n%s\n%s\n' "$A" "$1" "$k" "$(jq -nr --argjson t "$t" --argjson l "$l" '$t + $l | todate')" > "$p.txt" &&
   jq -nr --argjson t "$t" '$t | todate' > "$p.made" &&      # before the signature: a statement is signed once its record is there
-  ssh-keygen -q -Y sign -n "dromas-prekey-v1:$A" -f "$DR/work/$1-cert.pub" < "$p.txt" > "$p.txt.sig" &&      # stdin to stdout: never a stale .sig
-  sync "$DR/work/$1" "$DR/work/$1.pub" "$DR/work/$1-cert.pub" "$DR/work" && sync "$p.agekey" "$p.txt" "$p.made" "$p.txt.sig" "$DR/prekeys"      # the working key first, each file in turn: a signed statement is never on disk without the key its pass needs      # on disk before any upload publishes the statement: a key lost to a crash after that is a message nobody can read
+  ssh-keygen -q -Y sign -n "dromas-prekey-v1:$A" -f "$DR/identity" < "$p.txt" > "$p.txt.sig" &&      # stdin to stdout: never a stale .sig
+  sync "$p.agekey" "$p.txt" "$p.made" "$p.txt.sig" "$DR/prekeys"      # on disk before any upload publishes the statement: a key lost to a crash after that is a message nobody can read
 }
-dr_init(){ # → creates this mailbox, or finishes a half-done init, and registers it; prints its address and link. The registration carries a pass the new working key signs, so the mailbox is in use at once
+dr_init(){ # → creates this mailbox, or finishes a half-done init, and registers it, in identity mode; prints its address and link. The registration carries a pass its identity signs, so the mailbox is in use at once
   dr_ownmailbox || return 1
   dr_dirs && dr_putline "$DR/.gitignore" '*' || return 1      # the mailbox ignores itself, wherever it is
   [ -s "$DR/identity" ] || { rm -f "$DR/identity" "$DR/identity.pub"; ssh-keygen -q -t ed25519 -N '' -C '' -f "$DR/identity" < /dev/null; } || return 1      # an empty identity, as a crash before the sync below leaves one, is no key, and nothing was registered with it, so it is made again, as the Go client does
   if dr_held; then dr_identity; else dr_lock true; fi && sync "$DR/identity" "$DR/identity.pub" "$DR" || return 1      # identity.doc and address made under the mailbox's lock, as every command that writes the mailbox makes them (dr_lock): a command beside init reads them. The identity on disk before it is registered
   [ ! -s "$DR/serial" ] || { dr_addr; return; }      # registered already
-  local A n p h c; A=$(cat "$DR/address")
-  n=$(ls "$DR/prekeys" | sed -n 's/\.agekey$//p; s/\.txt\.sig$//p' | sort -n | tail -n 1); [ -n "$n" ] || n=$(dr_now); [ "$n" -ge 1 ] || n=1; p="$DR/prekeys/$n"      # the mailbox's first prekey, working key and certificate take their number as every later one does, from this machine's clock in seconds (dr_renew): a second machine handed the same identity then makes no certificate of a serial this one used. An attempt that got as far as a key keeps the number it took, so a registration whose answer was lost is sent again as it was
-  if c=$(dr_cert "$p.txt.sig" "$DR/identity.doc" "$A" 2> /dev/null) && c=${c#* } && [ "${c% *}" -gt $(($(dr_now) - 3600)) ]; then      # a first statement an earlier attempt left, under a certificate that began less than an hour before this machine's clock: made while the clock read ahead of where it reads now, as a pass made then is not used either (PROTOCOL.md §12.4), so a reader whose clock a server takes may not have reached its start. The working key, its certificate and the statement are made again. The prekey's own key stays: a server may have taken a registration whose answer was lost, and then messages may be waiting that only this key opens
-    rm -f "$p.txt" "$p.made" "$p.txt.sig" "$DR/work/$n" "$DR/work/$n.pub" "$DR/work/$n-cert.pub" "$DR/pass.new"
-  fi
+  local A n p h; A=$(cat "$DR/address")
+  n=$(ls "$DR/prekeys" | sed -n 's/\.agekey$//p; s/\.txt\.sig$//p' | sort -n | tail -n 1); [ -n "$n" ] || n=$(dr_now); [ "$n" -ge 1 ] || n=1; p="$DR/prekeys/$n"      # the mailbox's first prekey takes its number as every later one does, from this machine's clock in seconds (dr_renew). An attempt that got as far as a key keeps the number it took, so a registration whose answer was lost is sent again as it was
   dr_prekey "$n" || return 1
   jq -n --arg i "$(dr_b64 "$DR/identity.doc")" --arg p "$(dr_b64 "$p.txt")" --arg s "$(dr_b64 "$p.txt.sig")" --argjson k "$(dr_senders)" '{identity:$i, prekey:$p, prekey_signature:$s, sender_key_types:$k}' > "$DR/register.json"
-  h=$(dr_pass "$n") && { dr_api PUT "/v1/$A" "$DR/register.json" -H "Authorization: $h" > /dev/null || { dr_clock; dr_own; false; }; } && mv "$DR/pass.new" "$DR/pass" && dr_putline "$DR/serial" "$n" && dr_addr
+  h=$(dr_pass new) && { dr_api PUT "/v1/$A" "$DR/register.json" -H "Authorization: $h" > /dev/null || { dr_clock; dr_own; false; }; } && mv "$DR/pass.new" "$DR/pass" && dr_putline "$DR/serial" "$n" && dr_addr
 }
 dr_addr(){ local a; dr_held || { [ -s "$DR/identity" ] && [ -s "$DR/address" ]; } || { dr_lock dr_addr; return; }; a=$(cat "$DR/address") && dr_out mailbox --arg address "$a" --arg link "$DR_SERVER_URL/to/$a"; }      # the mailbox's address and its link: what to give whoever should write to it. Read with no lock; with no mailbox, dr_lock's refusal, and a mailbox restored from its identity alone has its files made under the lock first (dr_identity), as the Go client's Open makes them
 dr_dest(){ # <link or address> → the address: 77 characters of lowercase base32, or taken from a link to this mailbox's server, $DR_SERVER_URL/to/<address>
@@ -288,7 +280,7 @@ dr_sshsig(){ # <signature file> → 0 only for a signature dr_blob reads that is
   x=$(dr_blob "$1") && [[ ${x:0:20} =~ ^5353485349470000000[01]$ ]] || return 1      # "SSHSIG", version 0 or 1
   dr_str && k=$v && dr_str && dr_str && dr_str && dr_str && dr_s "$v" && [ "$o" -eq "${#x}" ]      # the signing key, the namespace, reserved, the hash, the signature: and nothing after
 }
-dr_cert(){ # <signature> <identity document> <address> → "<serial> <valid after> <valid before>", as Unix times, for the certificate the signature carries, only if it is in its one form (below) and names that identity as its signer. Its fields are read from its bytes, in order: ssh-keygen -Y verify takes a certificate with a critical option, or with extensions out of their order, and checks no key id. Whether the identity's signature on it is good, and whether it holds now, are dr_certified's
+dr_cert(){ # <signature> <identity document> <address> → "<serial> <valid after> <valid before>", as Unix times, for the certificate the signature carries, only if it is in its one form (below, PROTOCOL.md §5.2) and names that identity as its signer. Its fields are read from its bytes, in order: ssh-keygen -Y verify takes a certificate with a critical option, or with extensions out of their order, and checks no key id. Whether the identity's signature on it is good, and whether it holds now, are dr_signed's
   local x o=20 l v k n a b      # x: the bytes being read, in hex; o: how far into them; v: the field just read
   dr_sshsig "$1" || return 1; x=$k; o=0      # the signing key: here, the certificate
   dr_str && [ "$v" = "$(dr_asc ssh-ed25519-cert-v01@openssh.com)" ] || return 1      # a certificate for an Ed25519 key
@@ -298,10 +290,10 @@ dr_cert(){ # <signature> <identity document> <address> → "<serial> <valid afte
   [ "${x:o:8}" = 00000001 ] || return 1; o=$((o + 8))      # a user certificate
   dr_str && [ "$v" = "$(dr_asc dromas-cert-v1)" ] || return 1      # the key id
   dr_str && [ "$v" = "$(printf %08x ${#3})$(dr_asc "$3")" ] || return 1      # exactly one principal: the address
-  dr_u64 && a=$v && dr_u64 && b=$v || return 1      # valid after, valid before
+  dr_u64 && a=$v && dr_u64 && b=$v && [ "$a" -le 253402300799 ] && [ "$b" -le 253402300799 ] || return 1      # valid after, valid before: each at or before 9999-12-31T23:59:59Z, so forever is refused for its form, never as not begun or not ended
   dr_str && [ -z "$v" ] || return 1      # no critical option: one a verifier does not know is refused, and none is known here
   dr_str && dr_exts "$v" && dr_str || return 1      # the extensions, each ignored, as one a verifier does not know is; then reserved, whatever it holds, ignored too
-  dr_str && [ "$v" = "$(sed -n 2p "$2" | cut -d' ' -f2 | base64 -d | od -An -v -tx1 | tr -d ' \n')" ] && [ "$v" != "0000000b$(dr_asc ssh-ed25519)00000020$k" ] || return 1      # signed by the identity's key, byte for byte, which is never the working key
+  dr_str && [ "$v" = "$(dr_idkey "$2")" ] && [ "$v" != "0000000b$(dr_asc ssh-ed25519)00000020$k" ] || return 1      # signed by the identity's key, byte for byte, which is never the key certified: SSHSIG signs no signing key, so the identity's own signature, wrapped in a certificate of the identity's key above the trip, would otherwise be taken where the identity's own is refused (PROTOCOL.md §5.2)
   dr_str && dr_s "$v" && [ "$o" -eq "${#x}" ] || return 1      # the identity's signature on it, and nothing after
   echo "$n $a $b"
 }
@@ -315,13 +307,32 @@ dr_exts(){ # dr_cert's: <a certificate's extensions, in hex> → 0 only for them
 }
 dr_str(){ [[ ${x:o:8} =~ ^[0-9a-f]{8}$ ]] || return 1; l=$((16#${x:o:8} * 2)); [ $((o + 8 + l)) -le ${#x} ] || return 1; v=${x:o+8:l}; o=$((o + 8 + l)); }      # dr_cert's: the next length-prefixed string of x, in hex, into v
 dr_u64(){ [[ ${x:o:16} =~ ^[0-7][0-9a-f]{15}$ ]] || return 1; v=$((16#${x:o:16})); o=$((o + 16)); }      # dr_cert's: the next 64-bit number of x into v. One with its top bit set is no time and no serial here
-dr_certified(){ # <address> <identity document> <namespace> <signature> <message> [at] → "<certificate serial> <its valid before>" only for a signature by a working key under a certificate of that identity that holds at the time given (now, without one): begun, not ended, and ending at most 64 days and an hour on. 1 otherwise; 2 when all that fails is that it has ended, 3 that it has not begun. A signature by the identity itself, or by a key with no certificate, is refused
+dr_idkey(){ sed -n 2p "$1" | cut -d' ' -f2 | base64 -d | od -An -v -tx1 | tr -d ' \n'; }      # <identity document> → its key as the SSH wire writes it, in hex: what a signature by the identity itself carries as its signing key, byte for byte
+dr_rank(){ # <signature> <identity document> <address> → the rank of its signer (PROTOCOL.md §5), read from the SSHSIG blob: 0 for the identity's own key, byte for byte, and the serial of a certificate of that identity in its one form (dr_cert). 1 for a signing key of neither form, a bare working key among them. Whether the signature verifies is dr_signed's
+  local x k r
+  dr_sshsig "$1" || return 1
+  [ "$k" != "$(dr_idkey "$2")" ] || { echo 0; return 0; }
+  r=$(dr_cert "$1" "$2" "$3") && echo "${r%% *}"
+}
+dr_signed(){ # <address> <identity document> <namespace> <signature> <message> [at] → the rank of its signer (dr_rank), only for a signature by that identity's own key, or by a working key under a certificate of it that holds at the time given (now, without one): begun and not ended. 1 otherwise; 2 when all that fails is that the certificate has ended, 3 that it has not begun. Whether the address's mode takes that signer is dr_mode's
   local A=$1 r n a b t=${6:-$(dr_now)}
-  dr_bound "$4" "$2" && r=$(dr_cert "$4" "$2" "$A") || return 1; read -r n a b <<< "$r"
-  printf '%s cert-authority %s\n' "$A" "$(sed -n 2p "$2")" > "$DR/signers"      # ONE line, built from checked bytes: only a certificate this identity signed, for this address
-  ssh-keygen -Y verify -f "$DR/signers" -I "$A" -n "$3" -s "$4" -O verify-time="$(dr_stamp $((a > 0 ? a : 1)))" < "$5" > /dev/null 2>&1 || return 1      # the two signatures, the identity's on the certificate and the working key's on the message, judged where the certificate begins (a second in, for one that begins at 0: ssh-keygen takes no verify-time of 0); the time is the next line's
-  [ "$a" -le "$t" ] || return 3; [ "$t" -lt "$b" ] || return 2; [ "$b" -le $((t + 64*86400 + 3600)) ] || return 1
-  echo "$n $b"
+  dr_bound "$4" "$2" && n=$(dr_rank "$4" "$2" "$A") || return 1
+  if [ "$n" = 0 ]; then
+    printf '%s %s\n' "$A" "$(sed -n 2p "$2")" > "$DR/signers"      # ONE line, built from checked bytes, chosen by the signing key's form: the identity's own key, with no cert-authority
+    ssh-keygen -Y verify -f "$DR/signers" -I "$A" -n "$3" -s "$4" < "$5" > /dev/null 2>&1 && echo 0; return
+  fi
+  r=$(dr_cert "$4" "$2" "$A") || return 1; read -r n a b <<< "$r"
+  printf '%s cert-authority %s\n' "$A" "$(sed -n 2p "$2")" > "$DR/signers"      # ONE line, the other form's: only a certificate this identity signed, for this address
+  ssh-keygen -Y verify -f "$DR/signers" -I "$A" -n "$3" -s "$4" -O verify-time="$(dr_stamp $((a > 0 ? a : 1)))" < "$5" > /dev/null 2>&1 || return 1      # the two signatures, the identity's on the certificate and the working key's on the message, judged where the certificate begins (a second in, for one that begins at 0: ssh-keygen takes no verify-time of 0); the time is the next line's. A verifier sets no bound on how long one runs (PROTOCOL.md §5.2)
+  [ "$a" -le "$t" ] || return 3; [ "$t" -lt "$b" ] || return 2
+  echo "$n"
+}
+dr_mode(){ # <address> <rank> → 0 when the address's mode, as this mailbox holds it, takes a signer of that rank (PROTOCOL.md §5.1): with no revocation of its certificates held, identity mode, the identity alone, rank 0; with one through N, working-key mode, a rank above N, compared as a number. 1: a rank at or below N, the identity's own among them. 2: a certificate, at an address in identity mode. 3: what is kept does not verify
+  local x; x=$(dr_certskept "$1"); case $? in
+    0) [ "$2" -gt "$x" ] || return 1 ;;
+    1) [ "$2" -eq 0 ] || return 2 ;;
+    *) return 3 ;;
+  esac
 }
 dr_bech32(){ # <string> → its human-readable part, only for a Bech32 string (BIP 173) as age writes a recipient: in lowercase, its checksum good, and its data whole bytes, with fewer than five bits left over and those zero. age takes one of any length, where BIP 173 stops at 90, and so does this. 1 for anything else
   local s=$1 h d cs=qpzry9x8gf2tvdw0s3jn54khce6mua7l v=() i c k m n chk=1 top g=(0x3b6a57b2 0x26508e6d 0x1ea119fa 0x3d4233dd 0x2a1462b3)
@@ -334,19 +345,18 @@ dr_bech32(){ # <string> → its human-readable part, only for a Bech32 string (B
   ((chk == 1 && c < 5 && (k & m) == 0)) || return 1
   printf '%s\n' "$h"
 }
-dr_prekeycheck(){ # <statement> <signature> <address> <identity document> [at] → "<serial> <age recipient> <not_after as Unix time> <certificate serial>" only for five LF-ended lines naming that address, signed by a working key its identity certified, not outliving that certificate, holding a key age will encrypt to; otherwise the reason, and 1. 2, with the reason, for one good in every other way whose key is a well-formed age recipient of a type this script cannot encrypt to: its Bech32 human-readable part begins age and is not the hybrid's age1pq, X25519's age among them. Nothing is wrong with such a statement (PROTOCOL.md §6), so its key's type is the last thing checked
+dr_prekeycheck(){ # <statement> <signature> <address> <identity document> [at] → "<serial> <age recipient> <not_after as Unix time> <its signer's rank>" only for five LF-ended lines naming that address, signed by its identity or by a working key its identity certified (dr_signed), holding a key age will encrypt to; otherwise the reason, and 1. Whether the address's mode takes the signer is the caller's (dr_mode). 2, with the reason, for one good in every other way whose key is a well-formed age recipient of a type this script cannot encrypt to: its Bech32 human-readable part begins age and is not the hybrid's age1pq, X25519's age among them. Nothing is wrong with such a statement (PROTOCOL.md §6), so its key's type is the last thing checked
   local p=$1 B=$3 s k na c L
-  c=$(dr_certified "$B" "$4" "dromas-prekey-v1:$B" "$2" "$p" ${5-}); case $? in 0) ;;
+  c=$(dr_signed "$B" "$4" "dromas-prekey-v1:$B" "$2" "$p" ${5-}); case $? in 0) ;;
     2) echo "$B's prekey: the certificate the prekey is signed under has ended"; return 1 ;;
     3) echo "$B's prekey: the certificate the prekey is signed under has not begun, by the clock that checked it"; return 1 ;;
-    *) echo "$B's prekey is not signed by a working key its identity certified, under a certificate that holds now"; return 1 ;;
+    *) echo "$B's prekey is not signed by its identity, or by a working key its identity certified under a certificate that holds now"; return 1 ;;
   esac
   mapfile -t L < "$p"
   [ "$(printf '%s\n' "${L[@]}" | sha256sum)" = "$(sha256sum < "$p")" ] && [ ${#L[@]} -eq 5 ] && [ "${L[0]}" = dromas-prekey-v1 ] && [ "${L[1]}" = "$B" ] ||      # the file against itself rebuilt from its lines: every line ends in LF, and nothing is in it that a shell variable drops (a NUL)
     { echo "the prekey statement is not $B's: five lines, each ending in LF"; return 1; }
   s=${L[2]}; [[ $s =~ ^[1-9][0-9]{0,15}$ ]] && [ "$s" -le 9007199254740991 ] || { echo "$B's prekey serial is malformed"; return 1; }      # from 1 to 2^53 - 1, as every serial is written
   na=$(dr_time "${L[4]}") || { echo "$B's prekey has no valid not_after"; return 1; }
-  [ "$na" -le "${c#* }" ] || { echo "$B's prekey statement outlives the certificate it is signed under"; return 1; }
   k=${L[3]}
   case $(dr_bech32 "$k") in      # the key's type is its human-readable part, read before age is: age 1.3 encrypts to more types than the protocol defines, and to an SSH key
     age1pq) if ! age -r "$k" < /dev/null > /dev/null 2>&1; then
@@ -355,10 +365,10 @@ dr_prekeycheck(){ # <statement> <signature> <address> <identity document> [at] �
     age*) echo "$B's prekey is an age recipient of a type this script cannot encrypt to, so nothing is sent"; return 2 ;;
     *) echo "$B's prekey is not an age key that age will encrypt to"; return 1 ;;
   esac
-  echo "$s $k $na ${c% *}"
+  echo "$s $k $na $c"
 }
-dr_resolve(){ # <address> [the mailbox dr_lookup read] → prints "<serial> <age recipient> <certificate serial>" only when EVERY check passes; otherwise there is nothing to encrypt to. The identity is the pinned one, or at first contact the served one, kept only once its prekey statement has verified. Without a mailbox read for it, it reads one, and keeps what verifies of the revocation of certificates it carries before the statement is checked against it
-  local B=$1 d="$DR/peers/$1" f r s k na c sc
+dr_resolve(){ # <address> [the mailbox dr_lookup read] → prints "<serial> <age recipient> <its signer's rank> <the statement's SHA-256>" only when EVERY check passes; otherwise there is nothing to encrypt to. The identity is the pinned one, or at first contact the served one, kept only once its prekey statement has verified. Without a mailbox read for it, it reads one, and keeps what verifies of the revocation of certificates it carries before the statement is checked against it
+  local B=$1 d="$DR/peers/$1" f r s k na c sc h
   dr_isaddr "$B" || dr_refuse "not an address" || return 1
   dr_gone "$B"; case $? in      # a peer this mailbox holds a revocation of is refused before anything is asked, whatever the server now serves for it
     0) dr_err "REVOKED: $B is revoked, for good, and the revocation verifies: ask its owner for their new address"; return 1 ;;
@@ -385,16 +395,18 @@ dr_resolve(){ # <address> [the mailbox dr_lookup read] → prints "<serial> <age
     *) dr_refuse "$r"; return 1 ;;
   esac
   read -r s k na c <<< "$r"
-  sc=$(cat "$d/cert-serial" 2> /dev/null || echo 0)      # a mailbox's statements are ordered by their certificate first, then by their own serial: a later certificate outranks any serial under an earlier one, so a mailbox that moved to a new certificate is followed whatever serial it publishes
-  [ "$c" -ge "$sc" ] || dr_refuse "rollback: $B's prekey is signed under certificate $c, below one already seen" || return 1
+  sc=$(cat "$d/rank" 2> /dev/null || echo 0)      # a mailbox's statements are ordered by (c, p), their signer's rank first, then their own serial (PROTOCOL.md §5.3): a later signer outranks any serial under an earlier one, so a mailbox that moved to a new certificate is followed whatever serial it publishes
+  [ "$c" -ge "$sc" ] || dr_refuse "rollback: $B's prekey is signed by a signer of rank $c, below one already seen" || return 1
   [ "$c" -gt "$sc" ] || [ "$s" -ge "$(cat "$d/serial" 2> /dev/null || echo 0)" ] || dr_refuse "rollback: $B's prekey serial $s is below one already seen" || return 1
-  dr_certrevoked "$B" "$c"; case $? in      # by what this mailbox holds: only the identity's own signature revokes a certificate
-    0) dr_refuse "$B's prekey is signed under a certificate its identity has revoked: its owner must publish a new one"; return 1 ;;
+  dr_mode "$B" "$c"; case $? in      # by what this mailbox holds, which the read above kept: only the identity's own signature moves an address to working-key mode, or revokes a signer
+    1) if [ "$c" = 0 ]; then dr_refuse "$B's prekey is signed by its identity, and $B is in working-key mode, where its identity's own signature is revoked: its owner must publish a new one"; else dr_refuse "$B's prekey is signed under a certificate its identity has revoked: its owner must publish a new one"; fi; return 1 ;;
+    2) dr_refuse "$B's prekey is signed under a certificate, and $B is in identity mode, where its identity signs and no certificate is taken"; return 1 ;;
     3) dr_refuse "the revocation of certificates kept for $B does not verify"; return 1 ;;
   esac
   [ "$na" -gt "$(dr_now)" ] || dr_refuse "$B's prekey has expired: its owner must publish a new one" || return 1
-  dr_meet "$B" "$f" && dr_putline "$d/serial" "$s" && dr_putline "$d/cert-serial" "$c" && dr_put "$DR/peer.txt" "$d/prekey.txt" && dr_put "$DR/peer.sig" "$d/prekey.sig" || return 1      # recorded only after every check passed
-  echo "$s $k $c"
+  h=$(sha256sum < "$DR/peer.txt" | cut -c1-64) && dr_hex "$h" || return 1      # the statement's bytes as served, never its signature, which another encoding of an ECDSA signature changes (PROTOCOL.md §11.10)
+  dr_meet "$B" "$f" && dr_putline "$d/serial" "$s" && dr_putline "$d/rank" "$c" && dr_put "$DR/peer.txt" "$d/prekey.txt" && dr_put "$DR/peer.sig" "$d/prekey.sig" || return 1      # recorded only after every check passed
+  echo "$s $k $c $h"
 }
 dr_put(){ local d; d=$(dirname "$2") && cp "$1" "$2.new" && sync "$2.new" && mv "$2.new" "$2" && sync "$d"; }      # <file> <path> → <path> holds the file's bytes, on disk before this returns: written beside it, synced, moved into place, and its directory synced, as the Go client's writeFile does. A crash leaves the old file or the new one, never an empty one
 dr_putline(){ local d; d=$(dirname "$1") && printf '%s\n' "$2" > "$1.new" && sync "$1.new" && mv "$1.new" "$1" && sync "$d"; }      # <path> <value> → dr_put of the value alone on its line
@@ -430,11 +442,6 @@ dr_certskept(){ # <address> → the serial through which this mailbox holds that
   [ -e "$f" ] || return 1
   dr_shape "$f" record && dr_bytes "$f" revoked_certificates "$DR/kept.certs" && dr_bytes "$f" revoked_certificates_signature "$DR/kept.csig" &&
     dr_certscheck "$1" "$d" "$DR/kept.certs" "$DR/kept.csig" || return 3
-}
-dr_certrevoked(){ # <address> <certificate serial> → 0 if the address's identity has revoked the certificate, by what this mailbox holds. 1 if nothing is kept, or what is kept runs below it. 3 if what is kept does not verify
-  local x
-  x=$(dr_certskept "$1") || return
-  [ "$2" -le "$x" ]
 }
 dr_keepcerts(){ # <address> <identity document> <statement> <signature> → keeps the revocation of the address's certificates, if it verifies and runs through a higher serial than the one this mailbox holds: the highest stands, and a certificate once revoked stays so. One that does not verify, or runs no higher, changes nothing. 1 only for a fault of this mailbox
   local f="$DR/peers/$1/revoked-certs.json" v h
@@ -472,7 +479,7 @@ dr_take(){ # <address> → keeps what verifies of $DR/rev.json, a server's answe
   [ "$(dr_record "$DR/rev.json")" = "$1" ] || return 1
   dr_keep "$1" "$DR/rev.doc" "$DR/rev.sig" || return 3
 }
-dr_lookup(){ # <address> → reads the address's mailbox from this mailbox's server (GET /v1/<address>, dr_look), and keeps what verifies of the revocations it carries. A mailbox served carries the revocation of its certificates the server holds, and a revoked address is answered 410 revoked with its record. The mailbox served is left in $DR/mailbox.json, for the seal that follows. 0: this mailbox holds a revocation of the address, and that is final. 1: none: the server served the mailbox, or holds no such mailbox, or said revoked and showed nothing that verifies, which comes to the same: only the identity's own signature revokes. 2: no answer from the mailbox's own server, which is not "none". 3: a fault of this mailbox: what it keeps for the address does not verify, or cannot be written
+dr_lookup(){ # <address> [revocations] → reads the address's mailbox from this mailbox's server (GET /v1/<address>, dr_look), and keeps what verifies of the revocations it carries. A mailbox served carries the revocation of its certificates the server holds, and a revoked address is answered 410 revoked with its record. With revocations, where the server holds no such mailbox, it reads the address's revocations instead (GET /v1/<address>/revocations), which a server keeps with a mailbox there or none (PROTOCOL.md §11.15): a reader's ask at check 7, and a mailbox's of its own (§12.3, §12.5). The mailbox served is left in $DR/mailbox.json, for the seal that follows. 0: this mailbox holds a revocation of the address, and that is final. 1: none: the server served the mailbox, or holds no such mailbox, or said revoked and showed nothing that verifies, which comes to the same: only the identity's own signature revokes. 2: no answer from the mailbox's own server, which is not "none". 3: a fault of this mailbox: what it keeps for the address does not verify, or cannot be written
   local r
   rm -f "$DR/mailbox.json"
   dr_gone "$1"; case $? in 0) return 0 ;; 3) return 3 ;; esac
@@ -480,26 +487,49 @@ dr_lookup(){ # <address> → reads the address's mailbox from this mailbox's ser
     jq -c '{identity, revoked_certificates, revoked_certificates_signature}' "$DR/mailbox.json" > "$DR/rev.json" && dr_take "$1"; r=$?; [ $r = 1 ] || return $r
   else case $(dr_code) in
     revoked) dr_takerecord "$1"; r=$?; [ $r = 1 ] || return $r ;;      # the record it carries proves itself, or counts as nothing shown
-    no_such_mailbox) ;;
+    no_such_mailbox) [ -z "${2-}" ] || { dr_revocations "$1"; return; } ;;
     *) cat "$DR/read.err" >&2; return 2 ;; esac; fi      # no answer: its error line, the status, the code and the wait, and none of the server's words
+  return 1
+}
+dr_revocations(){ # <address> → reads the address's revocations from this mailbox's server (GET /v1/<address>/revocations) and keeps what verifies: dr_lookup's answer. A record that is no record is no answer; not_revoked, and revoked with nothing that verifies, are none
+  local r w=$1; [ "$1" != "$(cat "$DR/address" 2> /dev/null)" ] || w="this mailbox"
+  if dr_api GET "/v1/$1/revocations" > "$DR/rev.json" 2> "$DR/read.err"; then dr_isrecord "$DR/rev.json" || { dr_refuse "the server's answer for $w's revocations is not one this client reads: a record, each byte field base64"; return 2; }      # a 2xx that is no record is no answer, as one that is no JSON is
+    dr_take "$1"; return
+  fi
+  case $(dr_code) in
+    revoked) dr_takerecord "$1"; r=$?; [ $r = 1 ] || return $r ;;
+    not_revoked) ;;
+    *) cat "$DR/read.err" >&2; return 2 ;;
+  esac
   return 1
 }
 dr_takerecord(){ # <address> → keeps what verifies of the record a 410 revoked carries, in $DR/error.json: dr_take's answer, or 1 where it carries no record
   jq -ce '.record | objects' "$DR/error.json" > "$DR/rev.json" 2> /dev/null && dr_isrecord "$DR/rev.json" || return 1
   dr_take "$1"
 }
-dr_finished(){ # → 0 while this mailbox may act as its address. 1: it holds its own revocation, which verifies, and signs nothing more as that address, no pass, no message and no certificate, whatever any server answers: a server that never saw the revocation would take it all (PROTOCOL.md §12.5). It still asks, keeps and publishes the record, which carry no pass. 3: the one it keeps does not verify, a fault of this mailbox, which stops the same
-  dr_gone "$(cat "$DR/address" 2> /dev/null)"; case $? in 1) return 0 ;; 0) return 1 ;; *) return 3 ;; esac
+dr_finished(){ # → 0 while this mailbox may act as its address. 1: it holds its own revocation, which verifies, and signs nothing more as that address, no pass, no message and no statement, whatever any server answers: a server that never saw the revocation would take it all (PROTOCOL.md §12.5). It still asks and keeps records, which carry no pass. 4: it holds a revocation of its own certificates, a trip, which verifies: its address is in working-key mode, where its identity's own signature is revoked (PROTOCOL.md §5.1), and this script, whose mailbox is in identity mode and makes no trip, signs nothing more. 3: one it keeps does not verify, a fault of this mailbox, which stops the same
+  local A; A=$(cat "$DR/address" 2> /dev/null)
+  dr_gone "$A"; case $? in 1) ;; 0) return 1 ;; *) return 3 ;; esac
+  dr_certskept "$A" > /dev/null; case $? in 1) return 0 ;; 0) return 4 ;; *) return 3 ;; esac
 }
 dr_done(){ # <what dr_finished returned> → says on stderr why this mailbox acts as its address no more
   case $1 in
     1) dr_err "REVOKED: this mailbox's own address is revoked, for good, and the revocation verifies. It can send and receive nothing more: make a new mailbox and give its address to those who write to this one" ;;
-    *) dr_refuse "this mailbox's own revocation (revoked.sig) does not verify: a fault of this mailbox, which acts as its address no more until it is put right" ;;
+    4) if [ -s "$DR/serial" ]; then      # a mailbox that has published a statement of its own made every one in identity mode, and this script makes no trip: so another did, with its identity (PROTOCOL.md §12.5)
+         dr_refuse "this mailbox holds a revocation of its own certificates that its identity signed and this mailbox did not make, so its identity is in other hands: the address is in working-key mode, and this mailbox signs nothing more. Revoke the address (the Go client's dromas revocation publish, with the address in full), which ends it for good, and give those who write to this one a new mailbox's address"
+       else      # one that has published none, a mailbox restored from its identity, takes the trip as its mode (PROTOCOL.md §12.5): a mode this script does not sign in
+         dr_refuse "this mailbox's address is in working-key mode, by a revocation of its certificates its identity signed, and this script signs in identity mode only: run this mailbox's identity with the Go client"
+       fi ;;
+    *) dr_refuse "a revocation this mailbox keeps of its own (revoked.sig or revoked-certs.json) does not verify: a fault of this mailbox, which acts as its address no more until it is put right" ;;
   esac
   return 1
 }
-dr_own(){ # after a call as this mailbox failed: if the server said this mailbox is revoked, asks it for the revocation, and says which it is. A server's word revokes nothing
-  [ "$(dr_code)" = revoked ] || return 0
+dr_own(){ # after a call as this mailbox failed: if the server said this mailbox is revoked, asks it for the revocation, and says which it is. If it said its signer is (certificate_revoked), reads its own mailbox, or its revocations where the server holds no mailbox for it, and keeps what verifies, which may stop it (dr_finished, PROTOCOL.md §12.5). A server's word revokes nothing
+  case $(dr_code) in
+    revoked) ;;
+    certificate_revoked) dr_lookup "$(cat "$DR/address")" revocations > /dev/null 2>&1; dr_finished || dr_done $?; return 0 ;;
+    *) return 0 ;;
+  esac
   if dr_lookup "$(cat "$DR/address")"; then dr_err "REVOKED: this mailbox's own address is revoked, for good, and the revocation verifies. It can send and receive nothing more: make a new mailbox and give its address to those who write to this one"
   else dr_err "the server showed no revocation of this mailbox that verifies, so this mailbox does not take itself as revoked"; fi
 }
@@ -528,35 +558,27 @@ dr_padding(){ # <message bytes: the envelope's line and its signature> <age reci
   local n=$1 s c; s=$(dr_blocks "$(dr_sealed "$n" "$2")"); c=$((s - $(dr_agehead "$2") - 16))      # what a file of that size has for its chunks, each with its tag
   echo "$((c - 16 * (c > 65552 ? (c + 65551) / 65552 : 1) - n)) $s"
 }
-dr_seal(){ # <address> <envelope stem> [the mailbox dr_lookup read] → what to post: $DR/seal.age, the envelope <stem>.P dated at this post ($DR/seal.P: its sent_at this clock, and nothing else changed, as a signed request's time is when it was signed, made anew for each attempt), signed for that recipient only, by the working key in use, then the line, the signature and the padding encrypted to the recipient's VERIFIED prekey; and $DR/seal.query, the query that names that prekey. It is git's layout for a signed tag: the signed bytes as they are, then the signature block. The envelope is read as its recipient will read it first. A seal is made for one post and never kept: dr_post seals the envelope again for its one retry
-  local B=$1 o=$2 s="$DR/seal" A r k n f t c why ps pc d; rm -f "$s.P" "$s.sig" "$s.age" "$s.query"; A=$(cat "$DR/address") && n=$(cat "$DR/serial") || return 1
+dr_seal(){ # <address> <envelope stem> [the mailbox dr_lookup read] → what to post: $DR/seal.age, the envelope <stem>.P dated at this post ($DR/seal.P: its sent_at this clock, and nothing else changed, as a signed request's time is when it was signed, made anew for each attempt), signed for that recipient only, by this mailbox's identity, then the line, the signature and the padding encrypted to the recipient's VERIFIED prekey; and $DR/seal.query, the query that names that prekey statement. It is git's layout for a signed tag: the signed bytes as they are, then the signature block. The envelope is read as its recipient will read it first. A seal is made for one post and never kept: dr_post seals the envelope again for its one retry
+  local B=$1 o=$2 s="$DR/seal" A r k f t why ps pc ph d; rm -f "$s.P" "$s.sig" "$s.age" "$s.query"; A=$(cat "$DR/address") || return 1
   why=$(dr_envcheck "$o.P" "$A" "$B") && [ "$(wc -l < "$o.P")" -eq 1 ] && [ "$(jq -r .identity "$o.P")" = "$(dr_b64 "$DR/identity.doc")" ] || dr_refuse "the envelope is not one this mailbox made for that address${why:+: $why}" || return 1
   d=$(jq -nr --argjson t "$(dr_now)" '$t | todate') && jq -c --arg d "$d" '.sent_at = $d' "$o.P" > "$s.P" || return 1      # written again by jq, as dr_send wrote it: the script seals only an envelope it has just built
   why=$(dr_envcheck "$s.P" "$A" "$B") && [ "$(wc -l < "$s.P")" -eq 1 ] && jq -e --arg d "$d" --slurpfile w "$o.P" '.sent_at == $d and del(.sent_at) == ($w[0] | del(.sent_at))' "$s.P" > /dev/null 2>&1 ||
     dr_refuse "the envelope does not read back as itself once dated at this post${why:+: $why}" || return 1
-  c=$(dr_cert "$DR/prekeys/$n.txt.sig" "$DR/identity.doc" "$A") && [ $((${c##* } - $(dr_now))) -gt $((33*86400)) ] ||      # the certificate in use: the one this mailbox's published prekey is signed under
-    dr_refuse "this mailbox's certificate ends within 33 days, too soon to sign a message that may wait that long (or it has no working key): rekey makes a new one" || return 1
-  [ "$(cat "$DR/not-made" 2> /dev/null)" != "$n" ] ||      # a statement served in this mailbox's name under that certificate that it did not make (dr_renew)
-    dr_refuse "a prekey statement this mailbox did not make is served in its name under the certificate it signs under, so someone else holds that working key, from a copy of the mailbox's directory, which holds the identity too: no message is signed under it. Revoke the address, unless you know the identity was not copied; prekey renew moves the mailbox to a new certificate" || return 1
-  dr_certrevoked "$A" "${c%% *}"; case $? in      # a certificate this mailbox's own identity has revoked signs no message: every reader that holds the revocation refuses it, whatever this mailbox's server took. That is the remedy's window while its renewal waits (PROTOCOL.md §12.6): the entry waits too
-    0) dr_refuse "this mailbox's identity has revoked the certificate it signs under, so a message signed now would be refused: prekey renew publishes the new one first"; return 1 ;;
-    1) ;;
-    *) dr_refuse "this mailbox's own revocation of its certificates does not verify"; return 1 ;;
-  esac
-  r=$(dr_resolve "$B" "${3-}") && read -r ps k pc <<< "$r" && [ -n "$pc" ] || return 1
-  ssh-keygen -q -Y sign -n "dromas-msg-v1:$B" -f "$DR/work/$n-cert.pub" < "$s.P" > "$s.sig" && tail -n 1 "$s.sig" | cmp -s - <(printf -- '-----END SSH SIGNATURE-----\n') ||
-    dr_refuse "the working key did not sign the message whole: nothing is sent" || return 1      # ssh-keygen does not check its write to stdout: a full disk leaves the file short and exits 0
+  r=$(dr_resolve "$B" "${3-}") && read -r ps k pc ph <<< "$r" && [ -n "$ph" ] || return 1
+  dr_finished || { dr_done $?; return 1; }      # at every signature, as at every pass and statement
+  ssh-keygen -q -Y sign -n "dromas-msg-v1:$B" -f "$DR/identity" < "$s.P" > "$s.sig" && tail -n 1 "$s.sig" | cmp -s - <(printf -- '-----END SSH SIGNATURE-----\n') ||
+    dr_refuse "the identity did not sign the message whole: nothing is sent" || return 1      # ssh-keygen does not check its write to stdout: a full disk leaves the file short and exits 0
   read -r f t <<< "$(dr_padding $(($(wc -c < "$s.P") + $(wc -c < "$s.sig"))) "$k")" && [ -n "$t" ] || return 1
   { cat "$s.P" "$s.sig" && head -c "$f" /dev/zero | tr '\0' .; } | age -r "$k" > "$s.age" || return 1
   [ "$(wc -c < "$s.age")" -eq "$t" ] || { rm -f "$s.age"; dr_refuse "the encrypted message is not the $t bytes its padding was made for: it is not sent at a size that tells its length"; return 1; }
-  printf 'prekey_serial=%s&certificate_serial=%s\n' "$ps" "$pc" > "$s.query"      # the prekey is named by both serials, its own and its certificate's, written as the digits dr_resolve checked. The body is the age file as it is, and no signature is beside it: the server knows the sender from the pass the post carries
+  printf 'statement=%s\n' "$ph" > "$s.query"      # the prekey statement is named by the SHA-256 of its bytes as served, in lowercase hex (dr_resolve; PROTOCOL.md §11.10). The body is the age file as it is, and no signature is beside it: the server knows the sender from the pass the post carries
 }
 dr_post(){ # <address> <envelope stem> → seals it and POSTs it; on 409 stale_prekey, seals the SAME envelope again, once, to the mailbox read again. Before each seal, the recipient's mailbox is read (dr_lookup), and the seal is made to what this mailbox then holds, dated after that read. A post that fails is told, and nothing is kept
   local B=$1 o=$2 c try
-  dr_finished; case $? in      # a mailbox that holds its own revocation can never deliver it: every reader that holds the revocation refuses its messages, whenever they were signed
+  dr_finished; c=$?; case $c in      # a mailbox that holds its own revocation can never deliver it: every reader that holds the revocation refuses its messages, whenever they were signed
     0) ;;
     1) dr_err "REVOKED: this mailbox's own address is revoked, for good, and the revocation verifies, so its messages can never be delivered: nothing is sent"; return 1 ;;
-    *) dr_done 3; return 1 ;;
+    *) dr_done $c; return 1 ;;
   esac
   for try in first retry; do
     rm -f "$DR/error.json"
@@ -597,7 +619,7 @@ dr_recv(){ # drains the mailbox, every page up to a drain's limits. ACCEPT → i
 dr_drain(){ # stops at a transient error or a fault of this mailbox, leaving the rest on the server for the next drain. And at a number of messages and of pages (below): a server that lists messages without end costs one run that much
   local B c="" n i id k=0 pages=0; B=$(cat "$DR/address") || return 1
   dr_finished || { dr_done $?; return 1; }
-  rm -f "$DR/asked"      # the senders this drain has asked the server about: one lookup each
+  rm -f "$DR/asked" "$DR/reread"      # the senders this drain has asked the server about, one lookup each, and those it has read again before refusing a certificate (dr_judge)
   while :; do
     [ $((pages += 1)) -le 100 ] || { dr_out more --arg detail "this run stopped at the most one drain takes: run recv again for the rest, which is still on the server"; return 0; }
     dr_owner GET "/v1/$B/messages${c:+?cursor=$c}" > "$DR/list.json" || { dr_own; return 1; }
@@ -636,8 +658,8 @@ dr_one(){ # <me> <id> <its list entry> → 0 once the message is judged and its 
 dr_kept(){ # <message stem> <id> → the message as refused/ keeps it: the id this script hashed, and the ciphertext its fetch answered, <stem>.age, in base64; none of the server's strings, so nothing the server chose is there to be read
   local rc; dr_b64 "$1.age" > "$1.b64" && jq -cj -n --rawfile c "$1.b64" --arg id "$2" '{id: $id, ciphertext: $c}'; rc=$?; rm -f "$1.b64"; return $rc      # base64 of the bytes, a file of ASCII, which jq carries as it is
 }
-dr_judge(){ # <me> <message stem> → 0 only if EVERY check passes, in this order; 2 for a resend of an accepted msg_id; 1 refused, with "<code>: <words>" on stdout, the words this script's own and never the message's; 3 a fault of this mailbox, no verdict; 4 no answer from the server on whether the sender is revoked, no verdict. Who the sender is, is never asked of the server, nor read from its list: the message carries what proves it. The one thing asked is whether a revocation of that sender exists, and the answer proves itself
-  local B=$1 m=$2 ids=() k h A c f
+dr_judge(){ # <me> <message stem> → 0 only if EVERY check passes, in this order; 2 for a resend of an accepted msg_id; 1 refused, with "<code>: <words>" on stdout, the words this script's own and never the message's; 3 a fault of this mailbox, no verdict; 4 no answer from the server on whether the sender is revoked, or on its mode, no verdict. Who the sender is, is never asked of the server, nor read from its list: the message carries what proves it. The one thing asked is whether a revocation of that sender, or of its certificates, exists, and the answer proves itself
+  local B=$1 m=$2 ids=() k h A c f r
   for k in "$DR"/prekeys/*.agekey; do [ -e "$k" ] || continue; age-keygen -y "$k" > /dev/null 2>&1 || { echo "cannot read the prekey key $k"; return 3; }; ids+=(-i "$k"); done      # a key file age cannot read is a fault of this mailbox, which stops the drain: never a message refused for it
   [ ${#ids[@]} -gt 0 ] || { echo "this mailbox has no prekeys"; return 3; }
   age -d "${ids[@]}" < "$m.age" > "$m.T" 2> /dev/null || { echo "undecryptable: it does not decrypt with this mailbox's prekeys"; return 1; }
@@ -645,15 +667,27 @@ dr_judge(){ # <me> <message stem> → 0 only if EVERY check passes, in this orde
   f=$(dr_floor 2> /dev/null) || { echo "$DR/seen-floor names no time"; return 3; }
   [ "$f" -eq 0 ] || [ "$(dr_time "$(jq -r .sent_at "$m.P")")" -ge $((f + 33*86400)) ] || { echo "stale: sent_at is before this mailbox's replay set reaches back to, since its clock once read later than it does now"; return 1; }      # freshness has a floor too: a sent_at before the highest cutoff the replay set was pruned at may be a message whose line went, and so may one up to 33 days above it, a retry of such a message, dated afresh up to 33 days after its first copy (check 9 knows a retry by that copy's line). dr_open checked sent_at's grammar
   if ! grep -qxF -e "$A" "$DR/asked" 2> /dev/null; then      # the server is asked once for each sender in a drain. That it holds none is an answer; no answer is not, and the message then stays where it is
-    dr_lookup "$A" >> "$DR/said"; case $? in 0) ;; 1) printf '%s\n' "$A" >> "$DR/asked" ;; 3) echo "what this mailbox keeps of its sender's revocations does not verify, or cannot be written"; return 3 ;; *) echo "whether its sender is revoked could not be asked"; return 4 ;; esac
+    dr_lookup "$A" revocations >> "$DR/said"; case $? in 0) ;; 1) printf '%s\n' "$A" >> "$DR/asked" ;; 3) echo "what this mailbox keeps of its sender's revocations does not verify, or cannot be written"; return 3 ;; *) echo "whether its sender is revoked could not be asked"; return 4 ;; esac
   fi
   dr_gone "$A"; case $? in      # nobody can vouch for when a signature was made, so a revocation reaches back over everything that address signed
     0) echo "revoked: its sender's address is revoked, and the revocation verifies: nothing signed for that address is taken, whenever it was signed"; return 1 ;;
     3) echo "the revocation kept for $A does not verify"; return 3 ;;
   esac
-  c=$(dr_cert "$m.sig" "$m.doc" "$A") || { echo "cannot read the certificate of a signature that verified"; return 3; }
-  dr_certrevoked "$A" "${c%% *}"; case $? in      # the same answer carried the sender's revocation of its certificates, if it has one: the address goes on, and what a revoked certificate signed is refused the same way
-    0) echo "certificate_revoked: it is signed under a certificate its sender's identity has revoked: nothing signed under it is taken, whenever it was signed"; return 1 ;;
+  c=$(dr_rank "$m.sig" "$m.doc" "$A") || { echo "cannot read the signer of a signature that verified"; return 3; }
+  dr_mode "$A" "$c"; r=$?      # the same answer carried the sender's revocation of its certificates, if it has one, which gives its mode (PROTOCOL.md §5.1): the address goes on
+  if [ $r = 2 ] && ! grep -qxF -e "$A" "$DR/reread" 2> /dev/null; then      # a certificate from a sender whose trip this mailbox does not hold: read once more, once for each sender in a drain, since the trip may reach the sender's server's store later than its first message under a certificate
+    printf '%s\n' "$A" >> "$DR/reread"
+    dr_lookup "$A" revocations >> "$DR/said"; case $? in 0 | 1) ;; 3) echo "what this mailbox keeps of its sender's revocations does not verify, or cannot be written"; return 3 ;; *) echo "whether its sender's mode takes its signer could not be asked"; return 4 ;; esac
+    dr_gone "$A"; case $? in
+      0) echo "revoked: its sender's address is revoked, and the revocation verifies: nothing signed for that address is taken, whenever it was signed"; return 1 ;;
+      3) echo "the revocation kept for $A does not verify"; return 3 ;;
+    esac
+    dr_mode "$A" "$c"; r=$?
+  fi
+  case $r in
+    1) if [ "$c" = 0 ]; then echo "certificate_revoked: it is signed by its sender's identity, and its sender's address is in working-key mode, where its identity's own signature is revoked: nothing it signs is taken, whenever it was signed"
+       else echo "certificate_revoked: it is signed under a certificate its sender's identity has revoked: nothing signed under it is taken, whenever it was signed"; fi; return 1 ;;
+    2) echo "bad_signature: it is signed under a certificate, and its sender's address is in identity mode, where its identity signs and no certificate is taken"; return 1 ;;
     3) echo "the revocation of certificates kept for $A does not verify"; return 3 ;;
   esac
   [ ! -e "$DR/seen" ] || [ -r "$DR/seen" ] || { echo "cannot read $DR/seen"; return 3; }
@@ -679,10 +713,10 @@ dr_open(){ # <me> <message stem> → the sender's address, only if what was decr
   esac
   A=$(dr_address "$m.doc")      # the sender: the hash of the identity document the envelope carries. The document proves itself, and the signature must now verify under it
   jq -e --arg a "$A" '.from == $a' "$m.P" > /dev/null 2>&1 || { echo "reattributed: the envelope's from is not the address of the identity it carries"; return 1; }
-  dr_certified "$A" "$m.doc" "dromas-msg-v1:$B" "$m.sig" "$m.P" > /dev/null; case $? in      # over line 1 exactly as decrypted, never over anything rebuilt
+  dr_signed "$A" "$m.doc" "dromas-msg-v1:$B" "$m.sig" "$m.P" > /dev/null; case $? in      # over line 1 exactly as decrypted, never over anything rebuilt: either form of signer, whose mode is check 7's (dr_judge)
     0) ;; 2) echo "bad_signature: the certificate of the key that signed it has ended"; return 1 ;;
     3) echo "bad_signature: the certificate of the key that signed it has not begun, by this machine's clock"; return 1 ;;
-    *) echo "bad_signature: it is not signed for this mailbox by a working key the sender's identity certified"; return 1 ;;
+    *) echo "bad_signature: it is not signed for this mailbox by the sender's identity, or by a working key the sender's identity certified"; return 1 ;;
   esac
   dr_envcheck "$m.P" "$A" "$B" || return 1
   printf '%s\n' "$A"
@@ -727,50 +761,48 @@ dr_seen(){ # <sender> <message stem> <hash> → the message, in the replay set a
 }
 
 # recipe: new prekey (monthly)
-dr_rekey(){ # → publishes a new prekey, signed by a new working key under a new certificate, under the lock: a NEW key at a new number, which this machine's clock gives, or the statement an earlier run signed and the server did not take, sent again as it is. Needs only the identity (dr_lock makes the mailbox's other files from it), so it also recovers a mailbox that lost its prekeys or its working key
+dr_rekey(){ # → publishes a new prekey, signed by this mailbox's identity, under the lock: a NEW key at a new number, which this machine's clock gives, or the statement an earlier run signed and the server did not take, sent again as it is. Needs only the identity (dr_lock makes the mailbox's other files from it), so it also recovers a mailbox that lost its prekeys
   dr_held || { dr_lock dr_rekey; return; }
   dr_renew
 }
 dr_renew(){ # → what dr_rekey does, the lock held. A serial is signed ONCE
-  local A r s t na h c f cs p new x gone u w at; A=$(cat "$DR/address") || return 1; mkdir -p "$DR/prekeys"
+  local A r s t na p new gone u w at; A=$(cat "$DR/address") || return 1; mkdir -p "$DR/prekeys"
   dr_finished || { dr_done $?; return 1; }
   dr_api GET "/v1/$A" > "$DR/self.json" 2> "$DR/self.err" || case $(dr_code) in
     no_such_mailbox) gone=1 ;;      # 404: the server holds no mailbox here any more, past its record's expiry (PROTOCOL.md §13), so nothing is served to number above or to hold to its order, and the renewal goes as a registration
     revoked) dr_takerecord "$A"; [ $? != 3 ] || return 1; dr_finished || { dr_done $?; return 1; }; cat "$DR/self.err" >&2; return 1 ;;      # 410: the address's record, kept once it verifies, so the mailbox signs nothing more here or at any server it is pointed at (PROTOCOL.md §12.5; #343)
     *) cat "$DR/self.err" >&2; return 1 ;;
   esac
-  p=$(cat "$DR/serial" 2> /dev/null || echo 0)
-  if [ -n "$gone" ]; then s=$p; else
-    dr_shape "$DR/self.json" mailbox && dr_bytes "$DR/self.json" identity "$DR/self.doc" && dr_bytes "$DR/self.json" prekey "$DR/self.txt" && dr_bytes "$DR/self.json" prekey_signature "$DR/self.sig" ||
+  if [ -n "$gone" ]; then      # what is held of this mailbox's own revocations, at every renewal: from its server's answer, or for a mailbox it holds no more, which carries none, from its revocations alone
+    dr_revocations "$A" > /dev/null; case $? in 2 | 3) return 1 ;; esac
+  else
+    dr_ismailbox "$DR/self.json" && jq -c '{identity, revoked_certificates, revoked_certificates_signature}' "$DR/self.json" > "$DR/rev.json" ||
+      dr_refuse "the server's answer for this mailbox is not one this client reads: one JSON object, each byte field base64" || return 1
+    dr_take "$A"; [ $? != 3 ] || return 1
+  fi
+  dr_finished || { dr_done $?; return 1; }      # a revocation of its own address, or of its certificates, which this script never makes: a trip it was shown stops it here (PROTOCOL.md §12.5)
+  p=$(cat "$DR/serial" 2> /dev/null || echo 0); s=$p
+  if [ -z "$gone" ]; then
+    dr_bytes "$DR/self.json" identity "$DR/self.doc" && dr_bytes "$DR/self.json" prekey "$DR/self.txt" && dr_bytes "$DR/self.json" prekey_signature "$DR/self.sig" ||
       dr_refuse "the server's answer for this mailbox is not one this client reads: one JSON object, each byte field base64" || return 1
     [ -s "$DR/self.txt" ] && [ -s "$DR/self.sig" ] || dr_refuse "the server sent no prekey for this mailbox" || return 1
-    c=$(dr_cert "$DR/self.sig" "$DR/identity.doc" "$A") && c=${c#* } && r=$(dr_prekeycheck "$DR/self.txt" "$DR/self.sig" "$A" "$DR/identity.doc" "${c% *}") || dr_refuse "this mailbox's current prekey, as served: ${r:-it is not signed under a certificate of this identity}" || return 1      # its own record, judged where its certificate begins: whether this identity ever certified the key that signed it, even if that certificate has since ended
-    s=${r%% *}; cs=${r##* }      # a mailbox's statements are ordered by certificate first, then by serial, and this mailbox gives a renewal's certificate and prekey one number: what it published is (p, p), and the server may serve nothing ordered before it
-    if [ "$cs" -eq "$p" ] && ! cmp -s "$DR/self.txt" "$DR/prekeys/$s.txt"; then dr_putline "$DR/not-made" "$cs" || return 1; fi      # served under the certificate this mailbox signs under, and not a statement it made: whoever made it holds that working key, from a copy of the mailbox's directory, so dr_seal signs no message under it until this renewal has moved the mailbox to a new certificate (PROTOCOL.md §12.4). The Go client tells its own certificate by the key it certifies, this script by the serial, so it also holds under one the identity made for another key at that serial, which only refuses more
-    [ "$cs" -gt "$p" ] || { [ "$cs" -eq "$p" ] && [ "$s" -ge "$p" ]; } || dr_refuse "rollback: the server serves this mailbox's prekey serial $s under certificate $cs, before serial $p, which this mailbox published" || return 1
-    s=$((cs > p ? cs : p))
+    r=$(dr_prekeycheck "$DR/self.txt" "$DR/self.sig" "$A" "$DR/identity.doc") || dr_refuse "this mailbox's current prekey, as served: $r" || return 1      # its own record, by every rule but its dates (PROTOCOL.md §12.4): whether its identity signed it, and where it stands in the mailbox's order
+    [ "${r##* }" = 0 ] || dr_refuse "this mailbox's current prekey, as served, is signed under a certificate, and this mailbox is in identity mode, where its identity signs and no certificate is taken" || return 1
+    s=${r%% *}
+    if ! cmp -s "$DR/self.txt" "$DR/prekeys/$s.txt"; then      # signed by this mailbox's identity and not a statement it made: unless it is its owner's own, from a machine this mailbox was restored from, the identity is in other hands. Said, and the renewal goes on: no certificate of its own is in doubt, so nothing waits (PROTOCOL.md §12.4)
+      dr_out prekey_not_made --argjson serial "$s" --arg at "$(jq -nr --argjson t "$(dr_now)" '$t | todate')" --arg detail "this mailbox's server served a prekey statement in its name, serial $s, that this mailbox's identity signed and this mailbox did not make: unless it is the owner's own, from the machine this mailbox was restored from, the identity is in other hands, and only revoking the address ends that (the Go client's dromas revocation publish, with the address in full). This renewal goes above it"
+    fi
+    [ "$s" -ge "$p" ] || dr_refuse "rollback: the server serves this mailbox's prekey serial $s, before serial $p, which this mailbox published" || return 1
   fi
-  if [ -n "$gone" ]; then      # what is held of this mailbox's own revocations, at every renewal, so the certificate is numbered above them: from its server's answer, or for a mailbox it holds no more, which carries none, from its revocations alone
-    if dr_api GET "/v1/$A/revocations" > "$DR/rev.json" 2> "$DR/self.err"; then dr_isrecord "$DR/rev.json" || dr_refuse "the server's answer for this mailbox's revocations is not one this client reads: a record, each byte field base64" || return 1; dr_take "$A"; [ $? != 3 ] || return 1      # a 2xx that is no record stops the renewal with a refusal, as one for the mailbox's own read does
-    else case $(dr_code) in not_revoked | no_such_mailbox) ;; *) cat "$DR/self.err" >&2; return 1 ;; esac; fi
-  else jq -c '{identity, revoked_certificates, revoked_certificates_signature}' "$DR/self.json" > "$DR/rev.json" && dr_take "$A"; [ $? != 3 ] || return 1; fi
-  dr_finished || { dr_done $?; return 1; }
-  x=$(dr_certskept "$A"); case $? in      # above every serial this mailbox's identity has revoked too: a certificate numbered there would be revoked as it was made
-    0) [ "$x" -lt 9007199254740991 ] || dr_refuse "this mailbox's identity has revoked its certificates through the highest serial there is, so no later certificate can be made: the address cannot renew" || return 1; [ "$x" -le "$s" ] || s=$x ;;
-    1) ;;
-    *) dr_refuse "the revocation of certificates kept for this mailbox does not verify"; return 1 ;;
-  esac
-  t=$(ls "$DR/prekeys" | sed -n 's/\.agekey$//p; s/\.txt\.sig$//p' | sort -n | tail -n 1); new=1      # s is the highest number this mailbox knows of, and the new statement goes above it: above the served CERTIFICATE's serial, never the served prekey's, since it is under a new certificate, which outranks any prekey serial under the one before. So a prekey published in this mailbox's name at the highest serial there is holds nothing. t is the highest number this mailbox began a prekey at
-  if [ "${t:-0}" -gt "$s" ]; then s=$t; new=; [ ! -s "$DR/prekeys/$s.txt.sig" ] || { na=$(dr_time "$(sed -n 5p "$DR/prekeys/$s.txt")") && [ "$na" -gt "$(dr_now)" ] && [ -s "$DR/work/$s-cert.pub" ] && c=$(dr_cert "$DR/prekeys/$s.txt.sig" "$DR/identity.doc" "$A") && c=${c#* } && [ "${c% *}" -le $(($(dr_now) - 3600)) ] && u=$(dr_time "$(cat "$DR/prekeys/$s.made" 2> /dev/null)") && w=$(dr_lifetime 2> /dev/null) && [ $((na - u)) -le "$w" ]; } || new=1; fi      # a number an earlier run took, and that nothing has passed since, is kept. Signed and never seen published: sent again AS IT IS until it expires, then a new number. Signed again, the same key would get 33 more days from a server that keeps what it refuses. One under a certificate that began less than an hour before this clock was signed while the clock read ahead of where it reads now: a reader a server takes may not have reached its start, so it is spent too. Never signed: its key is used
-  if [ -n "$new" ]; then [ "$s" -lt 9007199254740991 ] || dr_refuse "this mailbox's certificate serial is the highest there is, so no later certificate can be made: the address cannot renew" || return 1; t=$(dr_now); s=$((t > s ? t : s + 1)); fi      # a new number: this machine's clock, in seconds, or one above the highest this mailbox knows of when the clock gives nothing higher. An identity is a key and keeps no record of what it signed, and a mailbox restored from it knows only what the server shows: by the clock, its certificate is above every one made before, on whatever machine. A verifier never reads a serial as a time, it only compares two
+  t=$(ls "$DR/prekeys" | sed -n 's/\.agekey$//p; s/\.txt\.sig$//p' | sort -n | tail -n 1); new=1      # s is the highest number this mailbox knows of, its own and the server's, and the new statement goes above it under the same signer (PROTOCOL.md §5.3). t is the highest number this mailbox began a prekey at
+  if [ "${t:-0}" -gt "$s" ]; then s=$t; new=; [ ! -s "$DR/prekeys/$s.txt.sig" ] || { na=$(dr_time "$(sed -n 5p "$DR/prekeys/$s.txt")") && [ "$na" -gt "$(dr_now)" ] && u=$(dr_time "$(cat "$DR/prekeys/$s.made" 2> /dev/null)") && w=$(dr_lifetime 2> /dev/null) && [ $((na - u)) -le "$w" ]; } || new=1; fi      # a number an earlier run took, and that nothing has passed since, is kept. Signed and never seen published: sent again AS IT IS until it expires, then a new number. Signed again, the same key would get 33 more days from a server that keeps what it refuses. Never signed: its key is used
+  if [ -n "$new" ]; then [ "$s" -lt 9007199254740991 ] || dr_refuse "this mailbox's prekey serial is the highest there is, so no later statement can be made: the address cannot renew" || return 1; t=$(dr_now); s=$((t > s ? t : s + 1)); fi      # a new number: this machine's clock, in seconds, or one above the highest this mailbox knows of when the clock gives nothing higher. A mailbox restored from its identity knows only what the server shows: by the clock, its statement is above every one made before, on whatever machine
   [ -s "$DR/prekeys/$s.txt.sig" ] || rm -f "$DR/prekeys/$s.txt" "$DR/prekeys/$s.made"; dr_prekey "$s" || return 1
   if [ -n "$gone" ]; then u="/v1/$A"; w='{identity:$i}'; else u="/v1/$A/prekey"; w='{}'; fi      # a registration is the identity document, then what a new prekey carries
   jq -n --arg i "$(dr_b64 "$DR/identity.doc")" --arg p "$(dr_b64 "$DR/prekeys/$s.txt")" --arg g "$(dr_b64 "$DR/prekeys/$s.txt.sig")" --argjson k "$(dr_senders)" "$w"' + {prekey:$p, prekey_signature:$g, sender_key_types:$k}' > "$DR/rekey.json"
-  h=$(dr_pass "$s") && dr_api PUT "$u" "$DR/rekey.json" -H "Authorization: $h" > /dev/null || { dr_clock; dr_own; return 1; }      # a pass under the NEW certificate: that is how a mailbox moves to one, and the server then takes no pass under an older
+  h=$(dr_pass new) && dr_api PUT "$u" "$DR/rekey.json" -H "Authorization: $h" > /dev/null || { dr_clock; dr_own; return 1; }      # a new pass, dated as the renewal is sent
   [ "$s" -le "$(cat "$DR/serial" 2> /dev/null || echo 0)" ] || dr_putline "$DR/serial" "$s" || return 1
   mv "$DR/pass.new" "$DR/pass" || return 1
-  rm -f "$DR/not-made"      # the mailbox is under its new certificate
-  for f in "$DR"/work/*-cert.pub; do t=$(basename "$f" -cert.pub); [[ $t =~ ^[0-9]+$ ]] && [ "$t" -lt "$s" ] && rm -f "$DR/work/$t" "$DR/work/$t.pub" "$f"; done      # older working keys: what they signed is signed, and the server takes no pass under them
   at=$(dr_taken) && dr_prune "$at" && dr_out prekey --argjson serial "$s" --arg not_after "$(sed -n 5p "$DR/prekeys/$s.txt")"      # by the reading the server took the renewal at: the date of its pass, now $DR/pass
 }
 dr_prune(){ # <Unix time, one a server took (dr_taken)> → deletes every retired prekey past its deletion time by that reading of this machine's clock: its not_after + the 33 days a message is kept. dr_recv gives the date of the pass its list carried, dr_renew that of the renewal's: a clock a server took, never a later reading. After that, a message encrypted to it is unrecoverable. (The Go client also deletes them sooner.)
@@ -779,7 +811,7 @@ dr_prune(){ # <Unix time, one a server took (dr_taken)> → deletes every retire
     [ -e "$f" ] || continue
     n=$(basename "$f" .txt); [ "$n" -lt "$top" ] || continue      # never the newest
     na=$(dr_time "$(sed -n 5p "$f")") || continue
-    [ "$1" -lt $((na + 33*86400)) ] || rm -f "$DR/prekeys/$n.agekey" "$DR/work/$n" "$DR/work/$n.pub" "$DR/work/$n-cert.pub"      # and the working key made with it, if a renewal the server never took left one
+    [ "$1" -lt $((na + 33*86400)) ] || rm -f "$DR/prekeys/$n.agekey"
   done
 }
 
