@@ -199,10 +199,12 @@ func (b *Mailbox) certificateLifetime(ctx context.Context) (time.Duration, error
 // recorded first, as the trip this mailbox makes, and an attempt that did not
 // finish is made again at that number. A server that holds a higher one
 // answers conflict: the mailbox reads itself (known), which keeps that one.
-func (b *Mailbox) trip(ctx context.Context, known uint64) error {
+// It reports whether its server holds the trip by it: one it kept before is
+// the caller's to publish where its server holds none.
+func (b *Mailbox) trip(ctx context.Context, known uint64) (bool, error) {
 	own := b.id.Address()
 	if held, err := b.revokedCerts(own); err != nil || held != nil {
-		return err
+		return false, err
 	}
 	var through uint64
 	if err := b.view(func(s store) error {
@@ -210,47 +212,47 @@ func (b *Mailbox) trip(ctx context.Context, known uint64) error {
 		through, err = decimal(s.get(bucketIntent, "trip"), "trip")
 		return err
 	}); err != nil {
-		return err
+		return false, err
 	}
 	if through == 0 {
 		through = max(protocol.SerialAt(b.now(), known)-1, 1)
 		if err := noneAbove(through); err != nil {
-			return err
+			return false, err
 		}
 		if err := b.update(func(s store) error {
 			return s.put(bucketIntent, "trip", fmt.Appendf(nil, "%d", through))
 		}); err != nil {
-			return err
+			return false, err
 		}
 	}
 	step("trip begun")
 	certs, err := protocol.NewRevokedCertificates(own, through)
 	if err != nil {
-		return err
+		return false, err
 	}
 	sig, err := b.certifier.RevokedCertificates(certs)
 	if err != nil {
-		return err
+		return false, err
 	}
 	rec := &protocol.Revocations{Identity: b.id.Document(), RevokedCertificates: certs.Statement(), RevokedCertificatesSignature: sig}
 	switch err := b.publishRecord(ctx, own, rec); {
 	case err == nil:
 		step("trip published")
 		if err := b.keepRevokedCerts(own, rec.Identity, rec.RevokedCertificates, rec.RevokedCertificatesSignature); err != nil {
-			return err
+			return false, err
 		}
 	case code(err) == protocol.CodeConflict:
 		if _, kerr := b.known(ctx); kerr != nil {
-			return errors.Join(err, kerr)
+			return false, errors.Join(err, kerr)
 		}
 		if held, herr := b.revokedCerts(own); herr != nil || held == nil {
-			return errors.Join(err, herr)
+			return false, errors.Join(err, herr)
 		}
 	default:
-		return err
+		return false, err
 	}
 	step("trip kept")
-	return nil
+	return true, nil
 }
 
 // publishTrip publishes the revocation of its certificates this mailbox keeps
@@ -341,6 +343,15 @@ func (b *Mailbox) switchMode(ctx context.Context) (*Switched, error) {
 	case published == 0:
 		return nil, refuse("this mailbox has published no statement to switch from: dromas init --offline makes or restores a mailbox in working-key mode")
 	}
+	// What its server holds of it first, its revocations kept: a trip it did
+	// not make stops the switch before anything is recorded.
+	st, err := b.readOwn(ctx, false, false)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := b.mode(); err != nil {
+		return nil, err
+	}
 	if !switching {
 		if _, err := b.certificateLifetime(ctx); err != nil {
 			return nil, err
@@ -350,11 +361,7 @@ func (b *Mailbox) switchMode(ctx context.Context) (*Switched, error) {
 		}
 		step("switch begun")
 	}
-	st, err := b.readOwn(ctx, false, false)
-	if err != nil {
-		return nil, err
-	}
-	if err := b.trip(ctx, st.known); err != nil {
+	if _, err := b.trip(ctx, st.known); err != nil {
 		return nil, err
 	}
 	out := &Switched{}

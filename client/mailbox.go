@@ -425,7 +425,7 @@ func (b *Mailbox) init(ctx context.Context) (*Mailbox, error) {
 	}
 	st := &ownRead{forgotten: true}
 	if working {
-		if err := b.trip(ctx, 0); err != nil {
+		if _, err := b.trip(ctx, 0); err != nil {
 			return nil, err
 		}
 		st.trip = true
@@ -462,9 +462,11 @@ func (b *Mailbox) restore(ctx context.Context, working bool) error {
 	case working && !kept && st.served != nil && st.served.Identity():
 		return refuse("this mailbox's server holds this address in identity mode, under a statement its identity signed: dromas init restores it in that mode, and dromas cert switch, with its address in full, then moves it to working-key mode, at the cost it states")
 	case working:
-		if err := b.trip(ctx, st.known); err != nil {
+		made, err := b.trip(ctx, st.known)
+		if err != nil {
 			return err
 		}
+		st.trip = st.trip || made
 	}
 	p, at, err := b.renewFrom(ctx, st)
 	if err != nil {

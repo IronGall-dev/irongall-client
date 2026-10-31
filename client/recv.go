@@ -315,6 +315,10 @@ func (b *Mailbox) mendable(err error) bool {
 	if code(err) == protocol.CodeNoSuchMailbox {
 		return true
 	}
+	// Nor a trip it did not make, after which it signs nothing.
+	if _, merr := b.mode(); merr != nil {
+		return false
+	}
 	return b.usesRevoked()
 }
 
