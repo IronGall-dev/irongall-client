@@ -204,7 +204,7 @@ func renewalSteps(working bool) []string {
 	if working {
 		return client.Steps("renewal")
 	}
-	return slices.DeleteFunc(client.Steps("renewal"), func(s string) bool { return s == "working key made" })
+	return slices.DeleteFunc(slices.Clone(client.Steps("renewal")), func(s string) bool { return s == "working key made" })
 }
 
 // A restore told working-key mode (init --offline) at a server that holds
@@ -244,6 +244,7 @@ func TestAnOfflineInitKilledAtEachStepOfItsTripLeavesItsOwnTrip(t *testing.T) {
 			if err != nil {
 				t.Fatalf("init --offline again after a crash at %s: %v", step, err)
 			}
+			landAll(t, x)
 			if m, err := x.Mode(context.Background()); err != nil || m != "working_key" {
 				t.Fatalf("after a crash at %s: mode %s, %v", step, m, err)
 			}
@@ -261,7 +262,7 @@ func TestASwitchKilledAtEachStepFinishesWhenRunAgain(t *testing.T) {
 		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
 	}
 	// Its retries are written by the switch, then posted as a flush posts.
-	posted := slices.DeleteFunc(client.Steps("post"), func(s string) bool { return s == "outbox written" })
+	posted := slices.DeleteFunc(slices.Clone(client.Steps("post")), func(s string) bool { return s == "outbox written" })
 	steps := slices.Concat(client.Steps("switch"), client.Steps("trip"), renewalSteps(true), posted)
 	for _, step := range steps {
 		t.Run(step, func(t *testing.T) {
@@ -275,7 +276,16 @@ func TestASwitchKilledAtEachStepFinishesWhenRunAgain(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := x.Switch(ctx); err != nil {
+			// Once its retries are written the switch is done, and what it
+			// did not post waits in the outbox.
+			if slices.Contains(append(posted, "retries written"), step) {
+				if _, err := x.Switch(ctx); err == nil || !strings.Contains(err.Error(), "working-key mode already") {
+					t.Fatalf("the switch again after a crash at %s: %v", step, err)
+				}
+				if _, err := x.Flush(ctx); err != nil {
+					t.Fatalf("a flush after a crash at %s: %v", step, err)
+				}
+			} else if _, err := x.Switch(ctx); err != nil {
 				t.Fatalf("the switch again after a crash at %s: %v", step, err)
 			}
 			if m, err := x.Mode(ctx); err != nil || m != "working_key" {
