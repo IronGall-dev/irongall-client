@@ -227,9 +227,9 @@ func lockedFinished[T any](ctx context.Context, b *Mailbox, f func() (T, error))
 	if err != nil {
 		return v, err
 	}
-	b.ended = nil
+	b.ended, b.lifetime = nil, 0
 	defer func() {
-		b.ended = nil
+		b.ended, b.lifetime = nil, 0
 		if e := release(); err == nil {
 			err = e
 		}
