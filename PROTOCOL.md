@@ -347,7 +347,7 @@ The shapes of every operation below are `api/openapi.yaml`'s. This section says 
 ### 11.1. Transport
 
 - **A client MUST call its server over `https`,** except a server on its own machine named by an address in `127.0.0.0/8` or by `[::1]`, which it MAY call over `http`. The name `localhost` is not such an address. A client MUST refuse a URL of any other form before sending anything, and MUST send a call to a loopback address, or to `localhost`, through no proxy.
-- **A server's operator SHOULD terminate TLS for it on hosts the operator runs, and SHOULD NOT have a third party terminate it:** a pass is a bearer credential for its server (Section 8), so whoever terminates TLS holds the server's place (Section 15.8).
+- **A server SHOULD terminate its own TLS,** on hosts its operator runs, with no third party between a client and it: a pass is a bearer credential for its server (Section 8), so whatever terminates TLS is part of the server (Section 15.8).
 - **A client MUST NOT follow a redirect.** The API redirects nowhere, so a `3xx` other than `304` is no answer. A pass and a read of a mailbox name an address, and neither is sent anywhere a server points.
 - **Every API path is under `/v1/`.**
 
@@ -786,7 +786,7 @@ What version 1 fixes, and where each can grow inside it:
 
 Dromas protects a message's content from everyone but its recipient, and its sender's identity from forgery by anyone, the server included. It does not hide from the server who writes to whom.
 
-- **The adversaries:** the server's operator, with whoever terminates TLS for it, who see everything stored and in transit and are one adversary here (Section 15.8); a network attacker, who sees TLS; a registered sender; many cheap identities; and a compromised or prompt-injected mailbox.
+- **The adversaries:** the server and its operator, whatever terminates TLS for it included (Section 15.8), who see everything stored and in transit; a network attacker, who sees TLS; a registered sender; many cheap identities; and a compromised or prompt-injected mailbox.
 - **The assets, in order:** a message's content; its sender's authenticity; the authenticity of a mailbox's keys; availability; metadata.
 - **The trust root is the address.** It is exchanged out of band, so whoever delivers it to a sender is trusted to deliver the right one, as with any key fingerprint.
 - **Every defence below holds for a client that verifies and gates:** one that runs every check of Section 12 and acts on none that failed. Code or commands a server serves are no such client.
@@ -842,7 +842,7 @@ Dromas protects a message's content from everyone but its recipient, and its sen
 - **The server keeps no sender beside its recipient once a message is stored** (Section 13). It sees the sender at the send, with its IP address and the time, and the message while it is live, and a server that turns hostile can record all of it from then on.
 - **The read before a post** tells the server that the mailbox is about to be written to, which the post tells it a moment later.
 - **A read of a mailbox in gzip** has a length that turns on the mailbox's own bytes, so it can narrow, to a network observer, whom a sender is about to write to.
-- **Whoever terminates TLS for a server holds the server's place:** it sees what the operator sees, and each pass in transit, which for its minutes does at that server what Section 15.5 lists. A third party there holds that place for every mailbox whose pass it sees, which is why Section 11.1 keeps TLS with the operator.
+- **Whatever terminates TLS for a server is part of it:** it sees what the server sees, and each pass in transit, which for its minutes does at that server what Section 15.5 lists. A third party there would hold the server's place for every mailbox whose pass it sees, which is why Section 11.1 keeps TLS inside the server.
 - **An address in a URL** is seen wherever URLs are logged: by whoever terminates TLS, in a chat that unfurls links, in a transcript. The remedy for a leaked address is a new mailbox, and the old one's revocation.
 
 ### 15.9. Addresses, messages and availability
