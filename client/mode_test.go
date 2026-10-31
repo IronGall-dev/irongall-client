@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -432,7 +433,7 @@ func TestACertificateTooLongIsMadeAgainAtTheServersMaximum(t *testing.T) {
 		t.Fatalf("the statement taken: %v, %+v", err, by)
 	}
 	words := (&client.APIError{Status: 400, Problem: protocol.Problem{Code: protocol.CodeCertificateTooLong, MaxCertificateLifetime: &short}}).Error()
-	if !strings.Contains(words, "3801600 seconds") && !strings.Contains(words, " seconds") {
+	if !strings.Contains(words, strconv.FormatUint(short, 10)+" seconds") {
 		t.Errorf("certificate_too_long says %q", words)
 	}
 }
