@@ -904,6 +904,33 @@ echo "$A"; dr_line "$DR/msg.P"`, abs(t, f), b))
 	t.Logf("%d plain/ vectors: %v", len(files), codes)
 }
 
+// Each ciphertext of message/ is read by the script as its recipient reads
+// it: decrypted with its prekey's published identity to exactly its .plain,
+// then checks 2 to 6 and check 7's mode in its sender's (dr_open, dr_mode,
+// dr_admitted): A's under A's certificate with A's trip held, and B's,
+// signed by B's identity, with nothing held. Each is delivered from its
+// sender.
+func TestVectorsMessage(t *testing.T) {
+	t.Parallel()
+	need(t, scriptTools...)
+	_, setNow := vectorNow(t)
+	key := abs(t, filepath.Join(vectors, "input", "b-1.pq.key"))
+	for _, v := range []struct{ name, from, to string }{{"a-to-b", "a", "b"}, {"a-to-c", "a", "c"}, {"b-to-c", "b", "c"}} {
+		from, _ := identity(t, v.from)
+		to, _ := identity(t, v.to)
+		m := filepath.Join(vectors, "message", v.name)
+		out, err := bash(t, scratch(t), setNow+held(t, v.from)+fmt.Sprintf(`age -d -i %s < %s > "$DR/msg.T" && cmp -s "$DR/msg.T" %s || exit 5
+A=$(dr_open %s "$DR/msg") || { echo "$A"; exit 1; }
+c=$(dr_rank "$DR/msg.sig" "$DR/msg.doc" "$A") || exit 3; dr_mode "$A" "$c"; dr_admitted "$A" "$c" $? || exit
+echo "$A $c"`, key, abs(t, m+".age"), abs(t, m+".plain"), to))
+		var sender string
+		var rank uint64
+		if _, serr := fmt.Sscan(out, &sender, &rank); err != nil || serr != nil || sender != from || (rank == 0) != (v.from != "a") {
+			t.Errorf("%s: the script says %q, %v; want delivered from %s, by its identity only where it is in identity mode", v.name, strings.TrimSpace(out), err, from)
+		}
+	}
+}
+
 // The script pads as the Go client does: for a message of any size and a key
 // of either type, the same padding and the same size on the wire. This is
 // arithmetic only, so it needs no age: a post-quantum key is told by its

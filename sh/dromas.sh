@@ -348,9 +348,9 @@ dr_bech32(){ # <string> → its human-readable part, only for a Bech32 string (B
   ((chk == 1 && c < 5 && (k & m) == 0)) || return 1
   printf '%s\n' "$h"
 }
-dr_prekeycheck(){ # <statement> <signature> <address> <identity document> [at] → "<serial> <age recipient> <not_after as Unix time> <its signer's rank>" only for five LF-ended lines naming that address, signed by its identity or by a working key its identity certified (dr_signed), holding a key age will encrypt to; otherwise the reason, and 1. Whether the address's mode takes the signer is the caller's (dr_mode). 2, with the reason, for one good in every other way whose key is a well-formed age recipient of a type this script cannot encrypt to: its Bech32 human-readable part begins age and is not the hybrid's age1pq, X25519's age among them. Nothing is wrong with such a statement (PROTOCOL.md §6), so its key's type is the last thing checked
+dr_prekeycheck(){ # <statement> <signature> <address> <identity document> → "<serial> <age recipient> <not_after as Unix time> <its signer's rank>" only for five LF-ended lines naming that address, signed by its identity or by a working key its identity certified (dr_signed), holding a key age will encrypt to; otherwise the reason, and 1. Whether the address's mode takes the signer is the caller's (dr_mode). 2, with the reason, for one good in every other way whose key is a well-formed age recipient of a type this script cannot encrypt to: its Bech32 human-readable part begins age and is not the hybrid's age1pq, X25519's age among them. Nothing is wrong with such a statement (PROTOCOL.md §6), so its key's type is the last thing checked
   local p=$1 B=$3 s k na c L
-  c=$(dr_signed "$B" "$4" "dromas-prekey-v1:$B" "$2" "$p" ${5-}); case $? in 0) ;;
+  c=$(dr_signed "$B" "$4" "dromas-prekey-v1:$B" "$2" "$p"); case $? in 0) ;;
     2) echo "$B's prekey: the certificate the prekey is signed under has ended"; return 1 ;;
     3) echo "$B's prekey: the certificate the prekey is signed under has not begun, by the clock that checked it"; return 1 ;;
     *) echo "$B's prekey is not signed by its identity, or by a working key its identity certified under a certificate that holds now"; return 1 ;;
