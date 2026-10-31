@@ -43,7 +43,7 @@ The key words "MUST", "MUST NOT", "REQUIRED", "SHALL", "SHALL NOT", "SHOULD", "S
 - **Renewal:** the publication of a new prekey statement (Section 11.9).
 - **Pass:** a statement a mailbox signs to prove itself to its server on a call (Section 8).
 - **Envelope:** the signed JSON line that carries a message's metadata and body (Section 9.1).
-- **Server:** the mailbox server a mailbox is registered at and calls. A mailbox's **own server** is the one it registered at.
+- **Server:** the mailbox server a mailbox is registered at and calls: the whole system its operator runs to answer at the server's name, whatever terminates TLS for it included (Section 15.8). A mailbox's **own server** is the one it registered at.
 - **TTL:** 33 days: the longest a server keeps a message (Section 13) and a reader takes it as fresh (Section 12.3, check 6).
 - **Active, revoked, unknown:** the states of a mailbox at a server (Section 11.6).
 - **Served:** as a server answers it when a mailbox is read (Section 11.8): the server's word until a client has verified it.
