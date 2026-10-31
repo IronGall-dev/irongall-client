@@ -519,7 +519,9 @@ func (b *Mailbox) keepRevokedCerts(a protocol.Address, doc, statement, sig []byt
 // took, and a fault of this mailbox after that: the mailbox keeps it at its next
 // read of itself (#383).
 // A message this mailbox sent under those certificates, and that its reader has not
-// read yet, is refused too: nobody can tell it from a thief's.
+// read yet, is refused too: nobody can tell it from a thief's. A mailbox in
+// identity mode, by what it keeps once it has read itself, has no
+// certificates, and is refused (certificatesOwn).
 func (b *Mailbox) RevokeEarlier(ctx context.Context) (*protocol.RevokedCertificates, error) {
 	return locked(ctx, b, func() (*protocol.RevokedCertificates, error) {
 		// What its server holds of the mailbox's own revocations, kept where it
