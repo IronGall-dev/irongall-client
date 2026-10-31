@@ -361,9 +361,11 @@ func (b *Mailbox) switchMode(ctx context.Context) (*Switched, error) {
 		}
 		step("switch begun")
 	}
-	if _, err := b.trip(ctx, st.known); err != nil {
+	made, err := b.trip(ctx, st.known)
+	if err != nil {
 		return nil, err
 	}
+	st.trip = st.trip || made
 	out := &Switched{}
 	if b.usesRevoked() {
 		p, at, err := b.renewFrom(ctx, st)
