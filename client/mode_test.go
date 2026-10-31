@@ -443,9 +443,12 @@ func TestACertificateTooLongIsMadeAgainAtTheServersMaximum(t *testing.T) {
 func TestTheServerKeepsAMailboxByItsLatestCertificate(t *testing.T) {
 	t.Parallel()
 	e := newWorkEnv(t)
+	// A certificate longer than a prekey and the TTL: its end is the later.
+	long := 200 * 24 * time.Hour
+	e.srv.SetPolicy(protocol.ServerDocument{MaxCertificateLifetime: uint64(long / time.Second)})
 	a := e.mailbox()
 	kept := e.srv.KeptUntil(a.Address())
-	if want := e.clock.Now().Add(-protocol.MaxSkew).Add(testCertLife); kept.Before(want.Add(-time.Second)) {
+	if want := e.clock.Now().Add(-protocol.MaxSkew).Add(long); kept.Before(want) {
 		t.Errorf("kept until %s, before its certificate ends, %s", kept, want)
 	}
 	e.clock.Add(time.Hour)
