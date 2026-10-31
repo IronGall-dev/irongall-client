@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dromas-dev/dromas-client/client"
 	"github.com/dromas-dev/dromas-client/internal/fakeserver"
 	"github.com/dromas-dev/dromas-client/internal/forge"
 	"github.com/dromas-dev/dromas-client/protocol"
@@ -94,6 +95,29 @@ func (w *world) mailbox() *shMailbox {
 	b.must("dr_init")
 	b.addr = mustAddress(w.t, b.dir)
 	return b
+}
+
+// goMailbox is a Go client's mailbox at the world's server, in working-key
+// mode as init --offline makes one or in identity mode as init does, taking
+// every sender's messages into its inbox; and its directory as a shMailbox,
+// whose identity.doc, address, identity and work/ the script's helpers read
+// (certs) and no script command ever runs in.
+func (w *world) goMailbox(workingKey bool) (*client.Mailbox, *shMailbox) {
+	w.t.Helper()
+	g, err := client.Init(w.t.Context(), w.t.TempDir(), client.Options{Base: w.srv.URL, WorkingKey: workingKey})
+	if err != nil {
+		w.t.Fatal(err)
+	}
+	landAll(w.t, g)
+	return g, &shMailbox{w: w, dir: g.Dir(), addr: g.Address()}
+}
+
+// publish puts a record at the server for the address it names, with no pass,
+// from a directory of its own: the identity's own signature is the authority.
+func (w *world) publish(a protocol.Address, record string) {
+	w.t.Helper()
+	p := &shMailbox{w: w, dir: filepath.Join(w.work, "publisher")}
+	p.must(`mkdir -p "$DR" && dr_api PUT "/v1/` + a.String() + `/revocations" ` + record + ` > /dev/null`)
 }
 
 // ran is what one command did.
