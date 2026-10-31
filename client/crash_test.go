@@ -54,6 +54,15 @@ var crashCommands = map[string]func(ctx context.Context, b *client.Mailbox, o cr
 		_, err := b.RenewAndRevoke(ctx)
 		return err
 	},
+	"init --offline": func(ctx context.Context, b *client.Mailbox, o crashOrder) error {
+		now := time.Unix(o.Now, 0).UTC()
+		_, err := client.Init(ctx, b.Dir(), client.Options{Base: o.Base, Now: func() time.Time { return now }, WorkingKey: true})
+		return err
+	},
+	"switch": func(ctx context.Context, b *client.Mailbox, _ crashOrder) error {
+		_, err := b.Switch(ctx)
+		return err
+	},
 	"send": func(ctx context.Context, b *client.Mailbox, o crashOrder) error {
 		to, err := protocol.ParseAddress(o.To)
 		if err != nil {
@@ -174,14 +183,112 @@ func TestARenewalKilledAtEachStepLeavesTheMailboxWhole(t *testing.T) {
 	if testing.Short() {
 		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
 	}
-	for _, step := range client.Steps("renewal") {
+	for _, working := range []bool{false, true} {
+		for _, step := range renewalSteps(working) {
+			t.Run(fmt.Sprintf("working-key mode %v, %s", working, step), func(t *testing.T) {
+				e := newEnv(t)
+				e.working = working
+				a, b := e.mailbox(), e.mailbox()
+				send(t, a, b, "sealed to the prekey in use")
+				e.clock.Add(2 * time.Second)
+				crash(t, e, b, "rekey", step, protocol.Address{})
+				whole(t, e, b, a, "sealed to the prekey in use")
+			})
+		}
+	}
+}
+
+// renewalSteps are the steps of a renewal in a mode: in identity mode no
+// working key is made.
+func renewalSteps(working bool) []string {
+	if working {
+		return client.Steps("renewal")
+	}
+	return slices.DeleteFunc(client.Steps("renewal"), func(s string) bool { return s == "working key made" })
+}
+
+// A restore told working-key mode (init --offline) at a server that holds
+// nothing of the address, killed at each step of its trip and of its
+// renewal: run again, it goes on, keeps the trip as its own (no foreign trip
+// is said), and comes back whole in working-key mode.
+func TestAnOfflineInitKilledAtEachStepOfItsTripLeavesItsOwnTrip(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
+	}
+	for _, step := range append(client.Steps("trip"), renewalSteps(true)...) {
 		t.Run(step, func(t *testing.T) {
 			e := newEnv(t)
+			a := e.mailbox()
+			dir := filepath.Join(t.TempDir(), "mailbox")
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			// An identity e's server holds nothing of: a mailbox's at another
+			// server.
+			key, err := os.ReadFile(filepath.Join(newEnv(t).mailbox().Dir(), "identity"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "identity"), key, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			b, err := client.Open(dir, e.opts())
+			if err != nil {
+				t.Fatal(err)
+			}
+			crash(t, e, b, "init --offline", step, protocol.Address{})
+			opt := e.opts()
+			opt.WorkingKey = true
+			x, err := client.Init(context.Background(), dir, opt)
+			if err != nil {
+				t.Fatalf("init --offline again after a crash at %s: %v", step, err)
+			}
+			if m, err := x.Mode(context.Background()); err != nil || m != "working_key" {
+				t.Fatalf("after a crash at %s: mode %s, %v", step, m, err)
+			}
+			whole(t, e, x, a)
+		})
+	}
+}
+
+// A switch to working-key mode killed at each of its steps: run again, it
+// finishes, keeps the trip as its own, and posts again the message it sent,
+// which its reader takes once.
+func TestASwitchKilledAtEachStepFinishesWhenRunAgain(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
+	}
+	// Its retries are written by the switch, then posted as a flush posts.
+	posted := slices.DeleteFunc(client.Steps("post"), func(s string) bool { return s == "outbox written" })
+	steps := slices.Concat(client.Steps("switch"), client.Steps("trip"), renewalSteps(true), posted)
+	for _, step := range steps {
+		t.Run(step, func(t *testing.T) {
+			ctx := context.Background()
+			e := newEnv(t)
 			a, b := e.mailbox(), e.mailbox()
-			send(t, a, b, "sealed to the prekey in use")
+			send(t, b, a, "sent in identity mode")
 			e.clock.Add(2 * time.Second)
-			crash(t, e, b, "rekey", step, protocol.Address{})
-			whole(t, e, b, a, "sealed to the prekey in use")
+			crash(t, e, b, "switch", step, protocol.Address{})
+			x, err := client.Open(b.Dir(), e.opts())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := x.Switch(ctx); err != nil {
+				t.Fatalf("the switch again after a crash at %s: %v", step, err)
+			}
+			if m, err := x.Mode(ctx); err != nil || m != "working_key" {
+				t.Fatalf("after a crash at %s: mode %s, %v", step, m, err)
+			}
+			if got := inbox(t, a); len(got) != 0 {
+				t.Fatalf("the reader's inbox before it drains: %q", got)
+			}
+			res := receive(t, a)
+			if len(res.Delivered) != 1 || bodyOf(t, res.Delivered[0]) != "sent in identity mode" {
+				t.Fatalf("the reader after a crash at %s: %+v", step, res)
+			}
+			whole(t, e, x, a)
 		})
 	}
 }
@@ -195,7 +302,7 @@ func TestAForgottenMailboxKilledAtEachStepOfItsRegistrationSendsItsACLAgain(t *t
 	if testing.Short() {
 		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
 	}
-	for _, step := range client.Steps("renewal") {
+	for _, step := range renewalSteps(false) {
 		t.Run(step, func(t *testing.T) {
 			e := newEnv(t)
 			a, b, c := e.mailbox(), e.mailbox(), e.mailbox()
@@ -257,7 +364,7 @@ func TestARecvKilledAtEachStepOfItsRenewalReadsItsServersACL(t *testing.T) {
 		{"forgotten before the renewal's read", nil, before, false},
 		{"forgotten between the renewal's read and its upload", nil, atUpload, false},
 	} {
-		for _, step := range append(client.Steps("renewal"), client.Steps("heal")...) {
+		for _, step := range append(renewalSteps(false), client.Steps("heal")...) {
 			if step == "held ACL kept" && s.other == nil {
 				continue // nothing another writer put is there to keep
 			}
@@ -420,7 +527,7 @@ func TestTheRemedyKilledAtEachStepLeavesTheMailboxWhole(t *testing.T) {
 	for _, step := range append(client.Steps("revocation"), client.Steps("renewal")...) {
 		t.Run(step, func(t *testing.T) {
 			ctx := context.Background()
-			e := newEnv(t)
+			e := newWorkEnv(t)
 			a, b := e.mailbox(), e.mailbox()
 			first := numberOf(t, b)
 			e.clock.Add(2 * time.Second)
@@ -451,7 +558,7 @@ func TestARestoreKilledAtEachStepAdoptsItsServersACL(t *testing.T) {
 	if testing.Short() {
 		t.Skip("long: -short skips it; scripts/check.sh full and CI run it")
 	}
-	for _, step := range append(client.Steps("renewal"), client.Steps("adoption")...) {
+	for _, step := range append(renewalSteps(false), client.Steps("adoption")...) {
 		t.Run(step, func(t *testing.T) {
 			ctx := context.Background()
 			e := newEnv(t)

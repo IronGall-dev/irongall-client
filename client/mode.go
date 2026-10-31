@@ -228,6 +228,10 @@ func (b *Mailbox) trip(ctx context.Context, known uint64) error {
 	rec := &protocol.Revocations{Identity: b.id.Document(), RevokedCertificates: certs.Statement(), RevokedCertificatesSignature: sig}
 	switch err := b.publishRecord(ctx, own, rec); {
 	case err == nil:
+		step("trip published")
+		if err := b.keepRevokedCerts(own, rec.Identity, rec.RevokedCertificates, rec.RevokedCertificatesSignature); err != nil {
+			return err
+		}
 	case code(err) == protocol.CodeConflict:
 		if _, kerr := b.known(ctx); kerr != nil {
 			return errors.Join(err, kerr)
@@ -235,13 +239,7 @@ func (b *Mailbox) trip(ctx context.Context, known uint64) error {
 		if held, herr := b.revokedCerts(own); herr != nil || held == nil {
 			return errors.Join(err, herr)
 		}
-		step("trip kept")
-		return nil
 	default:
-		return err
-	}
-	step("trip published")
-	if err := b.keepRevokedCerts(own, rec.Identity, rec.RevokedCertificates, rec.RevokedCertificatesSignature); err != nil {
 		return err
 	}
 	step("trip kept")
