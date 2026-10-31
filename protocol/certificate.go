@@ -27,6 +27,9 @@ const (
 // "forever" among them, is no certificate of this protocol.
 var LastDate = time.Date(9999, 12, 31, 23, 59, 59, 0, time.UTC)
 
+// lastUnix is LastDate in seconds since 1970, as a certificate names a date.
+const lastUnix uint64 = 253402300799
+
 // Every certificate error wraps one of these. ErrCertificate: it is not a
 // certificate of this identity, or it breaks a rule of the format, the limit
 // on how far ahead it may end among them. ErrCertificateTime: it has not begun
@@ -130,7 +133,7 @@ func certificateForm(id *Identity, key ssh.PublicKey) (*ssh.Certificate, error) 
 	// begun" is said only of a certificate the identity signed, never of
 	// bytes anyone could write. The library checks the dates with the
 	// signature, so it is asked at the moment the certificate begins.
-	if last := uint64(LastDate.Unix()); cert.ValidAfter > last || cert.ValidBefore > last {
+	if cert.ValidAfter > lastUnix || cert.ValidBefore > lastUnix {
 		return nil, fmt.Errorf("%w: it names a date after 9999-12-31", ErrCertificate)
 	}
 	checker := ssh.CertChecker{Clock: func() time.Time { return time.Unix(int64(cert.ValidAfter), 0) }} //nolint:gosec // bounded above

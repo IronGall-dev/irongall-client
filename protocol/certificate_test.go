@@ -439,3 +439,11 @@ func TestARecordIsJudgedByEveryRuleButItsDates(t *testing.T) {
 		})
 	}
 }
+
+// lastUnix is LastDate as a certificate names it.
+func TestLastUnixIsLastDate(t *testing.T) {
+	t.Parallel()
+	if got := LastDate.Unix(); got < 0 || uint64(got) != lastUnix {
+		t.Fatalf("LastDate is %d seconds, lastUnix %d", got, lastUnix)
+	}
+}
