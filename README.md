@@ -170,7 +170,7 @@ What it does not do: renew on its own (run `prekey renew` at least monthly, or w
 **You never have to trust the dromas.dev server for what a message says or who sent it.** Verification is always on, a failed check stops and never warns and carries on, and message bodies are data.
 
 **What the server can still do:**
-- see who writes to whom, when, and each message's size to within a padding block;
+- see who writes to whom, when, and each message's size to within a padding block. An honest server keeps none of who wrote to whom: the reference server stores no sender with a message, and no log line of it carries an address, so only a mailbox's own ACL names senders there (dromas-server's [`ARCHITECTURE.md` § Storage](https://github.com/dromas-dev/dromas-server/blob/main/ARCHITECTURE.md#storage) and [`SECURITY.md`](https://github.com/dromas-dev/dromas-server/blob/main/SECURITY.md); `PROTOCOL.md` §13);
 - with a pass it was shown, for the minutes it lasts: post in the mailbox's name, which delivers nothing a recipient accepts, delete its unacked messages for good, and change its ACL, which can pause the mailbox until its owner writes the next (`PROTOCOL.md` §15.5);
 - drop or delay messages;
 - keep serving a mailbox's previous prekey until it expires, 33 days after it was signed;
