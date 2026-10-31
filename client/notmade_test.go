@@ -53,7 +53,7 @@ func TestRecvRenewsNothingAboveAStatementTheMailboxDidNotMake(t *testing.T) {
 					t.Fatal(err)
 				}
 				certSerial = n + c.above
-				cert, err := protocol.NewCertificate(b.Identity(), identityKey(t, b), stranger.PublicKey(), certSerial, e.clock.Now())
+				cert, err := protocol.NewCertificate(b.Identity(), identityKey(t, b), stranger.PublicKey(), certSerial, e.clock.Now(), testCertLife)
 				if err != nil {
 					t.Fatal(err)
 				}

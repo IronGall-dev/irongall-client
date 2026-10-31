@@ -54,16 +54,16 @@ func restoreWith(t *testing.T, e *env, b *client.Mailbox, now func() time.Time) 
 	return r
 }
 
-// servedCertificate is the serial of the certificate the statement the server
-// serves for b is signed under.
+// servedCertificate is the rank of the signer of the statement the server
+// serves for b: its certificate's serial, or 0 for its identity.
 func servedCertificate(t *testing.T, e *env, b *client.Mailbox) uint64 {
 	t.Helper()
 	st, sig := e.srv.Prekey(b.Address())
-	_, cert, err := protocol.VerifyPrekey(b.Identity(), st, sig, e.clock.Now())
+	_, by, err := protocol.VerifyPrekey(b.Identity(), st, sig, e.clock.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
-	return cert.Serial()
+	return by.Rank()
 }
 
 // A mailbox whose identity renewed on another machine: its pass is under another

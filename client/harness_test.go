@@ -49,12 +49,25 @@ type env struct {
 	clock *clock
 	srv   *fakeserver.Server
 	http  *http.Client // the in-memory server's, or nil for the default client
+	// working is set where the env's mailboxes are made in working-key mode
+	// (newWorkEnv): identity mode, the default, otherwise.
+	working bool
 }
 
 func newEnv(t *testing.T) *env {
 	t.Helper()
 	e := &env{t: t, clock: &clock{t: time.Now().UTC().Truncate(time.Second)}}
 	e.srv = fakeserver.New(t, e.clock.Now)
+	return e
+}
+
+// newWorkEnv is newEnv whose mailboxes are made in working-key mode
+// (client.Options.WorkingKey): for a test of what a working key and its
+// certificates do.
+func newWorkEnv(t *testing.T) *env {
+	t.Helper()
+	e := newEnv(t)
+	e.working = true
 	return e
 }
 
@@ -70,7 +83,7 @@ func newMemEnv(t *testing.T) *env {
 }
 
 func (e *env) opts() client.Options {
-	return client.Options{Base: e.srv.URL, Now: e.clock.Now, HTTPClient: e.http}
+	return client.Options{Base: e.srv.URL, Now: e.clock.Now, HTTPClient: e.http, WorkingKey: e.working}
 }
 
 // mailbox makes and registers a mailbox, whose policy lands every sender's messages in
@@ -133,8 +146,13 @@ func bodyOf(t *testing.T, d client.Delivery) string {
 	return s
 }
 
+// testCertLife is how long a certificate a test makes runs: the longest the
+// fake server takes.
+const testCertLife = time.Duration(fakeserver.MaxCertificateLifetime) * time.Second
+
 // numberOf is the number of the prekey a mailbox published last, which is its
-// working key's and its certificate's too: its serial record. A mailbox takes each
+// working key's and its certificate's too in working-key mode: its serial
+// record. A mailbox takes each
 // number from its clock (protocol.SerialAt), so a test reads the number and
 // never assumes one.
 func numberOf(t *testing.T, b *client.Mailbox) uint64 {

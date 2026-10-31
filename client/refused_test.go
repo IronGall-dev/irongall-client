@@ -52,7 +52,7 @@ func refusedFindings(t *testing.T, kind string) {
 	work := workKey(t, a)
 	serial := numberOf(t, a) + 1
 	ahead := e.clock.Now().Add(2 * time.Hour)
-	cert, err := protocol.NewCertificate(a.Identity(), idSigner, work.PublicKey(), serial, ahead)
+	cert, err := protocol.NewCertificate(a.Identity(), idSigner, work.PublicKey(), serial, ahead, testCertLife)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +166,7 @@ func TestARefusalNamesNoSignerTheMailboxHoldsRevoked(t *testing.T) {
 	// under is a's working key certified anew by a's identity at serial n,
 	// its certificate starting at start.
 	under := func(t *testing.T, a *client.Mailbox, n uint64, start time.Time) ssh.Signer {
-		cert, err := protocol.NewCertificate(a.Identity(), identityKey(t, a), workKey(t, a).PublicKey(), n, start)
+		cert, err := protocol.NewCertificate(a.Identity(), identityKey(t, a), workKey(t, a).PublicKey(), n, start, testCertLife)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -277,7 +277,7 @@ func TestARefusalNamesNoSignerTheMailboxHoldsRevoked(t *testing.T) {
 					if q.SignedBy != "" || q.ClaimsIdentity != a.Address().String() || q.CertificateSerial != 0 || q.SentAt != "" || q.MsgID != "" {
 						t.Errorf("kept as %+v, where the mailbox holds a revocation that covers it", q)
 					}
-					if f.Signed || f.Identity == nil || *f.Identity != a.Address() || f.Serial != 0 || !f.Began.IsZero() || !f.Ends.IsZero() || !f.SentAt.IsZero() || f.MsgID != "" {
+					if f.Signed || f.Identity == nil || *f.Identity != a.Address() || f.Rank != 0 || !f.Began.IsZero() || !f.Ends.IsZero() || !f.SentAt.IsZero() || f.MsgID != "" {
 						t.Errorf("Refusal.Findings %+v, where the mailbox holds a revocation that covers it", f)
 					}
 					return
@@ -285,7 +285,7 @@ func TestARefusalNamesNoSignerTheMailboxHoldsRevoked(t *testing.T) {
 				if q.SignedBy != a.Address().String() || q.CertificateSerial != m.serial {
 					t.Errorf("kept as %+v, where the mailbox holds no revocation that covers it", q)
 				}
-				if !f.Signed || f.Serial != m.serial {
+				if !f.Signed || f.Rank != m.serial {
 					t.Errorf("Refusal.Findings %+v, where the mailbox holds no revocation that covers it", f)
 				}
 			})

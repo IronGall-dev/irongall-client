@@ -378,7 +378,7 @@ func TestAMessageThatWaitedIsSealedAtThePost(t *testing.T) {
 	if got, err := b.Flush(ctx); err != nil || len(got) != 1 {
 		t.Fatalf("flush: %v, %v", got, err)
 	}
-	if len(posted) != 1 || posted[0].CertificateSerial != numberOf(t, a) {
+	if st, _ := e.srv.Prekey(a.Address()); len(posted) != 1 || posted[0].Statement != protocol.StatementHash(st) {
 		t.Fatalf("%d posts: %+v", len(posted), posted)
 	}
 	if res := receive(t, a); len(res.Delivered) != 1 || bodyOf(t, res.Delivered[0]) != "written under the first certificate" {
@@ -429,13 +429,13 @@ func TestAMessageThatWaitedGoesUnderTheRenewalTheMailboxRecorded(t *testing.T) {
 	if _, err := b.Send(ctx, a.Address(), "the mailbox records the renewal"); err != nil {
 		t.Fatal(err)
 	}
-	var posted []uint64
+	var posted []string
 	watch(e, func(w http.ResponseWriter, r *http.Request) bool { // takes every post to a
 		if r.Method != http.MethodPost || r.URL.Path != postTo(a) {
 			return false
 		}
 		if q, err := protocol.ParseSendQuery(r.URL.RawQuery); err == nil {
-			posted = append(posted, q.CertificateSerial)
+			posted = append(posted, q.Statement)
 		}
 		fakeserver.Take(w, r)
 		return true
@@ -443,8 +443,8 @@ func TestAMessageThatWaitedGoesUnderTheRenewalTheMailboxRecorded(t *testing.T) {
 	if got, err := b.Flush(ctx); err != nil || len(got) != 1 {
 		t.Fatalf("flush: %v, %v", got, err)
 	}
-	if len(posted) != 1 || posted[0] != numberOf(t, a) {
-		t.Fatalf("posted under certificates %v after recording %d", posted, numberOf(t, a))
+	if st, _ := e.srv.Prekey(a.Address()); len(posted) != 1 || posted[0] != protocol.StatementHash(st) {
+		t.Fatalf("posted to statements %v after recording %d", posted, numberOf(t, a))
 	}
 }
 
