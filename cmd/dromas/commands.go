@@ -1164,6 +1164,9 @@ that one, with the address in full.`,
 			if err != nil {
 				return err
 			}
+			if err := foreignTrip(c, b, a); err != nil {
+				return err
+			}
 			if _, err := b.Publish(c.Context(), rec); err != nil {
 				return err
 			}
@@ -1348,7 +1351,10 @@ func (e *cli) keepCmd() *cobra.Command {
 		`Take a revocation of another mailbox that someone handed you (a record as
 dromas revocation make prints), check it, and keep it: this mailbox then sends
 that address nothing and takes nothing from it. A record may carry a
-revocation of the mailbox's certificates, which is kept the same way.`,
+revocation of the mailbox's certificates, which is kept the same way. This
+mailbox's own, where it has published a statement in identity mode and made no
+such revocation, shows its identity in other hands: it is said, and the
+mailbox signs nothing more but its address's revocation.`,
 		nargs(1, 1), func(c *cobra.Command, args []string) error {
 			b, err := e.mailbox()
 			if err != nil {
@@ -1362,8 +1368,26 @@ revocation of the mailbox's certificates, which is kept the same way.`,
 			if err != nil {
 				return err
 			}
-			return e.sayHeld(a, held)
+			if err := e.sayHeld(a, held); err != nil {
+				return err
+			}
+			return foreignTrip(c, b, a)
 		})
+}
+
+// foreignTrip is what a command that kept a record about the address a
+// returns of mailbox b's own: the trip to working-key mode it did not make,
+// which the mailbox says, and after which it signs nothing but its address's
+// revocation (PROTOCOL.md §12.5), or nil.
+func foreignTrip(c *cobra.Command, b *client.Mailbox, a protocol.Address) error {
+	if a != b.Address() {
+		return nil
+	}
+	var foreign *client.ForeignTripError
+	if _, err := b.Mode(c.Context()); errors.As(err, &foreign) {
+		return err
+	}
+	return nil
 }
 
 func (e *cli) askCmd() *cobra.Command {
