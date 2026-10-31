@@ -109,7 +109,13 @@ func (e *APIError) words() string {
 	case protocol.CodePrekeyNotNew:
 		return "the server has seen that prekey before, and every prekey is a new key: dromas prekey renew makes one"
 	case protocol.CodePrekeyTime:
-		return "the server finds the prekey statement, or the certificate it is under, not valid at its clock"
+		return "the server finds the prekey statement, or the certificate it is under, not valid at its clock: not begun, or ended"
+	case protocol.CodeCertificateTooLong:
+		s := "the server takes no certificate that runs longer than its maximum"
+		if p.MaxCertificateLifetime != nil && *p.MaxCertificateLifetime <= protocol.MaxInteger {
+			s += fmt.Sprintf(", %d seconds", *p.MaxCertificateLifetime)
+		}
+		return s + ": a certificate this client makes runs for the maximum the server's document names, which may have changed since, so dromas prekey renew makes one again"
 	case protocol.CodeUnsupportedKeyType:
 		s := "the server does not register identities of this mailbox's key type"
 		if t := knownTypes(p.KeyTypes); t != "" {
@@ -127,13 +133,15 @@ func (e *APIError) words() string {
 	case protocol.CodePassExpired:
 		return "the server refused this mailbox's pass, and a new one, as not valid at its clock"
 	case protocol.CodeCertificateNotCurrent:
-		s := "the server takes this mailbox's pass under another certificate than the one it signs under"
-		if p.CertificateSerial != nil {
-			s += fmt.Sprintf(", serial %d", *p.CertificateSerial)
+		s := "the server takes this mailbox's pass by another signer than the one it signs with"
+		if p.CertificateSerial != nil && *p.CertificateSerial >= 1 && *p.CertificateSerial <= protocol.MaxSerial {
+			s += fmt.Sprintf(", certificate %d", *p.CertificateSerial)
 		}
-		return s + ", as after a restore or a renewal on another machine, and the one this mailbox signs under may be revoked too: dromas prekey renew certifies a new working key above it"
+		return s + ", as after a restore or a renewal on another machine, or in another mode: dromas prekey renew publishes a statement above it"
 	case protocol.CodeCertificateRevoked:
-		return "the server holds the certificate this mailbox signs under as one its identity revoked: dromas prekey renew certifies a new working key above it"
+		return "the server holds the signer this mailbox signs with as one its identity revoked, a certificate at or below its revocation of certificates, or the identity itself once it holds one: in working-key mode dromas prekey renew certifies a new working key above it"
+	case protocol.CodeIdentityMode:
+		return "the server holds this address in identity mode, with no revocation of its certificates, and takes no statement under a certificate until it holds one: dromas cert publish-revoked publishes the one this mailbox keeps"
 	case protocol.CodeUnknownSender:
 		return "the server does not know this mailbox: it is not registered there, or was forgotten there (dromas init registers a mailbox, and dromas prekey renew registers one again)"
 	case protocol.CodeSenderRevoked:
@@ -298,8 +306,8 @@ func (e *APIError) clock() string {
 	case d > 0:
 		how = fmt.Sprintf("%s ahead of that", d)
 	}
-	return fmt.Sprintf("; the server dates its answer %s, and this machine's clock reads %s, %s. A server refuses a pass from a clock %d minutes or more behind its own, or more than %d ahead, a certificate made by a clock more than %d ahead, and a prekey statement dated more than an hour ahead of it. Check this machine's clock against a time source you trust, not against the server",
-		e.Dated.Format(protocol.TimeLayout), e.Read.Format(protocol.TimeLayout), how, slow/time.Minute, fast/time.Minute, fast/time.Minute)
+	return fmt.Sprintf("; the server dates its answer %s, and this machine's clock reads %s, %s. A server refuses a pass from a clock %d minutes or more behind its own, or more than %d ahead, a certificate that has not begun or has ended at its clock, and a prekey statement dated more than an hour ahead of it. Check this machine's clock against a time source you trust, not against the server",
+		e.Dated.Format(protocol.TimeLayout), e.Read.Format(protocol.TimeLayout), how, slow/time.Minute, fast/time.Minute)
 }
 
 // codeGrammar is the grammar of a code, as the mailbox's state keeps one for
