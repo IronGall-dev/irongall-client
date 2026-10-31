@@ -234,6 +234,10 @@ type ServerDocument struct {
 	Deprecations  []Scheduled  `json:"deprecations"`
 	Sunsets       []Scheduled  `json:"sunsets"`
 	Capabilities  []Capability `json:"capabilities"`
+	// MaxCertificateLifetime is the longest a certificate the server takes may
+	// run, valid-before less valid-after, in seconds (PROTOCOL.md §11.7): from
+	// 1 to MaxInteger.
+	MaxCertificateLifetime uint64 `json:"max_certificate_lifetime"`
 }
 
 // Scheduled is a deprecation or a sunset of versions, and its date: a
@@ -289,6 +293,9 @@ func (d *ServerDocument) Check() error {
 	}
 	if len(d.Capabilities) > MaxCapabilities {
 		return &memberError{name: "capabilities", known: true}
+	}
+	if d.MaxCertificateLifetime == 0 || d.MaxCertificateLifetime > MaxInteger {
+		return &memberError{name: "max_certificate_lifetime", known: true}
 	}
 	for _, c := range d.Capabilities {
 		if !capabilityGrammar.MatchString(c.Name) {

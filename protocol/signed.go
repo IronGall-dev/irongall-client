@@ -32,8 +32,8 @@ import (
 const padFiller = '.'
 
 // SignEnvelope returns the envelope's line and the signature over it for its
-// recipient, by signer: a working key under its certificate
-// (Certificate.Signer). The namespace names the recipient, so the signature
+// recipient, by signer: the identity in identity mode, or a working key under
+// its certificate (Certificate.Signer) in working-key mode. The namespace names the recipient, so the signature
 // holds for that mailbox only.
 func SignEnvelope(e *Envelope, signer ssh.Signer) (line, signature []byte, err error) {
 	if line, err = e.Line(); err != nil {
@@ -88,8 +88,10 @@ type Signed struct {
 	Signature []byte
 	// Sender is the identity the envelope carries, whose address is From.
 	Sender *Identity
-	// Certificate is the one the signature was made under.
-	Certificate *Certificate
+	// Signer is the key the signature was made by: the identity, or a working
+	// key under a certificate. Holding it to the sender's mode is the reader's
+	// (PROTOCOL.md §12.3 check 7, Admits).
+	Signer *Signer
 }
 
 // OpenSigned checks what a recipient decrypted, in this order, and returns
@@ -104,8 +106,9 @@ type Signed struct {
 //     this client does not verify is refused here, after its hash: with its
 //     own code, since nothing is wrong with it.
 //  5. The signature over the line, as decrypted, verifies in this mailbox's
-//     message namespace, by a working key that identity certified, under a
-//     certificate valid at now.
+//     message namespace, by that identity or a working key it certified,
+//     under a certificate valid at now. The sender's mode is not applied
+//     here: the reader learns it at check 7 (PROTOCOL.md §12.3).
 //  6. The envelope, in OpenEnvelope's order: a body and every member of its
 //     type, version 1, to is this mailbox, a msg_id, and a sent_at no older than
 //     TTL and no more than MaxSkew ahead.
@@ -129,15 +132,16 @@ type Findings struct {
 	// hashes to. Anyone can copy a document into an envelope, so it is who
 	// signed only when Signed is true.
 	Identity *Address
-	// Signed reports that the signature over the line verifies, by a working
-	// key Identity certified, checked at that certificate's own start: so it
-	// holds of a certificate that has not begun, or has ended, by At. It says
-	// who made the message, not that it is good now.
+	// Signed reports that the signature over the line verifies, by Identity
+	// or a working key it certified, checked at that certificate's own start:
+	// so it holds of a certificate that has not begun, or has ended, by At. It
+	// says who made the message, not that it is good now.
 	Signed bool
 	// What follows is kept only when Signed, since before that it is
-	// anyone's numbers: the certificate's serial and the moments it begins
-	// and ends, and the envelope's sent_at and msg_id when each has its form.
-	Serial      uint64
+	// anyone's numbers: the signer's rank (0 for the identity), the moments
+	// its certificate begins and ends (zero for the identity), and the
+	// envelope's sent_at and msg_id when each has its form.
+	Rank        uint64
 	Began, Ends time.Time
 	SentAt      time.Time
 	MsgID       string
@@ -173,10 +177,10 @@ func Examine(plaintext []byte, me Address, now time.Time) (*Signed, *Findings, e
 	case from != id.Address().String():
 		return nil, f, notTheSenders
 	}
-	cert, err := VerifyCertified(id, line, signature, MessageNamespace(me), now)
+	signer, err := VerifySigned(id, line, signature, MessageNamespace(me), now)
 	switch {
 	case err == nil:
-		f.signed(cert, signature, line)
+		f.signed(signer, line)
 	case errors.Is(err, ErrCertificateTime):
 		f.whoMade(id, line, signature, MessageNamespace(me))
 	}
@@ -195,7 +199,7 @@ func Examine(plaintext []byte, me Address, now time.Time) (*Signed, *Findings, e
 	if err != nil {
 		return nil, f, err
 	}
-	return &Signed{Envelope: env, Line: line, Signature: signature, Sender: id, Certificate: cert}, f, nil
+	return &Signed{Envelope: env, Line: line, Signature: signature, Sender: id, Signer: signer}, f, nil
 }
 
 // whoMade is for a signature refused for its certificate's time: it is
@@ -206,19 +210,18 @@ func (f *Findings) whoMade(id *Identity, line, signature []byte, namespace strin
 	if err != nil {
 		return
 	}
-	if cert, err := VerifyCertified(id, line, signature, namespace, began); err == nil {
-		f.signed(cert, signature, line)
+	if signer, err := VerifySigned(id, line, signature, namespace, began); err == nil {
+		f.signed(signer, line)
 	}
 }
 
 // signed fills in Signed and what goes with it, for a signature that
-// verified under cert.
-func (f *Findings) signed(cert *Certificate, signature, line []byte) {
-	began, err := CertificateBegan(signature)
-	if err != nil {
-		return
+// verified by signer.
+func (f *Findings) signed(signer *Signer, line []byte) {
+	f.Signed, f.Rank = true, signer.Rank()
+	if c := signer.Certificate(); c != nil {
+		f.Began, f.Ends = c.NotBefore(), c.NotAfter()
 	}
-	f.Signed, f.Serial, f.Began, f.Ends = true, cert.Serial(), began, cert.NotAfter()
 	fields, err := objectFields(line)
 	if err != nil {
 		return

@@ -85,7 +85,7 @@ type Pass struct {
 // MaxPassAuthorization is the longest an Authorization value carrying a pass
 // can be in the one form a sender writes: its fixed parts, an address, a time,
 // and the standard base64 of a signature of MaxSignature bytes. A pass is
-// signed by an Ed25519 working key, under the certificate its identity
+// signed by the identity or a working key under a certificate the identity
 // signed, so its size is its identity's key type's; and ParsePass refuses a
 // longer value, in any form, before it reads it, so before it knows the mailbox
 // (PROTOCOL.md §8). So the bound is the most any identity key type allows,
@@ -97,8 +97,9 @@ const MaxPassAuthorization = len(PassScheme+` address="", not_after="", signatur
 var passSignature = regexp.MustCompile(`\A[A-Za-z0-9+/]+={0,2}\z`)
 
 // NewPass makes mailbox a's pass for server, good for PassLifetime from now, and
-// returns it as the Authorization header's value. signer is the working key
-// under its certificate (Certificate.Signer).
+// returns it as the Authorization header's value. signer is the signer of
+// the mailbox's current statement: the identity in identity mode, or the
+// working key under its certificate (Certificate.Signer).
 func NewPass(signer ssh.Signer, a Address, server string, now time.Time) (authorization string, notAfter time.Time, err error) {
 	if err := CheckServerName(server); err != nil {
 		return "", time.Time{}, err
@@ -303,11 +304,11 @@ func trimOWS(s string) string { return strings.TrimLeft(s, " \t") }
 
 // Verify checks the pass at now: that it is the pass of the mailbox whose
 // identity is id, made for server, not run out, running out at most
-// MaxPassLifetime from now, and signed by a working key of that identity
-// under a certificate valid at now. It returns the certificate: a server
-// takes a pass only under the mailbox's current one, and only for a name that
-// is the server's own, which are the caller's to check.
-func (p *Pass) Verify(id *Identity, server string, now time.Time) (*Certificate, error) {
+// MaxPassLifetime from now, and signed by that identity or a working key of it
+// under a certificate valid at now. It returns the signer: a server takes a
+// pass only by the signer of the mailbox's current statement, and only for a
+// name that is the server's own, which are the caller's to check.
+func (p *Pass) Verify(id *Identity, server string, now time.Time) (*Signer, error) {
 	if p.Address != id.Address() {
 		return nil, fmt.Errorf("%w: it is another mailbox's", ErrPass)
 	}
@@ -320,27 +321,29 @@ func (p *Pass) Verify(id *Identity, server string, now time.Time) (*Certificate,
 	if p.NotAfter.After(now.Add(MaxPassLifetime)) {
 		return nil, fmt.Errorf("%w: it runs out more than %d minutes from now", ErrPass, MaxPassLifetime/time.Minute)
 	}
-	cert, err := VerifyCertified(id, PassStatement(p.Address, server, p.NotAfter), p.signature, PassNamespace(p.Address), now)
+	signer, err := VerifySigned(id, PassStatement(p.Address, server, p.NotAfter), p.signature, PassNamespace(p.Address), now)
 	if err != nil {
 		if errors.Is(err, ErrCertificate) || errors.Is(err, ErrCertificateTime) {
 			return nil, err
 		}
 		return nil, fmt.Errorf("%w: its signature does not verify", ErrPass)
 	}
-	return cert, nil
+	return signer, nil
 }
 
-// VerifyUnder checks the pass against a certificate known by the SHA-256 of
-// its bytes, sum: the one a caller has on record for the mailbox. The pass must
-// be for server, not run out, signed under exactly that certificate, which
-// must name the mailbox the pass names and must not have ended, and the working
-// key's signature must verify. It returns the certificate.
+// VerifyUnder checks the pass against the signing key a caller has on record
+// for the mailbox, known by the SHA-256 of its wire bytes, sum: the identity's
+// key in identity mode, the current certificate in working-key mode. The pass
+// must be for server, not run out, signed by exactly that key, and its
+// signature must verify; a certificate must name the mailbox the pass names and
+// must not have ended. It returns the key.
 //
-// It makes one signature check, and none for a pass under another
-// certificate (ErrCertificate), so a pass that is not the mailbox's is cheap to
-// refuse. It does NOT check the identity's signature on the certificate, nor
-// the certificate's other rules: that is CheckCertificate, which a caller
-// makes on what this returns, as Verify does in one step.
+// It makes one signature check, and none for a pass by another key
+// (ErrCertificate), so a pass that is not the mailbox's is cheap to refuse. It
+// does NOT check the identity's signature on a certificate, nor the
+// certificate's other rules: that is CheckCertificate, which a caller makes on
+// what this returns, as Verify does in one step. The identity's key on record
+// is the caller's to have checked against the address.
 func (p *Pass) VerifyUnder(sum [sha256.Size]byte, server string, now time.Time) (ssh.PublicKey, error) {
 	if err := CheckServerName(server); err != nil {
 		return nil, err
@@ -359,28 +362,34 @@ func (p *Pass) VerifyUnder(sum [sha256.Size]byte, server string, now time.Time) 
 	if err != nil {
 		return nil, fmt.Errorf("%w: its signature is not one", ErrPass)
 	}
-	cert, ok := key.(*ssh.Certificate)
-	if !ok || sha256.Sum256(cert.Marshal()) != sum {
-		return nil, fmt.Errorf("%w: the pass is not signed under the certificate on record", ErrCertificate)
+	if sha256.Sum256(key.Marshal()) != sum {
+		return nil, fmt.Errorf("%w: the pass is not signed by the signer on record", ErrCertificate)
 	}
-	// The certificate on record names the identity that signed it, and so
-	// the bound its mailbox's signatures are held to.
-	if cert.SignatureKey == nil || withinBound(p.signature, cert.SignatureKey.Type()) != nil {
+	identityType := key.Type()
+	if cert, ok := key.(*ssh.Certificate); ok {
+		if cert.SignatureKey == nil {
+			return nil, fmt.Errorf("%w: the pass is not signed by the signer on record", ErrCertificate)
+		}
+		identityType = cert.SignatureKey.Type()
+		// The pass names a mailbox, and the certificate names the one it is for.
+		if len(cert.ValidPrincipals) != 1 || cert.ValidPrincipals[0] != p.Address.String() {
+			return nil, fmt.Errorf("%w: it is another mailbox's", ErrPass)
+		}
+		// Of a certificate's rules, the one that stops holding by itself: it ends.
+		switch unix := uint64(max(now.Unix(), 0)); {
+		case unix < cert.ValidAfter:
+			return nil, ErrCertificateNotBegun
+		case unix >= cert.ValidBefore:
+			return nil, ErrCertificateEnded
+		}
+	}
+	// The key on record names the identity, and so the bound its mailbox's
+	// signatures are held to.
+	if withinBound(p.signature, identityType) != nil {
 		return nil, fmt.Errorf("%w: its signature is longer than its identity's key type allows", ErrPass)
 	}
-	// The pass names a mailbox, and the certificate names the one it is for.
-	if len(cert.ValidPrincipals) != 1 || cert.ValidPrincipals[0] != p.Address.String() {
-		return nil, fmt.Errorf("%w: it is another mailbox's", ErrPass)
-	}
-	// Of a certificate's rules, the one that stops holding by itself: it ends.
-	switch unix := uint64(max(now.Unix(), 0)); {
-	case unix < cert.ValidAfter:
-		return nil, ErrCertificateNotBegun
-	case unix >= cert.ValidBefore:
-		return nil, ErrCertificateEnded
-	}
-	if err := sshsig.Verify(cert, PassStatement(p.Address, server, p.NotAfter), blob, PassNamespace(p.Address)); err != nil {
+	if err := sshsig.Verify(key, PassStatement(p.Address, server, p.NotAfter), blob, PassNamespace(p.Address)); err != nil {
 		return nil, fmt.Errorf("%w: its signature does not verify", ErrPass)
 	}
-	return cert, nil
+	return key, nil
 }

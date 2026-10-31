@@ -23,6 +23,7 @@ const (
 	CodeBadKey             Code = "bad_key"              // an identity key, certificate or prekey statement that is malformed or does not verify
 	CodePrekeyNotNew       Code = "prekey_not_new"       // the prekey was published before: every prekey is a new key
 	CodePrekeyTime         Code = "prekey_time"          // the statement or its certificate is not valid at the server's clock
+	CodeCertificateTooLong Code = "certificate_too_long" // the certificate runs longer than the server's maximum: max_certificate_lifetime
 	CodeUnsupportedKeyType Code = "unsupported_key_type" // an identity of a key type this server does not register
 	CodeNotAge             Code = "not_age"              // the ciphertext is not an age file
 	CodeWrongRecipientType Code = "wrong_recipient_type" // not exactly one stanza of a live prekey type
@@ -50,6 +51,7 @@ const (
 	CodeConflict       Code = "conflict"        // what is held is newer, or another: a replay that is not byte-identical
 	CodeMailboxChanged Code = "mailbox_changed" // the mailbox changed while the request was handled: send it again as it is
 	CodeStalePrekey    Code = "stale_prekey"    // a newer prekey exists: re-fetch, re-encrypt the same envelope
+	CodeIdentityMode   Code = "identity_mode"   // the address is in identity mode: publish a revocation of certificates first
 	CodePrekeyExpired  Code = "prekey_expired"  // the mailbox's owner must publish a new prekey
 
 	// 408
@@ -87,6 +89,7 @@ var codes = map[Code]struct {
 	CodeBadKey:                {http.StatusBadRequest, "Bad key"},
 	CodePrekeyNotNew:          {http.StatusBadRequest, "Prekey not new"},
 	CodePrekeyTime:            {http.StatusBadRequest, "Prekey not valid now"},
+	CodeCertificateTooLong:    {http.StatusBadRequest, "Certificate too long"},
 	CodeUnsupportedKeyType:    {http.StatusBadRequest, "Unsupported key type"},
 	CodeNotAge:                {http.StatusBadRequest, "Not an age file"},
 	CodeWrongRecipientType:    {http.StatusBadRequest, "Wrong recipient type"},
@@ -106,6 +109,7 @@ var codes = map[Code]struct {
 	CodeConflict:              {http.StatusConflict, "Conflict"},
 	CodeMailboxChanged:        {http.StatusConflict, "Mailbox changed"},
 	CodeStalePrekey:           {http.StatusConflict, "Stale prekey"},
+	CodeIdentityMode:          {http.StatusConflict, "Identity mode"},
 	CodePrekeyExpired:         {http.StatusConflict, "Prekey expired"},
 	CodeRequestTimeout:        {http.StatusRequestTimeout, "Request timeout"},
 	CodeRevoked:               {http.StatusGone, "Revoked"},
@@ -181,6 +185,9 @@ type Problem struct {
 	// certificate: which ones each code names is PROTOCOL.md §11.3's.
 	PrekeySerial      *uint64 `json:"prekey_serial,omitempty"`
 	CertificateSerial *uint64 `json:"certificate_serial,omitempty"`
+	// MaxCertificateLifetime is the longest a certificate the server takes may
+	// run, valid-before less valid-after, in seconds (certificate_too_long).
+	MaxCertificateLifetime *uint64 `json:"max_certificate_lifetime,omitempty"`
 	// Through is the serial a revocation of certificates held runs through
 	// (conflict).
 	Through *uint64 `json:"through,omitempty"`
